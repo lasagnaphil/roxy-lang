@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+    <Type Name="rx::Vector&lt;*&gt;">
+        <Expand>
+            <Item Name="[size]">m_size</Item>
+            <Item Name="[capacity]">m_capacity</Item>
+            <ArrayItems>
+                <Size>m_size</Size>
+                <ValuePointer>m_data</ValuePointer>
+            </ArrayItems>
+        </Expand>
+    </Type>
+    <Type Name="rx::Token">
+        <DisplayString>{start,[length]su}</DisplayString>
+        <StringView>start,[length]su</StringView>
+        <Expand>
+            <Item Name="[line]">line</Item>
+            <Item Name="[type]">type</Item>
+            <Item Name="[length]">length</Item>
+        </Expand>
+    </Type>
+    <Type Name="rx::ObjString">
+        <DisplayString>{(char*)chars,[length]su}</DisplayString>
+        <StringView>(char*)chars,[length]su</StringView>
+        <Expand>
+            <Item Name="[length]">length</Item>
+            <Item Name="[hash]">hash</Item>
+        </Expand>
+    </Type>
+    <Type Name="rx::Expr">
+        <Expand>
+            <Item Name = "[ErrorExpr]" Condition="type == ExprType::Error">(ErrorExpr*)this</Item>
+            <Item Name = "[BinaryExpr]" Condition="type == ExprType::Binary">(BinaryExpr*)this</Item>
+            <Item Name = "[GroupingExpr]" Condition="type == ExprType::Grouping">(GroupingExpr*)this</Item>
+            <Item Name = "[LiteralExpr]" Condition="type == ExprType::Literal">(LiteralExpr*)this</Item>
+            <Item Name = "[UnaryExpr]" Condition="type == ExprType::Unary">(UnaryExpr*)this</Item>
+        </Expand>
+    </Type>
+</AutoVisualizer>
