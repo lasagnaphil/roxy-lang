@@ -10,6 +10,8 @@ namespace rx {
 
 class Expr;
 class Stmt;
+struct VarDecl;
+struct Type;
 
 class AstPrinter {
 private:
@@ -23,6 +25,7 @@ public:
 
     void add(const Expr* expr);
     void add(const Stmt* stmt);
+    void add(const Type* type);
 
 private:
     void inc_indent() { m_tab_count++; }
@@ -37,28 +40,11 @@ private:
     void add(std::string_view str) {
         m_buf += str;
     }
-    void add(const Vector<Expr*>& expressions) {
-        for (u32 i = 0; i < expressions.size() - 1; i++) {
-            add(expressions[i]);
-            m_buf += ' ';
-        }
-        add(expressions[expressions.size() - 1]);
-    }
-    void add(const Vector<Stmt*>& statements) {
-        inc_indent();
-        for (u32 i = 0; i < statements.size(); i++) {
-            newline();
-            add(statements[i]);
-        }
-        dec_indent();
-    }
-    void add(const Vector<Token>& tokens) {
-        for (u32 i = 0; i < tokens.size() - 1; i++) {
-            m_buf += tokens[i].str();
-            m_buf += ' ';
-        }
-        m_buf += tokens[tokens.size() - 1].str();
-    }
+    void add(const Vector<Expr*>& expressions);
+    void add(const Vector<Stmt*>& statements);
+    void add(const Vector<Token>& tokens);
+    void add(const VarDecl& variable);
+    void add(const Vector<VarDecl>& variables);
     void reset() {
         m_tab_count = 0;
         m_buf.clear();

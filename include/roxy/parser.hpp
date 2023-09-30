@@ -80,6 +80,11 @@ public:
         return m_allocator.emplace<StmtT>(std::forward<Args>(args)...);
     }
 
+    template <typename TypeT, typename ... Args, typename = std::enable_if_t<std::is_base_of_v<Type, TypeT>>>
+    TypeT* new_type(Args&&... args) {
+        return m_allocator.emplace<TypeT>(std::forward<Args>(args)...);
+    }
+
     void parse(Vector<Stmt*>& statements) {
         advance();
         while (!m_scanner->is_at_end()) {
@@ -89,12 +94,12 @@ public:
 
 private:
 
-    ErrorExpr* error_expr(const char* message) {
+    ErrorExpr* error_expr(std::string_view message) {
         error_at_current(message);
         return new_expr<ErrorExpr>();
     }
 
-    ErrorStmt* error_stmt(const char* message) {
+    ErrorStmt* error_stmt(std::string_view message) {
         error_at_current(message);
         return new_stmt<ErrorStmt>();
     }
@@ -283,23 +288,63 @@ private:
         return new_stmt<ContinueStmt>();
     }
 
-    Stmt* var_declaration() {
-        if (!consume(TokenType::Identifier)) {
-            return error_stmt("Expect variable name.");
+    // TODO: Make this much faster
+    bool parse_primitive_type(std::string_view name, PrimTypeKind& prim_kind) {
+        if (name == "bool") {
+            prim_kind = PrimTypeKind::Bool;
         }
-        Token name = previous();
-        Expr* initializer;
-        if (match(TokenType::Equal)) {
-            initializer = expression();
+        else if (name == "number") {
+            prim_kind = PrimTypeKind::Number;
+        }
+        else if (name == "string") {
+            prim_kind = PrimTypeKind::String;
         }
         else {
-            initializer = nullptr;
+            return false;
+        }
+        return true;
+    }
+
+    bool parse_variable(const char* var_kind, std::string& err_msg, VarDecl& variable) {
+        if (!consume(TokenType::Identifier)) {
+            err_msg = fmt::format("Expect {} name.", var_kind);
+            return false;
+        }
+        Token name = previous();
+        Type* type = nullptr;
+        if (match(TokenType::Colon)) {
+            if (!consume(TokenType::Identifier)) {
+                err_msg = "Expect type name.";
+                return false;
+            }
+            Token type_name = previous();
+            PrimTypeKind prim_kind;
+            if (!parse_primitive_type(type_name.str(), prim_kind)) {
+                err_msg = "Invalid type name.";
+                return false;
+            }
+            type= new_type<PrimitiveType>(prim_kind);
+        }
+        variable = VarDecl(name, type);
+        return true;
+    }
+
+    Stmt* var_declaration() {
+        VarDecl var_decl;
+        std::string err_msg;
+        if (!parse_variable("variable", err_msg, var_decl)) {
+            return error_stmt(err_msg);
+        }
+
+        Expr* initializer = nullptr;
+        if (match(TokenType::Equal)) {
+            initializer = expression();
         }
 
         if (!consume(TokenType::Semicolon)) {
             return error_stmt("Expect ';' after variable declaration.");
         }
-        return new_stmt<VarStmt>(name, initializer);
+        return new_stmt<VarStmt>(var_decl, initializer);
     }
 
     Stmt* fun_declaration() {
@@ -307,7 +352,7 @@ private:
             return error_stmt("Expect function name.");
         }
         Token name = previous();
-        Vector<Token> parameters;
+        Vector<VarDecl> parameters;
         if (!consume(TokenType::LeftParen)) {
             return error_stmt("Expect '(' after function name.");
         }
@@ -316,10 +361,12 @@ private:
                 if (parameters.size() >= 255) {
                     return error_stmt("Can't have more than 255 parameters.");
                 }
-                if (!consume(TokenType::Identifier)) {
-                    return error_stmt("Expect parameter name.");
+                VarDecl var_decl;
+                std::string err_msg;
+                if (!parse_variable("parameter", err_msg, var_decl)) {
+                    return error_stmt(err_msg);
                 }
-                parameters.push_back(previous());
+                parameters.push_back(var_decl);
             } while (match(TokenType::Comma));
         }
         if (!consume(TokenType::RightParen)) {
@@ -343,12 +390,14 @@ private:
             return error_stmt("Expect '{' before struct body.");
         }
 
-        Vector<Token> fields;
+        Vector<VarDecl> fields;
         while (!check(TokenType::RightBrace) && !m_scanner->is_at_end()){
-            if (!consume(TokenType::Identifier)) {
-                return error_stmt("Struct field must be a valid identifier.");
+            VarDecl var_decl;
+            std::string err_msg;
+            if (!parse_variable("field", err_msg, var_decl)) {
+                return error_stmt(err_msg);
             }
-            fields.push_back(previous());
+            fields.push_back(var_decl);
         }
 
         if (!consume(TokenType::RightBrace)) {
@@ -584,7 +633,7 @@ private:
         }
     }
 
-    void error_at_current(const char* message) {
+    void error_at_current(std::string_view message) {
         error_at(m_current, message);
     }
 
@@ -592,7 +641,7 @@ private:
         error_at(m_previous, message);
     }
 
-    void error_at(const Token& token, const char* message) {
+    void error_at(const Token& token, std::string_view message) {
         if (m_panic_mode) return;
         m_panic_mode = true;
         fmt::print(stderr, "[line {}] Error", token.line);

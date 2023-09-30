@@ -2,6 +2,7 @@
 
 #include "roxy/expr.hpp"
 #include "roxy/token.hpp"
+#include "roxy/type.hpp"
 
 namespace rx {
 
@@ -81,9 +82,9 @@ public:
     static constexpr StmtType s_type = StmtType::Struct;
 
     Token name;
-    Vector<Token> fields;
+    Vector<VarDecl> fields;
 
-    StructStmt(Token name, Vector<Token>&& fields) : Stmt(s_type), name(name), fields(std::move(fields)) {}
+    StructStmt(Token name, Vector<VarDecl>&& fields) : Stmt(s_type), name(name), fields(std::move(fields)) {}
 };
 
 class FunctionStmt : public Stmt {
@@ -91,10 +92,10 @@ public:
     static constexpr StmtType s_type = StmtType::Function;
 
     Token name;
-    Vector<Token> params;
+    Vector<VarDecl> params;
     Vector<Stmt*> body;
 
-    FunctionStmt(Token name, Vector<Token>&& params, Vector<Stmt*>&& body) :
+    FunctionStmt(Token name, Vector<VarDecl>&& params, Vector<Stmt*>&& body) :
         Stmt(s_type), name(name), params(std::move(params)), body(std::move(body)) {}
 };
 
@@ -123,10 +124,10 @@ class VarStmt : public Stmt {
 public:
     static constexpr StmtType s_type = StmtType::Var;
 
-    Token name;
+    VarDecl var;
     Expr* initializer; // can be null
 
-    VarStmt(Token name, Expr* initializer) : Stmt(s_type), name(name), initializer(initializer) {}
+    VarStmt(VarDecl var, Expr* initializer) : Stmt(s_type), var(var), initializer(initializer) {}
 };
 
 class WhileStmt : public Stmt {

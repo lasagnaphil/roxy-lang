@@ -1,5 +1,7 @@
 struct AttackSkill {
-    damage
-    crit_chance
-    crit_multiplier
+    name: string
+    damage: number
+    does_crit: bool
+    crit_chance: number
+    crit_multiplier: number
 }

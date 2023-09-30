@@ -3,6 +3,7 @@
 #include "roxy/core/vector.hpp"
 #include "roxy/expr.hpp"
 #include "roxy/stmt.hpp"
+#include "roxy/type.hpp"
 
 namespace rx {
 
@@ -118,7 +119,7 @@ void AstPrinter::add(const Stmt* stmt) {
         }
         case StmtType::Var: {
             auto& var_stmt = stmt->cast<VarStmt>();
-            parenthesize("var", var_stmt.name.str(), var_stmt.initializer);
+            parenthesize("var", var_stmt.var, var_stmt.initializer);
             break;
         }
         case StmtType::While: {
@@ -140,6 +141,66 @@ void AstPrinter::add(const Stmt* stmt) {
             break;
         }
     }
+}
+
+void AstPrinter::add(const Type* type) {
+    if (type == nullptr) {
+        m_buf += "null";
+        return;
+    }
+
+    switch (type->kind) {
+        case TypeKind::Primitive: {
+            auto& prim_type = type->cast<PrimitiveType>();
+            switch (prim_type.prim_kind) {
+                case PrimTypeKind::Bool: m_buf += "bool"; break;
+                case PrimTypeKind::Number: m_buf += "number"; break;
+                case PrimTypeKind::String: m_buf += "string"; break;
+            }
+            break;
+        }
+        default: {
+            // TODO
+            m_buf += "unsupported"; break;
+        }
+    }
+}
+
+void AstPrinter::add(const Vector<Expr*>& expressions) {
+    for (u32 i = 0; i < expressions.size() - 1; i++) {
+        add(expressions[i]);
+        m_buf += ' ';
+    }
+    add(expressions[expressions.size() - 1]);
+}
+
+void AstPrinter::add(const Vector<Stmt*>& statements) {
+    inc_indent();
+    for (u32 i = 0; i < statements.size(); i++) {
+        newline();
+        add(statements[i]);
+    }
+    dec_indent();
+}
+
+void AstPrinter::add(const Vector<Token>& tokens) {
+    for (u32 i = 0; i < tokens.size() - 1; i++) {
+        m_buf += tokens[i].str();
+        m_buf += ' ';
+    }
+    m_buf += tokens[tokens.size() - 1].str();
+}
+
+void AstPrinter::add(const VarDecl& variable) {
+    parenthesize("var", variable.name.str(), variable.type);
+}
+
+void AstPrinter::add(const Vector<VarDecl>& variables) {
+    for (u32 i = 0; i < variables.size() - 1; i++) {
+        add(variables[i]);
+        m_buf += ' ';
+    }
+    add(variables[variables.size() - 1]);
 }
 
 void AstPrinter::parenthesize_block(std::string_view name, const Vector<Stmt*>& statements) {
