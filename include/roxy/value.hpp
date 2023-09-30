@@ -14,7 +14,7 @@ enum class ValueType {
 };
 
 enum class ObjType {
-    String,
+    Value, String,
 };
 
 inline thread_local xoshiro256ss_state tl_uid_gen_state;
@@ -23,7 +23,7 @@ void init_uid_gen_state();
 
 struct Obj {
     u64 type_bits: 5;
-    u64 uid: 59; // TODO: make this 64-bit?
+    u64 uid: 59;
     u64 refcount; // TODO: make this atomic
 
     Obj(ObjType type) : type_bits((u64)type), refcount(1) {
@@ -33,9 +33,16 @@ struct Obj {
     ObjType type() const { return (ObjType)type_bits; }
 };
 
+struct ObjValue {
+    Obj obj;
+    u8 data[];
+
+    ObjValue() : obj(ObjType::Value) {}
+};
+
 struct ObjString;
 
-struct Value {
+struct AnyValue {
 
 #define SIGN_BIT ((uint64_t)0x8000000000000000)
 #define QNAN ((uint64_t)0x7ffc000000000000)
@@ -49,16 +56,16 @@ struct Value {
 
     uint64_t value;
 
-    Value() : value((uint64_t)(QNAN | TAG_NIL)) {}
+    AnyValue() : value((uint64_t)(QNAN | TAG_NIL)) {}
 
     // Need to do this template shenanigans to prevent any T* -> bool implicit conversions (C++ wtf)
     template <typename T, typename = std::enable_if_t<std::is_same_v<T, bool>>>
-    explicit Value(T boolean) : value(boolean? TRUE_VAL : FALSE_VAL) {}
+    explicit AnyValue(T boolean) : value(boolean ? TRUE_VAL : FALSE_VAL) {}
 
-    explicit Value(double number) {
-        memcpy(&value, &number, sizeof(Value));
+    explicit AnyValue(double number) {
+        memcpy(&value, &number, sizeof(AnyValue));
     }
-    explicit Value(Obj* obj) {
+    explicit AnyValue(Obj* obj) {
         value = SIGN_BIT | QNAN | (uint64_t)(uintptr_t)(obj);
     }
 
@@ -71,12 +78,12 @@ struct Value {
     bool as_bool() const { return value == TRUE_VAL; }
     double as_number() const {
         double num;
-        memcpy(&num, &value, sizeof(Value));
+        memcpy(&num, &value, sizeof(AnyValue));
         return num;
     }
     Obj* as_obj() const { return (Obj*)(uintptr_t)(value & ~(SIGN_BIT | QNAN)); }
 
-    explicit Value(ObjString* obj) : Value(reinterpret_cast<Obj*>(obj)) {}
+    explicit AnyValue(ObjString* obj) : AnyValue(reinterpret_cast<Obj*>(obj)) {}
 
     bool is_string() const { return is_obj_type(ObjType::String); }
 
@@ -97,7 +104,7 @@ struct Value {
         obj->refcount--;
         if (obj->refcount == 0) {
             obj_free();
-            // After this, the Value is in an invalid state, don't use it!
+            // After this, the AnyValue is in an invalid state, don't use it!
         }
     }
 
@@ -105,7 +112,7 @@ struct Value {
 
     u64 hash() const;
 
-    static bool equals(const Value& a, const Value& b) { return a.value == b.value; }
+    static bool equals(const AnyValue& a, const AnyValue& b) { return a.value == b.value; }
 
     std::string to_std_string(bool print_refcount = false) const;
 };

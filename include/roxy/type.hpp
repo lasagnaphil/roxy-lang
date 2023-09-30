@@ -19,11 +19,16 @@ enum class PrimTypeKind : u8 {
 };
 
 struct VarDecl;
+struct PrimitiveType;
 
 struct Type {
     TypeKind kind;
 
     Type(TypeKind kind) : kind(kind) {}
+
+    bool is_bool() const;
+    bool is_number() const;
+    bool is_string() const;
 
     template <typename TypeT, typename = std::enable_if_t<std::is_base_of_v<Type, TypeT>>>
     const TypeT& cast() const {
@@ -70,18 +75,33 @@ struct StructType : public Type {
     static constexpr TypeKind s_kind = TypeKind::Struct;
 
     Token name;
-    Vector<VarDecl> decl;
+    Span<VarDecl> decl;
 
-    StructType(Token name, Vector<VarDecl>&& decl) : Type(s_kind), name(name), decl(decl) {}
+    StructType(Token name, Span<VarDecl> decl) : Type(s_kind), name(name), decl(decl) {}
 };
 
 struct FunctionType : public Type {
     static constexpr TypeKind s_kind = TypeKind::Function;
 
     Type* ret;
-    Vector<Type*> params;
+    Span<Type*> params;
 
-    FunctionType(Type* ret, Vector<Type*>&& params) : Type(s_kind), ret(ret), params(params) {}
+    FunctionType(Type* ret, Span<Type*> params) : Type(s_kind), ret(ret), params(params) {}
 };
+
+inline bool Type::is_bool() const {
+    auto prim_type = try_cast<PrimitiveType>();
+    return prim_type && prim_type->prim_kind == PrimTypeKind::Bool;
+}
+
+inline bool Type::is_number() const {
+    auto prim_type = try_cast<PrimitiveType>();
+    return prim_type && prim_type->prim_kind == PrimTypeKind::Number;
+}
+
+inline bool Type::is_string() const {
+    auto prim_type = try_cast<PrimitiveType>();
+    return prim_type && prim_type->prim_kind == PrimTypeKind::String;
+}
 
 }

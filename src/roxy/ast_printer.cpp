@@ -14,7 +14,7 @@ std::string AstPrinter::to_string(const Expr* expr) {
     return res;
 }
 
-std::string AstPrinter::to_string(const Vector<Stmt*>& statements) {
+std::string AstPrinter::to_string(Span<Stmt*> statements) {
     for (auto stmt : statements) {
         add(stmt);
         newline();
@@ -166,7 +166,7 @@ void AstPrinter::add(const Type* type) {
     }
 }
 
-void AstPrinter::add(const Vector<Expr*>& expressions) {
+void AstPrinter::add(Span<Expr*> expressions) {
     for (u32 i = 0; i < expressions.size() - 1; i++) {
         add(expressions[i]);
         m_buf += ' ';
@@ -174,7 +174,7 @@ void AstPrinter::add(const Vector<Expr*>& expressions) {
     add(expressions[expressions.size() - 1]);
 }
 
-void AstPrinter::add(const Vector<Stmt*>& statements) {
+void AstPrinter::add(Span<Stmt*> statements) {
     inc_indent();
     for (u32 i = 0; i < statements.size(); i++) {
         newline();
@@ -183,7 +183,7 @@ void AstPrinter::add(const Vector<Stmt*>& statements) {
     dec_indent();
 }
 
-void AstPrinter::add(const Vector<Token>& tokens) {
+void AstPrinter::add(Span<Token> tokens) {
     for (u32 i = 0; i < tokens.size() - 1; i++) {
         m_buf += tokens[i].str();
         m_buf += ' ';
@@ -195,7 +195,7 @@ void AstPrinter::add(const VarDecl& variable) {
     parenthesize("var", variable.name.str(), variable.type);
 }
 
-void AstPrinter::add(const Vector<VarDecl>& variables) {
+void AstPrinter::add(Span<VarDecl> variables) {
     for (u32 i = 0; i < variables.size() - 1; i++) {
         add(variables[i]);
         m_buf += ' ';
@@ -203,15 +203,16 @@ void AstPrinter::add(const Vector<VarDecl>& variables) {
     add(variables[variables.size() - 1]);
 }
 
-void AstPrinter::parenthesize_block(std::string_view name, const Vector<Stmt*>& statements) {
+void AstPrinter::parenthesize_block(std::string_view name, Span<Stmt*> statements) {
     m_buf += "(";
     m_buf += name;
     inc_indent();
     newline();
-    for (Stmt* stmt : statements) {
-        add(stmt);
-        if (stmt != statements.back()) newline();
+    for (u32 i = 0; i < statements.size() - 1; i++) {
+        add(statements[i]);
+        newline();
     }
+    add(statements[statements.size() - 1]);
     dec_indent();
     m_buf += ")";
 }

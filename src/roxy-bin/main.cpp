@@ -24,10 +24,9 @@ int main(int argc, char** argv) {
         StringInterner string_interner;
         Parser parser(&scanner, &string_interner);
 
-        Vector<Stmt*> statements;
-        parser.parse(statements);
+        BlockStmt* block_stmt = parser.parse();
 
-        fmt::print("{}\n", AstPrinter().to_string(statements));
+        fmt::print("{}\n", AstPrinter().to_string(block_stmt->statements));
         return 0;
     }
 }

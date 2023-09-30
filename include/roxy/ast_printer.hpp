@@ -21,7 +21,7 @@ private:
 
 public:
     std::string to_string(const Expr* expr);
-    std::string to_string(const Vector<Stmt*>& statements);
+    std::string to_string(Span<Stmt*> statements);
 
     void add(const Expr* expr);
     void add(const Stmt* stmt);
@@ -40,11 +40,11 @@ private:
     void add(std::string_view str) {
         m_buf += str;
     }
-    void add(const Vector<Expr*>& expressions);
-    void add(const Vector<Stmt*>& statements);
-    void add(const Vector<Token>& tokens);
+    void add(Span<Expr*> expressions);
+    void add(Span<Stmt*> statements);
+    void add(Span<Token> tokens);
     void add(const VarDecl& variable);
-    void add(const Vector<VarDecl>& variables);
+    void add(Span<VarDecl> variables);
     void reset() {
         m_tab_count = 0;
         m_buf.clear();
@@ -60,7 +60,7 @@ private:
         m_buf += ")";
     }
 
-    void parenthesize_block(std::string_view name, const Vector<Stmt*>& statements);
+    void parenthesize_block(std::string_view name, Span<Stmt*> statements);
 };
 
 }

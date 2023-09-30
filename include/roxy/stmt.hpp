@@ -21,7 +21,7 @@ enum class StmtType {
     Continue,
 };
 
-class Stmt {
+struct Stmt {
 public:
     StmtType type;
 
@@ -52,24 +52,21 @@ public:
     }
 };
 
-class ErrorStmt : public Stmt {
-public:
+struct ErrorStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Error;
 
     ErrorStmt() : Stmt(s_type) {}
 };
 
-class BlockStmt : public Stmt {
-public:
+struct BlockStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Block;
 
-    Vector<Stmt*> statements;
+    Span<Stmt*> statements;
 
-    BlockStmt(Vector<Stmt*>&& statements) : Stmt(s_type), statements(statements) {}
+    BlockStmt(Span<Stmt*> statements) : Stmt(s_type), statements(statements) {}
 };
 
-class ExpressionStmt : public Stmt {
-public:
+struct ExpressionStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Expression;
 
     Expr* expr;
@@ -77,30 +74,28 @@ public:
     ExpressionStmt(Expr* expr) : Stmt(s_type), expr(expr) {}
 };
 
-class StructStmt : public Stmt {
-public:
+struct StructStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Struct;
 
     Token name;
-    Vector<VarDecl> fields;
+    Span<VarDecl> fields;
 
-    StructStmt(Token name, Vector<VarDecl>&& fields) : Stmt(s_type), name(name), fields(std::move(fields)) {}
+    StructStmt(Token name, Span<VarDecl> fields) : Stmt(s_type), name(name), fields(fields) {}
 };
 
-class FunctionStmt : public Stmt {
+struct FunctionStmt : public Stmt {
 public:
     static constexpr StmtType s_type = StmtType::Function;
 
     Token name;
-    Vector<VarDecl> params;
-    Vector<Stmt*> body;
+    Span<VarDecl> params;
+    Span<Stmt*> body;
 
-    FunctionStmt(Token name, Vector<VarDecl>&& params, Vector<Stmt*>&& body) :
-        Stmt(s_type), name(name), params(std::move(params)), body(std::move(body)) {}
+    FunctionStmt(Token name, Span<VarDecl> params, Span<Stmt*> body) :
+        Stmt(s_type), name(name), params(params), body(body) {}
 };
 
-class IfStmt : public Stmt {
-public:
+struct IfStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::If;
 
     Expr* condition;
@@ -111,8 +106,7 @@ public:
         Stmt(s_type), condition(condition), then_branch(then_branch), else_branch(else_branch) {}
 };
 
-class PrintStmt : public Stmt {
-public:
+struct PrintStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Print;
 
     Expr* expr;
@@ -120,8 +114,7 @@ public:
     PrintStmt(Expr* expr) : Stmt(s_type), expr(expr) {}
 };
 
-class VarStmt : public Stmt {
-public:
+struct VarStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Var;
 
     VarDecl var;
@@ -130,8 +123,7 @@ public:
     VarStmt(VarDecl var, Expr* initializer) : Stmt(s_type), var(var), initializer(initializer) {}
 };
 
-class WhileStmt : public Stmt {
-public:
+struct WhileStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::While;
 
     Expr* condition;
@@ -140,8 +132,7 @@ public:
     WhileStmt(Expr* condition, Stmt* body) : Stmt(s_type), condition(condition), body(body) {}
 };
 
-class ReturnStmt : public Stmt {
-public:
+struct ReturnStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Return;
 
     Expr* expr; // can be null
@@ -149,15 +140,13 @@ public:
     ReturnStmt(Expr* expr) : Stmt(s_type), expr(expr) {}
 };
 
-class BreakStmt : public Stmt {
-public:
+struct BreakStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Break;
 
     BreakStmt() : Stmt(s_type) {}
 };
 
-class ContinueStmt : public Stmt {
-public:
+struct ContinueStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Continue;
 
     ContinueStmt() : Stmt(s_type) {}

@@ -45,63 +45,96 @@ struct ParseRule {
     Precedence precedence;
 };
 
+class AstAllocator {
+private:
+    BumpAllocator m_allocator;
+
+    PrimitiveType s_prim_type_bool = {PrimTypeKind::Bool};
+    PrimitiveType s_prim_type_number = {PrimTypeKind::Number};
+    PrimitiveType s_prim_type_string = {PrimTypeKind::String};
+
+public:
+    AstAllocator(u64 initial_capacity) : m_allocator(initial_capacity) {}
+
+    template <typename T, typename ... Args, typename = std::enable_if_t<
+            std::is_base_of_v<Expr, T> || std::is_base_of_v<Stmt, T> || std::is_base_of_v<Type, T>>>
+    T* emplace(Args&&... args) {
+        return m_allocator.emplace<T, Args...>(std::forward<Args>(args)...);
+    }
+
+    template <>
+    PrimitiveType* emplace<PrimitiveType, PrimTypeKind>(PrimTypeKind&& prim_kind) {
+        switch (prim_kind) {
+            case PrimTypeKind::Bool: return &s_prim_type_bool;
+            case PrimTypeKind::Number: return &s_prim_type_number;
+            case PrimTypeKind::String: return &s_prim_type_string;
+        }
+    }
+
+    template <typename T>
+    Span<T> move(Vector<T>&& vec) {
+        void* data = m_allocator.alloc_bytes(sizeof(T) * vec.size());
+        Span<T> span = {reinterpret_cast<T*>(data), vec.size()};
+        for (u32 i = 0; i < vec.size(); i++) {
+            new (span.data() + i) T(std::move(vec[i]));
+        }
+        return span;
+    }
+};
+
 class Parser {
 private:
-    static constexpr u64 s_initial_expr_buffer_capacity = 65536;
+    static constexpr u64 s_initial_ast_allocator_capacity = 65536;
     static ParseRule s_parse_rules[];
 
     Scanner* m_scanner;
-    BumpAllocator m_allocator;
     Token m_previous = {}, m_current = {};
     bool m_had_error = false;
     bool m_panic_mode = false;
 
     StringInterner* m_string_interner;
+    AstAllocator m_allocator;
 
 public:
     Parser(Scanner* scanner, StringInterner* string_interner) :
             m_scanner(scanner), m_string_interner(string_interner),
-            m_allocator(s_initial_expr_buffer_capacity) {
-
+            m_allocator(s_initial_ast_allocator_capacity) {
     }
 
-    Parser(const Parser& compiler) = delete;
-    Parser& operator=(const Parser& compiler) = delete;
-    Parser(Parser&& compiler) = delete;
-    Parser& operator=(Parser&& compiler) = delete;
+    Parser(const Parser& parser) = delete;
+    Parser& operator=(const Parser& parser) = delete;
+    Parser(Parser&& parser) = delete;
+    Parser& operator=(Parser&& parser) = delete;
 
-    template <typename ExprT, typename ... Args, typename = std::enable_if_t<std::is_base_of_v<Expr, ExprT>>>
-    ExprT* new_expr(Args&&... args) {
-        return m_allocator.emplace<ExprT>(std::forward<Args>(args)...);
+    template <typename T, typename ... Args>
+    T* alloc(Args&&... args) {
+        return m_allocator.emplace<T, Args...>(std::forward<Args>(args)...);
     }
 
-    template <typename StmtT, typename ... Args, typename = std::enable_if_t<std::is_base_of_v<Stmt, StmtT>>>
-    StmtT* new_stmt(Args&&... args) {
-        return m_allocator.emplace<StmtT>(std::forward<Args>(args)...);
+    template <typename T>
+    Span<T> move(Vector<T>&& vec) {
+        return m_allocator.move(std::move(vec));
     }
 
-    template <typename TypeT, typename ... Args, typename = std::enable_if_t<std::is_base_of_v<Type, TypeT>>>
-    TypeT* new_type(Args&&... args) {
-        return m_allocator.emplace<TypeT>(std::forward<Args>(args)...);
-    }
-
-    void parse(Vector<Stmt*>& statements) {
+    BlockStmt* parse() {
         advance();
+        Vector<Stmt*> statements;
         while (!m_scanner->is_at_end()) {
             statements.push_back(declaration());
         }
+        return alloc<BlockStmt>(move(std::move(statements)));
     }
 
 private:
 
     ErrorExpr* error_expr(std::string_view message) {
         error_at_current(message);
-        return new_expr<ErrorExpr>();
+        return alloc<ErrorExpr>();
     }
 
     ErrorStmt* error_stmt(std::string_view message) {
         error_at_current(message);
-        return new_stmt<ErrorStmt>();
+        return alloc<ErrorStmt>();
     }
 
     Expr* expression() {
@@ -137,7 +170,7 @@ private:
     Stmt* statement() {
         Stmt* stmt;
         if (match(TokenType::LeftBrace)) {
-            stmt = new_stmt<BlockStmt>(block());
+            stmt = alloc<BlockStmt>(block());
         }
         else if (match(TokenType::If)) {
             stmt = if_statement();
@@ -184,7 +217,7 @@ private:
         else{
             else_branch = nullptr;
         }
-        return new_stmt<IfStmt>(condition, then_branch, else_branch);
+        return alloc<IfStmt>(condition, then_branch, else_branch);
     }
 
     Stmt* print_statement() {
@@ -192,7 +225,7 @@ private:
         if (!consume(TokenType::Semicolon)) {
             return error_stmt("Expect ';' after value.");
         }
-        return new_stmt<PrintStmt>(value);
+        return alloc<PrintStmt>(value);
     }
 
     Stmt* while_statement() {
@@ -204,7 +237,7 @@ private:
             return error_stmt("Expext ')' after condition.");
         }
         Stmt* body = statement();
-        return new_stmt<WhileStmt>(condition, body);
+        return alloc<WhileStmt>(condition, body);
     }
 
     Stmt* for_statement() {
@@ -242,18 +275,18 @@ private:
         Stmt* body = statement();
 
         if (increment != nullptr) {
-            Vector<Stmt*> stmts = {body, new_stmt<ExpressionStmt>(increment)};
-            body = new_stmt<BlockStmt>(std::move(stmts));
+            Vector<Stmt*> stmts = {body, alloc<ExpressionStmt>(increment)};
+            body = alloc<BlockStmt>(move(std::move(stmts)));
         }
 
         if (condition != nullptr) {
-            condition = new_expr<LiteralExpr>(Value(true));
+            condition = alloc<LiteralExpr>(AnyValue(true));
         }
-        body = new_stmt<WhileStmt>(condition, body);
+        body = alloc<WhileStmt>(condition, body);
 
         if (initializer != nullptr) {
             Vector<Stmt*> stmts = {initializer, body};
-            body = new_stmt<BlockStmt>(std::move(stmts));
+            body = alloc<BlockStmt>(move(std::move(stmts)));
         }
 
         return body;
@@ -263,14 +296,14 @@ private:
         // TODO: check if this is top-level code
 
         if (match(TokenType::Semicolon)) {
-            return new_stmt<ReturnStmt>(nullptr);
+            return alloc<ReturnStmt>(nullptr);
         }
         else {
             Expr* expr = expression();
             if (!consume(TokenType::Semicolon)) {
                 return error_stmt("Expect ';' after return value.");
             }
-            return new_stmt<ReturnStmt>(expr);
+            return alloc<ReturnStmt>(expr);
         }
     }
 
@@ -278,14 +311,14 @@ private:
         if (!consume(TokenType::Semicolon)) {
             return error_stmt("Expect ';' after 'break'.");
         }
-        return new_stmt<BreakStmt>();
+        return alloc<BreakStmt>();
     }
 
     Stmt* continue_statement() {
         if (!consume(TokenType::Semicolon)) {
             return error_stmt("Expect ';' after 'break'.");
         }
-        return new_stmt<ContinueStmt>();
+        return alloc<ContinueStmt>();
     }
 
     // TODO: Make this much faster
@@ -323,7 +356,7 @@ private:
                 err_msg = "Invalid type name.";
                 return false;
             }
-            type= new_type<PrimitiveType>(prim_kind);
+            type = alloc<PrimitiveType>(prim_kind);
         }
         variable = VarDecl(name, type);
         return true;
@@ -344,7 +377,7 @@ private:
         if (!consume(TokenType::Semicolon)) {
             return error_stmt("Expect ';' after variable declaration.");
         }
-        return new_stmt<VarStmt>(var_decl, initializer);
+        return alloc<VarStmt>(var_decl, initializer);
     }
 
     Stmt* fun_declaration() {
@@ -376,8 +409,9 @@ private:
         if (!consume(TokenType::LeftBrace)) {
             return error_stmt("Expect '{' before function body.");
         }
-        Vector<Stmt*> body = block();
-        return new_stmt<FunctionStmt>(name, std::move(parameters), std::move(body));
+        return alloc<FunctionStmt>(name,
+                                      move(std::move(parameters)),
+                                      move(block()));
     }
 
     Stmt* struct_declaration() {
@@ -404,7 +438,7 @@ private:
             return error_stmt("Expect '}' after class body.");
         }
 
-        return new_stmt<StructStmt>(name, std::move(fields));
+        return alloc<StructStmt>(name, move(std::move(fields)));
     }
 
     Stmt* expression_statement() {
@@ -412,58 +446,58 @@ private:
         if (!consume(TokenType::Semicolon)) {
             return error_stmt("Expect ';' after expression.");
         }
-        return new_stmt<ExpressionStmt>(expr);
+        return alloc<ExpressionStmt>(expr);
     }
 
     Expr* grouping(bool can_assign) {
         Expr* expr = expression();
         if (!consume(TokenType::RightParen)) {
             error_at_current("Expect ')' after expression.");
-            return new_expr<ErrorExpr>();
+            return alloc<ErrorExpr>();
         }
-        return new_expr<GroupingExpr>(expr);
+        return alloc<GroupingExpr>(expr);
     }
 
     Expr* number(bool can_assign) {
         double value = strtod(reinterpret_cast<const char*>(previous().start), nullptr);
-        return new_expr<LiteralExpr>(Value(value));
+        return alloc<LiteralExpr>(AnyValue(value));
     }
 
     Expr* string(bool can_assign) {
         ObjString* str = m_string_interner->create_string(
                 reinterpret_cast<const char*>(previous().start + 1),
                 (u32)(previous().length - 2));
-        auto value = Value(str);
+        auto value = AnyValue(str);
         value.obj_incref();
-        return new_expr<LiteralExpr>(Value(str));
+        return alloc<LiteralExpr>(AnyValue(str));
     }
 
     Expr* literal(bool can_assign) {
         switch (previous().type) {
-            case TokenType::False: return new_expr<LiteralExpr>(Value(false));
-            case TokenType::True: return new_expr<LiteralExpr>(Value(true));
-            case TokenType::Nil: return new_expr<LiteralExpr>(Value());
-            default: return new_expr<ErrorExpr>();
+            case TokenType::False: return alloc<LiteralExpr>(AnyValue(false));
+            case TokenType::True: return alloc<LiteralExpr>(AnyValue(true));
+            case TokenType::Nil: return alloc<LiteralExpr>(AnyValue());
+            default: return alloc<ErrorExpr>();
         }
     }
 
     Expr* table(bool can_assign) {
         error_unimplemented();
-        return new_expr<ErrorExpr>();
+        return alloc<ErrorExpr>();
     }
 
     Expr* array(bool can_assign) {
         error_unimplemented();
-        return new_expr<ErrorExpr>();
+        return alloc<ErrorExpr>();
     }
 
     Expr* named_variable(Token name, bool can_assign) {
         if (can_assign && match(TokenType::Equal)) {
             Expr* value = expression();
-            return new_expr<AssignExpr>(name, value);
+            return alloc<AssignExpr>(name, value);
         }
         else {
-            return new_expr<VariableExpr>(name);
+            return alloc<VariableExpr>(name);
         }
     }
 
@@ -473,25 +507,25 @@ private:
 
     Expr* super(bool can_assign) {
         error_unimplemented();
-        return new_expr<ErrorExpr>();
+        return alloc<ErrorExpr>();
     }
 
     Expr* this_(bool can_assign) {
         error_unimplemented();
-        return new_expr<ErrorExpr>();
+        return alloc<ErrorExpr>();
     }
 
     Expr* unary(bool can_assign) {
         Token op = previous();
         Expr* expr = parse_precedence(Precedence::Unary);
-        return new_expr<UnaryExpr>(op, expr);
+        return alloc<UnaryExpr>(op, expr);
     }
 
     Expr* binary(bool can_assign, Expr* left) {
         Token op = previous();
         ParseRule rule = get_rule(op.type);
         Expr* right = parse_precedence((Precedence)((u32)rule.precedence + 1));
-        return new_expr<BinaryExpr>(left, op, right);
+        return alloc<BinaryExpr>(left, op, right);
     }
 
     Expr* call(bool can_assign, Expr* left) {
@@ -508,29 +542,29 @@ private:
             return error_expr("Expect ')' after arguments.");
         }
         Token paren = previous();
-        return new_expr<CallExpr>(left, paren, std::move(arguments));
+        return alloc<CallExpr>(left, paren, move(std::move(arguments)));
     }
 
     Expr* subscript(bool can_assign, Expr* left) {
         error_unimplemented();
-        return new_expr<ErrorExpr>();
+        return alloc<ErrorExpr>();
     }
 
     Expr* dot(bool can_assign, Expr* left) {
         error_unimplemented();
-        return new_expr<ErrorExpr>();
+        return alloc<ErrorExpr>();
     }
 
     Expr* logical_and(bool can_assign, Expr* left) {
         Token op = previous();
         Expr* right = parse_precedence(Precedence::And);
-        return new_expr<BinaryExpr>(left, op, right);
+        return alloc<BinaryExpr>(left, op, right);
     }
 
     Expr* logical_or(bool can_assign, Expr* left) {
         Token op = previous();
         Expr* right = parse_precedence(Precedence::Or);
-        return new_expr<BinaryExpr>(left, op, right);
+        return alloc<BinaryExpr>(left, op, right);
     }
 
     Expr* ternary(bool can_assign, Expr* cond) {
@@ -539,7 +573,7 @@ private:
             return error_expr("Expect ':' after expression.");
         }
         Expr* right = parse_precedence(Precedence::Ternary);
-        return new_expr<TernaryExpr>(cond, left, right);
+        return alloc<TernaryExpr>(cond, left, right);
     }
 
     Expr* parse_precedence(Precedence precedence) {

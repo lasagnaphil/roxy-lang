@@ -12,7 +12,7 @@ void init_uid_gen_state() {
     xoshiro256ss_init(&tl_uid_gen_state, t);
 }
 
-void Value::obj_free() {
+void AnyValue::obj_free() {
     Obj* obj = as_obj();
     switch (obj->type()) {
         case ObjType::String: {
@@ -24,7 +24,7 @@ void Value::obj_free() {
     value = (QNAN | SIGN_BIT);
 }
 
-u64 Value::hash() const {
+u64 AnyValue::hash() const {
     if (is_nil()) return 0;
     else if (is_bool()) return as_bool()? 1231 : 1237;
     else if (is_number()) {
@@ -45,9 +45,9 @@ u64 Value::hash() const {
     return 0;
 }
 
-std::string object_to_string(Value value, bool print_refcount);
+std::string object_to_string(AnyValue value, bool print_refcount);
 
-std::string value_to_string(Value value, bool print_refcount) {
+std::string value_to_string(AnyValue value, bool print_refcount) {
     if (value.is_bool()) return value.as_bool()? "true" : "false";
     else if (value.is_nil()) return "nil";
     else if (value.is_number()) return fmt::format("{:g}", value.as_number());
@@ -61,7 +61,7 @@ std::string value_to_string(Value value, bool print_refcount) {
     else return "";
 }
 
-std::string object_to_string(Value value, bool print_refcount) {
+std::string object_to_string(AnyValue value, bool print_refcount) {
     Obj* obj = value.as_obj();
     switch (obj->type()) {
         case ObjType::String: return fmt::format("\"{}\"", value.as_string()->chars);
@@ -69,7 +69,7 @@ std::string object_to_string(Value value, bool print_refcount) {
     }
 }
 
-std::string Value::to_std_string(bool print_refcount) const {
+std::string AnyValue::to_std_string(bool print_refcount) const {
     return value_to_string(*this, print_refcount);
 }
 

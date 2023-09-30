@@ -1,6 +1,7 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
+#include "roxy/core/span.hpp"
 #include "roxy/token.hpp"
 #include "roxy/value.hpp"
 
@@ -20,8 +21,7 @@ enum class ExprType : u32 {
     Call,
 };
 
-class Expr {
-public:
+struct Expr {
     ExprType type;
 
     Expr(ExprType type) : type(type) {}
@@ -51,15 +51,13 @@ public:
     }
 };
 
-class ErrorExpr : public Expr {
-public:
+struct ErrorExpr : public Expr {
     static constexpr ExprType s_type = ExprType::Error;
 
     ErrorExpr() : Expr(s_type) {}
 };
 
-class AssignExpr : public Expr {
-public:
+struct AssignExpr : public Expr {
     static constexpr ExprType s_type = ExprType::Assign;
 
     Token name;
@@ -69,8 +67,7 @@ public:
         Expr(s_type), name(name), value(value) {}
 };
 
-class BinaryExpr : public Expr {
-public:
+struct BinaryExpr : public Expr {
     static constexpr ExprType s_type = ExprType::Binary;
 
     Expr* left;
@@ -81,8 +78,7 @@ public:
         Expr(s_type), left(left), right(right), op(op) {}
 };
 
-class TernaryExpr : public Expr {
-public:
+struct TernaryExpr : public Expr {
     static constexpr ExprType s_type = ExprType::Ternary;
 
     Expr* cond;
@@ -93,8 +89,7 @@ public:
         Expr(s_type), cond(cond), left(left), right(right) {}
 };
 
-class GroupingExpr : public Expr {
-public:
+struct GroupingExpr : public Expr {
     static constexpr ExprType s_type = ExprType::Grouping;
 
     Expr* expression;
@@ -104,18 +99,18 @@ public:
             expression(expression) {}
 };
 
-class LiteralExpr : public Expr {
+struct LiteralExpr : public Expr {
 public:
     static constexpr ExprType s_type = ExprType::Literal;
 
-    Value value;
+    AnyValue value;
 
-    LiteralExpr(Value value) :
+    LiteralExpr(AnyValue value) :
             Expr(s_type),
             value(value) {}
 };
 
-class UnaryExpr : public Expr {
+struct UnaryExpr : public Expr {
 public:
     static constexpr ExprType s_type = ExprType::Unary;
 
@@ -125,7 +120,7 @@ public:
     UnaryExpr(Token op, Expr* right) : Expr(s_type), op(op), right(right) {}
 };
 
-class VariableExpr : public Expr {
+struct VariableExpr : public Expr {
 public:
     static constexpr ExprType s_type = ExprType::Variable;
 
@@ -134,16 +129,16 @@ public:
     VariableExpr(Token name) : Expr(s_type), name(name) {}
 };
 
-class CallExpr : public Expr {
+struct CallExpr : public Expr {
 public:
     static constexpr ExprType s_type = ExprType::Call;
 
     Expr* callee;
     Token paren;
-    Vector<Expr*> arguments;
+    Span<Expr*> arguments;
 
-    CallExpr(Expr* callee, Token paren, Vector<Expr*>&& arguments) :
-            Expr(s_type), callee(callee), paren(paren), arguments(std::move(arguments)) {}
+    CallExpr(Expr* callee, Token paren, Span<Expr*> arguments) :
+            Expr(s_type), callee(callee), paren(paren), arguments(arguments) {}
 };
 
 }
