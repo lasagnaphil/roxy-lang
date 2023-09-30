@@ -50,10 +50,14 @@ Token Scanner::scan_token() {
         case '*': return make_token(TokenType::Star);
         case '?': return make_token(TokenType::QuestionMark);
         case ':': return make_token(TokenType::Colon);
+        case '~': return make_token(TokenType::Tilde);
+        case '^': return make_token(TokenType::Caret);
         case '!': return make_token(match('=') ? TokenType::BangEqual : TokenType::Bang);
         case '=': return make_token(match('=') ? TokenType::EqualEqual : TokenType::Equal);
         case '<': return make_token(match('=') ? TokenType::LessEqual : TokenType::Less);
         case '>': return make_token(match('=') ? TokenType::GreaterEqual : TokenType::Greater);
+        case '&': return make_token(match('&') ? TokenType::AmpAmp: TokenType::Ampersand);
+        case '|': return make_token(match('|') ? TokenType::BarBar: TokenType::Bar);
         case '"': return string();
     }
     return error_token("Unexpected character.");
@@ -88,8 +92,6 @@ void Scanner::skip_whitespace() {
 
 TokenType Scanner::identifier_type() {
     switch (m_start[0]) {
-        case 'a': return check_keyword(1, 2, "nd", TokenType::And);
-        case 'c': return check_keyword(1, 4, "lass", TokenType::Class);
         case 'e': return check_keyword(1, 3, "lse", TokenType::Else);
         case 'f':
             if (m_current - m_start > 1) {
@@ -102,9 +104,16 @@ TokenType Scanner::identifier_type() {
             break;
         case 'i': return check_keyword(1, 1, "f", TokenType::If);
         case 'n': return check_keyword(1, 2, "il", TokenType::Nil);
-        case 'o': return check_keyword(1, 1, "r", TokenType::Or);
+        case 'p': return check_keyword(1, 4, "rint", TokenType::Print);
         case 'r': return check_keyword(1, 5, "eturn", TokenType::Return);
-        case 's': return check_keyword(1, 4, "uper", TokenType::Super);
+        case 's':
+            if (m_current - m_start > 1) {
+                switch (m_start[1]) {
+                    case 't': return check_keyword(2, 4, "ruct", TokenType::Struct);
+                    case 'u': return check_keyword(2, 3, "per", TokenType::Super);
+                }
+            }
+            break;
         case 't':
             if (m_current - m_start > 1) {
                 switch (m_start[1]) {

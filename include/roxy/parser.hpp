@@ -1,11 +1,14 @@
 #pragma once
 
 #include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/vector.hpp"
 #include "roxy/fmt/core.h"
 #include "roxy/scanner.hpp"
 #include "roxy/value.hpp"
 #include "roxy/expr.hpp"
+#include "roxy/stmt.hpp"
 #include "roxy/string_interner.hpp"
+#include "ast_printer.hpp"
 
 #include <utility>
 #include <cassert>
@@ -48,7 +51,7 @@ private:
     static ParseRule s_parse_rules[];
 
     Scanner* m_scanner;
-    BumpAllocator m_expr_allocator;
+    BumpAllocator m_allocator;
     Token m_previous = {}, m_current = {};
     bool m_had_error = false;
     bool m_panic_mode = false;
@@ -57,8 +60,8 @@ private:
 
 public:
     Parser(Scanner* scanner, StringInterner* string_interner) :
-        m_scanner(scanner), m_string_interner(string_interner),
-        m_expr_allocator(s_initial_expr_buffer_capacity) {
+            m_scanner(scanner), m_string_interner(string_interner),
+            m_allocator(s_initial_expr_buffer_capacity) {
 
     }
 
@@ -69,18 +72,298 @@ public:
 
     template <typename ExprT, typename ... Args, typename = std::enable_if_t<std::is_base_of_v<Expr, ExprT>>>
     ExprT* new_expr(Args&&... args) {
-        return m_expr_allocator.emplace<ExprT>(std::forward<Args>(args)...);
+        return m_allocator.emplace<ExprT>(std::forward<Args>(args)...);
     }
 
-    Expr* parse() {
+    template <typename StmtT, typename ... Args, typename = std::enable_if_t<std::is_base_of_v<Stmt, StmtT>>>
+    StmtT* new_stmt(Args&&... args) {
+        return m_allocator.emplace<StmtT>(std::forward<Args>(args)...);
+    }
+
+    void parse(Vector<Stmt*>& statements) {
         advance();
-        return expression();
+        while (!m_scanner->is_at_end()) {
+            statements.push_back(declaration());
+        }
     }
 
 private:
 
+    ErrorExpr* error_expr(const char* message) {
+        error_at_current(message);
+        return new_expr<ErrorExpr>();
+    }
+
+    ErrorStmt* error_stmt(const char* message) {
+        error_at_current(message);
+        return new_stmt<ErrorStmt>();
+    }
+
     Expr* expression() {
         return parse_precedence(Precedence::Assignment);
+    }
+
+    Vector<Stmt*> block() {
+        Vector<Stmt*> statements;
+        while (!check(TokenType::RightBrace) && !check(TokenType::Eof)) {
+            statements.push_back(declaration());
+        }
+        if (!consume(TokenType::RightBrace)) {
+            return {error_stmt("Expect '}' after block.")};
+        }
+        return statements;
+    }
+
+    Stmt* declaration() {
+        if (match(TokenType::Var)) {
+            return var_declaration();
+        }
+        else if (match(TokenType::Fun)) {
+            return fun_declaration();
+        }
+        else if (match(TokenType::Struct)) {
+            return struct_declaration();
+        }
+        else {
+            return statement();
+        }
+    }
+
+    Stmt* statement() {
+        Stmt* stmt;
+        if (match(TokenType::LeftBrace)) {
+            stmt = new_stmt<BlockStmt>(block());
+        }
+        else if (match(TokenType::If)) {
+            stmt = if_statement();
+        }
+        else if (match(TokenType::Print)) {
+            stmt = print_statement();
+        }
+        else if (match(TokenType::While)) {
+            stmt = while_statement();
+        }
+        else if (match(TokenType::For)) {
+            stmt = for_statement();
+        }
+        else if (match(TokenType::Return)) {
+            stmt = return_statement();
+        }
+        else if (match(TokenType::Break)) {
+            stmt = break_statement();
+        }
+        else if (match(TokenType::Continue)) {
+            stmt = continue_statement();
+        }
+        else {
+            stmt = expression_statement();
+        }
+        if (m_panic_mode) synchronize();
+        return stmt;
+    }
+
+    Stmt* if_statement() {
+        if (!consume(TokenType::LeftParen)) {
+            return error_stmt("Expect '(' after 'if'.");
+        }
+        Expr* condition = expression();
+        if (!consume(TokenType::RightParen)) {
+            return error_stmt("Expect ')' after if condition.");
+        }
+
+        Stmt* then_branch = statement();
+        Stmt* else_branch;
+        if (match(TokenType::Else)) {
+            else_branch = statement();
+        }
+        else{
+            else_branch = nullptr;
+        }
+        return new_stmt<IfStmt>(condition, then_branch, else_branch);
+    }
+
+    Stmt* print_statement() {
+        Expr* value = expression();
+        if (!consume(TokenType::Semicolon)) {
+            return error_stmt("Expect ';' after value.");
+        }
+        return new_stmt<PrintStmt>(value);
+    }
+
+    Stmt* while_statement() {
+        if (!consume(TokenType::LeftParen)) {
+            return error_stmt("Expect '(' after 'while'.");
+        }
+        Expr* condition = expression();
+        if (!consume(TokenType::RightParen)) {
+            return error_stmt("Expext ')' after condition.");
+        }
+        Stmt* body = statement();
+        return new_stmt<WhileStmt>(condition, body);
+    }
+
+    Stmt* for_statement() {
+        if (!consume(TokenType::LeftParen)) {
+            return error_stmt("Expect '(' after 'for'.");
+        }
+
+        Stmt* initializer;
+        if (match(TokenType::Semicolon)) {
+            initializer = nullptr;
+        }
+        else if (match(TokenType::Var)) {
+            initializer = var_declaration();
+        }
+        else {
+            initializer = expression_statement();
+        }
+
+        Expr* condition = nullptr;
+        if (!check(TokenType::Semicolon)) {
+            condition = expression();
+        }
+        if (!consume(TokenType::Semicolon)) {
+            return error_stmt("Expect ';' after loop condition.");
+        }
+
+        Expr* increment = nullptr;
+        if (!check(TokenType::RightParen)) {
+            increment = expression();
+        }
+        if (!consume(TokenType::RightParen)) {
+            return error_stmt("Expect ')' after for clauses.");
+        }
+
+        Stmt* body = statement();
+
+        if (increment != nullptr) {
+            Vector<Stmt*> stmts = {body, new_stmt<ExpressionStmt>(increment)};
+            body = new_stmt<BlockStmt>(std::move(stmts));
+        }
+
+        if (condition != nullptr) {
+            condition = new_expr<LiteralExpr>(Value(true));
+        }
+        body = new_stmt<WhileStmt>(condition, body);
+
+        if (initializer != nullptr) {
+            Vector<Stmt*> stmts = {initializer, body};
+            body = new_stmt<BlockStmt>(std::move(stmts));
+        }
+
+        return body;
+    }
+
+    Stmt* return_statement() {
+        // TODO: check if this is top-level code
+
+        if (match(TokenType::Semicolon)) {
+            return new_stmt<ReturnStmt>(nullptr);
+        }
+        else {
+            Expr* expr = expression();
+            if (!consume(TokenType::Semicolon)) {
+                return error_stmt("Expect ';' after return value.");
+            }
+            return new_stmt<ReturnStmt>(expr);
+        }
+    }
+
+    Stmt* break_statement() {
+        if (!consume(TokenType::Semicolon)) {
+            return error_stmt("Expect ';' after 'break'.");
+        }
+        return new_stmt<BreakStmt>();
+    }
+
+    Stmt* continue_statement() {
+        if (!consume(TokenType::Semicolon)) {
+            return error_stmt("Expect ';' after 'break'.");
+        }
+        return new_stmt<ContinueStmt>();
+    }
+
+    Stmt* var_declaration() {
+        if (!consume(TokenType::Identifier)) {
+            return error_stmt("Expect variable name.");
+        }
+        Token name = previous();
+        Expr* initializer;
+        if (match(TokenType::Equal)) {
+            initializer = expression();
+        }
+        else {
+            initializer = nullptr;
+        }
+
+        if (!consume(TokenType::Semicolon)) {
+            return error_stmt("Expect ';' after variable declaration.");
+        }
+        return new_stmt<VarStmt>(name, initializer);
+    }
+
+    Stmt* fun_declaration() {
+        if (!consume(TokenType::Identifier)) {
+            return error_stmt("Expect function name.");
+        }
+        Token name = previous();
+        Vector<Token> parameters;
+        if (!consume(TokenType::LeftParen)) {
+            return error_stmt("Expect '(' after function name.");
+        }
+        if (!check(TokenType::RightParen)) {
+            do {
+                if (parameters.size() >= 255) {
+                    return error_stmt("Can't have more than 255 parameters.");
+                }
+                if (!consume(TokenType::Identifier)) {
+                    return error_stmt("Expect parameter name.");
+                }
+                parameters.push_back(previous());
+            } while (match(TokenType::Comma));
+        }
+        if (!consume(TokenType::RightParen)) {
+            return error_stmt("Expect ')' after parameters.");
+        }
+
+        if (!consume(TokenType::LeftBrace)) {
+            return error_stmt("Expect '{' before function body.");
+        }
+        Vector<Stmt*> body = block();
+        return new_stmt<FunctionStmt>(name, std::move(parameters), std::move(body));
+    }
+
+    Stmt* struct_declaration() {
+        if (!consume(TokenType::Identifier)) {
+            return error_stmt("Expect struct name.");
+        }
+        Token name = previous();
+
+        if (!consume(TokenType::LeftBrace)) {
+            return error_stmt("Expect '{' before struct body.");
+        }
+
+        Vector<Token> fields;
+        while (!check(TokenType::RightBrace) && !m_scanner->is_at_end()){
+            if (!consume(TokenType::Identifier)) {
+                return error_stmt("Struct field must be a valid identifier.");
+            }
+            fields.push_back(previous());
+        }
+
+        if (!consume(TokenType::RightBrace)) {
+            return error_stmt("Expect '}' after class body.");
+        }
+
+        return new_stmt<StructStmt>(name, std::move(fields));
+    }
+
+    Stmt* expression_statement() {
+        Expr* expr = expression();
+        if (!consume(TokenType::Semicolon)) {
+            return error_stmt("Expect ';' after expression.");
+        }
+        return new_stmt<ExpressionStmt>(expr);
     }
 
     Expr* grouping(bool can_assign) {
@@ -125,11 +408,19 @@ private:
         return new_expr<ErrorExpr>();
     }
 
-    Expr* variable(bool can_assign) {
-        error_unimplemented();
-        return new_expr<ErrorExpr>();
+    Expr* named_variable(Token name, bool can_assign) {
+        if (can_assign && match(TokenType::Equal)) {
+            Expr* value = expression();
+            return new_expr<AssignExpr>(name, value);
+        }
+        else {
+            return new_expr<VariableExpr>(name);
+        }
     }
 
+    Expr* variable(bool can_assign) {
+        return named_variable(previous(), can_assign);
+    }
 
     Expr* super(bool can_assign) {
         error_unimplemented();
@@ -155,8 +446,20 @@ private:
     }
 
     Expr* call(bool can_assign, Expr* left) {
-        error_unimplemented();
-        return new_expr<ErrorExpr>();
+        Vector<Expr*> arguments;
+        if (!check(TokenType::RightParen)) {
+            do {
+                if (arguments.size() == 255) {
+                    return error_expr("Can't have more than 255 arguments.");
+                }
+                arguments.push_back(expression());
+            } while (match(TokenType::Comma));
+        }
+        if (!consume(TokenType::RightParen)) {
+            return error_expr("Expect ')' after arguments.");
+        }
+        Token paren = previous();
+        return new_expr<CallExpr>(left, paren, std::move(arguments));
     }
 
     Expr* subscript(bool can_assign, Expr* left) {
@@ -169,19 +472,25 @@ private:
         return new_expr<ErrorExpr>();
     }
 
-    Expr* and_(bool can_assign, Expr* left) {
-        error_unimplemented();
-        return new_expr<ErrorExpr>();
+    Expr* logical_and(bool can_assign, Expr* left) {
+        Token op = previous();
+        Expr* right = parse_precedence(Precedence::And);
+        return new_expr<BinaryExpr>(left, op, right);
     }
 
-    Expr* or_(bool can_assign, Expr* left) {
-        error_unimplemented();
-        return new_expr<ErrorExpr>();
+    Expr* logical_or(bool can_assign, Expr* left) {
+        Token op = previous();
+        Expr* right = parse_precedence(Precedence::Or);
+        return new_expr<BinaryExpr>(left, op, right);
     }
 
-    Expr* ternary(bool can_assign, Expr* left) {
-        error_unimplemented();
-        return new_expr<ErrorExpr>();
+    Expr* ternary(bool can_assign, Expr* cond) {
+        Expr* left = parse_precedence(Precedence::Ternary);
+        if (!consume(TokenType::Colon)) {
+            return error_expr("Expect ':' after expression.");
+        }
+        Expr* right = parse_precedence(Precedence::Ternary);
+        return new_expr<TernaryExpr>(cond, left, right);
     }
 
     Expr* parse_precedence(Precedence precedence) {
@@ -190,8 +499,7 @@ private:
         TokenType prefix_type = previous().type;
         PrefixParseFn prefix_rule = get_rule(prefix_type).prefix_fn;
         if (prefix_rule == nullptr) {
-            error("Expect expression.");
-            return new_expr<ErrorExpr>();
+            return error_expr("Expect expression.");
         }
 
         bool can_assign = precedence <= Precedence::Assignment;
@@ -204,8 +512,7 @@ private:
         }
 
         if (can_assign && match(TokenType::Equal)) {
-            error("Invalid assignment target.");
-            return new_expr<ErrorExpr>();
+            return error_expr("Invalid assignment target.");
         }
         return expr;
 
@@ -246,7 +553,7 @@ private:
         return false;
     }
 
-    bool match(std::initializer_list<TokenType> types) {
+    bool match_multiple(std::initializer_list<TokenType> types) {
         for (TokenType type : types) {
             if (check(type)) {
                 advance();
@@ -262,7 +569,7 @@ private:
         while (m_current.type != TokenType::Eof) {
             if (m_previous.type == TokenType::Semicolon) return;
             switch (m_current.type) {;
-                case TokenType::Class:
+                case TokenType::Struct:
                 case TokenType::Fun:
                 case TokenType::Var:
                 case TokenType::If:

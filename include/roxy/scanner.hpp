@@ -1,55 +1,10 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
+#include "roxy/token.hpp"
 
 #include <cstring>
-#include <string_view>
 
 namespace rx {
-
-enum class TokenType : u8 {
-    // Single-character tokens.
-    LeftParen, RightParen,
-    LeftBrace, RightBrace,
-    LeftBracket, RightBracket,
-    Comma, Dot, Minus, Plus,
-    Semicolon, Slash, Star,
-    QuestionMark, Colon,
-    // One or two character tokens.
-    Bang, BangEqual,
-    Equal, EqualEqual,
-    Greater, GreaterEqual,
-    Less, LessEqual,
-    // Literals.
-    Identifier, String, Number,
-    // Keywords.
-    And, Class, Else, False,
-    For, Fun, If, Nil, Or,
-    Return, Super, This,
-    True, Var, While,
-
-    Error, Eof
-};
-
-struct Token {
-    const u8* start;
-    u32 line;
-    u16 length;
-    TokenType type;
-
-    Token() = default;
-
-    Token(const u8* start, u16 length, TokenType type, u32 line) :
-        start(start), length(length), type(type), line(line) {}
-
-    Token(std::string_view name, TokenType type, u32 line) :
-        start(reinterpret_cast<const u8*>(name.data())),
-        length(name.length()),
-        type(type),
-        line(line) {}
-
-    std::string_view str() const { return {(const char*) start, length}; }
-};
 
 class Scanner {
 public:

@@ -27,13 +27,30 @@
             <Item Name="[hash]">hash</Item>
         </Expand>
     </Type>
-    <Type Name="rx::Expr">
+    <!--
+    <Type Name="rx::Expression">
         <Expand>
-            <Item Name = "[ErrorExpr]" Condition="type == ExprType::Error">(ErrorExpr*)this</Item>
-            <Item Name = "[BinaryExpr]" Condition="type == ExprType::Binary">(BinaryExpr*)this</Item>
-            <Item Name = "[GroupingExpr]" Condition="type == ExprType::Grouping">(GroupingExpr*)this</Item>
-            <Item Name = "[LiteralExpr]" Condition="type == ExprType::Literal">(LiteralExpr*)this</Item>
-            <Item Name = "[UnaryExpr]" Condition="type == ExprType::Unary">(UnaryExpr*)this</Item>
+            <Item Name="[Error]" Condition="type == ExprType::Error">(ErrorExpr*)this</Item>
+            <Item Name="[Assign]" Condition="type == ExprType::Assign">(AssignExpr*)this</Item>
+            <Item Name="[Binary]" Condition="type == ExprType::Binary">(BinaryExpr*)this</Item>
+            <Item Name="[Ternary]" Condition="type == ExprType::Ternary">(TernaryExpr*)this</Item>
+            <Item Name="[Grouping]" Condition="type == ExprType::Grouping">(GroupingExpr*)this</Item>
+            <Item Name="[Literal]" Condition="type == ExprType::Literal">(LiteralExpr*)this</Item>
+            <Item Name="[Unary]" Condition="type == ExprType::Unary">(UnaryExpr*)this</Item>
+            <Item Name="[Variable]" Condition="type == ExprType::Variable">(VariableExpr*)this</Item>
         </Expand>
     </Type>
+    <Type Name="rx::Stmt">
+        <Expand>
+            <ExpandedItem Name="[Error]" Condition="type == StmtType::Error">*(ErrorStmt*)this,nd</ExpandedItem>
+            <ExpandedItem Name="[Block]" Condition="type == StmtType::Block" ExcludeView="simple">*(BlockStmt*)this,nd</ExpandedItem>
+            <ExpandedItem Name="[Expression]" Condition="type == StmtType::Expression">*(ExpressionStmt*)this,nd</ExpandedItem>
+            <ExpandedItem Name="[If]" Condition="type == StmtType::If">*(IfStmt*)this,nd</ExpandedItem>
+            <ExpandedItem Name="[Print]" Condition="type == StmtType::Print">*(PrintStmt*)this,nd</ExpandedItem>
+            <ExpandedItem Name="[Var]" Condition="type == StmtType::Var">*(VarStmt*)this,nd</ExpandedItem>
+            <ExpandedItem Name="[While]" Condition="type == StmtType::While">*(WhileStmt*)this,nd</ExpandedItem>
+            <ExpandedItem Name="[Break]" Condition="type == StmtType::Break">*(BreakStmt*)this,nd</ExpandedItem>
+        </Expand>
+    </Type>
+    -->
 </AutoVisualizer>

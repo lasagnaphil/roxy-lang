@@ -1,0 +1,5 @@
+struct AttackSkill {
+    damage
+    crit_chance
+    crit_multiplier
+}

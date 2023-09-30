@@ -1,20 +1,27 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
+#include "roxy/token.hpp"
+#include "roxy/value.hpp"
+
+#include <cassert>
 
 namespace rx {
 
 enum class ExprType : u32 {
     Error,
+    Assign,
     Binary,
+    Ternary,
     Grouping,
     Literal,
-    Unary
+    Unary,
+    Variable,
+    Call,
 };
 
 class Expr {
 public:
-    u32 source_loc;
     ExprType type;
 
     Expr(ExprType type) : type(type) {}
@@ -51,6 +58,17 @@ public:
     ErrorExpr() : Expr(s_type) {}
 };
 
+class AssignExpr : public Expr {
+public:
+    static constexpr ExprType s_type = ExprType::Assign;
+
+    Token name;
+    Expr* value;
+
+    AssignExpr(Token name, Expr* value) :
+        Expr(s_type), name(name), value(value) {}
+};
+
 class BinaryExpr : public Expr {
 public:
     static constexpr ExprType s_type = ExprType::Binary;
@@ -60,8 +78,19 @@ public:
     Token op;
 
     BinaryExpr(Expr* left, Token op, Expr* right) :
-            Expr(s_type),
-            left(left), right(right), op(op) {}
+        Expr(s_type), left(left), right(right), op(op) {}
+};
+
+class TernaryExpr : public Expr {
+public:
+    static constexpr ExprType s_type = ExprType::Ternary;
+
+    Expr* cond;
+    Expr* left;
+    Expr* right;
+
+    TernaryExpr(Expr* cond, Expr* left, Expr* right) :
+        Expr(s_type), cond(cond), left(left), right(right) {}
 };
 
 class GroupingExpr : public Expr {
@@ -90,12 +119,31 @@ class UnaryExpr : public Expr {
 public:
     static constexpr ExprType s_type = ExprType::Unary;
 
-    Expr* right;
     Token op;
+    Expr* right;
 
-    UnaryExpr(Token op, Expr* right) :
-            Expr(s_type),
-            right(right), op(op) {}
+    UnaryExpr(Token op, Expr* right) : Expr(s_type), op(op), right(right) {}
+};
+
+class VariableExpr : public Expr {
+public:
+    static constexpr ExprType s_type = ExprType::Variable;
+
+    Token name;
+
+    VariableExpr(Token name) : Expr(s_type), name(name) {}
+};
+
+class CallExpr : public Expr {
+public:
+    static constexpr ExprType s_type = ExprType::Call;
+
+    Expr* callee;
+    Token paren;
+    Vector<Expr*> arguments;
+
+    CallExpr(Expr* callee, Token paren, Vector<Expr*>&& arguments) :
+            Expr(s_type), callee(callee), paren(paren), arguments(std::move(arguments)) {}
 };
 
 }
