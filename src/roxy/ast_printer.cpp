@@ -36,7 +36,7 @@ void AstPrinter::add(const Expr* expr) {
         }
         case ExprType::Assign: {
             auto& assign_expr = expr->cast<AssignExpr>();
-            parenthesize(assign_expr.name.str(), assign_expr.value);
+            parenthesize("set", assign_expr.name.str(), assign_expr.value);
             break;
         }
         case ExprType::Binary: {

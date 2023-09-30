@@ -8,7 +8,9 @@
 #include "roxy/expr.hpp"
 #include "roxy/stmt.hpp"
 #include "roxy/string_interner.hpp"
-#include "ast_printer.hpp"
+#include "roxy/ast_allocator.hpp"
+#include "roxy/ast_printer.hpp"
+#include "roxy/sema.hpp"
 
 #include <utility>
 #include <cassert>
@@ -45,43 +47,6 @@ struct ParseRule {
     Precedence precedence;
 };
 
-class AstAllocator {
-private:
-    BumpAllocator m_allocator;
-
-    PrimitiveType s_prim_type_bool = {PrimTypeKind::Bool};
-    PrimitiveType s_prim_type_number = {PrimTypeKind::Number};
-    PrimitiveType s_prim_type_string = {PrimTypeKind::String};
-
-public:
-    AstAllocator(u64 initial_capacity) : m_allocator(initial_capacity) {}
-
-    template <typename T, typename ... Args, typename = std::enable_if_t<
-            std::is_base_of_v<Expr, T> || std::is_base_of_v<Stmt, T> || std::is_base_of_v<Type, T>>>
-    T* emplace(Args&&... args) {
-        return m_allocator.emplace<T, Args...>(std::forward<Args>(args)...);
-    }
-
-    template <>
-    PrimitiveType* emplace<PrimitiveType, PrimTypeKind>(PrimTypeKind&& prim_kind) {
-        switch (prim_kind) {
-            case PrimTypeKind::Bool: return &s_prim_type_bool;
-            case PrimTypeKind::Number: return &s_prim_type_number;
-            case PrimTypeKind::String: return &s_prim_type_string;
-        }
-    }
-
-    template <typename T>
-    Span<T> move(Vector<T>&& vec) {
-        void* data = m_allocator.alloc_bytes(sizeof(T) * vec.size());
-        Span<T> span = {reinterpret_cast<T*>(data), vec.size()};
-        for (u32 i = 0; i < vec.size(); i++) {
-            new (span.data() + i) T(std::move(vec[i]));
-        }
-        return span;
-    }
-};
-
 class Parser {
 private:
     static constexpr u64 s_initial_ast_allocator_capacity = 65536;
@@ -92,13 +57,17 @@ private:
     bool m_had_error = false;
     bool m_panic_mode = false;
 
-    StringInterner* m_string_interner;
     AstAllocator m_allocator;
+    SemaAnalyzer m_sema_analyzer;
+    StringInterner* m_string_interner;
 
 public:
     Parser(Scanner* scanner, StringInterner* string_interner) :
-            m_scanner(scanner), m_string_interner(string_interner),
-            m_allocator(s_initial_ast_allocator_capacity) {
+            m_scanner(scanner),
+            m_allocator(s_initial_ast_allocator_capacity),
+            m_sema_analyzer(&m_allocator),
+            m_string_interner(string_interner) {
+
     }
 
     Parser(const Parser& parser) = delete;
@@ -108,13 +77,15 @@ public:
 
     template <typename T, typename ... Args>
     T* alloc(Args&&... args) {
-        return m_allocator.emplace<T, Args...>(std::forward<Args>(args)...);
+        return m_allocator.alloc<T, Args...>(std::forward<Args>(args)...);
     }
 
     template <typename T>
     Span<T> move(Vector<T>&& vec) {
-        return m_allocator.move(std::move(vec));
+        return m_allocator.copy(std::move(vec));
     }
+
+    AstAllocator* get_ast_allocator() { return &m_allocator; }
 
     BlockStmt* parse() {
         advance();
@@ -170,7 +141,7 @@ private:
     Stmt* statement() {
         Stmt* stmt;
         if (match(TokenType::LeftBrace)) {
-            stmt = alloc<BlockStmt>(block());
+            stmt = alloc<BlockStmt>(move(block()));
         }
         else if (match(TokenType::If)) {
             stmt = if_statement();

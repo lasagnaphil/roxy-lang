@@ -10,6 +10,7 @@ add_library(roxy STATIC
         src/roxy/string.cpp
         src/roxy/string_interner.cpp
         src/roxy/ast_printer.cpp
+        src/roxy/sema.cpp
         src/roxy/core/file.cpp
         src/roxy/fmt/format.cc
 )

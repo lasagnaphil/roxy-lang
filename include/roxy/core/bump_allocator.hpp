@@ -14,18 +14,27 @@ public:
         reallocate(capacity);
     }
 
-    u8* alloc_bytes(u64 num_bytes) {
-        if (m_current - m_start + num_bytes > m_capacity) {
-            reallocate(2 * m_capacity);
+    u8* alloc_bytes(u64 size, u64 align) {
+        assert(align > 0);
+        assert((align & (align - 1)) == 0); // power of two
+
+        u8* aligned = (u8*)((uintptr_t)(m_current + align - 1) & ~(align - 1));
+
+        // TODO: There is a potential UB when size is really large and the addition overflows.
+        //  Probably use __builtin_add_overflow intrinsic (or MSVC equivalent) to optimize bounds checking.
+        u8* new_ptr = aligned + size;
+
+        if (new_ptr - m_current > m_capacity) {
+            reallocate(m_capacity << 1);
         }
-        u8* ptr = m_current;
-        m_current += num_bytes;
+        u8* ptr = aligned;
+        m_current = aligned + size;
         return ptr;
     }
 
     template <typename T, typename ... Args>
     T* emplace(Args&&... args) {
-        u8* ptr = alloc_bytes(sizeof(T));
+        u8* ptr = alloc_bytes(sizeof(T), alignof(T));
         new (ptr) T(std::forward<Args>(args)...);
         return reinterpret_cast<T*>(ptr);
     }
