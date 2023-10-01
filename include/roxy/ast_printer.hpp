@@ -2,32 +2,228 @@
 
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
+#include "roxy/ast_visitor.hpp"
 #include "roxy/token.hpp"
+#include "roxy/expr.hpp"
+#include "roxy/stmt.hpp"
+#include "roxy/type.hpp"
 
 #include <string>
 
 namespace rx {
 
-class Expr;
-class Stmt;
-struct VarDecl;
-struct Type;
+class AstPrinter :
+        public ExprVisitorBase<AstPrinter, void>,
+        public StmtVisitorBase<AstPrinter, void>,
+        public TypeVisitorBase<AstPrinter, void> {
 
-class AstPrinter {
+public:
+    using ExprVisitorBase<AstPrinter, void>::visit;
+    using StmtVisitorBase<AstPrinter, void>::visit;
+    using TypeVisitorBase<AstPrinter, void>::visit;
+
+    std::string to_string(Stmt& stmt) {
+        visit(stmt);
+        auto res = m_buf;
+        m_buf.clear();
+        return res;
+    }
+
+    void visit_impl(ErrorStmt& stmt) {
+        add_identifier("error");
+    }
+    void visit_impl(BlockStmt& stmt) {
+        begin_paren("block");
+        inc_indent();
+        for (auto& stmt : stmt.statements) {
+            newline();
+            visit(*stmt);
+        }
+        end_paren(); dec_indent();
+    }
+    void visit_impl(ExpressionStmt& stmt) {
+        begin_paren("expr");
+        visit(*stmt.expr);
+        end_paren();
+    }
+    void visit_impl(StructStmt& stmt) {
+        begin_paren("struct");
+        add_identifier(stmt.name.str());
+        inc_indent(); newline();
+        for (auto& field : stmt.fields) {
+            begin_paren();
+            add_identifier(field.name.str());
+            if (Type* type = field.type.get()) {
+                visit(*type);
+            }
+            end_paren();
+        }
+        end_paren(); dec_indent();
+    }
+
+    void visit_impl(FunctionStmt& stmt) {
+        begin_paren("fun");
+        add_identifier(stmt.name.str());
+        for (auto& field : stmt.params) {
+            begin_paren();
+            add_identifier(field.name.str());
+            if (Type* type = field.type.get()) {
+                visit(*type);
+            }
+
+            end_paren();
+        }
+        inc_indent(); newline();
+        for (auto& stmt : stmt.body) {
+            visit(*stmt);
+        }
+        end_paren(); dec_indent();
+    }
+
+    void visit_impl(IfStmt& stmt) {
+        begin_paren("if");
+        visit(*stmt.condition);
+        visit(*stmt.then_branch);
+        if (Stmt* else_stmt = stmt.else_branch.get()) {
+            visit(*else_stmt);
+        }
+        end_paren();
+    }
+    void visit_impl(PrintStmt& stmt) {
+        begin_paren("print");
+        visit(*stmt.expr);
+        end_paren();
+    }
+    void visit_impl(VarStmt& stmt) {
+        begin_paren("var");
+        add_identifier(stmt.var.name.str());
+        if (Type* type = stmt.var.type.get()) {
+            visit(*type);
+        }
+        else {
+            add_identifier("null");
+        }
+        if (Expr* expr = stmt.initializer.get()) {
+            visit(*expr);
+        }
+        end_paren();
+    }
+    void visit_impl(WhileStmt& stmt) {
+        begin_paren("while");
+        visit(*stmt.condition);
+        visit(*stmt.body);
+        end_paren();
+    }
+    void visit_impl(ReturnStmt& stmt) {
+        begin_paren("return");
+        if (Expr* expr = stmt.expr.get()) {
+            visit(*expr);
+        }
+        end_paren();
+    }
+    void visit_impl(BreakStmt& stmt) {
+        begin_paren("break");
+        end_paren();
+    }
+    void visit_impl(ContinueStmt& stmt) {
+        begin_paren("continue");
+        end_paren();
+    }
+
+    void visit_impl(ErrorExpr& expr) {
+        add_identifier("error");
+    }
+    void visit_impl(AssignExpr& expr) {
+        begin_paren("set");
+        add_identifier(expr.name.str());
+        visit(*expr.value);
+        end_paren();
+    }
+    void visit_impl(BinaryExpr& expr) {
+        begin_paren(expr.op.str());
+        visit(*expr.left);
+        visit(*expr.right);
+        end_paren();
+    }
+    void visit_impl(CallExpr& expr) {
+        begin_paren("call");
+        visit(*expr.callee);
+        for (auto& arg : expr.arguments) {
+            visit(*arg);
+        }
+        end_paren();
+    }
+    void visit_impl(TernaryExpr& expr) {
+        begin_paren("ternary");
+        visit(*expr.cond);
+        visit(*expr.left);
+        visit(*expr.right);
+        end_paren();
+    }
+    void visit_impl(GroupingExpr& expr) {
+        begin_paren("grouping");
+        visit(*expr.expression);
+        end_paren();
+    }
+    void visit_impl(LiteralExpr& expr) {
+        add_identifier(expr.value.to_std_string());
+    }
+    void visit_impl(UnaryExpr& expr) {
+        begin_paren(expr.op.str());
+        visit(*expr.right);
+        end_paren();
+    }
+    void visit_impl(VariableExpr& expr) {
+        add_identifier(expr.name.str());
+    }
+
+    void visit_impl(PrimitiveType& type) {
+        switch (type.prim_kind) {
+            case PrimTypeKind::Bool: add_identifier("bool"); break;
+            case PrimTypeKind::Number: add_identifier("number"); break;
+            case PrimTypeKind::String: add_identifier("string"); break;
+        }
+    }
+    void visit_impl(StructType& type) {
+        begin_paren("struct");
+        add_identifier(type.name.str());
+        inc_indent(); newline();
+        for (auto& var_decl : type.decl) {
+            begin_paren();
+            add_identifier(var_decl.name.str());
+            visit(*var_decl.type);
+            end_paren();
+            newline();
+        }
+        end_paren(); dec_indent();
+    }
+    void visit_impl(FunctionType& type) {
+        begin_paren("function");
+        for (auto& param_type : type.params) {
+            visit(*param_type);
+        }
+        visit(*type.ret);
+        end_paren();
+    }
+
 private:
     const char* m_tab_chars = "    ";
     u32 m_tab_count = 0;
     std::string m_buf;
 
-public:
-    std::string to_string(const Expr* expr);
-    std::string to_string(Span<Stmt*> statements);
+    void begin_paren() { m_buf += '('; }
+    void begin_paren(std::string_view name) { m_buf += '('; m_buf += name; m_buf += ' '; }
+    void end_paren() {
+        if (m_buf[m_buf.size() - 1] == ' ') {
+            m_buf[m_buf.size() - 1] = ')';
+            m_buf += ' ';
+        }
+        else {
+            m_buf += ") ";
+        }
+    }
+    void add_identifier(std::string_view identifier) { m_buf += identifier; m_buf += ' '; }
 
-    void add(const Expr* expr);
-    void add(const Stmt* stmt);
-    void add(const Type* type);
-
-private:
     void inc_indent() { m_tab_count++; }
     void dec_indent() { m_tab_count--; }
     void indent() {
@@ -37,30 +233,6 @@ private:
         m_buf += '\n';
         indent();
     }
-    void add(std::string_view str) {
-        m_buf += str;
-    }
-    void add(Span<Expr*> expressions);
-    void add(Span<Stmt*> statements);
-    void add(Span<Token> tokens);
-    void add(const VarDecl& variable);
-    void add(Span<VarDecl> variables);
-    void reset() {
-        m_tab_count = 0;
-        m_buf.clear();
-    }
-
-    std::string to_string(std::string_view str) { return std::string(str); }
-
-    template <typename ... ExprT>
-    void parenthesize(std::string_view name, ExprT&&... exprs) {
-        m_buf += "(";
-        m_buf += name;
-        (((m_buf += ' ', add(std::forward<ExprT>(exprs)))),...);
-        m_buf += ")";
-    }
-
-    void parenthesize_block(std::string_view name, Span<Stmt*> statements);
 };
 
 }

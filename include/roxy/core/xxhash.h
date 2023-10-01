@@ -3930,10 +3930,10 @@ XXH_FORCE_INLINE xxh_u64x2 XXH_vec_mule(xxh_u32x4 a, xxh_u32x4 b)
 #endif /* XXH_VECTOR == XXH_VSX */
 
 #if XXH_VECTOR == XXH_SVE
-#define ACCRND(acc, offset) \
+#define ACCRND(acc, m_offset) \
 do { \
-    svuint64_t input_vec = svld1_u64(mask, xinput + offset);         \
-    svuint64_t secret_vec = svld1_u64(mask, xsecret + offset);       \
+    svuint64_t input_vec = svld1_u64(mask, xinput + m_offset);         \
+    svuint64_t secret_vec = svld1_u64(mask, xsecret + m_offset);       \
     svuint64_t mixed = sveor_u64_x(mask, secret_vec, input_vec);     \
     svuint64_t swapped = svtbl_u64(input_vec, kSwap);                \
     svuint64_t mixed_lo = svextw_u64_x(mask, mixed);                 \
@@ -4937,15 +4937,15 @@ XXH3_accumulate_512_neon( void* XXH_RESTRICT acc,
          * is constant propagated, which results in it converting it to this
          * inside the loop:
          *
-         *    a = v128.load(XXH3_kSecret +  0 + $secret_offset, offset = 0)
-         *    b = v128.load(XXH3_kSecret + 16 + $secret_offset, offset = 0)
+         *    a = v128.load(XXH3_kSecret +  0 + $secret_offset, m_offset = 0)
+         *    b = v128.load(XXH3_kSecret + 16 + $secret_offset, m_offset = 0)
          *    ...
          *
          * This requires a full 32-bit address immediate (and therefore a 6 byte
-         * instruction) as well as an add for each offset.
+         * instruction) as well as an add for each m_offset.
          *
          * Putting an asm guard prevents it from folding (at the cost of losing
-         * the alignment hint), and uses the free offset in `v128.load` instead
+         * the alignment hint), and uses the free m_offset in `v128.load` instead
          * of adding secret_offset each time which overall reduces code size by
          * about a kilobyte and improves performance.
          */
@@ -5764,7 +5764,7 @@ XXH3_64bits_withSecretandSeed(XXH_NOESCAPE const void* input, size_t length, XXH
  * like this anyways, and besides, testing for the existence of library
  * functions without relying on external build tools is impossible.
  *
- * The method is simple: Overallocate, manually align, and store the offset
+ * The method is simple: Overallocate, manually align, and store the m_offset
  * to the original behind the returned pointer.
  *
  * Align must be a power of 2 and 8 <= align <= 128.
@@ -5774,22 +5774,22 @@ static XXH_MALLOCF void* XXH_alignedMalloc(size_t s, size_t align)
     XXH_ASSERT(align <= 128 && align >= 8); /* range check */
     XXH_ASSERT((align & (align-1)) == 0);   /* power of 2 */
     XXH_ASSERT(s != 0 && s < (s + align));  /* empty/overflow */
-    {   /* Overallocate to make room for manual realignment and an offset byte */
+    {   /* Overallocate to make room for manual realignment and an m_offset byte */
         xxh_u8* base = (xxh_u8*)XXH_malloc(s + align);
         if (base != NULL) {
             /*
-             * Get the offset needed to align this pointer.
+             * Get the m_offset needed to align this pointer.
              *
              * Even if the returned pointer is aligned, there will always be
-             * at least one byte to store the offset to the original pointer.
+             * at least one byte to store the m_offset to the original pointer.
              */
             size_t offset = align - ((size_t)base & (align - 1)); /* base % align */
-            /* Add the offset for the now-aligned pointer */
+            /* Add the m_offset for the now-aligned pointer */
             xxh_u8* ptr = base + offset;
 
             XXH_ASSERT((size_t)ptr % align == 0);
 
-            /* Store the offset immediately before the returned pointer. */
+            /* Store the m_offset immediately before the returned pointer. */
             ptr[-1] = (xxh_u8)offset;
             return ptr;
         }
@@ -5804,7 +5804,7 @@ static void XXH_alignedFree(void* p)
 {
     if (p != NULL) {
         xxh_u8* ptr = (xxh_u8*)p;
-        /* Get the offset byte we added in XXH_malloc. */
+        /* Get the m_offset byte we added in XXH_malloc. */
         xxh_u8 offset = ptr[-1];
         /* Free the original malloc'd pointer */
         xxh_u8* base = ptr - offset;
@@ -6360,7 +6360,7 @@ XXH3_len_129to240_128b(const xxh_u8* XXH_RESTRICT input, size_t len,
         acc.low64 = len * XXH_PRIME64_1;
         acc.high64 = 0;
         /*
-         *  We set as `i` as offset + 32. We do this so that unchanged
+         *  We set as `i` as m_offset + 32. We do this so that unchanged
          * `len` can be used as upper bound. This reaches a sweet spot
          * where both x86 and aarch64 get simple agen and good codegen
          * for the loop.

@@ -27,7 +27,7 @@ int main(int argc, char** argv) {
         BlockStmt* block_stmt = parser.parse();
 
         fmt::print("Parsed output:\n");
-        fmt::print("{}\n", AstPrinter().to_string(block_stmt->statements));
+        fmt::print("{}\n", AstPrinter().to_string(*block_stmt));
 
         SemaAnalyzer sema_analyzer(parser.get_ast_allocator());
 
@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
         fmt::print("Sema errors: {}\n", sema_errors.empty()? "none" : std::to_string(sema_errors.size()));
 
         for (auto err : sema_errors) {
-            switch (err.type) {
+            switch (err.res_type) {
                 case SemaResultType::UndefinedVariable:
                     fmt::print("- Undefined variable.\n");
                     break;
@@ -49,11 +49,13 @@ int main(int argc, char** argv) {
                 case SemaResultType::Misc:
                     fmt::print("- Misc.\n");
                     break;
+                default:
+                    break;
             }
         }
 
         fmt::print("\nAfter semantic analysis:\n");
-        fmt::print("{}\n", AstPrinter().to_string(block_stmt->statements));
+        fmt::print("{}\n", AstPrinter().to_string(*block_stmt));
 
         return 0;
     }

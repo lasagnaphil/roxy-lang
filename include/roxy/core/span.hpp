@@ -20,8 +20,14 @@ public:
     const T* end() const { return m_data + m_size; }
     T* end() { return m_data + m_size; }
 
-    const T& operator[](Index i) const { return m_data[i]; }
-    T& operator[](Index i) { return m_data[i]; }
+    const T& operator[](Index i) const {
+        assert(i < m_size);
+        return m_data[i];
+    }
+    T& operator[](Index i) {
+        assert(i < m_size);
+        return m_data[i];
+    }
 
     Index size() const { return m_size; }
     Index ssize() const { return (std::make_signed_t<Index>) m_size; }

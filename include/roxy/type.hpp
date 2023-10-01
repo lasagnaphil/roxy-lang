@@ -22,6 +22,10 @@ struct VarDecl;
 struct PrimitiveType;
 
 struct Type {
+#ifndef NDEBUG
+    virtual ~Type() = default;
+#endif
+
     TypeKind kind;
 
     Type(TypeKind kind) : kind(kind) {}
@@ -63,6 +67,13 @@ struct VarDecl {
     VarDecl(Token name, Type* type) : name(name), type(type) {}
 };
 
+struct AstVarDecl {
+    Token name;
+    RelPtr<Type> type;
+
+    AstVarDecl(VarDecl var_decl) : name(var_decl.name), type(var_decl.type) {}
+};
+
 struct PrimitiveType : public Type {
     static constexpr TypeKind s_kind = TypeKind::Primitive;
 
@@ -75,18 +86,18 @@ struct StructType : public Type {
     static constexpr TypeKind s_kind = TypeKind::Struct;
 
     Token name;
-    Span<VarDecl> decl;
+    RelSpan<AstVarDecl> decl;
 
-    StructType(Token name, Span<VarDecl> decl) : Type(s_kind), name(name), decl(decl) {}
+    StructType(Token name, Span<AstVarDecl> decl) : Type(s_kind), name(name), decl(decl) {}
 };
 
 struct FunctionType : public Type {
     static constexpr TypeKind s_kind = TypeKind::Function;
 
-    Type* ret;
-    Span<Type*> params;
+    RelPtr<Type> ret;
+    RelSpan<RelPtr<Type>> params;
 
-    FunctionType(Type* ret, Span<Type*> params) : Type(s_kind), ret(ret), params(params) {}
+    FunctionType(Type* ret, Span<RelPtr<Type>> params) : Type(s_kind), ret(ret), params(params) {}
 };
 
 inline bool Type::is_bool() const {

@@ -1,12 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
-    <Type Name="rx::Vector&lt;*&gt;">
+    <Type Name="rx::Vector&lt;*,*&gt;">
         <Expand>
             <Item Name="[size]">m_size</Item>
             <Item Name="[capacity]">m_capacity</Item>
             <ArrayItems>
                 <Size>m_size</Size>
                 <ValuePointer>m_data</ValuePointer>
+            </ArrayItems>
+        </Expand>
+    </Type>
+    <Type Name="rx::Span&lt;*,*&gt;">
+        <Expand>
+            <Item Name="[size]">m_size</Item>
+            <ArrayItems>
+                <Size>m_size</Size>
+                <ValuePointer>m_data</ValuePointer>
+            </ArrayItems>
+        </Expand>
+    </Type>
+    <Type Name="rx::RelPtr&lt;*,*&gt;">
+        <Expand>
+            <SmartPointer Usage="Minimal">($T1*)((u8*)(&amp;m_offset) + m_offset)</SmartPointer>
+            <Item Name="[ptr]">($T1*)((u8*)(&amp;m_offset) + m_offset)</Item>
+        </Expand>
+    </Type>
+    <Type Name="rx::RelSpan&lt;*,*&gt;">
+        <Expand>
+            <Item Name="[size]">m_size</Item>
+            <ArrayItems>
+                <Size>m_size</Size>
+                <ValuePointer>($T1*)((u8*)(&amp;m_data.m_offset) + m_data.m_offset)</ValuePointer>
             </ArrayItems>
         </Expand>
     </Type>

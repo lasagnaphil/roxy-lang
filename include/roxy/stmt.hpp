@@ -22,7 +22,10 @@ enum class StmtType {
 };
 
 struct Stmt {
-public:
+#ifndef NDEBUG
+    virtual ~Stmt() = default;
+#endif
+
     StmtType type;
 
     Stmt(StmtType type) : type(type) {}
@@ -61,15 +64,15 @@ struct ErrorStmt : public Stmt {
 struct BlockStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Block;
 
-    Span<Stmt*> statements;
+    RelSpan<RelPtr<Stmt>> statements;
 
-    BlockStmt(Span<Stmt*> statements) : Stmt(s_type), statements(statements) {}
+    BlockStmt(Span<RelPtr<Stmt>> statements) : Stmt(s_type), statements(statements) {}
 };
 
 struct ExpressionStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Expression;
 
-    Expr* expr;
+    RelPtr<Expr> expr;
 
     ExpressionStmt(Expr* expr) : Stmt(s_type), expr(expr) {}
 };
@@ -78,9 +81,9 @@ struct StructStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Struct;
 
     Token name;
-    Span<VarDecl> fields;
+    RelSpan<AstVarDecl> fields;
 
-    StructStmt(Token name, Span<VarDecl> fields) : Stmt(s_type), name(name), fields(fields) {}
+    StructStmt(Token name, Span<AstVarDecl> fields) : Stmt(s_type), name(name), fields(fields) {}
 };
 
 struct FunctionStmt : public Stmt {
@@ -88,19 +91,19 @@ public:
     static constexpr StmtType s_type = StmtType::Function;
 
     Token name;
-    Span<VarDecl> params;
-    Span<Stmt*> body;
+    RelSpan<AstVarDecl> params;
+    RelSpan<RelPtr<Stmt>> body;
 
-    FunctionStmt(Token name, Span<VarDecl> params, Span<Stmt*> body) :
+    FunctionStmt(Token name, Span<AstVarDecl> params, Span<RelPtr<Stmt>> body) :
         Stmt(s_type), name(name), params(params), body(body) {}
 };
 
 struct IfStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::If;
 
-    Expr* condition;
-    Stmt* then_branch;
-    Stmt* else_branch; // can be null
+    RelPtr<Expr> condition;
+    RelPtr<Stmt> then_branch;
+    RelPtr<Stmt> else_branch; // can be null
 
     IfStmt(Expr* condition, Stmt* then_branch, Stmt* else_branch) :
         Stmt(s_type), condition(condition), then_branch(then_branch), else_branch(else_branch) {}
@@ -109,7 +112,7 @@ struct IfStmt : public Stmt {
 struct PrintStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Print;
 
-    Expr* expr;
+    RelPtr<Expr> expr;
 
     PrintStmt(Expr* expr) : Stmt(s_type), expr(expr) {}
 };
@@ -117,8 +120,8 @@ struct PrintStmt : public Stmt {
 struct VarStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Var;
 
-    VarDecl var;
-    Expr* initializer; // can be null
+    AstVarDecl var;
+    RelPtr<Expr> initializer; // can be null
 
     VarStmt(VarDecl var, Expr* initializer) : Stmt(s_type), var(var), initializer(initializer) {}
 };
@@ -126,8 +129,8 @@ struct VarStmt : public Stmt {
 struct WhileStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::While;
 
-    Expr* condition;
-    Stmt* body;
+    RelPtr<Expr> condition;
+    RelPtr<Stmt> body;
 
     WhileStmt(Expr* condition, Stmt* body) : Stmt(s_type), condition(condition), body(body) {}
 };
@@ -135,7 +138,7 @@ struct WhileStmt : public Stmt {
 struct ReturnStmt : public Stmt {
     static constexpr StmtType s_type = StmtType::Return;
 
-    Expr* expr; // can be null
+    RelPtr<Expr> expr; // can be null
 
     ReturnStmt(Expr* expr) : Stmt(s_type), expr(expr) {}
 };

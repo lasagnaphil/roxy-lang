@@ -2,6 +2,7 @@
 
 #include "roxy/core/types.hpp"
 #include "roxy/core/span.hpp"
+#include "roxy/core/rel_ptr.hpp"
 #include "roxy/token.hpp"
 #include "roxy/value.hpp"
 
@@ -21,7 +22,12 @@ enum class ExprType : u32 {
     Call,
 };
 
+
 struct Expr {
+#ifndef NDEBUG
+    virtual ~Expr() = default;
+#endif
+
     ExprType type;
 
     Expr(ExprType type) : type(type) {}
@@ -61,7 +67,7 @@ struct AssignExpr : public Expr {
     static constexpr ExprType s_type = ExprType::Assign;
 
     Token name;
-    Expr* value;
+    RelPtr<Expr> value;
 
     AssignExpr(Token name, Expr* value) :
         Expr(s_type), name(name), value(value) {}
@@ -70,8 +76,8 @@ struct AssignExpr : public Expr {
 struct BinaryExpr : public Expr {
     static constexpr ExprType s_type = ExprType::Binary;
 
-    Expr* left;
-    Expr* right;
+    RelPtr<Expr> left;
+    RelPtr<Expr> right;
     Token op;
 
     BinaryExpr(Expr* left, Token op, Expr* right) :
@@ -81,9 +87,9 @@ struct BinaryExpr : public Expr {
 struct TernaryExpr : public Expr {
     static constexpr ExprType s_type = ExprType::Ternary;
 
-    Expr* cond;
-    Expr* left;
-    Expr* right;
+    RelPtr<Expr> cond;
+    RelPtr<Expr> left;
+    RelPtr<Expr> right;
 
     TernaryExpr(Expr* cond, Expr* left, Expr* right) :
         Expr(s_type), cond(cond), left(left), right(right) {}
@@ -92,7 +98,7 @@ struct TernaryExpr : public Expr {
 struct GroupingExpr : public Expr {
     static constexpr ExprType s_type = ExprType::Grouping;
 
-    Expr* expression;
+    RelPtr<Expr> expression;
 
     GroupingExpr(Expr* expression) :
             Expr(s_type),
@@ -115,7 +121,7 @@ public:
     static constexpr ExprType s_type = ExprType::Unary;
 
     Token op;
-    Expr* right;
+    RelPtr<Expr> right;
 
     UnaryExpr(Token op, Expr* right) : Expr(s_type), op(op), right(right) {}
 };
@@ -133,11 +139,11 @@ struct CallExpr : public Expr {
 public:
     static constexpr ExprType s_type = ExprType::Call;
 
-    Expr* callee;
+    RelPtr<Expr> callee;
     Token paren;
-    Span<Expr*> arguments;
+    RelSpan<RelPtr<Expr>> arguments;
 
-    CallExpr(Expr* callee, Token paren, Span<Expr*> arguments) :
+    CallExpr(Expr* callee, Token paren, Span<RelPtr<Expr>> arguments) :
             Expr(s_type), callee(callee), paren(paren), arguments(arguments) {}
 };
 

@@ -81,8 +81,17 @@ public:
     }
 
     template <typename T>
-    Span<T> move(Vector<T>&& vec) {
-        return m_allocator.copy(std::move(vec));
+    Span<T> alloc_vector(Vector<T>&& vec) {
+        return m_allocator.alloc_vector<T, T>(std::move(vec));
+    }
+
+    template <typename T>
+    Span<RelPtr<T>> alloc_vector_ptr(Vector<T*>&& vec) {
+        return m_allocator.alloc_vector<RelPtr<T>, T*>(std::move(vec));
+    }
+
+    Span<AstVarDecl> alloc_vector_var_decl(Vector<VarDecl>&& vec) {
+        return m_allocator.alloc_vector<AstVarDecl, VarDecl>(std::move(vec));
     }
 
     AstAllocator* get_ast_allocator() { return &m_allocator; }
@@ -93,7 +102,8 @@ public:
         while (!m_scanner->is_at_end()) {
             statements.push_back(declaration());
         }
-        return alloc<BlockStmt>(move(std::move(statements)));
+        auto alloc_statements = alloc_vector_ptr(std::move(statements));
+        return alloc<BlockStmt>(alloc_statements);
     }
 
 private:
@@ -141,7 +151,7 @@ private:
     Stmt* statement() {
         Stmt* stmt;
         if (match(TokenType::LeftBrace)) {
-            stmt = alloc<BlockStmt>(move(block()));
+            stmt = alloc<BlockStmt>(alloc_vector_ptr(block()));
         }
         else if (match(TokenType::If)) {
             stmt = if_statement();
@@ -175,24 +185,18 @@ private:
         if (!consume(TokenType::LeftParen)) {
             return error_stmt("Expect '(' after 'if'.");
         }
-        Expr* condition = expression();
+        auto condition = expression();
         if (!consume(TokenType::RightParen)) {
             return error_stmt("Expect ')' after if condition.");
         }
 
-        Stmt* then_branch = statement();
-        Stmt* else_branch;
-        if (match(TokenType::Else)) {
-            else_branch = statement();
-        }
-        else{
-            else_branch = nullptr;
-        }
+        auto then_branch = statement();
+        auto else_branch = match(TokenType::Else)? statement() : nullptr;
         return alloc<IfStmt>(condition, then_branch, else_branch);
     }
 
     Stmt* print_statement() {
-        Expr* value = expression();
+        auto value = expression();
         if (!consume(TokenType::Semicolon)) {
             return error_stmt("Expect ';' after value.");
         }
@@ -203,11 +207,11 @@ private:
         if (!consume(TokenType::LeftParen)) {
             return error_stmt("Expect '(' after 'while'.");
         }
-        Expr* condition = expression();
+        auto condition = expression();
         if (!consume(TokenType::RightParen)) {
             return error_stmt("Expext ')' after condition.");
         }
-        Stmt* body = statement();
+        auto body = statement();
         return alloc<WhileStmt>(condition, body);
     }
 
@@ -247,17 +251,17 @@ private:
 
         if (increment != nullptr) {
             Vector<Stmt*> stmts = {body, alloc<ExpressionStmt>(increment)};
-            body = alloc<BlockStmt>(move(std::move(stmts)));
+            body = alloc<BlockStmt>(alloc_vector_ptr(std::move(stmts)));
         }
 
-        if (condition != nullptr) {
+        if (condition == nullptr) {
             condition = alloc<LiteralExpr>(AnyValue(true));
         }
         body = alloc<WhileStmt>(condition, body);
 
         if (initializer != nullptr) {
             Vector<Stmt*> stmts = {initializer, body};
-            body = alloc<BlockStmt>(move(std::move(stmts)));
+            body = alloc<BlockStmt>(alloc_vector_ptr(std::move(stmts)));
         }
 
         return body;
@@ -381,8 +385,8 @@ private:
             return error_stmt("Expect '{' before function body.");
         }
         return alloc<FunctionStmt>(name,
-                                      move(std::move(parameters)),
-                                      move(block()));
+                                      alloc_vector_var_decl(std::move(parameters)),
+                                      alloc_vector_ptr(block()));
     }
 
     Stmt* struct_declaration() {
@@ -409,7 +413,7 @@ private:
             return error_stmt("Expect '}' after class body.");
         }
 
-        return alloc<StructStmt>(name, move(std::move(fields)));
+        return alloc<StructStmt>(name, alloc_vector_var_decl(std::move(fields)));
     }
 
     Stmt* expression_statement() {
@@ -513,7 +517,7 @@ private:
             return error_expr("Expect ')' after arguments.");
         }
         Token paren = previous();
-        return alloc<CallExpr>(left, paren, move(std::move(arguments)));
+        return alloc<CallExpr>(left, paren, alloc_vector_ptr(std::move(arguments)));
     }
 
     Expr* subscript(bool can_assign, Expr* left) {

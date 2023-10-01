@@ -9,7 +9,6 @@ add_library(roxy STATIC
         src/roxy/value.cpp
         src/roxy/string.cpp
         src/roxy/string_interner.cpp
-        src/roxy/ast_printer.cpp
         src/roxy/sema.cpp
         src/roxy/core/file.cpp
         src/roxy/fmt/format.cc
@@ -18,7 +17,7 @@ add_library(roxy STATIC
 target_include_directories(roxy PUBLIC include)
 target_include_directories(roxy PRIVATE include/roxy)
 target_compile_definitions(roxy PRIVATE FMT_EXCEPTIONS=0 XXH_INLINE_ALL)
-target_compile_options(roxy PRIVATE -Wno-c99-designator)
+target_compile_options(roxy PRIVATE -Wreturn-type -Wno-c99-designator)
 
 add_executable(roxy_bin src/roxy-bin/main.cpp)
 target_link_libraries(roxy_bin PRIVATE roxy)
