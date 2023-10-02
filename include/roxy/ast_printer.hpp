@@ -22,6 +22,12 @@ public:
     using StmtVisitorBase<AstPrinter, void>::visit;
     using TypeVisitorBase<AstPrinter, void>::visit;
 
+    AstPrinter(const u8* source) : m_source(source) {}
+
+    std::string_view get_token_str(Token token) {
+        return token.str(m_source);
+    }
+
     std::string to_string(Stmt& stmt) {
         visit(stmt);
         auto res = m_buf;
@@ -48,11 +54,11 @@ public:
     }
     void visit_impl(StructStmt& stmt) {
         begin_paren("struct");
-        add_identifier(stmt.name.str());
+        add_identifier(stmt.name);
         inc_indent(); newline();
         for (auto& field : stmt.fields) {
             begin_paren();
-            add_identifier(field.name.str());
+            add_identifier(field.name);
             if (Type* type = field.type.get()) {
                 visit(*type);
             }
@@ -63,10 +69,10 @@ public:
 
     void visit_impl(FunctionStmt& stmt) {
         begin_paren("fun");
-        add_identifier(stmt.name.str());
+        add_identifier(stmt.name);
         for (auto& field : stmt.params) {
             begin_paren();
-            add_identifier(field.name.str());
+            add_identifier(field.name);
             if (Type* type = field.type.get()) {
                 visit(*type);
             }
@@ -96,7 +102,7 @@ public:
     }
     void visit_impl(VarStmt& stmt) {
         begin_paren("var");
-        add_identifier(stmt.var.name.str());
+        add_identifier(stmt.var.name);
         if (Type* type = stmt.var.type.get()) {
             visit(*type);
         }
@@ -133,12 +139,12 @@ public:
     void visit_impl(AssignExpr& expr) {
         begin_paren("set");
         if (expr.type.get()) visit(*expr.type);
-        add_identifier(expr.name.str());
+        add_identifier(expr.name);
         visit(*expr.value);
         end_paren();
     }
     void visit_impl(BinaryExpr& expr) {
-        begin_paren(expr.op.str());
+        begin_paren(get_token_str(expr.op));
         if (expr.type.get()) visit(*expr.type);
         visit(*expr.left);
         visit(*expr.right);
@@ -174,7 +180,7 @@ public:
         end_paren();
     }
     void visit_impl(UnaryExpr& expr) {
-        begin_paren(expr.op.str());
+        begin_paren(get_token_str(expr.op));
         if (expr.type.get()) visit(*expr.type);
         visit(*expr.right);
         end_paren();
@@ -183,11 +189,11 @@ public:
         if (expr.type.get()) {
             begin_paren();
             visit(*expr.type);
-            add_identifier(expr.name.str());
+            add_identifier(expr.name);
             end_paren();
         }
         else {
-            add_identifier(expr.name.str());
+            add_identifier(expr.name);
         }
     }
 
@@ -200,11 +206,11 @@ public:
     }
     void visit_impl(StructType& type) {
         begin_paren("struct");
-        add_identifier(type.name.str());
+        add_identifier(type.name);
         inc_indent(); newline();
         for (auto& var_decl : type.decl) {
             begin_paren();
-            add_identifier(var_decl.name.str());
+            add_identifier(var_decl.name);
             visit(*var_decl.type);
             end_paren();
             newline();
@@ -221,6 +227,7 @@ public:
     }
 
 private:
+    const u8* m_source;
     const char* m_tab_chars = "    ";
     u32 m_tab_count = 0;
     std::string m_buf;
@@ -237,6 +244,7 @@ private:
         }
     }
     void add_identifier(std::string_view identifier) { m_buf += identifier; m_buf += ' '; }
+    void add_identifier(Token token) { m_buf += get_token_str(token); m_buf += ' '; }
 
     void inc_indent() { m_tab_count++; }
     void dec_indent() { m_tab_count--; }

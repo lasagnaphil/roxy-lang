@@ -12,6 +12,10 @@ void StringInterner::free() {
     m_string_table.clear();
 }
 
+ObjString* StringInterner::create_string(std::string_view str) {
+    return create_string(str.data(), (u32)str.length());
+}
+
 ObjString* StringInterner::create_string(const char *chars, u32 length) {
     u64 hash = XXH3_64bits(chars, length);
     return create_string(chars, length, hash);

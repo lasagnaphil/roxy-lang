@@ -65,7 +65,7 @@ public:
     Parser(Scanner* scanner, StringInterner* string_interner) :
             m_scanner(scanner),
             m_allocator(s_initial_ast_allocator_capacity),
-            m_sema_analyzer(&m_allocator),
+            m_sema_analyzer(&m_allocator, m_scanner->source()),
             m_string_interner(string_interner) {
 
     }
@@ -96,17 +96,22 @@ public:
 
     AstAllocator* get_ast_allocator() { return &m_allocator; }
 
-    BlockStmt* parse() {
+    bool parse(BlockStmt*& stmt) {
         advance();
         Vector<Stmt*> statements;
         while (!m_scanner->is_at_end()) {
             statements.push_back(declaration());
         }
         auto alloc_statements = alloc_vector_ptr(std::move(statements));
-        return alloc<BlockStmt>(alloc_statements);
+        stmt = alloc<BlockStmt>(alloc_statements);
+        return !m_had_error;
     }
 
 private:
+
+    std::string_view get_token_str(Token token) const {
+        return token.str(m_scanner->source());
+    }
 
     ErrorExpr* error_expr(std::string_view message) {
         error_at_current(message);
@@ -327,7 +332,8 @@ private:
             }
             Token type_name = previous();
             PrimTypeKind prim_kind;
-            if (!parse_primitive_type(type_name.str(), prim_kind)) {
+            auto type_str = get_token_str(type_name);
+            if (!parse_primitive_type(type_str, prim_kind)) {
                 err_msg = "Invalid kind name.";
                 return false;
             }
@@ -438,14 +444,13 @@ private:
     }
 
     Expr* number(bool can_assign) {
-        double value = strtod(reinterpret_cast<const char*>(previous().start), nullptr);
+        double value = strtod(reinterpret_cast<const char*>(m_scanner->source() + previous().source_loc), nullptr);
         return alloc<LiteralExpr>(AnyValue(value));
     }
 
     Expr* string(bool can_assign) {
-        ObjString* str = m_string_interner->create_string(
-                reinterpret_cast<const char*>(previous().start + 1),
-                (u32)(previous().length - 2));
+        std::string_view contents = get_token_str(previous()).substr(1, previous().length - 2);
+        ObjString* str = m_string_interner->create_string(contents);
         auto value = AnyValue(str);
         value.obj_incref();
         return alloc<LiteralExpr>(AnyValue(str));
@@ -589,9 +594,9 @@ private:
         m_previous = m_current;
         for (;;) {
             m_current = m_scanner->scan_token();
-            if (m_current.type != TokenType::Error) break;
+            if (!m_current.is_error()) break;
 
-            error_at_current(reinterpret_cast<const char*>(m_current.start));
+            error_at_current(get_token_str(m_current));
         }
     }
 
@@ -657,15 +662,15 @@ private:
     void error_at(const Token& token, std::string_view message) {
         if (m_panic_mode) return;
         m_panic_mode = true;
-        fmt::print(stderr, "[line {}] Error", token.line);
+        fmt::print(stderr, "[line {}] Error", m_scanner->get_line(token));
         if (token.type == TokenType::Eof) {
             fmt::print(stderr, " at end");
         }
-        else if (token.type == TokenType::Error) {
+        else if (token.is_error()) {
             // Nothing.
         }
         else {
-            fmt::print(stderr, " at '{}'", token.str());
+            fmt::print(stderr, " at '{}'", get_token_str(token));
         }
 
         fmt::print(stderr, ": {}\n", message);

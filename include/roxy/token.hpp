@@ -3,6 +3,7 @@
 #include "roxy/core/types.hpp"
 
 #include <string_view>
+#include <cassert>
 
 namespace rx {
 
@@ -31,27 +32,34 @@ enum class TokenType : u8 {
     True, Var, While,
     Break, Continue,
 
-    Error, Eof
+    Eof,
+
+    ErrorUnexpectedCharacter = 0b10000000,
+    ErrorUnterminatedString,
 };
 
 struct Token {
-    const u8* start;
-    u32 line;
+    u32 source_loc;
     u16 length;
     TokenType type;
 
     Token() = default;
 
-    Token(const u8* start, u16 length, TokenType type, u32 line) :
-            start(start), length(length), type(type), line(line) {}
+    Token(u32 source_loc, u16 length, TokenType type) :
+            source_loc(source_loc), length(length), type(type) {}
 
-    Token(std::string_view name, TokenType type, u32 line) :
-            start(reinterpret_cast<const u8*>(name.data())),
-            length(name.length()),
-            type(type),
-            line(line) {}
+    Token(u32 source_loc, TokenType type) :
+            source_loc(source_loc), length(0), type(type) {
+        assert(is_error());
+    }
 
-    std::string_view str() const { return {(const char*) start, length}; }
+    bool is_error() const {
+        return ((u8)type & 0b10000000) != 0;
+    }
+
+    std::string_view str(const u8* source) const {
+        return {reinterpret_cast<const char*>(source + source_loc), length};
+    }
 };
 
 }

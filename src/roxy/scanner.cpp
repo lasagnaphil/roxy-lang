@@ -1,10 +1,11 @@
 #include "roxy/scanner.hpp"
+#include "roxy/core/binary_search.hpp"
 
 namespace rx {
 
-inline bool identifiers_equal(const Token& a, const Token& b) {
+bool Scanner::identifiers_equal(const Token& a, const Token& b) {
     if (a.length != b.length) return false;
-    return memcmp(a.start, b.start, a.length) == 0;
+    return memcmp(m_source + a.source_loc, m_source + b.source_loc, a.length) == 0;
 }
 
 inline bool is_alpha(u8 c) {
@@ -21,7 +22,11 @@ Scanner::Scanner(const u8* source) {
     m_source = source;
     m_start = source;
     m_current = source;
-    m_line = 1;
+    m_line_start.push_back(0);
+}
+
+u32 Scanner::get_line(Token token) const {
+    return binary_search(m_line_start.data(), m_line_start.size(), token.source_loc) + 1;
 }
 
 Token Scanner::scan_token() {
@@ -60,7 +65,7 @@ Token Scanner::scan_token() {
         case '|': return make_token(match('|') ? TokenType::BarBar: TokenType::Bar);
         case '"': return string();
     }
-    return error_token("Unexpected character.");
+    return make_error_token(TokenType::ErrorUnexpectedCharacter);
 }
 
 void Scanner::skip_whitespace() {
@@ -73,7 +78,7 @@ void Scanner::skip_whitespace() {
                 advance();
                 break;
             case '\n':
-                m_line++;
+                new_line();
                 advance();
                 break;
             case '/':
@@ -146,11 +151,12 @@ Token Scanner::number() {
 
 Token Scanner::string() {
     while (peek() != '"' && !is_at_end()) {
-        if (peek() == '\n') m_line++;
+        if (peek() == '\n') new_line();
         advance();
     }
-    if (is_at_end()) return error_token("Unterminated string.");
+    if (is_at_end()) return make_error_token(TokenType::ErrorUnterminatedString);
     advance();
     return make_token(TokenType::String);
 }
+
 }

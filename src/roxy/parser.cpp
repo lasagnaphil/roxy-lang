@@ -49,8 +49,9 @@ ParseRule Parser::s_parse_rules[] = {
         [(u32) TokenType::True]          = {&Parser::literal,    NULL,                   Precedence::None},
         [(u32) TokenType::Var]           = {NULL,                NULL,                   Precedence::None},
         [(u32) TokenType::While]         = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Error]         = {NULL,                NULL,                   Precedence::None},
         [(u32) TokenType::Eof]           = {NULL,                NULL,                   Precedence::None},
+        [(u32) TokenType::ErrorUnterminatedString]           = {NULL,                NULL,                   Precedence::None},
+        [(u32) TokenType::ErrorUnexpectedCharacter]           = {NULL,                NULL,                   Precedence::None},
 };
 
 }

@@ -24,47 +24,26 @@ int main(int argc, char** argv) {
         StringInterner string_interner;
         Parser parser(&scanner, &string_interner);
 
-        BlockStmt* block_stmt = parser.parse();
+        BlockStmt* block_stmt;
+        bool parse_success = parser.parse(block_stmt);
 
         fmt::print("Parsed output:\n");
-        fmt::print("{}\n", AstPrinter().to_string(*block_stmt));
+        fmt::print("{}\n", AstPrinter(scanner.source()).to_string(*block_stmt));
 
-        SemaAnalyzer sema_analyzer(parser.get_ast_allocator());
+        if (!parse_success) return 0;
+
+        SemaAnalyzer sema_analyzer(parser.get_ast_allocator(), scanner.source());
 
         auto sema_errors = sema_analyzer.check(block_stmt);
 
         fmt::print("Sema errors: {}\n", sema_errors.empty()? "none" : std::to_string(sema_errors.size()));
 
         for (auto err : sema_errors) {
-            switch (err.res_type) {
-                case SemaResultType::UndefinedVar:
-                    fmt::print("- Undefined variable.\n");
-                    break;
-                case SemaResultType::WrongType:
-                    fmt::print("- Wrong type.\n");
-                    break;
-                case SemaResultType::InvalidInitializerType:
-                    fmt::print("- Invalid initializer type.\n");
-                    break;
-                case SemaResultType::InvalidAssignedType:
-                    fmt::print("- Invalid assignment type.\n");
-                    break;
-                case SemaResultType::IncompatibleTypes:
-                    fmt::print("- Incompatible types.\n");
-                    break;
-                case SemaResultType::CannotInferType:
-                    fmt::print("- Cannot infer kind.\n");
-                    break;
-                case SemaResultType::Misc:
-                    fmt::print("- Misc.\n");
-                    break;
-                default:
-                    break;
-            }
+            fmt::print("- {}\n", err.to_error_msg());
         }
 
         fmt::print("\nAfter semantic analysis:\n");
-        fmt::print("{}\n", AstPrinter().to_string(*block_stmt));
+        fmt::print("{}\n", AstPrinter(scanner.source()).to_string(*block_stmt));
 
         return 0;
     }

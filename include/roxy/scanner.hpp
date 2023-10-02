@@ -1,5 +1,6 @@
 #pragma once
 
+#include "roxy/core/vector.hpp"
 #include "roxy/token.hpp"
 
 #include <cstring>
@@ -15,6 +16,10 @@ public:
     bool is_at_end() const {
         return *m_current == '\0';
     }
+
+    const u8* source() { return m_source; }
+
+    u32 get_line(Token token) const;
 
 private:
     u8 advance() {
@@ -38,12 +43,16 @@ private:
         return true;
     }
 
-    Token make_token(TokenType type) const {
-        return Token(m_start, m_current - m_start, type, m_line);
+    void new_line() {
+        m_line_start.push_back(m_start - m_source);
     }
 
-    Token error_token(const char* message) const {
-        return Token(message, TokenType::Error, m_line);
+    Token make_token(TokenType type) const {
+        return Token(m_start - m_source, m_current - m_start, type);
+    }
+
+    Token make_error_token(TokenType type) const {
+        return Token(m_start - m_source, type);
     }
 
     void skip_whitespace();
@@ -65,10 +74,12 @@ private:
     Token string();
 
 private:
+    bool identifiers_equal(const Token& a, const Token& b);
+
     const u8* m_source;
     const u8* m_start;
     const u8* m_current;
-    u32 m_line;
+    Vector<u32> m_line_start;
 };
 
 }

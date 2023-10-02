@@ -10,6 +10,7 @@ public:
     void init();
     void free();
 
+    ObjString* create_string(std::string_view str);
     ObjString* create_string(const char* chars, u32 length);
     ObjString* create_string(const char* chars, u32 length, u64 hash);
 
