@@ -13,17 +13,14 @@ class AstAllocator {
 private:
     BumpAllocator m_allocator;
 
-    PrimitiveType* m_prim_type_void;
-    PrimitiveType* m_prim_type_bool;
-    PrimitiveType* m_prim_type_number;
-    PrimitiveType* m_prim_type_string;
+    PrimitiveType* m_prim_types[(u32)PrimTypeKind::_size];
 
 public:
     AstAllocator(u64 initial_capacity) : m_allocator(initial_capacity) {
-        m_prim_type_void = m_allocator.emplace<PrimitiveType>(PrimTypeKind::Void);
-        m_prim_type_bool = m_allocator.emplace<PrimitiveType>(PrimTypeKind::Bool);
-        m_prim_type_number = m_allocator.emplace<PrimitiveType>(PrimTypeKind::Number);
-        m_prim_type_string = m_allocator.emplace<PrimitiveType>(PrimTypeKind::String);
+        // Allocate every primitive type beforehand, these are going to get interned in the pool.
+        for (u32 i = 0; i < (u32)PrimTypeKind::_size; i++) {
+            m_prim_types[i] = m_allocator.emplace<PrimitiveType>((PrimTypeKind) i);
+        }
     }
 
     template <typename T, typename ... Args, typename = std::enable_if_t<
@@ -34,18 +31,13 @@ public:
 
     template <>
     PrimitiveType* alloc<PrimitiveType, PrimTypeKind>(PrimTypeKind&& prim_kind) {
-        switch (prim_kind) {
-            case PrimTypeKind::Void: return m_prim_type_void;
-            case PrimTypeKind::Bool: return m_prim_type_bool;
-            case PrimTypeKind::Number: return m_prim_type_number;
-            case PrimTypeKind::String: return m_prim_type_string;
-        }
+        assert((u32)prim_kind < (u32)PrimTypeKind::_size);
+        return m_prim_types[(u32)prim_kind];
     }
 
-    PrimitiveType* get_void_type() { return m_prim_type_bool; }
-    PrimitiveType* get_bool_type() { return m_prim_type_bool; }
-    PrimitiveType* get_number_type() { return m_prim_type_number; }
-    PrimitiveType* get_string_type() { return m_prim_type_string; }
+    PrimitiveType* get_void_type() { return m_prim_types[(u32)PrimTypeKind::Void]; }
+    PrimitiveType* get_bool_type() { return m_prim_types[(u32)PrimTypeKind::Bool]; }
+    PrimitiveType* get_string_type() { return m_prim_types[(u32)PrimTypeKind::String]; }
 
     template <typename T, typename U, typename = std::enable_if_t<std::is_convertible_v<U, T>>>
     Span<T> alloc_vector(Vector<U>&& vec) {

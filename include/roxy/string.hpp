@@ -1,6 +1,6 @@
 #pragma once
 
-#include "roxy/value.hpp"
+#include "roxy/object.hpp"
 
 namespace rx {
 

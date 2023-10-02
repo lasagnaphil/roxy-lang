@@ -14,6 +14,7 @@ private:
     FunctionStmt* m_function;
     tsl::robin_map<std::string_view, AstVarDecl*> m_var_map;
     tsl::robin_map<std::string_view, FunctionStmt*> m_function_map;
+    tsl::robin_map<std::string_view, StructStmt*> m_struct_map;
 
 public:
     SemaEnv(SemaEnv* outer) : m_outer(outer), m_function(m_outer? m_outer->m_function : nullptr) {}
@@ -59,6 +60,25 @@ public:
     void set_function(std::string_view name, FunctionStmt* fun_stmt) {
         m_function_map.insert({name, fun_stmt});
     }
+
+    StructStmt* get_struct(std::string_view name) {
+        auto it = m_struct_map.find(name);
+        if (it != m_struct_map.end()) {
+            return it->second;
+        }
+        else {
+            if (m_outer) {
+                return m_outer->get_struct(name);
+            }
+            else {
+                return nullptr;
+            }
+        }
+    }
+
+    void set_struct(std::string_view name, StructStmt* struct_stmt) {
+        m_struct_map.insert({name, struct_stmt});
+    }
 };
 
 enum class SemaResultType {
@@ -68,7 +88,6 @@ enum class SemaResultType {
     InvalidInitializerType,
     InvalidAssignedType,
     InvalidReturnType,
-    InvalidArugmentType,
     UncallableType,
     IncompatibleTypes,
     CannotInferType,
@@ -370,14 +389,14 @@ public:
 
         switch (expr.op.type) {
             // The numeric operators +, -, *, / and the inequality comparison operators >, >=, <, <=
-            //  can only be done on numbers
+            //  can only be done on same types of numbers
             case TokenType::Minus:
             case TokenType::Plus:
             case TokenType::Star:
             case TokenType::Slash:
             {
-                expr.type = m_allocator->get_number_type();
-                if (left_expr->type->is_number() && right_expr->type->is_number()) {
+                expr.type = left_expr->type.get();
+                if (is_type_same(left_expr->type.get(), right_expr->type.get())) {
                     return SemaResult::ok();
                 }
                 else {
@@ -454,32 +473,20 @@ public:
         return visit(*expr.expression.get());
     }
     SemaResult visit_impl(LiteralExpr& expr)       {
-        if (expr.value.is_bool()) {
-            expr.type = m_allocator->get_bool_type();
-            return SemaResult::ok();
-        }
-        else if (expr.value.is_number()) {
-            expr.type = m_allocator->get_number_type();
-            return SemaResult::ok();
-        }
-        else if (expr.value.is_string()) {
-            expr.type = m_allocator->get_string_type();
-            return SemaResult::ok();
-        }
-        else {
-            return report_error(SemaResult::misc(&expr)); // TODO
-        }
+        expr.type = m_allocator->alloc<PrimitiveType>(expr.value.kind);
+        return SemaResult::ok();
     }
     SemaResult visit_impl(UnaryExpr& expr)         {
         auto right_expr = expr.right.get();
         SEMA_TRY(visit(*right_expr));
         switch (expr.op.type) {
             case TokenType::Minus: {
-                expr.type = m_allocator->get_number_type();
                 if (right_expr->type->is_number()) {
+                    expr.type = right_expr->type.get();
                     return SemaResult::ok();
                 }
                 else {
+                    expr.type = m_allocator->alloc<PrimitiveType>(PrimTypeKind::I32); // Just pick any integer
                     return report_error(SemaResult::wrong_type(right_expr, expr.type.get()));
                 }
             }

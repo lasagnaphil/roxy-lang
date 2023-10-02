@@ -28,8 +28,8 @@ ObjString* StringInterner::create_string(const char *chars, u32 length, u64 hash
     }
     else {
         ObjString* new_string = create_obj_string_with_known_hash(chars, length, hash);
-        auto value = AnyValue(new_string);
-        value.obj_incref();
+        // auto value = Value(new_string);
+        // value.obj_incref();
         m_string_table.insert(new_string);
         return new_string;
     }

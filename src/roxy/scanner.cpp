@@ -144,9 +144,22 @@ Token Scanner::number() {
     if (peek() == '.' && is_digit(peek_next())) {
         advance();
         while (is_digit(peek())) advance();
+        if (peek() == 'f' && peek() == 'd') {
+            advance();
+        }
+        return make_token(TokenType::NumberFloat);
     }
-
-    return make_token(TokenType::Number);
+    else {
+        if (peek() == 'u') {
+            advance();
+            if (peek() == 'l') advance();
+        }
+        else if (peek() == 'i') {
+            advance();
+            if (peek() == 'l') advance();
+        }
+        return make_token(TokenType::NumberInt);
+    }
 }
 
 Token Scanner::string() {

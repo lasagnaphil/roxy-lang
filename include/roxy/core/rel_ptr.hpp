@@ -1,6 +1,7 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
+#include "roxy/core/span.hpp"
 
 #include <type_traits>
 

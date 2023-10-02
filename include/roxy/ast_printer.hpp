@@ -207,7 +207,16 @@ public:
         switch (type.prim_kind) {
             case PrimTypeKind::Void: add_identifier("'void"); break;
             case PrimTypeKind::Bool: add_identifier("'bool"); break;
-            case PrimTypeKind::Number: add_identifier("'number"); break;
+            case PrimTypeKind::U8: add_identifier("'u8"); break;
+            case PrimTypeKind::U16: add_identifier("'u16"); break;
+            case PrimTypeKind::U32: add_identifier("'u32"); break;
+            case PrimTypeKind::U64: add_identifier("'u64"); break;
+            case PrimTypeKind::I8: add_identifier("'i8"); break;
+            case PrimTypeKind::I16: add_identifier("'i16"); break;
+            case PrimTypeKind::I32: add_identifier("'i32"); break;
+            case PrimTypeKind::I64: add_identifier("'i64"); break;
+            case PrimTypeKind::F32: add_identifier("'f32"); break;
+            case PrimTypeKind::F64: add_identifier("'f64"); break;
             case PrimTypeKind::String: add_identifier("'string"); break;
         }
     }

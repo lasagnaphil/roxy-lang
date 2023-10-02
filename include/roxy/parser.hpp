@@ -303,25 +303,69 @@ private:
 
     // TODO: Make this much faster
     bool parse_primitive_type(std::string_view name, PrimTypeKind& prim_kind, bool include_void = false) {
+        switch (name[0]) {
+            case 'v':
+                if (include_void && name.size() == 4 && name.substr(1, 3) == "oid") {
+                    prim_kind = PrimTypeKind::Void; return true;
+                }
+                break;
+            case 'b':
+                if (name.size() == 4 && name.substr(1, 3) == "ool") {
+                    prim_kind = PrimTypeKind::Bool; return true;
+                }
+                break;
+            case 's':
+                if (name.size() == 6 && name.substr(1, 5) == "tring") {
+                    prim_kind = PrimTypeKind::String; return true;
+                }
+                break;
+            case 'i': case 'u':
+                if (name.size() == 2 && name[1] == '8') {
+                    prim_kind = name[0] == 'i'? PrimTypeKind::I8 : PrimTypeKind::U8; return true;
+                }
+                else if (name.size() == 3) {
+                    if (name == "int") {
+                        prim_kind = PrimTypeKind::I32; return true;
+                    }
+                    if (name[1] == '1' && name[2] == '6') {
+                        prim_kind = name[0] == 'i'? PrimTypeKind::I16 : PrimTypeKind::U16; return true;
+                    }
+                    else if (name[1] == '3' && name[2] == '2') {
+                        prim_kind = name[0] == 'i'? PrimTypeKind::I32: PrimTypeKind::U32; return true;
+                    }
+                    else if (name[1] == '6' && name[2] == '4') {
+                        prim_kind = name[0] == 'i'? PrimTypeKind::I64: PrimTypeKind::U64; return true;
+                    }
+                }
+                else if (name.size() == 4) {
+                    if (name == "uint") {
+                        prim_kind = PrimTypeKind::U32; return true;
+                    }
+                }
+                break;
+            case 'f':
+                if (name.size() == 3) {
+                    if (name[1] == '3' && name[2] == '2') {
+                        prim_kind = PrimTypeKind::F32; return true;
+                    }
+                    else if (name[1] == '6' && name[2] == '4') {
+                        prim_kind = PrimTypeKind::F64; return true;
+                    }
+                }
+                else if (name.size() == 5) {
+                    if (name.substr(1, 4) == "loat") {
+                        prim_kind = PrimTypeKind::F32; return true;
+                    }
+                }
+                break;
+        }
         if (include_void) {
             if (name == "void") {
                 prim_kind = PrimTypeKind::Void;
                 return true;
             }
         }
-        if (name == "bool") {
-            prim_kind = PrimTypeKind::Bool;
-        }
-        else if (name == "number") {
-            prim_kind = PrimTypeKind::Number;
-        }
-        else if (name == "string") {
-            prim_kind = PrimTypeKind::String;
-        }
-        else {
-            return false;
-        }
-        return true;
+        return false;
     }
 
     bool parse_variable(const char* var_kind, std::string& err_msg, VarDecl& variable) {
@@ -466,16 +510,45 @@ private:
         return alloc<GroupingExpr>(expr);
     }
 
-    Expr* number(bool can_assign) {
-        double value = strtod(reinterpret_cast<const char*>(m_scanner->source() + previous().source_loc), nullptr);
-        return alloc<LiteralExpr>(AnyValue(value));
+    Expr* number_i(bool can_assign) {
+        auto str = std::string(get_token_str(previous()));
+        if (tolower(str[str.size() - 1]) == 'l') {
+            if (tolower(str[str.size() - 2]) == 'u') {
+                u64 value = std::stoull(str);
+                return alloc<LiteralExpr>(AnyValue(value));
+            }
+            else {
+                i64 value = std::stoll(str);
+                return alloc<LiteralExpr>(AnyValue(value));
+            }
+        }
+        else if (tolower(str[str.size() - 1]) == 'u') {
+            u32 value = std::stoul(str);
+            return alloc<LiteralExpr>(AnyValue(value));
+        }
+        else {
+            i32 value = std::stoi(str);
+            return alloc<LiteralExpr>(AnyValue(value));
+        }
+    }
+
+    Expr* number_f(bool can_assign) {
+        auto str = std::string(get_token_str(previous()));
+        if (tolower(str[str.size() - 1]) == 'f') {
+            float value = std::stof(str);
+            return alloc<LiteralExpr>(AnyValue(value));
+        }
+        else {
+            double value = std::stod(str);
+            return alloc<LiteralExpr>(AnyValue(value));
+        }
     }
 
     Expr* string(bool can_assign) {
         std::string_view contents = get_token_str(previous()).substr(1, previous().length - 2);
+        // TODO: store the string in a constant table
         ObjString* str = m_string_interner->create_string(contents);
         auto value = AnyValue(str);
-        value.obj_incref();
         return alloc<LiteralExpr>(AnyValue(str));
     }
 

@@ -7,6 +7,7 @@ add_library(roxy STATIC
         src/roxy/scanner.cpp
         src/roxy/parser.cpp
         src/roxy/value.cpp
+        src/roxy/object.cpp
         src/roxy/string.cpp
         src/roxy/string_interner.cpp
         src/roxy/sema.cpp

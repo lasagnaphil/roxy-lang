@@ -24,7 +24,7 @@ enum class TokenType : u8 {
     // Two character tokens.
     AmpAmp, BarBar,
     // Literals.
-    Identifier, String, Number,
+    Identifier, String, NumberInt, NumberFloat,
     // Keywords.
     Struct, Else, False,
     For, Fun, If, Nil,

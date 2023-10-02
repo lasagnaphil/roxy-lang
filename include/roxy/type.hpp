@@ -1,6 +1,7 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
+#include "roxy/core/rel_ptr.hpp"
 #include "roxy/token.hpp"
 
 struct ObjString;
@@ -15,7 +16,17 @@ enum class TypeKind : u8 {
 
 // Primitive types
 enum class PrimTypeKind : u8 {
-    Void, Bool, Number, String,
+    Void,
+    Bool,
+    // Signed integers
+    U8, U16, U32, U64,
+    // Unsigned integers
+    I8, I16, I32, I64,
+    // Floating point values
+    F32, F64,
+    // String (contents on the heap, but it's primitive since it's interned)
+    String,
+    _size
 };
 
 struct VarDecl;
@@ -113,7 +124,9 @@ inline bool Type::is_bool() const {
 
 inline bool Type::is_number() const {
     auto prim_type = try_cast<PrimitiveType>();
-    return prim_type && prim_type->prim_kind == PrimTypeKind::Number;
+    return prim_type &&
+        prim_type->prim_kind >= PrimTypeKind::U8 &&
+        prim_type->prim_kind <= PrimTypeKind::F64;
 }
 
 inline bool Type::is_string() const {

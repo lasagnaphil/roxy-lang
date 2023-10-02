@@ -3,68 +3,36 @@
 #include "roxy/fmt/core.h"
 #include "roxy/string.hpp"
 
-#include <ctime>
-
 namespace rx {
-
-void init_uid_gen_state() {
-    u64 t = time(nullptr);
-    xoshiro256ss_init(&tl_uid_gen_state, t);
-}
-
-void AnyValue::obj_free() {
-    Obj* obj = as_obj();
-    switch (obj->type()) {
-        case ObjType::String: {
-            free_obj_string(reinterpret_cast<ObjString*>(obj));
-            break;
-        }
-    }
-    // Zero-out the pointer for some safety
-    value = (QNAN | SIGN_BIT);
-}
-
-u64 AnyValue::hash() const {
-    if (is_nil()) return 0;
-    else if (is_bool()) return as_bool()? 1231 : 1237;
-    else if (is_number()) {
-        double number = as_number();
-        auto bits = reinterpret_cast<const char*>(&number);
-        return XXH3_64bits(bits, 4);
-    }
-    else if (is_obj()) {
-        Obj* obj = as_obj();
-        if (obj->type() == ObjType::String) {
-            return reinterpret_cast<ObjString*>(obj)->hash;
-        }
-        else {
-            auto bits = reinterpret_cast<const char *>(&obj);
-            return XXH3_64bits(bits, 4);
-        }
-    }
-    return 0;
-}
 
 std::string object_to_string(AnyValue value, bool print_refcount);
 
 std::string value_to_string(AnyValue value, bool print_refcount) {
-    if (value.is_bool()) return value.as_bool()? "true" : "false";
-    else if (value.is_nil()) return "nil";
-    else if (value.is_number()) return fmt::format("{:g}", value.as_number());
-    else if (value.is_obj()) {
-        if (print_refcount)
-            return fmt::format("{} ({})", object_to_string(value, true), value.as_obj()->refcount);
-        else
-            return object_to_string(value, false);
+    switch (value.kind) {
+        case PrimTypeKind::Void: return "nil";
+        case PrimTypeKind::Bool: return value.value_bool? "true" : "false";
+        case PrimTypeKind::I8: return std::to_string(value.value_i8);
+        case PrimTypeKind::I16: return std::to_string(value.value_i16);
+        case PrimTypeKind::I32: return std::to_string(value.value_i32);
+        case PrimTypeKind::I64: return std::to_string(value.value_i64);
+        case PrimTypeKind::U8: return std::to_string(value.value_u8);
+        case PrimTypeKind::U16: return std::to_string(value.value_u16);
+        case PrimTypeKind::U32: return std::to_string(value.value_u32);
+        case PrimTypeKind::U64: return std::to_string(value.value_u64);
+        case PrimTypeKind::String: {
+            if (print_refcount)
+                return fmt::format("{} ({})", object_to_string(value, true), value.obj->refcount);
+            else
+                return object_to_string(value, false);
 
+        }
     }
-    else return "";
+    return "";
 }
 
 std::string object_to_string(AnyValue value, bool print_refcount) {
-    Obj* obj = value.as_obj();
-    switch (obj->type()) {
-        case ObjType::String: return fmt::format("\"{}\"", value.as_string()->chars);
+    switch (value.obj->type()) {
+        case ObjType::String: return fmt::format("\"{}\"", reinterpret_cast<ObjString*>(value.obj)->chars);
         default: return "";
     }
 }
