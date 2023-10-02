@@ -10,7 +10,7 @@
 
 namespace rx {
 
-enum class ExprType : u32 {
+enum class ExprKind : u32 {
     Error,
     Assign,
     Binary,
@@ -22,129 +22,131 @@ enum class ExprType : u32 {
     Call,
 };
 
+struct Type;
 
 struct Expr {
 #ifndef NDEBUG
     virtual ~Expr() = default;
 #endif
 
-    ExprType type;
+    ExprKind kind;
+    RelPtr<Type> type;
 
-    Expr(ExprType type) : type(type) {}
+    Expr(ExprKind kind) : kind(kind), type(nullptr) {}
 
     template <typename ExprT, typename = std::enable_if_t<std::is_base_of_v<Expr, ExprT>>>
     const ExprT& cast() const {
-        assert(type == ExprT::s_type);
+        assert(kind == ExprT::s_kind);
         return static_cast<const ExprT&>(*this);
     }
 
     template <typename ExprT, typename = std::enable_if_t<std::is_base_of_v<Expr, ExprT>>>
     ExprT& cast() {
-        assert(type == ExprT::s_type);
+        assert(kind == ExprT::s_kind);
         return static_cast<ExprT&>(*this);
     }
 
     template <typename ExprT, typename = std::enable_if_t<std::is_base_of_v<Expr, ExprT>>>
     const ExprT* try_cast() const {
-        if (type == ExprT::s_type) return static_cast<const ExprT*>(this);
+        if (kind == ExprT::s_kind) return static_cast<const ExprT*>(this);
         else return nullptr;
     }
 
     template <typename ExprT, typename = std::enable_if_t<std::is_base_of_v<Expr, ExprT>>>
     ExprT* try_cast() {
-        if (type == ExprT::s_type) return static_cast<ExprT*>(this);
+        if (kind == ExprT::s_kind) return static_cast<ExprT*>(this);
         else return nullptr;
     }
 };
 
 struct ErrorExpr : public Expr {
-    static constexpr ExprType s_type = ExprType::Error;
+    static constexpr ExprKind s_kind = ExprKind::Error;
 
-    ErrorExpr() : Expr(s_type) {}
+    ErrorExpr() : Expr(s_kind) {}
 };
 
 struct AssignExpr : public Expr {
-    static constexpr ExprType s_type = ExprType::Assign;
+    static constexpr ExprKind s_kind = ExprKind::Assign;
 
     Token name;
     RelPtr<Expr> value;
 
     AssignExpr(Token name, Expr* value) :
-        Expr(s_type), name(name), value(value) {}
+        Expr(s_kind), name(name), value(value) {}
 };
 
 struct BinaryExpr : public Expr {
-    static constexpr ExprType s_type = ExprType::Binary;
+    static constexpr ExprKind s_kind = ExprKind::Binary;
 
     RelPtr<Expr> left;
     RelPtr<Expr> right;
     Token op;
 
     BinaryExpr(Expr* left, Token op, Expr* right) :
-        Expr(s_type), left(left), right(right), op(op) {}
+        Expr(s_kind), left(left), right(right), op(op) {}
 };
 
 struct TernaryExpr : public Expr {
-    static constexpr ExprType s_type = ExprType::Ternary;
+    static constexpr ExprKind s_kind = ExprKind::Ternary;
 
     RelPtr<Expr> cond;
     RelPtr<Expr> left;
     RelPtr<Expr> right;
 
     TernaryExpr(Expr* cond, Expr* left, Expr* right) :
-        Expr(s_type), cond(cond), left(left), right(right) {}
+        Expr(s_kind), cond(cond), left(left), right(right) {}
 };
 
 struct GroupingExpr : public Expr {
-    static constexpr ExprType s_type = ExprType::Grouping;
+    static constexpr ExprKind s_kind = ExprKind::Grouping;
 
     RelPtr<Expr> expression;
 
     GroupingExpr(Expr* expression) :
-            Expr(s_type),
+            Expr(s_kind),
             expression(expression) {}
 };
 
 struct LiteralExpr : public Expr {
 public:
-    static constexpr ExprType s_type = ExprType::Literal;
+    static constexpr ExprKind s_kind = ExprKind::Literal;
 
     AnyValue value;
 
     LiteralExpr(AnyValue value) :
-            Expr(s_type),
+            Expr(s_kind),
             value(value) {}
 };
 
 struct UnaryExpr : public Expr {
 public:
-    static constexpr ExprType s_type = ExprType::Unary;
+    static constexpr ExprKind s_kind = ExprKind::Unary;
 
     Token op;
     RelPtr<Expr> right;
 
-    UnaryExpr(Token op, Expr* right) : Expr(s_type), op(op), right(right) {}
+    UnaryExpr(Token op, Expr* right) : Expr(s_kind), op(op), right(right) {}
 };
 
 struct VariableExpr : public Expr {
 public:
-    static constexpr ExprType s_type = ExprType::Variable;
+    static constexpr ExprKind s_kind = ExprKind::Variable;
 
     Token name;
 
-    VariableExpr(Token name) : Expr(s_type), name(name) {}
+    VariableExpr(Token name) : Expr(s_kind), name(name) {}
 };
 
 struct CallExpr : public Expr {
 public:
-    static constexpr ExprType s_type = ExprType::Call;
+    static constexpr ExprKind s_kind = ExprKind::Call;
 
     RelPtr<Expr> callee;
     Token paren;
     RelSpan<RelPtr<Expr>> arguments;
 
     CallExpr(Expr* callee, Token paren, Span<RelPtr<Expr>> arguments) :
-            Expr(s_type), callee(callee), paren(paren), arguments(arguments) {}
+            Expr(s_kind), callee(callee), paren(paren), arguments(arguments) {}
 };
 
 }

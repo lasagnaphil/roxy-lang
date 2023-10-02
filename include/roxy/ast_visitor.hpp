@@ -14,16 +14,16 @@ template <typename Derived, typename ReturnT>
 class ExprVisitorBase {
 public:
     ReturnT visit(Expr& expr) {
-        switch (expr.type) {
-            case ExprType::Error:       return static_cast<Derived*>(this)->visit_impl(expr.cast<ErrorExpr>());
-            case ExprType::Assign:      return static_cast<Derived*>(this)->visit_impl(expr.cast<AssignExpr>());
-            case ExprType::Binary:      return static_cast<Derived*>(this)->visit_impl(expr.cast<BinaryExpr>());
-            case ExprType::Ternary:     return static_cast<Derived*>(this)->visit_impl(expr.cast<TernaryExpr>());
-            case ExprType::Grouping:    return static_cast<Derived*>(this)->visit_impl(expr.cast<GroupingExpr>());
-            case ExprType::Literal:     return static_cast<Derived*>(this)->visit_impl(expr.cast<LiteralExpr>());
-            case ExprType::Unary:       return static_cast<Derived*>(this)->visit_impl(expr.cast<UnaryExpr>());
-            case ExprType::Variable:    return static_cast<Derived*>(this)->visit_impl(expr.cast<VariableExpr>());
-            case ExprType::Call:        return static_cast<Derived*>(this)->visit_impl(expr.cast<CallExpr>());
+        switch (expr.kind) {
+            case ExprKind::Error:       return static_cast<Derived*>(this)->visit_impl(expr.cast<ErrorExpr>());
+            case ExprKind::Assign:      return static_cast<Derived*>(this)->visit_impl(expr.cast<AssignExpr>());
+            case ExprKind::Binary:      return static_cast<Derived*>(this)->visit_impl(expr.cast<BinaryExpr>());
+            case ExprKind::Ternary:     return static_cast<Derived*>(this)->visit_impl(expr.cast<TernaryExpr>());
+            case ExprKind::Grouping:    return static_cast<Derived*>(this)->visit_impl(expr.cast<GroupingExpr>());
+            case ExprKind::Literal:     return static_cast<Derived*>(this)->visit_impl(expr.cast<LiteralExpr>());
+            case ExprKind::Unary:       return static_cast<Derived*>(this)->visit_impl(expr.cast<UnaryExpr>());
+            case ExprKind::Variable:    return static_cast<Derived*>(this)->visit_impl(expr.cast<VariableExpr>());
+            case ExprKind::Call:        return static_cast<Derived*>(this)->visit_impl(expr.cast<CallExpr>());
         }
     }
 
@@ -44,19 +44,19 @@ template <typename Derived, typename ReturnT>
 class StmtVisitorBase {
 public:
     ReturnT visit(Stmt& stmt) {
-        switch (stmt.type) {
-            case StmtType::Error:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<ErrorStmt>());
-            case StmtType::Block:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<BlockStmt>());
-            case StmtType::Expression:  return static_cast<Derived*>(this)->visit_impl(stmt.cast<ExpressionStmt>());
-            case StmtType::Struct:      return static_cast<Derived*>(this)->visit_impl(stmt.cast<StructStmt>());
-            case StmtType::Function:    return static_cast<Derived*>(this)->visit_impl(stmt.cast<FunctionStmt>());
-            case StmtType::If:          return static_cast<Derived*>(this)->visit_impl(stmt.cast<IfStmt>());
-            case StmtType::Print:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<PrintStmt>());
-            case StmtType::Var:         return static_cast<Derived*>(this)->visit_impl(stmt.cast<VarStmt>());
-            case StmtType::While:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<WhileStmt>());
-            case StmtType::Return:      return static_cast<Derived*>(this)->visit_impl(stmt.cast<ReturnStmt>());
-            case StmtType::Break:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<BreakStmt>());
-            case StmtType::Continue:    return static_cast<Derived*>(this)->visit_impl(stmt.cast<ContinueStmt>());
+        switch (stmt.kind) {
+            case StmtKind::Error:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<ErrorStmt>());
+            case StmtKind::Block:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<BlockStmt>());
+            case StmtKind::Expression:  return static_cast<Derived*>(this)->visit_impl(stmt.cast<ExpressionStmt>());
+            case StmtKind::Struct:      return static_cast<Derived*>(this)->visit_impl(stmt.cast<StructStmt>());
+            case StmtKind::Function:    return static_cast<Derived*>(this)->visit_impl(stmt.cast<FunctionStmt>());
+            case StmtKind::If:          return static_cast<Derived*>(this)->visit_impl(stmt.cast<IfStmt>());
+            case StmtKind::Print:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<PrintStmt>());
+            case StmtKind::Var:         return static_cast<Derived*>(this)->visit_impl(stmt.cast<VarStmt>());
+            case StmtKind::While:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<WhileStmt>());
+            case StmtKind::Return:      return static_cast<Derived*>(this)->visit_impl(stmt.cast<ReturnStmt>());
+            case StmtKind::Break:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<BreakStmt>());
+            case StmtKind::Continue:    return static_cast<Derived*>(this)->visit_impl(stmt.cast<ContinueStmt>());
         }
     }
 

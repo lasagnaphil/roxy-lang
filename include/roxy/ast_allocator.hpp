@@ -13,15 +13,15 @@ class AstAllocator {
 private:
     BumpAllocator m_allocator;
 
-    PrimitiveType* s_prim_type_bool;
-    PrimitiveType* s_prim_type_number;
-    PrimitiveType* s_prim_type_string;
+    PrimitiveType* m_prim_type_bool;
+    PrimitiveType* m_prim_type_number;
+    PrimitiveType* m_prim_type_string;
 
 public:
     AstAllocator(u64 initial_capacity) : m_allocator(initial_capacity) {
-        s_prim_type_bool = m_allocator.emplace<PrimitiveType>(PrimTypeKind::Bool);
-        s_prim_type_number = m_allocator.emplace<PrimitiveType>(PrimTypeKind::Number);
-        s_prim_type_string = m_allocator.emplace<PrimitiveType>(PrimTypeKind::String);
+        m_prim_type_bool = m_allocator.emplace<PrimitiveType>(PrimTypeKind::Bool);
+        m_prim_type_number = m_allocator.emplace<PrimitiveType>(PrimTypeKind::Number);
+        m_prim_type_string = m_allocator.emplace<PrimitiveType>(PrimTypeKind::String);
     }
 
     template <typename T, typename ... Args, typename = std::enable_if_t<
@@ -33,11 +33,15 @@ public:
     template <>
     PrimitiveType* alloc<PrimitiveType, PrimTypeKind>(PrimTypeKind&& prim_kind) {
         switch (prim_kind) {
-            case PrimTypeKind::Bool: return s_prim_type_bool;
-            case PrimTypeKind::Number: return s_prim_type_number;
-            case PrimTypeKind::String: return s_prim_type_string;
+            case PrimTypeKind::Bool: return m_prim_type_bool;
+            case PrimTypeKind::Number: return m_prim_type_number;
+            case PrimTypeKind::String: return m_prim_type_string;
         }
     }
+
+    PrimitiveType* get_bool_type() { return m_prim_type_bool; }
+    PrimitiveType* get_number_type() { return m_prim_type_number; }
+    PrimitiveType* get_string_type() { return m_prim_type_string; }
 
     template <typename T, typename U, typename = std::enable_if_t<std::is_convertible_v<U, T>>>
     Span<T> alloc_vector(Vector<U>&& vec) {

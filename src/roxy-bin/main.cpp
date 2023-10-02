@@ -37,14 +37,23 @@ int main(int argc, char** argv) {
 
         for (auto err : sema_errors) {
             switch (err.res_type) {
-                case SemaResultType::UndefinedVariable:
+                case SemaResultType::UndefinedVar:
                     fmt::print("- Undefined variable.\n");
+                    break;
+                case SemaResultType::WrongType:
+                    fmt::print("- Wrong type.\n");
+                    break;
+                case SemaResultType::InvalidInitializerType:
+                    fmt::print("- Invalid initializer type.\n");
+                    break;
+                case SemaResultType::InvalidAssignedType:
+                    fmt::print("- Invalid assignment type.\n");
                     break;
                 case SemaResultType::IncompatibleTypes:
                     fmt::print("- Incompatible types.\n");
                     break;
                 case SemaResultType::CannotInferType:
-                    fmt::print("- Cannot infer type.\n");
+                    fmt::print("- Cannot infer kind.\n");
                     break;
                 case SemaResultType::Misc:
                     fmt::print("- Misc.\n");

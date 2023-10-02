@@ -322,13 +322,13 @@ private:
         Type* type = nullptr;
         if (match(TokenType::Colon)) {
             if (!consume(TokenType::Identifier)) {
-                err_msg = "Expect type name.";
+                err_msg = "Expect kind name.";
                 return false;
             }
             Token type_name = previous();
             PrimTypeKind prim_kind;
             if (!parse_primitive_type(type_name.str(), prim_kind)) {
-                err_msg = "Invalid type name.";
+                err_msg = "Invalid kind name.";
                 return false;
             }
             type = alloc<PrimitiveType>(prim_kind);
@@ -347,6 +347,10 @@ private:
         Expr* initializer = nullptr;
         if (match(TokenType::Equal)) {
             initializer = expression();
+        }
+
+        if (var_decl.type == nullptr && initializer == nullptr) {
+            return error_stmt("Expect explicit kind for var declaration.");
         }
 
         if (!consume(TokenType::Semicolon)) {

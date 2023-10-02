@@ -100,9 +100,6 @@ public:
         if (Type* type = stmt.var.type.get()) {
             visit(*type);
         }
-        else {
-            add_identifier("null");
-        }
         if (Expr* expr = stmt.initializer.get()) {
             visit(*expr);
         }
@@ -135,18 +132,21 @@ public:
     }
     void visit_impl(AssignExpr& expr) {
         begin_paren("set");
+        if (expr.type.get()) visit(*expr.type);
         add_identifier(expr.name.str());
         visit(*expr.value);
         end_paren();
     }
     void visit_impl(BinaryExpr& expr) {
         begin_paren(expr.op.str());
+        if (expr.type.get()) visit(*expr.type);
         visit(*expr.left);
         visit(*expr.right);
         end_paren();
     }
     void visit_impl(CallExpr& expr) {
         begin_paren("call");
+        if (expr.type.get()) visit(*expr.type);
         visit(*expr.callee);
         for (auto& arg : expr.arguments) {
             visit(*arg);
@@ -155,6 +155,7 @@ public:
     }
     void visit_impl(TernaryExpr& expr) {
         begin_paren("ternary");
+        if (expr.type.get()) visit(*expr.type);
         visit(*expr.cond);
         visit(*expr.left);
         visit(*expr.right);
@@ -162,26 +163,39 @@ public:
     }
     void visit_impl(GroupingExpr& expr) {
         begin_paren("grouping");
+        if (expr.type.get()) visit(*expr.type);
         visit(*expr.expression);
         end_paren();
     }
     void visit_impl(LiteralExpr& expr) {
+        begin_paren("lit");
+        if (expr.type.get()) visit(*expr.type);
         add_identifier(expr.value.to_std_string());
+        end_paren();
     }
     void visit_impl(UnaryExpr& expr) {
         begin_paren(expr.op.str());
+        if (expr.type.get()) visit(*expr.type);
         visit(*expr.right);
         end_paren();
     }
     void visit_impl(VariableExpr& expr) {
-        add_identifier(expr.name.str());
+        if (expr.type.get()) {
+            begin_paren();
+            visit(*expr.type);
+            add_identifier(expr.name.str());
+            end_paren();
+        }
+        else {
+            add_identifier(expr.name.str());
+        }
     }
 
     void visit_impl(PrimitiveType& type) {
         switch (type.prim_kind) {
-            case PrimTypeKind::Bool: add_identifier("bool"); break;
-            case PrimTypeKind::Number: add_identifier("number"); break;
-            case PrimTypeKind::String: add_identifier("string"); break;
+            case PrimTypeKind::Bool: add_identifier("'bool"); break;
+            case PrimTypeKind::Number: add_identifier("'number"); break;
+            case PrimTypeKind::String: add_identifier("'string"); break;
         }
     }
     void visit_impl(StructType& type) {
