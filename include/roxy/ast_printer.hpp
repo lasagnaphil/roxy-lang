@@ -79,8 +79,12 @@ public:
 
             end_paren();
         }
-        inc_indent(); newline();
+
+        if (stmt.ret_type.get()) visit(*stmt.ret_type);
+
+        inc_indent();
         for (auto& stmt : stmt.body) {
+            newline();
             visit(*stmt);
         }
         end_paren(); dec_indent();
@@ -89,11 +93,13 @@ public:
     void visit_impl(IfStmt& stmt) {
         begin_paren("if");
         visit(*stmt.condition);
+        inc_indent(); newline();
         visit(*stmt.then_branch);
         if (Stmt* else_stmt = stmt.else_branch.get()) {
+            newline();
             visit(*else_stmt);
         }
-        end_paren();
+        end_paren(); dec_indent();
     }
     void visit_impl(PrintStmt& stmt) {
         begin_paren("print");
@@ -199,6 +205,7 @@ public:
 
     void visit_impl(PrimitiveType& type) {
         switch (type.prim_kind) {
+            case PrimTypeKind::Void: add_identifier("'void"); break;
             case PrimTypeKind::Bool: add_identifier("'bool"); break;
             case PrimTypeKind::Number: add_identifier("'number"); break;
             case PrimTypeKind::String: add_identifier("'string"); break;
@@ -218,10 +225,11 @@ public:
         end_paren(); dec_indent();
     }
     void visit_impl(FunctionType& type) {
-        begin_paren("function");
+        begin_paren("fun");
         for (auto& param_type : type.params) {
             visit(*param_type);
         }
+        add_identifier("->");
         visit(*type.ret);
         end_paren();
     }

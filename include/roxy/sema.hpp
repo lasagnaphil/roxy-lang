@@ -11,17 +11,20 @@ namespace rx {
 class SemaEnv {
 private:
     SemaEnv* m_outer;
-    tsl::robin_map<std::string, VarStmt*> m_type_map;
+    FunctionStmt* m_function;
+    tsl::robin_map<std::string_view, AstVarDecl*> m_var_map;
+    tsl::robin_map<std::string_view, FunctionStmt*> m_function_map;
 
 public:
-    SemaEnv(SemaEnv* outer) : m_outer(outer) {}
+    SemaEnv(SemaEnv* outer) : m_outer(outer), m_function(m_outer? m_outer->m_function : nullptr) {}
+    SemaEnv(SemaEnv* outer, FunctionStmt* function) : m_outer(outer), m_function(function) {}
 
     SemaEnv* get_outer_env() { return m_outer; }
+    FunctionStmt* get_outer_function() { return m_function; }
 
-    VarStmt* get_var(std::string_view name) {
-        // TODO: Use a better hash map that doesn't need the std::string allocation
-        auto it = m_type_map.find(std::string(name));
-        if (it != m_type_map.end()) {
+    AstVarDecl* get_var(std::string_view name) {
+        auto it = m_var_map.find(name);
+        if (it != m_var_map.end()) {
             return it->second;
         }
         else {
@@ -34,9 +37,27 @@ public:
         }
     }
 
-    void set_var(std::string_view name, VarStmt* stmt) {
-        // TODO: Use a better hash map that doesn't need the std::string allocation
-        m_type_map.insert({std::string(name), stmt});
+    void set_var(std::string_view name, AstVarDecl* var_decl) {
+        m_var_map.insert({name, var_decl});
+    }
+
+    FunctionStmt* get_function(std::string_view name) {
+        auto it = m_function_map.find(name);
+        if (it != m_function_map.end()) {
+            return it->second;
+        }
+        else {
+            if (m_outer) {
+                return m_outer->get_function(name);
+            }
+            else {
+                return nullptr;
+            }
+        }
+    }
+
+    void set_function(std::string_view name, FunctionStmt* fun_stmt) {
+        m_function_map.insert({name, fun_stmt});
     }
 };
 
@@ -46,6 +67,9 @@ enum class SemaResultType {
     WrongType,
     InvalidInitializerType,
     InvalidAssignedType,
+    InvalidReturnType,
+    InvalidArugmentType,
+    UncallableType,
     IncompatibleTypes,
     CannotInferType,
     Misc,
@@ -54,10 +78,10 @@ enum class SemaResultType {
 // TODO: better SemaResult ADT...
 
 struct SemaResult {
-    SemaResultType res_type;
+    SemaResultType res_type = SemaResultType::Ok;
 
     Expr* cur_expr = nullptr;
-    Stmt* cur_stmt = nullptr;
+    AstVarDecl* cur_var_decl = nullptr;
     Expr* other_expr = nullptr;
     Type* expected_type = nullptr;
 
@@ -85,11 +109,24 @@ struct SemaResult {
             .cur_expr = initializer_expr
         };
     }
-    static SemaResult invalid_assigned_type(Stmt* var_stmt, Expr* assigned_expr) {
+    static SemaResult invalid_assigned_type(AstVarDecl* var_decl, Expr* assigned_expr) {
         return {
             .res_type = SemaResultType::InvalidAssignedType,
             .cur_expr = assigned_expr,
-            .cur_stmt = var_stmt,
+            .cur_var_decl = var_decl,
+        };
+    }
+    static SemaResult invalid_return_type(Expr* return_expr, Type* expected_type) {
+        return {
+            .res_type = SemaResultType::InvalidReturnType,
+            .cur_expr = return_expr,
+            .expected_type = expected_type
+        };
+    }
+    static SemaResult uncallable_type(Expr* uncallable_expr) {
+        return {
+            .res_type = SemaResultType::UncallableType,
+            .cur_expr = uncallable_expr
         };
     }
     static SemaResult incompatible_types(Expr* left, Expr* right) {
@@ -124,6 +161,8 @@ struct SemaResult {
                 return "Invalid initializer type.";
             case SemaResultType::InvalidAssignedType:
                 return "Invalid assignment type.";
+            case SemaResultType::InvalidReturnType:
+                return "Invalid return type.";
             case SemaResultType::IncompatibleTypes:
                 return "Incompatible types.";
             case SemaResultType::CannotInferType:
@@ -163,7 +202,7 @@ private:
 
     Vector<SemaResult> m_errors;
 
-    SemaEnv* m_cur_env;
+    SemaEnv* m_cur_env = nullptr;
 
     void set_env(SemaEnv* env) {
         m_cur_env = env;
@@ -190,7 +229,7 @@ public:
 
 #define SEMA_TRY(EXPR) do { auto _res = EXPR; if (!_res.is_ok()) return _res; } while (false)
 
-    SemaResult visit_impl(ErrorStmt& stmt)         { return {}; } // unreachable
+    SemaResult visit_impl(ErrorStmt& stmt)         { return SemaResult::ok(); } // unreachable
     SemaResult visit_impl(BlockStmt& stmt)         {
         SemaEnv block_env(m_cur_env);
         m_cur_env = &block_env;
@@ -199,16 +238,40 @@ public:
             auto _ = visit(*inner_stmt.get());
         }
         m_cur_env = block_env.get_outer_env();
-        return {};
+        return SemaResult::ok();
     }
     SemaResult visit_impl(ExpressionStmt& stmt)    {
         return visit(*stmt.expr.get());
     }
     SemaResult visit_impl(StructStmt& stmt)        {
-        return {}; // TODO: add struct to env
+        return SemaResult::ok(); // TODO: add struct to env
     }
     SemaResult visit_impl(FunctionStmt& stmt)      {
-        return {}; // TODO
+        SemaEnv fn_env(m_cur_env, &stmt);
+        m_cur_env = &fn_env;
+
+        // Add all function parameters to the scope.
+        Vector<Type*> param_types;
+        for (auto& param : stmt.params) {
+            m_cur_env->set_var(param.name.str(m_source), &param);
+            param_types.push_back(param.type.get());
+        }
+
+        // Add the created function to the TypeEnv.
+        stmt.function_type = m_allocator->alloc<FunctionType>(
+                m_allocator->alloc_vector<RelPtr<Type>, Type*>(std::move(param_types)),
+                stmt.ret_type.get());
+
+        m_cur_env->set_function(stmt.name.str(m_source), &stmt);
+
+        // Do a sema pass on the statements inside the body.
+        for (auto& body_stmt : stmt.body) {
+            // Do not return on error result, since we want to scan all statements.
+            auto _ = visit(*body_stmt);
+        }
+
+        m_cur_env = fn_env.get_outer_env();
+        return SemaResult::ok();
     }
     SemaResult visit_impl(IfStmt& stmt)            {
         Expr* cond_expr = stmt.condition.get();
@@ -220,7 +283,7 @@ public:
         if (auto else_branch = stmt.else_branch.get()) {
             SEMA_TRY(visit(*else_branch));
         }
-        return {};
+        return SemaResult::ok();
     }
     SemaResult visit_impl(PrintStmt& stmt)         {
         return visit(*stmt.expr.get());
@@ -245,7 +308,7 @@ public:
             // insert default value
             stmt.initializer = nullptr; // TODO
         }
-        m_cur_env->set_var(stmt.var.name.str(m_source), &stmt);
+        m_cur_env->set_var(stmt.var.name.str(m_source), &stmt.var);
 
         return {SemaResultType::Ok, nullptr};
     }
@@ -258,8 +321,19 @@ public:
         return visit(*stmt.body.get());
     }
     SemaResult visit_impl(ReturnStmt& stmt)        {
-        // TODO: Need to look at current function scope and compare return kind
-        return {};
+        auto return_expr = stmt.expr.get();
+        SEMA_TRY(visit(*return_expr));
+        Type* return_type = return_expr->type.get();
+        Type* fn_return_type = m_cur_env->get_outer_function()->ret_type.get();
+        if (fn_return_type) {
+            if (!is_type_same(return_type, fn_return_type)) {
+                return report_error(SemaResult::invalid_return_type(return_expr, fn_return_type));
+            }
+        }
+        else {
+            m_cur_env->get_outer_function()->ret_type = return_type;
+        }
+        return SemaResult::ok();
     }
     SemaResult visit_impl(BreakStmt& stmt)         { return SemaResult::ok(); } // nothing to do
     SemaResult visit_impl(ContinueStmt& stmt)      { return SemaResult::ok(); } // nothing to do
@@ -267,19 +341,19 @@ public:
     SemaResult visit_impl(ErrorExpr& expr)         { return SemaResult::misc(&expr); } // unreachable???
     SemaResult visit_impl(AssignExpr& expr)        {
         SEMA_TRY(visit(*expr.value.get()));
-        if (VarStmt* var_stmt = m_cur_env->get_var(expr.name.str(m_source))) {
+        if (auto var_decl = m_cur_env->get_var(expr.name.str(m_source))) {
             // If cannot find kind of assigned expression, then error.
             Expr* assigned_expr = expr.value.get();
             SEMA_TRY(visit(*assigned_expr));
 
             // If assigned kind is not compatible with variable, then error.
-            Type* var_type = var_stmt->var.type.get();
+            Type* var_type = var_decl->type.get();
             expr.type = var_type;
             if (is_type_compatible(var_type, assigned_expr->type.get())) {
                 return SemaResult::ok();
             }
             else {
-                return report_error(SemaResult::invalid_assigned_type(var_stmt, assigned_expr));
+                return report_error(SemaResult::invalid_assigned_type(var_decl, assigned_expr));
             }
         }
         else {
@@ -424,17 +498,39 @@ public:
         }
     }
     SemaResult visit_impl(VariableExpr& expr)      {
-        auto var_stmt = m_cur_env->get_var(expr.name.str(m_source));
+        auto expr_name = expr.name.str(m_source);
+        auto var_stmt = m_cur_env->get_var(expr_name);
         if (var_stmt) {
-            expr.type = var_stmt->var.type.get();
+            expr.type = var_stmt->type.get();
+            return SemaResult::ok();
+        }
+        auto function_stmt = m_cur_env->get_function(expr_name);
+        if (function_stmt) {
+            expr.type = function_stmt->function_type.get();
+            return SemaResult::ok();
+        }
+        return report_error(SemaResult::undefined_var(&expr));
+    }
+    SemaResult visit_impl(CallExpr& expr)          {
+        auto callee_expr = expr.callee.get();
+        SEMA_TRY(visit(*callee_expr));
+        auto function_type = callee_expr->type->try_cast<FunctionType>();
+        if (function_type) {
+            expr.type = function_type->ret.get();
+            for (u32 i = 0; i < expr.arguments.size(); i++) {
+                auto arg_expr = expr.arguments[i].get();
+                SEMA_TRY(visit(*arg_expr));
+
+                auto fun_param_type = function_type->params[i].get();
+                if (!is_type_compatible(fun_param_type, arg_expr->type.get())) {
+                    return SemaResult::wrong_type(arg_expr, fun_param_type);
+                }
+            }
             return SemaResult::ok();
         }
         else {
-            return report_error(SemaResult::undefined_var(&expr));
+            return SemaResult::uncallable_type(callee_expr);
         }
-    }
-    SemaResult visit_impl(CallExpr& expr)          {
-        return report_error(SemaResult::misc(&expr)); // TODO
     }
 };
 

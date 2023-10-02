@@ -302,7 +302,13 @@ private:
     }
 
     // TODO: Make this much faster
-    bool parse_primitive_type(std::string_view name, PrimTypeKind& prim_kind) {
+    bool parse_primitive_type(std::string_view name, PrimTypeKind& prim_kind, bool include_void = false) {
+        if (include_void) {
+            if (name == "void") {
+                prim_kind = PrimTypeKind::Void;
+                return true;
+            }
+        }
         if (name == "bool") {
             prim_kind = PrimTypeKind::Bool;
         }
@@ -327,14 +333,14 @@ private:
         Type* type = nullptr;
         if (match(TokenType::Colon)) {
             if (!consume(TokenType::Identifier)) {
-                err_msg = "Expect kind name.";
+                err_msg = "Expect type name.";
                 return false;
             }
             Token type_name = previous();
             PrimTypeKind prim_kind;
             auto type_str = get_token_str(type_name);
             if (!parse_primitive_type(type_str, prim_kind)) {
-                err_msg = "Invalid kind name.";
+                err_msg = "Invalid type name.";
                 return false;
             }
             type = alloc<PrimitiveType>(prim_kind);
@@ -390,13 +396,30 @@ private:
         if (!consume(TokenType::RightParen)) {
             return error_stmt("Expect ')' after parameters.");
         }
+        Type* ret_type = nullptr;
+        if (consume(TokenType::Colon)) {
+            if (!consume(TokenType::Identifier)) {
+                return error_stmt("Expect type after ':'.");
+            }
+            auto ret_type_name = get_token_str(previous());
+            PrimTypeKind prim_type_kind;
+            if (!parse_primitive_type(ret_type_name, prim_type_kind, true)) {
+                return error_stmt("Expect valid type after ':'");
+            }
+            ret_type = alloc<PrimitiveType>(prim_type_kind);
+        }
+        else {
+            // Default return type is void.
+            ret_type = alloc<PrimitiveType>(PrimTypeKind::Void);
+        }
 
         if (!consume(TokenType::LeftBrace)) {
             return error_stmt("Expect '{' before function body.");
         }
         return alloc<FunctionStmt>(name,
-                                      alloc_vector_var_decl(std::move(parameters)),
-                                      alloc_vector_ptr(block()));
+                                   alloc_vector_var_decl(std::move(parameters)),
+                                   alloc_vector_ptr(block()),
+                                   ret_type);
     }
 
     Stmt* struct_declaration() {

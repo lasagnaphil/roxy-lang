@@ -15,7 +15,7 @@ enum class TypeKind : u8 {
 
 // Primitive types
 enum class PrimTypeKind : u8 {
-    Bool, Number, String,
+    Void, Bool, Number, String,
 };
 
 struct VarDecl;
@@ -30,6 +30,7 @@ struct Type {
 
     Type(TypeKind kind) : kind(kind) {}
 
+    bool is_void() const;
     bool is_bool() const;
     bool is_number() const;
     bool is_string() const;
@@ -94,11 +95,16 @@ struct StructType : public Type {
 struct FunctionType : public Type {
     static constexpr TypeKind s_kind = TypeKind::Function;
 
-    RelPtr<Type> ret;
     RelSpan<RelPtr<Type>> params;
+    RelPtr<Type> ret;
 
-    FunctionType(Type* ret, Span<RelPtr<Type>> params) : Type(s_kind), ret(ret), params(params) {}
+    FunctionType(Span<RelPtr<Type>> params, Type* ret) : Type(s_kind), params(params), ret(ret) {}
 };
+
+inline bool Type::is_void() const {
+    auto prim_type = try_cast<PrimitiveType>();
+    return prim_type && prim_type->prim_kind == PrimTypeKind::Void;
+}
 
 inline bool Type::is_bool() const {
     auto prim_type = try_cast<PrimitiveType>();

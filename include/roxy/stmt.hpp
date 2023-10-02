@@ -93,9 +93,11 @@ public:
     Token name;
     RelSpan<AstVarDecl> params;
     RelSpan<RelPtr<Stmt>> body;
+    RelPtr<Type> ret_type;
+    RelPtr<FunctionType> function_type = nullptr; // created later in sema analyzer
 
-    FunctionStmt(Token name, Span<AstVarDecl> params, Span<RelPtr<Stmt>> body) :
-        Stmt(s_kind), name(name), params(params), body(body) {}
+    FunctionStmt(Token name, Span<AstVarDecl> params, Span<RelPtr<Stmt>> body, Type* ret_type) :
+        Stmt(s_kind), name(name), params(params), body(body), ret_type(ret_type) {}
 };
 
 struct IfStmt : public Stmt {

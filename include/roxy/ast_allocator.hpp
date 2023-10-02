@@ -13,12 +13,14 @@ class AstAllocator {
 private:
     BumpAllocator m_allocator;
 
+    PrimitiveType* m_prim_type_void;
     PrimitiveType* m_prim_type_bool;
     PrimitiveType* m_prim_type_number;
     PrimitiveType* m_prim_type_string;
 
 public:
     AstAllocator(u64 initial_capacity) : m_allocator(initial_capacity) {
+        m_prim_type_void = m_allocator.emplace<PrimitiveType>(PrimTypeKind::Void);
         m_prim_type_bool = m_allocator.emplace<PrimitiveType>(PrimTypeKind::Bool);
         m_prim_type_number = m_allocator.emplace<PrimitiveType>(PrimTypeKind::Number);
         m_prim_type_string = m_allocator.emplace<PrimitiveType>(PrimTypeKind::String);
@@ -33,12 +35,14 @@ public:
     template <>
     PrimitiveType* alloc<PrimitiveType, PrimTypeKind>(PrimTypeKind&& prim_kind) {
         switch (prim_kind) {
+            case PrimTypeKind::Void: return m_prim_type_void;
             case PrimTypeKind::Bool: return m_prim_type_bool;
             case PrimTypeKind::Number: return m_prim_type_number;
             case PrimTypeKind::String: return m_prim_type_string;
         }
     }
 
+    PrimitiveType* get_void_type() { return m_prim_type_bool; }
     PrimitiveType* get_bool_type() { return m_prim_type_bool; }
     PrimitiveType* get_number_type() { return m_prim_type_number; }
     PrimitiveType* get_string_type() { return m_prim_type_string; }
