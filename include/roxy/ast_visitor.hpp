@@ -83,6 +83,7 @@ public:
             case TypeKind::Primitive:   return static_cast<Derived*>(this)->visit_impl(type.cast<PrimitiveType>());
             case TypeKind::Struct:      return static_cast<Derived*>(this)->visit_impl(type.cast<StructType>());
             case TypeKind::Function:    return static_cast<Derived*>(this)->visit_impl(type.cast<FunctionType>());
+            case TypeKind::Unassigned:  return static_cast<Derived*>(this)->visit_impl(type.cast<UnassignedType>());
         }
     }
 
@@ -90,6 +91,7 @@ public:
     ReturnT visit_impl(PrimitiveType& type)     { return ReturnT{}; }
     ReturnT visit_impl(StructType& type)        { return ReturnT{}; }
     ReturnT visit_impl(FunctionType& type)      { return ReturnT{}; }
+    ReturnT visit_impl(UnassignedType& type)    { return ReturnT{}; }
 };
 
 }

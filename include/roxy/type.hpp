@@ -12,6 +12,7 @@ enum class TypeKind : u8 {
     Primitive,
     Struct,
     Function,
+    Unassigned,
 };
 
 // Primitive types
@@ -38,6 +39,8 @@ struct Type {
 #endif
 
     TypeKind kind;
+    u16 size;
+    u16 alignment;
 
     Type(TypeKind kind) : kind(kind) {}
 
@@ -91,16 +94,22 @@ struct PrimitiveType : public Type {
 
     PrimTypeKind prim_kind;
 
-    PrimitiveType(PrimTypeKind prim_kind) : Type(s_kind), prim_kind(prim_kind) {}
+    static u16 s_prim_type_sizes[(u32)PrimTypeKind::_size];
+
+    PrimitiveType(PrimTypeKind prim_kind) : Type(s_kind), prim_kind(prim_kind) {
+        size = alignment = s_prim_type_sizes[(u32)prim_kind];
+    }
 };
 
 struct StructType : public Type {
     static constexpr TypeKind s_kind = TypeKind::Struct;
 
     Token name;
-    RelSpan<AstVarDecl> decl;
+    RelSpan<AstVarDecl> declarations;
 
-    StructType(Token name, Span<AstVarDecl> decl) : Type(s_kind), name(name), decl(decl) {}
+    StructType(Token name, Span<AstVarDecl> declarations) : Type(s_kind), name(name), declarations(declarations) {
+        size = alignment = 0;
+    }
 };
 
 struct FunctionType : public Type {
@@ -109,7 +118,19 @@ struct FunctionType : public Type {
     RelSpan<RelPtr<Type>> params;
     RelPtr<Type> ret;
 
-    FunctionType(Span<RelPtr<Type>> params, Type* ret) : Type(s_kind), params(params), ret(ret) {}
+    FunctionType(Span<RelPtr<Type>> params, Type* ret) : Type(s_kind), params(params), ret(ret) {
+        size = alignment = 8;
+    }
+};
+
+struct UnassignedType : public Type {
+    static constexpr TypeKind s_kind = TypeKind::Unassigned;
+
+    Token name;
+
+    UnassignedType(Token name) : Type(s_kind), name(name) {
+        size = alignment = 0;
+    }
 };
 
 inline bool Type::is_void() const {

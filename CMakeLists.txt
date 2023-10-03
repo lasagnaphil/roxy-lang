@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 add_library(roxy STATIC
         src/roxy/scanner.cpp
         src/roxy/parser.cpp
+        src/roxy/type.cpp
         src/roxy/value.cpp
         src/roxy/object.cpp
         src/roxy/string.cpp

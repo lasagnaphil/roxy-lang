@@ -25,8 +25,8 @@ struct AnyValue {
         i16 value_i16;
         i32 value_i32;
         i64 value_i64;
-        float value_f32;
-        float value_f64;
+        f32 value_f32;
+        f64 value_f64;
         Obj* obj;
     };
 

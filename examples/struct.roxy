@@ -1,7 +1,30 @@
 struct AttackSkill {
     name: string
-    damage: number
+    damage: i64
+    success_rate: float
     does_crit: bool
-    crit_chance: number
-    crit_multiplier: number
+    crit_chance: int
+    crit_multiplier: int
 }
+
+struct DefendSkill {
+    name: string
+    success_rate: float
+    damage_reduction_multiplier: float
+}
+
+struct Player {
+    name: string
+    attack_skill: AttackSkill
+    defend_skill: DefendSkill
+    health: i32
+}
+
+fun add_skills_to_player(player: Player, attack_skill: AttackSkill, defend_skill: DefendSkill) {
+    // TODO
+}
+
+var player: Player;
+var attack_skill: AttackSkill;
+var defend_skill: DefendSkill;
+add_skills_to_player(player, attack_skill, defend_skill);

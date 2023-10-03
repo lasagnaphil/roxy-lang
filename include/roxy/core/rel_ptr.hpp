@@ -95,6 +95,8 @@ struct RelSpan {
     u32 size() const { return m_size; }
     i32 ssize() const { return (i32)m_size; }
 
+    Span<T> to_span() { return {m_data.get(), m_size}; }
+
 private:
     RelPtr<T, Alignment> m_data;
     u32 m_size;

@@ -221,10 +221,13 @@ public:
         }
     }
     void visit_impl(StructType& type) {
-        begin_paren("struct");
+#if 1
+        add_identifier(fmt::format("'{}", get_token_str(type.name)));
+#else
+        begin_paren("'struct");
         add_identifier(type.name);
         inc_indent(); newline();
-        for (auto& var_decl : type.decl) {
+        for (auto& var_decl : type.declarations) {
             begin_paren();
             add_identifier(var_decl.name);
             visit(*var_decl.type);
@@ -232,6 +235,7 @@ public:
             newline();
         }
         end_paren(); dec_indent();
+#endif
     }
     void visit_impl(FunctionType& type) {
         begin_paren("fun");
@@ -241,6 +245,9 @@ public:
         add_identifier("->");
         visit(*type.ret);
         end_paren();
+    }
+    void visit_impl(UnassignedType& type) {
+        add_identifier(fmt::format("'{}", get_token_str(type.name)));
     }
 
 private:

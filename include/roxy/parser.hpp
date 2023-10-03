@@ -301,8 +301,7 @@ private:
         return alloc<ContinueStmt>();
     }
 
-    // TODO: Make this much faster
-    bool parse_primitive_type(std::string_view name, PrimTypeKind& prim_kind, bool include_void = false) {
+    static bool parse_primitive_type(std::string_view name, PrimTypeKind& prim_kind, bool include_void = false) {
         switch (name[0]) {
             case 'v':
                 if (include_void && name.size() == 4 && name.substr(1, 3) == "oid") {
@@ -383,11 +382,12 @@ private:
             Token type_name = previous();
             PrimTypeKind prim_kind;
             auto type_str = get_token_str(type_name);
-            if (!parse_primitive_type(type_str, prim_kind)) {
-                err_msg = "Invalid type name.";
-                return false;
+            if (parse_primitive_type(type_str, prim_kind)) {
+                type = alloc<PrimitiveType>(prim_kind);
             }
-            type = alloc<PrimitiveType>(prim_kind);
+            else {
+                type = alloc<UnassignedType>(type_name);
+            }
         }
         variable = VarDecl(name, type);
         return true;
@@ -445,12 +445,15 @@ private:
             if (!consume(TokenType::Identifier)) {
                 return error_stmt("Expect type after ':'.");
             }
-            auto ret_type_name = get_token_str(previous());
+            auto ret_type_name = previous();
+            auto ret_type_str = get_token_str(ret_type_name);
             PrimTypeKind prim_type_kind;
-            if (!parse_primitive_type(ret_type_name, prim_type_kind, true)) {
-                return error_stmt("Expect valid type after ':'");
+            if (parse_primitive_type(ret_type_str, prim_type_kind, true)) {
+                ret_type = alloc<PrimitiveType>(prim_type_kind);
             }
-            ret_type = alloc<PrimitiveType>(prim_type_kind);
+            else {
+                ret_type = alloc<UnassignedType>(ret_type_name);
+            }
         }
         else {
             // Default return type is void.

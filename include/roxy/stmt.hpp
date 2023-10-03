@@ -82,6 +82,7 @@ struct StructStmt : public Stmt {
 
     Token name;
     RelSpan<AstVarDecl> fields;
+    RelPtr<Type> type = nullptr; // created later in sema analyzer
 
     StructStmt(Token name, Span<AstVarDecl> fields) : Stmt(s_kind), name(name), fields(fields) {}
 };
