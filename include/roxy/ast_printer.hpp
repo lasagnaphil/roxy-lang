@@ -43,6 +43,13 @@ public:
         return res;
     }
 
+    std::string to_string(Expr& stmt) {
+        visit(stmt);
+        auto res = m_buf;
+        m_buf.clear();
+        return res;
+    }
+
     std::string to_string(Type& type) {
         visit(type);
         auto res = m_buf;
@@ -216,6 +223,19 @@ public:
         else {
             add_identifier(expr.name);
         }
+    }
+    void visit_impl(GetExpr& expr) {
+        begin_paren("get");
+        visit(*expr.object);
+        add_identifier(get_token_str(expr.name));
+        end_paren();
+    }
+    void visit_impl(SetExpr& expr) {
+        begin_paren("set");
+        visit(*expr.object);
+        add_identifier(get_token_str(expr.name));
+        visit(*expr.value);
+        end_paren();
     }
 
     void visit_impl(PrimitiveType& type) {

@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
             auto line = scanner.get_line(error_msg.loc);
             std::string_view str = {reinterpret_cast<const char* const>(scanner.source() + error_msg.loc.source_loc),
                                     (size_t)error_msg.loc.length};
-            fmt::print("[line {}] Error at '{}': {}", line, str, error_msg.message);
+            fmt::print("[line {}] Error at '{}': {}\n", line, str, error_msg.message);
         }
 
         fmt::print("\nAfter semantic analysis:\n");

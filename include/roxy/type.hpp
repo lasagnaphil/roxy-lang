@@ -99,6 +99,18 @@ struct PrimitiveType : public Type {
     PrimitiveType(PrimTypeKind prim_kind) : Type(s_kind), prim_kind(prim_kind) {
         size = alignment = s_prim_type_sizes[(u32)prim_kind];
     }
+
+    bool is_signed_integer() const {
+        return prim_kind >= PrimTypeKind::I8 && prim_kind <= PrimTypeKind::I64;
+    }
+
+    bool is_unsigned_integer() const {
+        return prim_kind >= PrimTypeKind::U8 && prim_kind <= PrimTypeKind::U64;
+    }
+
+    bool is_floating_point_num() const {
+        return prim_kind == PrimTypeKind::F32 || prim_kind == PrimTypeKind::F64;
+    }
 };
 
 struct StructType : public Type {

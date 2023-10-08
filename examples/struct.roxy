@@ -21,10 +21,16 @@ struct Player {
 }
 
 fun add_skills_to_player(player: Player, attack_skill: AttackSkill, defend_skill: DefendSkill) {
-    // TODO
+    player.attack_skill = attack_skill;
+    player.defend_skill = defend_skill;
 }
 
 var player: Player;
+player.name = "Buddy";
+
 var attack_skill: AttackSkill;
 var defend_skill: DefendSkill;
+
 add_skills_to_player(player, attack_skill, defend_skill);
+
+player.attack_skill.damage = 20;

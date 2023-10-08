@@ -98,6 +98,9 @@ enum class SemaResultType {
     IncompatibleTypes,
     CannotInferType,
     CannotFindType,
+    CannotDotAccessOnType,
+    CannotFindField,
+    IncompatibleFieldType,
     Misc,
 };
 
@@ -112,6 +115,7 @@ struct SemaResult {
     SemaResultType res_type = SemaResultType::Ok;
 
     Expr* cur_expr = nullptr;
+    Token cur_name = {};
     AstVarDecl* cur_var_decl = nullptr;
     Expr* other_expr = nullptr;
     Type* expected_type = nullptr;
@@ -160,7 +164,20 @@ struct SemaResult {
                     .loc = unassigned_type.name.get_source_loc(),
                     .message = fmt::format("Cannot find type {}.", unassigned_type.name.str(source))
                 };
-            }
+            };
+            case SemaResultType::CannotDotAccessOnType: return {
+                .loc = cur_expr->get_source_loc(),
+                .message = fmt::format("Cannot dot access on type {}",
+                                       AstPrinter(source).to_string(*expected_type))
+            };
+            case SemaResultType::CannotFindField: return {
+                .loc = cur_expr->get_source_loc(),
+                .message = fmt::format("Cannot find field.")
+            };
+            case SemaResultType::IncompatibleFieldType: return {
+                .loc = cur_expr->get_source_loc(),
+                .message = fmt::format("Incompatible field type.")
+            };
             case SemaResultType::Misc: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = "Misc."
@@ -184,7 +201,30 @@ inline bool is_type_same(Type* lhs, Type* rhs) {
 }
 
 inline bool is_type_compatible(Type* lhs, Type* rhs) {
-    return is_type_same(lhs, rhs);
+    if (lhs == rhs) return true;
+    if (lhs->kind != rhs->kind) return false;
+    switch (lhs->kind) {
+        case TypeKind::Primitive: {
+            auto& lhs_type = lhs->cast<PrimitiveType>();
+            auto& rhs_type = rhs->cast<PrimitiveType>();
+
+            // implicit numeric type conversions (only to larger number type)
+            if (lhs_type.is_signed_integer() && rhs_type.is_signed_integer()) {
+                return lhs_type.prim_kind >= rhs_type.prim_kind;
+            }
+            else if (lhs_type.is_unsigned_integer() && rhs_type.is_unsigned_integer()) {
+                return lhs_type.prim_kind >= rhs_type.prim_kind;
+            }
+            else if (lhs_type.is_floating_point_num() && rhs_type.is_floating_point_num()) {
+                return lhs_type.prim_kind >= rhs_type.prim_kind;
+            }
+            else {
+                return lhs_type.prim_kind == rhs_type.prim_kind;
+            }
+        }
+        default:
+            return false; // TODO
+    }
 }
 
 class SemaAnalyzer :
@@ -349,7 +389,12 @@ public:
             if (unassigned_type) {
                 auto var_type_name = unassigned_type->name.str(m_source);
                 auto struct_stmt = m_cur_env->get_struct(var_type_name);
-                stmt.var.type = struct_stmt->type.get();
+                if (struct_stmt) {
+                    stmt.var.type = struct_stmt->type.get();
+                }
+                else {
+                    return error_cannot_find_type(&stmt.var);
+                }
             }
 
             // insert default value
@@ -567,6 +612,64 @@ public:
             return error_uncallable_type(callee_expr);
         }
     }
+    SemaResult visit_impl(GetExpr& expr)           {
+        auto obj_expr = expr.object.get();
+        SEMA_TRY(visit(*obj_expr));
+        auto obj_type = obj_expr->type.get();
+        if (auto obj_struct_type = obj_type->try_cast<StructType>()) {
+            Type* type = nullptr;
+            for (auto& var_decl : obj_struct_type->declarations) {
+                auto var_name = var_decl.name.str(m_source);
+                if (var_name == expr.name.str(m_source)) {
+                    type = var_decl.type.get();
+                    break;
+                }
+            }
+            if (type) {
+                expr.type = type;
+                return ok();
+            }
+            else {
+                return error_cannot_find_field(&expr);
+            }
+        }
+        else {
+            return error_cannot_dot_access_on_type(obj_expr, obj_type);
+        }
+    }
+    SemaResult visit_impl(SetExpr& expr)           {
+        auto obj_expr = expr.object.get();
+        SEMA_TRY(visit(*obj_expr));
+        auto obj_type = obj_expr->type.get();
+        if (auto obj_struct_type = obj_type->try_cast<StructType>()) {
+            Type* type = nullptr;
+            for (auto& var_decl : obj_struct_type->declarations) {
+                auto var_name = var_decl.name.str(m_source);
+                if (var_name == expr.name.str(m_source)) {
+                    type = var_decl.type.get();
+                    break;
+                }
+            }
+            if (type) {
+                expr.type = type;
+                auto value_expr = expr.value.get();
+                SEMA_TRY(visit(*value_expr));
+                Type* value_type = value_expr->type.get();
+                if (is_type_compatible(type, value_type)) {
+                    return ok();
+                }
+                else {
+                    return error_incompatible_field_type(&expr, expr.name, type);
+                }
+            }
+            else {
+                return error_cannot_find_field(&expr);
+            }
+        }
+        else {
+            return error_cannot_dot_access_on_type(obj_expr, obj_type);
+        }
+    }
 
     SemaResult ok() {
         return {
@@ -630,6 +733,27 @@ public:
         return report_error({
                 .res_type = SemaResultType::CannotFindType,
                 .cur_var_decl = var_decl
+        });
+    }
+    SemaResult error_cannot_dot_access_on_type(Expr* expr, Type* type) {
+        return report_error({
+                .res_type = SemaResultType::CannotDotAccessOnType,
+                .cur_expr = expr,
+                .expected_type = type
+        });
+    }
+    SemaResult error_cannot_find_field(Expr* expr) {
+        return report_error({
+                .res_type = SemaResultType::CannotFindField,
+                .cur_expr = expr,
+        });
+    }
+    SemaResult error_incompatible_field_type(Expr* expr, Token name, Type* type) {
+        return report_error({
+                .res_type = SemaResultType::IncompatibleFieldType,
+                .cur_expr = expr,
+                .cur_name = name,
+                .expected_type = type
         });
     }
     SemaResult error_misc(Expr* expr) {

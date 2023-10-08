@@ -671,7 +671,26 @@ private:
     }
 
     Expr* dot(bool can_assign, Expr* left) {
-        return error_expr(get_current_token_loc(), "Unimplemented!");
+        u32 start_loc = get_current_token_loc().source_loc;
+        if (!consume(TokenType::Identifier)) {
+            return error_expr(get_current_token_loc(), "Expect property name after '.'.");
+        }
+        Token name = previous();
+        if (can_assign && match(TokenType::Equal)) {
+            Expr* right = expression();
+            u32 end_loc = get_current_token_loc().source_loc;
+            auto loc = SourceLocation::from_start_end(start_loc, end_loc);
+            return alloc<SetExpr>(loc, left, name, right);
+        }
+        else if (match(TokenType::LeftParen)) {
+            // TODO: Method calls
+            return error_expr(get_current_token_loc(), "Unimplemented!");
+        }
+        else {
+            u32 end_loc = get_current_token_loc().source_loc;
+            auto loc = SourceLocation::from_start_end(start_loc, end_loc);
+            return alloc<GetExpr>(loc, left, name);
+        }
     }
 
     Expr* logical_and(bool can_assign, Expr* left) {

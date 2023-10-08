@@ -47,7 +47,8 @@ private:
     }
 
     void new_line() {
-        m_line_start.push_back(m_start - m_source);
+        m_line_start[m_line_start.size() - 1] = m_current - m_source;
+        m_line_start.push_back(UINT32_MAX);
     }
 
     Token make_token(TokenType type) const {

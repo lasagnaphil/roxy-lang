@@ -1,6 +1,8 @@
 #include "roxy/scanner.hpp"
 #include "roxy/core/binary_search.hpp"
 
+#include <cstring>
+
 namespace rx {
 
 bool Scanner::identifiers_equal(const Token& a, const Token& b) {
@@ -26,6 +28,7 @@ Scanner::Scanner(const u8* source) {
 }
 
 u32 Scanner::get_line(SourceLocation loc) const {
+    if (m_line_start.size() == 1) return 1;
     return binary_search(m_line_start.data(), m_line_start.size(), loc.source_loc) + 1;
 }
 
@@ -144,20 +147,21 @@ Token Scanner::number() {
     if (peek() == '.' && is_digit(peek_next())) {
         advance();
         while (is_digit(peek())) advance();
-        if (peek() == 'f' && peek() == 'd') {
+        if (peek() == 'f' || peek() == 'F' || peek() == 'd' || peek() == 'D') {
             advance();
         }
         return make_token(TokenType::NumberFloat);
     }
     else {
-        if (peek() == 'u') {
+        if (peek() == 'u' || peek() == 'U') {
             advance();
-            if (peek() == 'l') advance();
+            if (peek() == 'l' || peek() == 'L') advance();
         }
-        else if (peek() == 'i') {
+        else if (peek() == 'i' || peek() == 'I') {
             advance();
-            if (peek() == 'l') advance();
+            if (peek() == 'l' || peek() == 'L') advance();
         }
+        else if (peek() == 'l' || peek() == 'L') advance();
         return make_token(TokenType::NumberInt);
     }
 }

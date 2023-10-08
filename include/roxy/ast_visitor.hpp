@@ -24,6 +24,8 @@ public:
             case ExprKind::Unary:       return static_cast<Derived*>(this)->visit_impl(expr.cast<UnaryExpr>());
             case ExprKind::Variable:    return static_cast<Derived*>(this)->visit_impl(expr.cast<VariableExpr>());
             case ExprKind::Call:        return static_cast<Derived*>(this)->visit_impl(expr.cast<CallExpr>());
+            case ExprKind::Get:         return static_cast<Derived*>(this)->visit_impl(expr.cast<GetExpr>());
+            case ExprKind::Set:         return static_cast<Derived*>(this)->visit_impl(expr.cast<SetExpr>());
         }
     }
 
@@ -37,6 +39,8 @@ public:
     ReturnT visit_impl(UnaryExpr& expr)         { return ReturnT{}; }
     ReturnT visit_impl(VariableExpr& expr)      { return ReturnT{}; }
     ReturnT visit_impl(CallExpr& expr)          { return ReturnT{}; }
+    ReturnT visit_impl(GetExpr& expr)           { return ReturnT{}; }
+    ReturnT visit_impl(SetExpr& expr)           { return ReturnT{}; }
 
 };
 
