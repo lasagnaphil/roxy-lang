@@ -38,6 +38,18 @@ enum class TokenType : u8 {
     ErrorUnterminatedString,
 };
 
+
+struct SourceLocation {
+    u32 source_loc;
+    u16 length;
+
+    static SourceLocation from_start_end(u32 start, u32 end) {
+        u32 length = end - start;
+        assert(length <= UINT16_MAX);
+        return {start, (u16)length};
+    }
+};
+
 struct Token {
     u32 source_loc;
     u16 length;
@@ -47,6 +59,9 @@ struct Token {
 
     Token(u32 source_loc, u16 length, TokenType type) :
             source_loc(source_loc), length(length), type(type) {}
+
+    Token(SourceLocation loc, TokenType type) :
+            source_loc(loc.source_loc), length(loc.length), type(type) {}
 
     Token(u32 source_loc, TokenType type) :
             source_loc(source_loc), length(0), type(type) {
@@ -59,6 +74,10 @@ struct Token {
 
     std::string_view str(const u8* source) const {
         return {reinterpret_cast<const char*>(source + source_loc), length};
+    }
+
+    SourceLocation get_source_loc() const {
+        return {source_loc, length};
     }
 };
 

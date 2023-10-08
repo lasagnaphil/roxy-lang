@@ -3,8 +3,11 @@
 #include "roxy/core/vector.hpp"
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/tsl/robin_map.h"
-#include "roxy/ast_visitor.hpp"
 #include "roxy/ast_allocator.hpp"
+#include "roxy/ast_visitor.hpp"
+#include "roxy/ast_printer.hpp"
+
+#include "roxy/fmt/format.h"
 
 namespace rx {
 
@@ -100,6 +103,11 @@ enum class SemaResultType {
 
 // TODO: better SemaResult ADT...
 
+struct ErrorMessage {
+    SourceLocation loc;
+    std::string message;
+};
+
 struct SemaResult {
     SemaResultType res_type = SemaResultType::Ok;
 
@@ -110,28 +118,54 @@ struct SemaResult {
 
     bool is_ok() const { return res_type == SemaResultType::Ok; }
 
-    std::string to_error_msg() const {
+    ErrorMessage to_error_msg(const u8* source) const {
         switch (res_type) {
-            case SemaResultType::UndefinedVar:
-                return "Undefined variable.";
-            case SemaResultType::WrongType:
-                return "Wrong type.";
-            case SemaResultType::InvalidInitializerType:
-                return "Invalid initializer type.";
-            case SemaResultType::InvalidAssignedType:
-                return "Invalid assignment type.";
-            case SemaResultType::InvalidReturnType:
-                return "Invalid return type.";
-            case SemaResultType::IncompatibleTypes:
-                return "Incompatible types.";
-            case SemaResultType::CannotInferType:
-                return "Cannot infer type.";
-            case SemaResultType::CannotFindType:
-                return "Cannot find type.";
-            case SemaResultType::Misc:
-                return "Misc.";
-            default:
-                return "";
+            case SemaResultType::UndefinedVar: return {
+                .loc = cur_expr->get_source_loc(),
+                .message = "Undefined variable."
+            };
+            case SemaResultType::WrongType: return {
+                .loc = cur_expr->get_source_loc(),
+                .message = fmt::format("Wrong type: expected {}.",
+                                       AstPrinter(source).to_string(*expected_type))
+            };
+            case SemaResultType::InvalidInitializerType: return {
+                .loc = cur_expr->get_source_loc(),
+                .message = fmt::format("Invalid initializer type: expected {}.",
+                                       AstPrinter(source).to_string(*expected_type))
+            };
+            case SemaResultType::InvalidAssignedType: return {
+                .loc = cur_expr->get_source_loc(),
+                .message = fmt::format("Invalid assignment type: expected {}.",
+                                       AstPrinter(source).to_string(*cur_var_decl->type))
+            };
+            case SemaResultType::InvalidReturnType: return {
+                .loc = cur_expr->get_source_loc(),
+                .message = fmt::format("Invalid return type: expected {}.",
+                                       AstPrinter(source).to_string(*expected_type))
+            };
+            case SemaResultType::IncompatibleTypes: return {
+                .loc = cur_expr->get_source_loc(),
+                .message = fmt::format("Incompatible types: expected {}.",
+                                       AstPrinter(source).to_string(*expected_type))
+            };
+            case SemaResultType::CannotInferType: return {
+                .loc = cur_expr->get_source_loc(),
+                .message = fmt::format("Cannot infer type.",
+                                       AstPrinter(source).to_string(*expected_type))
+            };
+            case SemaResultType::CannotFindType:  {
+                auto unassigned_type = cur_var_decl->type->cast<UnassignedType>();
+                return {
+                    .loc = unassigned_type.name.get_source_loc(),
+                    .message = fmt::format("Cannot find type {}.", unassigned_type.name.str(source))
+                };
+            }
+            case SemaResultType::Misc: return {
+                .loc = cur_expr->get_source_loc(),
+                .message = "Misc."
+            };
+            default: return {};
         }
     }
 };
@@ -216,7 +250,7 @@ public:
             auto unassigned_type = field_type->try_cast<UnassignedType>();
             if (unassigned_type) {
                 auto field_type_name = unassigned_type->name.str(m_source);
-                auto found_struct= m_cur_env->get_struct(field_type_name);
+                auto found_struct = m_cur_env->get_struct(field_type_name);
                 if (found_struct) {
                     field.type = found_struct->type.get();
                 }
@@ -304,7 +338,7 @@ public:
             else {
                 Type* var_type = stmt.var.type.get();
                 if (!is_type_compatible(var_type, init_expr->type.get())) {
-                    return error_invalid_initializer_type(init_expr);
+                    return error_invalid_initializer_type(init_expr, var_type);
                 }
             }
         }
@@ -552,10 +586,11 @@ public:
                 .expected_type = expected_type
         });
     }
-    SemaResult error_invalid_initializer_type(Expr* initializer_expr) {
+    SemaResult error_invalid_initializer_type(Expr* initializer_expr, Type* expected_type) {
         return report_error({
                 .res_type = SemaResultType::InvalidInitializerType,
-                .cur_expr = initializer_expr
+                .cur_expr = initializer_expr,
+                .expected_type = expected_type
         });
     }
     SemaResult error_invalid_assigned_type(AstVarDecl* var_decl, Expr* assigned_expr) {

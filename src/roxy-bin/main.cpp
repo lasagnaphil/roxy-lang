@@ -36,10 +36,14 @@ int main(int argc, char** argv) {
 
         auto sema_errors = sema_analyzer.check(block_stmt);
 
-        fmt::print("Sema errors: {}\n", sema_errors.empty()? "none" : std::to_string(sema_errors.size()));
+        fmt::print("\nSema errors: {}\n", sema_errors.empty()? "none" : std::to_string(sema_errors.size()));
 
         for (auto err : sema_errors) {
-            fmt::print("- {}\n", err.to_error_msg());
+            auto error_msg = err.to_error_msg(scanner.source());
+            auto line = scanner.get_line(error_msg.loc);
+            std::string_view str = {reinterpret_cast<const char* const>(scanner.source() + error_msg.loc.source_loc),
+                                    (size_t)error_msg.loc.length};
+            fmt::print("[line {}] Error at '{}': {}", line, str, error_msg.message);
         }
 
         fmt::print("\nAfter semantic analysis:\n");

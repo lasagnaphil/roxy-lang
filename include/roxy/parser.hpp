@@ -113,14 +113,22 @@ private:
         return token.str(m_scanner->source());
     }
 
-    ErrorExpr* error_expr(std::string_view message) {
+    SourceLocation get_previous_token_loc() const {
+        return {m_previous.source_loc, m_previous.length};
+    }
+
+    SourceLocation get_current_token_loc() const {
+        return {m_previous.source_loc, m_previous.length};
+    }
+
+    ErrorExpr* error_expr(SourceLocation loc, std::string_view message) {
         error_at_current(message);
-        return alloc<ErrorExpr>();
+        return alloc<ErrorExpr>(loc, message);
     }
 
     ErrorStmt* error_stmt(std::string_view message) {
         error_at_current(message);
-        return alloc<ErrorStmt>();
+        return alloc<ErrorStmt>(message);
     }
 
     Expr* expression() {
@@ -236,9 +244,17 @@ private:
             initializer = expression_statement();
         }
 
-        Expr* condition = nullptr;
-        if (!check(TokenType::Semicolon)) {
+        SourceLocation condition_loc;
+        Expr* condition;
+        if (check(TokenType::Semicolon)) {
+            condition = nullptr;
+            condition_loc = {get_previous_token_loc().source_loc, 0};
+        }
+        else {
+            u32 start_loc = get_current_token_loc().source_loc;
             condition = expression();
+            u32 end_loc = get_current_token_loc().source_loc;
+            condition_loc = SourceLocation::from_start_end(start_loc, end_loc);
         }
         if (!consume(TokenType::Semicolon)) {
             return error_stmt("Expect ';' after loop condition.");
@@ -260,7 +276,7 @@ private:
         }
 
         if (condition == nullptr) {
-            condition = alloc<LiteralExpr>(AnyValue(true));
+            condition = alloc<LiteralExpr>(condition_loc, AnyValue(true));
         }
         body = alloc<WhileStmt>(condition, body);
 
@@ -505,45 +521,51 @@ private:
     }
 
     Expr* grouping(bool can_assign) {
+        u32 start_loc = get_current_token_loc().source_loc;
         Expr* expr = expression();
         if (!consume(TokenType::RightParen)) {
-            error_at_current("Expect ')' after expression.");
-            return alloc<ErrorExpr>();
+            return error_expr(get_current_token_loc(), "Expect ')' after expression.");
         }
-        return alloc<GroupingExpr>(expr);
+        u32 end_loc = get_current_token_loc().source_loc;
+        auto loc = SourceLocation::from_start_end(start_loc, end_loc);
+        return alloc<GroupingExpr>(loc, expr);
     }
 
     Expr* number_i(bool can_assign) {
         auto str = std::string(get_token_str(previous()));
+        auto token_loc = get_previous_token_loc();
+
         if (tolower(str[str.size() - 1]) == 'l') {
             if (tolower(str[str.size() - 2]) == 'u') {
                 u64 value = std::stoull(str);
-                return alloc<LiteralExpr>(AnyValue(value));
+                return alloc<LiteralExpr>(token_loc, AnyValue(value));
             }
             else {
                 i64 value = std::stoll(str);
-                return alloc<LiteralExpr>(AnyValue(value));
+                return alloc<LiteralExpr>(token_loc, AnyValue(value));
             }
         }
         else if (tolower(str[str.size() - 1]) == 'u') {
             u32 value = std::stoul(str);
-            return alloc<LiteralExpr>(AnyValue(value));
+            return alloc<LiteralExpr>(token_loc, AnyValue(value));
         }
         else {
             i32 value = std::stoi(str);
-            return alloc<LiteralExpr>(AnyValue(value));
+            return alloc<LiteralExpr>(token_loc, AnyValue(value));
         }
     }
 
     Expr* number_f(bool can_assign) {
         auto str = std::string(get_token_str(previous()));
+        auto token_loc = get_previous_token_loc();
+
         if (tolower(str[str.size() - 1]) == 'f') {
             float value = std::stof(str);
-            return alloc<LiteralExpr>(AnyValue(value));
+            return alloc<LiteralExpr>(token_loc, AnyValue(value));
         }
         else {
             double value = std::stod(str);
-            return alloc<LiteralExpr>(AnyValue(value));
+            return alloc<LiteralExpr>(token_loc, AnyValue(value));
         }
     }
 
@@ -552,35 +574,37 @@ private:
         // TODO: store the string in a constant table
         ObjString* str = m_string_interner->create_string(contents);
         auto value = AnyValue(str);
-        return alloc<LiteralExpr>(AnyValue(str));
+        return alloc<LiteralExpr>(get_previous_token_loc(), AnyValue(str));
     }
 
     Expr* literal(bool can_assign) {
+        auto token_loc = get_previous_token_loc();
         switch (previous().type) {
-            case TokenType::False: return alloc<LiteralExpr>(AnyValue(false));
-            case TokenType::True: return alloc<LiteralExpr>(AnyValue(true));
-            case TokenType::Nil: return alloc<LiteralExpr>(AnyValue());
-            default: return alloc<ErrorExpr>();
+            case TokenType::False: return alloc<LiteralExpr>(token_loc, AnyValue(false));
+            case TokenType::True: return alloc<LiteralExpr>(token_loc, AnyValue(true));
+            case TokenType::Nil: return alloc<LiteralExpr>(token_loc, AnyValue());
+            default: return error_expr(get_current_token_loc(), "Unreachable code!");
         }
     }
 
     Expr* table(bool can_assign) {
-        error_unimplemented();
-        return alloc<ErrorExpr>();
+        return error_expr(get_current_token_loc(), "Unimplemented!");
     }
 
     Expr* array(bool can_assign) {
-        error_unimplemented();
-        return alloc<ErrorExpr>();
+        return error_expr(get_current_token_loc(), "Unimplemented!");
     }
 
     Expr* named_variable(Token name, bool can_assign) {
+        auto start_loc = get_current_token_loc().source_loc;
         if (can_assign && match(TokenType::Equal)) {
             Expr* value = expression();
-            return alloc<AssignExpr>(name, value);
+            auto end_loc = get_current_token_loc().source_loc;
+            auto loc = SourceLocation {start_loc, (u16)(end_loc - start_loc)};
+            return alloc<AssignExpr>(loc, name, value);
         }
         else {
-            return alloc<VariableExpr>(name);
+            return alloc<VariableExpr>(name.get_source_loc(), name);
         }
     }
 
@@ -589,74 +613,101 @@ private:
     }
 
     Expr* super(bool can_assign) {
-        error_unimplemented();
-        return alloc<ErrorExpr>();
+        return error_expr(get_current_token_loc(), "Unimplemented!");
     }
 
     Expr* this_(bool can_assign) {
-        error_unimplemented();
-        return alloc<ErrorExpr>();
+        return error_expr(get_current_token_loc(), "Unimplemented!");
     }
 
     Expr* unary(bool can_assign) {
+        u32 start_loc = get_current_token_loc().source_loc;
+
         Token op = previous();
         Expr* expr = parse_precedence(Precedence::Unary);
-        return alloc<UnaryExpr>(op, expr);
+
+        u32 end_loc = get_current_token_loc().source_loc;
+        auto loc = SourceLocation::from_start_end(start_loc, end_loc);
+        return alloc<UnaryExpr>(loc, op, expr);
     }
 
     Expr* binary(bool can_assign, Expr* left) {
+        u32 start_loc = get_current_token_loc().source_loc;
+
         Token op = previous();
         ParseRule rule = get_rule(op.type);
         Expr* right = parse_precedence((Precedence)((u32)rule.precedence + 1));
-        return alloc<BinaryExpr>(left, op, right);
+
+        u32 end_loc = get_current_token_loc().source_loc;
+        auto loc = SourceLocation::from_start_end(start_loc, end_loc);
+        return alloc<BinaryExpr>(loc, left, op, right);
     }
 
     Expr* call(bool can_assign, Expr* left) {
+        u32 start_loc = get_current_token_loc().source_loc;
         Vector<Expr*> arguments;
         if (!check(TokenType::RightParen)) {
             do {
                 if (arguments.size() == 255) {
-                    return error_expr("Can't have more than 255 arguments.");
+                    u32 end_loc = get_current_token_loc().source_loc;
+                    auto loc = SourceLocation::from_start_end(start_loc, end_loc);
+                    return error_expr(loc, "Can't have more than 255 arguments.");
                 }
                 arguments.push_back(expression());
             } while (match(TokenType::Comma));
         }
         if (!consume(TokenType::RightParen)) {
-            return error_expr("Expect ')' after arguments.");
+            return error_expr(get_current_token_loc(), "Expect ')' after arguments.");
         }
         Token paren = previous();
-        return alloc<CallExpr>(left, paren, alloc_vector_ptr(std::move(arguments)));
+
+        u32 end_loc = get_current_token_loc().source_loc;
+        auto loc = SourceLocation::from_start_end(start_loc, end_loc);
+        return alloc<CallExpr>(loc, left, paren, alloc_vector_ptr(std::move(arguments)));
     }
 
     Expr* subscript(bool can_assign, Expr* left) {
-        error_unimplemented();
-        return alloc<ErrorExpr>();
+        return error_expr(get_current_token_loc(), "Unimplemented!");
     }
 
     Expr* dot(bool can_assign, Expr* left) {
-        error_unimplemented();
-        return alloc<ErrorExpr>();
+        return error_expr(get_current_token_loc(), "Unimplemented!");
     }
 
     Expr* logical_and(bool can_assign, Expr* left) {
+        u32 start_loc = get_current_token_loc().source_loc;
+
         Token op = previous();
         Expr* right = parse_precedence(Precedence::And);
-        return alloc<BinaryExpr>(left, op, right);
+
+        u32 end_loc = get_current_token_loc().source_loc;
+        auto loc = SourceLocation::from_start_end(start_loc, end_loc);
+        return alloc<BinaryExpr>(loc, left, op, right);
     }
 
     Expr* logical_or(bool can_assign, Expr* left) {
+        u32 start_loc = get_current_token_loc().source_loc;
+
         Token op = previous();
         Expr* right = parse_precedence(Precedence::Or);
-        return alloc<BinaryExpr>(left, op, right);
+
+        u32 end_loc = get_current_token_loc().source_loc;
+        auto loc = SourceLocation::from_start_end(start_loc, end_loc);
+        return alloc<BinaryExpr>(loc, left, op, right);
     }
 
     Expr* ternary(bool can_assign, Expr* cond) {
+        u32 start_loc = get_current_token_loc().source_loc;
+
         Expr* left = parse_precedence(Precedence::Ternary);
         if (!consume(TokenType::Colon)) {
-            return error_expr("Expect ':' after expression.");
+            return error_expr(get_current_token_loc(), "Expect ':' after expression.");
         }
         Expr* right = parse_precedence(Precedence::Ternary);
-        return alloc<TernaryExpr>(cond, left, right);
+
+        u32 end_loc = get_current_token_loc().source_loc;
+        auto loc = SourceLocation::from_start_end(start_loc, end_loc);
+        return alloc<TernaryExpr>(loc, cond, left, right);
     }
 
     Expr* parse_precedence(Precedence precedence) {
@@ -665,7 +716,7 @@ private:
         TokenType prefix_type = previous().type;
         PrefixParseFn prefix_rule = get_rule(prefix_type).prefix_fn;
         if (prefix_rule == nullptr) {
-            return error_expr("Expect expression.");
+            return error_expr(get_current_token_loc(), "Expect expression.");
         }
 
         bool can_assign = precedence <= Precedence::Assignment;
@@ -678,7 +729,7 @@ private:
         }
 
         if (can_assign && match(TokenType::Equal)) {
-            return error_expr("Invalid assignment target.");
+            return error_expr(get_current_token_loc(), "Invalid assignment target.");
         }
         return expr;
 

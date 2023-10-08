@@ -19,7 +19,10 @@ public:
 
     const u8* source() { return m_source; }
 
-    u32 get_line(Token token) const;
+    u32 get_line(Token token) const {
+        return get_line(SourceLocation{token.source_loc, token.length});
+    }
+    u32 get_line(SourceLocation loc) const;
 
 private:
     u8 advance() {

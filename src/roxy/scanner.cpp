@@ -25,8 +25,8 @@ Scanner::Scanner(const u8* source) {
     m_line_start.push_back(0);
 }
 
-u32 Scanner::get_line(Token token) const {
-    return binary_search(m_line_start.data(), m_line_start.size(), token.source_loc) + 1;
+u32 Scanner::get_line(SourceLocation loc) const {
+    return binary_search(m_line_start.data(), m_line_start.size(), loc.source_loc) + 1;
 }
 
 Token Scanner::scan_token() {

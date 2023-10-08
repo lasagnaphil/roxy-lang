@@ -58,7 +58,10 @@ struct Stmt {
 struct ErrorStmt : public Stmt {
     static constexpr StmtKind s_kind = StmtKind::Error;
 
-    ErrorStmt() : Stmt(s_kind) {}
+    std::string message;
+
+    ErrorStmt(std::string message) : Stmt(s_kind), message(std::move(message)) {}
+    ErrorStmt(std::string_view message) : Stmt(s_kind), message(message) {}
 };
 
 struct BlockStmt : public Stmt {

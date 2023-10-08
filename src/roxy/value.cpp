@@ -19,6 +19,8 @@ std::string value_to_string(AnyValue value, bool print_refcount) {
         case PrimTypeKind::U16: return std::to_string(value.value_u16);
         case PrimTypeKind::U32: return std::to_string(value.value_u32);
         case PrimTypeKind::U64: return std::to_string(value.value_u64);
+        case PrimTypeKind::F32: return std::to_string(value.value_f32);
+        case PrimTypeKind::F64: return std::to_string(value.value_f64);
         case PrimTypeKind::String: {
             if (print_refcount)
                 return fmt::format("{} ({})", object_to_string(value, true), value.obj->refcount);

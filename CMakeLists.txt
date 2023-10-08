@@ -23,3 +23,4 @@ target_compile_options(roxy PRIVATE -Wreturn-type -Wno-c99-designator)
 
 add_executable(roxy_bin src/roxy-bin/main.cpp)
 target_link_libraries(roxy_bin PRIVATE roxy)
+target_compile_definitions(roxy_bin PRIVATE FMT_EXCEPTIONS=0)
