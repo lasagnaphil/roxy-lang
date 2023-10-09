@@ -20,9 +20,10 @@ struct Player {
     health: i32
 }
 
-fun add_skills_to_player(player: Player, attack_skill: AttackSkill, defend_skill: DefendSkill) {
+fun add_skills_to_player(player: Player, attack_skill: AttackSkill, defend_skill: DefendSkill): bool {
     player.attack_skill = attack_skill;
     player.defend_skill = defend_skill;
+    return true;
 }
 
 var player: Player;
@@ -31,6 +32,6 @@ player.name = "Buddy";
 var attack_skill: AttackSkill;
 var defend_skill: DefendSkill;
 
-add_skills_to_player(player, attack_skill, defend_skill);
+var ret = add_skills_to_player(player, attack_skill, defend_skill);
 
 player.attack_skill.damage = 20;

@@ -13,6 +13,7 @@ enum class TypeKind : u8 {
     Struct,
     Function,
     Unassigned,
+    Inferred,
 };
 
 // Primitive types
@@ -143,6 +144,12 @@ struct UnassignedType : public Type {
     UnassignedType(Token name) : Type(s_kind), name(name) {
         size = alignment = 0;
     }
+};
+
+struct InferredType : public Type {
+    static constexpr TypeKind s_kind = TypeKind::Inferred;
+
+    InferredType() : Type(s_kind) {}
 };
 
 inline bool Type::is_void() const {

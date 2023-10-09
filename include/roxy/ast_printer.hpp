@@ -291,6 +291,9 @@ public:
     void visit_impl(UnassignedType& type) {
         add_type(get_token_str(type.name));
     }
+    void visit_impl(InferredType& type) {
+        add_type("?");
+    }
 
 private:
     const u8* m_source;

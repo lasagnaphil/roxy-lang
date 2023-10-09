@@ -56,6 +56,7 @@ private:
     Token m_previous = {}, m_current = {};
     bool m_had_error = false;
     bool m_panic_mode = false;
+    bool m_inside_fun = false;
 
     AstAllocator m_allocator;
     SemaAnalyzer m_sema_analyzer;
@@ -289,8 +290,9 @@ private:
     }
 
     Stmt* return_statement() {
-        // TODO: check if this is top-level code
-
+        if (!m_inside_fun) {
+            return error_stmt("Cannot return in top-level code.");
+        }
         if (match(TokenType::Semicolon)) {
             return alloc<ReturnStmt>(nullptr);
         }
@@ -405,6 +407,9 @@ private:
                 type = alloc<UnassignedType>(type_name);
             }
         }
+        else {
+            type = alloc<InferredType>();
+        }
         variable = VarDecl(name, type);
         return true;
     }
@@ -421,7 +426,7 @@ private:
             initializer = expression();
         }
 
-        if (var_decl.type == nullptr && initializer == nullptr) {
+        if (var_decl.type->kind == TypeKind::Inferred && initializer == nullptr) {
             return error_stmt("Expect explicit kind for var declaration.");
         }
 
@@ -479,9 +484,15 @@ private:
         if (!consume(TokenType::LeftBrace)) {
             return error_stmt("Expect '{' before function body.");
         }
+
+        // TODO: what if there are functions inside functions?
+        m_inside_fun = true;
+        auto block_stmt_list = alloc_vector_ptr(block());
+        m_inside_fun = false;
+
         return alloc<FunctionStmt>(name,
                                    alloc_vector_var_decl(std::move(parameters)),
-                                   alloc_vector_ptr(block()),
+                                   block_stmt_list,
                                    ret_type);
     }
 

@@ -159,7 +159,7 @@ struct SemaResult {
                                        AstPrinter(source).to_string(*expected_type))
             };
             case SemaResultType::CannotFindType:  {
-                auto unassigned_type = cur_var_decl->type->cast<UnassignedType>();
+                auto unassigned_type = expected_type->cast<UnassignedType>();
                 return {
                     .loc = unassigned_type.name.get_source_loc(),
                     .message = fmt::format("Cannot find type {}.", unassigned_type.name.str(source))
@@ -188,44 +188,6 @@ struct SemaResult {
 };
 
 class AstAllocator;
-
-inline bool is_type_same(Type* lhs, Type* rhs) {
-    if (lhs == rhs) return true;
-    if (lhs->kind != rhs->kind) return false;
-    switch (lhs->kind) {
-        case TypeKind::Primitive:
-            return lhs->cast<PrimitiveType>().prim_kind == rhs->cast<PrimitiveType>().prim_kind;
-        default:
-            return false; // TODO
-    }
-}
-
-inline bool is_type_compatible(Type* lhs, Type* rhs) {
-    if (lhs == rhs) return true;
-    if (lhs->kind != rhs->kind) return false;
-    switch (lhs->kind) {
-        case TypeKind::Primitive: {
-            auto& lhs_type = lhs->cast<PrimitiveType>();
-            auto& rhs_type = rhs->cast<PrimitiveType>();
-
-            // implicit numeric type conversions (only to larger number type)
-            if (lhs_type.is_signed_integer() && rhs_type.is_signed_integer()) {
-                return lhs_type.prim_kind >= rhs_type.prim_kind;
-            }
-            else if (lhs_type.is_unsigned_integer() && rhs_type.is_unsigned_integer()) {
-                return lhs_type.prim_kind >= rhs_type.prim_kind;
-            }
-            else if (lhs_type.is_floating_point_num() && rhs_type.is_floating_point_num()) {
-                return lhs_type.prim_kind >= rhs_type.prim_kind;
-            }
-            else {
-                return lhs_type.prim_kind == rhs_type.prim_kind;
-            }
-        }
-        default:
-            return false; // TODO
-    }
-}
 
 class SemaAnalyzer :
         public StmtVisitorBase<SemaAnalyzer, SemaResult>,
@@ -295,7 +257,7 @@ public:
                     field.type = found_struct->type.get();
                 }
                 else {
-                    auto _ = error_cannot_find_type(&field);
+                    auto _ = error_cannot_find_type(unassigned_type);
                     continue;
                 }
             }
@@ -331,11 +293,23 @@ public:
                     param.type = struct_stmt->type.get();
                 }
                 else {
-                    auto _ = error_cannot_find_type(&param);
+                    auto _ = error_cannot_find_type(unassigned_type);
                 }
             }
             param_types.push_back(param.type.get());
             m_cur_env->set_var(param_name, &param);
+        }
+
+        // Find return type
+        if (auto unassigned_type = stmt.ret_type->try_cast<UnassignedType>()) {
+            auto param_type_name = unassigned_type->name.str(m_source);
+            auto struct_stmt = m_cur_env->get_struct(param_type_name);
+            if (struct_stmt) {
+                stmt.ret_type = struct_stmt->type.get();
+            }
+            else {
+                auto _ = error_cannot_find_type(unassigned_type);
+            }
         }
 
         // Add the created function to the TypeEnv.
@@ -370,9 +344,9 @@ public:
     SemaResult visit_impl(VarStmt& stmt)           {
         if (Expr* init_expr = stmt.initializer.get()) {
             SEMA_TRY(visit(*init_expr));
-            auto unassigned_type = stmt.var.type->try_cast<UnassignedType>();
-            if (unassigned_type) {
-                // Basic local kind inference
+            auto inferred_type = stmt.var.type->try_cast<InferredType>();
+            if (inferred_type) {
+                // Basic local type inference
                 stmt.var.type = init_expr->type.get();
             }
             else {
@@ -393,7 +367,7 @@ public:
                     stmt.var.type = struct_stmt->type.get();
                 }
                 else {
-                    return error_cannot_find_type(&stmt.var);
+                    return error_cannot_find_type(unassigned_type);
                 }
             }
 
@@ -416,14 +390,15 @@ public:
         auto return_expr = stmt.expr.get();
         SEMA_TRY(visit(*return_expr));
         Type* return_type = return_expr->type.get();
-        Type* fn_return_type = m_cur_env->get_outer_function()->ret_type.get();
+        auto cur_fn = m_cur_env->get_outer_function();
+        Type* fn_return_type = cur_fn->ret_type.get();
         if (fn_return_type) {
             if (!is_type_same(return_type, fn_return_type)) {
                 return error_invalid_return_type(return_expr, fn_return_type);
             }
         }
         else {
-            m_cur_env->get_outer_function()->ret_type = return_type;
+            cur_fn->ret_type = return_type;
         }
         return ok();
     }
@@ -671,6 +646,55 @@ public:
         }
     }
 
+    inline bool is_type_same(Type* lhs, Type* rhs) {
+        if (lhs == rhs) return true;
+        if (lhs->kind != rhs->kind) return false;
+        switch (lhs->kind) {
+            case TypeKind::Primitive:
+                return lhs->cast<PrimitiveType>().prim_kind == rhs->cast<PrimitiveType>().prim_kind;
+            case TypeKind::Struct: {
+                auto& lhs_struct = lhs->cast<StructType>();
+                auto& rhs_struct = rhs->cast<StructType>();
+                return lhs_struct.name.str(m_source) == rhs_struct.name.str(m_source);
+            }
+            default:
+                return false; // TODO
+        }
+    }
+
+    inline bool is_type_compatible(Type* lhs, Type* rhs) {
+        if (lhs == rhs) return true;
+        if (lhs->kind != rhs->kind) return false;
+        switch (lhs->kind) {
+            case TypeKind::Primitive: {
+                auto& lhs_type = lhs->cast<PrimitiveType>();
+                auto& rhs_type = rhs->cast<PrimitiveType>();
+
+                // implicit numeric type conversions (only to larger number type)
+                if (lhs_type.is_signed_integer() && rhs_type.is_signed_integer()) {
+                    return lhs_type.prim_kind >= rhs_type.prim_kind;
+                }
+                else if (lhs_type.is_unsigned_integer() && rhs_type.is_unsigned_integer()) {
+                    return lhs_type.prim_kind >= rhs_type.prim_kind;
+                }
+                else if (lhs_type.is_floating_point_num() && rhs_type.is_floating_point_num()) {
+                    return lhs_type.prim_kind >= rhs_type.prim_kind;
+                }
+                else {
+                    return lhs_type.prim_kind == rhs_type.prim_kind;
+                }
+            }
+            case TypeKind::Struct: {
+                auto& lhs_struct = lhs->cast<StructType>();
+                auto& rhs_struct = rhs->cast<StructType>();
+                // TODO: add subtyping
+                return lhs_struct.name.str(m_source) == rhs_struct.name.str(m_source);
+            }
+            default:
+                return false; // TODO
+        }
+    }
+
     SemaResult ok() {
         return {
                 .res_type = SemaResultType::Ok,
@@ -729,10 +753,10 @@ public:
                 .cur_expr = expr
         });
     }
-    SemaResult error_cannot_find_type(AstVarDecl* var_decl) {
+    SemaResult error_cannot_find_type(Type* type) {
         return report_error({
                 .res_type = SemaResultType::CannotFindType,
-                .cur_var_decl = var_decl
+                .expected_type = type
         });
     }
     SemaResult error_cannot_dot_access_on_type(Expr* expr, Type* type) {

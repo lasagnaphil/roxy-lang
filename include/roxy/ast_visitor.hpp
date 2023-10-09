@@ -96,6 +96,7 @@ public:
     ReturnT visit_impl(StructType& type)        { return ReturnT{}; }
     ReturnT visit_impl(FunctionType& type)      { return ReturnT{}; }
     ReturnT visit_impl(UnassignedType& type)    { return ReturnT{}; }
+    ReturnT visit_impl(InferredType& type)      { return ReturnT{}; }
 };
 
 }
