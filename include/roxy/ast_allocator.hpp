@@ -24,7 +24,8 @@ public:
     }
 
     template <typename T, typename ... Args, typename = std::enable_if_t<
-            std::is_base_of_v<Expr, T> || std::is_base_of_v<Stmt, T> || std::is_base_of_v<Type, T>>>
+            std::is_base_of_v<Expr, T> || std::is_base_of_v<Stmt, T> || std::is_base_of_v<Type, T> ||
+            std::is_same_v<AstVarDecl, T>>>
     T* alloc(Args&&... args) {
         return m_allocator.emplace<T, Args...>(std::forward<Args>(args)...);
     }

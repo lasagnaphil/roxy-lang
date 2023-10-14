@@ -12,6 +12,7 @@ add_library(roxy STATIC
         src/roxy/string.cpp
         src/roxy/string_interner.cpp
         src/roxy/sema.cpp
+        src/roxy/vm.cpp
         src/roxy/core/file.cpp
         src/roxy/fmt/format.cc
 )

@@ -27,7 +27,7 @@ struct AnyValue {
         i64 value_i64;
         f32 value_f32;
         f64 value_f64;
-        Obj* obj;
+        const char* str;
     };
 
     AnyValue() : kind(PrimTypeKind::Void) {}
@@ -48,7 +48,7 @@ struct AnyValue {
     explicit AnyValue(f32 value) : kind(PrimTypeKind::F32), is_boxed(false), value_f32(value) {}
     explicit AnyValue(f64 value) : kind(PrimTypeKind::F64), is_boxed(false), value_f64(value) {}
 
-    explicit AnyValue(ObjString* obj) : kind(PrimTypeKind::String), is_boxed(true), obj(reinterpret_cast<Obj*>(obj)) {}
+    explicit AnyValue(const char* str) : kind(PrimTypeKind::String), is_boxed(true), str(str) {}
 
     std::string to_std_string(bool print_refcount = false) const;
 };

@@ -5,8 +5,6 @@
 
 namespace rx {
 
-std::string object_to_string(AnyValue value, bool print_refcount);
-
 std::string value_to_string(AnyValue value, bool print_refcount) {
     switch (value.kind) {
         case PrimTypeKind::Void: return "nil";
@@ -21,22 +19,9 @@ std::string value_to_string(AnyValue value, bool print_refcount) {
         case PrimTypeKind::U64: return std::to_string(value.value_u64);
         case PrimTypeKind::F32: return std::to_string(value.value_f32);
         case PrimTypeKind::F64: return std::to_string(value.value_f64);
-        case PrimTypeKind::String: {
-            if (print_refcount)
-                return fmt::format("{} ({})", object_to_string(value, true), value.obj->refcount);
-            else
-                return object_to_string(value, false);
-
-        }
+        case PrimTypeKind::String: return std::string(value.str);
     }
     return "";
-}
-
-std::string object_to_string(AnyValue value, bool print_refcount) {
-    switch (value.obj->type()) {
-        case ObjType::String: return fmt::format("\"{}\"", reinterpret_cast<ObjString*>(value.obj)->chars);
-        default: return "";
-    }
 }
 
 std::string AnyValue::to_std_string(bool print_refcount) const {

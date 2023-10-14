@@ -3,6 +3,8 @@
 #include <roxy/ast_printer.hpp>
 #include <roxy/fmt/core.h>
 #include <roxy/core/file.hpp>
+#include <roxy/compiler.hpp>
+#include <roxy/vm.hpp>
 
 #include <cstdio>
 

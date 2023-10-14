@@ -584,8 +584,8 @@ private:
         std::string_view contents = get_token_str(previous()).substr(1, previous().length - 2);
         // TODO: store the string in a constant table
         ObjString* str = m_string_interner->create_string(contents);
-        auto value = AnyValue(str);
-        return alloc<LiteralExpr>(get_previous_token_loc(), AnyValue(str));
+        auto value = AnyValue(str->chars);
+        return alloc<LiteralExpr>(get_previous_token_loc(), value);
     }
 
     Expr* literal(bool can_assign) {
@@ -762,7 +762,6 @@ private:
             return error_expr(get_current_token_loc(), "Invalid assignment target.");
         }
         return expr;
-
 #undef MEMBER_FN
     }
 

@@ -88,6 +88,7 @@ public:
             case TypeKind::Struct:      return static_cast<Derived*>(this)->visit_impl(type.cast<StructType>());
             case TypeKind::Function:    return static_cast<Derived*>(this)->visit_impl(type.cast<FunctionType>());
             case TypeKind::Unassigned:  return static_cast<Derived*>(this)->visit_impl(type.cast<UnassignedType>());
+            case TypeKind::Inferred:    return static_cast<Derived*>(this)->visit_impl(type.cast<InferredType>());
         }
     }
 

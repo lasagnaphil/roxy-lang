@@ -83,6 +83,7 @@ struct AssignExpr : public Expr {
 
     Token name;
     RelPtr<Expr> value;
+    RelPtr<AstVarDecl> origin = nullptr;
 
     AssignExpr(SourceLocation loc, Token name, Expr* value) :
         Expr(s_kind, loc), name(name), value(value) {}
@@ -141,11 +142,14 @@ public:
     UnaryExpr(SourceLocation loc, Token op, Expr* right) : Expr(s_kind, loc), op(op), right(right) {}
 };
 
+struct Stmt;
+
 struct VariableExpr : public Expr {
 public:
     static constexpr ExprKind s_kind = ExprKind::Variable;
 
     Token name;
+    RelPtr<AstVarDecl> origin = nullptr;
 
     VariableExpr(SourceLocation loc, Token name) : Expr(s_kind, loc), name(name) {}
 };

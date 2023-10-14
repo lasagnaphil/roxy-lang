@@ -86,8 +86,10 @@ struct VarDecl {
 struct AstVarDecl {
     Token name;
     RelPtr<Type> type;
+    u32 local_index = 0;
 
     AstVarDecl(VarDecl var_decl) : name(var_decl.name), type(var_decl.type) {}
+    AstVarDecl(Token name, Type* type) : name(name), type(type) {}
 };
 
 struct PrimitiveType : public Type {

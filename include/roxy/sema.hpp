@@ -42,6 +42,7 @@ public:
     }
 
     bool set_var(std::string_view name, AstVarDecl* var_decl) {
+        var_decl->local_index = (u32)m_var_map.size();
         auto [it, inserted] = m_var_map.insert({name, var_decl});
         return inserted;
     }
@@ -85,6 +86,19 @@ public:
         auto [it, inserted] = m_struct_map.insert({name, struct_stmt});
         return inserted;
     }
+
+    Vector<AstVarDecl*> get_locals() {
+        Vector<AstVarDecl*> locals;
+        for (auto& [var, var_decl] : m_var_map) {
+            locals.push_back(var_decl);
+        }
+        return locals;
+    }
+};
+
+struct SemaLocalVar {
+    Token name;
+    RelPtr<Type> type;
 };
 
 enum class SemaResultType {
@@ -93,6 +107,7 @@ enum class SemaResultType {
     WrongType,
     InvalidInitializerType,
     InvalidAssignedType,
+    InvalidParamType,
     InvalidReturnType,
     UncallableType,
     IncompatibleTypes,
@@ -147,6 +162,10 @@ struct SemaResult {
                 .loc = cur_expr->get_source_loc(),
                 .message = fmt::format("Invalid return type: expected {}.",
                                        AstPrinter(source).to_string(*expected_type))
+            };
+            case SemaResultType::InvalidParamType: return {
+                .loc = cur_expr->get_source_loc(),
+                .message = fmt::format("Invalid param type: cannot be void.")
             };
             case SemaResultType::IncompatibleTypes: return {
                 .loc = cur_expr->get_source_loc(),
@@ -285,6 +304,11 @@ public:
         for (auto& param : stmt.params) {
             // Assign type to each param
             auto param_name = param.name.str(m_source);
+            if (auto prim_type = param.type->try_cast<PrimitiveType>()) {
+                if (prim_type->prim_kind == PrimTypeKind::Void) {
+                    return error_invalid_param_type(&param);
+                }
+            }
             auto unassigned_type = param.type->try_cast<UnassignedType>();
             if (unassigned_type) {
                 auto param_type_name = unassigned_type->name.str(m_source);
@@ -322,6 +346,8 @@ public:
             // Do not return on error result, since we want to scan all statements.
             auto _ = visit(*body_stmt);
         }
+
+        stmt.set_locals(m_allocator->alloc_vector<RelPtr<AstVarDecl>, AstVarDecl*>(fn_env.get_locals()));
 
         m_cur_env = fn_env.get_outer_env();
         return ok();
@@ -407,15 +433,14 @@ public:
 
     SemaResult visit_impl(ErrorExpr& expr)         { return error_misc(&expr); } // unreachable???
     SemaResult visit_impl(AssignExpr& expr)        {
-        SEMA_TRY(visit(*expr.value.get()));
         if (auto var_decl = m_cur_env->get_var(expr.name.str(m_source))) {
-            // If cannot find kind of assigned expression, then error.
             Expr* assigned_expr = expr.value.get();
             SEMA_TRY(visit(*assigned_expr));
 
             // If assigned kind is not compatible with variable, then error.
             Type* var_type = var_decl->type.get();
             expr.type = var_type;
+            expr.origin = var_decl;
             if (is_type_compatible(var_type, assigned_expr->type.get())) {
                 return ok();
             }
@@ -557,11 +582,13 @@ public:
         auto var_stmt = m_cur_env->get_var(expr_name);
         if (var_stmt) {
             expr.type = var_stmt->type.get();
+            expr.origin = var_stmt;
             return ok();
         }
         auto function_stmt = m_cur_env->get_function(expr_name);
         if (function_stmt) {
             expr.type = function_stmt->function_type.get();
+            expr.origin = nullptr;
             return ok();
         }
         return error_undefined_var(&expr);
@@ -725,6 +752,12 @@ public:
                 .res_type = SemaResultType::InvalidAssignedType,
                 .cur_expr = assigned_expr,
                 .cur_var_decl = var_decl,
+        });
+    }
+    SemaResult error_invalid_param_type(AstVarDecl* param_var_decl) {
+        return report_error({
+                .res_type = SemaResultType::InvalidParamType,
+                .cur_var_decl = param_var_decl,
         });
     }
     SemaResult error_invalid_return_type(Expr* return_expr, Type* expected_type) {
