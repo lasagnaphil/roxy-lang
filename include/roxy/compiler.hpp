@@ -65,7 +65,7 @@ public:
         m_cur_chunk = &out_chunk;
 
         COMP_TRY(visit(stmt));
-        emit_byte(OpCode::Ret, -1);
+        emit_byte(OpCode::ret, -1);
 
         m_cur_chunk = nullptr;
         m_cur_fn_env = nullptr;
@@ -116,7 +116,7 @@ public:
         Expr* expr = stmt.expr.get();
         COMP_TRY(visit(*expr));
         u32 cur_line = m_scanner->get_line(expr->get_source_loc());
-        emit_byte(OpCode::Print, cur_line);
+        emit_byte(OpCode::print, cur_line);
         return ok();
     }
 
@@ -137,15 +137,15 @@ public:
                         case PrimTypeKind::U8: case PrimTypeKind::I8:
                         case PrimTypeKind::U16: case PrimTypeKind::I16:
                         case PrimTypeKind::U32: case PrimTypeKind::I32: case PrimTypeKind::F32: {
-                            emit_byte(OpCode::LdC_i4_0, cur_line); break;
+                            emit_byte(OpCode::ildc_0, cur_line); break;
                         }
                         case PrimTypeKind::U64: case PrimTypeKind::I64: case PrimTypeKind::F64: {
-                            emit_byte(OpCode::LdC_i8, cur_line);
+                            emit_byte(OpCode::lldc, cur_line);
                             emit_u64(0);
                             break;
                         }
                         case PrimTypeKind::String: {
-                            emit_byte(OpCode::LdC_Null, cur_line); break;
+                            emit_byte(OpCode::ldcnil, cur_line); break;
                         }
                     }
                 }
@@ -168,15 +168,15 @@ public:
                     case PrimTypeKind::F32: {
                         if (local_index < 256) {
                             if (local_index < 4) {
-                                emit_byte((OpCode)((u32)OpCode::St_Loc_0 + (u32)local_index), cur_line);
+                                emit_byte((OpCode)((u32)OpCode::istloc_0 + (u32)local_index), cur_line);
                             }
                             else {
-                                emit_byte(OpCode::St_Loc_S, cur_line);
+                                emit_byte(OpCode::istloc_s, cur_line);
                                 emit_byte((u8)local_index);
                             }
                         }
                         else {
-                            emit_byte(OpCode::St_Loc, cur_line);
+                            emit_byte(OpCode::istloc, cur_line);
                             emit_u16(local_index);
                         }
                         break;
@@ -184,15 +184,15 @@ public:
                     case PrimTypeKind::U64: case PrimTypeKind::I64: case PrimTypeKind::F64: {
                         if (local_index < 256) {
                             if (local_index < 4) {
-                                emit_byte((OpCode)((u32)OpCode::St_Loc_i8 + (u32)local_index), cur_line);
+                                emit_byte((OpCode)((u32)OpCode::lstloc + (u32)local_index), cur_line);
                             }
                             else {
-                                emit_byte(OpCode::St_Loc_i8_S, cur_line);
+                                emit_byte(OpCode::lstloc_s, cur_line);
                                 emit_byte((u8)local_index);
                             }
                         }
                         else {
-                            emit_byte(OpCode::St_Loc_i8, cur_line);
+                            emit_byte(OpCode::lstloc, cur_line);
                             emit_u16(local_index);
                         }
                         break;
@@ -230,15 +230,15 @@ public:
             case PrimTypeKind::F32: {
                 if (offset <= UINT8_MAX) {
                     if (offset < 4) {
-                        emit_byte((OpCode)((u32)OpCode::St_Loc_0 + (u32)offset), cur_line);
+                        emit_byte((OpCode)((u32)OpCode::istloc_0 + (u32)offset), cur_line);
                     }
                     else {
-                        emit_byte(OpCode::St_Loc_S, cur_line);
+                        emit_byte(OpCode::istloc_s, cur_line);
                         emit_byte(offset);
                     }
                 }
                 else {
-                    emit_byte(OpCode::St_Loc, cur_line);
+                    emit_byte(OpCode::istloc, cur_line);
                     emit_u16(offset);
                 }
                 break;
@@ -246,15 +246,15 @@ public:
             case PrimTypeKind::U64: case PrimTypeKind::I64: case PrimTypeKind::F64: {
                 if (offset <= UINT8_MAX) {
                     if (offset < 4) {
-                        emit_byte((OpCode)((u32)OpCode::St_Loc_i8_0 + (u32)offset), cur_line);
+                        emit_byte((OpCode)((u32)OpCode::lstloc_0 + (u32)offset), cur_line);
                     }
                     else {
-                        emit_byte(OpCode::St_Loc_i8_S, cur_line);
+                        emit_byte(OpCode::lstloc_s, cur_line);
                         emit_byte(offset);
                     }
                 }
                 else {
-                    emit_byte(OpCode::St_Loc_i8, cur_line);
+                    emit_byte(OpCode::lstloc, cur_line);
                     emit_u16((u16) offset);
                 }
                 break;
@@ -282,13 +282,13 @@ public:
                 switch (prim_kind) {
                     case PrimTypeKind::U8: case PrimTypeKind::U16: case PrimTypeKind::U32:
                     case PrimTypeKind::I8: case PrimTypeKind::I16: case PrimTypeKind::I32:
-                        emit_byte(OpCode::Sub_i4, cur_line); break;
+                        emit_byte(OpCode::isub, cur_line); break;
                     case PrimTypeKind::U64: case PrimTypeKind::I64:
-                        emit_byte(OpCode::Sub_i8, cur_line); break;
+                        emit_byte(OpCode::lsub, cur_line); break;
                     case PrimTypeKind::F32:
-                        emit_byte(OpCode::Sub_r4, cur_line); break;
+                        emit_byte(OpCode::fsub, cur_line); break;
                     case PrimTypeKind::F64:
-                        emit_byte(OpCode::Sub_r8, cur_line); break;
+                        emit_byte(OpCode::dsub, cur_line); break;
                     default:
                         return error();
                 }
@@ -297,13 +297,13 @@ public:
                 switch (prim_kind) {
                     case PrimTypeKind::U8: case PrimTypeKind::U16: case PrimTypeKind::U32:
                     case PrimTypeKind::I8: case PrimTypeKind::I16: case PrimTypeKind::I32:
-                        emit_byte(OpCode::Add_i4, cur_line); break;
+                        emit_byte(OpCode::iadd, cur_line); break;
                     case PrimTypeKind::U64: case PrimTypeKind::I64:
-                        emit_byte(OpCode::Add_i8, cur_line); break;
+                        emit_byte(OpCode::ladd, cur_line); break;
                     case PrimTypeKind::F32:
-                        emit_byte(OpCode::Add_r4, cur_line); break;
+                        emit_byte(OpCode::fadd, cur_line); break;
                     case PrimTypeKind::F64:
-                        emit_byte(OpCode::Add_r8, cur_line); break;
+                        emit_byte(OpCode::dadd, cur_line); break;
                     default:
                         return error();
                 }
@@ -311,17 +311,17 @@ public:
             case TokenType::Star:
                 switch (prim_kind) {
                     case PrimTypeKind::I8: case PrimTypeKind::I16: case PrimTypeKind::I32:
-                        emit_byte(OpCode::Mul_i4, cur_line); break;
+                        emit_byte(OpCode::imul, cur_line); break;
                     case PrimTypeKind::U8: case PrimTypeKind::U16: case PrimTypeKind::U32:
-                        emit_byte(OpCode::Mul_u4, cur_line); break;
+                        emit_byte(OpCode::uimul, cur_line); break;
                     case PrimTypeKind::I64:
-                        emit_byte(OpCode::Mul_i8, cur_line); break;
+                        emit_byte(OpCode::lmul, cur_line); break;
                     case PrimTypeKind::U64:
-                        emit_byte(OpCode::Mul_u8, cur_line); break;
+                        emit_byte(OpCode::ulmul, cur_line); break;
                     case PrimTypeKind::F32:
-                        emit_byte(OpCode::Mul_r4, cur_line); break;
+                        emit_byte(OpCode::fmul, cur_line); break;
                     case PrimTypeKind::F64:
-                        emit_byte(OpCode::Mul_r8, cur_line); break;
+                        emit_byte(OpCode::dmul, cur_line); break;
                     default:
                         return error();
                 }
@@ -329,17 +329,17 @@ public:
             case TokenType::Slash:
                 switch (prim_kind) {
                     case PrimTypeKind::I8: case PrimTypeKind::I16: case PrimTypeKind::I32:
-                        emit_byte(OpCode::Div_i4, cur_line); break;
+                        emit_byte(OpCode::idiv, cur_line); break;
                     case PrimTypeKind::U8: case PrimTypeKind::U16: case PrimTypeKind::U32:
-                        emit_byte(OpCode::Div_u4, cur_line); break;
+                        emit_byte(OpCode::uidiv, cur_line); break;
                     case PrimTypeKind::I64:
-                        emit_byte(OpCode::Div_i8, cur_line); break;
+                        emit_byte(OpCode::ldiv, cur_line); break;
                     case PrimTypeKind::U64:
-                        emit_byte(OpCode::Div_u8, cur_line); break;
+                        emit_byte(OpCode::uldiv, cur_line); break;
                     case PrimTypeKind::F32:
-                        emit_byte(OpCode::Div_r4, cur_line); break;
+                        emit_byte(OpCode::fdiv, cur_line); break;
                     case PrimTypeKind::F64:
-                        emit_byte(OpCode::Div_r8, cur_line); break;
+                        emit_byte(OpCode::ddiv, cur_line); break;
                     default:
                         return error();
                 }
@@ -367,47 +367,63 @@ public:
                 switch (prim_type.prim_kind) {
                     case PrimTypeKind::Void: return error();
                     case PrimTypeKind::Bool: {
-                        emit_byte(value.value_bool? OpCode::LdC_i4_1 : OpCode::LdC_i4_0, cur_line); break;
+                        emit_byte(value.value_bool? OpCode::ildc_1 : OpCode::ildc_0, cur_line); break;
                     }
                     case PrimTypeKind::U8: case PrimTypeKind::I8: {
-                        emit_byte(OpCode::LdC_i4_S, cur_line);
-                        emit_byte(value.value_u8);
+                        if (prim_type.prim_kind == PrimTypeKind::I16 && value.value_i16 == -1) {
+                            emit_byte(OpCode::ildc_m1, cur_line);
+                        }
+                        else if (value.value_u16 <= 8) {
+                            emit_byte((OpCode)((u32)OpCode::ildc_0 + (u32)value.value_u16), cur_line);
+                        }
+                        else {
+                            emit_byte(OpCode::ildc_S, cur_line);
+                            emit_byte(value.value_u8);
+                        }
                         break;
                     }
                     case PrimTypeKind::U16: case PrimTypeKind::I16: {
                         if (prim_type.prim_kind == PrimTypeKind::I16 && value.value_i16 == -1) {
-                            emit_byte(OpCode::LdC_i4_M1, cur_line);
+                            emit_byte(OpCode::ildc_m1, cur_line);
                         }
                         else if (value.value_u16 <= 8) {
-                            emit_byte((OpCode)((u32)OpCode::LdC_i4_0 + (u32)value.value_u16), cur_line);
+                            emit_byte((OpCode)((u32)OpCode::ildc_0 + (u32)value.value_u16), cur_line);
+                        }
+                        else if (value.value_u16 < 256) {
+                            emit_byte(OpCode::ildc_S, cur_line);
+                            emit_byte(value.value_u16);
                         }
                         else {
-                            emit_byte(OpCode::LdC_i4, cur_line);
+                            emit_byte(OpCode::ildc, cur_line);
                             emit_u32(value.value_u16);
                         }
                         break;
                     }
                     case PrimTypeKind::U32: case PrimTypeKind::I32: case PrimTypeKind::F32: {
                         if (prim_type.prim_kind == PrimTypeKind::I32 && value.value_i32 == -1) {
-                            emit_byte(OpCode::LdC_i4_M1, cur_line);
+                            emit_byte(OpCode::ildc_m1, cur_line);
                         }
                         else if (prim_type.prim_kind != PrimTypeKind::F32 && value.value_u32 <= 8) {
-                            emit_byte((OpCode)((u32)OpCode::LdC_i4_0 + value.value_u32), cur_line);
+                            emit_byte((OpCode)((u32)OpCode::ildc_0 + value.value_u32), cur_line);
+                        }
+                        else if (prim_type.prim_kind != PrimTypeKind::F32 && value.value_u32 < 256) {
+                            emit_byte(OpCode::ildc_S, cur_line);
+                            emit_byte(value.value_u16);
                         }
                         else {
-                            emit_byte(OpCode::LdC_i4, cur_line);
+                            emit_byte(OpCode::ildc, cur_line);
                             emit_u32(value.value_u32);
                         }
                         break;
                     }
                     case PrimTypeKind::U64: case PrimTypeKind::I64: case PrimTypeKind::F64: {
-                        emit_byte(OpCode::LdC_i8, cur_line);
+                        emit_byte(OpCode::ildc, cur_line);
                         emit_u64(value.value_u64);
                         break;
                     }
                     case PrimTypeKind::String: {
                         u32 string_offset = m_cur_chunk->add_string(value.str);
-                        emit_byte(OpCode::LdStr, cur_line);
+                        emit_byte(OpCode::ldstr, cur_line);
                         emit_u32(string_offset);
                         break;
                     }
@@ -435,25 +451,25 @@ public:
             case PrimTypeKind::U8: case PrimTypeKind::U16: case PrimTypeKind::U32:
             case PrimTypeKind::I8: case PrimTypeKind::I16: case PrimTypeKind::I32:
             case PrimTypeKind::F32: {
-                emit_byte(OpCode::LdC_i4_0, cur_line);
+                emit_byte(OpCode::ildc_0, cur_line);
                 COMP_TRY(visit(*right_expr));
                 if (prim_kind == PrimTypeKind::F32) {
-                    emit_byte(OpCode::Sub_r4, cur_line);
+                    emit_byte(OpCode::fsub, cur_line);
                 }
                 else {
-                    emit_byte(OpCode::Sub_i4, cur_line);
+                    emit_byte(OpCode::isub, cur_line);
                 }
                 break;
             }
             case PrimTypeKind::U64: case PrimTypeKind::I64: case PrimTypeKind::F64: {
-                emit_byte(OpCode::LdC_i8, cur_line);
+                emit_byte(OpCode::lldc, cur_line);
                 emit_u64(0);
                 COMP_TRY(visit(*right_expr));
                 if (prim_kind == PrimTypeKind::F64) {
-                    emit_byte(OpCode::Sub_r8, cur_line);
+                    emit_byte(OpCode::dsub, cur_line);
                 }
                 else {
-                    emit_byte(OpCode::Sub_i8, cur_line);
+                    emit_byte(OpCode::lsub, cur_line);
                 }
                 break;
             }
@@ -474,18 +490,18 @@ public:
             case PrimTypeKind::F32: {
                 if (offset <= UINT8_MAX) {
                     if (offset < 4) {
-                        if (offset == 0)       emit_byte(OpCode::Ld_Loc_0, cur_line);
-                        else if (offset == 1)  emit_byte(OpCode::Ld_Loc_1, cur_line);
-                        else if (offset == 2)  emit_byte(OpCode::Ld_Loc_2, cur_line);
-                        else if (offset == 3)  emit_byte(OpCode::Ld_Loc_3, cur_line);
+                        if (offset == 0)       emit_byte(OpCode::ildloc_0, cur_line);
+                        else if (offset == 1)  emit_byte(OpCode::ildloc_1, cur_line);
+                        else if (offset == 2)  emit_byte(OpCode::ildloc_2, cur_line);
+                        else if (offset == 3)  emit_byte(OpCode::ildloc_3, cur_line);
                     }
                     else {
-                        emit_byte(OpCode::Ld_Loc_S, cur_line);
+                        emit_byte(OpCode::ildloc_s, cur_line);
                         emit_byte(offset);
                     }
                 }
                 else {
-                    emit_byte(OpCode::Ld_Loc, cur_line);
+                    emit_byte(OpCode::ildloc, cur_line);
                     emit_u16((u16) offset);
                 }
                 break;
@@ -493,18 +509,18 @@ public:
             case PrimTypeKind::U64: case PrimTypeKind::I64: case PrimTypeKind::F64: {
                 if (offset <= UINT8_MAX) {
                     if (offset < 4) {
-                        if (offset == 0)       emit_byte(OpCode::Ld_Loc_i8_0, cur_line);
-                        else if (offset == 1)  emit_byte(OpCode::Ld_Loc_i8_1, cur_line);
-                        else if (offset == 2)  emit_byte(OpCode::Ld_Loc_i8_2, cur_line);
-                        else if (offset == 3)  emit_byte(OpCode::Ld_Loc_i8_3, cur_line);
+                        if (offset == 0)       emit_byte(OpCode::lldloc_0, cur_line);
+                        else if (offset == 1)  emit_byte(OpCode::lldloc_1, cur_line);
+                        else if (offset == 2)  emit_byte(OpCode::lldloc_2, cur_line);
+                        else if (offset == 3)  emit_byte(OpCode::lldloc_3, cur_line);
                     }
                     else {
-                        emit_byte(OpCode::Ld_Loc_i8_S, cur_line);
+                        emit_byte(OpCode::lldloc_s, cur_line);
                         emit_byte(offset);
                     }
                 }
                 else {
-                    emit_byte(OpCode::Ld_Loc_i8, cur_line);
+                    emit_byte(OpCode::lldloc, cur_line);
                     emit_u16((u16) offset);
                 }
                 break;
@@ -524,7 +540,7 @@ public:
             auto arg_expr = expr.arguments[i].get();
             COMP_TRY(visit(*arg_expr));
         }
-        emit_byte(OpCode::Call, cur_line);
+        emit_byte(OpCode::call, cur_line);
         return ok();
     }
 
