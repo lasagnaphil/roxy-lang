@@ -20,13 +20,29 @@
     X(St_Loc_2)             \
     X(St_Loc_3)             \
     X(Ld_Arg_S)             \
-    X(Ld_Arg_AS)            \
     X(St_Arg_S)             \
     X(Ld_Loc)               \
     X(Ld_Loc_S)             \
-    X(Ld_Loc_AS)            \
     X(St_Loc)               \
     X(St_Loc_S)             \
+    X(Ld_Arg_i8_0)          \
+    X(Ld_Arg_i8_1)          \
+    X(Ld_Arg_i8_2)          \
+    X(Ld_Arg_i8_3)          \
+    X(Ld_Loc_i8_0)          \
+    X(Ld_Loc_i8_1)          \
+    X(Ld_Loc_i8_2)          \
+    X(Ld_Loc_i8_3)          \
+    X(St_Loc_i8_0)          \
+    X(St_Loc_i8_1)          \
+    X(St_Loc_i8_2)          \
+    X(St_Loc_i8_3)          \
+    X(Ld_Arg_i8_S)          \
+    X(St_Arg_i8_S)          \
+    X(Ld_Loc_i8)            \
+    X(Ld_Loc_i8_S)          \
+    X(St_Loc_i8)            \
+    X(St_Loc_i8_S)          \
     X(LdC_Null)             \
     X(LdC_i4_M1)            \
     X(LdC_i4_0)             \
@@ -176,7 +192,7 @@
     X(LdElem)               \
     X(StElem)               \
     X(UnboxAny)             \
-    X(_count)               \
+    X(Print)                \
 
 namespace rx {
 
@@ -184,6 +200,8 @@ enum class OpCode : u8 {
 #define X(val) val,
     OPCODE_LIST(X)
 #undef X
+    _count,
+    Invalid = 255
 };
 
 extern const char* g_opcode_str[(u32)OpCode::_count];

@@ -13,8 +13,10 @@ Index binary_search(const T* arr, Index n, T x) {
     while (len > 1) {
         Index half = len / 2;
         len -= half;
+#ifdef __x86_64__
         __builtin_prefetch(&base[len / 2 - 1]);
         __builtin_prefetch(&base[half + len / 2 - 1]);
+#endif
         base += (base[half - 1] < x) * half;
     }
     return base - arr;

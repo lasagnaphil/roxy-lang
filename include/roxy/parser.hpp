@@ -97,14 +97,14 @@ public:
 
     AstAllocator* get_ast_allocator() { return &m_allocator; }
 
-    bool parse(BlockStmt*& stmt) {
+    bool parse(ModuleStmt*& stmt) {
         advance();
         Vector<Stmt*> statements;
         while (!m_scanner->is_at_end()) {
             statements.push_back(declaration());
         }
         auto alloc_statements = alloc_vector_ptr(std::move(statements));
-        stmt = alloc<BlockStmt>(alloc_statements);
+        stmt = alloc<ModuleStmt>(alloc_statements);
         return !m_had_error;
     }
 

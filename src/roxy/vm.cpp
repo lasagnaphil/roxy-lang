@@ -7,10 +7,10 @@ VM::VM() {
     m_stack_top = m_stack.data();
 }
 
-InterpretResult VM::run_bytecode(Span<u8> bytecode) {
+InterpretResult VM::run_chunk(Chunk& chunk) {
     m_frame_count = 1;
     m_frames[0] = {
-            .ip = bytecode.data(),
+            .ip = chunk.m_bytecode.data(),
             .slots = m_stack_top
     };
     return run();
@@ -64,6 +64,8 @@ InterpretResult VM::run() {
             case OpCode::Sub_r8: push_f64(pop_f64() / pop_f64()); break;
             case OpCode::Mul_r8: push_f64(pop_f64() * pop_f64()); break;
             case OpCode::Div_r8: push_f64(pop_f64() / pop_f64()); break;
+
+            case OpCode::Ret: return InterpretResult::Ok;
         }
     }
 

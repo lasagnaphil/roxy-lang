@@ -86,7 +86,7 @@ struct VarDecl {
 struct AstVarDecl {
     Token name;
     RelPtr<Type> type;
-    u32 local_index = 0;
+    u16 local_index = 0;
 
     AstVarDecl(VarDecl var_decl) : name(var_decl.name), type(var_decl.type) {}
     AstVarDecl(Token name, Type* type) : name(name), type(type) {}
@@ -113,6 +113,12 @@ struct PrimitiveType : public Type {
 
     bool is_floating_point_num() const {
         return prim_kind == PrimTypeKind::F32 || prim_kind == PrimTypeKind::F64;
+    }
+
+    bool is_within_4_bytes() const {
+        return prim_kind == PrimTypeKind::I32 || prim_kind == PrimTypeKind::U32 || prim_kind == PrimTypeKind::F32 ||
+                prim_kind == PrimTypeKind::I16 || prim_kind == PrimTypeKind::U16 ||
+                prim_kind == PrimTypeKind::I8 || prim_kind == PrimTypeKind::U8;
     }
 };
 

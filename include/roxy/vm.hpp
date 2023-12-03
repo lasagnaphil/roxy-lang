@@ -28,7 +28,7 @@ public:
 
     VM();
 
-    InterpretResult run_bytecode(Span<u8> bytecode);
+    InterpretResult run_chunk(Chunk& chunk);
 
 private:
 

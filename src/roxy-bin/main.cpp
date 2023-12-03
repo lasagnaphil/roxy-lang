@@ -26,17 +26,17 @@ int main(int argc, char** argv) {
         StringInterner string_interner;
         Parser parser(&scanner, &string_interner);
 
-        BlockStmt* block_stmt;
-        bool parse_success = parser.parse(block_stmt);
+        ModuleStmt* module_stmt;
+        bool parse_success = parser.parse(module_stmt);
 
         fmt::print("Parsed output:\n");
-        fmt::print("{}\n", AstPrinter(scanner.source()).to_string(*block_stmt));
+        fmt::print("{}\n", AstPrinter(scanner.source()).to_string(*module_stmt));
 
         if (!parse_success) return 0;
 
         SemaAnalyzer sema_analyzer(parser.get_ast_allocator(), scanner.source());
 
-        auto sema_errors = sema_analyzer.check(block_stmt);
+        auto sema_errors = sema_analyzer.check(module_stmt);
 
         fmt::print("\nSema errors: {}\n", sema_errors.empty()? "none" : std::to_string(sema_errors.size()));
 
@@ -49,7 +49,17 @@ int main(int argc, char** argv) {
         }
 
         fmt::print("\nAfter semantic analysis:\n");
-        fmt::print("{}\n", AstPrinter(scanner.source()).to_string(*block_stmt));
+        fmt::print("{}\n\n", AstPrinter(scanner.source()).to_string(*module_stmt));
+
+        Compiler compiler(&scanner);
+        Chunk chunk("test_chunk");
+        auto res = compiler.compile(*module_stmt, chunk);
+        if (res != CompileResult::Ok) {
+            fmt::print("Error during compilation!\n");
+            return 0;
+        }
+
+        chunk.print_disassembly();
 
         return 0;
     }

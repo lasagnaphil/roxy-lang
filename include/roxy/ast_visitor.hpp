@@ -51,6 +51,7 @@ public:
         switch (stmt.kind) {
             case StmtKind::Error:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<ErrorStmt>());
             case StmtKind::Block:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<BlockStmt>());
+            case StmtKind::Module:      return static_cast<Derived*>(this)->visit_impl(stmt.cast<ModuleStmt>());
             case StmtKind::Expression:  return static_cast<Derived*>(this)->visit_impl(stmt.cast<ExpressionStmt>());
             case StmtKind::Struct:      return static_cast<Derived*>(this)->visit_impl(stmt.cast<StructStmt>());
             case StmtKind::Function:    return static_cast<Derived*>(this)->visit_impl(stmt.cast<FunctionStmt>());
@@ -67,6 +68,7 @@ public:
     // The functions you need to implement for each class derived from StmtVisitorBase!
     ReturnT visit_impl(ErrorStmt& stmt)         { return ReturnT{}; }
     ReturnT visit_impl(BlockStmt& stmt)         { return ReturnT{}; }
+    ReturnT visit_impl(ModuleStmt& stmt)        { return ReturnT{}; }
     ReturnT visit_impl(ExpressionStmt& stmt)    { return ReturnT{}; }
     ReturnT visit_impl(StructStmt& stmt)        { return ReturnT{}; }
     ReturnT visit_impl(FunctionStmt& stmt)      { return ReturnT{}; }

@@ -235,7 +235,7 @@ public:
 
     SemaAnalyzer(AstAllocator* allocator, const u8* source) : m_allocator(allocator), m_source(source) {}
 
-    Vector<SemaResult> check(BlockStmt* stmt) {
+    Vector<SemaResult> check(ModuleStmt* stmt) {
         visit_impl(*stmt);
 
         auto errors = m_errors;
@@ -254,6 +254,19 @@ public:
             auto _ = visit(*inner_stmt.get());
         }
         m_cur_env = block_env.get_outer_env();
+        return ok();
+    }
+    SemaResult visit_impl(ModuleStmt& stmt)         {
+        SemaEnv module_env(m_cur_env);
+        m_cur_env = &module_env;
+        for (RelPtr<Stmt>& inner_stmt : stmt.statements) {
+            // Do not return on error result, since we want to scan all statements inside the block.
+            auto _ = visit(*inner_stmt.get());
+        }
+        m_cur_env = module_env.get_outer_env();
+
+        stmt.set_locals(m_allocator->alloc_vector<RelPtr<AstVarDecl>, AstVarDecl*>(module_env.get_locals()));
+
         return ok();
     }
     SemaResult visit_impl(ExpressionStmt& stmt)    {

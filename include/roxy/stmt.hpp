@@ -9,6 +9,7 @@ namespace rx {
 enum class StmtKind {
     Error,
     Block,
+    Module,
     Expression,
     Struct,
     Function,
@@ -70,6 +71,20 @@ struct BlockStmt : public Stmt {
     RelSpan<RelPtr<Stmt>> statements;
 
     BlockStmt(Span<RelPtr<Stmt>> statements) : Stmt(s_kind), statements(statements) {}
+};
+
+struct ModuleStmt : public Stmt {
+    static constexpr StmtKind s_kind = StmtKind::Module;
+
+    RelSpan<RelPtr<Stmt>> statements;
+    RelSpan<RelPtr<AstVarDecl>> locals;
+
+    ModuleStmt(Span<RelPtr<Stmt>> statements)
+        : Stmt(s_kind), statements(statements) {}
+
+    void set_locals(Span<RelPtr<AstVarDecl>> locals) {
+        new (&this->locals) RelSpan<RelPtr<AstVarDecl>>(locals);
+    }
 };
 
 struct ExpressionStmt : public Stmt {

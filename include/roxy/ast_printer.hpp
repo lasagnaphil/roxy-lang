@@ -69,6 +69,15 @@ public:
         }
         end_paren(); dec_indent();
     }
+    void visit_impl(ModuleStmt& stmt) {
+        begin_paren("module");
+        inc_indent();
+        for (auto& stmt : stmt.statements) {
+            newline();
+            visit(*stmt);
+        }
+        end_paren(); dec_indent();
+    }
     void visit_impl(ExpressionStmt& stmt) {
         begin_paren("expr");
         visit(*stmt.expr);
