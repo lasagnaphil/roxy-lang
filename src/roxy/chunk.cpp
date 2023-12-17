@@ -8,16 +8,7 @@
 namespace rx {
 
 void Chunk::write(u8 byte, u32 line) {
-    if (m_lines.empty()) {
-        m_lines.push_back(line);
-        m_line_bytecode_starts.push_back(0);
-    }
-
-    if (line != -1 && m_lines.back() != line) {
-        m_lines.push_back(line);
-        m_line_bytecode_starts.push_back(m_bytecode.size());
-    }
-
+    m_lines.push_back(line);
     m_bytecode.push_back(byte);
 }
 
@@ -30,8 +21,11 @@ u32 Chunk::add_constant(UntypedValue value) {
 }
 
 u32 Chunk::get_line(u32 bytecode_offset) {
-    i32 i = binary_search(m_line_bytecode_starts.data(), m_line_bytecode_starts.size(), bytecode_offset);
-    return m_lines[i];
+    u32 line = m_lines[bytecode_offset];
+    if (line == 0xffffffff) {
+        return m_lines[bytecode_offset - 1];
+    }
+    return line;
 }
 
 void Chunk::print_disassembly() {
@@ -44,7 +38,7 @@ void Chunk::print_disassembly() {
 u32 Chunk::disassemble_instruction(u32 offset) {
     fmt::print("{:04d} ", offset);
     u32 cur_line = get_line(offset);
-    u32 prev_line = get_line(offset - 1);
+    u32 prev_line = offset > 0? get_line(offset - 1) : 1;
     if (offset > 0 && cur_line == prev_line) {
         fmt::print("   | ");
     }

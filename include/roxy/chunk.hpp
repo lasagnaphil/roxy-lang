@@ -60,7 +60,6 @@ struct Chunk
 
     // Line debug information
     Vector<u32> m_lines;
-    Vector<u32> m_line_bytecode_starts;
 
     Chunk(std::string name) : m_name(std::move(name)) {}
 
