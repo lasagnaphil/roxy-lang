@@ -1,6 +1,8 @@
 #include "roxy/vm.hpp"
 #include "roxy/opcode.hpp"
 
+#include <fmt/core.h>
+
 namespace rx {
 
 VM::VM() {
@@ -13,58 +15,91 @@ InterpretResult VM::run_chunk(Chunk& chunk) {
             .ip = chunk.m_bytecode.data(),
             .slots = m_stack_top
     };
+    m_cur_frame = &m_frames[0];
     return run();
 }
+
+#define DEBUG_TRACE_EXECUTION
 
 InterpretResult VM::run() {
     // Add frame
     CallFrame& frame = m_frames[m_frame_count - 1];
 
+#ifdef DEBUG_TRACE_EXECUTION
+    fmt::print("---- Debug Trace ----\n");
+#endif
     for (;;) {
+#ifdef DEBUG_TRACE_EXECUTION
+        fmt::print("          ");
+        for (u32* slot = m_stack.data(); slot < m_stack_top; slot++) {
+            fmt::print("[ {} ]", *slot);
+        }
+        fmt::print("\n");
+        /*
+        frame->closure->function->chunk.disassemble_instruction(
+            (int32_t)(frame->ip - frame->closure->function->chunk.m_code.data()));
+        fflush(stdout);
+        */
+#endif
+
+#define BINARY_OP(Type, Op) do { Type b = (Type)pop_##Type(); Type a = (Type)pop_##Type(); push_##Type(a Op b); } while(0);
+
         OpCode inst = (OpCode) read_u8();
         switch (inst) {
-            case OpCode::ildc_m1: push(-1); break;
-            case OpCode::ildc_0: push(0); break;
-            case OpCode::ildc_1: push(1); break;
-            case OpCode::ildc_2: push(2); break;
-            case OpCode::ildc_3: push(3); break;
-            case OpCode::ildc_4: push(4); break;
-            case OpCode::ildc_5: push(5); break;
-            case OpCode::ildc_6: push(6); break;
-            case OpCode::ildc_7: push(7); break;
-            case OpCode::ildc_8: push(8); break;
-            case OpCode::ildc_S: push(read_u8()); break;
-            case OpCode::ildc: push(read_u32()); break;
-            case OpCode::lldc: push_u64(read_u64()); break;
-            case OpCode::fldc: push(read_u32()); break;
-            case OpCode::dldc: push_u64(read_u64()); break;
-            case OpCode::dup: push(top()); break;
-            case OpCode::pop: pop(); break;
-            case OpCode::iadd: push(pop() + pop()); break;
-            case OpCode::isub: push(pop() - pop()); break;
-            case OpCode::imul: push((i32)pop() * (i32)pop()); break;
-            case OpCode::uimul: push(pop() * pop()); break;
-            case OpCode::idiv: push((i32)pop() / (i32)pop()); break;
-            case OpCode::uidiv: push(pop() / pop()); break;
-            case OpCode::irem: push((i32)pop() % (i32)pop()); break;
-            case OpCode::uirem: push(pop() % pop()); break;
-            case OpCode::ladd: push_u64(pop_u64() + pop_u64()); break;
-            case OpCode::lsub: push_u64(pop_u64() - pop_u64()); break;
-            case OpCode::lmul: push_u64((i64)pop_u64() * (i64)pop_u64()); break;
-            case OpCode::ulmul: push_u64(pop_u64() * pop_u64()); break;
-            case OpCode::ldiv: push_u64((i64)pop_u64() / (i64)pop_u64()); break;
-            case OpCode::uldiv: push_u64(pop_u64() / pop_u64()); break;
-            case OpCode::lrem: push_u64((i64)pop_u64() % (i64)pop_u64()); break;
-            case OpCode::ulrem: push_u64(pop_u64() % pop_u64()); break;
-            case OpCode::fadd: push_f32(pop_f32() + pop_f32()); break;
-            case OpCode::fsub: push_f32(pop_f32() - pop_f32()); break;
-            case OpCode::fmul: push_f32(pop_f32() * pop_f32()); break;
-            case OpCode::fdiv: push_f32(pop_f32() / pop_f32()); break;
-            case OpCode::dadd: push_f64(pop_f64() * pop_f64()); break;
-            case OpCode::dsub: push_f64(pop_f64() / pop_f64()); break;
-            case OpCode::dmul: push_f64(pop_f64() * pop_f64()); break;
-            case OpCode::ddiv: push_f64(pop_f64() / pop_f64()); break;
-
+            case OpCode::iload_0: push_u32(frame.slots[0]); break;
+            case OpCode::iload_1: push_u32(frame.slots[1]); break;
+            case OpCode::iload_2: push_u32(frame.slots[2]); break;
+            case OpCode::iload_3: push_u32(frame.slots[3]); break;
+            case OpCode::istore_0: frame.slots[0] = pop_u32(); break;
+            case OpCode::istore_1: frame.slots[1] = pop_u32(); break;
+            case OpCode::istore_2: frame.slots[2] = pop_u32(); break;
+            case OpCode::istore_3: frame.slots[3] = pop_u32(); break;
+            case OpCode::iload: push_u32(frame.slots[read_u16()]); break;
+            case OpCode::iload_s: push_u32(frame.slots[read_u8()]); break;
+            case OpCode::istore: frame.slots[read_u16()] = pop_u32(); break;
+            case OpCode::istore_s: frame.slots[read_u8()] = pop_u32(); break;
+            case OpCode::iconst_m1: push_u32(-1); break;
+            case OpCode::iconst_0: push_u32(0); break;
+            case OpCode::iconst_1: push_u32(1); break;
+            case OpCode::iconst_2: push_u32(2); break;
+            case OpCode::iconst_3: push_u32(3); break;
+            case OpCode::iconst_4: push_u32(4); break;
+            case OpCode::iconst_5: push_u32(5); break;
+            case OpCode::iconst_6: push_u32(6); break;
+            case OpCode::iconst_7: push_u32(7); break;
+            case OpCode::iconst_8: push_u32(8); break;
+            case OpCode::iconst_S: push_u32(read_u8()); break;
+            case OpCode::iconst: push_u32(read_u32()); break;
+            case OpCode::lconst: push_u64(read_u64()); break;
+            case OpCode::fconst: push_f32(read_f32()); break;
+            case OpCode::dconst: push_f64(read_f64()); break;
+            case OpCode::dup: push_u32(top()); break;
+            case OpCode::pop: pop_u32(); break;
+            case OpCode::iadd: BINARY_OP(i32, +); break;
+            case OpCode::isub: BINARY_OP(i32, -); break;
+            case OpCode::imul: BINARY_OP(i32, *); break;
+            case OpCode::uimul: BINARY_OP(u32, *); break;
+            case OpCode::idiv: BINARY_OP(i32, /); break;
+            case OpCode::uidiv: BINARY_OP(u32, /); break;
+            case OpCode::irem: BINARY_OP(i32, %); break;
+            case OpCode::uirem: BINARY_OP(u32, %); break;
+            case OpCode::ladd: BINARY_OP(i64, +); break;
+            case OpCode::lsub: BINARY_OP(i64, -); break;
+            case OpCode::lmul: BINARY_OP(i64, *); break;
+            case OpCode::ulmul: BINARY_OP(u64, *); break;
+            case OpCode::ldiv: BINARY_OP(i64, /); break;
+            case OpCode::uldiv: BINARY_OP(u64, /); break;
+            case OpCode::lrem: BINARY_OP(i64, %); break;
+            case OpCode::ulrem: BINARY_OP(u64, %); break;
+            case OpCode::fadd: BINARY_OP(f32, +); break;
+            case OpCode::fsub: BINARY_OP(f32, -); break;
+            case OpCode::fmul: BINARY_OP(f32, *); break;
+            case OpCode::fdiv: BINARY_OP(f32, /); break;
+            case OpCode::dadd: BINARY_OP(f64, +); break;
+            case OpCode::dsub: BINARY_OP(f64, -); break;
+            case OpCode::dmul: BINARY_OP(f64, *); break;
+            case OpCode::ddiv: BINARY_OP(f64, /); break;
+            case OpCode::print: printf("%d\n", pop_u32()); break; // temp
             case OpCode::ret: return InterpretResult::Ok;
         }
     }

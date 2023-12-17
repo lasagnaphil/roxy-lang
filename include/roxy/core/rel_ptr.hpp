@@ -25,9 +25,6 @@ struct RelPtr {
     RelPtr() : m_offset(0) {}
     RelPtr(T* ptr) { set(ptr); }
 
-    template <typename U, typename = std::enable_if<std::is_base_of_v<T, U>>>
-    RelPtr(RelPtr<U> other) : m_offset(other.m_offset) {}
-
     RelPtr& operator=(T* ptr) {
         set(ptr);
         return *this;

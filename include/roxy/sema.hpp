@@ -169,8 +169,9 @@ struct SemaResult {
             };
             case SemaResultType::IncompatibleTypes: return {
                 .loc = cur_expr->get_source_loc(),
-                .message = fmt::format("Incompatible types: expected {}.",
-                                       AstPrinter(source).to_string(*expected_type))
+                .message = fmt::format("Incompatible types between {} and {}.",
+                                       AstPrinter(source).to_string(*cur_expr->type),
+                                       AstPrinter(source).to_string(*other_expr->type))
             };
             case SemaResultType::CannotInferType: return {
                 .loc = cur_expr->get_source_loc(),
@@ -556,7 +557,10 @@ public:
         }
     }
     SemaResult visit_impl(GroupingExpr& expr)      {
-        return visit(*expr.expression.get());
+        auto& inner_expr = *expr.expression;
+        SEMA_TRY(visit(inner_expr));
+        expr.type = inner_expr.type.get();
+        return ok();
     }
     SemaResult visit_impl(LiteralExpr& expr)       {
         expr.type = m_allocator->alloc<PrimitiveType>(expr.value.kind);

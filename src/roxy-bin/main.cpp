@@ -47,6 +47,7 @@ int main(int argc, char** argv) {
                                     (size_t)error_msg.loc.length};
             fmt::print("[line {}] Error at '{}': {}\n", line, str, error_msg.message);
         }
+        if (!sema_errors.empty()) return 0;
 
         fmt::print("\nAfter semantic analysis:\n");
         fmt::print("{}\n\n", AstPrinter(scanner.source()).to_string(*module_stmt));
@@ -60,6 +61,15 @@ int main(int argc, char** argv) {
         }
 
         chunk.print_disassembly();
+
+        fmt::print("\n");
+
+        VM vm;
+        auto interpret_res = vm.run_chunk(chunk);
+        if (interpret_res != InterpretResult::Ok) {
+            fmt::print("Error during execution!\n");
+            return 0;
+        }
 
         return 0;
     }

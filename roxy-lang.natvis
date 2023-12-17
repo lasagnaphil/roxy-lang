@@ -19,6 +19,14 @@
             </ArrayItems>
         </Expand>
     </Type>
+    <Type Name="rx::Array&lt;*,_Size&gt;">
+        <Expand>
+            <ArrayItems>
+                <Size>_Size</Size>
+                <ValuePointer>m_data</ValuePointer>
+            </ArrayItems>
+        </Expand>
+    </Type>
     <Type Name="rx::RelPtr&lt;*,*&gt;">
         <Expand>
             <SmartPointer Usage="Minimal">($T1*)((u8*)(&amp;m_offset) + m_offset)</SmartPointer>

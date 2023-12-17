@@ -49,41 +49,33 @@ u32 Chunk::disassemble_instruction(u32 offset) {
     switch (opcode) {
     case OpCode::nop:
     case OpCode::brk:
-    case OpCode::ildarg_0:
-    case OpCode::ildarg_1:
-    case OpCode::ildarg_2:
-    case OpCode::ildarg_3:
-    case OpCode::ildloc_0:
-    case OpCode::ildloc_1:
-    case OpCode::ildloc_2:
-    case OpCode::ildloc_3:
-    case OpCode::istloc_0:
-    case OpCode::istloc_1:
-    case OpCode::istloc_2:
-    case OpCode::istloc_3:
-    case OpCode::lldarg_0:
-    case OpCode::lldarg_1:
-    case OpCode::lldarg_2:
-    case OpCode::lldarg_3:
-    case OpCode::lldloc_0:
-    case OpCode::lldloc_1:
-    case OpCode::lldloc_2:
-    case OpCode::lldloc_3:
-    case OpCode::lstloc_0:
-    case OpCode::lstloc_1:
-    case OpCode::lstloc_2:
-    case OpCode::lstloc_3:
-    case OpCode::ldcnil:
-    case OpCode::ildc_m1:
-    case OpCode::ildc_0:
-    case OpCode::ildc_1:
-    case OpCode::ildc_2:
-    case OpCode::ildc_3:
-    case OpCode::ildc_4:
-    case OpCode::ildc_5:
-    case OpCode::ildc_6:
-    case OpCode::ildc_7:
-    case OpCode::ildc_8:
+    case OpCode::iload_0:
+    case OpCode::iload_1:
+    case OpCode::iload_2:
+    case OpCode::iload_3:
+    case OpCode::istore_0:
+    case OpCode::istore_1:
+    case OpCode::istore_2:
+    case OpCode::istore_3:
+    case OpCode::lload_0:
+    case OpCode::lload_1:
+    case OpCode::lload_2:
+    case OpCode::lload_3:
+    case OpCode::lstore_0:
+    case OpCode::lstore_1:
+    case OpCode::lstore_2:
+    case OpCode::lstore_3:
+    case OpCode::iconst_nil:
+    case OpCode::iconst_m1:
+    case OpCode::iconst_0:
+    case OpCode::iconst_1:
+    case OpCode::iconst_2:
+    case OpCode::iconst_3:
+    case OpCode::iconst_4:
+    case OpCode::iconst_5:
+    case OpCode::iconst_6:
+    case OpCode::iconst_7:
+    case OpCode::iconst_8:
     case OpCode::dup:
     case OpCode::pop:
     case OpCode::ret:
@@ -128,25 +120,23 @@ u32 Chunk::disassemble_instruction(u32 offset) {
     case OpCode::conv_r8:
     case OpCode::print:
         return print_simple_instruction(opcode, offset);
-    case OpCode::ildarg_s:
-    case OpCode::lldarg_s:
-    case OpCode::ildloc_s:
-    case OpCode::lldloc_s:
-    case OpCode::istloc_s:
-    case OpCode::lstloc_s:
+    case OpCode::iload_s:
+    case OpCode::lload_s:
+    case OpCode::istore_s:
+    case OpCode::lstore_s:
         return print_arg_u8_instruction(opcode, offset);
-    case OpCode::ildloc:
-    case OpCode::lldloc:
-    case OpCode::istloc:
-    case OpCode::lstloc:
+    case OpCode::iload:
+    case OpCode::lload:
+    case OpCode::istore:
+    case OpCode::lstore:
         return print_arg_u16_instruction(opcode, offset);
-    case OpCode::ildc:
+    case OpCode::iconst:
         return print_arg_u32_instruction(opcode, offset);
-    case OpCode::lldc:
+    case OpCode::lconst:
         return print_arg_u64_instruction(opcode, offset);
-    case OpCode::fldc:
+    case OpCode::fconst:
         return print_arg_f32_instruction(opcode, offset);
-    case OpCode::dldc:
+    case OpCode::dconst:
         return print_arg_f64_instruction(opcode, offset);
     default:
         return print_simple_instruction(OpCode::Invalid, offset);
