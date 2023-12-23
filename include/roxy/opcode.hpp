@@ -42,7 +42,7 @@
     X(iconst_6)             \
     X(iconst_7)             \
     X(iconst_8)             \
-    X(iconst_S)             \
+    X(iconst_s)             \
     X(iconst)                \
     X(lconst)                \
     X(fconst)                \

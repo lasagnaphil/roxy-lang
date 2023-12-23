@@ -1,2 +1,5 @@
 var a = (1 + 2) / 3 + 4 * 5;
-print a;
+var b = 30;
+var c = a - b;
+var d = a * c;
+print d;

@@ -6,7 +6,6 @@
 #include "roxy/fmt/core.h"
 
 namespace rx {
-
 void Chunk::write(u8 byte, u32 line) {
     m_lines.push_back(line);
     m_bytecode.push_back(byte);
@@ -30,7 +29,7 @@ u32 Chunk::get_line(u32 bytecode_offset) {
 
 void Chunk::print_disassembly() {
     fmt::print("== {} ==\n", m_name);
-    for (i32 offset = 0; offset < m_bytecode.size(); ) {
+    for (i32 offset = 0; offset < m_bytecode.size();) {
         offset = disassemble_instruction(offset);
     }
 }
@@ -38,7 +37,7 @@ void Chunk::print_disassembly() {
 u32 Chunk::disassemble_instruction(u32 offset) {
     fmt::print("{:04d} ", offset);
     u32 cur_line = get_line(offset);
-    u32 prev_line = offset > 0? get_line(offset - 1) : 1;
+    u32 prev_line = offset > 0 ? get_line(offset - 1) : 1;
     if (offset > 0 && cur_line == prev_line) {
         fmt::print("   | ");
     }
@@ -124,6 +123,7 @@ u32 Chunk::disassemble_instruction(u32 offset) {
     case OpCode::lload_s:
     case OpCode::istore_s:
     case OpCode::lstore_s:
+    case OpCode::iconst_s:
         return print_arg_u8_instruction(opcode, offset);
     case OpCode::iload:
     case OpCode::lload:
@@ -161,7 +161,7 @@ u32 Chunk::print_arg_u8_instruction(OpCode opcode, u32 offset) {
 u32 Chunk::print_arg_u16_instruction(OpCode opcode, u32 offset) {
     assert((u32)opcode < (u32)OpCode::_count);
 
-    u16 value = (u16) (m_bytecode[offset + 1] << 8);
+    u16 value = (u16)(m_bytecode[offset + 1] << 8);
     value |= m_bytecode[offset + 2];
     fmt::print("{:<16s} {:4d}\n", g_opcode_str[(u32)opcode], value);
     return offset + 3;
@@ -210,5 +210,4 @@ u32 Chunk::print_string_instruction(OpCode opcode, u32 offset) {
     fputs("'\n", stdout);
     return offset + 5;
 }
-
 }

@@ -3,11 +3,11 @@
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/opcode.hpp"
+#include "roxy/type.hpp"
 
 #include <string_view>
 
 namespace rx {
-
 class Obj;
 
 struct UntypedValue {
@@ -52,11 +52,19 @@ private:
     Vector<UntypedValue> m_values;
 };
 
-struct Chunk
-{
+struct LocalTableEntry {
+    u16 start;
+    u16 size;
+    TypeKind type_kind;
+    PrimTypeKind prim_type_kind;
+    std::string name;
+};
+
+struct Chunk {
     std::string m_name;
     Vector<u8> m_bytecode;
     ConstantTable m_constant_table;
+    Vector<LocalTableEntry> m_local_table;
 
     // Line debug information
     Vector<u32> m_lines;
@@ -64,15 +72,22 @@ struct Chunk
     Chunk(std::string name) : m_name(std::move(name)) {}
 
     void write(u8 byte, u32 line);
+
     u32 add_string(std::string_view str);
     u32 add_constant(UntypedValue value);
+
+    u32 get_locals_slot_size() {
+        if (m_local_table.empty()) return 0;
+        auto& last_local = m_local_table[m_local_table.size() - 1];
+        return last_local.start + last_local.size;
+    }
 
     u32 get_line(u32 bytecode_offset);
 
     void print_disassembly();
+    u32 disassemble_instruction(u32 offset);
 
 private:
-    u32 disassemble_instruction(u32 offset);
     u32 print_simple_instruction(OpCode opcode, u32 offset);
     u32 print_arg_u8_instruction(OpCode opcode, u32 offset);
     u32 print_arg_u16_instruction(OpCode opcode, u32 offset);
@@ -83,30 +98,29 @@ private:
     u32 print_string_instruction(OpCode opcode, u32 offset);
 
     u16 get_u16_from_bytecode_offset(u32 offset) {
-        u16 value = (u16) (m_bytecode[offset] << 8);
+        u16 value = (u16)(m_bytecode[offset] << 8);
         value |= m_bytecode[offset + 1];
         return value;
     }
 
     u32 get_u32_from_bytecode_offset(u32 offset) {
-        u32 value = (u32) (m_bytecode[offset]) << 24;
-        value |= (u32) (m_bytecode[offset + 1]) << 16;
-        value |= (u32) (m_bytecode[offset + 2]) << 8;
-        value |= (u32) (m_bytecode[offset + 3]);
+        u32 value = (u32)(m_bytecode[offset]) << 24;
+        value |= (u32)(m_bytecode[offset + 1]) << 16;
+        value |= (u32)(m_bytecode[offset + 2]) << 8;
+        value |= (u32)(m_bytecode[offset + 3]);
         return value;
     }
 
     u64 get_u64_from_bytecode_offset(u32 offset) {
-        u64 value = (u64) (m_bytecode[offset]) << 56;
-        value |= (u64) (m_bytecode[offset + 1]) << 48;
-        value |= (u64) (m_bytecode[offset + 2]) << 40;
-        value |= (u64) (m_bytecode[offset + 3]) << 32;
-        value |= (u64) (m_bytecode[offset + 4]) << 24;
-        value |= (u64) (m_bytecode[offset + 5]) << 16;
-        value |= (u64) (m_bytecode[offset + 6]) << 8;
-        value |= (u64) (m_bytecode[offset + 7]);
+        u64 value = (u64)(m_bytecode[offset]) << 56;
+        value |= (u64)(m_bytecode[offset + 1]) << 48;
+        value |= (u64)(m_bytecode[offset + 2]) << 40;
+        value |= (u64)(m_bytecode[offset + 3]) << 32;
+        value |= (u64)(m_bytecode[offset + 4]) << 24;
+        value |= (u64)(m_bytecode[offset + 5]) << 16;
+        value |= (u64)(m_bytecode[offset + 6]) << 8;
+        value |= (u64)(m_bytecode[offset + 7]);
         return value;
     }
 };
-
 }

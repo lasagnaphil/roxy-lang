@@ -6,47 +6,60 @@
 #include "roxy/scanner.hpp"
 
 namespace rx {
-
 enum CompileResult {
-    Ok, Error, Unimplemented
+    Ok,
+    Error,
+    Unimplemented
 };
 
 class FnLocalEnv {
 private:
     FnLocalEnv* m_outer;
 
-    Vector<u16> m_local_offsets;
+    Vector<LocalTableEntry> m_local_table;
 
 public:
-    FnLocalEnv(FunctionStmt& stmt) {
-        init_from_locals(stmt.locals);
+    FnLocalEnv(Scanner* scanner, FunctionStmt& stmt) {
+        init_from_locals(scanner, stmt.locals);
     }
-    FnLocalEnv(ModuleStmt& stmt) {
-        init_from_locals(stmt.locals);
+
+    FnLocalEnv(Scanner* scanner, ModuleStmt& stmt) {
+        init_from_locals(scanner, stmt.locals);
     }
 
     FnLocalEnv* get_outer_env() { return m_outer; }
 
-    u16 get_local_offset(u32 local_index) const { return m_local_offsets[local_index]; }
+    u16 get_local_offset(u32 local_index) const { return m_local_table[local_index].start; }
+
+    void move_locals_to_chunk(Chunk* chunk) {
+        chunk->m_local_table = std::move(m_local_table);
+    }
 
 private:
-    void init_from_locals(RelSpan<RelPtr<AstVarDecl>>& locals) {
-        m_local_offsets.resize(locals.size());
+    void init_from_locals(Scanner* scanner, RelSpan<RelPtr<AstVarDecl>>& locals) {
+        m_local_table.resize(locals.size());
         u32 offset = 0;
         for (u32 i = 0; i < locals.size(); i++) {
             auto& local = locals[i];
             auto type = local->type.get();
-            m_local_offsets[i] = offset;
-            u32 aligned_size = (offset + type->alignment) & ~type->alignment;
-            offset = aligned_size + type->size;
+            u32 aligned_offset = (offset + type->alignment - 1) & ~(type->alignment - 1);
+            if (type->kind == TypeKind::Primitive) {
+                auto name = local->name.str(scanner->source());
+                PrimTypeKind prim_type = type->cast<PrimitiveType>().prim_kind;
+                m_local_table[i] = {(u16)((offset + 3) >> 2), (u16)((type->size + 3) >> 2),
+                    TypeKind::Primitive, prim_type, std::string(name)};
+            }
+            else {
+                // TODO
+            }
+            offset = aligned_offset + type->size;
         }
     }
 };
 
 class Compiler :
-        public StmtVisitorBase<Compiler, CompileResult>,
-        public ExprVisitorBase<Compiler, CompileResult> {
-
+    public StmtVisitorBase<Compiler, CompileResult>,
+    public ExprVisitorBase<Compiler, CompileResult> {
 private:
     Scanner* m_scanner;
     Chunk* m_cur_chunk;
@@ -60,8 +73,7 @@ public:
 
     Compiler(Scanner* scanner) : m_scanner(scanner) {}
 
-    CompileResult compile(ModuleStmt& stmt, Chunk& out_chunk)
-    {
+    CompileResult compile(ModuleStmt& stmt, Chunk& out_chunk) {
         m_cur_chunk = &out_chunk;
 
         COMP_TRY(visit(stmt));
@@ -74,20 +86,23 @@ public:
     }
 
     CompileResult visit_impl(ErrorStmt& stmt) { return ok(); }
+
     CompileResult visit_impl(BlockStmt& stmt) {
         for (auto& inner_stmt : stmt.statements) {
             COMP_TRY(visit(*inner_stmt.get()));
         }
         return ok();
     }
+
     CompileResult visit_impl(ModuleStmt& stmt) {
-        FnLocalEnv module_env(stmt);
+        FnLocalEnv module_env(m_scanner, stmt);
         m_cur_fn_env = &module_env;
 
         for (auto& inner_stmt : stmt.statements) {
             COMP_TRY(visit(*inner_stmt.get()));
         }
 
+        m_cur_fn_env->move_locals_to_chunk(m_cur_chunk);
         m_cur_fn_env = module_env.get_outer_env();
         return ok();
     }
@@ -99,13 +114,15 @@ public:
     CompileResult visit_impl(StructStmt& stmt) { return ok(); }
 
     CompileResult visit_impl(FunctionStmt& stmt) {
-        FnLocalEnv fn_env(stmt);
+        // TODO: need to compile and save chunk for each function...
+        FnLocalEnv fn_env(m_scanner, stmt);
         m_cur_fn_env = &fn_env;
 
         for (auto& body_stmt : stmt.body) {
             COMP_TRY(visit(*body_stmt));
         }
 
+        m_cur_fn_env->move_locals_to_chunk(m_cur_chunk);
         m_cur_fn_env = fn_env.get_outer_env();
         return ok();
     }
@@ -129,78 +146,33 @@ public:
             // synthesize default initializer
             auto type = stmt.var.type.get();
             switch (type->kind) {
-                case TypeKind::Primitive: {
-                    auto& prim_type = type->cast<PrimitiveType>();
-                    switch (prim_type.prim_kind) {
-                        case PrimTypeKind::Void: return error();
-                        case PrimTypeKind::Bool:
-                        case PrimTypeKind::U8: case PrimTypeKind::I8:
-                        case PrimTypeKind::U16: case PrimTypeKind::I16:
-                        case PrimTypeKind::U32: case PrimTypeKind::I32: case PrimTypeKind::F32: {
-                            emit_byte(OpCode::iconst_0, cur_line); break;
-                        }
-                        case PrimTypeKind::U64: case PrimTypeKind::I64: case PrimTypeKind::F64: {
-                            emit_byte(OpCode::lconst, cur_line);
-                            emit_u64(0);
-                            break;
-                        }
-                        case PrimTypeKind::String: {
-                            emit_byte(OpCode::iconst_nil, cur_line); break;
-                        }
-                    }
-                }
-                case TypeKind::Function:
-                case TypeKind::Struct:
-                    return unimplemented();
-                case TypeKind::Inferred:
-                case TypeKind::Unassigned:
-                    return error();
-            }
-        }
-        auto type = stmt.var.type.get();
-        switch (type->kind) {
             case TypeKind::Primitive: {
-                u16 local_index = stmt.var.local_index;
                 auto& prim_type = type->cast<PrimitiveType>();
                 switch (prim_type.prim_kind) {
-                    case PrimTypeKind::U8: case PrimTypeKind::U16: case PrimTypeKind::U32:
-                    case PrimTypeKind::I8: case PrimTypeKind::I16: case PrimTypeKind::I32:
-                    case PrimTypeKind::F32: {
-                        if (local_index < 256) {
-                            if (local_index < 4) {
-                                emit_byte((OpCode)((u32)OpCode::istore_0 + (u32)local_index), cur_line);
-                            }
-                            else {
-                                emit_byte(OpCode::istore_s, cur_line);
-                                emit_byte((u8)local_index);
-                            }
-                        }
-                        else {
-                            emit_byte(OpCode::istore, cur_line);
-                            emit_u16(local_index);
-                        }
-                        break;
-                    }
-                    case PrimTypeKind::U64: case PrimTypeKind::I64: case PrimTypeKind::F64: {
-                        if (local_index < 256) {
-                            if (local_index < 4) {
-                                emit_byte((OpCode)((u32)OpCode::lstore + (u32)local_index), cur_line);
-                            }
-                            else {
-                                emit_byte(OpCode::lstore_s, cur_line);
-                                emit_byte((u8)local_index);
-                            }
-                        }
-                        else {
-                            emit_byte(OpCode::lstore, cur_line);
-                            emit_u16(local_index);
-                        }
-                        break;
-                    }
-                    default:
-                        unimplemented();
+                case PrimTypeKind::Void: return error();
+                case PrimTypeKind::Bool:
+                case PrimTypeKind::U8:
+                case PrimTypeKind::I8:
+                case PrimTypeKind::U16:
+                case PrimTypeKind::I16:
+                case PrimTypeKind::U32:
+                case PrimTypeKind::I32:
+                case PrimTypeKind::F32: {
+                    emit_byte(OpCode::iconst_0, cur_line);
+                    break;
                 }
-                break;
+                case PrimTypeKind::U64:
+                case PrimTypeKind::I64:
+                case PrimTypeKind::F64: {
+                    emit_byte(OpCode::lconst, cur_line);
+                    emit_u64(0);
+                    break;
+                }
+                case PrimTypeKind::String: {
+                    emit_byte(OpCode::iconst_nil, cur_line);
+                    break;
+                }
+                }
             }
             case TypeKind::Function:
             case TypeKind::Struct:
@@ -208,6 +180,65 @@ public:
             case TypeKind::Inferred:
             case TypeKind::Unassigned:
                 return error();
+            }
+        }
+        auto type = stmt.var.type.get();
+        switch (type->kind) {
+        case TypeKind::Primitive: {
+            u16 local_index = stmt.var.local_index;
+            auto& prim_type = type->cast<PrimitiveType>();
+            switch (prim_type.prim_kind) {
+            case PrimTypeKind::U8:
+            case PrimTypeKind::U16:
+            case PrimTypeKind::U32:
+            case PrimTypeKind::I8:
+            case PrimTypeKind::I16:
+            case PrimTypeKind::I32:
+            case PrimTypeKind::F32: {
+                if (local_index < 256) {
+                    if (local_index < 4) {
+                        emit_byte((OpCode)((u32)OpCode::istore_0 + (u32)local_index), cur_line);
+                    }
+                    else {
+                        emit_byte(OpCode::istore_s, cur_line);
+                        emit_byte((u8)local_index);
+                    }
+                }
+                else {
+                    emit_byte(OpCode::istore, cur_line);
+                    emit_u16(local_index);
+                }
+                break;
+            }
+            case PrimTypeKind::U64:
+            case PrimTypeKind::I64:
+            case PrimTypeKind::F64: {
+                if (local_index < 256) {
+                    if (local_index < 4) {
+                        emit_byte((OpCode)((u32)OpCode::lstore + (u32)local_index), cur_line);
+                    }
+                    else {
+                        emit_byte(OpCode::lstore_s, cur_line);
+                        emit_byte((u8)local_index);
+                    }
+                }
+                else {
+                    emit_byte(OpCode::lstore, cur_line);
+                    emit_u16(local_index);
+                }
+                break;
+            }
+            default:
+                unimplemented();
+            }
+            break;
+        }
+        case TypeKind::Function:
+        case TypeKind::Struct:
+            return unimplemented();
+        case TypeKind::Inferred:
+        case TypeKind::Unassigned:
+            return error();
         }
 
         return ok();
@@ -219,48 +250,55 @@ public:
     CompileResult visit_impl(ContinueStmt& stmt) { return unimplemented(); }
 
     CompileResult visit_impl(ErrorExpr& expr) { return error(); }
+
     CompileResult visit_impl(AssignExpr& expr) {
         u32 cur_line = m_scanner->get_line(expr.name.get_source_loc());
         AstVarDecl* var_decl = expr.origin.get();
         u16 offset = m_cur_fn_env->get_local_offset(var_decl->local_index);
         auto& prim_type = expr.type->cast<PrimitiveType>();
         switch (prim_type.prim_kind) {
-            case PrimTypeKind::U8: case PrimTypeKind::U16: case PrimTypeKind::U32:
-            case PrimTypeKind::I8: case PrimTypeKind::I16: case PrimTypeKind::I32:
-            case PrimTypeKind::F32: {
-                if (offset <= UINT8_MAX) {
-                    if (offset < 4) {
-                        emit_byte((OpCode)((u32)OpCode::istore_0 + (u32)offset), cur_line);
-                    }
-                    else {
-                        emit_byte(OpCode::istore_s, cur_line);
-                        emit_byte(offset);
-                    }
+        case PrimTypeKind::U8:
+        case PrimTypeKind::U16:
+        case PrimTypeKind::U32:
+        case PrimTypeKind::I8:
+        case PrimTypeKind::I16:
+        case PrimTypeKind::I32:
+        case PrimTypeKind::F32: {
+            if (offset <= UINT8_MAX) {
+                if (offset < 4) {
+                    emit_byte((OpCode)((u32)OpCode::istore_0 + (u32)offset), cur_line);
                 }
                 else {
-                    emit_byte(OpCode::istore, cur_line);
-                    emit_u16(offset);
+                    emit_byte(OpCode::istore_s, cur_line);
+                    emit_byte(offset);
                 }
-                break;
             }
-            case PrimTypeKind::U64: case PrimTypeKind::I64: case PrimTypeKind::F64: {
-                if (offset <= UINT8_MAX) {
-                    if (offset < 4) {
-                        emit_byte((OpCode)((u32)OpCode::lstore_0 + (u32)offset), cur_line);
-                    }
-                    else {
-                        emit_byte(OpCode::lstore_s, cur_line);
-                        emit_byte(offset);
-                    }
+            else {
+                emit_byte(OpCode::istore, cur_line);
+                emit_u16(offset);
+            }
+            break;
+        }
+        case PrimTypeKind::U64:
+        case PrimTypeKind::I64:
+        case PrimTypeKind::F64: {
+            if (offset <= UINT8_MAX) {
+                if (offset < 4) {
+                    emit_byte((OpCode)((u32)OpCode::lstore_0 + (u32)offset), cur_line);
                 }
                 else {
-                    emit_byte(OpCode::lstore, cur_line);
-                    emit_u16((u16) offset);
+                    emit_byte(OpCode::lstore_s, cur_line);
+                    emit_byte(offset);
                 }
-                break;
             }
-            default:
-                unimplemented();
+            else {
+                emit_byte(OpCode::lstore, cur_line);
+                emit_u16((u16)offset);
+            }
+            break;
+        }
+        default:
+            unimplemented();
         }
 
         return ok();
@@ -278,74 +316,112 @@ public:
         PrimTypeKind prim_kind = expr.type->cast<PrimitiveType>().prim_kind;
 
         switch (expr.op.type) {
-            case TokenType::Minus:
-                switch (prim_kind) {
-                    case PrimTypeKind::U8: case PrimTypeKind::U16: case PrimTypeKind::U32:
-                    case PrimTypeKind::I8: case PrimTypeKind::I16: case PrimTypeKind::I32:
-                        emit_byte(OpCode::isub, cur_line); break;
-                    case PrimTypeKind::U64: case PrimTypeKind::I64:
-                        emit_byte(OpCode::lsub, cur_line); break;
-                    case PrimTypeKind::F32:
-                        emit_byte(OpCode::fsub, cur_line); break;
-                    case PrimTypeKind::F64:
-                        emit_byte(OpCode::dsub, cur_line); break;
-                    default:
-                        return error();
-                }
+        case TokenType::Minus:
+            switch (prim_kind) {
+            case PrimTypeKind::U8:
+            case PrimTypeKind::U16:
+            case PrimTypeKind::U32:
+            case PrimTypeKind::I8:
+            case PrimTypeKind::I16:
+            case PrimTypeKind::I32:
+                emit_byte(OpCode::isub, cur_line);
                 break;
-            case TokenType::Plus:
-                switch (prim_kind) {
-                    case PrimTypeKind::U8: case PrimTypeKind::U16: case PrimTypeKind::U32:
-                    case PrimTypeKind::I8: case PrimTypeKind::I16: case PrimTypeKind::I32:
-                        emit_byte(OpCode::iadd, cur_line); break;
-                    case PrimTypeKind::U64: case PrimTypeKind::I64:
-                        emit_byte(OpCode::ladd, cur_line); break;
-                    case PrimTypeKind::F32:
-                        emit_byte(OpCode::fadd, cur_line); break;
-                    case PrimTypeKind::F64:
-                        emit_byte(OpCode::dadd, cur_line); break;
-                    default:
-                        return error();
-                }
+            case PrimTypeKind::U64:
+            case PrimTypeKind::I64:
+                emit_byte(OpCode::lsub, cur_line);
                 break;
-            case TokenType::Star:
-                switch (prim_kind) {
-                    case PrimTypeKind::I8: case PrimTypeKind::I16: case PrimTypeKind::I32:
-                        emit_byte(OpCode::imul, cur_line); break;
-                    case PrimTypeKind::U8: case PrimTypeKind::U16: case PrimTypeKind::U32:
-                        emit_byte(OpCode::uimul, cur_line); break;
-                    case PrimTypeKind::I64:
-                        emit_byte(OpCode::lmul, cur_line); break;
-                    case PrimTypeKind::U64:
-                        emit_byte(OpCode::ulmul, cur_line); break;
-                    case PrimTypeKind::F32:
-                        emit_byte(OpCode::fmul, cur_line); break;
-                    case PrimTypeKind::F64:
-                        emit_byte(OpCode::dmul, cur_line); break;
-                    default:
-                        return error();
-                }
+            case PrimTypeKind::F32:
+                emit_byte(OpCode::fsub, cur_line);
                 break;
-            case TokenType::Slash:
-                switch (prim_kind) {
-                    case PrimTypeKind::I8: case PrimTypeKind::I16: case PrimTypeKind::I32:
-                        emit_byte(OpCode::idiv, cur_line); break;
-                    case PrimTypeKind::U8: case PrimTypeKind::U16: case PrimTypeKind::U32:
-                        emit_byte(OpCode::uidiv, cur_line); break;
-                    case PrimTypeKind::I64:
-                        emit_byte(OpCode::ldiv, cur_line); break;
-                    case PrimTypeKind::U64:
-                        emit_byte(OpCode::uldiv, cur_line); break;
-                    case PrimTypeKind::F32:
-                        emit_byte(OpCode::fdiv, cur_line); break;
-                    case PrimTypeKind::F64:
-                        emit_byte(OpCode::ddiv, cur_line); break;
-                    default:
-                        return error();
-                }
+            case PrimTypeKind::F64:
+                emit_byte(OpCode::dsub, cur_line);
                 break;
             default:
                 return error();
+            }
+            break;
+        case TokenType::Plus:
+            switch (prim_kind) {
+            case PrimTypeKind::U8:
+            case PrimTypeKind::U16:
+            case PrimTypeKind::U32:
+            case PrimTypeKind::I8:
+            case PrimTypeKind::I16:
+            case PrimTypeKind::I32:
+                emit_byte(OpCode::iadd, cur_line);
+                break;
+            case PrimTypeKind::U64:
+            case PrimTypeKind::I64:
+                emit_byte(OpCode::ladd, cur_line);
+                break;
+            case PrimTypeKind::F32:
+                emit_byte(OpCode::fadd, cur_line);
+                break;
+            case PrimTypeKind::F64:
+                emit_byte(OpCode::dadd, cur_line);
+                break;
+            default:
+                return error();
+            }
+            break;
+        case TokenType::Star:
+            switch (prim_kind) {
+            case PrimTypeKind::I8:
+            case PrimTypeKind::I16:
+            case PrimTypeKind::I32:
+                emit_byte(OpCode::imul, cur_line);
+                break;
+            case PrimTypeKind::U8:
+            case PrimTypeKind::U16:
+            case PrimTypeKind::U32:
+                emit_byte(OpCode::uimul, cur_line);
+                break;
+            case PrimTypeKind::I64:
+                emit_byte(OpCode::lmul, cur_line);
+                break;
+            case PrimTypeKind::U64:
+                emit_byte(OpCode::ulmul, cur_line);
+                break;
+            case PrimTypeKind::F32:
+                emit_byte(OpCode::fmul, cur_line);
+                break;
+            case PrimTypeKind::F64:
+                emit_byte(OpCode::dmul, cur_line);
+                break;
+            default:
+                return error();
+            }
+            break;
+        case TokenType::Slash:
+            switch (prim_kind) {
+            case PrimTypeKind::I8:
+            case PrimTypeKind::I16:
+            case PrimTypeKind::I32:
+                emit_byte(OpCode::idiv, cur_line);
+                break;
+            case PrimTypeKind::U8:
+            case PrimTypeKind::U16:
+            case PrimTypeKind::U32:
+                emit_byte(OpCode::uidiv, cur_line);
+                break;
+            case PrimTypeKind::I64:
+                emit_byte(OpCode::ldiv, cur_line);
+                break;
+            case PrimTypeKind::U64:
+                emit_byte(OpCode::uldiv, cur_line);
+                break;
+            case PrimTypeKind::F32:
+                emit_byte(OpCode::fdiv, cur_line);
+                break;
+            case PrimTypeKind::F64:
+                emit_byte(OpCode::ddiv, cur_line);
+                break;
+            default:
+                return error();
+            }
+            break;
+        default:
+            return error();
         }
 
         return ok();
@@ -362,80 +438,87 @@ public:
         AnyValue value = expr.value;
         auto type = expr.type.get();
         switch (type->kind) {
-            case TypeKind::Primitive: {
-                auto& prim_type = type->cast<PrimitiveType>();
-                switch (prim_type.prim_kind) {
-                    case PrimTypeKind::Void: return error();
-                    case PrimTypeKind::Bool: {
-                        emit_byte(value.value_bool? OpCode::iconst_1 : OpCode::iconst_0, cur_line); break;
-                    }
-                    case PrimTypeKind::U8: case PrimTypeKind::I8: {
-                        if (prim_type.prim_kind == PrimTypeKind::I16 && value.value_i16 == -1) {
-                            emit_byte(OpCode::iconst_m1, cur_line);
-                        }
-                        else if (value.value_u16 <= 8) {
-                            emit_byte((OpCode)((u32)OpCode::iconst_0 + (u32)value.value_u16), cur_line);
-                        }
-                        else {
-                            emit_byte(OpCode::iconst_S, cur_line);
-                            emit_byte(value.value_u8);
-                        }
-                        break;
-                    }
-                    case PrimTypeKind::U16: case PrimTypeKind::I16: {
-                        if (prim_type.prim_kind == PrimTypeKind::I16 && value.value_i16 == -1) {
-                            emit_byte(OpCode::iconst_m1, cur_line);
-                        }
-                        else if (value.value_u16 <= 8) {
-                            emit_byte((OpCode)((u32)OpCode::iconst_0 + (u32)value.value_u16), cur_line);
-                        }
-                        else if (value.value_u16 < 256) {
-                            emit_byte(OpCode::iconst_S, cur_line);
-                            emit_byte(value.value_u16);
-                        }
-                        else {
-                            emit_byte(OpCode::iconst, cur_line);
-                            emit_u32(value.value_u16);
-                        }
-                        break;
-                    }
-                    case PrimTypeKind::U32: case PrimTypeKind::I32: case PrimTypeKind::F32: {
-                        if (prim_type.prim_kind == PrimTypeKind::I32 && value.value_i32 == -1) {
-                            emit_byte(OpCode::iconst_m1, cur_line);
-                        }
-                        else if (prim_type.prim_kind != PrimTypeKind::F32 && value.value_u32 <= 8) {
-                            emit_byte((OpCode)((u32)OpCode::iconst_0 + value.value_u32), cur_line);
-                        }
-                        else if (prim_type.prim_kind != PrimTypeKind::F32 && value.value_u32 < 256) {
-                            emit_byte(OpCode::iconst_S, cur_line);
-                            emit_byte(value.value_u16);
-                        }
-                        else {
-                            emit_byte(OpCode::iconst, cur_line);
-                            emit_u32(value.value_u32);
-                        }
-                        break;
-                    }
-                    case PrimTypeKind::U64: case PrimTypeKind::I64: case PrimTypeKind::F64: {
-                        emit_byte(OpCode::iconst, cur_line);
-                        emit_u64(value.value_u64);
-                        break;
-                    }
-                    case PrimTypeKind::String: {
-                        u32 string_offset = m_cur_chunk->add_string(value.str);
-                        emit_byte(OpCode::ldstr, cur_line);
-                        emit_u32(string_offset);
-                        break;
-                    }
+        case TypeKind::Primitive: {
+            auto& prim_type = type->cast<PrimitiveType>();
+            switch (prim_type.prim_kind) {
+            case PrimTypeKind::Void: return error();
+            case PrimTypeKind::Bool: {
+                emit_byte(value.value_bool ? OpCode::iconst_1 : OpCode::iconst_0, cur_line);
+                break;
+            }
+            case PrimTypeKind::U8:
+            case PrimTypeKind::I8: {
+                if (prim_type.prim_kind == PrimTypeKind::I16 && value.value_i16 == -1) {
+                    emit_byte(OpCode::iconst_m1, cur_line);
+                }
+                else if (value.value_u16 <= 8) {
+                    emit_byte((OpCode)((u32)OpCode::iconst_0 + (u32)value.value_u16), cur_line);
+                }
+                else {
+                    emit_byte(OpCode::iconst_s, cur_line);
+                    emit_byte(value.value_u8);
                 }
                 break;
             }
-            case TypeKind::Function:
-            case TypeKind::Struct:
-                return unimplemented();
-            case TypeKind::Inferred:
-            case TypeKind::Unassigned:
-                return error();
+            case PrimTypeKind::U16:
+            case PrimTypeKind::I16: {
+                if (prim_type.prim_kind == PrimTypeKind::I16 && value.value_i16 == -1) {
+                    emit_byte(OpCode::iconst_m1, cur_line);
+                }
+                else if (value.value_u16 <= 8) {
+                    emit_byte((OpCode)((u32)OpCode::iconst_0 + (u32)value.value_u16), cur_line);
+                }
+                else if (value.value_u16 < 256) {
+                    emit_byte(OpCode::iconst_s, cur_line);
+                    emit_byte(value.value_u16);
+                }
+                else {
+                    emit_byte(OpCode::iconst, cur_line);
+                    emit_u32(value.value_u16);
+                }
+                break;
+            }
+            case PrimTypeKind::U32:
+            case PrimTypeKind::I32:
+            case PrimTypeKind::F32: {
+                if (prim_type.prim_kind == PrimTypeKind::I32 && value.value_i32 == -1) {
+                    emit_byte(OpCode::iconst_m1, cur_line);
+                }
+                else if (prim_type.prim_kind != PrimTypeKind::F32 && value.value_u32 <= 8) {
+                    emit_byte((OpCode)((u32)OpCode::iconst_0 + value.value_u32), cur_line);
+                }
+                else if (prim_type.prim_kind != PrimTypeKind::F32 && value.value_u32 < 256) {
+                    emit_byte(OpCode::iconst_s, cur_line);
+                    emit_byte(value.value_u16);
+                }
+                else {
+                    emit_byte(OpCode::iconst, cur_line);
+                    emit_u32(value.value_u32);
+                }
+                break;
+            }
+            case PrimTypeKind::U64:
+            case PrimTypeKind::I64:
+            case PrimTypeKind::F64: {
+                emit_byte(OpCode::iconst, cur_line);
+                emit_u64(value.value_u64);
+                break;
+            }
+            case PrimTypeKind::String: {
+                u32 string_offset = m_cur_chunk->add_string(value.str);
+                emit_byte(OpCode::ldstr, cur_line);
+                emit_u32(string_offset);
+                break;
+            }
+            }
+            break;
+        }
+        case TypeKind::Function:
+        case TypeKind::Struct:
+            return unimplemented();
+        case TypeKind::Inferred:
+        case TypeKind::Unassigned:
+            return error();
         }
         return ok();
     }
@@ -448,33 +531,39 @@ public:
         // TODO: Support operator overloading for custom types
         auto prim_kind = expr.type->cast<PrimitiveType>().prim_kind;
         switch (prim_kind) {
-            case PrimTypeKind::U8: case PrimTypeKind::U16: case PrimTypeKind::U32:
-            case PrimTypeKind::I8: case PrimTypeKind::I16: case PrimTypeKind::I32:
-            case PrimTypeKind::F32: {
-                emit_byte(OpCode::iconst_0, cur_line);
-                COMP_TRY(visit(*right_expr));
-                if (prim_kind == PrimTypeKind::F32) {
-                    emit_byte(OpCode::fsub, cur_line);
-                }
-                else {
-                    emit_byte(OpCode::isub, cur_line);
-                }
-                break;
+        case PrimTypeKind::U8:
+        case PrimTypeKind::U16:
+        case PrimTypeKind::U32:
+        case PrimTypeKind::I8:
+        case PrimTypeKind::I16:
+        case PrimTypeKind::I32:
+        case PrimTypeKind::F32: {
+            emit_byte(OpCode::iconst_0, cur_line);
+            COMP_TRY(visit(*right_expr));
+            if (prim_kind == PrimTypeKind::F32) {
+                emit_byte(OpCode::fsub, cur_line);
             }
-            case PrimTypeKind::U64: case PrimTypeKind::I64: case PrimTypeKind::F64: {
-                emit_byte(OpCode::lconst, cur_line);
-                emit_u64(0);
-                COMP_TRY(visit(*right_expr));
-                if (prim_kind == PrimTypeKind::F64) {
-                    emit_byte(OpCode::dsub, cur_line);
-                }
-                else {
-                    emit_byte(OpCode::lsub, cur_line);
-                }
-                break;
+            else {
+                emit_byte(OpCode::isub, cur_line);
             }
-            default:
-                return error();
+            break;
+        }
+        case PrimTypeKind::U64:
+        case PrimTypeKind::I64:
+        case PrimTypeKind::F64: {
+            emit_byte(OpCode::lconst, cur_line);
+            emit_u64(0);
+            COMP_TRY(visit(*right_expr));
+            if (prim_kind == PrimTypeKind::F64) {
+                emit_byte(OpCode::dsub, cur_line);
+            }
+            else {
+                emit_byte(OpCode::lsub, cur_line);
+            }
+            break;
+        }
+        default:
+            return error();
         }
         return ok();
     }
@@ -485,48 +574,54 @@ public:
         u32 offset = m_cur_fn_env->get_local_offset(var_decl->local_index);
         auto prim_kind = var_decl->type->cast<PrimitiveType>().prim_kind;
         switch (prim_kind) {
-            case PrimTypeKind::U8: case PrimTypeKind::U16: case PrimTypeKind::U32:
-            case PrimTypeKind::I8: case PrimTypeKind::I16: case PrimTypeKind::I32:
-            case PrimTypeKind::F32: {
-                if (offset <= UINT8_MAX) {
-                    if (offset < 4) {
-                        if (offset == 0)       emit_byte(OpCode::iload_0, cur_line);
-                        else if (offset == 1)  emit_byte(OpCode::iload_1, cur_line);
-                        else if (offset == 2)  emit_byte(OpCode::iload_2, cur_line);
-                        else if (offset == 3)  emit_byte(OpCode::iload_3, cur_line);
-                    }
-                    else {
-                        emit_byte(OpCode::iload_s, cur_line);
-                        emit_byte(offset);
-                    }
+        case PrimTypeKind::U8:
+        case PrimTypeKind::U16:
+        case PrimTypeKind::U32:
+        case PrimTypeKind::I8:
+        case PrimTypeKind::I16:
+        case PrimTypeKind::I32:
+        case PrimTypeKind::F32: {
+            if (offset <= UINT8_MAX) {
+                if (offset < 4) {
+                    if (offset == 0) emit_byte(OpCode::iload_0, cur_line);
+                    else if (offset == 1) emit_byte(OpCode::iload_1, cur_line);
+                    else if (offset == 2) emit_byte(OpCode::iload_2, cur_line);
+                    else if (offset == 3) emit_byte(OpCode::iload_3, cur_line);
                 }
                 else {
-                    emit_byte(OpCode::iload, cur_line);
-                    emit_u16((u16) offset);
+                    emit_byte(OpCode::iload_s, cur_line);
+                    emit_byte(offset);
                 }
-                break;
             }
-            case PrimTypeKind::U64: case PrimTypeKind::I64: case PrimTypeKind::F64: {
-                if (offset <= UINT8_MAX) {
-                    if (offset < 4) {
-                        if (offset == 0)       emit_byte(OpCode::lload_0, cur_line);
-                        else if (offset == 1)  emit_byte(OpCode::lload_1, cur_line);
-                        else if (offset == 2)  emit_byte(OpCode::lload_2, cur_line);
-                        else if (offset == 3)  emit_byte(OpCode::lload_3, cur_line);
-                    }
-                    else {
-                        emit_byte(OpCode::lload_s, cur_line);
-                        emit_byte(offset);
-                    }
+            else {
+                emit_byte(OpCode::iload, cur_line);
+                emit_u16((u16)offset);
+            }
+            break;
+        }
+        case PrimTypeKind::U64:
+        case PrimTypeKind::I64:
+        case PrimTypeKind::F64: {
+            if (offset <= UINT8_MAX) {
+                if (offset < 4) {
+                    if (offset == 0) emit_byte(OpCode::lload_0, cur_line);
+                    else if (offset == 1) emit_byte(OpCode::lload_1, cur_line);
+                    else if (offset == 2) emit_byte(OpCode::lload_2, cur_line);
+                    else if (offset == 3) emit_byte(OpCode::lload_3, cur_line);
                 }
                 else {
-                    emit_byte(OpCode::lload, cur_line);
-                    emit_u16((u16) offset);
+                    emit_byte(OpCode::lload_s, cur_line);
+                    emit_byte(offset);
                 }
-                break;
             }
-            default:
-                unimplemented();
+            else {
+                emit_byte(OpCode::lload, cur_line);
+                emit_u16((u16)offset);
+            }
+            break;
+        }
+        default:
+            unimplemented();
         }
 
         return ok();
@@ -555,8 +650,8 @@ public:
 private:
     void emit_byte(OpCode opcode, u32 line) {
         m_cur_chunk->write((u8)opcode, line);
-
     }
+
     void emit_byte(u8 value) {
         m_cur_chunk->write(value, -1);
     }
@@ -584,5 +679,4 @@ private:
         emit_byte(value & 0xff);
     }
 };
-
 }
