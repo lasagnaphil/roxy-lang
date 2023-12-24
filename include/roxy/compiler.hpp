@@ -168,13 +168,14 @@ public:
             COMP_TRY(visit(*left_expr));
             COMP_TRY(visit(*right_expr));
             Type* binary_type = binary_expr->type.get();
-            PrimitiveType* binary_prim_type = binary_type->try_cast<PrimitiveType>();
-            if (binary_prim_type) {
-                if (binary_prim_type->is_within_4_bytes_integer()) {
+            PrimitiveType* left_prim_type = binary_type->try_cast<PrimitiveType>();
+            PrimitiveType* right_prim_type = binary_type->try_cast<PrimitiveType>();
+            if (left_prim_type && right_prim_type && left_prim_type->prim_kind == right_prim_type->prim_kind) {
+                if (left_prim_type->is_within_4_bytes_integer()) {
                     then_jump = emit_jump(opcode_integer_br_cmp_opposite(binary_expr->op.type, false), cond_line);
                 }
-                else if (binary_prim_type->is_floating_point_num()) {
-                    auto prim_kind = binary_prim_type->prim_kind;
+                else if (left_prim_type->is_floating_point_num()) {
+                    auto prim_kind = left_prim_type->prim_kind;
                     // TODO: test if this code is really right
                     switch (binary_expr->op.type) {
                     case TokenType::EqualEqual:
@@ -206,7 +207,7 @@ public:
                     }
                 }
                 else {
-                    OpCode sub = opcode_sub(binary_prim_type->prim_kind);
+                    OpCode sub = opcode_sub(left_prim_type->prim_kind);
                     emit_byte(sub, cond_line);
                     then_jump = emit_jump(OpCode::br_true, cond_line);
                 }
@@ -266,17 +267,23 @@ public:
                 case PrimTypeKind::U16:
                 case PrimTypeKind::I16:
                 case PrimTypeKind::U32:
-                case PrimTypeKind::I32:
-                case PrimTypeKind::F32: {
+                case PrimTypeKind::I32: {
                     emit_byte(OpCode::iconst_0, cur_line);
                     break;
                 }
                 case PrimTypeKind::U64:
-                case PrimTypeKind::I64:
-                case PrimTypeKind::F64: {
+                case PrimTypeKind::I64: {
                     emit_byte(OpCode::lconst, cur_line);
                     emit_u64(0);
                     break;
+                }
+                case PrimTypeKind::F32: {
+                    emit_byte(OpCode::fconst, cur_line);
+                    emit_u32(0);
+                }
+                case PrimTypeKind::F64: {
+                    emit_byte(OpCode::dconst, cur_line);
+                    emit_u64(0);
                 }
                 case PrimTypeKind::String: {
                     emit_byte(OpCode::iconst_nil, cur_line);
@@ -325,7 +332,7 @@ public:
             case PrimTypeKind::F64: {
                 if (local_index < 256) {
                     if (local_index < 4) {
-                        emit_byte((OpCode)((u32)OpCode::lstore + (u32)local_index), cur_line);
+                        emit_byte((OpCode)((u32)OpCode::lstore_0 + (u32)local_index), cur_line);
                     }
                     else {
                         emit_byte(OpCode::lstore_s, cur_line);
@@ -594,23 +601,35 @@ public:
                 if (prim_type.prim_kind == PrimTypeKind::I32 && value.value_i32 == -1) {
                     emit_byte(OpCode::iconst_m1, cur_line);
                 }
-                else if (prim_type.prim_kind != PrimTypeKind::F32 && value.value_u32 <= 8) {
-                    emit_byte((OpCode)((u32)OpCode::iconst_0 + value.value_u32), cur_line);
-                }
-                else if (prim_type.prim_kind != PrimTypeKind::F32 && value.value_u32 < 256) {
-                    emit_byte(OpCode::iconst_s, cur_line);
-                    emit_byte(value.value_u16);
-                }
                 else {
-                    emit_byte(OpCode::iconst, cur_line);
-                    emit_u32(value.value_u32);
+                    if (prim_type.prim_kind == PrimTypeKind::F32) {
+                        emit_byte(OpCode::fconst, cur_line);
+                        emit_u32(value.value_u32);
+                    }
+                    else {
+                        if (value.value_u32 <= 8) {
+                            emit_byte((OpCode)((u32)OpCode::iconst_0 + value.value_u32), cur_line);
+                        }
+                        else if (value.value_u32 < 256) {
+                            emit_byte(OpCode::iconst_s, cur_line);
+                            emit_byte(value.value_u16);
+                        }
+                        else {
+                            emit_byte(OpCode::iconst, cur_line);
+                            emit_u32(value.value_u32);
+                        }
+                    }
                 }
                 break;
             }
             case PrimTypeKind::U64:
-            case PrimTypeKind::I64:
-            case PrimTypeKind::F64: {
+            case PrimTypeKind::I64: {
                 emit_byte(OpCode::iconst, cur_line);
+                emit_u64(value.value_u64);
+                break;
+            }
+            case PrimTypeKind::F64: {
+                emit_byte(OpCode::dconst, cur_line);
                 emit_u64(value.value_u64);
                 break;
             }
@@ -693,10 +712,7 @@ public:
         case PrimTypeKind::F32: {
             if (offset <= UINT8_MAX) {
                 if (offset < 4) {
-                    if (offset == 0) emit_byte(OpCode::iload_0, cur_line);
-                    else if (offset == 1) emit_byte(OpCode::iload_1, cur_line);
-                    else if (offset == 2) emit_byte(OpCode::iload_2, cur_line);
-                    else if (offset == 3) emit_byte(OpCode::iload_3, cur_line);
+                    emit_byte((OpCode)((u32)OpCode::iload_0 + offset), cur_line);
                 }
                 else {
                     emit_byte(OpCode::iload_s, cur_line);
@@ -712,12 +728,10 @@ public:
         case PrimTypeKind::U64:
         case PrimTypeKind::I64:
         case PrimTypeKind::F64: {
+            offset >>= 1;
             if (offset <= UINT8_MAX) {
                 if (offset < 4) {
-                    if (offset == 0) emit_byte(OpCode::lload_0, cur_line);
-                    else if (offset == 1) emit_byte(OpCode::lload_1, cur_line);
-                    else if (offset == 2) emit_byte(OpCode::lload_2, cur_line);
-                    else if (offset == 3) emit_byte(OpCode::lload_3, cur_line);
+                    emit_byte((OpCode)((u32)OpCode::lload_0 + offset), cur_line);
                 }
                 else {
                     emit_byte(OpCode::lload_s, cur_line);

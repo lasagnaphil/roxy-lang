@@ -99,6 +99,87 @@ InterpretResult VM::run() {
             // do nothing
             break;
 #endif
+        case OpCode::lload_0: {
+            u64 value;
+            memcpy(&value, frame.locals, sizeof(u64));
+            push_u64(value);
+            break;
+        }
+        case OpCode::lload_1: {
+            u64 value;
+            memcpy(&value, frame.locals + 2, sizeof(u64));
+            push_u64(value);
+            break;
+        }
+        case OpCode::lload_2: {
+            u64 value;
+            memcpy(&value, frame.locals + 4, sizeof(u64));
+            push_u64(value);
+            break;
+        }
+        case OpCode::lload_3: {
+            u64 value;
+            memcpy(&value, frame.locals + 6, sizeof(u64));
+            push_u64(value);
+            break;
+        }
+        case OpCode::lload: {
+            u32 offset = (u32)read_u16() << 1;
+            u64 value;
+            memcpy(&value, frame.locals + offset, sizeof(u64));
+            push_u64(value);
+            break;
+        }
+        case OpCode::lload_s: {
+            u32 offset = (u32)read_u8() << 1;
+            u64 value;
+            memcpy(&value, frame.locals + offset, sizeof(u64));
+            push_u64(value);
+            break;
+        }
+#ifdef ROXY_USE_SEPARATE_LOCALS
+        case OpCode::lstore_0: {
+            u64 value = pop_u64();
+            memcpy(frame.locals, &value, sizeof(u64));
+            break;
+        }
+        case OpCode::lstore_1: {
+            u64 value = pop_u64();
+            memcpy(frame.locals + 2, &value, sizeof(u64));
+            break;
+        }
+        case OpCode::lstore_2: {
+            u64 value = pop_u64();
+            memcpy(frame.locals + 4, &value, sizeof(u64));
+            break;
+        }
+        case OpCode::lstore_3: {
+            u64 value = pop_u64();
+            memcpy(frame.locals + 6, &value, sizeof(u64));
+            break;
+        }
+        case OpCode::lstore: {
+            u64 value = pop_u64();
+            u32 offset = (u32)read_u16() << 1;
+            memcpy(frame.locals + offset, &value, sizeof(u64));
+            break;
+        }
+        case OpCode::lstore_s: {
+            u64 value = pop_u64();
+            u32 offset = (u32)read_u8() << 1;
+            memcpy(frame.locals + offset, &value, sizeof(u64));
+            break;
+        }
+#else
+        case OpCode::lstore_0:
+        case OpCode::lstore_1:
+        case OpCode::lstore_2:
+        case OpCode::lstore_3:
+        case OpCode::lstore:
+        case OpCode::lstore_s:
+            // do nothing
+            break;
+#endif
         case OpCode::iconst_m1: push_u32(-1);
             break;
         case OpCode::iconst_0: push_u32(0);
@@ -217,8 +298,8 @@ InterpretResult VM::run() {
             break;
         case OpCode::ddiv: BINARY_OP(f64, /);
             break;
-        case OpCode::print: printf("%d\n", pop_u32());
-            break; // temp
+        case OpCode::print: printf("%d\n", pop_u32()); // temp
+            break;
         case OpCode::ret: return InterpretResult::Ok;
         default: return InterpretResult::RuntimeError;
         }

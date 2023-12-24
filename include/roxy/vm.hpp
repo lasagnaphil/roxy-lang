@@ -76,8 +76,8 @@ private:
 
     u64 pop_u64() {
         m_stack_top -= 2;
-        u64 value = (u64)m_stack_top[0] << 32;
-        value |= (u64)m_stack_top[1];
+        u64 value = (u64)m_stack_top[0];
+        value |= (u64)m_stack_top[1] << 32;
         return value;
     }
 
