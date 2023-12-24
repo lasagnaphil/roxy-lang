@@ -6,6 +6,7 @@
 #include "roxy/fmt/core.h"
 
 namespace rx {
+
 void Chunk::write(u8 byte, u32 line) {
     m_lines.push_back(line);
     m_bytecode.push_back(byte);

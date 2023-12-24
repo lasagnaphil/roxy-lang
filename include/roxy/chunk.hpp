@@ -2,6 +2,7 @@
 
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
+#include "roxy/core/unique_ptr.hpp"
 #include "roxy/opcode.hpp"
 #include "roxy/type.hpp"
 
@@ -52,20 +53,101 @@ private:
     Vector<UntypedValue> m_values;
 };
 
+struct TypeData {
+    TypeKind kind;
+    u16 size;
+    u16 alignment;
+
+    TypeData(TypeKind kind) : kind(kind), size(0), alignment(0) {}
+    TypeData(TypeKind kind, u16 size, u16 alignment) : kind(kind), size(size), alignment(alignment) {}
+
+    static UniquePtr<TypeData> from_type(const Type* type, const u8* source);
+};
+
+struct VarData {
+    std::string name;
+    UniquePtr<TypeData> type;
+
+    VarData() = default;
+    VarData(const AstVarDecl& decl, const u8* source) {
+        name = decl.name.str(source);
+        type = TypeData::from_type(decl.type.get(), source);
+    }
+};
+
+struct PrimitiveTypeData : TypeData {
+    static constexpr TypeKind s_kind = TypeKind::Primitive;
+
+    PrimitiveTypeData() : TypeData(s_kind) {}
+    PrimitiveTypeData(const PrimitiveType& type) : TypeData(s_kind), prim_kind(type.prim_kind) {}
+
+    PrimTypeKind prim_kind;
+};
+
+struct StructTypeData : TypeData {
+    static constexpr TypeKind s_kind = TypeKind::Struct;
+
+    StructTypeData() : TypeData(s_kind) {}
+
+    StructTypeData(const StructType& type, const u8* source) : TypeData(s_kind), name(type.name.str(source)) {
+        fields.resize(type.declarations.size());
+        for (u32 i = 0; i < type.declarations.size(); i++) {
+            fields[i] = VarData(type.declarations[i], source);
+        }
+    }
+
+    std::string name;
+    Vector<VarData> fields;
+};
+
+struct FunctionTypeData : TypeData {
+    static constexpr TypeKind s_kind = TypeKind::Function;
+
+    FunctionTypeData() : TypeData(s_kind) {}
+
+    FunctionTypeData(const FunctionType& type, const u8* source) : TypeData(s_kind) {
+        params.resize(type.params.size());
+        for (u32 i = 0; i < type.params.size(); i++) {
+            params[i] = TypeData::from_type(type.params[i].get(), source);
+        }
+        ret = TypeData::from_type(type.ret.get(), source);
+    }
+
+    Vector<UniquePtr<TypeData>> params;
+    UniquePtr<TypeData> ret;
+};
+
+inline UniquePtr<TypeData> TypeData::from_type(const Type* type, const u8* source) {
+    if (type->kind == TypeKind::Primitive) {
+        return UniquePtr<TypeData>(new PrimitiveTypeData(type->cast<PrimitiveType>()));
+    }
+    else if (type->kind == TypeKind::Struct) {
+        return UniquePtr<TypeData>(new StructTypeData(type->cast<StructType>(), source));
+    }
+    else if (type->kind == TypeKind::Function) {
+        return UniquePtr<TypeData>(new FunctionTypeData(type->cast<FunctionType>(), source));
+    }
+    else {
+        return nullptr;
+    }
+}
+
 struct LocalTableEntry {
     u16 start;
     u16 size;
-    TypeKind type_kind;
-    PrimTypeKind prim_type_kind;
+    UniquePtr<TypeData> type;
     std::string name;
 };
+
+struct FunctionTableEntry;
 
 struct Chunk {
     std::string m_name;
     Vector<u8> m_bytecode;
     ConstantTable m_constant_table;
     Vector<LocalTableEntry> m_local_table;
-    Vector<Chunk> m_function_table;
+    Vector<FunctionTableEntry> m_function_table;
+    Vector<StructTypeData> m_struct_table;
 
     // Line debug information
     Vector<u32> m_lines;
@@ -118,5 +200,12 @@ private:
         memcpy(&value, m_bytecode.data() + offset, sizeof(u64));
         return value;
     }
+};
+
+struct FunctionTableEntry {
+    std::string name;
+    // Vector<std::string> param_names;
+    FunctionTypeData type;
+    Chunk chunk;
 };
 }

@@ -99,7 +99,7 @@ public:
 
     void push_back(T elem) {
         ensure_capacity(m_size + 1);
-        m_data[m_size++] = elem;
+        m_data[m_size++] = std::move(elem);
     }
 
     T& push_empty() {
@@ -119,7 +119,7 @@ public:
 
     void resize(Index new_size) {
         T* new_data = new T[new_size];
-        copy(m_data, m_size, new_data);
+        move(m_data, m_size, new_data);
         delete[] m_data;
         m_data = new_data;
         m_capacity = m_size = new_size;
@@ -128,7 +128,7 @@ public:
     void reserve(Index new_capacity) {
         if (new_capacity <= m_capacity) return;
         T* new_data = new T[new_capacity];
-        copy(m_data, m_size, new_data);
+        move(m_data, m_size, new_data);
         delete[] m_data;
         m_data = new_data;
         m_capacity = new_capacity;
@@ -169,12 +169,23 @@ private:
         }
     }
 
+    static void move(T* src, Index n, T* dst) {
+        if constexpr (std::is_trivially_copyable<T>::value) {
+            memmove(dst, src, sizeof(T) * n);
+        }
+        else {
+            for (Index i = 0; i < n; i++) {
+                dst[i] = std::move(src[i]);
+            }
+        }
+    }
+
     void ensure_capacity(Index min_capacity) {
 #define MAX(a, b) (((a)>(b))? (a):(b))
         if (min_capacity <= m_capacity) return;
         size_t new_capacity = MAX(m_capacity * 2, min_capacity);
         T* new_data = new T[new_capacity];
-        copy(m_data, m_size, new_data);
+        move(m_data, m_size, new_data);
         delete[] m_data;
         m_data = new_data;
         m_capacity = new_capacity;

@@ -6,7 +6,6 @@
 #include <type_traits>
 
 namespace rx {
-
 template <typename T, u32 Alignment = 1>
 struct RelPtr {
     static_assert((Alignment & (Alignment - 1)) == 0, "Alignment must be power of two");
@@ -31,15 +30,19 @@ struct RelPtr {
     }
 
     T* operator->() { return get(); }
+    const T* operator->() const { return get(); }
 
     T& operator*() { return *get(); }
+    const T& operator*() const { return *get(); }
 
     T* get() {
         return m_offset ? reinterpret_cast<T*>(reinterpret_cast<u8*>(this) + (m_offset << AlignmentBits)) : nullptr;
     }
 
     const T* get() const {
-        return m_offset ? reinterpret_cast<const T*>(reinterpret_cast<const u8*>(this) + (m_offset << AlignmentBits)) : nullptr;
+        return m_offset
+                   ? reinterpret_cast<const T*>(reinterpret_cast<const u8*>(this) + (m_offset << AlignmentBits))
+                   : nullptr;
     }
 
     void set(T* ptr) {
@@ -84,6 +87,7 @@ struct RelSpan {
         assert(i < m_size);
         return m_data.get()[i];
     }
+
     T& operator[](u32 i) {
         assert(i < m_size);
         return m_data.get()[i];
@@ -98,5 +102,4 @@ private:
     RelPtr<T, Alignment> m_data;
     u32 m_size;
 };
-
 }

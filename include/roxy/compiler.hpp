@@ -49,17 +49,11 @@ private:
             auto& local = locals[i];
             auto type = local->type.get();
             u32 aligned_offset = (offset + type->alignment - 1) & ~(type->alignment - 1);
-            if (type->kind == TypeKind::Primitive) {
-                auto name = local->name.str(scanner->source());
-                PrimTypeKind prim_type = type->cast<PrimitiveType>().prim_kind;
-                m_local_table[i] = {
-                    (u16)((offset + 3) >> 2), (u16)((type->size + 3) >> 2),
-                    TypeKind::Primitive, prim_type, std::string(name)
-                };
-            }
-            else {
-                // TODO
-            }
+            auto name = local->name.str(scanner->source());
+            m_local_table[i] = {
+                (u16)((offset + 3) >> 2), (u16)((type->size + 3) >> 2),
+                TypeData::from_type(type, scanner->source()), std::string(name)
+            };
             offset = aligned_offset + type->size;
         }
     }
@@ -123,8 +117,8 @@ public:
 
     CompileResult visit_impl(FunctionStmt& stmt) {
         // Set current chunk to newly created chunk of function
-        auto fn_name = stmt.name.str(m_scanner->source());
-        Chunk fn_chunk = {std::string(fn_name)};
+        auto fn_name = std::string(stmt.name.str(m_scanner->source()));
+        Chunk fn_chunk = {fn_name};
         Chunk* parent_chunk = m_cur_chunk;
         m_cur_chunk = &fn_chunk;
 
@@ -136,13 +130,17 @@ public:
             COMP_TRY(visit(*body_stmt));
         }
 
-        // Insert function to parent chunk
-        parent_chunk->m_function_table.push_back(std::move(fn_chunk));
-
         // Revert to parent env and chunk
         m_cur_fn_env->move_locals_to_chunk(m_cur_chunk);
         m_cur_fn_env = fn_env.get_outer_env();
         m_cur_chunk = parent_chunk;
+
+        // Insert function to parent chunk
+        auto fn_type = stmt.function_type.get();
+        parent_chunk->m_function_table.push_back({
+            fn_name,
+            FunctionTypeData(*fn_type, m_scanner->source()),
+            std::move(fn_chunk)});
 
         return ok();
     }
