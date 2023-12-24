@@ -7,7 +7,6 @@
 struct ObjString;
 
 namespace rx {
-
 enum class TypeKind : u8 {
     Primitive,
     Struct,
@@ -21,11 +20,18 @@ enum class PrimTypeKind : u8 {
     Void,
     Bool,
     // Signed integers
-    U8, U16, U32, U64,
+    U8,
+    U16,
+    U32,
+    U64,
     // Unsigned integers
-    I8, I16, I32, I64,
+    I8,
+    I16,
+    I32,
+    I64,
     // Floating point values
-    F32, F64,
+    F32,
+    F64,
     // String (contents on the heap, but it's primitive since it's interned)
     String,
     _size
@@ -116,9 +122,17 @@ struct PrimitiveType : public Type {
     }
 
     bool is_within_4_bytes() const {
-        return prim_kind == PrimTypeKind::I32 || prim_kind == PrimTypeKind::U32 || prim_kind == PrimTypeKind::F32 ||
-                prim_kind == PrimTypeKind::I16 || prim_kind == PrimTypeKind::U16 ||
-                prim_kind == PrimTypeKind::I8 || prim_kind == PrimTypeKind::U8;
+        return prim_kind == PrimTypeKind::Bool ||
+            prim_kind == PrimTypeKind::I32 || prim_kind == PrimTypeKind::U32 || prim_kind == PrimTypeKind::F32 ||
+            prim_kind == PrimTypeKind::I16 || prim_kind == PrimTypeKind::U16 ||
+            prim_kind == PrimTypeKind::I8 || prim_kind == PrimTypeKind::U8;
+    }
+
+    bool is_within_4_bytes_integer() const {
+        return prim_kind == PrimTypeKind::Bool ||
+            prim_kind == PrimTypeKind::I32 || prim_kind == PrimTypeKind::U32 ||
+            prim_kind == PrimTypeKind::I16 || prim_kind == PrimTypeKind::U16 ||
+            prim_kind == PrimTypeKind::I8 || prim_kind == PrimTypeKind::U8;
     }
 };
 
@@ -181,5 +195,4 @@ inline bool Type::is_string() const {
     auto prim_type = try_cast<PrimitiveType>();
     return prim_type && prim_type->prim_kind == PrimTypeKind::String;
 }
-
 }

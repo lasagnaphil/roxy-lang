@@ -76,8 +76,8 @@ private:
 
     u64 pop_u64() {
         m_stack_top -= 2;
-        u64 value = m_stack_top[0];
-        value |= (u64)m_stack_top[1] << 32;
+        u64 value = (u64)m_stack_top[0] << 32;
+        value |= (u64)m_stack_top[1];
         return value;
     }
 
@@ -97,32 +97,32 @@ private:
 
     u8 read_u8() { return *m_cur_frame->ip++; }
     u16 read_u16() {
-        u16 value = (m_cur_frame->ip[0] << 8) | m_cur_frame->ip[1];
-        *m_cur_frame->ip += 2;
+        u16 value = m_cur_frame->ip[0] | (m_cur_frame->ip[1] << 8);
+        m_cur_frame->ip += 2;
         return value;
     }
     u32 read_u32() {
         u32 value;
         memcpy(&value, m_cur_frame->ip, sizeof(u32));
-        *m_cur_frame->ip += 4;
+        m_cur_frame->ip += 4;
         return value;
     }
     u64 read_u64() {
         u64 value;
         memcpy(&value, m_cur_frame->ip, sizeof(u64));
-        *m_cur_frame->ip += 8;
+        m_cur_frame->ip += 8;
         return value;
     }
     f32 read_f32() {
         f32 value;
         memcpy(&value, m_cur_frame->ip, sizeof(f32));
-        *m_cur_frame->ip += 4;
+        m_cur_frame->ip += 4;
         return value;
     }
     f64 read_f64() {
         f64 value;
         memcpy(&value, m_cur_frame->ip, sizeof(f64));
-        *m_cur_frame->ip += 8;
+        m_cur_frame->ip += 8;
         return value;
     }
 

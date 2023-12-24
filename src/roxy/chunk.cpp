@@ -102,21 +102,16 @@ u32 Chunk::disassemble_instruction(u32 offset) {
     case OpCode::dsub:
     case OpCode::dmul:
     case OpCode::ddiv:
+    case OpCode::lcmp:
+    case OpCode::fcmpl:
+    case OpCode::fcmpg:
+    case OpCode::dcmpl:
+    case OpCode::dcmpg:
     case OpCode::band:
     case OpCode::bor:
     case OpCode::bxor:
     case OpCode::bneg:
     case OpCode::bnot:
-    case OpCode::conv_i1:
-    case OpCode::conv_u1:
-    case OpCode::conv_i2:
-    case OpCode::conv_u2:
-    case OpCode::conv_i4:
-    case OpCode::conv_u4:
-    case OpCode::conv_i8:
-    case OpCode::conv_u8:
-    case OpCode::conv_r4:
-    case OpCode::conv_r8:
     case OpCode::print:
         return print_simple_instruction(opcode, offset);
     case OpCode::iload_s:
@@ -138,8 +133,40 @@ u32 Chunk::disassemble_instruction(u32 offset) {
         return print_arg_f32_instruction(opcode, offset);
     case OpCode::dconst:
         return print_arg_f64_instruction(opcode, offset);
+    case OpCode::jmp_s:
+    case OpCode::br_false_s:
+    case OpCode::br_true_s:
+    case OpCode::br_icmpeq_s:
+    case OpCode::br_icmpne_s:
+    case OpCode::br_icmpge_s:
+    case OpCode::br_icmpgt_s:
+    case OpCode::br_icmple_s:
+    case OpCode::br_icmplt_s:
+    case OpCode::br_eq_s:
+    case OpCode::br_ne_s:
+    case OpCode::br_ge_s:
+    case OpCode::br_gt_s:
+    case OpCode::br_le_s:
+    case OpCode::br_lt_s:
+        return print_branch_shortened_instruction(opcode, 1, offset);
+    case OpCode::jmp:
+    case OpCode::br_false:
+    case OpCode::br_true:
+    case OpCode::br_icmpeq:
+    case OpCode::br_icmpne:
+    case OpCode::br_icmpge:
+    case OpCode::br_icmpgt:
+    case OpCode::br_icmple:
+    case OpCode::br_icmplt:
+    case OpCode::br_eq:
+    case OpCode::br_ne:
+    case OpCode::br_ge:
+    case OpCode::br_gt:
+    case OpCode::br_le:
+    case OpCode::br_lt:
+        return print_branch_instruction(opcode, 1, offset);
     default:
-        return print_simple_instruction(OpCode::Invalid, offset);
+        return print_simple_instruction(OpCode::invalid, offset);
     }
 }
 
@@ -161,8 +188,7 @@ u32 Chunk::print_arg_u8_instruction(OpCode opcode, u32 offset) {
 u32 Chunk::print_arg_u16_instruction(OpCode opcode, u32 offset) {
     assert((u32)opcode < (u32)OpCode::_count);
 
-    u16 value = (u16)(m_bytecode[offset + 1] << 8);
-    value |= m_bytecode[offset + 2];
+    u16 value = get_u16_from_bytecode_offset(offset + 1);
     fmt::print("{:<16s} {:4d}\n", g_opcode_str[(u32)opcode], value);
     return offset + 3;
 }
@@ -199,6 +225,20 @@ u32 Chunk::print_arg_f64_instruction(OpCode opcode, u32 offset) {
     memcpy(&value_f, &value, sizeof(u64));
     fmt::print("{:<16s} {:8f}\n", g_opcode_str[(u32)opcode], value_f);
     return offset + 9;
+}
+
+u32 Chunk::print_branch_instruction(OpCode opcode, i32 sign, u32 offset) {
+    assert((u32)opcode < (u32)OpCode::_count);
+    u32 jump = get_u32_from_bytecode_offset(offset + 1);
+    fmt::print("{:<16s} {:4d} -> {:d}\n", g_opcode_str[(u32)opcode], offset, offset + 5 + sign * jump);
+    return offset + 5;
+}
+
+u32 Chunk::print_branch_shortened_instruction(OpCode opcode, i32 sign, u32 offset) {
+    assert((u32)opcode < (u32)OpCode::_count);
+    u32 jump = (u32)m_bytecode[offset + 1];
+    fmt::print("{:<16s} {:4d} -> {:d}\n", g_opcode_str[(u32)opcode], offset, offset + 2 + sign * jump);
+    return offset + 2;
 }
 
 u32 Chunk::print_string_instruction(OpCode opcode, u32 offset) {

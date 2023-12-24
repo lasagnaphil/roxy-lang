@@ -6,10 +6,16 @@
 #include "roxy/scanner.hpp"
 
 namespace rx {
-enum CompileResult {
+enum CompileResultType {
     Ok,
     Error,
-    Unimplemented
+    Unimplemented,
+    Unreachable
+};
+
+struct CompileResult {
+    CompileResultType type;
+    std::string message;
 };
 
 class FnLocalEnv {
@@ -46,8 +52,10 @@ private:
             if (type->kind == TypeKind::Primitive) {
                 auto name = local->name.str(scanner->source());
                 PrimTypeKind prim_type = type->cast<PrimitiveType>().prim_kind;
-                m_local_table[i] = {(u16)((offset + 3) >> 2), (u16)((type->size + 3) >> 2),
-                    TypeKind::Primitive, prim_type, std::string(name)};
+                m_local_table[i] = {
+                    (u16)((offset + 3) >> 2), (u16)((type->size + 3) >> 2),
+                    TypeKind::Primitive, prim_type, std::string(name)
+                };
             }
             else {
                 // TODO
@@ -69,7 +77,7 @@ public:
     using StmtVisitorBase<Compiler, CompileResult>::visit;
     using ExprVisitorBase<Compiler, CompileResult>::visit;
 
-#define COMP_TRY(EXPR) do { auto _res = EXPR; if (_res != CompileResult::Ok) return _res; } while (false);
+#define COMP_TRY(EXPR) do { auto _res = EXPR; if (_res.type != CompileResultType::Ok) { return _res; } } while (false);
 
     Compiler(Scanner* scanner) : m_scanner(scanner) {}
 
@@ -77,10 +85,6 @@ public:
         m_cur_chunk = &out_chunk;
 
         COMP_TRY(visit(stmt));
-        emit_byte(OpCode::ret, -1);
-
-        m_cur_chunk = nullptr;
-        m_cur_fn_env = nullptr;
 
         return ok();
     }
@@ -102,8 +106,11 @@ public:
             COMP_TRY(visit(*inner_stmt.get()));
         }
 
+        emit_byte(OpCode::ret, -1);
+
         m_cur_fn_env->move_locals_to_chunk(m_cur_chunk);
-        m_cur_fn_env = module_env.get_outer_env();
+        m_cur_fn_env = nullptr;
+        m_cur_chunk = nullptr;
         return ok();
     }
 
@@ -114,7 +121,13 @@ public:
     CompileResult visit_impl(StructStmt& stmt) { return ok(); }
 
     CompileResult visit_impl(FunctionStmt& stmt) {
-        // TODO: need to compile and save chunk for each function...
+        // Set current chunk to newly created chunk of function
+        auto fn_name = stmt.name.str(m_scanner->source());
+        Chunk fn_chunk = {std::string(fn_name)};
+        Chunk* parent_chunk = m_cur_chunk;
+        m_cur_chunk = &fn_chunk;
+
+        // Create new local env
         FnLocalEnv fn_env(m_scanner, stmt);
         m_cur_fn_env = &fn_env;
 
@@ -122,12 +135,109 @@ public:
             COMP_TRY(visit(*body_stmt));
         }
 
+        // Insert function to parent chunk
+        parent_chunk->m_function_table.push_back(std::move(fn_chunk));
+
+        // Revert to parent env and chunk
         m_cur_fn_env->move_locals_to_chunk(m_cur_chunk);
         m_cur_fn_env = fn_env.get_outer_env();
+        m_cur_chunk = parent_chunk;
+
         return ok();
     }
 
-    CompileResult visit_impl(IfStmt& stmt) { return unimplemented(); }
+    CompileResult visit_impl(IfStmt& stmt) {
+        Expr* cond_expr = stmt.condition.get();
+        u32 cond_line = m_scanner->get_line(cond_expr->get_source_loc());
+
+        u32 then_jump;
+        if (auto unary_expr = cond_expr->try_cast<UnaryExpr>()) {
+            if (unary_expr->op.type == TokenType::Bang) {
+                Expr* right_expr = unary_expr->right.get();
+                COMP_TRY(visit(*right_expr));
+                then_jump = emit_jump(OpCode::br_true, cond_line);
+            }
+            else {
+                COMP_TRY(visit(*cond_expr));
+                then_jump = emit_jump(OpCode::br_false, cond_line);
+            }
+        }
+        else if (auto binary_expr = stmt.condition->try_cast<BinaryExpr>()) {
+            Expr* left_expr = binary_expr->left.get();
+            Expr* right_expr = binary_expr->right.get();
+            COMP_TRY(visit(*left_expr));
+            COMP_TRY(visit(*right_expr));
+            Type* binary_type = binary_expr->type.get();
+            PrimitiveType* binary_prim_type = binary_type->try_cast<PrimitiveType>();
+            if (binary_prim_type) {
+                if (binary_prim_type->is_within_4_bytes_integer()) {
+                    then_jump = emit_jump(opcode_integer_br_cmp_opposite(binary_expr->op.type, false), cond_line);
+                }
+                else if (binary_prim_type->is_floating_point_num()) {
+                    auto prim_kind = binary_prim_type->prim_kind;
+                    // TODO: test if this code is really right
+                    switch (binary_expr->op.type) {
+                    case TokenType::EqualEqual:
+                        emit_byte(opcode_floating_cmp(prim_kind, false), cond_line);
+                        then_jump = emit_jump(OpCode::br_false, cond_line);
+                        break;
+                    case TokenType::BangEqual:
+                        emit_byte(opcode_floating_cmp(prim_kind, false), cond_line);
+                        then_jump = emit_jump(OpCode::br_true, cond_line);
+                        break;
+                    case TokenType::Less:
+                        emit_byte(opcode_floating_cmp(prim_kind, false), cond_line);
+                        then_jump = emit_jump(OpCode::br_gt, cond_line);
+                        break;
+                    case TokenType::LessEqual:
+                        emit_byte(opcode_floating_cmp(prim_kind, false), cond_line);
+                        then_jump = emit_jump(OpCode::br_ge, cond_line);
+                        break;
+                    case TokenType::Greater:
+                        emit_byte(opcode_floating_cmp(prim_kind, true), cond_line);
+                        then_jump = emit_jump(OpCode::br_gt, cond_line);
+                        break;
+                    case TokenType::GreaterEqual:
+                        emit_byte(opcode_floating_cmp(prim_kind, true), cond_line);
+                        then_jump = emit_jump(OpCode::br_ge, cond_line);
+                        break;
+                    default:
+                        unreachable();
+                    }
+                }
+                else {
+                    OpCode sub = opcode_sub(binary_prim_type->prim_kind);
+                    emit_byte(sub, cond_line);
+                    then_jump = emit_jump(OpCode::br_true, cond_line);
+                }
+            }
+            else {
+                unimplemented();
+            }
+        }
+        else {
+            COMP_TRY(visit(*cond_expr));
+            then_jump = emit_jump(OpCode::br_false, cond_line);
+        }
+
+        emit_byte(OpCode::pop, cond_line);
+
+        Stmt* then_stmt = stmt.then_branch.get();
+        COMP_TRY(visit(*then_stmt));
+
+        u32 else_jump = emit_jump(OpCode::jmp, cond_line);
+
+        patch_jump(then_jump);
+        emit_byte(OpCode::pop, cond_line);
+
+        Stmt* else_stmt = stmt.else_branch.get();
+        if (else_stmt) {
+            COMP_TRY(visit(*else_stmt));
+        }
+        patch_jump(else_jump);
+
+        return ok();
+    }
 
     CompileResult visit_impl(PrintStmt& stmt) {
         Expr* expr = stmt.expr.get();
@@ -149,7 +259,7 @@ public:
             case TypeKind::Primitive: {
                 auto& prim_type = type->cast<PrimitiveType>();
                 switch (prim_type.prim_kind) {
-                case PrimTypeKind::Void: return error();
+                case PrimTypeKind::Void: return unreachable();
                 case PrimTypeKind::Bool:
                 case PrimTypeKind::U8:
                 case PrimTypeKind::I8:
@@ -179,7 +289,7 @@ public:
                 return unimplemented();
             case TypeKind::Inferred:
             case TypeKind::Unassigned:
-                return error();
+                return error("Cannot compile expression with unassigned type!");
             }
         }
         auto type = stmt.var.type.get();
@@ -238,7 +348,7 @@ public:
             return unimplemented();
         case TypeKind::Inferred:
         case TypeKind::Unassigned:
-            return error();
+            return error("Cannot compile expression with unassigned type!");
         }
 
         return ok();
@@ -249,7 +359,7 @@ public:
     CompileResult visit_impl(BreakStmt& stmt) { return unimplemented(); }
     CompileResult visit_impl(ContinueStmt& stmt) { return unimplemented(); }
 
-    CompileResult visit_impl(ErrorExpr& expr) { return error(); }
+    CompileResult visit_impl(ErrorExpr& expr) { return error("Cannot compile expression with error!"); }
 
     CompileResult visit_impl(AssignExpr& expr) {
         u32 cur_line = m_scanner->get_line(expr.name.get_source_loc());
@@ -337,7 +447,7 @@ public:
                 emit_byte(OpCode::dsub, cur_line);
                 break;
             default:
-                return error();
+                return unimplemented();
             }
             break;
         case TokenType::Plus:
@@ -361,7 +471,7 @@ public:
                 emit_byte(OpCode::dadd, cur_line);
                 break;
             default:
-                return error();
+                return unimplemented();
             }
             break;
         case TokenType::Star:
@@ -389,7 +499,7 @@ public:
                 emit_byte(OpCode::dmul, cur_line);
                 break;
             default:
-                return error();
+                return unimplemented();
             }
             break;
         case TokenType::Slash:
@@ -417,11 +527,11 @@ public:
                 emit_byte(OpCode::ddiv, cur_line);
                 break;
             default:
-                return error();
+                return unimplemented();
             }
             break;
         default:
-            return error();
+            return unimplemented();
         }
 
         return ok();
@@ -441,7 +551,7 @@ public:
         case TypeKind::Primitive: {
             auto& prim_type = type->cast<PrimitiveType>();
             switch (prim_type.prim_kind) {
-            case PrimTypeKind::Void: return error();
+            case PrimTypeKind::Void: return unreachable();
             case PrimTypeKind::Bool: {
                 emit_byte(value.value_bool ? OpCode::iconst_1 : OpCode::iconst_0, cur_line);
                 break;
@@ -518,7 +628,7 @@ public:
             return unimplemented();
         case TypeKind::Inferred:
         case TypeKind::Unassigned:
-            return error();
+            return unreachable();
         }
         return ok();
     }
@@ -563,7 +673,7 @@ public:
             break;
         }
         default:
-            return error();
+            return unimplemented();
         }
         return ok();
     }
@@ -643,12 +753,26 @@ public:
 
     CompileResult visit_impl(SetExpr& expr) { return unimplemented(); }
 
-    static inline CompileResult ok() { return CompileResult::Ok; }
-    static inline CompileResult unimplemented() { return CompileResult::Unimplemented; }
-    static inline CompileResult error() { return CompileResult::Error; }
+    static inline CompileResult ok() { return {CompileResultType::Ok, ""}; }
+
+    static inline CompileResult unimplemented() {
+        __debugbreak();
+        return {CompileResultType::Unimplemented, "Unimplemented code"};
+    }
+
+    static inline CompileResult unreachable() {
+        __debugbreak();
+        return {CompileResultType::Unreachable, "Unreachable code"};
+    }
+
+    static inline CompileResult error(std::string message) {
+        __debugbreak();
+        return {CompileResultType::Error, std::move(message)};
+    }
 
 private:
     void emit_byte(OpCode opcode, u32 line) {
+        assert(opcode != OpCode::invalid);
         m_cur_chunk->write((u8)opcode, line);
     }
 
@@ -657,26 +781,41 @@ private:
     }
 
     void emit_u16(u16 value) {
-        emit_byte((value >> 8) & 0xff);
         emit_byte(value & 0xff);
+        emit_byte((value >> 8) & 0xff);
     }
 
     void emit_u32(u32 value) {
-        emit_byte((value >> 24) & 0xff);
-        emit_byte((value >> 16) & 0xff);
-        emit_byte((value >> 8) & 0xff);
         emit_byte(value & 0xff);
+        emit_byte((value >> 8) & 0xff);
+        emit_byte((value >> 16) & 0xff);
+        emit_byte((value >> 24) & 0xff);
     }
 
     void emit_u64(u64 value) {
-        emit_byte((value >> 56) & 0xff);
-        emit_byte((value >> 48) & 0xff);
-        emit_byte((value >> 40) & 0xff);
-        emit_byte((value >> 32) & 0xff);
-        emit_byte((value >> 24) & 0xff);
-        emit_byte((value >> 16) & 0xff);
-        emit_byte((value >> 8) & 0xff);
         emit_byte(value & 0xff);
+        emit_byte((value >> 8) & 0xff);
+        emit_byte((value >> 16) & 0xff);
+        emit_byte((value >> 24) & 0xff);
+        emit_byte((value >> 32) & 0xff);
+        emit_byte((value >> 40) & 0xff);
+        emit_byte((value >> 48) & 0xff);
+        emit_byte((value >> 56) & 0xff);
+    }
+
+    u32 emit_jump(OpCode opcode, u32 line) {
+        emit_byte(opcode, line);
+        emit_u32(0xffffffff);
+        return m_cur_chunk->m_bytecode.size() - 4;
+    }
+
+    void patch_jump(u32 offset) {
+        u32 jump = m_cur_chunk->m_bytecode.size() - offset - 4;
+        // TODO: use br_s instead when jump < UINT16_MAX
+        m_cur_chunk->m_bytecode[offset + 0] = jump & 0xff;
+        m_cur_chunk->m_bytecode[offset + 1] = (jump >> 8) & 0xff;
+        m_cur_chunk->m_bytecode[offset + 2] = (jump >> 16) & 0xff;
+        m_cur_chunk->m_bytecode[offset + 3] = (jump >> 24) & 0xff;
     }
 };
 }

@@ -65,10 +65,12 @@ struct Chunk {
     Vector<u8> m_bytecode;
     ConstantTable m_constant_table;
     Vector<LocalTableEntry> m_local_table;
+    Vector<Chunk> m_function_table;
 
     // Line debug information
     Vector<u32> m_lines;
 
+    Chunk() = default;
     Chunk(std::string name) : m_name(std::move(name)) {}
 
     void write(u8 byte, u32 line);
@@ -95,31 +97,25 @@ private:
     u32 print_arg_u64_instruction(OpCode opcode, u32 offset);
     u32 print_arg_f32_instruction(OpCode opcode, u32 offset);
     u32 print_arg_f64_instruction(OpCode opcode, u32 offset);
+    u32 print_branch_instruction(OpCode opcode, i32 sign, u32 offset);
+    u32 print_branch_shortened_instruction(OpCode opcode, i32 sign, u32 offset);
     u32 print_string_instruction(OpCode opcode, u32 offset);
 
     u16 get_u16_from_bytecode_offset(u32 offset) {
-        u16 value = (u16)(m_bytecode[offset] << 8);
-        value |= m_bytecode[offset + 1];
+        u16 value;
+        memcpy(&value, m_bytecode.data() + offset, sizeof(u16));
         return value;
     }
 
     u32 get_u32_from_bytecode_offset(u32 offset) {
-        u32 value = (u32)(m_bytecode[offset]) << 24;
-        value |= (u32)(m_bytecode[offset + 1]) << 16;
-        value |= (u32)(m_bytecode[offset + 2]) << 8;
-        value |= (u32)(m_bytecode[offset + 3]);
+        u32 value;
+        memcpy(&value, m_bytecode.data() + offset, sizeof(u32));
         return value;
     }
 
     u64 get_u64_from_bytecode_offset(u32 offset) {
-        u64 value = (u64)(m_bytecode[offset]) << 56;
-        value |= (u64)(m_bytecode[offset + 1]) << 48;
-        value |= (u64)(m_bytecode[offset + 2]) << 40;
-        value |= (u64)(m_bytecode[offset + 3]) << 32;
-        value |= (u64)(m_bytecode[offset + 4]) << 24;
-        value |= (u64)(m_bytecode[offset + 5]) << 16;
-        value |= (u64)(m_bytecode[offset + 6]) << 8;
-        value |= (u64)(m_bytecode[offset + 7]);
+        u64 value;
+        memcpy(&value, m_bytecode.data() + offset, sizeof(u64));
         return value;
     }
 };

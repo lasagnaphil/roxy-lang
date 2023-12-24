@@ -55,8 +55,8 @@ int main(int argc, char** argv) {
         Compiler compiler(&scanner);
         Chunk chunk("test_chunk");
         auto res = compiler.compile(*module_stmt, chunk);
-        if (res != CompileResult::Ok) {
-            fmt::print("Error during compilation!\n");
+        if (res.type != CompileResultType::Ok) {
+            fmt::print("Error during compilation: {}!\n", res.message);
             return 0;
         }
 

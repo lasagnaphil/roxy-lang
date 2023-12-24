@@ -1,6 +1,7 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
+#include "roxy/type.hpp"
 
 // IL Opcode list for the Roxy language.
 
@@ -49,36 +50,38 @@
     X(dconst)                \
     X(dup)                  \
     X(pop)                  \
-    X(jmp)                  \
     X(call)                 \
-    X(callI)                \
     X(ret)                  \
-    X(br_s)                 \
-    X(brfalse_s)            \
-    X(brtrue_s)             \
-    X(breq_s)               \
-    X(brge_s)               \
-    X(brgt_s)               \
-    X(brle_s)               \
-    X(brlt_s)               \
-    X(brne_un_s)             \
-    X(brge_un_s)             \
-    X(brgt_un_s)             \
-    X(brle_un_s)             \
-    X(brlt_un_s)             \
-    X(br)                   \
-    X(brfalse)              \
-    X(brtrue)               \
-    X(breq)                 \
-    X(brge)                 \
-    X(brgt)                 \
-    X(brle)                 \
-    X(brlt)                 \
-    X(breq_un)              \
-    X(brge_un)              \
-    X(brgt_un)              \
-    X(brle_un)              \
-    X(brlt_un)              \
+    X(jmp_s)                  \
+    X(br_false_s)            \
+    X(br_true_s)             \
+    X(br_icmpeq_s)               \
+    X(br_icmpne_s)               \
+    X(br_icmpge_s)               \
+    X(br_icmpgt_s)               \
+    X(br_icmple_s)               \
+    X(br_icmplt_s)               \
+    X(br_eq_s)             \
+    X(br_ne_s)             \
+    X(br_ge_s)             \
+    X(br_gt_s)             \
+    X(br_le_s)             \
+    X(br_lt_s)                   \
+    X(jmp)                   \
+    X(br_false)              \
+    X(br_true)               \
+    X(br_icmpeq)                 \
+    X(br_icmpne)                 \
+    X(br_icmpge)                 \
+    X(br_icmpgt)                 \
+    X(br_icmple)                 \
+    X(br_icmplt)                 \
+    X(br_eq)                 \
+    X(br_ne)                 \
+    X(br_ge)                 \
+    X(br_gt)                 \
+    X(br_le)                 \
+    X(br_lt)                 \
     X(swch)                 \
     X(iadd)               \
     X(isub)               \
@@ -104,6 +107,11 @@
     X(dsub)               \
     X(dmul)               \
     X(ddiv)               \
+    X(lcmp)               \
+    X(fcmpl)               \
+    X(fcmpg)               \
+    X(dcmpl)               \
+    X(dcmpg)               \
     X(band)                  \
     X(bor)                   \
     X(bxor)                  \
@@ -112,29 +120,173 @@
     X(bshr_un)               \
     X(bneg)                  \
     X(bnot)                  \
-    X(conv_i1)              \
-    X(conv_u1)              \
-    X(conv_i2)              \
-    X(conv_u2)              \
-    X(conv_i4)              \
-    X(conv_u4)              \
-    X(conv_i8)              \
-    X(conv_u8)              \
-    X(conv_r4)              \
-    X(conv_r8)              \
     X(ldstr)                \
-    X(print)                \
+    X(print)
 
 namespace rx {
-
 enum class OpCode : u8 {
 #define X(val) val,
     OPCODE_LIST(X)
 #undef X
     _count,
-    Invalid = 255
+    invalid = 255
 };
 
 extern const char* g_opcode_str[(u32)OpCode::_count];
 
+constexpr OpCode opcode_add(PrimTypeKind kind) {
+    switch (kind) {
+    case PrimTypeKind::U8:
+    case PrimTypeKind::U16:
+    case PrimTypeKind::U32:
+    case PrimTypeKind::I8:
+    case PrimTypeKind::I16:
+    case PrimTypeKind::I32:
+        return OpCode::iadd;
+    case PrimTypeKind::U64:
+    case PrimTypeKind::I64:
+        return OpCode::ladd;
+    case PrimTypeKind::F32:
+        return OpCode::fadd;
+    case PrimTypeKind::F64:
+        return OpCode::dadd;
+    default:
+        return OpCode::invalid;
+    }
+}
+
+constexpr OpCode opcode_sub(PrimTypeKind kind) {
+    switch (kind) {
+    case PrimTypeKind::U8:
+    case PrimTypeKind::U16:
+    case PrimTypeKind::U32:
+    case PrimTypeKind::I8:
+    case PrimTypeKind::I16:
+    case PrimTypeKind::I32:
+        return OpCode::isub;
+    case PrimTypeKind::U64:
+    case PrimTypeKind::I64:
+        return OpCode::lsub;
+    case PrimTypeKind::F32:
+        return OpCode::fsub;
+    case PrimTypeKind::F64:
+        return OpCode::dsub;
+    default:
+        return OpCode::invalid;
+    }
+}
+
+constexpr OpCode opcode_mul(PrimTypeKind kind) {
+    switch (kind) {
+    case PrimTypeKind::U8:
+    case PrimTypeKind::U16:
+    case PrimTypeKind::U32:
+        return OpCode::uimul;
+    case PrimTypeKind::I8:
+    case PrimTypeKind::I16:
+    case PrimTypeKind::I32:
+        return OpCode::imul;
+    case PrimTypeKind::U64:
+    case PrimTypeKind::I64:
+        return OpCode::lmul;
+    case PrimTypeKind::F32:
+        return OpCode::fmul;
+    case PrimTypeKind::F64:
+        return OpCode::dmul;
+    default:
+        return OpCode::invalid;
+    }
+}
+
+constexpr OpCode opcode_div(PrimTypeKind kind) {
+    switch (kind) {
+    case PrimTypeKind::Bool:
+        return OpCode::invalid;
+    case PrimTypeKind::U8:
+    case PrimTypeKind::U16:
+    case PrimTypeKind::U32:
+        return OpCode::uidiv;
+    case PrimTypeKind::I8:
+    case PrimTypeKind::I16:
+    case PrimTypeKind::I32:
+        return OpCode::idiv;
+    case PrimTypeKind::U64:
+    case PrimTypeKind::I64:
+        return OpCode::ldiv;
+    case PrimTypeKind::F32:
+        return OpCode::fdiv;
+    case PrimTypeKind::F64:
+        return OpCode::ddiv;
+    default:
+        return OpCode::invalid;
+    }
+}
+
+constexpr OpCode opcode_rem(PrimTypeKind kind) {
+    switch (kind) {
+    case PrimTypeKind::U8:
+    case PrimTypeKind::U16:
+    case PrimTypeKind::U32:
+        return OpCode::uirem;
+    case PrimTypeKind::I8:
+    case PrimTypeKind::I16:
+    case PrimTypeKind::I32:
+        return OpCode::irem;
+    case PrimTypeKind::U64:
+    case PrimTypeKind::I64:
+        return OpCode::lrem;
+    default:
+        return OpCode::invalid;
+    }
+}
+
+constexpr OpCode opcode_integer_br_cmp(TokenType type, bool shortened) {
+    switch (type) {
+    case TokenType::EqualEqual:
+        return shortened ? OpCode::br_icmpeq_s : OpCode::br_icmpeq;
+    case TokenType::BangEqual:
+        return shortened ? OpCode::br_icmpne_s : OpCode::br_icmpne;
+    case TokenType::Less:
+        return shortened ? OpCode::br_icmplt_s : OpCode::br_icmplt;
+    case TokenType::LessEqual:
+        return shortened ? OpCode::br_icmple_s : OpCode::br_icmple;
+    case TokenType::Greater:
+        return shortened ? OpCode::br_icmpgt_s : OpCode::br_icmpgt;
+    case TokenType::GreaterEqual:
+        return shortened ? OpCode::br_icmpge_s : OpCode::br_icmpge;
+    default:
+        return OpCode::invalid;
+    }
+}
+
+constexpr OpCode opcode_integer_br_cmp_opposite(TokenType type, bool shortened) {
+    switch (type) {
+    case TokenType::EqualEqual:
+        return shortened ? OpCode::br_icmpne_s : OpCode::br_icmpne;
+    case TokenType::BangEqual:
+        return shortened ? OpCode::br_icmpeq_s : OpCode::br_icmpeq;
+    case TokenType::Less:
+        return shortened ? OpCode::br_icmpge_s : OpCode::br_icmpge;
+    case TokenType::LessEqual:
+        return shortened ? OpCode::br_icmpgt_s : OpCode::br_icmpgt;
+    case TokenType::Greater:
+        return shortened ? OpCode::br_icmple_s : OpCode::br_icmple;
+    case TokenType::GreaterEqual:
+        return shortened ? OpCode::br_icmplt_s : OpCode::br_icmplt;
+    default:
+        return OpCode::invalid;
+    }
+}
+
+constexpr OpCode opcode_floating_cmp(PrimTypeKind kind, bool greater) {
+    if (kind == PrimTypeKind::F32) {
+        return greater ? OpCode::fcmpg : OpCode::fcmpl;
+    }
+    else if (kind == PrimTypeKind::F64) {
+        return greater ? OpCode::dcmpg : OpCode::dcmpl;
+    }
+    else {
+        return OpCode::invalid;
+    }
+}
 }

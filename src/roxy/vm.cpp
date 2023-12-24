@@ -59,6 +59,8 @@ InterpretResult VM::run() {
 #endif
 
 #define BINARY_OP(Type, Op) do { Type b = (Type)pop_##Type(); Type a = (Type)pop_##Type(); push_##Type(a Op b); } while(0);
+#define BINARY_INTEGER_BR_S_OP(Op) do { u32 a = pop_u32(); u32 b = pop_u32(); u32 offset = (u32)read_u8(); if (a Op b) frame.ip += offset; } while(0);
+#define BINARY_INTEGER_BR_OP(Op) do { u32 a = pop_u32(); u32 b = pop_u32(); u32 offset = (u32)read_u32(); if (a Op b) frame.ip += offset; } while(0);
 
         OpCode inst = (OpCode)read_u8();
         switch (inst) {
@@ -131,6 +133,42 @@ InterpretResult VM::run() {
             break;
         case OpCode::pop: pop_u32();
             break;
+        case OpCode::jmp_s: frame.ip += read_u8();
+            break;
+        case OpCode::br_true_s: if (pop_u32()) frame.ip += read_u8();
+            break;
+        case OpCode::br_false_s: if (!pop_u32()) frame.ip += read_u8();
+            break;
+        case OpCode::br_icmpeq_s: BINARY_INTEGER_BR_S_OP(==);
+            break;
+        case OpCode::br_icmpne_s: BINARY_INTEGER_BR_S_OP(!=);
+            break;
+        case OpCode::br_icmpge_s: BINARY_INTEGER_BR_S_OP(>=);
+            break;
+        case OpCode::br_icmpgt_s: BINARY_INTEGER_BR_S_OP(>);
+            break;
+        case OpCode::br_icmple_s: BINARY_INTEGER_BR_S_OP(<=);
+            break;
+        case OpCode::br_icmplt_s: BINARY_INTEGER_BR_S_OP(<);
+            break;
+        case OpCode::jmp: frame.ip += read_u32();
+            break;
+        case OpCode::br_true: if (pop_u32()) frame.ip += read_u32();
+            break;
+        case OpCode::br_false: if (!pop_u32()) frame.ip += read_u32();
+            break;
+        case OpCode::br_icmpeq: BINARY_INTEGER_BR_OP(==);
+            break;
+        case OpCode::br_icmpne: BINARY_INTEGER_BR_OP(!=);
+            break;
+        case OpCode::br_icmpge: BINARY_INTEGER_BR_OP(>=);
+            break;
+        case OpCode::br_icmpgt: BINARY_INTEGER_BR_OP(>);
+            break;
+        case OpCode::br_icmple: BINARY_INTEGER_BR_OP(<=);
+            break;
+        case OpCode::br_icmplt: BINARY_INTEGER_BR_OP(<);
+            break;
         case OpCode::iadd: BINARY_OP(i32, +);
             break;
         case OpCode::isub: BINARY_OP(i32, -);
@@ -182,6 +220,7 @@ InterpretResult VM::run() {
         case OpCode::print: printf("%d\n", pop_u32());
             break; // temp
         case OpCode::ret: return InterpretResult::Ok;
+        default: return InterpretResult::RuntimeError;
         }
     }
 
