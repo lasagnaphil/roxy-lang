@@ -53,6 +53,7 @@
     X(call)                 \
     X(ret)                  \
     X(jmp_s)                  \
+    X(loop_s)                  \
     X(br_false_s)            \
     X(br_true_s)             \
     X(br_icmpeq_s)               \
@@ -68,6 +69,7 @@
     X(br_le_s)             \
     X(br_lt_s)                   \
     X(jmp)                   \
+    X(loop)                   \
     X(br_false)              \
     X(br_true)               \
     X(br_icmpeq)                 \
@@ -187,6 +189,7 @@ constexpr OpCode opcode_mul(PrimTypeKind kind) {
     case PrimTypeKind::I32:
         return OpCode::imul;
     case PrimTypeKind::U64:
+        return OpCode::ulmul;
     case PrimTypeKind::I64:
         return OpCode::lmul;
     case PrimTypeKind::F32:
@@ -211,6 +214,7 @@ constexpr OpCode opcode_div(PrimTypeKind kind) {
     case PrimTypeKind::I32:
         return OpCode::idiv;
     case PrimTypeKind::U64:
+        return OpCode::uldiv;
     case PrimTypeKind::I64:
         return OpCode::ldiv;
     case PrimTypeKind::F32:
@@ -233,6 +237,7 @@ constexpr OpCode opcode_rem(PrimTypeKind kind) {
     case PrimTypeKind::I32:
         return OpCode::irem;
     case PrimTypeKind::U64:
+        return OpCode::ulrem;
     case PrimTypeKind::I64:
         return OpCode::lrem;
     default:
@@ -240,41 +245,59 @@ constexpr OpCode opcode_rem(PrimTypeKind kind) {
     }
 }
 
-constexpr OpCode opcode_integer_br_cmp(TokenType type, bool shortened) {
+constexpr OpCode opcode_arithmetic(PrimTypeKind kind, TokenType type) {
     switch (type) {
-    case TokenType::EqualEqual:
-        return shortened ? OpCode::br_icmpeq_s : OpCode::br_icmpeq;
-    case TokenType::BangEqual:
-        return shortened ? OpCode::br_icmpne_s : OpCode::br_icmpne;
-    case TokenType::Less:
-        return shortened ? OpCode::br_icmplt_s : OpCode::br_icmplt;
-    case TokenType::LessEqual:
-        return shortened ? OpCode::br_icmple_s : OpCode::br_icmple;
-    case TokenType::Greater:
-        return shortened ? OpCode::br_icmpgt_s : OpCode::br_icmpgt;
-    case TokenType::GreaterEqual:
-        return shortened ? OpCode::br_icmpge_s : OpCode::br_icmpge;
+    case TokenType::Plus:
+        return opcode_add(kind);
+    case TokenType::Minus:
+        return opcode_sub(kind);
+    case TokenType::Star:
+        return opcode_mul(kind);
+    case TokenType::Slash:
+        return opcode_div(kind);
+    case TokenType::Percent:
+        return opcode_rem(kind);
     default:
         return OpCode::invalid;
     }
 }
 
-constexpr OpCode opcode_integer_br_cmp_opposite(TokenType type, bool shortened) {
-    switch (type) {
-    case TokenType::EqualEqual:
-        return shortened ? OpCode::br_icmpne_s : OpCode::br_icmpne;
-    case TokenType::BangEqual:
-        return shortened ? OpCode::br_icmpeq_s : OpCode::br_icmpeq;
-    case TokenType::Less:
-        return shortened ? OpCode::br_icmpge_s : OpCode::br_icmpge;
-    case TokenType::LessEqual:
-        return shortened ? OpCode::br_icmpgt_s : OpCode::br_icmpgt;
-    case TokenType::Greater:
-        return shortened ? OpCode::br_icmple_s : OpCode::br_icmple;
-    case TokenType::GreaterEqual:
-        return shortened ? OpCode::br_icmplt_s : OpCode::br_icmplt;
-    default:
-        return OpCode::invalid;
+constexpr OpCode opcode_integer_br_cmp(TokenType type, bool shortened, bool opposite = false) {
+    if (opposite) {
+        switch (type) {
+        case TokenType::EqualEqual:
+            return shortened ? OpCode::br_icmpne_s : OpCode::br_icmpne;
+        case TokenType::BangEqual:
+            return shortened ? OpCode::br_icmpeq_s : OpCode::br_icmpeq;
+        case TokenType::Less:
+            return shortened ? OpCode::br_icmpge_s : OpCode::br_icmpge;
+        case TokenType::LessEqual:
+            return shortened ? OpCode::br_icmpgt_s : OpCode::br_icmpgt;
+        case TokenType::Greater:
+            return shortened ? OpCode::br_icmple_s : OpCode::br_icmple;
+        case TokenType::GreaterEqual:
+            return shortened ? OpCode::br_icmplt_s : OpCode::br_icmplt;
+        default:
+            return OpCode::invalid;
+        }
+    }
+    else {
+        switch (type) {
+        case TokenType::EqualEqual:
+            return shortened ? OpCode::br_icmpeq_s : OpCode::br_icmpeq;
+        case TokenType::BangEqual:
+            return shortened ? OpCode::br_icmpne_s : OpCode::br_icmpne;
+        case TokenType::Less:
+            return shortened ? OpCode::br_icmplt_s : OpCode::br_icmplt;
+        case TokenType::LessEqual:
+            return shortened ? OpCode::br_icmple_s : OpCode::br_icmple;
+        case TokenType::Greater:
+            return shortened ? OpCode::br_icmpgt_s : OpCode::br_icmpgt;
+        case TokenType::GreaterEqual:
+            return shortened ? OpCode::br_icmpge_s : OpCode::br_icmpge;
+        default:
+            return OpCode::invalid;
+        }
     }
 }
 

@@ -20,11 +20,7 @@ u32 Chunk::add_constant(UntypedValue value) {
 }
 
 u32 Chunk::get_line(u32 bytecode_offset) {
-    u32 line = m_lines[bytecode_offset];
-    if (line == 0xffffffff) {
-        return m_lines[bytecode_offset - 1];
-    }
-    return line;
+    return m_lines[bytecode_offset];
 }
 
 void Chunk::print_disassembly() {
@@ -35,15 +31,17 @@ void Chunk::print_disassembly() {
 }
 
 u32 Chunk::disassemble_instruction(u32 offset) {
+    static u32 prev_line = 0; // TODO: this is just a quick hack
     fmt::print("{:04d} ", offset);
     u32 cur_line = get_line(offset);
-    u32 prev_line = offset > 0 ? get_line(offset - 1) : 1;
     if (offset > 0 && cur_line == prev_line) {
         fmt::print("   | ");
     }
     else {
         fmt::print("{:4d} ", cur_line);
     }
+    prev_line = cur_line;
+
     OpCode opcode = (OpCode)m_bytecode[offset];
     switch (opcode) {
     case OpCode::nop:
@@ -149,6 +147,8 @@ u32 Chunk::disassemble_instruction(u32 offset) {
     case OpCode::br_le_s:
     case OpCode::br_lt_s:
         return print_branch_shortened_instruction(opcode, 1, offset);
+    case OpCode::loop_s:
+        return print_branch_shortened_instruction(opcode, -1, offset);
     case OpCode::jmp:
     case OpCode::br_false:
     case OpCode::br_true:
@@ -165,6 +165,8 @@ u32 Chunk::disassemble_instruction(u32 offset) {
     case OpCode::br_le:
     case OpCode::br_lt:
         return print_branch_instruction(opcode, 1, offset);
+    case OpCode::loop:
+        return print_branch_instruction(opcode, -1, offset);
     default:
         return print_simple_instruction(OpCode::invalid, offset);
     }

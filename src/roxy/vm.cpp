@@ -8,12 +8,9 @@ VM::VM() {
     m_stack_top = m_stack.data();
 }
 
-// #define ROXY_USE_SEPARATE_LOCALS
-
 InterpretResult VM::run_chunk(Chunk& chunk) {
     m_frame_count = 1;
 
-#ifdef ROXY_USE_SEPARATE_LOCALS
     // Allocate extra space for locals
     u32* locals = m_stack_top;
     m_stack_top += chunk.get_locals_slot_size();
@@ -24,14 +21,6 @@ InterpretResult VM::run_chunk(Chunk& chunk) {
         .stack = m_stack_top,
         .locals = locals
     };
-#else
-    m_frames[0] = {
-        .chunk = &chunk,
-        .ip = chunk.m_bytecode.data(),
-        .stack = m_stack_top,
-        .locals = m_stack_top
-    };
-#endif
 
     m_cur_frame = &m_frames[0];
     return run();
@@ -76,7 +65,6 @@ InterpretResult VM::run() {
             break;
         case OpCode::iload_s: push_u32(frame.locals[read_u8()]);
             break;
-#ifdef ROXY_USE_SEPARATE_LOCALS
         case OpCode::istore_0: frame.locals[0] = pop_u32();
             break;
         case OpCode::istore_1: frame.locals[1] = pop_u32();
@@ -89,16 +77,6 @@ InterpretResult VM::run() {
             break;
         case OpCode::istore_s: frame.locals[read_u8()] = pop_u32();
             break;
-#else
-        case OpCode::istore_0:
-        case OpCode::istore_1:
-        case OpCode::istore_2:
-        case OpCode::istore_3:
-        case OpCode::istore:
-        case OpCode::istore_s:
-            // do nothing
-            break;
-#endif
         case OpCode::lload_0: {
             u64 value;
             memcpy(&value, frame.locals, sizeof(u64));
@@ -137,7 +115,6 @@ InterpretResult VM::run() {
             push_u64(value);
             break;
         }
-#ifdef ROXY_USE_SEPARATE_LOCALS
         case OpCode::lstore_0: {
             u64 value = pop_u64();
             memcpy(frame.locals, &value, sizeof(u64));
@@ -170,16 +147,6 @@ InterpretResult VM::run() {
             memcpy(frame.locals + offset, &value, sizeof(u64));
             break;
         }
-#else
-        case OpCode::lstore_0:
-        case OpCode::lstore_1:
-        case OpCode::lstore_2:
-        case OpCode::lstore_3:
-        case OpCode::lstore:
-        case OpCode::lstore_s:
-            // do nothing
-            break;
-#endif
         case OpCode::iconst_m1: push_u32(-1);
             break;
         case OpCode::iconst_0: push_u32(0);
@@ -216,6 +183,8 @@ InterpretResult VM::run() {
             break;
         case OpCode::jmp_s: frame.ip += read_u8();
             break;
+        case OpCode::loop_s: frame.ip -= read_u8();
+            break;
         case OpCode::br_true_s: if (pop_u32()) frame.ip += read_u8();
             break;
         case OpCode::br_false_s: if (!pop_u32()) frame.ip += read_u8();
@@ -233,6 +202,8 @@ InterpretResult VM::run() {
         case OpCode::br_icmplt_s: BINARY_INTEGER_BR_S_OP(<);
             break;
         case OpCode::jmp: frame.ip += read_u32();
+            break;
+        case OpCode::loop: frame.ip -= read_u32();
             break;
         case OpCode::br_true: if (pop_u32()) frame.ip += read_u32();
             break;

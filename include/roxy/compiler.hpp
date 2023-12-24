@@ -115,7 +115,8 @@ public:
     }
 
     CompileResult visit_impl(ExpressionStmt& stmt) {
-        return visit(*stmt.expr.get());
+        COMP_TRY(visit(*stmt.expr.get()));
+        return ok();
     }
 
     CompileResult visit_impl(StructStmt& stmt) { return ok(); }
@@ -146,23 +147,22 @@ public:
         return ok();
     }
 
-    CompileResult visit_impl(IfStmt& stmt) {
-        Expr* cond_expr = stmt.condition.get();
+    // Emits a jump instruction from a conditional.
+    // Used for implementing if / while / for statements.
+    CompileResult emit_jump_from_cond_expr(Expr* cond_expr, bool shortened, bool opposite, u32& jump_loc) {
         u32 cond_line = m_scanner->get_line(cond_expr->get_source_loc());
-
-        u32 then_jump;
         if (auto unary_expr = cond_expr->try_cast<UnaryExpr>()) {
             if (unary_expr->op.type == TokenType::Bang) {
                 Expr* right_expr = unary_expr->right.get();
                 COMP_TRY(visit(*right_expr));
-                then_jump = emit_jump(OpCode::br_true, cond_line);
+                jump_loc = emit_jump(OpCode::br_true, cond_line);
             }
             else {
                 COMP_TRY(visit(*cond_expr));
-                then_jump = emit_jump(OpCode::br_false, cond_line);
+                jump_loc = emit_jump(OpCode::br_false, cond_line);
             }
         }
-        else if (auto binary_expr = stmt.condition->try_cast<BinaryExpr>()) {
+        else if (auto binary_expr = cond_expr->try_cast<BinaryExpr>()) {
             Expr* left_expr = binary_expr->left.get();
             Expr* right_expr = binary_expr->right.get();
             COMP_TRY(visit(*left_expr));
@@ -172,7 +172,7 @@ public:
             PrimitiveType* right_prim_type = binary_type->try_cast<PrimitiveType>();
             if (left_prim_type && right_prim_type && left_prim_type->prim_kind == right_prim_type->prim_kind) {
                 if (left_prim_type->is_within_4_bytes_integer()) {
-                    then_jump = emit_jump(opcode_integer_br_cmp_opposite(binary_expr->op.type, false), cond_line);
+                    jump_loc = emit_jump(opcode_integer_br_cmp(binary_expr->op.type, shortened, opposite), cond_line);
                 }
                 else if (left_prim_type->is_floating_point_num()) {
                     auto prim_kind = left_prim_type->prim_kind;
@@ -180,27 +180,27 @@ public:
                     switch (binary_expr->op.type) {
                     case TokenType::EqualEqual:
                         emit_byte(opcode_floating_cmp(prim_kind, false), cond_line);
-                        then_jump = emit_jump(OpCode::br_false, cond_line);
+                        jump_loc = emit_jump(OpCode::br_false, cond_line);
                         break;
                     case TokenType::BangEqual:
                         emit_byte(opcode_floating_cmp(prim_kind, false), cond_line);
-                        then_jump = emit_jump(OpCode::br_true, cond_line);
+                        jump_loc = emit_jump(OpCode::br_true, cond_line);
                         break;
                     case TokenType::Less:
                         emit_byte(opcode_floating_cmp(prim_kind, false), cond_line);
-                        then_jump = emit_jump(OpCode::br_gt, cond_line);
+                        jump_loc = emit_jump(OpCode::br_gt, cond_line);
                         break;
                     case TokenType::LessEqual:
                         emit_byte(opcode_floating_cmp(prim_kind, false), cond_line);
-                        then_jump = emit_jump(OpCode::br_ge, cond_line);
+                        jump_loc = emit_jump(OpCode::br_ge, cond_line);
                         break;
                     case TokenType::Greater:
                         emit_byte(opcode_floating_cmp(prim_kind, true), cond_line);
-                        then_jump = emit_jump(OpCode::br_gt, cond_line);
+                        jump_loc = emit_jump(OpCode::br_gt, cond_line);
                         break;
                     case TokenType::GreaterEqual:
                         emit_byte(opcode_floating_cmp(prim_kind, true), cond_line);
-                        then_jump = emit_jump(OpCode::br_ge, cond_line);
+                        jump_loc = emit_jump(OpCode::br_ge, cond_line);
                         break;
                     default:
                         unreachable();
@@ -209,7 +209,7 @@ public:
                 else {
                     OpCode sub = opcode_sub(left_prim_type->prim_kind);
                     emit_byte(sub, cond_line);
-                    then_jump = emit_jump(OpCode::br_true, cond_line);
+                    jump_loc = emit_jump(OpCode::br_true, cond_line);
                 }
             }
             else {
@@ -218,10 +218,17 @@ public:
         }
         else {
             COMP_TRY(visit(*cond_expr));
-            then_jump = emit_jump(OpCode::br_false, cond_line);
+            jump_loc = emit_jump(OpCode::br_false, cond_line);
         }
+        return ok();
+    }
 
-        emit_byte(OpCode::pop, cond_line);
+    CompileResult visit_impl(IfStmt& stmt) {
+        Expr* cond_expr = stmt.condition.get();
+        u32 cond_line = m_scanner->get_line(cond_expr->get_source_loc());
+
+        u32 then_jump;
+        COMP_TRY(emit_jump_from_cond_expr(cond_expr, false, true, then_jump));
 
         Stmt* then_stmt = stmt.then_branch.get();
         COMP_TRY(visit(*then_stmt));
@@ -229,7 +236,6 @@ public:
         u32 else_jump = emit_jump(OpCode::jmp, cond_line);
 
         patch_jump(then_jump);
-        emit_byte(OpCode::pop, cond_line);
 
         Stmt* else_stmt = stmt.else_branch.get();
         if (else_stmt) {
@@ -280,16 +286,19 @@ public:
                 case PrimTypeKind::F32: {
                     emit_byte(OpCode::fconst, cur_line);
                     emit_u32(0);
+                    break;
                 }
                 case PrimTypeKind::F64: {
                     emit_byte(OpCode::dconst, cur_line);
                     emit_u64(0);
+                    break;
                 }
                 case PrimTypeKind::String: {
                     emit_byte(OpCode::iconst_nil, cur_line);
                     break;
                 }
                 }
+                return ok();
             }
             case TypeKind::Function:
             case TypeKind::Struct:
@@ -361,7 +370,21 @@ public:
         return ok();
     }
 
-    CompileResult visit_impl(WhileStmt& stmt) { return unimplemented(); }
+    CompileResult visit_impl(WhileStmt& stmt) {
+        u32 loop_start = m_cur_chunk->m_bytecode.size();
+
+        auto cond_expr = stmt.condition.get();
+        u32 cond_line = m_scanner->get_line(cond_expr->get_source_loc());
+
+        u32 exit_jump;
+        COMP_TRY(emit_jump_from_cond_expr(cond_expr, false, false, exit_jump));
+        COMP_TRY(visit(*stmt.body));
+        emit_loop(loop_start, cond_line);;
+
+        patch_jump(exit_jump);
+        return ok();
+    }
+
     CompileResult visit_impl(ReturnStmt& stmt) { return unimplemented(); }
     CompileResult visit_impl(BreakStmt& stmt) { return unimplemented(); }
     CompileResult visit_impl(ContinueStmt& stmt) { return unimplemented(); }
@@ -369,6 +392,8 @@ public:
     CompileResult visit_impl(ErrorExpr& expr) { return error("Cannot compile expression with error!"); }
 
     CompileResult visit_impl(AssignExpr& expr) {
+        COMP_TRY(visit(*expr.value));
+
         u32 cur_line = m_scanner->get_line(expr.name.get_source_loc());
         AstVarDecl* var_decl = expr.origin.get();
         u16 offset = m_cur_fn_env->get_local_offset(var_decl->local_index);
@@ -422,124 +447,51 @@ public:
     }
 
     CompileResult visit_impl(BinaryExpr& expr) {
-        Expr* left_expr = expr.left.get();
-        Expr* right_expr = expr.right.get();
-        COMP_TRY(visit(*left_expr));
-        COMP_TRY(visit(*right_expr));
-
         u32 cur_line = m_scanner->get_line(expr.get_source_loc());
 
-        // TODO: Support operator overloading for custom types
-        PrimTypeKind prim_kind = expr.type->cast<PrimitiveType>().prim_kind;
+        Expr* left_expr = expr.left.get();
+        Expr* right_expr = expr.right.get();
 
-        switch (expr.op.type) {
-        case TokenType::Minus:
-            switch (prim_kind) {
-            case PrimTypeKind::U8:
-            case PrimTypeKind::U16:
-            case PrimTypeKind::U32:
-            case PrimTypeKind::I8:
-            case PrimTypeKind::I16:
-            case PrimTypeKind::I32:
-                emit_byte(OpCode::isub, cur_line);
-                break;
-            case PrimTypeKind::U64:
-            case PrimTypeKind::I64:
-                emit_byte(OpCode::lsub, cur_line);
-                break;
-            case PrimTypeKind::F32:
-                emit_byte(OpCode::fsub, cur_line);
-                break;
-            case PrimTypeKind::F64:
-                emit_byte(OpCode::dsub, cur_line);
-                break;
-            default:
-                return unimplemented();
+        COMP_TRY(visit(*left_expr));
+
+        // TODO: Support operator overloading for custom types
+        if (auto prim_type = expr.type->try_cast<PrimitiveType>()) {
+            if (expr.op.is_arithmetic()) {
+                COMP_TRY(visit(*right_expr));
+                emit_byte(opcode_arithmetic(prim_type->prim_kind, expr.op.type), cur_line);
             }
-            break;
-        case TokenType::Plus:
-            switch (prim_kind) {
-            case PrimTypeKind::U8:
-            case PrimTypeKind::U16:
-            case PrimTypeKind::U32:
-            case PrimTypeKind::I8:
-            case PrimTypeKind::I16:
-            case PrimTypeKind::I32:
-                emit_byte(OpCode::iadd, cur_line);
-                break;
-            case PrimTypeKind::U64:
-            case PrimTypeKind::I64:
-                emit_byte(OpCode::ladd, cur_line);
-                break;
-            case PrimTypeKind::F32:
-                emit_byte(OpCode::fadd, cur_line);
-                break;
-            case PrimTypeKind::F64:
-                emit_byte(OpCode::dadd, cur_line);
-                break;
-            default:
-                return unimplemented();
+            else {
+                switch (expr.op.type) {
+                // logical and
+                case TokenType::AmpAmp: {
+                    u32 end_jump = emit_jump(OpCode::br_false, cur_line);
+                    emit_byte(OpCode::pop, cur_line);
+
+                    COMP_TRY(visit(*right_expr));
+                    patch_jump(end_jump);
+                    break;
+                }
+                // logical or
+                case TokenType::BarBar: {
+                    u32 else_jump = emit_jump(OpCode::br_false, cur_line);
+                    u32 end_jump = emit_jump(OpCode::jmp, cur_line);
+
+                    patch_jump(end_jump);
+                    emit_byte(OpCode::pop, cur_line);
+
+                    COMP_TRY(visit(*right_expr));
+                    patch_jump(end_jump);
+                    break;
+                }
+                default:
+                    return unimplemented();
+                }
             }
-            break;
-        case TokenType::Star:
-            switch (prim_kind) {
-            case PrimTypeKind::I8:
-            case PrimTypeKind::I16:
-            case PrimTypeKind::I32:
-                emit_byte(OpCode::imul, cur_line);
-                break;
-            case PrimTypeKind::U8:
-            case PrimTypeKind::U16:
-            case PrimTypeKind::U32:
-                emit_byte(OpCode::uimul, cur_line);
-                break;
-            case PrimTypeKind::I64:
-                emit_byte(OpCode::lmul, cur_line);
-                break;
-            case PrimTypeKind::U64:
-                emit_byte(OpCode::ulmul, cur_line);
-                break;
-            case PrimTypeKind::F32:
-                emit_byte(OpCode::fmul, cur_line);
-                break;
-            case PrimTypeKind::F64:
-                emit_byte(OpCode::dmul, cur_line);
-                break;
-            default:
-                return unimplemented();
-            }
-            break;
-        case TokenType::Slash:
-            switch (prim_kind) {
-            case PrimTypeKind::I8:
-            case PrimTypeKind::I16:
-            case PrimTypeKind::I32:
-                emit_byte(OpCode::idiv, cur_line);
-                break;
-            case PrimTypeKind::U8:
-            case PrimTypeKind::U16:
-            case PrimTypeKind::U32:
-                emit_byte(OpCode::uidiv, cur_line);
-                break;
-            case PrimTypeKind::I64:
-                emit_byte(OpCode::ldiv, cur_line);
-                break;
-            case PrimTypeKind::U64:
-                emit_byte(OpCode::uldiv, cur_line);
-                break;
-            case PrimTypeKind::F32:
-                emit_byte(OpCode::fdiv, cur_line);
-                break;
-            case PrimTypeKind::F64:
-                emit_byte(OpCode::ddiv, cur_line);
-                break;
-            default:
-                return unimplemented();
-            }
-            break;
-        default:
-            return unimplemented();
         }
+        else {
+            unimplemented();
+        }
+
 
         return ok();
     }
@@ -830,6 +782,13 @@ private:
         m_cur_chunk->m_bytecode[offset + 1] = (jump >> 8) & 0xff;
         m_cur_chunk->m_bytecode[offset + 2] = (jump >> 16) & 0xff;
         m_cur_chunk->m_bytecode[offset + 3] = (jump >> 24) & 0xff;
+    }
+
+    void emit_loop(u32 loop_start, u32 line) {
+        emit_byte(OpCode::loop, line);
+
+        u32 offset = m_cur_chunk->m_bytecode.size() - loop_start + 4;
+        emit_u32(offset);
     }
 };
 }

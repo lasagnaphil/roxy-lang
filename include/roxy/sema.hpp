@@ -10,21 +10,36 @@
 #include "roxy/fmt/format.h"
 
 namespace rx {
-
 class SemaEnv {
 private:
     SemaEnv* m_outer;
+
     FunctionStmt* m_function;
     tsl::robin_map<std::string_view, AstVarDecl*> m_var_map;
     tsl::robin_map<std::string_view, FunctionStmt*> m_function_map;
     tsl::robin_map<std::string_view, StructStmt*> m_struct_map;
 
-public:
-    SemaEnv(SemaEnv* outer) : m_outer(outer), m_function(m_outer? m_outer->m_function : nullptr) {}
-    SemaEnv(SemaEnv* outer, FunctionStmt* function) : m_outer(outer), m_function(function) {}
+    Vector<AstVarDecl*> m_locals;
+    SemaEnv* m_locals_env;
 
-    SemaEnv* get_outer_env() { return m_outer; }
-    FunctionStmt* get_outer_function() { return m_function; }
+public:
+    SemaEnv(SemaEnv* outer)
+        : m_outer(outer), m_function(m_outer->m_function) {
+        SemaEnv* env = m_outer;
+        while (!env->has_locals()) {
+            env = env->m_outer;
+        }
+        m_locals_env = env;
+    }
+
+    SemaEnv(SemaEnv* outer, FunctionStmt* function) : m_outer(outer), m_function(function), m_locals_env(this) {}
+    SemaEnv(SemaEnv* outer, ModuleStmt* module) : m_outer(outer), m_function(nullptr), m_locals_env(this) {}
+
+    bool has_locals() const { return m_locals_env == this; }
+
+    SemaEnv* get_outer_env() const { return m_outer; }
+    FunctionStmt* get_outer_function() const { return m_function; }
+    Vector<AstVarDecl*> get_locals() const { return m_locals; }
 
     AstVarDecl* get_var(std::string_view name) {
         auto it = m_var_map.find(name);
@@ -42,8 +57,11 @@ public:
     }
 
     bool set_var(std::string_view name, AstVarDecl* var_decl) {
-        var_decl->local_index = (u32)m_var_map.size();
+        var_decl->local_index = m_locals_env->m_locals.size();
         auto [it, inserted] = m_var_map.insert({name, var_decl});
+        if (inserted) {
+            m_locals_env->m_locals.push_back(var_decl);
+        }
         return inserted;
     }
 
@@ -85,14 +103,6 @@ public:
     bool set_struct(std::string_view name, StructStmt* struct_stmt) {
         auto [it, inserted] = m_struct_map.insert({name, struct_stmt});
         return inserted;
-    }
-
-    Vector<AstVarDecl*> get_locals() {
-        Vector<AstVarDecl*> locals;
-        for (auto& [var, var_decl] : m_var_map) {
-            locals.push_back(var_decl);
-        }
-        return locals;
     }
 };
 
@@ -139,70 +149,70 @@ struct SemaResult {
 
     ErrorMessage to_error_msg(const u8* source) const {
         switch (res_type) {
-            case SemaResultType::UndefinedVar: return {
+        case SemaResultType::UndefinedVar: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = "Undefined variable."
             };
-            case SemaResultType::WrongType: return {
+        case SemaResultType::WrongType: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = fmt::format("Wrong type: expected {}.",
                                        AstPrinter(source).to_string(*expected_type))
             };
-            case SemaResultType::InvalidInitializerType: return {
+        case SemaResultType::InvalidInitializerType: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = fmt::format("Invalid initializer type: expected {}.",
                                        AstPrinter(source).to_string(*expected_type))
             };
-            case SemaResultType::InvalidAssignedType: return {
+        case SemaResultType::InvalidAssignedType: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = fmt::format("Invalid assignment type: expected {}.",
                                        AstPrinter(source).to_string(*cur_var_decl->type))
             };
-            case SemaResultType::InvalidReturnType: return {
+        case SemaResultType::InvalidReturnType: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = fmt::format("Invalid return type: expected {}.",
                                        AstPrinter(source).to_string(*expected_type))
             };
-            case SemaResultType::InvalidParamType: return {
+        case SemaResultType::InvalidParamType: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = fmt::format("Invalid param type: cannot be void.")
             };
-            case SemaResultType::IncompatibleTypes: return {
+        case SemaResultType::IncompatibleTypes: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = fmt::format("Incompatible types between {} and {}.",
                                        AstPrinter(source).to_string(*cur_expr->type),
                                        AstPrinter(source).to_string(*other_expr->type))
             };
-            case SemaResultType::CannotInferType: return {
+        case SemaResultType::CannotInferType: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = fmt::format("Cannot infer type.",
                                        AstPrinter(source).to_string(*expected_type))
             };
-            case SemaResultType::CannotFindType:  {
-                auto unassigned_type = expected_type->cast<UnassignedType>();
-                return {
-                    .loc = unassigned_type.name.get_source_loc(),
-                    .message = fmt::format("Cannot find type {}.", unassigned_type.name.str(source))
-                };
+        case SemaResultType::CannotFindType: {
+            auto unassigned_type = expected_type->cast<UnassignedType>();
+            return {
+                .loc = unassigned_type.name.get_source_loc(),
+                .message = fmt::format("Cannot find type {}.", unassigned_type.name.str(source))
             };
-            case SemaResultType::CannotDotAccessOnType: return {
+        };
+        case SemaResultType::CannotDotAccessOnType: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = fmt::format("Cannot dot access on type {}",
                                        AstPrinter(source).to_string(*expected_type))
             };
-            case SemaResultType::CannotFindField: return {
+        case SemaResultType::CannotFindField: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = fmt::format("Cannot find field.")
             };
-            case SemaResultType::IncompatibleFieldType: return {
+        case SemaResultType::IncompatibleFieldType: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = fmt::format("Incompatible field type.")
             };
-            case SemaResultType::Misc: return {
+        case SemaResultType::Misc: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = "Misc."
             };
-            default: return {};
+        default: return {};
         }
     }
 };
@@ -210,9 +220,8 @@ struct SemaResult {
 class AstAllocator;
 
 class SemaAnalyzer :
-        public StmtVisitorBase<SemaAnalyzer, SemaResult>,
-        public ExprVisitorBase<SemaAnalyzer, SemaResult> {
-
+    public StmtVisitorBase<SemaAnalyzer, SemaResult>,
+    public ExprVisitorBase<SemaAnalyzer, SemaResult> {
 private:
     AstAllocator* m_allocator;
     const u8* m_source;
@@ -221,9 +230,7 @@ private:
 
     SemaEnv* m_cur_env = nullptr;
 
-    void set_env(SemaEnv* env) {
-        m_cur_env = env;
-    }
+    void revert_parent_env() {}
 
     SemaResult report_error(const SemaResult& res) {
         m_errors.push_back(res);
@@ -246,8 +253,8 @@ public:
 
 #define SEMA_TRY(EXPR) do { auto _res = EXPR; if (!_res.is_ok()) return _res; } while (false)
 
-    SemaResult visit_impl(ErrorStmt& stmt)         { return ok(); } // unreachable
-    SemaResult visit_impl(BlockStmt& stmt)         {
+    SemaResult visit_impl(ErrorStmt& stmt) { return ok(); } // unreachable
+    SemaResult visit_impl(BlockStmt& stmt) {
         SemaEnv block_env(m_cur_env);
         m_cur_env = &block_env;
         for (RelPtr<Stmt>& inner_stmt : stmt.statements) {
@@ -257,8 +264,9 @@ public:
         m_cur_env = block_env.get_outer_env();
         return ok();
     }
-    SemaResult visit_impl(ModuleStmt& stmt)         {
-        SemaEnv module_env(m_cur_env);
+
+    SemaResult visit_impl(ModuleStmt& stmt) {
+        SemaEnv module_env(m_cur_env, &stmt);
         m_cur_env = &module_env;
         for (RelPtr<Stmt>& inner_stmt : stmt.statements) {
             // Do not return on error result, since we want to scan all statements inside the block.
@@ -270,10 +278,12 @@ public:
 
         return ok();
     }
-    SemaResult visit_impl(ExpressionStmt& stmt)    {
+
+    SemaResult visit_impl(ExpressionStmt& stmt) {
         return visit(*stmt.expr.get());
     }
-    SemaResult visit_impl(StructStmt& stmt)        {
+
+    SemaResult visit_impl(StructStmt& stmt) {
         auto fields = stmt.fields.to_span();
         auto struct_type = m_allocator->alloc<StructType>(stmt.name, fields);
 
@@ -296,7 +306,7 @@ public:
             }
             u32 aligned_size = (size + field_type->alignment - 1) & ~(field_type->alignment - 1);
             size = aligned_size + field_type->size;
-            alignment = field_type->alignment > alignment? field_type->alignment : alignment;
+            alignment = field_type->alignment > alignment ? field_type->alignment : alignment;
         }
         struct_type->size = size;
         struct_type->alignment = alignment;
@@ -307,7 +317,8 @@ public:
 
         return ok();
     }
-    SemaResult visit_impl(FunctionStmt& stmt)      {
+
+    SemaResult visit_impl(FunctionStmt& stmt) {
         m_cur_env->set_function(stmt.name.str(m_source), &stmt);
 
         SemaEnv fn_env(m_cur_env, &stmt);
@@ -352,8 +363,8 @@ public:
 
         // Add the created function to the TypeEnv.
         stmt.function_type = m_allocator->alloc<FunctionType>(
-                m_allocator->alloc_vector<RelPtr<Type>, Type*>(std::move(param_types)),
-                stmt.ret_type.get());
+            m_allocator->alloc_vector<RelPtr<Type>, Type*>(std::move(param_types)),
+            stmt.ret_type.get());
 
         // Do a sema pass on the statements inside the body.
         for (auto& body_stmt : stmt.body) {
@@ -366,7 +377,8 @@ public:
         m_cur_env = fn_env.get_outer_env();
         return ok();
     }
-    SemaResult visit_impl(IfStmt& stmt)            {
+
+    SemaResult visit_impl(IfStmt& stmt) {
         Expr* cond_expr = stmt.condition.get();
         SEMA_TRY(visit(*cond_expr));
         if (!cond_expr->type->is_bool()) {
@@ -378,10 +390,12 @@ public:
         }
         return ok();
     }
-    SemaResult visit_impl(PrintStmt& stmt)         {
+
+    SemaResult visit_impl(PrintStmt& stmt) {
         return visit(*stmt.expr.get());
     }
-    SemaResult visit_impl(VarStmt& stmt)           {
+
+    SemaResult visit_impl(VarStmt& stmt) {
         if (Expr* init_expr = stmt.initializer.get()) {
             SEMA_TRY(visit(*init_expr));
             auto inferred_type = stmt.var.type->try_cast<InferredType>();
@@ -393,6 +407,9 @@ public:
                 Type* var_type = stmt.var.type.get();
                 if (!is_type_compatible(var_type, init_expr->type.get())) {
                     return error_invalid_initializer_type(init_expr, var_type);
+                }
+                else {
+                    stmt.var.type = init_expr->type.get();
                 }
             }
         }
@@ -418,7 +435,8 @@ public:
 
         return {SemaResultType::Ok, nullptr};
     }
-    SemaResult visit_impl(WhileStmt& stmt)         {
+
+    SemaResult visit_impl(WhileStmt& stmt) {
         auto cond_expr = stmt.condition.get();
         SEMA_TRY(visit(*cond_expr));
         if (!cond_expr->type->is_bool()) {
@@ -426,7 +444,8 @@ public:
         }
         return visit(*stmt.body.get());
     }
-    SemaResult visit_impl(ReturnStmt& stmt)        {
+
+    SemaResult visit_impl(ReturnStmt& stmt) {
         auto return_expr = stmt.expr.get();
         SEMA_TRY(visit(*return_expr));
         Type* return_type = return_expr->type.get();
@@ -442,11 +461,12 @@ public:
         }
         return ok();
     }
-    SemaResult visit_impl(BreakStmt& stmt)         { return ok(); } // nothing to do
-    SemaResult visit_impl(ContinueStmt& stmt)      { return ok(); } // nothing to do
 
-    SemaResult visit_impl(ErrorExpr& expr)         { return error_misc(&expr); } // unreachable???
-    SemaResult visit_impl(AssignExpr& expr)        {
+    SemaResult visit_impl(BreakStmt& stmt) { return ok(); } // nothing to do
+    SemaResult visit_impl(ContinueStmt& stmt) { return ok(); } // nothing to do
+
+    SemaResult visit_impl(ErrorExpr& expr) { return error_misc(&expr); } // unreachable???
+    SemaResult visit_impl(AssignExpr& expr) {
         if (auto var_decl = m_cur_env->get_var(expr.name.str(m_source))) {
             Expr* assigned_expr = expr.value.get();
             SEMA_TRY(visit(*assigned_expr));
@@ -468,72 +488,69 @@ public:
         }
     }
 
-    SemaResult visit_impl(BinaryExpr& expr)        {
+    SemaResult visit_impl(BinaryExpr& expr) {
         Expr* left_expr = expr.left.get();
         Expr* right_expr = expr.right.get();
         SEMA_TRY(visit(*left_expr));
         SEMA_TRY(visit(*right_expr));
 
         switch (expr.op.type) {
-            // The numeric operators +, -, *, / and the inequality comparison operators >, >=, <, <=
-            //  can only be done on same types of numbers
-            case TokenType::Minus:
-            case TokenType::Plus:
-            case TokenType::Star:
-            case TokenType::Slash:
-            {
-                expr.type = left_expr->type.get();
-                if (is_type_same(left_expr->type.get(), right_expr->type.get())) {
-                    return ok();
-                }
-                else {
-                    // When incompatible type error, just use the left type for the placeholder.
-                    return error_incompatible_types(left_expr, right_expr);
-                }
+        // The numeric operators +, -, *, / and the inequality comparison operators >, >=, <, <=
+        //  can only be done on same types of numbers
+        case TokenType::Minus:
+        case TokenType::Plus:
+        case TokenType::Star:
+        case TokenType::Slash: {
+            expr.type = left_expr->type.get();
+            if (is_type_same(left_expr->type.get(), right_expr->type.get())) {
+                return ok();
             }
-            case TokenType::Greater:
-            case TokenType::GreaterEqual:
-            case TokenType::Less:
-            case TokenType::LessEqual:
-            {
-                expr.type = m_allocator->get_bool_type();
-                if (left_expr->type->is_number() && right_expr->type->is_number()) {
-                    return ok();
-                }
-                else {
-                    // When incompatible type error, just use the left type for the placeholder.
-                    return error_incompatible_types(left_expr, right_expr);
-                }
+            else {
+                // When incompatible type error, just use the left type for the placeholder.
+                return error_incompatible_types(left_expr, right_expr);
             }
-                // The logical operators &&, || can only be done on bools
-            case TokenType::AmpAmp:
-            case TokenType::BarBar:
-            {
-                expr.type = m_allocator->get_bool_type();
-                if (left_expr->type->is_bool() && right_expr->type->is_bool()) {
-                    return ok();
-                }
-                else {
-                    return error_incompatible_types(left_expr, right_expr);
-                }
+        }
+        case TokenType::Greater:
+        case TokenType::GreaterEqual:
+        case TokenType::Less:
+        case TokenType::LessEqual: {
+            expr.type = m_allocator->get_bool_type();
+            if (left_expr->type->is_number() && right_expr->type->is_number()) {
+                return ok();
             }
-                // The equality comparison operators ==, != can only be done on same types
-            case TokenType::BangEqual:
-            case TokenType::EqualEqual:
-            {
-                expr.type = m_allocator->get_bool_type();
-                if (is_type_same(left_expr->type.get(), right_expr->type.get())) {
-                    return ok();
-                }
-                else {
-                    return error_incompatible_types(left_expr, right_expr);
-                }
+            else {
+                // When incompatible type error, just use the left type for the placeholder.
+                return error_incompatible_types(left_expr, right_expr);
             }
-            default:
-                return error_misc(&expr);
+        }
+        // The logical operators &&, || can only be done on bools
+        case TokenType::AmpAmp:
+        case TokenType::BarBar: {
+            expr.type = m_allocator->get_bool_type();
+            if (left_expr->type->is_bool() && right_expr->type->is_bool()) {
+                return ok();
+            }
+            else {
+                return error_incompatible_types(left_expr, right_expr);
+            }
+        }
+        // The equality comparison operators ==, != can only be done on same types
+        case TokenType::BangEqual:
+        case TokenType::EqualEqual: {
+            expr.type = m_allocator->get_bool_type();
+            if (is_type_same(left_expr->type.get(), right_expr->type.get())) {
+                return ok();
+            }
+            else {
+                return error_incompatible_types(left_expr, right_expr);
+            }
+        }
+        default:
+            return error_misc(&expr);
         }
     }
-    SemaResult visit_impl(TernaryExpr& expr)       {
+
+    SemaResult visit_impl(TernaryExpr& expr) {
         Expr* cond_expr = expr.cond.get();
         SEMA_TRY(visit(*cond_expr));
         if (!cond_expr->type->is_bool()) {
@@ -556,45 +573,49 @@ public:
             return error_incompatible_types(left_expr, right_expr);
         }
     }
-    SemaResult visit_impl(GroupingExpr& expr)      {
+
+    SemaResult visit_impl(GroupingExpr& expr) {
         auto& inner_expr = *expr.expression;
         SEMA_TRY(visit(inner_expr));
         expr.type = inner_expr.type.get();
         return ok();
     }
-    SemaResult visit_impl(LiteralExpr& expr)       {
+
+    SemaResult visit_impl(LiteralExpr& expr) {
         expr.type = m_allocator->alloc<PrimitiveType>(expr.value.kind);
         return ok();
     }
-    SemaResult visit_impl(UnaryExpr& expr)         {
+
+    SemaResult visit_impl(UnaryExpr& expr) {
         auto right_expr = expr.right.get();
         SEMA_TRY(visit(*right_expr));
         switch (expr.op.type) {
-            case TokenType::Minus: {
-                if (right_expr->type->is_number()) {
-                    expr.type = right_expr->type.get();
-                    return ok();
-                }
-                else {
-                    expr.type = m_allocator->alloc<PrimitiveType>(PrimTypeKind::I32); // Just pick any integer
-                    return error_wrong_type(right_expr, expr.type.get());
-                }
+        case TokenType::Minus: {
+            if (right_expr->type->is_number()) {
+                expr.type = right_expr->type.get();
+                return ok();
             }
-            case TokenType::Bang: {
-                expr.type = m_allocator->get_bool_type();
-                if (right_expr->type->is_bool()) {
-                    return ok();
-                }
-                else {
-                    return error_wrong_type(right_expr, expr.type.get());
-                }
-            }
-            default: {
-                return error_misc(&expr); // unreachable
+            else {
+                expr.type = m_allocator->alloc<PrimitiveType>(PrimTypeKind::I32); // Just pick any integer
+                return error_wrong_type(right_expr, expr.type.get());
             }
         }
+        case TokenType::Bang: {
+            expr.type = m_allocator->get_bool_type();
+            if (right_expr->type->is_bool()) {
+                return ok();
+            }
+            else {
+                return error_wrong_type(right_expr, expr.type.get());
+            }
+        }
+        default: {
+            return error_misc(&expr); // unreachable
+        }
+        }
     }
-    SemaResult visit_impl(VariableExpr& expr)      {
+
+    SemaResult visit_impl(VariableExpr& expr) {
         auto expr_name = expr.name.str(m_source);
         auto var_stmt = m_cur_env->get_var(expr_name);
         if (var_stmt) {
@@ -610,7 +631,8 @@ public:
         }
         return error_undefined_var(&expr);
     }
-    SemaResult visit_impl(CallExpr& expr)          {
+
+    SemaResult visit_impl(CallExpr& expr) {
         auto callee_expr = expr.callee.get();
         SEMA_TRY(visit(*callee_expr));
         auto function_type = callee_expr->type->try_cast<FunctionType>();
@@ -631,7 +653,8 @@ public:
             return error_uncallable_type(callee_expr);
         }
     }
-    SemaResult visit_impl(GetExpr& expr)           {
+
+    SemaResult visit_impl(GetExpr& expr) {
         auto obj_expr = expr.object.get();
         SEMA_TRY(visit(*obj_expr));
         auto obj_type = obj_expr->type.get();
@@ -656,7 +679,8 @@ public:
             return error_cannot_dot_access_on_type(obj_expr, obj_type);
         }
     }
-    SemaResult visit_impl(SetExpr& expr)           {
+
+    SemaResult visit_impl(SetExpr& expr) {
         auto obj_expr = expr.object.get();
         SEMA_TRY(visit(*obj_expr));
         auto obj_type = obj_expr->type.get();
@@ -694,15 +718,15 @@ public:
         if (lhs == rhs) return true;
         if (lhs->kind != rhs->kind) return false;
         switch (lhs->kind) {
-            case TypeKind::Primitive:
-                return lhs->cast<PrimitiveType>().prim_kind == rhs->cast<PrimitiveType>().prim_kind;
-            case TypeKind::Struct: {
-                auto& lhs_struct = lhs->cast<StructType>();
-                auto& rhs_struct = rhs->cast<StructType>();
-                return lhs_struct.name.str(m_source) == rhs_struct.name.str(m_source);
-            }
-            default:
-                return false; // TODO
+        case TypeKind::Primitive:
+            return lhs->cast<PrimitiveType>().prim_kind == rhs->cast<PrimitiveType>().prim_kind;
+        case TypeKind::Struct: {
+            auto& lhs_struct = lhs->cast<StructType>();
+            auto& rhs_struct = rhs->cast<StructType>();
+            return lhs_struct.name.str(m_source) == rhs_struct.name.str(m_source);
+        }
+        default:
+            return false; // TODO
         }
     }
 
@@ -710,133 +734,145 @@ public:
         if (lhs == rhs) return true;
         if (lhs->kind != rhs->kind) return false;
         switch (lhs->kind) {
-            case TypeKind::Primitive: {
-                auto& lhs_type = lhs->cast<PrimitiveType>();
-                auto& rhs_type = rhs->cast<PrimitiveType>();
+        case TypeKind::Primitive: {
+            auto& lhs_type = lhs->cast<PrimitiveType>();
+            auto& rhs_type = rhs->cast<PrimitiveType>();
 
-                // implicit numeric type conversions (only to larger number type)
-                if (lhs_type.is_signed_integer() && rhs_type.is_signed_integer()) {
-                    return lhs_type.prim_kind >= rhs_type.prim_kind;
-                }
-                else if (lhs_type.is_unsigned_integer() && rhs_type.is_unsigned_integer()) {
-                    return lhs_type.prim_kind >= rhs_type.prim_kind;
-                }
-                else if (lhs_type.is_floating_point_num() && rhs_type.is_floating_point_num()) {
-                    return lhs_type.prim_kind >= rhs_type.prim_kind;
-                }
-                else {
-                    return lhs_type.prim_kind == rhs_type.prim_kind;
-                }
+            // implicit numeric type conversions (only to larger number type)
+            if (lhs_type.is_signed_integer() && rhs_type.is_signed_integer()) {
+                return lhs_type.prim_kind >= rhs_type.prim_kind;
             }
-            case TypeKind::Struct: {
-                auto& lhs_struct = lhs->cast<StructType>();
-                auto& rhs_struct = rhs->cast<StructType>();
-                // TODO: add subtyping
-                return lhs_struct.name.str(m_source) == rhs_struct.name.str(m_source);
+            else if (lhs_type.is_unsigned_integer() && rhs_type.is_unsigned_integer()) {
+                return lhs_type.prim_kind >= rhs_type.prim_kind;
             }
-            default:
-                return false; // TODO
+            else if (lhs_type.is_floating_point_num() && rhs_type.is_floating_point_num()) {
+                return lhs_type.prim_kind >= rhs_type.prim_kind;
+            }
+            else {
+                return lhs_type.prim_kind == rhs_type.prim_kind;
+            }
+        }
+        case TypeKind::Struct: {
+            auto& lhs_struct = lhs->cast<StructType>();
+            auto& rhs_struct = rhs->cast<StructType>();
+            // TODO: add subtyping
+            return lhs_struct.name.str(m_source) == rhs_struct.name.str(m_source);
+        }
+        default:
+            return false; // TODO
         }
     }
 
     SemaResult ok() {
         return {
-                .res_type = SemaResultType::Ok,
+            .res_type = SemaResultType::Ok,
         };
     }
+
     SemaResult error_undefined_var(Expr* expr) {
         return report_error({
-                .res_type = SemaResultType::UndefinedVar,
-                .cur_expr = expr
+            .res_type = SemaResultType::UndefinedVar,
+            .cur_expr = expr
         });
     }
+
     SemaResult error_wrong_type(Expr* expr, Type* expected_type) {
         return report_error({
-                .res_type = SemaResultType::WrongType,
-                .cur_expr = expr,
-                .expected_type = expected_type
+            .res_type = SemaResultType::WrongType,
+            .cur_expr = expr,
+            .expected_type = expected_type
         });
     }
+
     SemaResult error_invalid_initializer_type(Expr* initializer_expr, Type* expected_type) {
         return report_error({
-                .res_type = SemaResultType::InvalidInitializerType,
-                .cur_expr = initializer_expr,
-                .expected_type = expected_type
+            .res_type = SemaResultType::InvalidInitializerType,
+            .cur_expr = initializer_expr,
+            .expected_type = expected_type
         });
     }
+
     SemaResult error_invalid_assigned_type(AstVarDecl* var_decl, Expr* assigned_expr) {
         return report_error({
-                .res_type = SemaResultType::InvalidAssignedType,
-                .cur_expr = assigned_expr,
-                .cur_var_decl = var_decl,
+            .res_type = SemaResultType::InvalidAssignedType,
+            .cur_expr = assigned_expr,
+            .cur_var_decl = var_decl,
         });
     }
+
     SemaResult error_invalid_param_type(AstVarDecl* param_var_decl) {
         return report_error({
-                .res_type = SemaResultType::InvalidParamType,
-                .cur_var_decl = param_var_decl,
+            .res_type = SemaResultType::InvalidParamType,
+            .cur_var_decl = param_var_decl,
         });
     }
+
     SemaResult error_invalid_return_type(Expr* return_expr, Type* expected_type) {
         return report_error({
-                .res_type = SemaResultType::InvalidReturnType,
-                .cur_expr = return_expr,
-                .expected_type = expected_type
+            .res_type = SemaResultType::InvalidReturnType,
+            .cur_expr = return_expr,
+            .expected_type = expected_type
         });
     }
+
     SemaResult error_uncallable_type(Expr* uncallable_expr) {
         return report_error({
-                .res_type = SemaResultType::UncallableType,
-                .cur_expr = uncallable_expr
+            .res_type = SemaResultType::UncallableType,
+            .cur_expr = uncallable_expr
         });
     }
+
     SemaResult error_incompatible_types(Expr* left, Expr* right) {
         return report_error({
-                .res_type = SemaResultType::IncompatibleTypes,
-                .cur_expr = left,
-                .other_expr = right,
+            .res_type = SemaResultType::IncompatibleTypes,
+            .cur_expr = left,
+            .other_expr = right,
         });
     }
+
     SemaResult error_cannot_infer_type(Expr* expr) {
         return report_error({
-                .res_type = SemaResultType::CannotInferType,
-                .cur_expr = expr
+            .res_type = SemaResultType::CannotInferType,
+            .cur_expr = expr
         });
     }
+
     SemaResult error_cannot_find_type(Type* type) {
         return report_error({
-                .res_type = SemaResultType::CannotFindType,
-                .expected_type = type
+            .res_type = SemaResultType::CannotFindType,
+            .expected_type = type
         });
     }
+
     SemaResult error_cannot_dot_access_on_type(Expr* expr, Type* type) {
         return report_error({
-                .res_type = SemaResultType::CannotDotAccessOnType,
-                .cur_expr = expr,
-                .expected_type = type
+            .res_type = SemaResultType::CannotDotAccessOnType,
+            .cur_expr = expr,
+            .expected_type = type
         });
     }
+
     SemaResult error_cannot_find_field(Expr* expr) {
         return report_error({
-                .res_type = SemaResultType::CannotFindField,
-                .cur_expr = expr,
+            .res_type = SemaResultType::CannotFindField,
+            .cur_expr = expr,
         });
     }
+
     SemaResult error_incompatible_field_type(Expr* expr, Token name, Type* type) {
         return report_error({
-                .res_type = SemaResultType::IncompatibleFieldType,
-                .cur_expr = expr,
-                .cur_name = name,
-                .expected_type = type
+            .res_type = SemaResultType::IncompatibleFieldType,
+            .cur_expr = expr,
+            .cur_name = name,
+            .expected_type = type
         });
     }
+
     SemaResult error_misc(Expr* expr) {
         return report_error({
-                .res_type = SemaResultType::Misc,
-                .cur_expr = expr
+            .res_type = SemaResultType::Misc,
+            .cur_expr = expr
         });
     }
-
 };
-
 }

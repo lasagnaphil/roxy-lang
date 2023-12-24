@@ -13,7 +13,7 @@ enum class TokenType : u8 {
     LeftBrace, RightBrace,
     LeftBracket, RightBracket,
     Comma, Dot, Minus, Plus,
-    Semicolon, Slash, Star,
+    Semicolon, Slash, Star, Percent,
     QuestionMark, Colon,
     Ampersand, Bar, Tilde, Caret,
     // One or two character tokens.
@@ -70,6 +70,11 @@ struct Token {
 
     bool is_error() const {
         return ((u8)type & 0b10000000) != 0;
+    }
+
+    bool is_arithmetic() const {
+        return type == TokenType::Plus || type == TokenType::Minus || type == TokenType::Star ||
+            type == TokenType::Slash || type == TokenType::Percent;
     }
 
     std::string_view str(const u8* source) const {
