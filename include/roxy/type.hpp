@@ -92,10 +92,44 @@ struct VarDecl {
 struct AstVarDecl {
     Token name;
     RelPtr<Type> type;
+
+    // Added in sema analyzer
     u16 local_index = 0;
 
     AstVarDecl(VarDecl var_decl) : name(var_decl.name), type(var_decl.type) {}
     AstVarDecl(Token name, Type* type) : name(name), type(type) {}
+};
+
+struct FunctionType;
+struct FunctionStmt;
+
+// TODO: Currently just assume that these function declarations are all inside the current module.
+//  Later when we add a module system we need to change this...
+
+struct FunDecl {
+    Token name;
+    Span<AstVarDecl> params;
+    Type* ret_type;
+
+    FunDecl() = default;
+    FunDecl(Token name, Span<AstVarDecl> params, Type* ret_type) :
+        name(name), params(params), ret_type(ret_type) {}
+};
+
+struct AstFunDecl {
+    Token name;
+    RelSpan<AstVarDecl> params;
+    RelPtr<Type> ret_type;
+
+    // Added in sema analyzer
+    RelPtr<FunctionType> type;
+    RelPtr<FunctionStmt> stmt;
+    u16 local_index = 0;
+
+    AstFunDecl(FunDecl fun_decl) :
+        name(fun_decl.name), params(fun_decl.params), ret_type(fun_decl.ret_type), type(nullptr), stmt(nullptr) {}
+    AstFunDecl(Token name, Span<AstVarDecl> params, Type* ret_type, FunctionType* type, FunctionStmt* stmt) :
+        name(name), params(params), ret_type(ret_type), type(type), stmt(stmt) {}
 };
 
 struct PrimitiveType : public Type {

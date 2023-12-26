@@ -16,10 +16,12 @@ private:
 
     FunctionStmt* m_function;
     tsl::robin_map<std::string_view, AstVarDecl*> m_var_map;
-    tsl::robin_map<std::string_view, FunctionStmt*> m_function_map;
+    tsl::robin_map<std::string_view, AstFunDecl*> m_function_map;
     tsl::robin_map<std::string_view, StructStmt*> m_struct_map;
 
     Vector<AstVarDecl*> m_locals;
+    Vector<AstFunDecl*> m_functions;
+
     SemaEnv* m_locals_env;
 
 public:
@@ -33,6 +35,7 @@ public:
     }
 
     SemaEnv(SemaEnv* outer, FunctionStmt* function) : m_outer(outer), m_function(function), m_locals_env(this) {}
+
     SemaEnv(SemaEnv* outer, ModuleStmt* module) : m_outer(outer), m_function(nullptr), m_locals_env(this) {}
 
     bool has_locals() const { return m_locals_env == this; }
@@ -65,7 +68,7 @@ public:
         return inserted;
     }
 
-    FunctionStmt* get_function(std::string_view name) {
+    AstFunDecl* get_function(std::string_view name) {
         auto it = m_function_map.find(name);
         if (it != m_function_map.end()) {
             return it->second;
@@ -80,8 +83,12 @@ public:
         }
     }
 
-    bool set_function(std::string_view name, FunctionStmt* fun_stmt) {
-        auto [it, inserted] = m_function_map.insert({name, fun_stmt});
+    bool set_function(std::string_view name, AstFunDecl* fun_decl) {
+        fun_decl->local_index = m_functions.size();
+        auto [it, inserted] = m_function_map.insert({name, fun_decl});
+        if (inserted) {
+            m_functions.push_back(fun_decl);
+        }
         return inserted;
     }
 
@@ -124,6 +131,7 @@ enum class SemaResultType {
     CannotInferType,
     CannotFindType,
     CannotDotAccessOnType,
+    CannotCallOnType,
     CannotFindField,
     IncompatibleFieldType,
     Misc,
@@ -199,6 +207,12 @@ struct SemaResult {
                 .loc = cur_expr->get_source_loc(),
                 .message = fmt::format("Cannot dot access on type {}",
                                        AstPrinter(source).to_string(*expected_type))
+
+            };
+        case SemaResultType::CannotCallOnType: return {
+                    .loc = cur_expr->get_source_loc(),
+                    .message = fmt::format("Cannot call on type {}",
+                                           AstPrinter(source).to_string(*expected_type))
             };
         case SemaResultType::CannotFindField: return {
                 .loc = cur_expr->get_source_loc(),
@@ -319,14 +333,14 @@ public:
     }
 
     SemaResult visit_impl(FunctionStmt& stmt) {
-        m_cur_env->set_function(stmt.name.str(m_source), &stmt);
+        m_cur_env->set_function(stmt.fun_decl.name.str(m_source), &stmt.fun_decl);
 
         SemaEnv fn_env(m_cur_env, &stmt);
         m_cur_env = &fn_env;
 
         // Add all function parameters to the scope.
         Vector<Type*> param_types;
-        for (auto& param : stmt.params) {
+        for (auto& param : stmt.fun_decl.params) {
             // Assign type to each param
             auto param_name = param.name.str(m_source);
             if (auto prim_type = param.type->try_cast<PrimitiveType>()) {
@@ -350,11 +364,11 @@ public:
         }
 
         // Find return type
-        if (auto unassigned_type = stmt.ret_type->try_cast<UnassignedType>()) {
+        if (auto unassigned_type = stmt.fun_decl.ret_type->try_cast<UnassignedType>()) {
             auto param_type_name = unassigned_type->name.str(m_source);
             auto struct_stmt = m_cur_env->get_struct(param_type_name);
             if (struct_stmt) {
-                stmt.ret_type = struct_stmt->type.get();
+                stmt.fun_decl.ret_type = struct_stmt->type.get();
             }
             else {
                 auto _ = error_cannot_find_type(unassigned_type);
@@ -362,9 +376,9 @@ public:
         }
 
         // Add the created function to the TypeEnv.
-        stmt.function_type = m_allocator->alloc<FunctionType>(
+        stmt.fun_decl.type = m_allocator->alloc<FunctionType>(
             m_allocator->alloc_vector<RelPtr<Type>, Type*>(std::move(param_types)),
-            stmt.ret_type.get());
+            stmt.fun_decl.ret_type.get());
 
         // Do a sema pass on the statements inside the body.
         for (auto& body_stmt : stmt.body) {
@@ -450,14 +464,14 @@ public:
         SEMA_TRY(visit(*return_expr));
         Type* return_type = return_expr->type.get();
         auto cur_fn = m_cur_env->get_outer_function();
-        Type* fn_return_type = cur_fn->ret_type.get();
+        Type* fn_return_type = cur_fn->fun_decl.ret_type.get();
         if (fn_return_type) {
             if (!is_type_same(return_type, fn_return_type)) {
                 return error_invalid_return_type(return_expr, fn_return_type);
             }
         }
         else {
-            cur_fn->ret_type = return_type;
+            cur_fn->fun_decl.ret_type = return_type;
         }
         return ok();
     }
@@ -471,10 +485,11 @@ public:
             Expr* assigned_expr = expr.value.get();
             SEMA_TRY(visit(*assigned_expr));
 
-            // If assigned kind is not compatible with variable, then error.
             Type* var_type = var_decl->type.get();
             expr.type = var_type;
             expr.origin = var_decl;
+
+            // If assigned kind is not compatible with variable, then error.
             if (is_type_compatible(var_type, assigned_expr->type.get())) {
                 return ok();
             }
@@ -617,16 +632,18 @@ public:
 
     SemaResult visit_impl(VariableExpr& expr) {
         auto expr_name = expr.name.str(m_source);
-        auto var_stmt = m_cur_env->get_var(expr_name);
-        if (var_stmt) {
-            expr.type = var_stmt->type.get();
-            expr.origin = var_stmt;
+        auto var_decl = m_cur_env->get_var(expr_name);
+        if (var_decl) {
+            // Loading variables
+            expr.type = var_decl->type.get();
+            expr.var_origin = var_decl;
             return ok();
         }
-        auto function_stmt = m_cur_env->get_function(expr_name);
-        if (function_stmt) {
-            expr.type = function_stmt->function_type.get();
-            expr.origin = nullptr;
+        auto fun_decl = m_cur_env->get_function(expr_name);
+        if (fun_decl) {
+            // Loading function pointers
+            expr.type = fun_decl->type.get();
+            expr.fun_origin = fun_decl;
             return ok();
         }
         return error_undefined_var(&expr);
@@ -847,6 +864,14 @@ public:
     SemaResult error_cannot_dot_access_on_type(Expr* expr, Type* type) {
         return report_error({
             .res_type = SemaResultType::CannotDotAccessOnType,
+            .cur_expr = expr,
+            .expected_type = type
+        });
+    }
+
+    SemaResult error_cannot_call_on_type(Expr* expr, Type* type) {
+        return report_error({
+            .res_type = SemaResultType::CannotCallOnType,
             .cur_expr = expr,
             .expected_type = type
         });

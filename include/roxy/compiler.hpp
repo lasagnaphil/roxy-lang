@@ -25,11 +25,11 @@ private:
     Vector<LocalTableEntry> m_local_table;
 
 public:
-    FnLocalEnv(Scanner* scanner, FunctionStmt& stmt) {
+    FnLocalEnv(FnLocalEnv* outer, Scanner* scanner, FunctionStmt& stmt) : m_outer(outer) {
         init_from_locals(scanner, stmt.locals);
     }
 
-    FnLocalEnv(Scanner* scanner, ModuleStmt& stmt) {
+    FnLocalEnv(FnLocalEnv* outer, Scanner* scanner, ModuleStmt& stmt) : m_outer(outer) {
         init_from_locals(scanner, stmt.locals);
     }
 
@@ -43,17 +43,16 @@ public:
 
 private:
     void init_from_locals(Scanner* scanner, RelSpan<RelPtr<AstVarDecl>>& locals) {
-        m_local_table.resize(locals.size());
         u32 offset = 0;
-        for (u32 i = 0; i < locals.size(); i++) {
-            auto& local = locals[i];
+        m_local_table.reserve(locals.size());
+        for (auto& local : locals) {
             auto type = local->type.get();
             u32 aligned_offset = (offset + type->alignment - 1) & ~(type->alignment - 1);
             auto name = local->name.str(scanner->source());
-            m_local_table[i] = {
-                (u16)((offset + 3) >> 2), (u16)((type->size + 3) >> 2),
+            m_local_table.push_back({
+                (u16)((offset + 3) / 4), (u16)((type->size + 3) / 4),
                 TypeData::from_type(type, scanner->source()), std::string(name)
-            };
+            });
             offset = aligned_offset + type->size;
         }
     }
@@ -93,7 +92,7 @@ public:
     }
 
     CompileResult visit_impl(ModuleStmt& stmt) {
-        FnLocalEnv module_env(m_scanner, stmt);
+        FnLocalEnv module_env(nullptr, m_scanner, stmt);
         m_cur_fn_env = &module_env;
 
         for (auto& inner_stmt : stmt.statements) {
@@ -117,13 +116,13 @@ public:
 
     CompileResult visit_impl(FunctionStmt& stmt) {
         // Set current chunk to newly created chunk of function
-        auto fn_name = std::string(stmt.name.str(m_scanner->source()));
+        auto fn_name = std::string(stmt.fun_decl.name.str(m_scanner->source()));
         Chunk fn_chunk = {fn_name};
         Chunk* parent_chunk = m_cur_chunk;
         m_cur_chunk = &fn_chunk;
 
         // Create new local env
-        FnLocalEnv fn_env(m_scanner, stmt);
+        FnLocalEnv fn_env(m_cur_fn_env, m_scanner, stmt);
         m_cur_fn_env = &fn_env;
 
         for (auto& body_stmt : stmt.body) {
@@ -136,7 +135,7 @@ public:
         m_cur_chunk = parent_chunk;
 
         // Insert function to parent chunk
-        auto fn_type = stmt.function_type.get();
+        auto fn_type = stmt.fun_decl.type.get();
         parent_chunk->m_function_table.push_back({
             fn_name,
             FunctionTypeData(*fn_type, m_scanner->source()),
@@ -252,49 +251,42 @@ public:
         return ok();
     }
 
-    CompileResult visit_impl(VarStmt& stmt) {
-        u32 cur_line = m_scanner->get_line(stmt.var.name.get_source_loc());
-        if (Expr* init_expr = stmt.initializer.get()) {
-            COMP_TRY(visit(*init_expr));
-        }
-        else {
-            // synthesize default initializer
-            auto type = stmt.var.type.get();
-            switch (type->kind) {
+    CompileResult push_zero_initialized_value(Type* type, u32 cur_line) {
+        switch (type->kind) {
             case TypeKind::Primitive: {
                 auto& prim_type = type->cast<PrimitiveType>();
                 switch (prim_type.prim_kind) {
-                case PrimTypeKind::Void: return unreachable();
-                case PrimTypeKind::Bool:
-                case PrimTypeKind::U8:
-                case PrimTypeKind::I8:
-                case PrimTypeKind::U16:
-                case PrimTypeKind::I16:
-                case PrimTypeKind::U32:
-                case PrimTypeKind::I32: {
-                    emit_byte(OpCode::iconst_0, cur_line);
-                    break;
-                }
-                case PrimTypeKind::U64:
-                case PrimTypeKind::I64: {
-                    emit_byte(OpCode::lconst, cur_line);
-                    emit_u64(0);
-                    break;
-                }
-                case PrimTypeKind::F32: {
-                    emit_byte(OpCode::fconst, cur_line);
-                    emit_u32(0);
-                    break;
-                }
-                case PrimTypeKind::F64: {
-                    emit_byte(OpCode::dconst, cur_line);
-                    emit_u64(0);
-                    break;
-                }
-                case PrimTypeKind::String: {
-                    emit_byte(OpCode::iconst_nil, cur_line);
-                    break;
-                }
+                    case PrimTypeKind::Void: return unreachable();
+                    case PrimTypeKind::Bool:
+                    case PrimTypeKind::U8:
+                    case PrimTypeKind::I8:
+                    case PrimTypeKind::U16:
+                    case PrimTypeKind::I16:
+                    case PrimTypeKind::U32:
+                    case PrimTypeKind::I32: {
+                        emit_byte(OpCode::iconst_0, cur_line);
+                        break;
+                    }
+                    case PrimTypeKind::U64:
+                    case PrimTypeKind::I64: {
+                        emit_byte(OpCode::lconst, cur_line);
+                        emit_u64(0);
+                        break;
+                    }
+                    case PrimTypeKind::F32: {
+                        emit_byte(OpCode::fconst, cur_line);
+                        emit_u32(0);
+                        break;
+                    }
+                    case PrimTypeKind::F64: {
+                        emit_byte(OpCode::dconst, cur_line);
+                        emit_u64(0);
+                        break;
+                    }
+                    case PrimTypeKind::String: {
+                        emit_byte(OpCode::iconst_nil, cur_line);
+                        break;
+                    }
                 }
                 return ok();
             }
@@ -304,7 +296,18 @@ public:
             case TypeKind::Inferred:
             case TypeKind::Unassigned:
                 return error("Cannot compile expression with unassigned type!");
-            }
+        }
+    }
+
+    CompileResult visit_impl(VarStmt& stmt) {
+        u32 cur_line = m_scanner->get_line(stmt.var.name.get_source_loc());
+        if (Expr* init_expr = stmt.initializer.get()) {
+            COMP_TRY(visit(*init_expr));
+        }
+        else {
+            // synthesize default initializer
+            auto type = stmt.var.type.get();
+            COMP_TRY(push_zero_initialized_value(type, cur_line));
         }
         auto type = stmt.var.type.get();
         switch (type->kind) {
@@ -383,7 +386,32 @@ public:
         return ok();
     }
 
-    CompileResult visit_impl(ReturnStmt& stmt) { return unimplemented(); }
+    CompileResult visit_impl(ReturnStmt& stmt) {
+        auto inner_expr = stmt.expr.get();
+        if (inner_expr) {
+            u32 cond_line = m_scanner->get_line(inner_expr->get_source_loc());
+            COMP_TRY(visit(*inner_expr));
+            Type* ret_type = inner_expr->type.get();
+            if (auto prim_ret_type = ret_type->try_cast<PrimitiveType>()) {
+                if (prim_ret_type->is_within_4_bytes()) {
+                    emit_byte(OpCode::iret, cond_line);
+                }
+                else {
+                    emit_byte(OpCode::lret, cond_line);
+                }
+            }
+            else {
+                unimplemented();
+            }
+        }
+        else {
+            // TODO: find a way to retrieve line information
+            emit_byte(OpCode::ret, -1);
+        }
+
+        return ok();
+    }
+
     CompileResult visit_impl(BreakStmt& stmt) { return unimplemented(); }
     CompileResult visit_impl(ContinueStmt& stmt) { return unimplemented(); }
 
@@ -649,53 +677,63 @@ public:
 
     CompileResult visit_impl(VariableExpr& expr) {
         u32 cur_line = m_scanner->get_line(expr.get_source_loc());
-        AstVarDecl* var_decl = expr.origin.get();
-        u32 offset = m_cur_fn_env->get_local_offset(var_decl->local_index);
-        auto prim_kind = var_decl->type->cast<PrimitiveType>().prim_kind;
-        switch (prim_kind) {
-        case PrimTypeKind::U8:
-        case PrimTypeKind::U16:
-        case PrimTypeKind::U32:
-        case PrimTypeKind::I8:
-        case PrimTypeKind::I16:
-        case PrimTypeKind::I32:
-        case PrimTypeKind::F32: {
-            if (offset <= UINT8_MAX) {
-                if (offset < 4) {
-                    emit_byte((OpCode)((u32)OpCode::iload_0 + offset), cur_line);
+
+        if (AstVarDecl* var_decl = expr.var_origin.get()) {
+            // Loading variables from local table
+            u32 offset = m_cur_fn_env->get_local_offset(var_decl->local_index);
+            auto prim_kind = var_decl->type->cast<PrimitiveType>().prim_kind;
+            switch (prim_kind) {
+                case PrimTypeKind::U8:
+                case PrimTypeKind::U16:
+                case PrimTypeKind::U32:
+                case PrimTypeKind::I8:
+                case PrimTypeKind::I16:
+                case PrimTypeKind::I32:
+                case PrimTypeKind::F32: {
+                    if (offset <= UINT8_MAX) {
+                        if (offset < 4) {
+                            emit_byte((OpCode)((u32)OpCode::iload_0 + offset), cur_line);
+                        }
+                        else {
+                            emit_byte(OpCode::iload_s, cur_line);
+                            emit_byte(offset);
+                        }
+                    }
+                    else {
+                        emit_byte(OpCode::iload, cur_line);
+                        emit_u16((u16)offset);
+                    }
+                    break;
                 }
-                else {
-                    emit_byte(OpCode::iload_s, cur_line);
-                    emit_byte(offset);
+                case PrimTypeKind::U64:
+                case PrimTypeKind::I64:
+                case PrimTypeKind::F64: {
+                    offset >>= 1;
+                    if (offset <= UINT8_MAX) {
+                        if (offset < 4) {
+                            emit_byte((OpCode)((u32)OpCode::lload_0 + offset), cur_line);
+                        }
+                        else {
+                            emit_byte(OpCode::lload_s, cur_line);
+                            emit_byte(offset);
+                        }
+                    }
+                    else {
+                        emit_byte(OpCode::lload, cur_line);
+                        emit_u16((u16)offset);
+                    }
+                    break;
                 }
+                default:
+                    unimplemented();
             }
-            else {
-                emit_byte(OpCode::iload, cur_line);
-                emit_u16((u16)offset);
-            }
-            break;
         }
-        case PrimTypeKind::U64:
-        case PrimTypeKind::I64:
-        case PrimTypeKind::F64: {
-            offset >>= 1;
-            if (offset <= UINT8_MAX) {
-                if (offset < 4) {
-                    emit_byte((OpCode)((u32)OpCode::lload_0 + offset), cur_line);
-                }
-                else {
-                    emit_byte(OpCode::lload_s, cur_line);
-                    emit_byte(offset);
-                }
-            }
-            else {
-                emit_byte(OpCode::lload, cur_line);
-                emit_u16((u16)offset);
-            }
-            break;
-        }
-        default:
+        else if (AstFunDecl* fun_decl = expr.fun_origin.get()) {
+            // TODO: Loading function pointers from local table
             unimplemented();
+        }
+        else {
+            unreachable();
         }
 
         return ok();
@@ -704,13 +742,35 @@ public:
     CompileResult visit_impl(CallExpr& expr) {
         u32 cur_line = m_scanner->get_line(expr.get_source_loc());
         auto callee_expr = expr.callee.get();
+        if (auto var_expr = callee_expr->try_cast<VariableExpr>()) {
+            if (auto fun_stmt = var_expr->fun_origin.get()) {
+                // If callee expr is just a function symbol, then just call the function directly!
+
+                // Push return value
+                Type* ret_type = fun_stmt->ret_type.get();
+                push_zero_initialized_value(ret_type, cur_line);
+
+                // Push arguments
+                for (u32 i = 0; i < expr.arguments.size(); i++) {
+                    auto arg_expr = expr.arguments[i].get();
+                    COMP_TRY(visit(*arg_expr));
+                }
+                emit_byte(OpCode::call, cur_line);
+                emit_u16(fun_stmt->local_index);
+                return ok();
+            }
+        }
+
+        // Else, callee expr is a function pointer, eval it and push it on the stack
         COMP_TRY(visit(*callee_expr));
         for (u32 i = 0; i < expr.arguments.size(); i++) {
             auto arg_expr = expr.arguments[i].get();
             COMP_TRY(visit(*arg_expr));
         }
-        emit_byte(OpCode::call, cur_line);
-        return ok();
+        // TODO: need an opcode like call_fnptr
+        // emit_byte(OpCode::call_fnptr, cur_line);
+        // return ok();
+        return unimplemented();
     }
 
     CompileResult visit_impl(GetExpr& expr) { return unimplemented(); }

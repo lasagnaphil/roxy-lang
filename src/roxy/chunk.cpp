@@ -29,10 +29,16 @@ void Chunk::print_disassembly() {
     for (i32 offset = 0; offset < m_bytecode.size();) {
         offset = disassemble_instruction(offset);
     }
+    fmt::print("\n");
+    for (auto& fn_entry : m_function_table) {
+        fmt::print("Functions: \n", fn_entry.name);
+        fn_entry.chunk.print_disassembly();
+    }
 }
 
 u32 Chunk::disassemble_instruction(u32 offset) {
     static u32 prev_line = 0; // TODO: this is just a quick hack
+
     fmt::print("{:04d} ", offset);
     u32 cur_line = get_line(offset);
     if (offset > 0 && cur_line == prev_line) {
@@ -77,6 +83,8 @@ u32 Chunk::disassemble_instruction(u32 offset) {
     case OpCode::dup:
     case OpCode::pop:
     case OpCode::ret:
+    case OpCode::iret:
+    case OpCode::lret:
     case OpCode::iadd:
     case OpCode::isub:
     case OpCode::imul:
@@ -123,6 +131,7 @@ u32 Chunk::disassemble_instruction(u32 offset) {
     case OpCode::lload:
     case OpCode::istore:
     case OpCode::lstore:
+    case OpCode::call:
         return print_arg_u16_instruction(opcode, offset);
     case OpCode::iconst:
         return print_arg_u32_instruction(opcode, offset);

@@ -95,6 +95,10 @@ public:
         return m_allocator.alloc_vector<AstVarDecl, VarDecl>(std::move(vec));
     }
 
+    Span<AstFunDecl> alloc_vector_fun_decl(Vector<FunDecl>&& vec) {
+        return m_allocator.alloc_vector<AstFunDecl, FunDecl>(std::move(vec));
+    }
+
     AstAllocator* get_ast_allocator() { return &m_allocator; }
 
     bool parse(ModuleStmt*& stmt) {
@@ -490,10 +494,8 @@ private:
         auto block_stmt_list = alloc_vector_ptr(block());
         m_inside_fun = false;
 
-        return alloc<FunctionStmt>(name,
-                                   alloc_vector_var_decl(std::move(parameters)),
-                                   block_stmt_list,
-                                   ret_type);
+        return alloc<FunctionStmt>(FunDecl(name, alloc_vector_var_decl(std::move(parameters)), ret_type),
+                                   block_stmt_list);
     }
 
     Stmt* struct_declaration() {

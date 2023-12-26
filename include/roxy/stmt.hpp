@@ -78,12 +78,17 @@ struct ModuleStmt : public Stmt {
 
     RelSpan<RelPtr<Stmt>> statements;
     RelSpan<RelPtr<AstVarDecl>> locals;
+    RelSpan<RelPtr<AstFunDecl>> functions;
 
     ModuleStmt(Span<RelPtr<Stmt>> statements)
         : Stmt(s_kind), statements(statements) {}
 
     void set_locals(Span<RelPtr<AstVarDecl>> locals) {
         new (&this->locals) RelSpan<RelPtr<AstVarDecl>>(locals);
+    }
+
+    void set_functions(Span<RelPtr<AstFunDecl>> functions) {
+        new (&this->functions) RelSpan<RelPtr<AstFunDecl>>(functions);
     }
 };
 
@@ -109,15 +114,18 @@ struct FunctionStmt : public Stmt {
 public:
     static constexpr StmtKind s_kind = StmtKind::Function;
 
-    Token name;
-    RelSpan<AstVarDecl> params;
+    AstFunDecl fun_decl;
     RelSpan<RelPtr<Stmt>> body;
-    RelPtr<Type> ret_type;
-    RelPtr<FunctionType> function_type = nullptr; // created later in sema analyzer
+
+    // "result" variable for functions with return value
+    AstVarDecl return_val;
+
+    // created later in sema analyzer
     RelSpan<RelPtr<AstVarDecl>> locals;
 
-    FunctionStmt(Token name, Span<AstVarDecl> params, Span<RelPtr<Stmt>> body, Type* ret_type) :
-        Stmt(s_kind), name(name), params(params), body(body), ret_type(ret_type) {}
+    FunctionStmt(FunDecl fun_decl, Span<RelPtr<Stmt>> body) :
+        Stmt(s_kind), fun_decl(fun_decl), body(body), return_val(fun_decl.name, fun_decl.ret_type) {
+    }
 
     void set_locals(Span<RelPtr<AstVarDecl>> locals) {
         new (&this->locals) RelSpan<RelPtr<AstVarDecl>>(locals);

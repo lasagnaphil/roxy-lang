@@ -52,6 +52,8 @@
     X(pop)                  \
     X(call)                 \
     X(ret)                  \
+    X(iret)                  \
+    X(lret)                  \
     X(jmp_s)                  \
     X(loop_s)                  \
     X(br_false_s)            \

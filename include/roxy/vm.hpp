@@ -20,7 +20,6 @@ struct CallFrame {
     Chunk* chunk;
     u8* ip;
     u32* stack;
-    u32* locals;
 };
 
 class VM {

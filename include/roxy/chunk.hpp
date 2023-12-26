@@ -58,8 +58,7 @@ struct TypeData {
     u16 size;
     u16 alignment;
 
-    TypeData(TypeKind kind) : kind(kind), size(0), alignment(0) {}
-    TypeData(TypeKind kind, u16 size, u16 alignment) : kind(kind), size(size), alignment(alignment) {}
+    TypeData(const Type& type) : kind(type.kind), size(type.size), alignment(type.alignment) {}
 
     static UniquePtr<TypeData> from_type(const Type* type, const u8* source);
 };
@@ -79,7 +78,7 @@ struct PrimitiveTypeData : TypeData {
     static constexpr TypeKind s_kind = TypeKind::Primitive;
 
     PrimitiveTypeData() : TypeData(s_kind) {}
-    PrimitiveTypeData(const PrimitiveType& type) : TypeData(s_kind), prim_kind(type.prim_kind) {}
+    PrimitiveTypeData(const PrimitiveType& type) : TypeData(type), prim_kind(type.prim_kind) {}
 
     PrimTypeKind prim_kind;
 };
@@ -89,7 +88,7 @@ struct StructTypeData : TypeData {
 
     StructTypeData() : TypeData(s_kind) {}
 
-    StructTypeData(const StructType& type, const u8* source) : TypeData(s_kind), name(type.name.str(source)) {
+    StructTypeData(const StructType& type, const u8* source) : TypeData(type), name(type.name.str(source)) {
         fields.resize(type.declarations.size());
         for (u32 i = 0; i < type.declarations.size(); i++) {
             fields[i] = VarData(type.declarations[i], source);
@@ -105,7 +104,7 @@ struct FunctionTypeData : TypeData {
 
     FunctionTypeData() : TypeData(s_kind) {}
 
-    FunctionTypeData(const FunctionType& type, const u8* source) : TypeData(s_kind) {
+    FunctionTypeData(const FunctionType& type, const u8* source) : TypeData(type) {
         params.resize(type.params.size());
         for (u32 i = 0; i < type.params.size(); i++) {
             params[i] = TypeData::from_type(type.params[i].get(), source);

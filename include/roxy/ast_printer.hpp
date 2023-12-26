@@ -100,8 +100,8 @@ public:
 
     void visit_impl(FunctionStmt& stmt) {
         begin_paren("fun");
-        add_identifier(stmt.name);
-        for (auto& field : stmt.params) {
+        add_identifier(stmt.fun_decl.name);
+        for (auto& field : stmt.fun_decl.params) {
             begin_paren();
             add_identifier(field.name);
             if (Type* type = field.type.get()) {
@@ -111,7 +111,7 @@ public:
             end_paren();
         }
 
-        if (stmt.ret_type.get()) visit(*stmt.ret_type);
+        if (stmt.fun_decl.ret_type.get()) visit(*stmt.fun_decl.ret_type);
 
         inc_indent();
         for (auto& stmt : stmt.body) {

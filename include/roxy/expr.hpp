@@ -143,13 +143,15 @@ public:
 };
 
 struct Stmt;
+struct FunctionStmt;
 
 struct VariableExpr : public Expr {
 public:
     static constexpr ExprKind s_kind = ExprKind::Variable;
 
     Token name;
-    RelPtr<AstVarDecl> origin = nullptr;
+    RelPtr<AstVarDecl> var_origin = nullptr;
+    RelPtr<AstFunDecl> fun_origin = nullptr;
 
     VariableExpr(SourceLocation loc, Token name) : Expr(s_kind, loc), name(name) {}
 };
