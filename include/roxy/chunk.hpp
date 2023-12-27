@@ -148,6 +148,8 @@ struct Chunk {
     Vector<FunctionTableEntry> m_function_table;
     Vector<StructTypeData> m_struct_table;
 
+    Vector<Chunk*> m_runtime_function_table;
+
     // Line debug information
     Vector<u32> m_lines;
 
@@ -158,6 +160,8 @@ struct Chunk {
 
     u32 add_string(std::string_view str);
     u32 add_constant(UntypedValue value);
+
+    void build_for_runtime(bool is_module);
 
     u32 get_locals_slot_size() {
         if (m_local_table.empty()) return 0;
@@ -205,6 +209,6 @@ struct FunctionTableEntry {
     std::string name;
     // Vector<std::string> param_names;
     FunctionTypeData type;
-    Chunk chunk;
+    UniquePtr<Chunk> chunk;
 };
 }

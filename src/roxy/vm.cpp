@@ -46,11 +46,13 @@ InterpretResult VM::run() {
 #endif
 
 #define BINARY_OP(Type, Op) do { Type b = (Type)pop_##Type(); Type a = (Type)pop_##Type(); push_##Type(a Op b); } while(0);
-#define BINARY_INTEGER_BR_S_OP(Op) do { u32 a = pop_u32(); u32 b = pop_u32(); u32 offset = (u32)read_u8(); if (a Op b) m_cur_frame->ip += offset; } while(0);
-#define BINARY_INTEGER_BR_OP(Op) do { u32 a = pop_u32(); u32 b = pop_u32(); u32 offset = (u32)read_u32(); if (a Op b) m_cur_frame->ip += offset; } while(0);
+#define BINARY_INTEGER_BR_S_OP(Op) do { u32 b = pop_u32(); u32 a = pop_u32(); u32 offset = (u32)read_u8(); if (a Op b) m_cur_frame->ip += offset; } while(0);
+#define BINARY_INTEGER_BR_OP(Op) do { u32 b = pop_u32(); u32 a = pop_u32(); u32 offset = (u32)read_u32(); if (a Op b) m_cur_frame->ip += offset; } while(0);
 
         OpCode inst = (OpCode)read_u8();
         switch (inst) {
+        case OpCode::nop:
+            break;
         case OpCode::iload_0: push_u32(m_cur_frame->stack[0]);
             break;
         case OpCode::iload_1: push_u32(m_cur_frame->stack[1]);
@@ -181,10 +183,9 @@ InterpretResult VM::run() {
             break;
         case OpCode::call: {
             // TODO: Optimize this by creating a runtime-only table for fast lookup
-            auto& fn_entry = m_cur_frame->chunk->m_function_table[read_u16()];
-            auto fn_chunk = &fn_entry.chunk;
+            u16 offset = read_u16();
+            auto fn_chunk = m_cur_frame->chunk->m_runtime_function_table[offset];
             u32 locals_slot_size = fn_chunk->get_locals_slot_size();
-            u32 return_value_size = (fn_entry.type.ret->size + 3) / 4;
 
             m_cur_frame = &m_frames[m_frame_count++];
             m_cur_frame->chunk = fn_chunk;

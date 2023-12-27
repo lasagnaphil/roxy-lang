@@ -102,6 +102,7 @@ public:
         emit_byte(OpCode::ret, -1);
 
         m_cur_fn_env->move_locals_to_chunk(m_cur_chunk);
+        m_cur_chunk->build_for_runtime(true);
         m_cur_fn_env = nullptr;
         m_cur_chunk = nullptr;
         return ok();
@@ -117,9 +118,9 @@ public:
     CompileResult visit_impl(FunctionStmt& stmt) {
         // Set current chunk to newly created chunk of function
         auto fn_name = std::string(stmt.fun_decl.name.str(m_scanner->source()));
-        Chunk fn_chunk = {fn_name};
+        auto fn_chunk = UniquePtr<Chunk>(new Chunk(fn_name));
         Chunk* parent_chunk = m_cur_chunk;
-        m_cur_chunk = &fn_chunk;
+        m_cur_chunk = fn_chunk.get();
 
         // Create new local env
         FnLocalEnv fn_env(m_cur_fn_env, m_scanner, stmt);
@@ -134,7 +135,8 @@ public:
         m_cur_fn_env = fn_env.get_outer_env();
         m_cur_chunk = parent_chunk;
 
-        // Insert function to parent chunk
+        // Build function chunk and insert it to parent chunk
+        fn_chunk->build_for_runtime(false);
         auto fn_type = stmt.fun_decl.type.get();
         parent_chunk->m_function_table.push_back({
             fn_name,
@@ -745,10 +747,6 @@ public:
         if (auto var_expr = callee_expr->try_cast<VariableExpr>()) {
             if (auto fun_stmt = var_expr->fun_origin.get()) {
                 // If callee expr is just a function symbol, then just call the function directly!
-
-                // Push return value
-                Type* ret_type = fun_stmt->ret_type.get();
-                push_zero_initialized_value(ret_type, cur_line);
 
                 // Push arguments
                 for (u32 i = 0; i < expr.arguments.size(); i++) {

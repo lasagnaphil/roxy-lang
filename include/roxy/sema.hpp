@@ -113,11 +113,6 @@ public:
     }
 };
 
-struct SemaLocalVar {
-    Token name;
-    RelPtr<Type> type;
-};
-
 enum class SemaResultType {
     Ok,
     UndefinedVar,
@@ -333,10 +328,13 @@ public:
     }
 
     SemaResult visit_impl(FunctionStmt& stmt) {
-        m_cur_env->set_function(stmt.fun_decl.name.str(m_source), &stmt.fun_decl);
+        auto fn_name = stmt.fun_decl.name.str(m_source);
+        m_cur_env->set_function(fn_name, &stmt.fun_decl);
 
         SemaEnv fn_env(m_cur_env, &stmt);
         m_cur_env = &fn_env;
+
+        m_cur_env->set_function(fn_name, &stmt.fun_decl);
 
         // Add all function parameters to the scope.
         Vector<Type*> param_types;
@@ -382,7 +380,6 @@ public:
 
         // Do a sema pass on the statements inside the body.
         for (auto& body_stmt : stmt.body) {
-            // Do not return on error result, since we want to scan all statements.
             auto _ = visit(*body_stmt);
         }
 

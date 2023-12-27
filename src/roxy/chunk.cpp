@@ -20,6 +20,17 @@ u32 Chunk::add_constant(UntypedValue value) {
     return m_constant_table.add_value(value);
 }
 
+void Chunk::build_for_runtime(bool is_module) {
+    m_runtime_function_table.reserve(m_function_table.size() + (is_module? 1 : 0));
+    // Only register itself if the chunk is from a function (needed for recursion)
+    if (!is_module) {
+        m_runtime_function_table.push_back(this);
+    }
+    for (auto& fn_entry : m_function_table) {
+        m_runtime_function_table.push_back(fn_entry.chunk.get());
+    }
+}
+
 u32 Chunk::get_line(u32 bytecode_offset) {
     return m_lines[bytecode_offset];
 }
@@ -32,7 +43,7 @@ void Chunk::print_disassembly() {
     fmt::print("\n");
     for (auto& fn_entry : m_function_table) {
         fmt::print("Functions: \n", fn_entry.name);
-        fn_entry.chunk.print_disassembly();
+        fn_entry.chunk->print_disassembly();
     }
 }
 
@@ -45,7 +56,12 @@ u32 Chunk::disassemble_instruction(u32 offset) {
         fmt::print("   | ");
     }
     else {
-        fmt::print("{:4d} ", cur_line);
+        if (cur_line == 0xffffffff) {
+            fmt::print("   . ", cur_line);
+        }
+        else {
+            fmt::print("{:4d} ", cur_line);
+        }
     }
     prev_line = cur_line;
 
@@ -262,4 +278,5 @@ u32 Chunk::print_string_instruction(OpCode opcode, u32 offset) {
     fputs("'\n", stdout);
     return offset + 5;
 }
+
 }
