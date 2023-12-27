@@ -4,6 +4,7 @@
 #include "roxy/opcode.hpp"
 #include "roxy/chunk.hpp"
 #include "roxy/scanner.hpp"
+#include "roxy/module.hpp"
 
 namespace rx {
 enum CompileResultType {
@@ -29,7 +30,7 @@ public:
         init_from_locals(scanner, stmt.locals);
     }
 
-    FnLocalEnv(FnLocalEnv* outer, Scanner* scanner, ModuleStmt& stmt) : m_outer(outer) {
+    FnLocalEnv(Scanner* scanner, ModuleStmt& stmt) : m_outer(nullptr) {
         init_from_locals(scanner, stmt.locals);
     }
 
@@ -63,6 +64,7 @@ class Compiler :
     public ExprVisitorBase<Compiler, CompileResult> {
 private:
     Scanner* m_scanner;
+    Module* m_cur_module;
     Chunk* m_cur_chunk;
     FnLocalEnv* m_cur_fn_env;
 
@@ -74,10 +76,15 @@ public:
 
     Compiler(Scanner* scanner) : m_scanner(scanner) {}
 
-    CompileResult compile(ModuleStmt& stmt, Chunk& out_chunk) {
-        m_cur_chunk = &out_chunk;
+    CompileResult compile(ModuleStmt& stmt, Module& module) {
+        m_cur_module = &module;
+        m_cur_chunk = &module.chunk();
 
         COMP_TRY(visit(stmt));
+
+        module.build_for_runtime();
+
+        m_cur_module = nullptr;
 
         return ok();
     }
@@ -92,7 +99,7 @@ public:
     }
 
     CompileResult visit_impl(ModuleStmt& stmt) {
-        FnLocalEnv module_env(nullptr, m_scanner, stmt);
+        FnLocalEnv module_env(m_scanner, stmt);
         m_cur_fn_env = &module_env;
 
         for (auto& inner_stmt : stmt.statements) {
@@ -102,7 +109,6 @@ public:
         emit_byte(OpCode::ret, -1);
 
         m_cur_fn_env->move_locals_to_chunk(m_cur_chunk);
-        m_cur_chunk->build_for_runtime(true);
         m_cur_fn_env = nullptr;
         m_cur_chunk = nullptr;
         return ok();
@@ -118,7 +124,7 @@ public:
     CompileResult visit_impl(FunctionStmt& stmt) {
         // Set current chunk to newly created chunk of function
         auto fn_name = std::string(stmt.fun_decl.name.str(m_scanner->source()));
-        auto fn_chunk = UniquePtr<Chunk>(new Chunk(fn_name));
+        auto fn_chunk = UniquePtr<Chunk>(new Chunk(fn_name, m_cur_module));
         Chunk* parent_chunk = m_cur_chunk;
         m_cur_chunk = fn_chunk.get();
 
@@ -130,18 +136,17 @@ public:
             COMP_TRY(visit(*body_stmt));
         }
 
+        // Build function chunk and insert it to parent module
+        auto fn_type = stmt.fun_decl.type.get();
+        m_cur_chunk->m_outer_module->m_function_table.push_back({
+            fn_name,
+            FunctionTypeData(*fn_type, m_scanner->source()),
+            std::move(fn_chunk)});
+
         // Revert to parent env and chunk
         m_cur_fn_env->move_locals_to_chunk(m_cur_chunk);
         m_cur_fn_env = fn_env.get_outer_env();
         m_cur_chunk = parent_chunk;
-
-        // Build function chunk and insert it to parent chunk
-        fn_chunk->build_for_runtime(false);
-        auto fn_type = stmt.fun_decl.type.get();
-        parent_chunk->m_function_table.push_back({
-            fn_name,
-            FunctionTypeData(*fn_type, m_scanner->source()),
-            std::move(fn_chunk)});
 
         return ok();
     }
@@ -614,7 +619,7 @@ public:
                 break;
             }
             case PrimTypeKind::String: {
-                u32 string_offset = m_cur_chunk->add_string(value.str);
+                u32 string_offset = m_cur_chunk->m_outer_module->add_string(value.str);
                 emit_byte(OpCode::ldstr, cur_line);
                 emit_u32(string_offset);
                 break;

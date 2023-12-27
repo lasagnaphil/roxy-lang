@@ -117,14 +117,11 @@ public:
     AstFunDecl fun_decl;
     RelSpan<RelPtr<Stmt>> body;
 
-    // "result" variable for functions with return value
-    AstVarDecl return_val;
-
     // created later in sema analyzer
     RelSpan<RelPtr<AstVarDecl>> locals;
 
     FunctionStmt(FunDecl fun_decl, Span<RelPtr<Stmt>> body) :
-        Stmt(s_kind), fun_decl(fun_decl), body(body), return_val(fun_decl.name, fun_decl.ret_type) {
+        Stmt(s_kind), fun_decl(fun_decl), body(body) {
     }
 
     void set_locals(Span<RelPtr<AstVarDecl>> locals) {

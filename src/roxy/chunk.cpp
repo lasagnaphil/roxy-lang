@@ -4,31 +4,13 @@
 
 #include "roxy/core/binary_search.hpp"
 #include "roxy/fmt/core.h"
+#include "roxy/module.hpp"
 
 namespace rx {
 
 void Chunk::write(u8 byte, u32 line) {
     m_lines.push_back(line);
     m_bytecode.push_back(byte);
-}
-
-u32 Chunk::add_string(std::string_view str) {
-    return m_constant_table.add_string(str);
-}
-
-u32 Chunk::add_constant(UntypedValue value) {
-    return m_constant_table.add_value(value);
-}
-
-void Chunk::build_for_runtime(bool is_module) {
-    m_runtime_function_table.reserve(m_function_table.size() + (is_module? 1 : 0));
-    // Only register itself if the chunk is from a function (needed for recursion)
-    if (!is_module) {
-        m_runtime_function_table.push_back(this);
-    }
-    for (auto& fn_entry : m_function_table) {
-        m_runtime_function_table.push_back(fn_entry.chunk.get());
-    }
 }
 
 u32 Chunk::get_line(u32 bytecode_offset) {
@@ -39,11 +21,6 @@ void Chunk::print_disassembly() {
     fmt::print("== {} ==\n", m_name);
     for (i32 offset = 0; offset < m_bytecode.size();) {
         offset = disassemble_instruction(offset);
-    }
-    fmt::print("\n");
-    for (auto& fn_entry : m_function_table) {
-        fmt::print("Functions: \n", fn_entry.name);
-        fn_entry.chunk->print_disassembly();
     }
 }
 
@@ -273,7 +250,7 @@ u32 Chunk::print_string_instruction(OpCode opcode, u32 offset) {
     u32 string_loc = get_u32_from_bytecode_offset(offset + 1);
 
     fmt::print("{:<16s} {:4d} '", g_opcode_str[(u32)opcode], string_loc);
-    auto str = m_constant_table.get_string(string_loc);
+    auto str = m_outer_module->constant_table().get_string(string_loc);
     fputs(str.data(), stdout);
     fputs("'\n", stdout);
     return offset + 5;

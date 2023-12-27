@@ -22,9 +22,11 @@ private:
     Vector<AstVarDecl*> m_locals;
     Vector<AstFunDecl*> m_functions;
 
-    SemaEnv* m_locals_env;
+    SemaEnv* m_locals_env; // closest parent function
+    SemaEnv* m_functions_env; // closest parent module
 
 public:
+    // Inside an ordinary scope
     SemaEnv(SemaEnv* outer)
         : m_outer(outer), m_function(m_outer->m_function) {
         SemaEnv* env = m_outer;
@@ -34,11 +36,20 @@ public:
         m_locals_env = env;
     }
 
-    SemaEnv(SemaEnv* outer, FunctionStmt* function) : m_outer(outer), m_function(function), m_locals_env(this) {}
+    // Inside a function
+    SemaEnv(SemaEnv* outer, FunctionStmt* function) : m_outer(outer), m_function(function), m_locals_env(this), m_functions_env(nullptr) {
+        SemaEnv* env = m_outer;
+        while (!env->has_functions()) {
+            env = env->m_outer;
+        }
+        m_functions_env = env;
+    }
 
-    SemaEnv(SemaEnv* outer, ModuleStmt* module) : m_outer(outer), m_function(nullptr), m_locals_env(this) {}
+    // Inside a module
+    SemaEnv(SemaEnv* outer, ModuleStmt* module) : m_outer(outer), m_function(nullptr), m_locals_env(this), m_functions_env(this) {}
 
     bool has_locals() const { return m_locals_env == this; }
+    bool has_functions() const { return m_locals_env == this; }
 
     SemaEnv* get_outer_env() const { return m_outer; }
     FunctionStmt* get_outer_function() const { return m_function; }
@@ -87,7 +98,7 @@ public:
         fun_decl->local_index = m_functions.size();
         auto [it, inserted] = m_function_map.insert({name, fun_decl});
         if (inserted) {
-            m_functions.push_back(fun_decl);
+            m_functions_env->m_functions.push_back(fun_decl);
         }
         return inserted;
     }
@@ -277,6 +288,15 @@ public:
     SemaResult visit_impl(ModuleStmt& stmt) {
         SemaEnv module_env(m_cur_env, &stmt);
         m_cur_env = &module_env;
+
+        // For the first pass, scan all function definitions and add them to the env first
+        for (RelPtr<Stmt>& inner_stmt : stmt.statements) {
+            if (auto fun_stmt = inner_stmt->try_cast<FunctionStmt>()) {
+                auto fun_name = fun_stmt->fun_decl.name.str(m_source);
+                m_cur_env->set_function(fun_name, &fun_stmt->fun_decl);
+            }
+        }
+        // Inside the second pass, do a proper sema visit
         for (RelPtr<Stmt>& inner_stmt : stmt.statements) {
             // Do not return on error result, since we want to scan all statements inside the block.
             auto _ = visit(*inner_stmt.get());
@@ -329,12 +349,14 @@ public:
 
     SemaResult visit_impl(FunctionStmt& stmt) {
         auto fn_name = stmt.fun_decl.name.str(m_source);
-        m_cur_env->set_function(fn_name, &stmt.fun_decl);
+
+        // If the parent is a function instead of a module, then it isn't pre-added to the module, so we need to add these manually
+        if (m_cur_env->get_outer_function() != nullptr) {
+            m_cur_env->set_function(fn_name, &stmt.fun_decl);
+        }
 
         SemaEnv fn_env(m_cur_env, &stmt);
         m_cur_env = &fn_env;
-
-        m_cur_env->set_function(fn_name, &stmt.fun_decl);
 
         // Add all function parameters to the scope.
         Vector<Type*> param_types;

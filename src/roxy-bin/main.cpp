@@ -5,8 +5,7 @@
 #include <roxy/core/file.hpp>
 #include <roxy/compiler.hpp>
 #include <roxy/vm.hpp>
-
-#include <cstdio>
+#include <roxy/module.hpp>
 
 int main(int argc, char** argv) {
     using namespace rx;
@@ -53,19 +52,19 @@ int main(int argc, char** argv) {
         fmt::print("{}\n\n", AstPrinter(scanner.source()).to_string(*module_stmt));
 
         Compiler compiler(&scanner);
-        Chunk chunk("test_chunk");
-        auto res = compiler.compile(*module_stmt, chunk);
+        Module module("test");
+        auto res = compiler.compile(*module_stmt, module);
         if (res.type != CompileResultType::Ok) {
             fmt::print("Error during compilation: {}!\n", res.message);
             return 0;
         }
 
-        chunk.print_disassembly();
+        module.print_disassembly();
 
         fmt::print("\n");
 
         VM vm;
-        auto interpret_res = vm.run_chunk(chunk);
+        auto interpret_res = vm.run_module(module);
         if (interpret_res != InterpretResult::Ok) {
             fmt::print("Error during execution!\n");
             return 0;

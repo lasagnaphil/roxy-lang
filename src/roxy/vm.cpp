@@ -8,15 +8,15 @@ VM::VM() {
     m_stack_top = m_stack.data();
 }
 
-InterpretResult VM::run_chunk(Chunk& chunk) {
+InterpretResult VM::run_module(Module& module) {
     m_frame_count = 1;
 
     // Allocate extra space for locals
-    m_stack_top += chunk.get_locals_slot_size();
+    m_stack_top += module.chunk().get_locals_slot_size();
 
     m_frames[0] = {
-        .chunk = &chunk,
-        .ip = chunk.m_bytecode.data(),
+        .chunk = &module.chunk(),
+        .ip = module.chunk().m_bytecode.data(),
         .stack = m_stack_top,
     };
 
@@ -182,9 +182,8 @@ InterpretResult VM::run() {
         case OpCode::pop: pop_u32();
             break;
         case OpCode::call: {
-            // TODO: Optimize this by creating a runtime-only table for fast lookup
             u16 offset = read_u16();
-            auto fn_chunk = m_cur_frame->chunk->m_runtime_function_table[offset];
+            auto fn_chunk = m_cur_frame->chunk->m_function_table[offset];
             u32 locals_slot_size = fn_chunk->get_locals_slot_size();
 
             m_cur_frame = &m_frames[m_frame_count++];

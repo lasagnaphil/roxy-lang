@@ -29,7 +29,7 @@ public:
 
     VM();
 
-    InterpretResult run_chunk(Chunk& chunk);
+    InterpretResult run_module(Module& module);
 
 private:
 
