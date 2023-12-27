@@ -21,6 +21,7 @@ private:
 
     Vector<AstVarDecl*> m_locals;
     Vector<AstFunDecl*> m_functions;
+    Vector<AstFunDecl*> m_native_functions;
 
     SemaEnv* m_locals_env; // closest parent function
     SemaEnv* m_functions_env; // closest parent module
@@ -95,10 +96,16 @@ public:
     }
 
     bool set_function(std::string_view name, AstFunDecl* fun_decl) {
-        fun_decl->local_index = m_functions.size();
         auto [it, inserted] = m_function_map.insert({name, fun_decl});
         if (inserted) {
-            m_functions_env->m_functions.push_back(fun_decl);
+            if (fun_decl->is_native) {
+                fun_decl->local_index = m_functions_env->m_native_functions.size();
+                m_functions_env->m_native_functions.push_back(fun_decl);
+            }
+            else {
+                fun_decl->local_index = m_functions_env->m_functions.size();
+                m_functions_env->m_functions.push_back(fun_decl);
+            }
         }
         return inserted;
     }
@@ -140,6 +147,7 @@ enum class SemaResultType {
     CannotCallOnType,
     CannotFindField,
     IncompatibleFieldType,
+    InvalidNativeFunDeclLocation,
     Misc,
 };
 
@@ -156,6 +164,7 @@ struct SemaResult {
     Expr* cur_expr = nullptr;
     Token cur_name = {};
     AstVarDecl* cur_var_decl = nullptr;
+    AstFunDecl* cur_fun_decl = nullptr;
     Expr* other_expr = nullptr;
     Type* expected_type = nullptr;
 
@@ -227,6 +236,10 @@ struct SemaResult {
         case SemaResultType::IncompatibleFieldType: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = fmt::format("Incompatible field type.")
+            };
+        case SemaResultType::InvalidNativeFunDeclLocation: return {
+                .loc = cur_fun_decl->name.get_source_loc(),
+                .message = fmt::format("Invalid native function declaration: only allowed at the module-level.")
             };
         case SemaResultType::Misc: return {
                 .loc = cur_expr->get_source_loc(),
@@ -352,7 +365,24 @@ public:
 
         // If the parent is a function instead of a module, then it isn't pre-added to the module, so we need to add these manually
         if (m_cur_env->get_outer_function() != nullptr) {
+            if (stmt.is_native) {
+                // Native function declarations should be only at the module level!
+                return error_invalid_native_fun_declaration(&stmt.fun_decl);
+            }
             m_cur_env->set_function(fn_name, &stmt.fun_decl);
+        }
+
+        if (stmt.is_native) {
+            // For native functions there is no body, so just apply the type and move on.
+            Vector<Type*> param_types;
+            for (auto& param : stmt.fun_decl.params) {
+                param_types.push_back(param.type.get());
+            }
+            stmt.fun_decl.type = m_allocator->alloc<FunctionType>(
+                    m_allocator->alloc_vector<RelPtr<Type>, Type*>(std::move(param_types)),
+                    stmt.fun_decl.ret_type.get());
+
+            return ok();
         }
 
         SemaEnv fn_env(m_cur_env, &stmt);
@@ -909,6 +939,13 @@ public:
             .cur_expr = expr,
             .cur_name = name,
             .expected_type = type
+        });
+    }
+
+    SemaResult error_invalid_native_fun_declaration(AstFunDecl* fun_decl) {
+        return report_error({
+            .res_type = SemaResultType::InvalidNativeFunDeclLocation,
+            .cur_fun_decl = fun_decl
         });
     }
 

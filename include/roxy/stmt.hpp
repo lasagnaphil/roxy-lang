@@ -116,12 +116,13 @@ public:
 
     AstFunDecl fun_decl;
     RelSpan<RelPtr<Stmt>> body;
+    bool is_native;
 
     // created later in sema analyzer
     RelSpan<RelPtr<AstVarDecl>> locals;
 
-    FunctionStmt(FunDecl fun_decl, Span<RelPtr<Stmt>> body) :
-        Stmt(s_kind), fun_decl(fun_decl), body(body) {
+    FunctionStmt(FunDecl fun_decl, Span<RelPtr<Stmt>> body, bool is_native) :
+        Stmt(s_kind), fun_decl(fun_decl), body(body), is_native(is_native) {
     }
 
     void set_locals(Span<RelPtr<AstVarDecl>> locals) {

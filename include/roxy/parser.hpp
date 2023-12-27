@@ -155,8 +155,14 @@ private:
         if (match(TokenType::Var)) {
             return var_declaration();
         }
+        else if (match(TokenType::Native)) {
+            if (!consume(TokenType::Fun)) {
+                return error_stmt("Expect 'fun' after 'native'.");
+            }
+            return fun_declaration(true);
+        }
         else if (match(TokenType::Fun)) {
-            return fun_declaration();
+            return fun_declaration(false);
         }
         else if (match(TokenType::Struct)) {
             return struct_declaration();
@@ -440,7 +446,7 @@ private:
         return alloc<VarStmt>(var_decl, initializer);
     }
 
-    Stmt* fun_declaration() {
+    Stmt* fun_declaration(bool is_native) {
         if (!consume(TokenType::Identifier)) {
             return error_stmt("Expect function name.");
         }
@@ -485,17 +491,25 @@ private:
             ret_type = alloc<PrimitiveType>(PrimTypeKind::Void);
         }
 
-        if (!consume(TokenType::LeftBrace)) {
-            return error_stmt("Expect '{' before function body.");
+        if (is_native) {
+            if (!consume(TokenType::Semicolon)) {
+                return error_stmt("Expect ';' after native function declaration.");
+            }
+            return alloc<FunctionStmt>(FunDecl(name, alloc_vector_var_decl(std::move(parameters)), ret_type, true),
+                                       Span<RelPtr<Stmt>>{}, true);
         }
+        else {
+            if (!consume(TokenType::LeftBrace)) {
+                return error_stmt("Expect '{' before function body.");
+            }
 
-        // TODO: what if there are functions inside functions?
-        m_inside_fun = true;
-        auto block_stmt_list = alloc_vector_ptr(block());
-        m_inside_fun = false;
-
-        return alloc<FunctionStmt>(FunDecl(name, alloc_vector_var_decl(std::move(parameters)), ret_type),
-                                   block_stmt_list);
+            // TODO: what if there are functions inside functions?
+            m_inside_fun = true;
+            auto block_stmt_list = alloc_vector_ptr(block());
+            m_inside_fun = false;
+            return alloc<FunctionStmt>(FunDecl(name, alloc_vector_var_decl(std::move(parameters)), ret_type, false),
+                                       block_stmt_list, false);
+        }
     }
 
     Stmt* struct_declaration() {

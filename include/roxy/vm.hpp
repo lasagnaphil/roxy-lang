@@ -133,7 +133,7 @@ private:
 
     CallFrame* m_cur_frame;
 
-    ConstantTable m_constant_table;
+    StringTable m_constant_table;
 };
 
 }

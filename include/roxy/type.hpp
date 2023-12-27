@@ -110,27 +110,51 @@ struct FunDecl {
     Token name;
     Span<AstVarDecl> params;
     Type* ret_type;
+    bool is_native;
 
     FunDecl() = default;
-    FunDecl(Token name, Span<AstVarDecl> params, Type* ret_type) :
-        name(name), params(params), ret_type(ret_type) {}
+    FunDecl(Token name, Span<AstVarDecl> params, Type* ret_type, bool is_native) :
+        name(name), params(params), ret_type(ret_type), is_native(is_native) {}
 };
 
 struct AstFunDecl {
     Token name;
     RelSpan<AstVarDecl> params;
     RelPtr<Type> ret_type;
+    bool is_native;
 
     // Added in sema analyzer
     RelPtr<FunctionType> type;
-    RelPtr<FunctionStmt> stmt;
     u16 local_index = 0;
 
     AstFunDecl(FunDecl fun_decl) :
-        name(fun_decl.name), params(fun_decl.params), ret_type(fun_decl.ret_type), type(nullptr), stmt(nullptr) {}
-    AstFunDecl(Token name, Span<AstVarDecl> params, Type* ret_type, FunctionType* type, FunctionStmt* stmt) :
-        name(name), params(params), ret_type(ret_type), type(type), stmt(stmt) {}
+        name(fun_decl.name), params(fun_decl.params), ret_type(fun_decl.ret_type),
+        is_native(fun_decl.is_native), type(nullptr) {}
+    AstFunDecl(Token name, Span<AstVarDecl> params, Type* ret_type, FunctionType* type, bool is_native) :
+        name(name), params(params), ret_type(ret_type), type(type), is_native(is_native) {}
 };
+
+/*
+struct NativeFunDecl {
+    std::string name;
+    Span<RelPtr<Type>> param_types;
+    Type* ret_type;
+
+    NativeFunDecl() = default;
+    NativeFunDecl(std::string name, Span<RelPtr<Type>> param_types, Type* ret_type) :
+        name(std::move(name)), param_types(param_types), ret_type(ret_type) {}
+};
+
+struct AstNativeFunDecl {
+    std::string name;
+    RelSpan<RelPtr<Type>> param_types;
+    RelPtr<Type> ret_type;
+
+    AstNativeFunDecl() = default;
+    AstNativeFunDecl(NativeFunDecl fun_decl) :
+        name(std::move(fun_decl.name)), param_types(fun_decl.param_types),  ret_type(fun_decl.ret_type) {}
+};
+ */
 
 struct PrimitiveType : public Type {
     static constexpr TypeKind s_kind = TypeKind::Primitive;

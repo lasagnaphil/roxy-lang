@@ -27,7 +27,7 @@ enum class TokenType : u8 {
     Identifier, String, NumberInt, NumberFloat,
     // Keywords.
     Struct, Else, False,
-    For, Fun, If, Nil,
+    For, Fun, If, Nil, Native,
     Return, Super, This, Print,
     True, Var, While,
     Break, Continue,

@@ -1,9 +1,10 @@
 #pragma once
 
+#include "roxy/scanner.hpp"
+#include "roxy/parser.hpp"
 #include "roxy/ast_visitor.hpp"
 #include "roxy/opcode.hpp"
 #include "roxy/chunk.hpp"
-#include "roxy/scanner.hpp"
 #include "roxy/module.hpp"
 
 namespace rx {
@@ -26,12 +27,12 @@ private:
     Vector<LocalTableEntry> m_local_table;
 
 public:
-    FnLocalEnv(FnLocalEnv* outer, Scanner* scanner, FunctionStmt& stmt) : m_outer(outer) {
-        init_from_locals(scanner, stmt.locals);
+    FnLocalEnv(FnLocalEnv* outer, FunctionStmt& stmt, const u8* source) : m_outer(outer) {
+        init_from_locals( stmt.locals, source);
     }
 
-    FnLocalEnv(Scanner* scanner, ModuleStmt& stmt) : m_outer(nullptr) {
-        init_from_locals(scanner, stmt.locals);
+    FnLocalEnv(ModuleStmt& stmt, const u8* source) : m_outer(nullptr) {
+        init_from_locals(stmt.locals, source);
     }
 
     FnLocalEnv* get_outer_env() { return m_outer; }
@@ -43,16 +44,16 @@ public:
     }
 
 private:
-    void init_from_locals(Scanner* scanner, RelSpan<RelPtr<AstVarDecl>>& locals) {
+    void init_from_locals(RelSpan<RelPtr<AstVarDecl>>& locals, const u8* source) {
         u32 offset = 0;
         m_local_table.reserve(locals.size());
         for (auto& local : locals) {
             auto type = local->type.get();
             u32 aligned_offset = (offset + type->alignment - 1) & ~(type->alignment - 1);
-            auto name = local->name.str(scanner->source());
+            auto name = local->name.str(source);
             m_local_table.push_back({
                 (u16)((offset + 3) / 4), (u16)((type->size + 3) / 4),
-                TypeData::from_type(type, scanner->source()), std::string(name)
+                TypeData::from_type(type, source), std::string(name)
             });
             offset = aligned_offset + type->size;
         }
@@ -62,11 +63,15 @@ private:
 class Compiler :
     public StmtVisitorBase<Compiler, CompileResult>,
     public ExprVisitorBase<Compiler, CompileResult> {
+
+    friend StmtVisitorBase<Compiler, CompileResult>;
+    friend ExprVisitorBase<Compiler, CompileResult>;
+
 private:
-    Scanner* m_scanner;
-    Module* m_cur_module;
-    Chunk* m_cur_chunk;
-    FnLocalEnv* m_cur_fn_env;
+    Scanner* m_scanner = nullptr;
+    Module* m_cur_module = nullptr;
+    Chunk* m_cur_chunk = nullptr;
+    FnLocalEnv* m_cur_fn_env = nullptr;
 
 public:
     using StmtVisitorBase<Compiler, CompileResult>::visit;
@@ -74,8 +79,60 @@ public:
 
 #define COMP_TRY(EXPR) do { auto _res = EXPR; if (_res.type != CompileResultType::Ok) { return _res; } } while (false);
 
-    Compiler(Scanner* scanner) : m_scanner(scanner) {}
+    Compiler() = default;
 
+    CompileResult compile(Module& module) {
+        Scanner scanner(module.m_source);
+
+        m_scanner = &scanner;
+
+        StringInterner string_interner;
+        Parser parser(&scanner, &string_interner);
+
+        ModuleStmt* module_stmt;
+        bool parse_success = parser.parse(module_stmt);
+
+        std::string message;
+
+        message += "Parsed output:\n";
+        message += AstPrinter(scanner.source()).to_string(*module_stmt);
+        message += '\n';
+
+        if (!parse_success) return {CompileResultType::Error, message};
+
+        SemaAnalyzer sema_analyzer(parser.get_ast_allocator(), scanner.source());
+        auto sema_errors = sema_analyzer.check(module_stmt);
+
+        if (!sema_errors.empty()) {
+            message += "\nSema errors: ";
+            message += std::to_string(sema_errors.size());
+            message += '\n';
+
+            for (auto err : sema_errors) {
+                auto error_msg = err.to_error_msg(scanner.source());
+                auto line = scanner.get_line(error_msg.loc);
+                std::string_view str = {reinterpret_cast<const char* const>(scanner.source() + error_msg.loc.source_loc),
+                                        (size_t)error_msg.loc.length};
+                message += fmt::format("[line {}] Error at '{}': {}\n", line, str, error_msg.message);
+            }
+
+            message += "\nAfter semantic analysis:\n";
+            message += AstPrinter(scanner.source()).to_string(*module_stmt);
+            message += "\n\n";
+
+            return {CompileResultType::Error, message};
+        }
+
+        auto res = compile(*module_stmt, module);
+        if (res.type != CompileResultType::Ok) {
+            message += res.message;
+            return {CompileResultType::Error, message};
+        }
+
+        return {CompileResultType::Ok, message};
+    }
+
+private:
     CompileResult compile(ModuleStmt& stmt, Module& module) {
         m_cur_module = &module;
         m_cur_chunk = &module.chunk();
@@ -99,7 +156,7 @@ public:
     }
 
     CompileResult visit_impl(ModuleStmt& stmt) {
-        FnLocalEnv module_env(m_scanner, stmt);
+        FnLocalEnv module_env(stmt, m_scanner->source());
         m_cur_fn_env = &module_env;
 
         for (auto& inner_stmt : stmt.statements) {
@@ -122,6 +179,9 @@ public:
     CompileResult visit_impl(StructStmt& stmt) { return ok(); }
 
     CompileResult visit_impl(FunctionStmt& stmt) {
+        // If native function declaration, just skip.
+        if (stmt.is_native) return ok();
+
         // Set current chunk to newly created chunk of function
         auto fn_name = std::string(stmt.fun_decl.name.str(m_scanner->source()));
         auto fn_chunk = UniquePtr<Chunk>(new Chunk(fn_name, m_cur_module));
@@ -129,7 +189,7 @@ public:
         m_cur_chunk = fn_chunk.get();
 
         // Create new local env
-        FnLocalEnv fn_env(m_cur_fn_env, m_scanner, stmt);
+        FnLocalEnv fn_env(m_cur_fn_env, stmt, m_scanner->source());
         m_cur_fn_env = &fn_env;
 
         for (auto& body_stmt : stmt.body) {
@@ -619,7 +679,7 @@ public:
                 break;
             }
             case PrimTypeKind::String: {
-                u32 string_offset = m_cur_chunk->m_outer_module->add_string(value.str);
+                u32 string_offset = m_cur_chunk->m_outer_module->constant_table().add_string(value.str);
                 emit_byte(OpCode::ldstr, cur_line);
                 emit_u32(string_offset);
                 break;

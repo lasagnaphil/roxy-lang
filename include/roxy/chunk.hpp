@@ -36,6 +36,9 @@ struct PrimitiveTypeData : TypeData {
     static constexpr TypeKind s_kind = TypeKind::Primitive;
 
     PrimitiveTypeData() : TypeData(s_kind) {}
+    PrimitiveTypeData(PrimTypeKind prim_kind) : TypeData(s_kind), prim_kind(prim_kind) {
+        size = alignment = PrimitiveType::s_prim_type_sizes[(u32)prim_kind];
+    }
     PrimitiveTypeData(const PrimitiveType& type) : TypeData(type), prim_kind(type.prim_kind) {}
 
     PrimTypeKind prim_kind;
