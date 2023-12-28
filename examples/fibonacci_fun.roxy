@@ -1,8 +1,13 @@
 native fun print_i32(value: int);
+native fun print_f64(value: f64);
+native fun clock(): f64;
 
 fun fib(n: int): int {
     if (n <= 1) return n;
     return fib(n - 2) + fib(n - 1);
 }
 
+var a = 1;
+var time = clock();
 print_i32(fib(10));
+print_f64(clock() - time);

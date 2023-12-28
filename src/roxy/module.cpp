@@ -10,6 +10,7 @@ native fun print_u32(value: u32);
 native fun print_u64(value: u64);
 native fun print_float(value: float);
 native fun print_double(value: double);
+native fun clock(): double;
 )";
 
 UniquePtr<Module> Module::s_builtin_module = nullptr;
@@ -75,6 +76,10 @@ void Module::load_basic_module() {
     ADD_NATIVE_PRINT_FUN(u64, "%llu")
     ADD_NATIVE_PRINT_FUN(f32, "%f")
     ADD_NATIVE_PRINT_FUN(f64, "%f")
+
+    add_native_function("clock", [](ArgStack* args) {
+        args->push_f64((f64)clock() / CLOCKS_PER_SEC);
+    });
 }
 
 #undef ADD_NATIVE_PRINT_FUN
