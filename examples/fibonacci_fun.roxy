@@ -7,7 +7,6 @@ fun fib(n: int): int {
     return fib(n - 2) + fib(n - 1);
 }
 
-var a = 1;
 var time = clock();
-print_i32(fib(10));
+print_i32(fib(35));
 print_f64(clock() - time);

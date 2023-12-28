@@ -13,6 +13,7 @@ public:
     ObjString* create_string(std::string_view str);
     ObjString* create_string(const char* chars, u32 length);
     ObjString* create_string(const char* chars, u32 length, u64 hash);
+    ObjString* insert_existing_string_obj(ObjString* obj);
 
     void free_string(ObjString* str);
 

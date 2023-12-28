@@ -4,8 +4,12 @@
 #include <fmt/core.h>
 
 namespace rx {
+
+StringInterner VM::s_string_interner = {};
+
 VM::VM() {
     m_stack_top = m_stack.data();
+    init_uid_gen_state();
 }
 
 InterpretResult VM::run_module(Module& module) {
@@ -25,9 +29,11 @@ InterpretResult VM::run_module(Module& module) {
     return run();
 }
 
-#define DEBUG_TRACE_EXECUTION
+// #define DEBUG_TRACE_EXECUTION
 
 InterpretResult VM::run() {
+    s_string_interner.init();
+
     // Add frame
     m_cur_frame = &m_frames[m_frame_count - 1];
 
@@ -54,168 +60,148 @@ InterpretResult VM::run() {
         switch (inst) {
         case OpCode::nop:
             break;
-        case OpCode::iload_0: push_u32(m_cur_frame->stack[0]);
+        case OpCode::iload_0: push_u32(get_local_u32(0));
             break;
-        case OpCode::iload_1: push_u32(m_cur_frame->stack[1]);
+        case OpCode::iload_1: push_u32(get_local_u32(1));
             break;
-        case OpCode::iload_2: push_u32(m_cur_frame->stack[2]);
+        case OpCode::iload_2: push_u32(get_local_u32(2));
             break;
-        case OpCode::iload_3: push_u32(m_cur_frame->stack[3]);
+        case OpCode::iload_3: push_u32(get_local_u32(3));
             break;
-        case OpCode::iload: push_u32(m_cur_frame->stack[read_u16()]);
+        case OpCode::iload: push_u32(get_local_u32(read_u16()));
             break;
-        case OpCode::iload_s: push_u32(m_cur_frame->stack[read_u8()]);
+        case OpCode::iload_s: push_u32(get_local_u32(read_u8()));
             break;
-        case OpCode::istore_0: m_cur_frame->stack[0] = pop_u32();
+        case OpCode::istore_0: set_local_u32(0, pop_u32());
             break;
-        case OpCode::istore_1: m_cur_frame->stack[1] = pop_u32();
+        case OpCode::istore_1: set_local_u32(1, pop_u32());
             break;
-        case OpCode::istore_2: m_cur_frame->stack[2] = pop_u32();
+        case OpCode::istore_2: set_local_u32(2, pop_u32());
             break;
-        case OpCode::istore_3: m_cur_frame->stack[3] = pop_u32();
+        case OpCode::istore_3: set_local_u32(3, pop_u32());
             break;
-        case OpCode::istore: m_cur_frame->stack[read_u16()] = pop_u32();
+        case OpCode::istore: set_local_u32(read_u16(), pop_u32());
             break;
-        case OpCode::istore_s: m_cur_frame->stack[read_u8()] = pop_u32();
+        case OpCode::istore_s: set_local_u32(read_u8(), pop_u32());
             break;
-        case OpCode::lload_0: {
-            u64 value;
-            memcpy(&value, m_cur_frame->stack, sizeof(u64));
-            push_u64(value);
+        case OpCode::lload_0: push_u64(get_local_u64(0));
             break;
-        }
-        case OpCode::lload_1: {
-            u64 value;
-            memcpy(&value, m_cur_frame->stack + 2, sizeof(u64));
-            push_u64(value);
+        case OpCode::lload_1: push_u64(get_local_u64(2));
             break;
-        }
-        case OpCode::lload_2: {
-            u64 value;
-            memcpy(&value, m_cur_frame->stack + 4, sizeof(u64));
-            push_u64(value);
+        case OpCode::lload_2: push_u64(get_local_u64(4));
             break;
-        }
-        case OpCode::lload_3: {
-            u64 value;
-            memcpy(&value, m_cur_frame->stack + 6, sizeof(u64));
-            push_u64(value);
+        case OpCode::lload_3: push_u64(get_local_u64(6));
             break;
-        }
         case OpCode::lload: {
             u32 offset = (u32)read_u16() << 1;
-            u64 value;
-            memcpy(&value, m_cur_frame->stack + offset, sizeof(u64));
-            push_u64(value);
+            push_u64(get_local_u64(offset));
             break;
         }
         case OpCode::lload_s: {
             u32 offset = (u32)read_u8() << 1;
-            u64 value;
-            memcpy(&value, m_cur_frame->stack + offset, sizeof(u64));
-            push_u64(value);
+            push_u64(get_local_u64(offset));
             break;
         }
-        case OpCode::lstore_0: {
-            u64 value = pop_u64();
-            memcpy(m_cur_frame->stack, &value, sizeof(u64));
+        case OpCode::lstore_0: set_local_u64(0, pop_u64());
             break;
-        }
-        case OpCode::lstore_1: {
-            u64 value = pop_u64();
-            memcpy(m_cur_frame->stack + 2, &value, sizeof(u64));
+        case OpCode::lstore_1: set_local_u64(2, pop_u64());
             break;
-        }
-        case OpCode::lstore_2: {
-            u64 value = pop_u64();
-            memcpy(m_cur_frame->stack + 4, &value, sizeof(u64));
+        case OpCode::lstore_2: set_local_u64(4, pop_u64());
             break;
-        }
-        case OpCode::lstore_3: {
-            u64 value = pop_u64();
-            memcpy(m_cur_frame->stack + 6, &value, sizeof(u64));
+        case OpCode::lstore_3: set_local_u64(6, pop_u64());
             break;
-        }
         case OpCode::lstore: {
             u64 value = pop_u64();
             u32 offset = (u32)read_u16() << 1;
-            memcpy(m_cur_frame->stack + offset, &value, sizeof(u64));
+            set_local_u64(offset, value);
             break;
         }
         case OpCode::lstore_s: {
             u64 value = pop_u64();
             u32 offset = (u32)read_u8() << 1;
-            memcpy(m_cur_frame->stack + offset, &value, sizeof(u64));
+            set_local_u64(offset, value);
             break;
         }
         case OpCode::rload_0: {
-            Obj* value;
-            memcpy(&value, m_cur_frame->stack, sizeof(Obj*));
+            Obj* value = get_local_ref(0);
             push_ref(value);
+            value->incref();
             break;
         }
         case OpCode::rload_1: {
-            Obj* value;
-            memcpy(&value, m_cur_frame->stack + 2, sizeof(Obj*));
+            Obj* value = get_local_ref(2);
             push_ref(value);
+            value->incref();
             break;
         }
         case OpCode::rload_2: {
-            Obj* value;
-            memcpy(&value, m_cur_frame->stack + 4, sizeof(Obj*));
+            Obj* value = get_local_ref(4);
             push_ref(value);
+            value->incref();
             break;
         }
         case OpCode::rload_3: {
-            Obj* value;
-            memcpy(&value, m_cur_frame->stack + 6, sizeof(Obj*));
+            Obj* value = get_local_ref(6);
             push_ref(value);
+            value->incref();
             break;
         }
         case OpCode::rload: {
             u32 offset = (u32)read_u16() << 1;
-            Obj* value;
-            memcpy(&value, m_cur_frame->stack + offset, sizeof(Obj*));
+            Obj* value = get_local_ref(offset);
             push_ref(value);
+            value->incref();
             break;
         }
         case OpCode::rload_s: {
             u32 offset = (u32)read_u8() << 1;
-            Obj* value;
-            memcpy(&value, m_cur_frame->stack + offset, sizeof(Obj*));
+            Obj* value = get_local_ref(offset);
             push_ref(value);
+            value->incref();
             break;
         }
         case OpCode::rstore_0: {
+            Obj* orig_value = get_local_ref(0);
+            if (orig_value) orig_value->decref();
             Obj* value = pop_ref();
-            memcpy(m_cur_frame->stack, &value, sizeof(Obj*));
+            set_local_ref(0, value);
             break;
         }
         case OpCode::rstore_1: {
+            Obj* orig_value = get_local_ref(2);
+            if (orig_value) orig_value->decref();
             Obj* value = pop_ref();
-            memcpy(m_cur_frame->stack + 2, &value, sizeof(Obj*));
+            set_local_ref(2, value);
             break;
         }
         case OpCode::rstore_2: {
+            Obj* orig_value = get_local_ref(4);
+            if (orig_value) orig_value->decref();
             Obj* value = pop_ref();
-            memcpy(m_cur_frame->stack + 4, &value, sizeof(Obj*));
+            set_local_ref(4, value);
             break;
         }
         case OpCode::rstore_3: {
+            Obj* orig_value = get_local_ref(6);
+            if (orig_value) orig_value->decref();
             Obj* value = pop_ref();
-            memcpy(m_cur_frame->stack + 6, &value, sizeof(Obj*));
+            set_local_ref(6, value);
             break;
         }
         case OpCode::rstore: {
-            Obj* value = pop_ref();
             u32 offset = (u32)read_u16() << 1;
-            memcpy(m_cur_frame->stack + offset, &value, sizeof(Obj*));
+            Obj* orig_value = get_local_ref(offset);
+            if (orig_value) orig_value->decref();
+            Obj* value = pop_ref();
+            set_local_ref(offset, value);
             break;
         }
         case OpCode::rstore_s: {
-            Obj* value = pop_ref();
             u32 offset = (u32)read_u8() << 1;
-            memcpy(m_cur_frame->stack + offset, &value, sizeof(Obj*));
+            Obj* orig_value = get_local_ref(offset);
+            if (orig_value) orig_value->decref();
+            Obj* value = pop_ref();
+            set_local_ref(offset, value);
             break;
         }
         case OpCode::iconst_m1: push_u32(-1);
@@ -272,9 +258,10 @@ InterpretResult VM::run() {
             break;
         }
         case OpCode::ret: {
+            decref_locals();
             m_frame_count--;
             if (m_frame_count == 0) {
-                return InterpretResult::Ok;
+                goto interpreter_end;
             }
             m_stack_top = m_cur_frame->stack;
             m_cur_frame = &m_frames[m_frame_count - 1];
@@ -282,9 +269,10 @@ InterpretResult VM::run() {
         }
         case OpCode::iret: {
             u32 ret_value = pop_u32();
+            decref_locals();
             m_frame_count--;
             if (m_frame_count == 0) {
-                return InterpretResult::Ok;
+                goto interpreter_end;
             }
             m_stack_top = m_cur_frame->stack;
             m_cur_frame = &m_frames[m_frame_count - 1];
@@ -293,13 +281,27 @@ InterpretResult VM::run() {
         }
         case OpCode::lret: {
             u64 ret_value = pop_u64();
+            decref_locals();
             m_frame_count--;
             if (m_frame_count == 0) {
-                return InterpretResult::Ok;
+                goto interpreter_end;
             }
             m_stack_top = m_cur_frame->stack;
             m_cur_frame = &m_frames[m_frame_count - 1];
             push_u64(ret_value);
+            break;
+        }
+        case OpCode::rret: {
+            Obj* ret_value = pop_ref();
+            decref_locals();
+            m_frame_count--;
+            if (m_frame_count == 0) {
+                ret_value->decref();
+                goto interpreter_end;
+            }
+            m_stack_top = m_cur_frame->stack;
+            m_cur_frame = &m_frames[m_frame_count - 1];
+            push_ref(ret_value);
             break;
         }
         case OpCode::jmp_s: m_cur_frame->ip += read_u8();
@@ -392,15 +394,18 @@ InterpretResult VM::run() {
             break;
         case OpCode::ldstr: {
             u32 offset = read_u32();
-            auto str = m_cur_frame->chunk->m_outer_module->constant_table().get_string(offset);
-            ObjString* obj_str = m_string_interner.create_string(str);
-            push_ref(reinterpret_cast<Obj*>(obj_str));
+            auto str = m_cur_frame->chunk->m_outer_module->string_table().get_string(offset);
+            ObjString* obj_str = s_string_interner.create_string(str);
+            Obj* obj = reinterpret_cast<Obj*>(obj_str);
+            push_ref(obj);
+            // obj->incref();
             break;
         }
         default: return InterpretResult::RuntimeError;
         }
     }
 
+interpreter_end:
     return InterpretResult::Ok;
 }
 }

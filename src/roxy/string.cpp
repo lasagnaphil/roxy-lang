@@ -1,5 +1,6 @@
 #include "roxy/string.hpp"
 #include "roxy/core/xxhash.h"
+#include "roxy/vm.hpp"
 
 #include <cstddef>
 #include <cstdlib>
@@ -78,17 +79,19 @@ ObjString* ObjString::from_f64(f64 value) {
 
 ObjString* ObjString::concat(ObjString* a, ObjString* b) {
     int32_t length = a->m_length + b->m_length;
-    auto result = ObjString::allocate(length);
-    memcpy(result->m_chars, a->m_chars, a->m_length);
-    memcpy(result->m_chars + a->m_length, b->m_chars, b->m_length);
-    result->m_hash = XXH3_64bits(result->m_chars, length);
-    result->m_chars[length] = 0;
-    return result;
+    // First create temporary object with concatenated string
+    auto temp = ObjString::allocate(length);
+    memcpy(temp->m_chars, a->m_chars, a->m_length);
+    memcpy(temp->m_chars + a->m_length, b->m_chars, b->m_length);
+    temp->m_hash = XXH3_64bits(temp->m_chars, length);
+    temp->m_chars[length] = 0;
+    // Then leave it to the string interner to create the actual object
+    return VM::get_global_string_interner().insert_existing_string_obj(temp);
 }
 
-void ObjString::free(ObjString* str) {
-    str->~ObjString();
-    ::free(str);
+void ObjString::free(Obj* obj) {
+    ObjString* str = reinterpret_cast<ObjString*>(obj);
+    VM::get_global_string_interner().free_string(str);
 }
 
 }

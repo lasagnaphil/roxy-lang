@@ -73,9 +73,11 @@ void Module::build_for_runtime() {
 
     m_chunk.m_function_table = m_runtime_function_table.data();
     m_chunk.m_native_function_table = m_runtime_native_fun_table.data();
+    m_chunk.find_ref_local_offsets();
     for (auto& fun_entry : m_function_table) {
         fun_entry.chunk->m_function_table = m_runtime_function_table.data();
         fun_entry.chunk->m_native_function_table = m_runtime_native_fun_table.data();
+        fun_entry.chunk->find_ref_local_offsets();
     }
 }
 
@@ -94,8 +96,9 @@ void Module::load_basic_module() {
     ADD_NATIVE_PRINT_FUN(f64, "%f")
 
     add_native_function("print", [](ArgStack* args) {
-        ObjString* obj = reinterpret_cast<ObjString*>(args->pop_ref());
-        puts(obj->chars());
+        ObjString* str= reinterpret_cast<ObjString*>(args->pop_ref());
+        puts(str->chars());
+        str->obj().decref();
     });
 
     add_native_function("concat", [](ArgStack* args) {
@@ -103,6 +106,8 @@ void Module::load_basic_module() {
         ObjString* a = reinterpret_cast<ObjString*>(args->pop_ref());
         ObjString* res = ObjString::concat(a, b);
         args->push_ref(reinterpret_cast<Obj*>(res));
+        a->obj().decref();
+        b->obj().decref();
     });
 
     add_native_function("clock", [](ArgStack* args) {

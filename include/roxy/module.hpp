@@ -117,7 +117,7 @@ public:
         m_name(std::move(name)), m_chunk(m_name, this), m_source(source) {}
 
     Chunk& chunk() { return m_chunk; }
-    StringTable& constant_table() { return m_constant_table; }
+    StringTable& string_table() { return m_string_table; }
 
     bool add_native_function(std::string_view name, NativeFunctionRef fun);
 
@@ -134,7 +134,7 @@ private:
     std::string m_name;
     const u8* m_source;
     Chunk m_chunk;
-    StringTable m_constant_table;
+    StringTable m_string_table;
     Vector<FunctionTableEntry> m_function_table;
     Vector<NativeFunctionTableEntry> m_native_function_table;
     Vector<StructTypeData> m_struct_table;

@@ -4,14 +4,17 @@
 
 namespace rx {
 
-struct ObjString {
+class ObjString {
 private:
-    Obj m_obj = ObjType::String;
+    Obj m_obj = {ObjType::String, ObjString::free};
     u64 m_hash;
     u32 m_length;
-    char m_chars[];
+    char m_chars[1];
 
 public:
+    Obj& obj() { return m_obj; }
+    const Obj& obj() const { return m_obj; }
+
     const char* chars() const { return m_chars; }
     u32 length() const { return m_length; }
     u64 hash() const { return m_hash; }
@@ -29,7 +32,7 @@ public:
     static ObjString* from_f64(f64 value);
 
     static ObjString* concat(ObjString* a, ObjString* b);
-    static void free(ObjString* str);
+    static void free(Obj* str);
 };
 
 }

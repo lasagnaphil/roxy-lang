@@ -8,9 +8,30 @@
 
 namespace rx {
 
+Chunk::Chunk(std::string name, Module* outer_module) :
+        m_name(std::move(name)), m_outer_module(outer_module),
+        m_function_table(nullptr), m_native_function_table(nullptr) {}
+
 void Chunk::write(u8 byte, u32 line) {
     m_lines.push_back(line);
     m_bytecode.push_back(byte);
+}
+
+void Chunk::find_ref_local_offsets() {
+    for (auto& local : m_local_table) {
+        if (local.type->kind == TypeKind::Primitive) {
+            auto prim_kind = static_cast<PrimitiveTypeData*>(local.type.get())->prim_kind;
+            if (prim_kind == PrimTypeKind::String) {
+                m_ref_local_offsets.push_back(local.start);
+            }
+        }
+    }
+}
+
+u32 Chunk::get_locals_slot_size() {
+    if (m_local_table.empty()) return 0;
+    auto& last_local = m_local_table[m_local_table.size() - 1];
+    return last_local.start + last_local.size;
 }
 
 u32 Chunk::get_line(u32 bytecode_offset) {
@@ -139,7 +160,6 @@ u32 Chunk::disassemble_instruction(u32 offset) {
     case OpCode::callnative:
         return print_arg_u16_instruction(opcode, offset);
     case OpCode::iconst:
-    case OpCode::ldstr:
         return print_arg_u32_instruction(opcode, offset);
     case OpCode::lconst:
         return print_arg_u64_instruction(opcode, offset);
@@ -183,6 +203,8 @@ u32 Chunk::disassemble_instruction(u32 offset) {
         return print_branch_instruction(opcode, 1, offset);
     case OpCode::loop:
         return print_branch_instruction(opcode, -1, offset);
+    case OpCode::ldstr:
+        return print_string_instruction(opcode, offset);
     default:
         return print_simple_instruction(OpCode::invalid, offset);
     }
@@ -263,7 +285,7 @@ u32 Chunk::print_string_instruction(OpCode opcode, u32 offset) {
     u32 string_loc = get_u32_from_bytecode_offset(offset + 1);
 
     fmt::print("{:<16s} {:4d} '", g_opcode_str[(u32)opcode], string_loc);
-    auto str = m_outer_module->constant_table().get_string(string_loc);
+    auto str = m_outer_module->string_table().get_string(string_loc);
     fputs(str.data(), stdout);
     fputs("'\n", stdout);
     return offset + 5;

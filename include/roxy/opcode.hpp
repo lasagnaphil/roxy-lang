@@ -67,6 +67,7 @@
     X(ret)                  \
     X(iret)                  \
     X(lret)                  \
+    X(rret)                  \
     X(jmp_s)                  \
     X(loop_s)                  \
     X(br_false_s)            \

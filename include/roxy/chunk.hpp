@@ -102,6 +102,7 @@ struct LocalTableEntry {
 
 class Module;
 class ArgStack;
+class StringTable;
 
 using NativeFunctionRef = void(*)(ArgStack*);
 
@@ -109,22 +110,23 @@ struct Chunk {
     std::string m_name;
     Vector<u8> m_bytecode;
     Vector<LocalTableEntry> m_local_table;
+    Module* m_outer_module;
+
+    // Pointers used at runtime
     Chunk** m_function_table;
     NativeFunctionRef* m_native_function_table;
-    Module* m_outer_module;
+    Vector<u32> m_ref_local_offsets;
 
     // Line debug information
     Vector<u32> m_lines;
 
-    Chunk(std::string name, Module* outer_module) : m_name(std::move(name)), m_outer_module(outer_module) {}
+    Chunk(std::string name, Module* outer_module);
 
     void write(u8 byte, u32 line);
 
-    u32 get_locals_slot_size() {
-        if (m_local_table.empty()) return 0;
-        auto& last_local = m_local_table[m_local_table.size() - 1];
-        return last_local.start + last_local.size;
-    }
+    void find_ref_local_offsets();
+
+    u32 get_locals_slot_size();
 
     u32 get_line(u32 bytecode_offset);
 

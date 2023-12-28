@@ -707,7 +707,7 @@ private:
                 break;
             }
             case PrimTypeKind::String: {
-                u32 string_offset = m_cur_chunk->m_outer_module->constant_table().add_string(value.str);
+                u32 string_offset = m_cur_chunk->m_outer_module->string_table().add_string(value.str);
                 emit_byte(OpCode::ldstr, cur_line);
                 emit_u32(string_offset);
                 break;

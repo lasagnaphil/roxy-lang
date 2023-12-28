@@ -31,6 +31,10 @@ public:
 
     InterpretResult run_module(Module& module);
 
+    static StringInterner& get_global_string_interner() {
+        return s_string_interner;
+    }
+
 private:
 
     InterpretResult run();
@@ -69,69 +73,106 @@ private:
         return *m_stack_top;
     }
 
-    i32 pop_i32() { return (i32)pop_u32(); }
-    i64 pop_i64() { return (i64)pop_u64(); }
+    inline i32 pop_i32() { return (i32)pop_u32(); }
+    inline i64 pop_i64() { return (i64)pop_u64(); }
 
-    u32 pop_u32() {
+    inline u32 pop_u32() {
         m_stack_top--;
         return *m_stack_top;
     }
 
-    u64 pop_u64() {
+    inline u64 pop_u64() {
         m_stack_top -= 2;
         u64 value = (u64)m_stack_top[0];
         value |= (u64)m_stack_top[1] << 32;
         return value;
     }
 
-    f32 pop_f32() {
+    inline f32 pop_f32() {
         u32 value = pop_u32();
         f32 value_f32;
         memcpy(&value_f32, &value, sizeof(f32));
         return value_f32;
     }
 
-    f64 pop_f64() {
+    inline f64 pop_f64() {
         u64 value = pop_u64();
         f64 value_f64;
         memcpy(&value_f64, &value, sizeof(f64));
         return value_f64;
     }
 
-    Obj* pop_ref() {
+    inline Obj* pop_ref() {
         u64 value = pop_u64();
         return reinterpret_cast<Obj*>(static_cast<intptr_t>(value));
     }
 
-    u8 read_u8() { return *m_cur_frame->ip++; }
-    u16 read_u16() {
+    inline u8 read_u8() { return *m_cur_frame->ip++; }
+    inline u16 read_u16() {
         u16 value = m_cur_frame->ip[0] | (m_cur_frame->ip[1] << 8);
         m_cur_frame->ip += 2;
         return value;
     }
-    u32 read_u32() {
+    inline u32 read_u32() {
         u32 value;
         memcpy(&value, m_cur_frame->ip, sizeof(u32));
         m_cur_frame->ip += 4;
         return value;
     }
-    u64 read_u64() {
+    inline u64 read_u64() {
         u64 value;
         memcpy(&value, m_cur_frame->ip, sizeof(u64));
         m_cur_frame->ip += 8;
         return value;
     }
-    f32 read_f32() {
+    inline f32 read_f32() {
         f32 value;
         memcpy(&value, m_cur_frame->ip, sizeof(f32));
         m_cur_frame->ip += 4;
         return value;
     }
-    f64 read_f64() {
+    inline f64 read_f64() {
         f64 value;
         memcpy(&value, m_cur_frame->ip, sizeof(f64));
         m_cur_frame->ip += 8;
         return value;
+    }
+
+    inline u32 get_local_u32(u32 offset) {
+        return m_cur_frame->stack[offset];
+    }
+
+    inline u64 get_local_u64(u32 offset) {
+        u64 value;
+        memcpy(&value, m_cur_frame->stack + offset, sizeof(u64));
+        return value;
+    }
+
+    inline Obj* get_local_ref(u32 offset) {
+        Obj* obj;
+        memcpy(&obj, m_cur_frame->stack + offset, sizeof(Obj*));
+        return obj;
+    }
+
+    inline void set_local_u32(u32 offset, u32 value) {
+        m_cur_frame->stack[offset] = value;
+    }
+
+    inline void set_local_u64(u32 offset, u64 value) {
+        memcpy(m_cur_frame->stack + offset, &value, sizeof(u64));
+    }
+
+    inline void set_local_ref(u32 offset, Obj* obj) {
+        memcpy(m_cur_frame->stack + offset, &obj, sizeof(Obj*));
+    }
+
+    inline void decref_locals() {
+        for (u16 offset : m_cur_frame->chunk->m_ref_local_offsets) {
+            Obj* value = get_local_ref(offset);
+            if (value) {
+                value->decref();
+            }
+        }
     }
 
     Array<CallFrame, MaxFrameSize> m_frames;
@@ -142,7 +183,7 @@ private:
 
     CallFrame* m_cur_frame;
 
-    StringInterner m_string_interner;
+    static StringInterner s_string_interner;
 };
 
 }
