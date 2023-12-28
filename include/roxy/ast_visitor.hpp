@@ -56,7 +56,6 @@ public:
             case StmtKind::Struct:      return static_cast<Derived*>(this)->visit_impl(stmt.cast<StructStmt>());
             case StmtKind::Function:    return static_cast<Derived*>(this)->visit_impl(stmt.cast<FunctionStmt>());
             case StmtKind::If:          return static_cast<Derived*>(this)->visit_impl(stmt.cast<IfStmt>());
-            case StmtKind::Print:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<PrintStmt>());
             case StmtKind::Var:         return static_cast<Derived*>(this)->visit_impl(stmt.cast<VarStmt>());
             case StmtKind::While:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<WhileStmt>());
             case StmtKind::Return:      return static_cast<Derived*>(this)->visit_impl(stmt.cast<ReturnStmt>());
@@ -73,7 +72,6 @@ public:
     ReturnT visit_impl(StructStmt& stmt)        { return ReturnT{}; }
     ReturnT visit_impl(FunctionStmt& stmt)      { return ReturnT{}; }
     ReturnT visit_impl(IfStmt& stmt)            { return ReturnT{}; }
-    ReturnT visit_impl(PrintStmt& stmt)         { return ReturnT{}; }
     ReturnT visit_impl(VarStmt& stmt)           { return ReturnT{}; }
     ReturnT visit_impl(WhileStmt& stmt)         { return ReturnT{}; }
     ReturnT visit_impl(ReturnStmt& stmt)        { return ReturnT{}; }

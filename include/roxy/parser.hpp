@@ -180,9 +180,6 @@ private:
         else if (match(TokenType::If)) {
             stmt = if_statement();
         }
-        else if (match(TokenType::Print)) {
-            stmt = print_statement();
-        }
         else if (match(TokenType::While)) {
             stmt = while_statement();
         }
@@ -217,14 +214,6 @@ private:
         auto then_branch = statement();
         auto else_branch = match(TokenType::Else)? statement() : nullptr;
         return alloc<IfStmt>(condition, then_branch, else_branch);
-    }
-
-    Stmt* print_statement() {
-        auto value = expression();
-        if (!consume(TokenType::Semicolon)) {
-            return error_stmt("Expect ';' after value.");
-        }
-        return alloc<PrintStmt>(value);
     }
 
     Stmt* while_statement() {

@@ -118,7 +118,6 @@ TokenType Scanner::identifier_type() {
                 case 'i': return check_keyword(2, 1, "l", TokenType::Nil);
             }
         }
-    case 'p': return check_keyword(1, 4, "rint", TokenType::Print);
     case 'r': return check_keyword(1, 5, "eturn", TokenType::Return);
     case 's':
         if (m_current - m_start > 1) {

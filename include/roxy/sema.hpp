@@ -454,10 +454,6 @@ public:
         return ok();
     }
 
-    SemaResult visit_impl(PrintStmt& stmt) {
-        return visit(*stmt.expr.get());
-    }
-
     SemaResult visit_impl(VarStmt& stmt) {
         if (Expr* init_expr = stmt.initializer.get()) {
             SEMA_TRY(visit(*init_expr));

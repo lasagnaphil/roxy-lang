@@ -1,2 +1,0 @@
-native fun print_int(value: int);
-native fun clock(): double;

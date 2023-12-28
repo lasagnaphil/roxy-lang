@@ -192,6 +192,12 @@ InterpretResult VM::run() {
             m_cur_frame->stack = m_stack_top - locals_slot_size;
             break;
         }
+        case OpCode::callnative: {
+            u16 offset = read_u16();
+            auto fn_ptr = m_cur_frame->chunk->m_native_function_table[offset];
+            fn_ptr(ArgStack(m_stack_top));
+            break;
+        }
         case OpCode::ret: {
             m_frame_count--;
             if (m_frame_count == 0) {
@@ -310,8 +316,6 @@ InterpretResult VM::run() {
         case OpCode::dmul: BINARY_OP(f64, *);
             break;
         case OpCode::ddiv: BINARY_OP(f64, /);
-            break;
-        case OpCode::print: printf("%d\n", pop_u32()); // temp
             break;
         default: return InterpretResult::RuntimeError;
         }

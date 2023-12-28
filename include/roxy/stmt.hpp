@@ -141,14 +141,6 @@ struct IfStmt : public Stmt {
         Stmt(s_kind), condition(condition), then_branch(then_branch), else_branch(else_branch) {}
 };
 
-struct PrintStmt : public Stmt {
-    static constexpr StmtKind s_kind = StmtKind::Print;
-
-    RelPtr<Expr> expr;
-
-    PrintStmt(Expr* expr) : Stmt(s_kind), expr(expr) {}
-};
-
 struct VarStmt : public Stmt {
     static constexpr StmtKind s_kind = StmtKind::Var;
 

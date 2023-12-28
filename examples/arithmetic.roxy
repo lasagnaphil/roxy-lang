@@ -1,5 +1,7 @@
+native fun print_i32(value: int);
+
 var a = (1 + 2) / 3 + 4 * 5;
 var b = 30;
 var c = a - b;
 var d = a * c;
-print d;
+print_i32(d);

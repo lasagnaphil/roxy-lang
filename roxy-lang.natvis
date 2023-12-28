@@ -78,7 +78,6 @@
             <ExpandedItem Name="[Block]" Condition="kind == StmtKind::Block" ExcludeView="simple">*(BlockStmt*)this,nd</ExpandedItem>
             <ExpandedItem Name="[Expression]" Condition="kind == StmtKind::Expression">*(ExpressionStmt*)this,nd</ExpandedItem>
             <ExpandedItem Name="[If]" Condition="kind == StmtKind::If">*(IfStmt*)this,nd</ExpandedItem>
-            <ExpandedItem Name="[Print]" Condition="kind == StmtKind::Print">*(PrintStmt*)this,nd</ExpandedItem>
             <ExpandedItem Name="[Var]" Condition="kind == StmtKind::Var">*(VarStmt*)this,nd</ExpandedItem>
             <ExpandedItem Name="[While]" Condition="kind == StmtKind::While">*(WhileStmt*)this,nd</ExpandedItem>
             <ExpandedItem Name="[Break]" Condition="kind == StmtKind::Break">*(BreakStmt*)this,nd</ExpandedItem>

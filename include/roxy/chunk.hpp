@@ -3,6 +3,7 @@
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/core/unique_ptr.hpp"
+#include "roxy/core/function_ref.hpp"
 #include "roxy/opcode.hpp"
 #include "roxy/type.hpp"
 
@@ -100,12 +101,16 @@ struct LocalTableEntry {
 };
 
 class Module;
+class ArgStack;
+
+using NativeFunctionRef = void(*)(ArgStack);
 
 struct Chunk {
     std::string m_name;
     Vector<u8> m_bytecode;
     Vector<LocalTableEntry> m_local_table;
     Chunk** m_function_table;
+    NativeFunctionRef* m_native_function_table;
     Module* m_outer_module;
 
     // Line debug information

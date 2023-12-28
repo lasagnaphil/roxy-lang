@@ -1,8 +1,10 @@
+native fun print_i32(value: int);
+
 var a = 1 + 1;
 var b = 3;
 if (a == b) {
-    print 42;
+    print_i32(42);
 }
 else {
-    print a;
+    print_i32(a);
 }

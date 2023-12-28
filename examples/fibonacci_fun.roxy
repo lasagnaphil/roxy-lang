@@ -1,6 +1,8 @@
+native fun print_i32(value: int);
+
 fun fib(n: int): int {
     if (n <= 1) return n;
     return fib(n - 2) + fib(n - 1);
 }
 
-print fib(10);
+print_i32(fib(10));

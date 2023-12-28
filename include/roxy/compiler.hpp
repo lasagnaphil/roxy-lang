@@ -179,11 +179,21 @@ private:
     CompileResult visit_impl(StructStmt& stmt) { return ok(); }
 
     CompileResult visit_impl(FunctionStmt& stmt) {
-        // If native function declaration, just skip.
-        if (stmt.is_native) return ok();
+        auto fn_name = std::string(stmt.fun_decl.name.str(m_scanner->source()));
+        auto fn_type = stmt.fun_decl.type.get();
+
+        // If this is a native function declaration, there is no implementation yet
+        // So just add the definition to the native table and return.
+        if (stmt.is_native) {
+            m_cur_chunk->m_outer_module->m_native_function_table.push_back({
+                fn_name,
+                FunctionTypeData(*fn_type, m_scanner->source()),
+                NativeFunctionRef {} // We do not know the exact function pointer yet... just set it to null for now
+            });
+            return ok();
+        }
 
         // Set current chunk to newly created chunk of function
-        auto fn_name = std::string(stmt.fun_decl.name.str(m_scanner->source()));
         auto fn_chunk = UniquePtr<Chunk>(new Chunk(fn_name, m_cur_module));
         Chunk* parent_chunk = m_cur_chunk;
         m_cur_chunk = fn_chunk.get();
@@ -197,7 +207,6 @@ private:
         }
 
         // Build function chunk and insert it to parent module
-        auto fn_type = stmt.fun_decl.type.get();
         m_cur_chunk->m_outer_module->m_function_table.push_back({
             fn_name,
             FunctionTypeData(*fn_type, m_scanner->source()),
@@ -307,14 +316,6 @@ private:
         }
         patch_jump(else_jump);
 
-        return ok();
-    }
-
-    CompileResult visit_impl(PrintStmt& stmt) {
-        Expr* expr = stmt.expr.get();
-        COMP_TRY(visit(*expr));
-        u32 cur_line = m_scanner->get_line(expr->get_source_loc());
-        emit_byte(OpCode::print, cur_line);
         return ok();
     }
 
@@ -812,13 +813,17 @@ private:
         if (auto var_expr = callee_expr->try_cast<VariableExpr>()) {
             if (auto fun_stmt = var_expr->fun_origin.get()) {
                 // If callee expr is just a function symbol, then just call the function directly!
-
                 // Push arguments
                 for (u32 i = 0; i < expr.arguments.size(); i++) {
                     auto arg_expr = expr.arguments[i].get();
                     COMP_TRY(visit(*arg_expr));
                 }
-                emit_byte(OpCode::call, cur_line);
+                if (fun_stmt->is_native) {
+                    emit_byte(OpCode::callnative, cur_line);
+                }
+                else {
+                    emit_byte(OpCode::call, cur_line);
+                }
                 emit_u16(fun_stmt->local_index);
                 return ok();
             }

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "roxy/core/array.hpp"
-#include "roxy/core/function_ref.hpp"
 #include "roxy/chunk.hpp"
 
 namespace rx {
@@ -97,7 +96,7 @@ private:
 struct NativeFunctionTableEntry {
     std::string name;
     FunctionTypeData type;
-    rx::function_ref<void(ArgStack&)> fun;
+    NativeFunctionRef fun;
 };
 
 class Module {
@@ -110,7 +109,7 @@ public:
     Chunk& chunk() { return m_chunk; }
     StringTable& constant_table() { return m_constant_table; }
 
-    u32 add_native_function(NativeFunctionTableEntry entry);
+    bool add_native_function(std::string_view name, NativeFunctionRef fun);
 
     void load_basic_module();
 
@@ -129,7 +128,9 @@ private:
     Vector<StructTypeData> m_struct_table;
 
     Vector<Chunk*> m_runtime_function_table;
-    Vector<rx::function_ref<void(ArgStack&)>> m_runtime_native_fun_table;
+    Vector<NativeFunctionRef> m_runtime_native_fun_table;
+
+    static UniquePtr<Module> s_builtin_module;
 };
 
 }

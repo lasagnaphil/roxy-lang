@@ -51,6 +51,7 @@
     X(dup)                  \
     X(pop)                  \
     X(call)                 \
+    X(callnative)                 \
     X(ret)                  \
     X(iret)                  \
     X(lret)                  \
@@ -124,8 +125,7 @@
     X(bshr_un)               \
     X(bneg)                  \
     X(bnot)                  \
-    X(ldstr)                \
-    X(print)
+    X(ldstr)
 
 namespace rx {
 enum class OpCode : u8 {

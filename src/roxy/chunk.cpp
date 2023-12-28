@@ -112,7 +112,6 @@ u32 Chunk::disassemble_instruction(u32 offset) {
     case OpCode::bxor:
     case OpCode::bneg:
     case OpCode::bnot:
-    case OpCode::print:
         return print_simple_instruction(opcode, offset);
     case OpCode::iload_s:
     case OpCode::lload_s:
@@ -125,6 +124,7 @@ u32 Chunk::disassemble_instruction(u32 offset) {
     case OpCode::istore:
     case OpCode::lstore:
     case OpCode::call:
+    case OpCode::callnative:
         return print_arg_u16_instruction(opcode, offset);
     case OpCode::iconst:
         return print_arg_u32_instruction(opcode, offset);

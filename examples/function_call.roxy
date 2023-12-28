@@ -1,5 +1,7 @@
+native fun print_i32(value: int);
+
 fun f(a: int, b: int): int {
     return a + b;
 }
 
-print f(1, 2);
+print_i32(f(1, 2));

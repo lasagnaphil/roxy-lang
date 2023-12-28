@@ -132,11 +132,6 @@ public:
         }
         end_paren(); dec_indent();
     }
-    void visit_impl(PrintStmt& stmt) {
-        begin_paren("print");
-        visit(*stmt.expr);
-        end_paren();
-    }
     void visit_impl(VarStmt& stmt) {
         begin_paren("var");
         add_identifier(stmt.var.name);
