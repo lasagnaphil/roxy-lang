@@ -1,5 +1,7 @@
 #include "roxy/module.hpp"
 #include "roxy/fmt/core.h"
+#include "roxy/object.hpp"
+#include "roxy/string.hpp"
 
 namespace rx {
 
@@ -10,13 +12,16 @@ native fun print_u32(value: u32);
 native fun print_u64(value: u64);
 native fun print_float(value: float);
 native fun print_double(value: double);
+native fun print(value: string);
+native fun concat(a: string, b: string);
+
 native fun clock(): double;
 )";
 
 UniquePtr<Module> Module::s_builtin_module = nullptr;
 
+// TODO: make this O(1) instead of O(N)
 bool Module::add_native_function(std::string_view name, NativeFunctionRef fun) {
-    // TODO: make this O(1) instead of O(N)
     auto found_entry = m_native_function_table.find_if([=](auto& entry) { return entry.name == name; });
     if (found_entry) {
         found_entry->fun = fun;
@@ -24,6 +29,17 @@ bool Module::add_native_function(std::string_view name, NativeFunctionRef fun) {
     }
     else {
         return false;
+    }
+}
+
+// TODO: Make this O(1) instead of O(N)
+u16 Module::find_native_function_index(std::string_view name) {
+    auto found_entry = m_native_function_table.find_if([=](auto& entry) { return entry.name == name; });
+    if (found_entry) {
+        return found_entry - m_native_function_table.data();
+    }
+    else {
+        return UINT16_MAX;
     }
 }
 
@@ -76,6 +92,18 @@ void Module::load_basic_module() {
     ADD_NATIVE_PRINT_FUN(u64, "%llu")
     ADD_NATIVE_PRINT_FUN(f32, "%f")
     ADD_NATIVE_PRINT_FUN(f64, "%f")
+
+    add_native_function("print", [](ArgStack* args) {
+        ObjString* obj = reinterpret_cast<ObjString*>(args->pop_ref());
+        puts(obj->chars());
+    });
+
+    add_native_function("concat", [](ArgStack* args) {
+        ObjString* b = reinterpret_cast<ObjString*>(args->pop_ref());
+        ObjString* a = reinterpret_cast<ObjString*>(args->pop_ref());
+        ObjString* res = ObjString::concat(a, b);
+        args->push_ref(reinterpret_cast<Obj*>(res));
+    });
 
     add_native_function("clock", [](ArgStack* args) {
         args->push_f64((f64)clock() / CLOCKS_PER_SEC);

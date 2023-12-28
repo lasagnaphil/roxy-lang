@@ -589,7 +589,7 @@ private:
         std::string_view contents = get_token_str(previous()).substr(1, previous().length - 2);
         // TODO: store the string in a constant table
         ObjString* str = m_string_interner->create_string(contents);
-        auto value = AnyValue(str->chars);
+        auto value = AnyValue(str->chars());
         return alloc<LiteralExpr>(get_previous_token_loc(), value);
     }
 

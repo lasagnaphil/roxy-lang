@@ -52,13 +52,17 @@ private:
     inline void push_f32(f32 value) {
         u32 value_u32;
         memcpy(&value_u32, &value, sizeof(u32));
-        return push_u32(value_u32);
+        push_u32(value_u32);
     }
 
     inline void push_f64(f64 value) {
         u64 value_u64;
         memcpy(&value_u64, &value, sizeof(u64));
-        return push_u64(value_u64);
+        push_u64(value_u64);
+    }
+
+    inline void push_ref(Obj* ref) {
+        push_u64(reinterpret_cast<intptr_t>(ref));
     }
 
     inline u32 top() {
@@ -92,6 +96,11 @@ private:
         f64 value_f64;
         memcpy(&value_f64, &value, sizeof(f64));
         return value_f64;
+    }
+
+    Obj* pop_ref() {
+        u64 value = pop_u64();
+        return reinterpret_cast<Obj*>(static_cast<intptr_t>(value));
     }
 
     u8 read_u8() { return *m_cur_frame->ip++; }
@@ -133,7 +142,7 @@ private:
 
     CallFrame* m_cur_frame;
 
-    StringTable m_constant_table;
+    StringInterner m_string_interner;
 };
 
 }

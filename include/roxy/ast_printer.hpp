@@ -208,7 +208,16 @@ public:
     void visit_impl(LiteralExpr& expr) {
         begin_paren("lit");
         if (expr.type.get()) visit(*expr.type);
-        add_identifier(expr.value.to_std_string());
+        auto str = expr.value.to_std_string();
+        if (expr.value.kind == PrimTypeKind::String) {
+            std::string s = "\"";
+            s += str;
+            s += '\"';
+            add_identifier(s);
+        }
+        else {
+            add_identifier(str);
+        }
         end_paren();
     }
     void visit_impl(UnaryExpr& expr) {

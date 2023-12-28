@@ -1,0 +1,9 @@
+native fun print(value: string);
+native fun concat(a: string, b: string);
+
+var hello = "Hello";
+var world = "world";
+
+var hello_world = hello + " " + world + "!";
+print(hello_world);
+print("Hello world" + " again!");

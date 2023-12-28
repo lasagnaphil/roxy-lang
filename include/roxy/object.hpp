@@ -14,15 +14,17 @@ inline thread_local xoshiro256ss_state tl_uid_gen_state;
 void init_uid_gen_state();
 
 struct Obj {
-    u64 type_bits: 5;
-    u64 uid: 59;
-    u64 refcount; // TODO: make this atomic
+private:
+    u64 m_type_bits: 5;
+    u64 m_uid: 59;
+    u64 m_refcount; // TODO: make this atomic
 
-    Obj(ObjType type) : type_bits((u64)type), refcount(1) {
-        uid = xoshiro256ss(&tl_uid_gen_state);
+public:
+    Obj(ObjType type) : m_type_bits((u64)type), m_refcount(1) {
+        m_uid = xoshiro256ss(&tl_uid_gen_state);
     }
 
-    ObjType type() const { return (ObjType)type_bits; }
+    ObjType type() const { return (ObjType)m_type_bits; }
 };
 
 struct ObjValue {

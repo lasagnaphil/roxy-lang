@@ -52,11 +52,11 @@
         </Expand>
     </Type>
     <Type Name="rx::ObjString">
-        <DisplayString>{(char*)chars,[length]su}</DisplayString>
-        <StringView>(char*)chars,[length]su</StringView>
+        <DisplayString>{(char*)m_chars,[m_length]su}</DisplayString>
+        <StringView>(char*)m_chars,[m_length]su</StringView>
         <Expand>
-            <Item Name="[length]">length</Item>
-            <Item Name="[hash]">hash</Item>
+            <Item Name="[m_length]">m_length</Item>
+            <Item Name="[m_hash]">m_hash</Item>
         </Expand>
     </Type>
     <!--

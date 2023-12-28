@@ -103,6 +103,10 @@ public:
         SemaAnalyzer sema_analyzer(parser.get_ast_allocator(), scanner.source());
         auto sema_errors = sema_analyzer.check(module_stmt);
 
+        message += "\nAfter semantic analysis:\n";
+        message += AstPrinter(scanner.source()).to_string(*module_stmt);
+        message += "\n\n";
+
         if (!sema_errors.empty()) {
             message += "\nSema errors: ";
             message += std::to_string(sema_errors.size());
@@ -115,10 +119,6 @@ public:
                                         (size_t)error_msg.loc.length};
                 message += fmt::format("[line {}] Error at '{}': {}\n", line, str, error_msg.message);
             }
-
-            message += "\nAfter semantic analysis:\n";
-            message += AstPrinter(scanner.source()).to_string(*module_stmt);
-            message += "\n\n";
 
             return {CompileResultType::Error, message};
         }
@@ -423,6 +423,22 @@ private:
                 }
                 break;
             }
+            case PrimTypeKind::String: {
+                if (local_index < 256) {
+                    if (local_index < 4) {
+                        emit_byte((OpCode)((u32)OpCode::rstore_0 + (u32)local_index), cur_line);
+                    }
+                    else {
+                        emit_byte(OpCode::rstore_s, cur_line);
+                        emit_byte((u8)local_index);
+                    }
+                }
+                else {
+                    emit_byte(OpCode::rstore, cur_line);
+                    emit_u16(local_index);
+                }
+                break;
+            }
             default:
                 unimplemented();
             }
@@ -552,7 +568,18 @@ private:
         if (auto prim_type = expr.type->try_cast<PrimitiveType>()) {
             if (expr.op.is_arithmetic()) {
                 COMP_TRY(visit(*right_expr));
-                emit_byte(opcode_arithmetic(prim_type->prim_kind, expr.op.type), cur_line);
+                if (prim_type->is_number()) {
+                    emit_byte(opcode_arithmetic(prim_type->prim_kind, expr.op.type), cur_line);
+                }
+                else if (prim_type->is_string()) {
+                    // Call concat() builtin
+                    u16 native_fun_index = m_cur_module->find_native_function_index("concat");
+                    emit_byte(OpCode::callnative, cur_line);
+                    emit_u16(native_fun_index);
+                }
+                else {
+                    unreachable();
+                }
             }
             else {
                 switch (expr.op.type) {
@@ -788,6 +815,23 @@ private:
                     }
                     else {
                         emit_byte(OpCode::lload, cur_line);
+                        emit_u16((u16)offset);
+                    }
+                    break;
+                }
+                case PrimTypeKind::String: {
+                    offset >>= 1;
+                    if (offset <= UINT8_MAX) {
+                        if (offset < 4) {
+                            emit_byte((OpCode)((u32)OpCode::rload_0 + offset), cur_line);
+                        }
+                        else {
+                            emit_byte(OpCode::rload_s, cur_line);
+                            emit_byte(offset);
+                        }
+                    }
+                    else {
+                        emit_byte(OpCode::rload, cur_line);
                         emit_u16((u16)offset);
                     }
                     break;

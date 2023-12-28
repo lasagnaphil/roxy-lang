@@ -10,6 +10,7 @@ public:
     u32 add_string(std::string_view str) {
         u32 offset = (u32)m_string_buf.size();
         m_string_buf += str;
+        m_string_buf += '\0';
         return offset;
     }
 
@@ -49,13 +50,17 @@ public:
     inline void push_f32(f32 value) {
         u32 value_u32;
         memcpy(&value_u32, &value, sizeof(u32));
-        return push_u32(value_u32);
+        push_u32(value_u32);
     }
 
     inline void push_f64(f64 value) {
         u64 value_u64;
         memcpy(&value_u64, &value, sizeof(u64));
-        return push_u64(value_u64);
+        push_u64(value_u64);
+    }
+
+    inline void push_ref(Obj* ref) {
+        push_u64(reinterpret_cast<intptr_t>(ref));
     }
 
     inline u32* top() { return m_stack_top; }
@@ -89,6 +94,11 @@ public:
         return value_f64;
     }
 
+    inline Obj* pop_ref() {
+        u64 value = pop_u64();
+        return reinterpret_cast<Obj*>(static_cast<intptr_t>(value));
+    }
+
 private:
     u32* m_stack_top;
 };
@@ -110,6 +120,8 @@ public:
     StringTable& constant_table() { return m_constant_table; }
 
     bool add_native_function(std::string_view name, NativeFunctionRef fun);
+
+    u16 find_native_function_index(std::string_view name);
 
     void load_basic_module();
 

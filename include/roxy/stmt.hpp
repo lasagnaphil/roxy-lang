@@ -14,7 +14,6 @@ enum class StmtKind {
     Struct,
     Function,
     If,
-    Print,
     Var,
     While,
     Return,

@@ -29,12 +29,12 @@ private:
         using is_transparent = void;
 
         bool operator()(const ObjString* key1, const ObjString* key2) const {
-            return key1->length == key2->length && key1->hash == key2->hash &&
-                memcmp(key1->chars, key2->chars, key1->length) == 0;
+            return key1->length() == key2->length() && key1->hash() == key2->hash() &&
+                   memcmp(key1->chars(), key2->chars(), key1->length()) == 0;
         }
         bool operator()(const ObjString* key, const TableParam& param) const {
-            return key->length == param.length &&
-                   memcmp(key->chars, param.chars, key->length) == 0;
+            return key->length() == param.length &&
+                   memcmp(key->chars(), param.chars, key->length()) == 0;
         }
         bool operator()(const TableParam& param, const ObjString* key) const {
             return operator()(key, param);
@@ -42,7 +42,7 @@ private:
     };
 
     struct TableHasher {
-        u64 operator()(const ObjString* key) const { return key->hash; }
+        u64 operator()(const ObjString* key) const { return key->hash(); }
         u64 operator()(const TableParam& param) const { return param.hash; }
     };
 

@@ -62,6 +62,14 @@ u32 Chunk::disassemble_instruction(u32 offset) {
     case OpCode::lstore_1:
     case OpCode::lstore_2:
     case OpCode::lstore_3:
+    case OpCode::rload_0:
+    case OpCode::rload_1:
+    case OpCode::rload_2:
+    case OpCode::rload_3:
+    case OpCode::rstore_0:
+    case OpCode::rstore_1:
+    case OpCode::rstore_2:
+    case OpCode::rstore_3:
     case OpCode::iconst_nil:
     case OpCode::iconst_m1:
     case OpCode::iconst_0:
@@ -115,18 +123,23 @@ u32 Chunk::disassemble_instruction(u32 offset) {
         return print_simple_instruction(opcode, offset);
     case OpCode::iload_s:
     case OpCode::lload_s:
+    case OpCode::rload_s:
     case OpCode::istore_s:
     case OpCode::lstore_s:
+    case OpCode::rstore_s:
     case OpCode::iconst_s:
         return print_arg_u8_instruction(opcode, offset);
     case OpCode::iload:
     case OpCode::lload:
+    case OpCode::rload:
     case OpCode::istore:
     case OpCode::lstore:
+    case OpCode::rstore:
     case OpCode::call:
     case OpCode::callnative:
         return print_arg_u16_instruction(opcode, offset);
     case OpCode::iconst:
+    case OpCode::ldstr:
         return print_arg_u32_instruction(opcode, offset);
     case OpCode::lconst:
         return print_arg_u64_instruction(opcode, offset);

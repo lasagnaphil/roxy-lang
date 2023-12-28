@@ -148,6 +148,76 @@ InterpretResult VM::run() {
             memcpy(m_cur_frame->stack + offset, &value, sizeof(u64));
             break;
         }
+        case OpCode::rload_0: {
+            Obj* value;
+            memcpy(&value, m_cur_frame->stack, sizeof(Obj*));
+            push_ref(value);
+            break;
+        }
+        case OpCode::rload_1: {
+            Obj* value;
+            memcpy(&value, m_cur_frame->stack + 2, sizeof(Obj*));
+            push_ref(value);
+            break;
+        }
+        case OpCode::rload_2: {
+            Obj* value;
+            memcpy(&value, m_cur_frame->stack + 4, sizeof(Obj*));
+            push_ref(value);
+            break;
+        }
+        case OpCode::rload_3: {
+            Obj* value;
+            memcpy(&value, m_cur_frame->stack + 6, sizeof(Obj*));
+            push_ref(value);
+            break;
+        }
+        case OpCode::rload: {
+            u32 offset = (u32)read_u16() << 1;
+            Obj* value;
+            memcpy(&value, m_cur_frame->stack + offset, sizeof(Obj*));
+            push_ref(value);
+            break;
+        }
+        case OpCode::rload_s: {
+            u32 offset = (u32)read_u8() << 1;
+            Obj* value;
+            memcpy(&value, m_cur_frame->stack + offset, sizeof(Obj*));
+            push_ref(value);
+            break;
+        }
+        case OpCode::rstore_0: {
+            Obj* value = pop_ref();
+            memcpy(m_cur_frame->stack, &value, sizeof(Obj*));
+            break;
+        }
+        case OpCode::rstore_1: {
+            Obj* value = pop_ref();
+            memcpy(m_cur_frame->stack + 2, &value, sizeof(Obj*));
+            break;
+        }
+        case OpCode::rstore_2: {
+            Obj* value = pop_ref();
+            memcpy(m_cur_frame->stack + 4, &value, sizeof(Obj*));
+            break;
+        }
+        case OpCode::rstore_3: {
+            Obj* value = pop_ref();
+            memcpy(m_cur_frame->stack + 6, &value, sizeof(Obj*));
+            break;
+        }
+        case OpCode::rstore: {
+            Obj* value = pop_ref();
+            u32 offset = (u32)read_u16() << 1;
+            memcpy(m_cur_frame->stack + offset, &value, sizeof(Obj*));
+            break;
+        }
+        case OpCode::rstore_s: {
+            Obj* value = pop_ref();
+            u32 offset = (u32)read_u8() << 1;
+            memcpy(m_cur_frame->stack + offset, &value, sizeof(Obj*));
+            break;
+        }
         case OpCode::iconst_m1: push_u32(-1);
             break;
         case OpCode::iconst_0: push_u32(0);
@@ -320,6 +390,13 @@ InterpretResult VM::run() {
             break;
         case OpCode::ddiv: BINARY_OP(f64, /);
             break;
+        case OpCode::ldstr: {
+            u32 offset = read_u32();
+            auto str = m_cur_frame->chunk->m_outer_module->constant_table().get_string(offset);
+            ObjString* obj_str = m_string_interner.create_string(str);
+            push_ref(reinterpret_cast<Obj*>(obj_str));
+            break;
+        }
         default: return InterpretResult::RuntimeError;
         }
     }

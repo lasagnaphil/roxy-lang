@@ -31,7 +31,19 @@
     X(lload)            \
     X(lload_s)          \
     X(lstore)            \
-    X(lstore_s)          \
+    X(lstore_s)             \
+    X(rload_0)          \
+    X(rload_1)          \
+    X(rload_2)          \
+    X(rload_3)          \
+    X(rstore_0)          \
+    X(rstore_1)          \
+    X(rstore_2)          \
+    X(rstore_3)          \
+    X(rload)            \
+    X(rload_s)          \
+    X(rstore)            \
+    X(rstore_s)             \
     X(iconst_nil)             \
     X(iconst_m1)            \
     X(iconst_0)             \
