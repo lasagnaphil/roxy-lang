@@ -12,12 +12,13 @@ InterpretResult VM::run_module(Module& module) {
     m_frame_count = 1;
 
     // Allocate extra space for locals
-    m_stack_top += module.chunk().get_locals_slot_size();
+    u32* stack = m_stack.data();
+    m_stack_top = stack + module.chunk().get_locals_slot_size();
 
     m_frames[0] = {
         .chunk = &module.chunk(),
         .ip = module.chunk().m_bytecode.data(),
-        .stack = m_stack_top,
+        .stack = stack,
     };
 
     m_cur_frame = &m_frames[0];
@@ -195,7 +196,9 @@ InterpretResult VM::run() {
         case OpCode::callnative: {
             u16 offset = read_u16();
             auto fn_ptr = m_cur_frame->chunk->m_native_function_table[offset];
-            fn_ptr(ArgStack(m_stack_top));
+            auto arg_stack = ArgStack(m_stack_top);
+            fn_ptr(&arg_stack);
+            m_stack_top = arg_stack.top();
             break;
         }
         case OpCode::ret: {

@@ -63,8 +63,8 @@ void Module::build_for_runtime() {
 }
 
 #define ADD_NATIVE_PRINT_FUN(Type, FormatStr) \
-add_native_function("print_" #Type, [](ArgStack args) { \
-    Type value = args.pop_##Type(); \
+add_native_function("print_" #Type, [](ArgStack* args) { \
+    Type value = args->pop_##Type(); \
     printf(FormatStr "\n", value); \
 });
 

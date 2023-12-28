@@ -103,7 +103,7 @@ struct LocalTableEntry {
 class Module;
 class ArgStack;
 
-using NativeFunctionRef = void(*)(ArgStack);
+using NativeFunctionRef = void(*)(ArgStack*);
 
 struct Chunk {
     std::string m_name;
