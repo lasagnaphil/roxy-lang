@@ -398,7 +398,6 @@ InterpretResult VM::run() {
             ObjString* obj_str = s_string_interner.create_string(str);
             Obj* obj = reinterpret_cast<Obj*>(obj_str);
             push_ref(obj);
-            // obj->incref();
             break;
         }
         default: return InterpretResult::RuntimeError;

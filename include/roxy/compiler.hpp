@@ -248,6 +248,7 @@ private:
             PrimitiveType* left_prim_type = binary_type->try_cast<PrimitiveType>();
             PrimitiveType* right_prim_type = binary_type->try_cast<PrimitiveType>();
             if (left_prim_type && right_prim_type && left_prim_type->prim_kind == right_prim_type->prim_kind) {
+                // If lhs / rhs is primitive type
                 if (left_prim_type->is_within_4_bytes_integer()) {
                     jump_loc = emit_jump(opcode_integer_br_cmp(binary_expr->op.type, shortened, opposite), cond_line);
                 }
@@ -288,8 +289,12 @@ private:
                     emit_byte(sub, cond_line);
                     jump_loc = emit_jump(OpCode::br_true, cond_line);
                 }
+                return ok();
             }
-            else {
+            StructType* left_struct_type = binary_type->try_cast<StructType>();
+            StructType* right_struct_type = binary_type->try_cast<StructType>();
+            if (left_struct_type && right_struct_type && left_struct_type == right_struct_type) {
+                // TODO: If lhs / rhs are same struct types, find and call operator function
                 unimplemented();
             }
         }
@@ -363,8 +368,21 @@ private:
                 return ok();
             }
             case TypeKind::Function:
-            case TypeKind::Struct:
                 return unimplemented();
+            case TypeKind::Struct: {
+                auto& struct_type = type->cast<StructType>();
+                if (struct_type.size > 16) {
+                    // TODO: heap allocation when struct is >16 bytes
+                    unimplemented();
+                }
+                else {
+                    u32 count_4bytes = (struct_type.size + 3) / 4;
+                    for (u32 i = 0; i < count_4bytes; i++) {
+                        emit_byte(OpCode::iconst_0, cur_line);
+                    }
+                }
+                return unimplemented();
+            }
             case TypeKind::Inferred:
             case TypeKind::Unassigned:
                 return error("Cannot compile expression with unassigned type!");
@@ -381,10 +399,56 @@ private:
             auto type = stmt.var.type.get();
             COMP_TRY(push_zero_initialized_value(type, cur_line));
         }
+        u16 offset = m_cur_fn_env->get_local_offset(stmt.var.local_index);
+
+        auto emit_store_u32 = [&](u16 offset, u32 cur_line) {
+            if (offset < 256) {
+                if (offset < 4) {
+                    emit_byte((OpCode)((u32)OpCode::istore_0 + (u32)offset), cur_line);
+                }
+                else {
+                    emit_byte(OpCode::istore_s, cur_line);
+                    emit_byte((u8)offset);
+                }
+            }
+            else {
+                emit_byte(OpCode::istore, cur_line);
+                emit_u16(offset);
+            }
+        };
+        auto emit_store_u64 = [&](u16 offset, u32 cur_line) {
+            if (offset < 256) {
+                if (offset < 4) {
+                    emit_byte((OpCode)((u32)OpCode::lstore_0 + (u32)offset), cur_line);
+                }
+                else {
+                    emit_byte(OpCode::lstore_s, cur_line);
+                    emit_byte((u8)offset);
+                }
+            }
+            else {
+                emit_byte(OpCode::lstore, cur_line);
+                emit_u16(offset);
+            }
+        };
+        auto emit_store_ref = [&](u16 offset, u32 cur_line) {
+            if (offset < 256) {
+                if (offset < 4) {
+                    emit_byte((OpCode)((u32)OpCode::rstore_0 + (u32)offset), cur_line);
+                }
+                else {
+                    emit_byte(OpCode::rstore_s, cur_line);
+                    emit_byte((u8)offset);
+                }
+            }
+            else {
+                emit_byte(OpCode::rstore, cur_line);
+                emit_u16(offset);
+            }
+        };
         auto type = stmt.var.type.get();
         switch (type->kind) {
         case TypeKind::Primitive: {
-            u16 local_index = stmt.var.local_index;
             auto& prim_type = type->cast<PrimitiveType>();
             switch (prim_type.prim_kind) {
             case PrimTypeKind::U8:
@@ -393,64 +457,34 @@ private:
             case PrimTypeKind::I8:
             case PrimTypeKind::I16:
             case PrimTypeKind::I32:
-            case PrimTypeKind::F32: {
-                if (local_index < 256) {
-                    if (local_index < 4) {
-                        emit_byte((OpCode)((u32)OpCode::istore_0 + (u32)local_index), cur_line);
-                    }
-                    else {
-                        emit_byte(OpCode::istore_s, cur_line);
-                        emit_byte((u8)local_index);
-                    }
-                }
-                else {
-                    emit_byte(OpCode::istore, cur_line);
-                    emit_u16(local_index);
-                }
+            case PrimTypeKind::F32:
+                emit_store_u32(offset, cur_line);
                 break;
-            }
             case PrimTypeKind::U64:
             case PrimTypeKind::I64:
-            case PrimTypeKind::F64: {
-                if (local_index < 256) {
-                    if (local_index < 4) {
-                        emit_byte((OpCode)((u32)OpCode::lstore_0 + (u32)local_index), cur_line);
-                    }
-                    else {
-                        emit_byte(OpCode::lstore_s, cur_line);
-                        emit_byte((u8)local_index);
-                    }
-                }
-                else {
-                    emit_byte(OpCode::lstore, cur_line);
-                    emit_u16(local_index);
-                }
+            case PrimTypeKind::F64:
+                emit_store_u64(offset, cur_line);
                 break;
-            }
-            case PrimTypeKind::String: {
-                if (local_index < 256) {
-                    if (local_index < 4) {
-                        emit_byte((OpCode)((u32)OpCode::rstore_0 + (u32)local_index), cur_line);
-                    }
-                    else {
-                        emit_byte(OpCode::rstore_s, cur_line);
-                        emit_byte((u8)local_index);
-                    }
-                }
-                else {
-                    emit_byte(OpCode::rstore, cur_line);
-                    emit_u16(local_index);
-                }
+            case PrimTypeKind::String:
+                emit_store_ref(offset, cur_line);
                 break;
-            }
             default:
                 unimplemented();
             }
             break;
         }
         case TypeKind::Function:
-        case TypeKind::Struct:
             return unimplemented();
+        case TypeKind::Struct: {
+            auto& struct_type = type->cast<StructType>();
+            if (struct_type.size > 16) {
+                // TODO: heap allocation
+            }
+            else {
+                // TODO: stack allocation
+            }
+            return unimplemented();
+        }
         case TypeKind::Inferred:
         case TypeKind::Unassigned:
             return error("Cannot compile expression with unassigned type!");
@@ -605,7 +639,7 @@ private:
                     u32 else_jump = emit_jump(OpCode::br_false, cur_line);
                     u32 end_jump = emit_jump(OpCode::jmp, cur_line);
 
-                    patch_jump(end_jump);
+                    patch_jump(else_jump);
                     emit_byte(OpCode::pop, cur_line);
 
                     COMP_TRY(visit(*right_expr));

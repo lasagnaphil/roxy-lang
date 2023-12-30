@@ -48,16 +48,4 @@ public:
     }
 };
 
-class ObjValue {
-private:
-    Obj m_obj = {ObjType::Value, Obj::free};
-    u8 m_data[1];
-
-public:
-    ObjValue() {}
-
-    Obj& obj() { return m_obj; }
-    const Obj& obj() const { return m_obj; }
-};
-
 }
