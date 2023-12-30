@@ -49,7 +49,6 @@ struct ParseRule {
 
 class Parser {
 private:
-    static constexpr u64 s_initial_ast_allocator_capacity = 65536;
     static ParseRule s_parse_rules[];
 
     Scanner* m_scanner;
@@ -58,17 +57,14 @@ private:
     bool m_panic_mode = false;
     bool m_inside_fun = false;
 
-    AstAllocator m_allocator;
-    SemaAnalyzer m_sema_analyzer;
+    AstAllocator* m_allocator;
     StringInterner* m_string_interner;
 
 public:
-    Parser(Scanner* scanner, StringInterner* string_interner) :
+    Parser(Scanner* scanner, AstAllocator* allocator, StringInterner* string_interner) :
             m_scanner(scanner),
-            m_allocator(s_initial_ast_allocator_capacity),
-            m_sema_analyzer(&m_allocator, m_scanner->source()),
+            m_allocator(allocator),
             m_string_interner(string_interner) {
-
     }
 
     Parser(const Parser& parser) = delete;
@@ -78,28 +74,32 @@ public:
 
     template <typename T, typename ... Args>
     T* alloc(Args&&... args) {
-        return m_allocator.alloc<T, Args...>(std::forward<Args>(args)...);
+        return m_allocator->alloc<T, Args...>(std::forward<Args>(args)...);
     }
 
     template <typename T>
     Span<T> alloc_vector(Vector<T>&& vec) {
-        return m_allocator.alloc_vector<T, T>(std::move(vec));
+        return m_allocator->alloc_vector<T, T>(std::move(vec));
     }
 
     template <typename T>
     Span<RelPtr<T>> alloc_vector_ptr(Vector<T*>&& vec) {
-        return m_allocator.alloc_vector<RelPtr<T>, T*>(std::move(vec));
+        return m_allocator->alloc_vector<RelPtr<T>, T*>(std::move(vec));
     }
 
     Span<AstVarDecl> alloc_vector_var_decl(Vector<VarDecl>&& vec) {
-        return m_allocator.alloc_vector<AstVarDecl, VarDecl>(std::move(vec));
+        return m_allocator->alloc_vector<AstVarDecl, VarDecl>(std::move(vec));
     }
 
     Span<AstFunDecl> alloc_vector_fun_decl(Vector<FunDecl>&& vec) {
-        return m_allocator.alloc_vector<AstFunDecl, FunDecl>(std::move(vec));
+        return m_allocator->alloc_vector<AstFunDecl, FunDecl>(std::move(vec));
     }
 
-    AstAllocator* get_ast_allocator() { return &m_allocator; }
+    Span<Token> alloc_vector_token(Vector<Token>&& vec) {
+        return m_allocator->alloc_vector<Token, Token>(std::move(vec));
+    }
+
+    AstAllocator* get_ast_allocator() { return m_allocator; }
 
     bool parse(ModuleStmt*& stmt) {
         advance();
@@ -145,7 +145,7 @@ private:
         while (!check(TokenType::RightBrace) && !check(TokenType::Eof)) {
             statements.push_back(declaration());
         }
-        if (!consume(TokenType::RightBrace)) {
+        if (!match(TokenType::RightBrace)) {
             return {error_stmt("Expect '}' after block.")};
         }
         return statements;
@@ -155,17 +155,44 @@ private:
         if (match(TokenType::Var)) {
             return var_declaration();
         }
-        else if (match(TokenType::Native)) {
-            if (!consume(TokenType::Fun)) {
-                return error_stmt("Expect 'fun' after 'native'.");
+        else if (match_multiple({TokenType::Pub, TokenType::Native, TokenType::Fun})) {
+            bool is_public = false, is_native = false;
+            if (previous().type == TokenType::Pub) {
+                is_public = true;
+                if (match(TokenType::Native)) {
+                    is_native = true;
+                }
+                if (match(TokenType::Fun)) {
+                    return fun_declaration(is_public, is_native);
+                }
+                else {
+                    return error_stmt("Expect 'fun' after function modifier.");
+                }
             }
-            return fun_declaration(true);
-        }
-        else if (match(TokenType::Fun)) {
-            return fun_declaration(false);
+            else if (previous().type == TokenType::Native) {
+                is_native = true;
+                if (match(TokenType::Pub)) {
+                    is_public = true;
+                }
+                if (match(TokenType::Fun)) {
+                    return fun_declaration(is_public, is_native);
+                }
+                else {
+                    return error_stmt("Expect 'fun' after function modifier.kA");
+                }
+            }
+            else {
+                return fun_declaration(is_public, is_native);
+            }
         }
         else if (match(TokenType::Struct)) {
             return struct_declaration();
+        }
+        else if (match(TokenType::Import)) {
+            return import_declaration();
+        }
+        else if (match(TokenType::From)) {
+            return import_from_declaration();
         }
         else {
             return statement();
@@ -203,11 +230,11 @@ private:
     }
 
     Stmt* if_statement() {
-        if (!consume(TokenType::LeftParen)) {
+        if (!match(TokenType::LeftParen)) {
             return error_stmt("Expect '(' after 'if'.");
         }
         auto condition = expression();
-        if (!consume(TokenType::RightParen)) {
+        if (!match(TokenType::RightParen)) {
             return error_stmt("Expect ')' after if condition.");
         }
 
@@ -217,11 +244,11 @@ private:
     }
 
     Stmt* while_statement() {
-        if (!consume(TokenType::LeftParen)) {
+        if (!match(TokenType::LeftParen)) {
             return error_stmt("Expect '(' after 'while'.");
         }
         auto condition = expression();
-        if (!consume(TokenType::RightParen)) {
+        if (!match(TokenType::RightParen)) {
             return error_stmt("Expext ')' after condition.");
         }
         auto body = statement();
@@ -229,7 +256,7 @@ private:
     }
 
     Stmt* for_statement() {
-        if (!consume(TokenType::LeftParen)) {
+        if (!match(TokenType::LeftParen)) {
             return error_stmt("Expect '(' after 'for'.");
         }
 
@@ -256,7 +283,7 @@ private:
             u32 end_loc = get_current_token_loc().source_loc;
             condition_loc = SourceLocation::from_start_end(start_loc, end_loc);
         }
-        if (!consume(TokenType::Semicolon)) {
+        if (!match(TokenType::Semicolon)) {
             return error_stmt("Expect ';' after loop condition.");
         }
 
@@ -264,7 +291,7 @@ private:
         if (!check(TokenType::RightParen)) {
             increment = expression();
         }
-        if (!consume(TokenType::RightParen)) {
+        if (!match(TokenType::RightParen)) {
             return error_stmt("Expect ')' after for clauses.");
         }
 
@@ -297,7 +324,7 @@ private:
         }
         else {
             Expr* expr = expression();
-            if (!consume(TokenType::Semicolon)) {
+            if (!match(TokenType::Semicolon)) {
                 return error_stmt("Expect ';' after return value.");
             }
             return alloc<ReturnStmt>(expr);
@@ -305,14 +332,14 @@ private:
     }
 
     Stmt* break_statement() {
-        if (!consume(TokenType::Semicolon)) {
+        if (!match(TokenType::Semicolon)) {
             return error_stmt("Expect ';' after 'break'.");
         }
         return alloc<BreakStmt>();
     }
 
     Stmt* continue_statement() {
-        if (!consume(TokenType::Semicolon)) {
+        if (!match(TokenType::Semicolon)) {
             return error_stmt("Expect ';' after 'break'.");
         }
         return alloc<ContinueStmt>();
@@ -385,14 +412,14 @@ private:
     }
 
     bool parse_variable(const char* var_kind, std::string& err_msg, VarDecl& variable) {
-        if (!consume(TokenType::Identifier)) {
+        if (!match(TokenType::Identifier)) {
             err_msg = fmt::format("Expect {} name.", var_kind);
             return false;
         }
         Token name = previous();
         Type* type = nullptr;
         if (match(TokenType::Colon)) {
-            if (!consume(TokenType::Identifier)) {
+            if (!match(TokenType::Identifier)) {
                 err_msg = "Expect type name.";
                 return false;
             }
@@ -429,19 +456,19 @@ private:
             return error_stmt("Expect explicit kind for var declaration.");
         }
 
-        if (!consume(TokenType::Semicolon)) {
+        if (!match(TokenType::Semicolon)) {
             return error_stmt("Expect ';' after variable declaration.");
         }
         return alloc<VarStmt>(var_decl, initializer);
     }
 
-    Stmt* fun_declaration(bool is_native) {
-        if (!consume(TokenType::Identifier)) {
+    Stmt* fun_declaration(bool is_public, bool is_native) {
+        if (!match(TokenType::Identifier)) {
             return error_stmt("Expect function name.");
         }
         Token name = previous();
         Vector<VarDecl> parameters;
-        if (!consume(TokenType::LeftParen)) {
+        if (!match(TokenType::LeftParen)) {
             return error_stmt("Expect '(' after function name.");
         }
         if (!check(TokenType::RightParen)) {
@@ -457,12 +484,12 @@ private:
                 parameters.push_back(var_decl);
             } while (match(TokenType::Comma));
         }
-        if (!consume(TokenType::RightParen)) {
+        if (!match(TokenType::RightParen)) {
             return error_stmt("Expect ')' after parameters.");
         }
         Type* ret_type = nullptr;
-        if (consume(TokenType::Colon)) {
-            if (!consume(TokenType::Identifier)) {
+        if (match(TokenType::Colon)) {
+            if (!match(TokenType::Identifier)) {
                 return error_stmt("Expect type after ':'.");
             }
             auto ret_type_name = previous();
@@ -481,14 +508,14 @@ private:
         }
 
         if (is_native) {
-            if (!consume(TokenType::Semicolon)) {
+            if (!match(TokenType::Semicolon)) {
                 return error_stmt("Expect ';' after native function declaration.");
             }
             return alloc<FunctionStmt>(FunDecl(name, alloc_vector_var_decl(std::move(parameters)), ret_type, true),
-                                       Span<RelPtr<Stmt>>{}, true);
+                                       Span<RelPtr<Stmt>>{}, is_public, true);
         }
         else {
-            if (!consume(TokenType::LeftBrace)) {
+            if (!match(TokenType::LeftBrace)) {
                 return error_stmt("Expect '{' before function body.");
             }
 
@@ -497,17 +524,17 @@ private:
             auto block_stmt_list = alloc_vector_ptr(block());
             m_inside_fun = false;
             return alloc<FunctionStmt>(FunDecl(name, alloc_vector_var_decl(std::move(parameters)), ret_type, false),
-                                       block_stmt_list, false);
+                                       block_stmt_list, is_public, false);
         }
     }
 
     Stmt* struct_declaration() {
-        if (!consume(TokenType::Identifier)) {
+        if (!match(TokenType::Identifier)) {
             return error_stmt("Expect struct name.");
         }
         Token name = previous();
 
-        if (!consume(TokenType::LeftBrace)) {
+        if (!match(TokenType::LeftBrace)) {
             return error_stmt("Expect '{' before struct body.");
         }
 
@@ -521,16 +548,77 @@ private:
             fields.push_back(var_decl);
         }
 
-        if (!consume(TokenType::RightBrace)) {
+        if (!match(TokenType::RightBrace)) {
             return error_stmt("Expect '}' after class body.");
         }
 
         return alloc<StructStmt>(name, alloc_vector_var_decl(std::move(fields)));
     }
 
+    Stmt* import_declaration() {
+        Vector<Token> package_path;
+        Vector<Token> imports;
+        if (!match(TokenType::Identifier)) {
+            return error_stmt("Expect identifier after 'from'.");
+        }
+        package_path.push_back(previous());
+        while (match(TokenType::Dot)) {
+            if (!match(TokenType::Identifier)) {
+                return error_stmt("Expect identifier after '.'.");
+            }
+            package_path.push_back(previous());
+        }
+        if (!match(TokenType::Semicolon)) {
+            return error_stmt("Missing semicolon after import declaration.");
+        }
+        return alloc<ImportStmt>(
+                alloc_vector_token(std::move(package_path)),
+                alloc_vector_token(std::move(imports)));
+    }
+
+    Stmt* import_from_declaration() {
+        Vector<Token> package_path;
+        Vector<Token> imports;
+        if (!match(TokenType::Identifier)) {
+            return error_stmt("Expect identifier after 'from'.");
+        }
+        package_path.push_back(previous());
+        while (match(TokenType::Dot)) {
+            if (!match(TokenType::Identifier)) {
+                return error_stmt("Expect identifier after '.'.");
+            }
+            package_path.push_back(previous());
+        }
+        if (!match(TokenType::Import)) {
+            return error_stmt("Expect 'import' after package path.");
+        }
+        if (match(TokenType::Star)) {
+            // wildcard import
+            imports.push_back(previous());
+        }
+        else {
+            if (!match(TokenType::Identifier)) {
+                return error_stmt("Expect identifier or wildcard after 'import'.");
+            }
+            imports.push_back(previous());
+            while (match(TokenType::Comma)) {
+                if (!match(TokenType::Identifier)) {
+                    return error_stmt("Expect identifier after ',',");
+                }
+                imports.push_back(previous());
+            }
+        }
+        if (!match(TokenType::Semicolon)) {
+            return error_stmt("Missing semicolon after import declaration.");
+        }
+        return alloc<ImportStmt>(
+                alloc_vector_token(std::move(package_path)),
+                alloc_vector_token(std::move(imports)));
+    }
+
     Stmt* expression_statement() {
         Expr* expr = expression();
-        if (!consume(TokenType::Semicolon)) {
+        if (!match(TokenType::Semicolon)) {
             return error_stmt("Expect ';' after expression.");
         }
         return alloc<ExpressionStmt>(expr);
@@ -539,7 +627,7 @@ private:
     Expr* grouping(bool can_assign) {
         u32 start_loc = get_current_token_loc().source_loc;
         Expr* expr = expression();
-        if (!consume(TokenType::RightParen)) {
+        if (!match(TokenType::RightParen)) {
             return error_expr(get_current_token_loc(), "Expect ')' after expression.");
         }
         u32 end_loc = get_current_token_loc().source_loc;
@@ -672,14 +760,13 @@ private:
                 arguments.push_back(expression());
             } while (match(TokenType::Comma));
         }
-        if (!consume(TokenType::RightParen)) {
+        if (!match(TokenType::RightParen)) {
             return error_expr(get_current_token_loc(), "Expect ')' after arguments.");
         }
-        Token paren = previous();
 
         u32 end_loc = get_current_token_loc().source_loc;
         auto loc = SourceLocation::from_start_end(start_loc, end_loc);
-        return alloc<CallExpr>(loc, left, paren, alloc_vector_ptr(std::move(arguments)));
+        return alloc<CallExpr>(loc, left, alloc_vector_ptr(std::move(arguments)));
     }
 
     Expr* subscript(bool can_assign, Expr* left) {
@@ -688,24 +775,40 @@ private:
 
     Expr* dot(bool can_assign, Expr* left) {
         u32 start_loc = get_current_token_loc().source_loc;
-        if (!consume(TokenType::Identifier)) {
+        if (!match(TokenType::Identifier)) {
             return error_expr(get_current_token_loc(), "Expect property name after '.'.");
         }
+        u32 end_loc = get_current_token_loc().source_loc;
         Token name = previous();
         if (can_assign && match(TokenType::Equal)) {
             Expr* right = expression();
-            u32 end_loc = get_current_token_loc().source_loc;
+            end_loc = get_current_token_loc().source_loc;
             auto loc = SourceLocation::from_start_end(start_loc, end_loc);
             return alloc<SetExpr>(loc, left, name, right);
         }
         else if (match(TokenType::LeftParen)) {
-            // TODO: Method calls
+            // TODO: method calls
             return error_expr(get_current_token_loc(), "Unimplemented!");
         }
         else {
-            u32 end_loc = get_current_token_loc().source_loc;
             auto loc = SourceLocation::from_start_end(start_loc, end_loc);
             return alloc<GetExpr>(loc, left, name);
+        }
+    }
+
+    Expr* package_get(bool can_assign, Expr* left) {
+        u32 start_loc = get_previous_token_loc().source_loc;
+        if (!match(TokenType::Identifier)) {
+            return error_expr(get_current_token_loc(), "Expect identifier after '::'.");
+        }
+        if (auto var_expr = left->try_cast<VariableExpr>()) {
+            Token name = previous();
+            u32 end_loc = get_current_token_loc().source_loc;
+            auto loc = SourceLocation::from_start_end(start_loc, end_loc);
+            return alloc<VariableExpr>(loc, name, var_expr->name);
+        }
+        else {
+            return error_expr(get_current_token_loc(), "Expect identifier before '::'.");
         }
     }
 
@@ -735,7 +838,7 @@ private:
         u32 start_loc = get_current_token_loc().source_loc;
 
         Expr* left = parse_precedence(Precedence::Ternary);
-        if (!consume(TokenType::Colon)) {
+        if (!match(TokenType::Colon)) {
             return error_expr(get_current_token_loc(), "Expect ':' after expression.");
         }
         Expr* right = parse_precedence(Precedence::Ternary);
@@ -784,7 +887,7 @@ private:
         }
     }
 
-    bool consume(TokenType type) {
+    bool match(TokenType type) {
         if (m_current.type == type) {
             advance();
             return true;
@@ -794,14 +897,6 @@ private:
 
     bool check(TokenType type) const {
         return m_current.type == type;
-    }
-
-    bool match(TokenType type) {
-        if (check(type)) {
-            advance();
-            return true;
-        }
-        return false;
     }
 
     bool match_multiple(std::initializer_list<TokenType> types) {

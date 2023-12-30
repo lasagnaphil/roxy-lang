@@ -1,0 +1,4 @@
+from math import add, mul;
+
+print_i32(add(1, 2));
+print_i32(mul(3, 4));

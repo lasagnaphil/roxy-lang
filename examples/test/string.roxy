@@ -1,6 +1,3 @@
-native fun print(value: string);
-native fun concat(a: string, b: string);
-
 fun concat3(a: string, b: string, c: string): string {
     return a + b + c;
 }

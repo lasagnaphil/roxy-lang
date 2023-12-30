@@ -1,44 +1,72 @@
-#include <roxy/fmt/core.h>
-#include <roxy/core/file.hpp>
-#include <roxy/compiler.hpp>
 #include <roxy/vm.hpp>
-#include <roxy/module.hpp>
+#include <roxy/library.hpp>
+
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 int main(int argc, char** argv) {
     using namespace rx;
 
-    if (argc == 1) {
-        fmt::print("Usage: roxy <filename>\n");
-        return 0; // TDO: repl
-    }
-    else if (argc == 2) {
-        Vector<u8> buf;
-        if (!read_file_to_buf(argv[1], buf)) {
-            fmt::print("Error while opening file {}!\n", argv[1]);
-            return 1;
-        }
+    if (argc == 2) {
+        Library library;
 
-        Module module("test", buf.data());
+        std::string msg;
+        auto filename = std::string(argv[1]);
+        auto parent_path = fs::path(filename).parent_path().string();
+        auto module_name = fs::path(filename).stem().string();
+        bool compile_success = library.compile_from_files(parent_path, {filename}, msg);
+        printf("%s\n", msg.c_str());
+        fflush(stdout);
+        if (!compile_success) return 9;
 
-        Compiler compiler;
-        auto res = compiler.compile(module);
-        fmt::print("{}\n", res.message);
-        if (res.type != CompileResultType::Ok) {
-            fmt::print("Error during compilation; exiting!");
+        auto module = library.get_module(module_name);
+        if (module == nullptr) {
+            printf("Cannot find module %s!\n", module_name.c_str());
             return 0;
         }
 
-        module.print_disassembly();
-
-        fmt::print("\n");
+        module->print_disassembly();
 
         VM vm;
-        auto interpret_res = vm.run_module(module);
-        if (interpret_res != InterpretResult::Ok) {
-            fmt::print("Error during execution!\n");
+        if (vm.run_module(*module) != InterpretResult::Ok) {
+            printf("Error while running module %s!\n", module_name.c_str());
+        }
+        return 0;
+    }
+    if (argc == 3) {
+        Library library;
+
+        auto path = std::string(argv[1]);
+        auto init_module = std::string(argv[2]);
+
+        std::string msg;
+        bool compile_success = library.compile_from_dir(path, msg);
+        printf("%s\n", msg.c_str());
+        fflush(stdout);
+        if (!compile_success) return 0;
+
+        auto module = library.get_module(init_module);
+        if (module == nullptr) {
+            printf("Cannot find module %s!\n", init_module.c_str());
             return 0;
         }
 
+        module->print_disassembly();
+
+        VM vm;
+        if (vm.run_module(*module) != InterpretResult::Ok) {
+            printf("Error while running module %s!\n", init_module.c_str());
+        }
+
+        return 0;
+    }
+    else if (argc == 1) {
+        fmt::print("Usage: roxy <path> <module>\n");
+        return 0; // TODO: repl
+    }
+    else {
+        fmt::print("Usage: roxy <path> <module>\n");
         return 0;
     }
 }

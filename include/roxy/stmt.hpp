@@ -19,6 +19,7 @@ enum class StmtKind {
     Return,
     Break,
     Continue,
+    Import,
 };
 
 struct Stmt {
@@ -72,12 +73,17 @@ struct BlockStmt : public Stmt {
     BlockStmt(Span<RelPtr<Stmt>> statements) : Stmt(s_kind), statements(statements) {}
 };
 
+struct ImportStmt;
+
 struct ModuleStmt : public Stmt {
     static constexpr StmtKind s_kind = StmtKind::Module;
 
     RelSpan<RelPtr<Stmt>> statements;
     RelSpan<RelPtr<AstVarDecl>> locals;
     RelSpan<RelPtr<AstFunDecl>> functions;
+
+    RelSpan<RelPtr<AstFunDecl>> exports;
+    RelSpan<RelPtr<ImportStmt>> imports;
 
     ModuleStmt(Span<RelPtr<Stmt>> statements)
         : Stmt(s_kind), statements(statements) {}
@@ -88,6 +94,14 @@ struct ModuleStmt : public Stmt {
 
     void set_functions(Span<RelPtr<AstFunDecl>> functions) {
         new (&this->functions) RelSpan<RelPtr<AstFunDecl>>(functions);
+    }
+
+    void set_exports(Span<RelPtr<AstFunDecl>> exports) {
+        new (&this->exports) RelSpan<RelPtr<AstFunDecl>>(exports);
+    }
+
+    void set_imports(Span<RelPtr<ImportStmt>> imports) {
+        new (&this->imports) RelSpan<RelPtr<ImportStmt>>(imports);
     }
 };
 
@@ -115,13 +129,14 @@ public:
 
     AstFunDecl fun_decl;
     RelSpan<RelPtr<Stmt>> body;
+    bool is_public;
     bool is_native;
 
     // created later in sema analyzer
     RelSpan<RelPtr<AstVarDecl>> locals;
 
-    FunctionStmt(FunDecl fun_decl, Span<RelPtr<Stmt>> body, bool is_native) :
-        Stmt(s_kind), fun_decl(fun_decl), body(body), is_native(is_native) {
+    FunctionStmt(FunDecl fun_decl, Span<RelPtr<Stmt>> body, bool is_public, bool is_native) :
+        Stmt(s_kind), fun_decl(fun_decl), body(body), is_public(is_public), is_native(is_native) {
     }
 
     void set_locals(Span<RelPtr<AstVarDecl>> locals) {
@@ -176,6 +191,20 @@ struct ContinueStmt : public Stmt {
     static constexpr StmtKind s_kind = StmtKind::Continue;
 
     ContinueStmt() : Stmt(s_kind) {}
+};
+
+struct ImportStmt : public Stmt {
+    static constexpr StmtKind s_kind = StmtKind::Import;
+
+    RelSpan<Token> package_path;
+    RelSpan<Token> import_symbols;
+
+    bool is_wildcard() const {
+        return import_symbols.size() == 1 && import_symbols[0].type == TokenType::Star;
+    }
+
+    ImportStmt(Span<Token> package_path, Span<Token> import_symbols) :
+            Stmt(s_kind), package_path(package_path), import_symbols(import_symbols) {}
 };
 
 }

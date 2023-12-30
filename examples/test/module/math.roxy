@@ -1,0 +1,7 @@
+pub fun add(a: int, b: int): int {
+    return a + b;
+}
+
+pub fun mul(a: int, b: int): int {
+    return a * b;
+}

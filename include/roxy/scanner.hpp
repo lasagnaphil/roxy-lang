@@ -9,6 +9,7 @@ namespace rx {
 
 class Scanner {
 public:
+    Scanner() = default;
     Scanner(const u8* source);
 
     Token scan_token();

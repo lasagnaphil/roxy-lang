@@ -117,6 +117,8 @@ struct FunDecl {
         name(name), params(params), ret_type(ret_type), is_native(is_native) {}
 };
 
+class Module;
+
 struct AstFunDecl {
     Token name;
     RelSpan<AstVarDecl> params;
@@ -126,6 +128,7 @@ struct AstFunDecl {
     // Added in sema analyzer
     RelPtr<FunctionType> type;
     u16 local_index = 0;
+    std::string_view module;
 
     AstFunDecl(FunDecl fun_decl) :
         name(fun_decl.name), params(fun_decl.params), ret_type(fun_decl.ret_type),

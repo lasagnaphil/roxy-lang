@@ -6,6 +6,7 @@
 #include "roxy/opcode.hpp"
 #include "roxy/chunk.hpp"
 #include "roxy/module.hpp"
+#include "roxy/library.hpp"
 
 namespace rx {
 enum CompileResultType {
@@ -79,15 +80,17 @@ public:
 
 #define COMP_TRY(EXPR) do { auto _res = EXPR; if (_res.type != CompileResultType::Ok) { return _res; } } while (false);
 
-    Compiler() = default;
+    Compiler(Scanner* scanner) : m_scanner(scanner) {}
 
     CompileResult compile(Module& module) {
         Scanner scanner(module.m_source);
 
         m_scanner = &scanner;
 
+        AstAllocator ast_allocator;
+
         StringInterner string_interner;
-        Parser parser(&scanner, &string_interner);
+        Parser parser(&scanner, &ast_allocator, &string_interner);
 
         ModuleStmt* module_stmt;
         bool parse_success = parser.parse(module_stmt);
@@ -101,7 +104,8 @@ public:
         if (!parse_success) return {CompileResultType::Error, message};
 
         SemaAnalyzer sema_analyzer(parser.get_ast_allocator(), scanner.source());
-        auto sema_errors = sema_analyzer.check(module_stmt);
+        ImportMap import_map; // empty import map
+        auto sema_errors = sema_analyzer.typecheck(module_stmt, import_map);
 
         message += "\nAfter semantic analysis:\n";
         message += AstPrinter(scanner.source()).to_string(*module_stmt);
@@ -132,20 +136,18 @@ public:
         return {CompileResultType::Ok, message};
     }
 
-private:
     CompileResult compile(ModuleStmt& stmt, Module& module) {
         m_cur_module = &module;
         m_cur_chunk = &module.chunk();
 
         COMP_TRY(visit(stmt));
 
-        module.build_for_runtime();
-
         m_cur_module = nullptr;
 
         return ok();
     }
 
+private:
     CompileResult visit_impl(ErrorStmt& stmt) { return ok(); }
 
     CompileResult visit_impl(BlockStmt& stmt) {
@@ -185,8 +187,9 @@ private:
         // If this is a native function declaration, there is no implementation yet
         // So just add the definition to the native table and return.
         if (stmt.is_native) {
-            m_cur_chunk->m_outer_module->m_native_function_table.push_back({
+            m_cur_module->m_native_function_table.push_back({
                 fn_name,
+                std::string(m_cur_module->name()),
                 FunctionTypeData(*fn_type, m_scanner->source()),
                 NativeFunctionRef {} // We do not know the exact function pointer yet... just set it to null for now
             });
@@ -207,8 +210,9 @@ private:
         }
 
         // Build function chunk and insert it to parent module
-        m_cur_chunk->m_outer_module->m_function_table.push_back({
+        m_cur_module->m_function_table.push_back({
             fn_name,
+            std::string(m_cur_module->name()),
             FunctionTypeData(*fn_type, m_scanner->source()),
             std::move(fn_chunk)});
 
@@ -462,7 +466,7 @@ private:
         u32 cond_line = m_scanner->get_line(cond_expr->get_source_loc());
 
         u32 exit_jump;
-        COMP_TRY(emit_jump_from_cond_expr(cond_expr, false, false, exit_jump));
+        COMP_TRY(emit_jump_from_cond_expr(cond_expr, false, true, exit_jump));
         COMP_TRY(visit(*stmt.body));
         emit_loop(loop_start, cond_line);;
 
@@ -498,6 +502,10 @@ private:
 
     CompileResult visit_impl(BreakStmt& stmt) { return unimplemented(); }
     CompileResult visit_impl(ContinueStmt& stmt) { return unimplemented(); }
+
+    CompileResult visit_impl(ImportStmt& stmt) {
+        return ok();
+    }
 
     CompileResult visit_impl(ErrorExpr& expr) { return error("Cannot compile expression with error!"); }
 
@@ -855,20 +863,20 @@ private:
         u32 cur_line = m_scanner->get_line(expr.get_source_loc());
         auto callee_expr = expr.callee.get();
         if (auto var_expr = callee_expr->try_cast<VariableExpr>()) {
-            if (auto fun_stmt = var_expr->fun_origin.get()) {
+            if (auto fun_decl = var_expr->fun_origin.get()) {
                 // If callee expr is just a function symbol, then just call the function directly!
                 // Push arguments
                 for (u32 i = 0; i < expr.arguments.size(); i++) {
                     auto arg_expr = expr.arguments[i].get();
                     COMP_TRY(visit(*arg_expr));
                 }
-                if (fun_stmt->is_native) {
+                if (fun_decl->is_native) {
                     emit_byte(OpCode::callnative, cur_line);
                 }
                 else {
                     emit_byte(OpCode::call, cur_line);
                 }
-                emit_u16(fun_stmt->local_index);
+                emit_u16(fun_decl->local_index);
                 return ok();
             }
         }

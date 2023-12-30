@@ -164,6 +164,26 @@ public:
         begin_paren("continue");
         end_paren();
     }
+    void visit_impl(ImportStmt& stmt) {
+        if (stmt.import_symbols.size() > 0) {
+            begin_paren("from");
+            for (auto token : stmt.package_path) {
+                add_identifier(token);
+            }
+            add_identifier("import");
+            for (auto token : stmt.import_symbols) {
+                add_identifier(token);
+            }
+            end_paren();
+        }
+        else {
+            begin_paren("import");
+            for (auto token : stmt.package_path) {
+                add_identifier(token);
+            }
+            end_paren();
+        }
+    }
 
     void visit_impl(ErrorExpr& expr) {
         add_identifier("error");

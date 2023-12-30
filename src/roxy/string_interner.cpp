@@ -2,7 +2,7 @@
 
 #include "roxy/core/xxhash.h"
 
-#define ROXY_DEBUG_ALLOCATIONS
+// #define ROXY_DEBUG_ALLOCATIONS
 
 namespace rx {
 

@@ -8,6 +8,7 @@
 namespace rx {
 
 enum class TokenType : u8 {
+    Empty,
     // Single-character tokens.
     LeftParen, RightParen,
     LeftBrace, RightBrace,
@@ -22,13 +23,13 @@ enum class TokenType : u8 {
     Greater, GreaterEqual,
     Less, LessEqual,
     // Two character tokens.
-    AmpAmp, BarBar,
+    AmpAmp, BarBar, ColonColon,
     // Literals.
     Identifier, String, NumberInt, NumberFloat,
     // Keywords.
     Struct, Else, False,
-    For, Fun, If, Nil, Native,
-    Return, Super, This,
+    For, From, Fun, If, Import, Nil, Native,
+    Pub, Return, Super, This,
     True, Var, While,
     Break, Continue,
 
@@ -51,9 +52,9 @@ struct SourceLocation {
 };
 
 struct Token {
-    u32 source_loc;
-    u16 length;
-    TokenType type;
+    u32 source_loc = 0;
+    u16 length = 0;
+    TokenType type = TokenType::Empty;
 
     Token() = default;
 

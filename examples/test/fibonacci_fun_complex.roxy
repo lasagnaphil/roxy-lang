@@ -1,5 +1,3 @@
-native fun print_i32(value: int);
-
 fun add(a: int, b: int): int {
     return a + b;
 }

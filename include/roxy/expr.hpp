@@ -21,7 +21,7 @@ enum class ExprKind : u8 {
     Variable,
     Call,
     Get,
-    Set
+    Set,
 };
 
 struct Type;
@@ -153,7 +153,11 @@ public:
     RelPtr<AstVarDecl> var_origin = nullptr;
     RelPtr<AstFunDecl> fun_origin = nullptr;
 
-    VariableExpr(SourceLocation loc, Token name) : Expr(s_kind, loc), name(name) {}
+    Token package;
+
+    bool is_imported() const { return package.length > 0; }
+
+    VariableExpr(SourceLocation loc, Token name, Token package = {}) : Expr(s_kind, loc), name(name), package(package) {}
 };
 
 struct CallExpr : public Expr {
@@ -161,11 +165,10 @@ public:
     static constexpr ExprKind s_kind = ExprKind::Call;
 
     RelPtr<Expr> callee;
-    Token paren;
     RelSpan<RelPtr<Expr>> arguments;
 
-    CallExpr(SourceLocation loc, Expr* callee, Token paren, Span<RelPtr<Expr>> arguments) :
-            Expr(s_kind, loc), callee(callee), paren(paren), arguments(arguments) {}
+    CallExpr(SourceLocation loc, Expr* callee, Span<RelPtr<Expr>> arguments) :
+            Expr(s_kind, loc), callee(callee), arguments(arguments) {}
 };
 
 struct GetExpr : public Expr {

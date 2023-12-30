@@ -10,11 +10,15 @@
 #include "roxy/fmt/format.h"
 
 namespace rx {
+
+using ImportMap = tsl::robin_map<std::string_view, AstFunDecl*>;
+
 class SemaEnv {
 private:
     SemaEnv* m_outer;
 
     FunctionStmt* m_function;
+
     tsl::robin_map<std::string_view, AstVarDecl*> m_var_map;
     tsl::robin_map<std::string_view, AstFunDecl*> m_function_map;
     tsl::robin_map<std::string_view, StructStmt*> m_struct_map;
@@ -23,34 +27,40 @@ private:
     Vector<AstFunDecl*> m_functions;
     Vector<AstFunDecl*> m_native_functions;
 
-    SemaEnv* m_locals_env; // closest parent function
-    SemaEnv* m_functions_env; // closest parent module
+    SemaEnv* m_closest_fun_env; // closest parent function
+    SemaEnv* m_closest_module_env; // closest parent module
 
 public:
     // Inside an ordinary scope
     SemaEnv(SemaEnv* outer)
         : m_outer(outer), m_function(m_outer->m_function) {
         SemaEnv* env = m_outer;
-        while (!env->has_locals()) {
+        while (!env->is_function_scope()) {
             env = env->m_outer;
         }
-        m_locals_env = env;
+        m_closest_fun_env = env;
+        while (!env->is_module_scope()) {
+            env = env->m_outer;
+        }
+        m_closest_module_env = env;
     }
 
     // Inside a function
-    SemaEnv(SemaEnv* outer, FunctionStmt* function) : m_outer(outer), m_function(function), m_locals_env(this), m_functions_env(nullptr) {
+    SemaEnv(SemaEnv* outer, FunctionStmt* function) :
+        m_outer(outer), m_function(function), m_closest_fun_env(this), m_closest_module_env(nullptr) {
         SemaEnv* env = m_outer;
-        while (!env->has_functions()) {
+        while (!env->is_module_scope()) {
             env = env->m_outer;
         }
-        m_functions_env = env;
+        m_closest_module_env = env;
     }
 
     // Inside a module
-    SemaEnv(SemaEnv* outer, ModuleStmt* module) : m_outer(outer), m_function(nullptr), m_locals_env(this), m_functions_env(this) {}
+    SemaEnv(SemaEnv* outer, ModuleStmt* module) :
+        m_outer(outer), m_function(nullptr), m_closest_fun_env(this), m_closest_module_env(this) {}
 
-    bool has_locals() const { return m_locals_env == this; }
-    bool has_functions() const { return m_locals_env == this; }
+    bool is_function_scope() const { return m_closest_fun_env == this; }
+    bool is_module_scope() const { return m_closest_module_env == this; }
 
     SemaEnv* get_outer_env() const { return m_outer; }
     FunctionStmt* get_outer_function() const { return m_function; }
@@ -72,10 +82,10 @@ public:
     }
 
     bool set_var(std::string_view name, AstVarDecl* var_decl) {
-        var_decl->local_index = m_locals_env->m_locals.size();
         auto [it, inserted] = m_var_map.insert({name, var_decl});
         if (inserted) {
-            m_locals_env->m_locals.push_back(var_decl);
+            var_decl->local_index = m_closest_fun_env->m_locals.size();
+            m_closest_fun_env->m_locals.push_back(var_decl);
         }
         return inserted;
     }
@@ -99,12 +109,12 @@ public:
         auto [it, inserted] = m_function_map.insert({name, fun_decl});
         if (inserted) {
             if (fun_decl->is_native) {
-                fun_decl->local_index = m_functions_env->m_native_functions.size();
-                m_functions_env->m_native_functions.push_back(fun_decl);
+                fun_decl->local_index = m_closest_module_env->m_native_functions.size();
+                m_closest_module_env->m_native_functions.push_back(fun_decl);
             }
             else {
-                fun_decl->local_index = m_functions_env->m_functions.size();
-                m_functions_env->m_functions.push_back(fun_decl);
+                fun_decl->local_index = m_closest_module_env->m_functions.size();
+                m_closest_module_env->m_functions.push_back(fun_decl);
             }
         }
         return inserted;
@@ -148,6 +158,7 @@ enum class SemaResultType {
     CannotFindField,
     IncompatibleFieldType,
     InvalidNativeFunDeclLocation,
+    InvalidImportDeclaration,
     Misc,
 };
 
@@ -162,6 +173,7 @@ struct SemaResult {
     SemaResultType res_type = SemaResultType::Ok;
 
     Expr* cur_expr = nullptr;
+    Stmt* cur_stmt = nullptr;
     Token cur_name = {};
     AstVarDecl* cur_var_decl = nullptr;
     AstFunDecl* cur_fun_decl = nullptr;
@@ -241,6 +253,10 @@ struct SemaResult {
                 .loc = cur_fun_decl->name.get_source_loc(),
                 .message = fmt::format("Invalid native function declaration: only allowed at the module-level.")
             };
+        case SemaResultType::InvalidImportDeclaration: return {
+                .loc = cur_stmt->cast<ImportStmt>().package_path[0].get_source_loc(),
+                .message = fmt::format("Invalid import declaration: only allowed at the module-level.")
+            };
         case SemaResultType::Misc: return {
                 .loc = cur_expr->get_source_loc(),
                 .message = "Misc."
@@ -260,8 +276,8 @@ private:
     const u8* m_source;
 
     Vector<SemaResult> m_errors;
-
     SemaEnv* m_cur_env = nullptr;
+    ImportMap* m_import_map = nullptr;
 
     void revert_parent_env() {}
 
@@ -276,8 +292,51 @@ public:
 
     SemaAnalyzer(AstAllocator* allocator, const u8* source) : m_allocator(allocator), m_source(source) {}
 
-    Vector<SemaResult> check(ModuleStmt* stmt) {
+    Vector<SemaResult> scan_dependencies(std::string_view module_name, ModuleStmt* module) {
+        Vector<ImportStmt*> imports;
+        Vector<AstFunDecl*> exports;
+
+        Vector<SemaResult> errors;
+
+        SemaEnv module_env(m_cur_env, module);
+        m_cur_env = &module_env;
+
+        for (RelPtr<Stmt>& inner_stmt : module->statements) {
+            if (auto import_stmt = inner_stmt->try_cast<ImportStmt>()) {
+                imports.push_back(import_stmt);
+            }
+            else if (auto fun_stmt = inner_stmt->try_cast<FunctionStmt>()) {
+                if (fun_stmt->is_public) {
+                    auto res = visit_impl(*fun_stmt, true);
+                    if (!res.is_ok()) errors.push_back(res);
+                    fun_stmt->fun_decl.module = module_name;
+                    exports.push_back(&fun_stmt->fun_decl);
+                }
+            }
+        }
+
+        m_cur_env = nullptr;
+
+        module->set_imports(m_allocator->alloc_vector<RelPtr<ImportStmt>, ImportStmt*>(std::move(imports)));
+        module->set_exports(m_allocator->alloc_vector<RelPtr<AstFunDecl>, AstFunDecl*>(std::move(exports)));
+
+        return errors;
+    }
+
+    Vector<SemaResult> typecheck(ModuleStmt* stmt, ImportMap& import_map) {
+        SemaEnv module_env(m_cur_env, stmt);
+        m_cur_env = &module_env;
+        m_import_map = &import_map;
+
+        for (auto [name, import_fun_stmt] : import_map) {
+            m_cur_env->set_function(name, import_fun_stmt);
+        }
+
         visit_impl(*stmt);
+
+        m_cur_env = nullptr;
+        m_import_map = nullptr;
+        stmt->set_locals(m_allocator->alloc_vector<RelPtr<AstVarDecl>, AstVarDecl*>(module_env.get_locals()));
 
         auto errors = m_errors;
         m_errors.clear();
@@ -299,9 +358,6 @@ public:
     }
 
     SemaResult visit_impl(ModuleStmt& stmt) {
-        SemaEnv module_env(m_cur_env, &stmt);
-        m_cur_env = &module_env;
-
         // For the first pass, scan all function definitions and add them to the env first
         for (RelPtr<Stmt>& inner_stmt : stmt.statements) {
             if (auto fun_stmt = inner_stmt->try_cast<FunctionStmt>()) {
@@ -314,9 +370,6 @@ public:
             // Do not return on error result, since we want to scan all statements inside the block.
             auto _ = visit(*inner_stmt.get());
         }
-        m_cur_env = module_env.get_outer_env();
-
-        stmt.set_locals(m_allocator->alloc_vector<RelPtr<AstVarDecl>, AstVarDecl*>(module_env.get_locals()));
 
         return ok();
     }
@@ -360,11 +413,24 @@ public:
         return ok();
     }
 
-    SemaResult visit_impl(FunctionStmt& stmt) {
+    SemaResult visit_impl(FunctionStmt& stmt, bool dependency_scan_mode = false) {
         auto fn_name = stmt.fun_decl.name.str(m_source);
 
-        // If the parent is a function instead of a module, then it isn't pre-added to the module, so we need to add these manually
-        if (m_cur_env->get_outer_function() != nullptr) {
+        // Find return type
+        if (auto unassigned_type = stmt.fun_decl.ret_type->try_cast<UnassignedType>()) {
+            auto param_type_name = unassigned_type->name.str(m_source);
+            auto struct_stmt = m_cur_env->get_struct(param_type_name);
+            if (struct_stmt) {
+                stmt.fun_decl.ret_type = struct_stmt->type.get();
+            }
+            else {
+                auto _ = error_cannot_find_type(unassigned_type);
+            }
+        }
+
+        // If function declaration is not at the module scope, then it isn't pre-added to the module,
+        // so we need to add these manually.
+        if (!m_cur_env->is_module_scope()) {
             if (stmt.is_native) {
                 // Native function declarations should be only at the module level!
                 return error_invalid_native_fun_declaration(&stmt.fun_decl);
@@ -372,16 +438,21 @@ public:
             m_cur_env->set_function(fn_name, &stmt.fun_decl);
         }
 
-        if (stmt.is_native) {
-            // For native functions there is no body, so just apply the type and move on.
-            Vector<Type*> param_types;
-            for (auto& param : stmt.fun_decl.params) {
-                param_types.push_back(param.type.get());
-            }
-            stmt.fun_decl.type = m_allocator->alloc<FunctionType>(
-                    m_allocator->alloc_vector<RelPtr<Type>, Type*>(std::move(param_types)),
-                    stmt.fun_decl.ret_type.get());
+        Vector<Type*> param_types;
+        for (auto& param : stmt.fun_decl.params) {
+            param_types.push_back(param.type.get());
+        }
+        stmt.fun_decl.type = m_allocator->alloc<FunctionType>(
+                m_allocator->alloc_vector<RelPtr<Type>, Type*>(std::move(param_types)),
+                stmt.fun_decl.ret_type.get());
 
+        // For native functions there is no body to typecheck.
+        if (stmt.is_native) {
+            return ok();
+        }
+
+        // For an initial dependency scan, we don't need to typecheck the contents.
+        if (dependency_scan_mode) {
             return ok();
         }
 
@@ -389,7 +460,6 @@ public:
         m_cur_env = &fn_env;
 
         // Add all function parameters to the scope.
-        Vector<Type*> param_types;
         for (auto& param : stmt.fun_decl.params) {
             // Assign type to each param
             auto param_name = param.name.str(m_source);
@@ -409,20 +479,7 @@ public:
                     auto _ = error_cannot_find_type(unassigned_type);
                 }
             }
-            param_types.push_back(param.type.get());
             m_cur_env->set_var(param_name, &param);
-        }
-
-        // Find return type
-        if (auto unassigned_type = stmt.fun_decl.ret_type->try_cast<UnassignedType>()) {
-            auto param_type_name = unassigned_type->name.str(m_source);
-            auto struct_stmt = m_cur_env->get_struct(param_type_name);
-            if (struct_stmt) {
-                stmt.fun_decl.ret_type = struct_stmt->type.get();
-            }
-            else {
-                auto _ = error_cannot_find_type(unassigned_type);
-            }
         }
 
         // Add the created function to the TypeEnv.
@@ -523,6 +580,13 @@ public:
 
     SemaResult visit_impl(BreakStmt& stmt) { return ok(); } // nothing to do
     SemaResult visit_impl(ContinueStmt& stmt) { return ok(); } // nothing to do
+
+    SemaResult visit_impl(ImportStmt& stmt) {
+        if (!m_cur_env->is_module_scope()) {
+            return error_invalid_import_declaration(&stmt);
+        }
+        return ok();
+    }
 
     SemaResult visit_impl(ErrorExpr& expr) { return error_misc(&expr); } // unreachable???
     SemaResult visit_impl(AssignExpr& expr) {
@@ -677,6 +741,7 @@ public:
 
     SemaResult visit_impl(VariableExpr& expr) {
         auto expr_name = expr.name.str(m_source);
+
         auto var_decl = m_cur_env->get_var(expr_name);
         if (var_decl) {
             // Loading variables
@@ -684,13 +749,23 @@ public:
             expr.var_origin = var_decl;
             return ok();
         }
-        auto fun_decl = m_cur_env->get_function(expr_name);
-        if (fun_decl) {
-            // Loading function pointers
+
+        auto it = m_import_map->find(expr_name);
+        if (it != m_import_map->end()) {
+            AstFunDecl* fun_decl = it->second;
             expr.type = fun_decl->type.get();
             expr.fun_origin = fun_decl;
             return ok();
         }
+
+        auto fun_decl = m_cur_env->get_function(expr_name);
+        if (fun_decl) {
+            // Loading functions
+            expr.type = fun_decl->type.get();
+            expr.fun_origin = fun_decl;
+            return ok();
+        }
+
         return error_undefined_var(&expr);
     }
 
@@ -718,6 +793,7 @@ public:
 
     SemaResult visit_impl(GetExpr& expr) {
         auto obj_expr = expr.object.get();
+
         SEMA_TRY(visit(*obj_expr));
         auto obj_type = obj_expr->type.get();
         if (auto obj_struct_type = obj_type->try_cast<StructType>()) {
@@ -942,6 +1018,13 @@ public:
         return report_error({
             .res_type = SemaResultType::InvalidNativeFunDeclLocation,
             .cur_fun_decl = fun_decl
+        });
+    }
+
+    SemaResult error_invalid_import_declaration(Stmt* stmt) {
+        return report_error({
+            .res_type = SemaResultType::InvalidImportDeclaration,
+            .cur_stmt = stmt
         });
     }
 

@@ -26,6 +26,7 @@ public:
             case ExprKind::Call:        return static_cast<Derived*>(this)->visit_impl(expr.cast<CallExpr>());
             case ExprKind::Get:         return static_cast<Derived*>(this)->visit_impl(expr.cast<GetExpr>());
             case ExprKind::Set:         return static_cast<Derived*>(this)->visit_impl(expr.cast<SetExpr>());
+            default: if constexpr (std::is_void_v<ReturnT>) return; else return ReturnT();
         }
     }
 
@@ -41,7 +42,6 @@ public:
     ReturnT visit_impl(CallExpr& expr)          { return ReturnT{}; }
     ReturnT visit_impl(GetExpr& expr)           { return ReturnT{}; }
     ReturnT visit_impl(SetExpr& expr)           { return ReturnT{}; }
-
 };
 
 template <typename Derived, typename ReturnT>
@@ -61,6 +61,8 @@ public:
             case StmtKind::Return:      return static_cast<Derived*>(this)->visit_impl(stmt.cast<ReturnStmt>());
             case StmtKind::Break:       return static_cast<Derived*>(this)->visit_impl(stmt.cast<BreakStmt>());
             case StmtKind::Continue:    return static_cast<Derived*>(this)->visit_impl(stmt.cast<ContinueStmt>());
+            case StmtKind::Import:      return static_cast<Derived*>(this)->visit_impl(stmt.cast<ImportStmt>());
+            default: if constexpr (std::is_void_v<ReturnT>) return; else return ReturnT();
         }
     }
 
@@ -77,6 +79,7 @@ public:
     ReturnT visit_impl(ReturnStmt& stmt)        { return ReturnT{}; }
     ReturnT visit_impl(BreakStmt& stmt)         { return ReturnT{}; }
     ReturnT visit_impl(ContinueStmt& stmt)      { return ReturnT{}; }
+    ReturnT visit_impl(ImportStmt& stmt)        { return ReturnT{}; }
 };
 
 template <typename Derived, typename ReturnT>
@@ -89,6 +92,7 @@ public:
             case TypeKind::Function:    return static_cast<Derived*>(this)->visit_impl(type.cast<FunctionType>());
             case TypeKind::Unassigned:  return static_cast<Derived*>(this)->visit_impl(type.cast<UnassignedType>());
             case TypeKind::Inferred:    return static_cast<Derived*>(this)->visit_impl(type.cast<InferredType>());
+            default: if constexpr (std::is_void_v<ReturnT>) return; else return ReturnT();
         }
     }
 

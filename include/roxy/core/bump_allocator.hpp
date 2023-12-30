@@ -14,6 +14,10 @@ public:
         reallocate(capacity);
     }
 
+    ~BumpAllocator() {
+        free(m_start);
+    }
+
     u8* alloc_bytes(u64 size, u64 align) {
         assert(align > 0);
         assert((align & (align - 1)) == 0); // power of two

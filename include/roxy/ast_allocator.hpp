@@ -11,12 +11,16 @@ namespace rx {
 
 class AstAllocator {
 private:
+    static constexpr u64 s_initial_ast_allocator_capacity = 65536;
+
     BumpAllocator m_allocator;
 
     PrimitiveType* m_prim_types[(u32)PrimTypeKind::_size];
 
 public:
-    AstAllocator(u64 initial_capacity) : m_allocator(initial_capacity) {
+    AstAllocator(u64 initial_capacity = s_initial_ast_allocator_capacity)
+        : m_allocator(initial_capacity) {
+
         // Allocate every primitive type beforehand, these are going to get interned in the pool.
         for (u32 i = 0; i < (u32)PrimTypeKind::_size; i++) {
             m_prim_types[i] = m_allocator.emplace<PrimitiveType>((PrimTypeKind) i);

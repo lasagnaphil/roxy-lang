@@ -57,7 +57,7 @@ Token Scanner::scan_token() {
     case '*': return make_token(TokenType::Star);
     case '%': return make_token(TokenType::Percent);
     case '?': return make_token(TokenType::QuestionMark);
-    case ':': return make_token(TokenType::Colon);
+    case ':': return make_token(match(':') ? TokenType::ColonColon : TokenType::Colon);
     case '~': return make_token(TokenType::Tilde);
     case '^': return make_token(TokenType::Caret);
     case '!': return make_token(match('=') ? TokenType::BangEqual : TokenType::Bang);
@@ -105,12 +105,19 @@ TokenType Scanner::identifier_type() {
         if (m_current - m_start > 1) {
             switch (m_start[1]) {
             case 'a': return check_keyword(2, 3, "lse", TokenType::False);
+            case 'r': return check_keyword(2, 2, "om", TokenType::From);
             case 'o': return check_keyword(2, 1, "r", TokenType::For);
             case 'u': return check_keyword(2, 1, "n", TokenType::Fun);
             }
         }
         break;
-    case 'i': return check_keyword(1, 1, "f", TokenType::If);
+    case 'i':
+        if (m_current - m_start > 1) {
+            switch (m_start[1]) {
+            case 'f': return TokenType::If;
+            case 'm': return check_keyword(2, 4, "port", TokenType::Import);
+            }
+        }
     case 'n':
         if (m_current - m_start > 1) {
             switch (m_start[1]) {
@@ -118,6 +125,7 @@ TokenType Scanner::identifier_type() {
                 case 'i': return check_keyword(2, 1, "l", TokenType::Nil);
             }
         }
+    case 'p': return check_keyword(1, 2, "ub", TokenType::Pub);
     case 'r': return check_keyword(1, 5, "eturn", TokenType::Return);
     case 's':
         if (m_current - m_start > 1) {

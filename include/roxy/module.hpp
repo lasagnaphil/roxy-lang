@@ -25,7 +25,7 @@ private:
 
 struct FunctionTableEntry {
     std::string name;
-    // Vector<std::string> param_names;
+    std::string module;
     FunctionTypeData type;
     UniquePtr<Chunk> chunk;
 };
@@ -105,17 +105,21 @@ private:
 
 struct NativeFunctionTableEntry {
     std::string name;
+    std::string module;
     FunctionTypeData type;
     NativeFunctionRef fun;
 };
 
 class Module {
     friend class Compiler;
+    friend class Library;
 
 public:
     Module(std::string name, const u8* source) :
         m_name(std::move(name)), m_chunk(m_name, this), m_source(source) {}
 
+    std::string_view name() const { return m_name; }
+    const u8* source() const { return m_source; }
     Chunk& chunk() { return m_chunk; }
     StringTable& string_table() { return m_string_table; }
 
@@ -123,13 +127,9 @@ public:
 
     u16 find_native_function_index(std::string_view name);
 
-    void load_basic_module();
-
     void print_disassembly();
 
 private:
-
-    void build_for_runtime();
 
     std::string m_name;
     const u8* m_source;
