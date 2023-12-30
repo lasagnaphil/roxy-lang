@@ -1,0 +1,35 @@
+struct Zoo {
+    aarvark: int = 1;
+    baboon: int = 1;
+    cat: int = 1;
+    donkey: int = 1;
+    elephant: int = 1;
+    fox: int = 1;
+}
+
+fun Zoo.ant() { return this.aarvark; }
+fun Zoo.banana() { return this.baboon; }
+fun Zoo.tuna() { return this.cat; }
+fun Zoo.hay() { return this.donkey; }
+fun Zoo.grass() { return this.elephant; }
+fun Zoo.mouse() { return this.fox; }
+
+var zoo = Zoo();
+var sum = 0;
+var start = clock();
+var batch = 0;
+while (clock() - start < 10) {
+  for (var i = 0; i < 10000; i = i + 1) {
+    sum = sum + zoo.ant()
+              + zoo.banana()
+              + zoo.tuna()
+              + zoo.hay()
+              + zoo.grass()
+              + zoo.mouse();
+  }
+  batch = batch + 1;
+}
+
+print(sum);
+print(batch);
+print(clock() - start);

@@ -1,0 +1,35 @@
+struct Tree {
+    a: uniq Tree,
+    b: uniq Tree,
+    c: uniq Tree,
+    d: uniq Tree,
+    e: uniq Tree
+}
+
+fun new Tree(depth: int) {
+    this.depth = depth;
+    if (depth > 0) {
+        this.a = uniq Tree(depth - 1);
+        this.b = uniq Tree(depth - 1);
+        this.c = uniq Tree(depth - 1);
+        this.d = uniq Tree(depth - 1);
+        this.e = uniq Tree(depth - 1);
+    }
+}
+
+fun Tree.walk(): int {
+    if (this.depth == 0) return 0;
+    return this.depth
+        + this.a.walk()
+        + this.b.walk()
+        + this.c.walk()
+        + this.d.walk()
+        + this.e.walk();
+}
+
+var tree = uniq Tree(8);
+var start = clock();
+for (var i = 0; i < 100; i = i + 1) {
+    if (tree.walk() != 122068) print("Error");
+}
+print(clock() - start);

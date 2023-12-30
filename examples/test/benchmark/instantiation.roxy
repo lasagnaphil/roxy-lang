@@ -1,0 +1,44 @@
+// This benchmark stresses instance creation and initializer calling.
+
+struct Foo {
+}
+
+fun new Foo.init() {}
+
+var start = clock();
+var i = 0;
+while (i < 500000) {
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  Foo.init();
+  i = i + 1;
+}
+
+print(clock() - start);
