@@ -1,0 +1,14 @@
+struct Foo {
+    field: string
+}
+
+fun new Foo.init(arg: string) {
+    print("Foo.init(" + arg + ")");
+    this.field = "init";
+}
+
+fun Foo.init() {
+  print("not initializer");
+}
+
+init(); // expect: not initializer

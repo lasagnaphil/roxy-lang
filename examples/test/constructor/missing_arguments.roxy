@@ -1,0 +1,6 @@
+struct Foo {}
+
+fun new Foo(a: int, b: int) {
+}
+
+var foo = Foo(1); // expect runtime error: Expected 2 arguments but got 1.

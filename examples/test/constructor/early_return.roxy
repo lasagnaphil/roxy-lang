@@ -1,0 +1,10 @@
+struct Foo {}
+
+fun new Foo() {
+    print("init");
+    return;
+    print("nope");
+}
+
+var foo = Foo(); // expect: init
+print(foo); // expect: Foo instance
