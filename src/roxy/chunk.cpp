@@ -132,10 +132,8 @@ u32 Chunk::disassemble_instruction(u32 offset) {
     case OpCode::dmul:
     case OpCode::ddiv:
     case OpCode::lcmp:
-    case OpCode::fcmpl:
-    case OpCode::fcmpg:
-    case OpCode::dcmpl:
-    case OpCode::dcmpg:
+    case OpCode::fcmp:
+    case OpCode::dcmp:
     case OpCode::band:
     case OpCode::bor:
     case OpCode::bxor:
@@ -252,18 +250,20 @@ u32 Chunk::print_arg_u64_instruction(OpCode opcode, u32 offset) {
 u32 Chunk::print_arg_f32_instruction(OpCode opcode, u32 offset) {
     assert((u32)opcode < (u32)OpCode::_count);
 
-    u32 value = get_u32_from_bytecode_offset(offset + 1);
-    fmt::print("{:<16s} {:4d}\n", g_opcode_str[(u32)opcode], value);
+    u32 value_u32 = get_u32_from_bytecode_offset(offset + 1);
+    f32 value;
+    memcpy(&value, &value_u32, sizeof(f32));
+    fmt::print("{:<16s} {:4.4f}\n", g_opcode_str[(u32)opcode], value);
     return offset + 5;
 }
 
 u32 Chunk::print_arg_f64_instruction(OpCode opcode, u32 offset) {
     assert((u32)opcode < (u32)OpCode::_count);
 
-    u64 value = get_u64_from_bytecode_offset(offset + 1);
-    f64 value_f;
-    memcpy(&value_f, &value, sizeof(u64));
-    fmt::print("{:<16s} {:8f}\n", g_opcode_str[(u32)opcode], value_f);
+    u64 value_u64 = get_u64_from_bytecode_offset(offset + 1);
+    f64 value;
+    memcpy(&value, &value_u64, sizeof(u64));
+    fmt::print("{:<16s} {:4.4f}\n", g_opcode_str[(u32)opcode], value);
     return offset + 9;
 }
 

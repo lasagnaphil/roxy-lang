@@ -166,6 +166,13 @@ struct PrimitiveType : public Type {
 
     static u16 s_prim_type_sizes[(u32)PrimTypeKind::_size];
 
+    static u16 get_kind_size(PrimTypeKind prim_kind) {
+        return s_prim_type_sizes[(u32)prim_kind];
+    }
+    static u16 get_kind_alignment(PrimTypeKind prim_kind) {
+        return s_prim_type_sizes[(u32)prim_kind];
+    }
+
     PrimitiveType(PrimTypeKind prim_kind) : Type(s_kind), prim_kind(prim_kind) {
         size = alignment = s_prim_type_sizes[(u32)prim_kind];
     }
@@ -176,6 +183,13 @@ struct PrimitiveType : public Type {
 
     bool is_unsigned_integer() const {
         return prim_kind >= PrimTypeKind::U8 && prim_kind <= PrimTypeKind::U64;
+    }
+
+    bool is_integer() const {
+        return prim_kind == PrimTypeKind::I64 || prim_kind == PrimTypeKind::U64 ||
+               prim_kind == PrimTypeKind::I32 || prim_kind == PrimTypeKind::U32 ||
+               prim_kind == PrimTypeKind::I16 || prim_kind == PrimTypeKind::U16 ||
+               prim_kind == PrimTypeKind::I8 || prim_kind == PrimTypeKind::U8;
     }
 
     bool is_floating_point_num() const {

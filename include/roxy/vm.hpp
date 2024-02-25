@@ -6,6 +6,8 @@
 
 #include <string_view>
 
+#define DEBUG_TRACE_EXECUTION
+
 namespace rx {
 
 struct Obj;
@@ -43,30 +45,60 @@ private:
     inline void push_i64(u64 value) { push_u64(value); }
 
     inline void push_u32(u32 value) {
+#ifdef DEBUG_TRACE_EXECUTION
+        u32 stack_idx = m_stack_top - m_stack.data();
+        m_debug_stack_type[stack_idx] = PrimTypeKind::U32;
+#endif
         *m_stack_top = value;
         m_stack_top++;
     }
 
     inline void push_u64(u64 value) {
+#ifdef DEBUG_TRACE_EXECUTION
+        u32 stack_idx = m_stack_top - m_stack.data();
+        m_debug_stack_type[stack_idx] = PrimTypeKind::U64;
+        m_debug_stack_type[stack_idx + 1] = PrimTypeKind::Void;
+#endif
         m_stack_top[0] = value;
         m_stack_top[1] = value >> 32;
         m_stack_top += 2;
     }
 
     inline void push_f32(f32 value) {
+#ifdef DEBUG_TRACE_EXECUTION
+        u32 stack_idx = m_stack_top - m_stack.data();
+        m_debug_stack_type[stack_idx] = PrimTypeKind::F32;
+#endif
         u32 value_u32;
         memcpy(&value_u32, &value, sizeof(u32));
-        push_u32(value_u32);
+        *m_stack_top = value_u32;
+        m_stack_top++;
     }
 
     inline void push_f64(f64 value) {
+#ifdef DEBUG_TRACE_EXECUTION
+        u32 stack_idx = m_stack_top - m_stack.data();
+        m_debug_stack_type[stack_idx] = PrimTypeKind::F64;
+        m_debug_stack_type[stack_idx + 1] = PrimTypeKind::Void;
+#endif
         u64 value_u64;
         memcpy(&value_u64, &value, sizeof(u64));
-        push_u64(value_u64);
+        m_stack_top[0] = value_u64;
+        m_stack_top[1] = value_u64 >> 32;
+        m_stack_top += 2;
     }
 
     inline void push_ref(Obj* ref) {
-        push_u64(reinterpret_cast<intptr_t>(ref));
+#ifdef DEBUG_TRACE_EXECUTION
+        u32 stack_idx = m_stack_top - m_stack.data();
+        m_debug_stack_type[stack_idx] = PrimTypeKind::F64;
+        m_debug_stack_type[stack_idx + 1] = PrimTypeKind::Void;
+#endif
+        u64 value_u64;
+        memcpy(&value_u64, &ref, sizeof(u64));
+        m_stack_top[0] = value_u64;
+        m_stack_top[1] = value_u64 >> 32;
+        m_stack_top += 2;
     }
 
     inline u32 top() {
@@ -148,6 +180,20 @@ private:
         return value;
     }
 
+    inline f32 get_local_f32(u32 offset) {
+        u32 value_u32 = get_local_u32(offset);
+        f32 value;
+        memcpy(&value, &value_u32, sizeof(f32));
+        return value;
+    }
+
+    inline f64 get_local_f64(u32 offset) {
+        u64 value_u64 = get_local_u64(offset);
+        f64 value;
+        memcpy(&value, &value_u64, sizeof(f64));
+        return value;
+    }
+
     inline Obj* get_local_ref(u32 offset) {
         Obj* obj;
         memcpy(&obj, m_cur_frame->stack + offset, sizeof(Obj*));
@@ -180,6 +226,8 @@ private:
 
     Array<u32, MaxStackSize> m_stack;
     u32* m_stack_top = nullptr;
+
+    Array<PrimTypeKind, MaxStackSize> m_debug_stack_type;
 
     CallFrame* m_cur_frame;
 

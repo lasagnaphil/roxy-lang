@@ -126,10 +126,8 @@
     X(dmul)               \
     X(ddiv)               \
     X(lcmp)               \
-    X(fcmpl)               \
-    X(fcmpg)               \
-    X(dcmpl)               \
-    X(dcmpg)               \
+    X(fcmp)               \
+    X(dcmp)               \
     X(band)                  \
     X(bor)                   \
     X(bxor)                  \
@@ -316,12 +314,12 @@ constexpr OpCode opcode_integer_br_cmp(TokenType type, bool shortened, bool oppo
     }
 }
 
-constexpr OpCode opcode_floating_cmp(PrimTypeKind kind, bool greater) {
+constexpr OpCode opcode_floating_cmp(PrimTypeKind kind) {
     if (kind == PrimTypeKind::F32) {
-        return greater ? OpCode::fcmpg : OpCode::fcmpl;
+        return OpCode::fcmp;
     }
     else if (kind == PrimTypeKind::F64) {
-        return greater ? OpCode::dcmpg : OpCode::dcmpl;
+        return OpCode::dcmp;
     }
     else {
         return OpCode::invalid;

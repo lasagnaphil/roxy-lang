@@ -70,9 +70,9 @@ fun Player.add_skill(skill: Skill) {
     skill_map[skill.str] = skill;
 }
 
-fun Player.get_skill_by_name(str: string): weak Skill {
+fun Player.get_skill_by_name(str: string): Skill? {
     // ref Skill -> weak Skill automatic conversion
-    return skill*map.get*or_default(str, null);
+    return skill_map.get_or_default(str, null);
 }
 
 // Custom destructor, need to call this manually (unless default destructor is not defined)
@@ -135,7 +135,7 @@ fun main(args: List<string>) {
             break;
         }
         else {
-            var skill = player.get_skill_by_name(input)
+            var skill = player.get_skill_by_name(input);
             if (skill) {
                 play_turn(player, monster, skill);
             }

@@ -29,7 +29,7 @@ private:
 
 public:
     FnLocalEnv(FnLocalEnv* outer, FunctionStmt& stmt, const u8* source) : m_outer(outer) {
-        init_from_locals( stmt.locals, source);
+        init_from_locals(stmt.locals, source);
     }
 
     FnLocalEnv(ModuleStmt& stmt, const u8* source) : m_outer(nullptr) {
@@ -245,50 +245,69 @@ private:
             COMP_TRY(visit(*left_expr));
             COMP_TRY(visit(*right_expr));
             Type* binary_type = binary_expr->type.get();
-            PrimitiveType* left_prim_type = binary_type->try_cast<PrimitiveType>();
-            PrimitiveType* right_prim_type = binary_type->try_cast<PrimitiveType>();
+            PrimitiveType* left_prim_type = left_expr->type->try_cast<PrimitiveType>();
+            PrimitiveType* right_prim_type = right_expr->type->try_cast<PrimitiveType>();
             if (left_prim_type && right_prim_type && left_prim_type->prim_kind == right_prim_type->prim_kind) {
                 // If lhs / rhs is primitive type
                 if (left_prim_type->is_within_4_bytes_integer()) {
                     jump_loc = emit_jump(opcode_integer_br_cmp(binary_expr->op.type, shortened, opposite), cond_line);
+                }
+                else if (left_prim_type->is_integer()){
+                    emit_byte(OpCode::lcmp, cond_line);
+                    switch (binary_expr->op.type) {
+                    case TokenType::EqualEqual:
+                        jump_loc = emit_jump(OpCode::br_false, cond_line);
+                        break;
+                    case TokenType::BangEqual:
+                        jump_loc = emit_jump(OpCode::br_true, cond_line);
+                        break;
+                    case TokenType::Less:
+                        jump_loc = emit_jump(OpCode::br_ge, cond_line);
+                        break;
+                    case TokenType::LessEqual:
+                        jump_loc = emit_jump(OpCode::br_gt, cond_line);
+                        break;
+                    case TokenType::Greater:
+                        jump_loc = emit_jump(OpCode::br_le, cond_line);
+                        break;
+                    case TokenType::GreaterEqual:
+                        jump_loc = emit_jump(OpCode::br_lt, cond_line);
+                        break;
+                    }
                 }
                 else if (left_prim_type->is_floating_point_num()) {
                     auto prim_kind = left_prim_type->prim_kind;
                     // TODO: test if this code is really right
                     switch (binary_expr->op.type) {
                     case TokenType::EqualEqual:
-                        emit_byte(opcode_floating_cmp(prim_kind, false), cond_line);
+                        emit_byte(opcode_floating_cmp(prim_kind), cond_line);
                         jump_loc = emit_jump(OpCode::br_false, cond_line);
                         break;
                     case TokenType::BangEqual:
-                        emit_byte(opcode_floating_cmp(prim_kind, false), cond_line);
+                        emit_byte(opcode_floating_cmp(prim_kind), cond_line);
                         jump_loc = emit_jump(OpCode::br_true, cond_line);
                         break;
                     case TokenType::Less:
-                        emit_byte(opcode_floating_cmp(prim_kind, false), cond_line);
-                        jump_loc = emit_jump(OpCode::br_gt, cond_line);
+                        emit_byte(opcode_floating_cmp(prim_kind), cond_line);
+                        jump_loc = emit_jump(OpCode::br_ge, cond_line);
                         break;
                     case TokenType::LessEqual:
-                        emit_byte(opcode_floating_cmp(prim_kind, false), cond_line);
-                        jump_loc = emit_jump(OpCode::br_ge, cond_line);
-                        break;
-                    case TokenType::Greater:
-                        emit_byte(opcode_floating_cmp(prim_kind, true), cond_line);
+                        emit_byte(opcode_floating_cmp(prim_kind), cond_line);
                         jump_loc = emit_jump(OpCode::br_gt, cond_line);
                         break;
+                    case TokenType::Greater:
+                        emit_byte(opcode_floating_cmp(prim_kind), cond_line);
+                        jump_loc = emit_jump(OpCode::br_le, cond_line);
+                        break;
                     case TokenType::GreaterEqual:
-                        emit_byte(opcode_floating_cmp(prim_kind, true), cond_line);
-                        jump_loc = emit_jump(OpCode::br_ge, cond_line);
+                        emit_byte(opcode_floating_cmp(prim_kind), cond_line);
+                        jump_loc = emit_jump(OpCode::br_lt, cond_line);
                         break;
                     default:
                         unreachable();
                     }
                 }
-                else {
-                    OpCode sub = opcode_sub(left_prim_type->prim_kind);
-                    emit_byte(sub, cond_line);
-                    jump_loc = emit_jump(OpCode::br_true, cond_line);
-                }
+
                 return ok();
             }
             StructType* left_struct_type = binary_type->try_cast<StructType>();
@@ -371,15 +390,10 @@ private:
                 return unimplemented();
             case TypeKind::Struct: {
                 auto& struct_type = type->cast<StructType>();
-                if (struct_type.size > 16) {
-                    // TODO: heap allocation when struct is >16 bytes
-                    unimplemented();
-                }
-                else {
-                    u32 count_4bytes = (struct_type.size + 3) / 4;
-                    for (u32 i = 0; i < count_4bytes; i++) {
-                        emit_byte(OpCode::iconst_0, cur_line);
-                    }
+                u32 count_4bytes = (struct_type.size + 3) / 4;
+                // TODO: add a new instruction (pushzeros) that does this faster?
+                for (u32 i = 0; i < count_4bytes; i++) {
+                    emit_byte(OpCode::iconst_0, cur_line);
                 }
                 return unimplemented();
             }
@@ -417,6 +431,7 @@ private:
             }
         };
         auto emit_store_u64 = [&](u16 offset, u32 cur_line) {
+            offset >>= 1;
             if (offset < 256) {
                 if (offset < 4) {
                     emit_byte((OpCode)((u32)OpCode::lstore_0 + (u32)offset), cur_line);
@@ -432,6 +447,7 @@ private:
             }
         };
         auto emit_store_ref = [&](u16 offset, u32 cur_line) {
+            offset >>= 1;
             if (offset < 256) {
                 if (offset < 4) {
                     emit_byte((OpCode)((u32)OpCode::rstore_0 + (u32)offset), cur_line);
@@ -477,13 +493,15 @@ private:
             return unimplemented();
         case TypeKind::Struct: {
             auto& struct_type = type->cast<StructType>();
-            if (struct_type.size > 16) {
-                // TODO: heap allocation
+            u32 count_8bytes = (struct_type.size + 7) / 8;
+            u32 count_4bytes = (struct_type.size - 8 * count_8bytes + 3) / 4;
+            for (u32 i = 0; i < count_8bytes; i++) {
+                emit_store_u64(offset + 2 * i, cur_line);
             }
-            else {
-                // TODO: stack allocation
+            for (u32 i = 0; i < count_4bytes; i++) {
+                emit_store_u32(offset + 2 * count_8bytes + i, cur_line);
             }
-            return unimplemented();
+            break;
         }
         case TypeKind::Inferred:
         case TypeKind::Unassigned:
@@ -615,9 +633,14 @@ private:
                 }
                 else if (prim_type->is_string()) {
                     // Call concat() builtin
-                    u16 native_fun_index = m_cur_module->find_native_function_index("concat");
-                    emit_byte(OpCode::callnative, cur_line);
-                    emit_u16(native_fun_index);
+                    if (expr.op.type == TokenType::Plus) {
+                        u16 native_fun_index = m_cur_module->find_native_function_index("concat");
+                        emit_byte(OpCode::callnative, cur_line);
+                        emit_u16(native_fun_index);
+                    }
+                    else {
+                        unreachable();
+                    }
                 }
                 else {
                     unreachable();
@@ -739,7 +762,7 @@ private:
             }
             case PrimTypeKind::U64:
             case PrimTypeKind::I64: {
-                emit_byte(OpCode::iconst, cur_line);
+                emit_byte(OpCode::lconst, cur_line);
                 emit_u64(value.value_u64);
                 break;
             }
