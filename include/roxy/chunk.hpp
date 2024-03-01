@@ -109,8 +109,11 @@ using NativeFunctionRef = void(*)(ArgStack*);
 struct Chunk {
     std::string m_name;
     Vector<u8> m_bytecode;
+    Vector<LocalTableEntry> m_param_table;
     Vector<LocalTableEntry> m_local_table;
     Module* m_outer_module;
+    u32 m_locals_slot_size;
+    u32 m_params_slot_size;
 
     // Pointers used at runtime
     Chunk** m_function_table;
@@ -122,11 +125,40 @@ struct Chunk {
 
     Chunk(std::string name, Module* outer_module);
 
+    void set_locals(Vector<LocalTableEntry>&& locals, u32 param_count) {
+        // Fill params and locals
+        m_param_table.resize(param_count);
+        for (u32 i = 0; i < param_count; i++) {
+            m_param_table[i] = std::move(locals[i]);
+        }
+        m_local_table.resize(locals.size() - param_count);
+        for (u32 i = param_count; i < locals.size(); i++) {
+            m_local_table[i - param_count] = std::move(locals[i]);
+        }
+
+        // Find total size of params and (non-param) locals
+        if (m_param_table.empty()) {
+            m_params_slot_size = 0;
+        }
+        else {
+            auto& last_param = m_param_table[m_param_table.size() - 1];
+            m_params_slot_size = last_param.start + last_param.size;
+        }
+        if (m_local_table.empty()) {
+            m_locals_slot_size = 0;
+        }
+        else {
+            auto& last_local = m_local_table[m_local_table.size() - 1];
+            m_locals_slot_size = last_local.start + last_local.size - m_params_slot_size;
+        }
+    }
+
     void write(u8 byte, u32 line);
 
     void find_ref_local_offsets();
 
-    u32 get_locals_slot_size();
+    u32 get_params_slot_size() { return m_params_slot_size; }
+    u32 get_locals_slot_size() { return m_locals_slot_size; }
 
     u32 get_line(u32 bytecode_offset);
 

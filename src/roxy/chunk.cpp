@@ -28,12 +28,6 @@ void Chunk::find_ref_local_offsets() {
     }
 }
 
-u32 Chunk::get_locals_slot_size() {
-    if (m_local_table.empty()) return 0;
-    auto& last_local = m_local_table[m_local_table.size() - 1];
-    return last_local.start + last_local.size;
-}
-
 u32 Chunk::get_line(u32 bytecode_offset) {
     return m_lines[bytecode_offset];
 }

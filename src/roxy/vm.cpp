@@ -318,12 +318,12 @@ InterpretResult VM::run() {
         case OpCode::call: {
             u16 offset = read_u16();
             auto fn_chunk = m_cur_frame->chunk->m_function_table[offset];
-            u32 locals_slot_size = fn_chunk->get_locals_slot_size();
+            u32 params_slot_size = fn_chunk->get_params_slot_size();
 
             m_cur_frame = &m_frames[m_frame_count++];
             m_cur_frame->chunk = fn_chunk;
             m_cur_frame->ip = fn_chunk->m_bytecode.data();
-            m_cur_frame->stack = m_stack_top - locals_slot_size;
+            m_cur_frame->stack = m_stack_top - params_slot_size;
             break;
         }
         case OpCode::callnative: {

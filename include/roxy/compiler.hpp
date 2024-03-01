@@ -26,38 +26,43 @@ private:
     FnLocalEnv* m_outer;
 
     Vector<LocalTableEntry> m_local_table;
+    u32 m_param_count;
 
 public:
     FnLocalEnv(FnLocalEnv* outer, FunctionStmt& stmt, const u8* source) : m_outer(outer) {
-        init_from_locals(stmt.locals, source);
+        init_from_locals(stmt.locals, stmt.fun_decl.params.size(), source);
     }
 
     FnLocalEnv(ModuleStmt& stmt, const u8* source) : m_outer(nullptr) {
-        init_from_locals(stmt.locals, source);
+        init_from_locals(stmt.locals, 0, source);
     }
 
     FnLocalEnv* get_outer_env() { return m_outer; }
 
-    u16 get_local_offset(u32 local_index) const { return m_local_table[local_index].start; }
+    u16 get_local_offset(u32 local_index) const {
+        return m_local_table[local_index].start;
+    }
 
     void move_locals_to_chunk(Chunk* chunk) {
-        chunk->m_local_table = std::move(m_local_table);
+        chunk->set_locals(std::move(m_local_table), m_param_count);
     }
 
 private:
-    void init_from_locals(RelSpan<RelPtr<AstVarDecl>>& locals, const u8* source) {
+    void init_from_locals(RelSpan<RelPtr<AstVarDecl>>& locals, u32 param_count, const u8* source) {
         u32 offset = 0;
-        m_local_table.reserve(locals.size());
-        for (auto& local : locals) {
-            auto type = local->type.get();
+        m_local_table.resize(locals.size());
+        for (u32 i = 0; i < locals.size(); i++) {
+            auto type = locals[i]->type.get();
             u32 aligned_offset = (offset + type->alignment - 1) & ~(type->alignment - 1);
-            auto name = local->name.str(source);
-            m_local_table.push_back({
-                (u16)((offset + 3) / 4), (u16)((type->size + 3) / 4),
-                TypeData::from_type(type, source), std::string(name)
-            });
+            auto name = locals[i]->name.str(source);
+            m_local_table[i] = {
+                    (u16)((offset + 3) / 4), (u16)((type->size + 3) / 4),
+                    TypeData::from_type(type, source), std::string(name)
+            };
             offset = aligned_offset + type->size;
         }
+
+        m_param_count = param_count;
     }
 };
 
