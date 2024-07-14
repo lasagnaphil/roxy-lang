@@ -105,6 +105,12 @@ private:
         return *m_stack_top;
     }
 
+    inline u64 top_u64() {
+        u64 value = (u64)m_stack_top[-2];
+        value |= (u64)m_stack_top[-1] << 32;
+        return value;
+    }
+
     inline i32 pop_i32() { return (i32)pop_u32(); }
     inline i64 pop_i64() { return (i64)pop_u64(); }
 

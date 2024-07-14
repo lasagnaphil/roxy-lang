@@ -1,0 +1,27 @@
+struct A {
+    x: double
+    y: double
+    z: double
+}
+
+fun pass_by_value(a: A, b: double) {
+    a.y = a.y * 2.0;
+    b = b * 2.0;
+}
+
+// fun pass_by_ref(a: ref A, b: double) { // The variable is now a pointer to the stack memory in f1()
+//     a.y *= 2;
+//     b *= 2;
+// }
+
+fun f() {
+    var a: A; // This variable occupies the stack of f1()
+    var b: double = 1.0;
+    a.y = 3.0;
+    a.y = a.y * 2.0;
+    b = b * 2.0;
+    // pass_by_value(a, b);
+    // pass_by_ref(ref a, b);
+}
+
+f();

@@ -3,6 +3,22 @@
 #include "roxy/core/types.hpp"
 #include "roxy/type.hpp"
 
+/*
+ *
+ * TODO: We should probably seperate between ILCode / VMCode for a better VM architecture.
+ *
+ * - ILCode: IL that contains type information needed for debugging
+ * - VMCode: does not contain any type information, "optimized" bytecode for VM execution
+ *
+ * ex) for load operations
+ * - ILCode: iload, lload, fload, dload, rload
+ * - OpCode: iload, iload_s, iload_0, iload_1, iload_2, iload_3, lload, lload_s, lload_0, lload_1, lload_2, lload_3
+ *
+ * We can have a rudimentary optimization pass that converts ILCode into VMCode.
+ * - Can also do things like dead code elimination, constant propagation, common expression elimination, etc...
+ *
+ */
+
 // IL Opcode list for the Roxy language.
 
 #define OPCODE_LIST(X)      \
@@ -60,8 +76,10 @@
     X(lconst)                \
     X(fconst)                \
     X(dconst)                \
-    X(dup)                  \
-    X(pop)                  \
+    X(idup)                  \
+    X(ipop)                  \
+    X(ldup)                  \
+    X(lpop)                  \
     X(call)                 \
     X(callnative)                 \
     X(ret)                  \

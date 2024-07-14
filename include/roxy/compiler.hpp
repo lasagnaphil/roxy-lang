@@ -353,58 +353,45 @@ private:
     }
 
     CompileResult push_zero_initialized_value(Type* type, u32 cur_line) {
-        switch (type->kind) {
-            case TypeKind::Primitive: {
-                auto& prim_type = type->cast<PrimitiveType>();
-                switch (prim_type.prim_kind) {
-                    case PrimTypeKind::Void: return unreachable();
-                    case PrimTypeKind::Bool:
-                    case PrimTypeKind::U8:
-                    case PrimTypeKind::I8:
-                    case PrimTypeKind::U16:
-                    case PrimTypeKind::I16:
-                    case PrimTypeKind::U32:
-                    case PrimTypeKind::I32: {
-                        emit_byte(OpCode::iconst_0, cur_line);
-                        break;
-                    }
-                    case PrimTypeKind::U64:
-                    case PrimTypeKind::I64: {
-                        emit_byte(OpCode::lconst, cur_line);
-                        emit_u64(0);
-                        break;
-                    }
-                    case PrimTypeKind::F32: {
-                        emit_byte(OpCode::fconst, cur_line);
-                        emit_u32(0);
-                        break;
-                    }
-                    case PrimTypeKind::F64: {
-                        emit_byte(OpCode::dconst, cur_line);
-                        emit_u64(0);
-                        break;
-                    }
-                    case PrimTypeKind::String: {
-                        emit_byte(OpCode::iconst_nil, cur_line);
-                        break;
-                    }
-                }
-                return ok();
+        if (auto prim_type = type->try_cast<PrimitiveType>()) {
+            if (prim_type->is_within_4_bytes_integer()) {
+                emit_byte(OpCode::iconst_0, cur_line);
             }
-            case TypeKind::Function:
-                return unimplemented();
-            case TypeKind::Struct: {
-                auto& struct_type = type->cast<StructType>();
-                u32 count_4bytes = (struct_type.size + 3) / 4;
-                // TODO: add a new instruction (pushzeros) that does this faster?
-                for (u32 i = 0; i < count_4bytes; i++) {
-                    emit_byte(OpCode::iconst_0, cur_line);
-                }
-                return unimplemented();
+            else if (prim_type->is_integer()) {
+                emit_byte(OpCode::lconst, cur_line);
+                emit_u64(0);
             }
-            case TypeKind::Inferred:
-            case TypeKind::Unassigned:
-                return error("Cannot compile expression with unassigned type!");
+            else if (prim_type->prim_kind == PrimTypeKind::F32) {
+                emit_byte(OpCode::fconst, cur_line);
+                emit_u32(0);
+            }
+            else if (prim_type->prim_kind == PrimTypeKind::F64) {
+                emit_byte(OpCode::dconst, cur_line);
+                emit_u64(0);
+            }
+            else if (prim_type->prim_kind == PrimTypeKind::String) {
+                emit_byte(OpCode::iconst_nil, cur_line);
+            }
+            return ok();
+        }
+        else if (auto struct_type = type->try_cast<StructType>()) {
+            // TODO: need proper struct zero initializer
+            u32 count_8bytes = (struct_type->size + 7) / 8;
+            u32 count_4bytes = (struct_type->size - 8 * count_8bytes + 3) / 4;
+            for (u32 i = 0; i < count_8bytes; i++) {
+                emit_byte(OpCode::lconst, cur_line);
+                emit_u64(0);
+            }
+            for (u32 i = 0; i < count_4bytes; i++) {
+                emit_byte(OpCode::iconst_0, cur_line);
+            }
+            return ok();
+        }
+        else if (auto fun_type = type->try_cast<FunctionType>()) {
+            return unimplemented();
+        }
+        else {
+            return error("Cannot compile expression with unassigned type!");
         }
     }
 
@@ -420,96 +407,31 @@ private:
         }
         u16 offset = m_cur_fn_env->get_local_offset(stmt.var.local_index);
 
-        auto emit_store_u32 = [&](u16 offset, u32 cur_line) {
-            if (offset < 256) {
-                if (offset < 4) {
-                    emit_byte((OpCode)((u32)OpCode::istore_0 + (u32)offset), cur_line);
-                }
-                else {
-                    emit_byte(OpCode::istore_s, cur_line);
-                    emit_byte((u8)offset);
-                }
-            }
-            else {
-                emit_byte(OpCode::istore, cur_line);
-                emit_u16(offset);
-            }
-        };
-        auto emit_store_u64 = [&](u16 offset, u32 cur_line) {
-            offset >>= 1;
-            if (offset < 256) {
-                if (offset < 4) {
-                    emit_byte((OpCode)((u32)OpCode::lstore_0 + (u32)offset), cur_line);
-                }
-                else {
-                    emit_byte(OpCode::lstore_s, cur_line);
-                    emit_byte((u8)offset);
-                }
-            }
-            else {
-                emit_byte(OpCode::lstore, cur_line);
-                emit_u16(offset);
-            }
-        };
-        auto emit_store_ref = [&](u16 offset, u32 cur_line) {
-            offset >>= 1;
-            if (offset < 256) {
-                if (offset < 4) {
-                    emit_byte((OpCode)((u32)OpCode::rstore_0 + (u32)offset), cur_line);
-                }
-                else {
-                    emit_byte(OpCode::rstore_s, cur_line);
-                    emit_byte((u8)offset);
-                }
-            }
-            else {
-                emit_byte(OpCode::rstore, cur_line);
-                emit_u16(offset);
-            }
-        };
         auto type = stmt.var.type.get();
-        switch (type->kind) {
-        case TypeKind::Primitive: {
-            auto& prim_type = type->cast<PrimitiveType>();
-            switch (prim_type.prim_kind) {
-            case PrimTypeKind::U8:
-            case PrimTypeKind::U16:
-            case PrimTypeKind::U32:
-            case PrimTypeKind::I8:
-            case PrimTypeKind::I16:
-            case PrimTypeKind::I32:
-            case PrimTypeKind::F32:
+        if (auto prim_type = type->try_cast<PrimitiveType>()) {
+            if (prim_type->is_within_4_bytes()) {
                 emit_store_u32(offset, cur_line);
-                break;
-            case PrimTypeKind::U64:
-            case PrimTypeKind::I64:
-            case PrimTypeKind::F64:
-                emit_store_u64(offset, cur_line);
-                break;
-            case PrimTypeKind::String:
-                emit_store_ref(offset, cur_line);
-                break;
-            default:
-                unimplemented();
             }
-            break;
+            else {
+                if (prim_type->is_string()) {
+                    emit_store_ref(offset, cur_line);
+                }
+                else {
+                    emit_store_u64(offset, cur_line);
+                }
+            }
         }
-        case TypeKind::Function:
-            return unimplemented();
-        case TypeKind::Struct: {
-            auto& struct_type = type->cast<StructType>();
-            u32 count_8bytes = (struct_type.size + 7) / 8;
-            u32 count_4bytes = (struct_type.size - 8 * count_8bytes + 3) / 4;
+        else if (auto struct_type = type->try_cast<StructType>()) {
+            u32 count_8bytes = (struct_type->size + 7) / 8;
+            u32 count_4bytes = (struct_type->size - 8 * count_8bytes + 3) / 4;
             for (u32 i = 0; i < count_8bytes; i++) {
                 emit_store_u64(offset + 2 * i, cur_line);
             }
             for (u32 i = 0; i < count_4bytes; i++) {
                 emit_store_u32(offset + 2 * count_8bytes + i, cur_line);
             }
-            break;
         }
-        case TypeKind::Inferred:
-        case TypeKind::Unassigned:
+        else {
             return error("Cannot compile expression with unassigned type!");
         }
 
@@ -572,50 +494,22 @@ private:
         u32 cur_line = m_scanner->get_line(expr.name.get_source_loc());
         AstVarDecl* var_decl = expr.origin.get();
         u16 offset = m_cur_fn_env->get_local_offset(var_decl->local_index);
-        auto& prim_type = expr.type->cast<PrimitiveType>();
-        switch (prim_type.prim_kind) {
-        case PrimTypeKind::U8:
-        case PrimTypeKind::U16:
-        case PrimTypeKind::U32:
-        case PrimTypeKind::I8:
-        case PrimTypeKind::I16:
-        case PrimTypeKind::I32:
-        case PrimTypeKind::F32: {
-            if (offset <= UINT8_MAX) {
-                if (offset < 4) {
-                    emit_byte((OpCode)((u32)OpCode::istore_0 + (u32)offset), cur_line);
-                }
-                else {
-                    emit_byte(OpCode::istore_s, cur_line);
-                    emit_byte(offset);
-                }
+        auto expr_type = expr.type.get();
+        if (auto prim_type = expr_type->try_cast<PrimitiveType>()) {
+            if (prim_type->is_within_4_bytes()) {
+                emit_store_u32(offset, cur_line);
             }
             else {
-                emit_byte(OpCode::istore, cur_line);
-                emit_u16(offset);
-            }
-            break;
-        }
-        case PrimTypeKind::U64:
-        case PrimTypeKind::I64:
-        case PrimTypeKind::F64: {
-            if (offset <= UINT8_MAX) {
-                if (offset < 4) {
-                    emit_byte((OpCode)((u32)OpCode::lstore_0 + (u32)offset), cur_line);
+                if (prim_type->is_string()) {
+                    emit_store_ref(offset, cur_line);
                 }
                 else {
-                    emit_byte(OpCode::lstore_s, cur_line);
-                    emit_byte(offset);
+                    emit_store_u64(offset, cur_line);
                 }
             }
-            else {
-                emit_byte(OpCode::lstore, cur_line);
-                emit_u16((u16)offset);
-            }
-            break;
         }
-        default:
-            unimplemented();
+        else {
+            return unimplemented();
         }
 
         return ok();
@@ -656,7 +550,7 @@ private:
                 // logical and
                 case TokenType::AmpAmp: {
                     u32 end_jump = emit_jump(OpCode::br_false, cur_line);
-                    emit_byte(OpCode::pop, cur_line);
+                    emit_byte(OpCode::ipop, cur_line);
 
                     COMP_TRY(visit(*right_expr));
                     patch_jump(end_jump);
@@ -668,7 +562,7 @@ private:
                     u32 end_jump = emit_jump(OpCode::jmp, cur_line);
 
                     patch_jump(else_jump);
-                    emit_byte(OpCode::pop, cur_line);
+                    emit_byte(OpCode::ipop, cur_line);
 
                     COMP_TRY(visit(*right_expr));
                     patch_jump(end_jump);
@@ -846,76 +740,36 @@ private:
         if (AstVarDecl* var_decl = expr.var_origin.get()) {
             // Loading variables from local table
             u32 offset = m_cur_fn_env->get_local_offset(var_decl->local_index);
-            auto prim_kind = var_decl->type->cast<PrimitiveType>().prim_kind;
-            switch (prim_kind) {
-                case PrimTypeKind::U8:
-                case PrimTypeKind::U16:
-                case PrimTypeKind::U32:
-                case PrimTypeKind::I8:
-                case PrimTypeKind::I16:
-                case PrimTypeKind::I32:
-                case PrimTypeKind::F32: {
-                    if (offset <= UINT8_MAX) {
-                        if (offset < 4) {
-                            emit_byte((OpCode)((u32)OpCode::iload_0 + offset), cur_line);
-                        }
-                        else {
-                            emit_byte(OpCode::iload_s, cur_line);
-                            emit_byte(offset);
-                        }
+            auto var_type = var_decl->type.get();
+            if (auto prim_type = var_type->try_cast<PrimitiveType>()) {
+                if (prim_type->is_within_4_bytes()) {
+                    emit_load_u32(offset, cur_line);
+                }
+                else {
+                    if (prim_type->is_string()) {
+                        emit_load_ref(offset, cur_line);
                     }
                     else {
-                        emit_byte(OpCode::iload, cur_line);
-                        emit_u16((u16)offset);
+                        emit_load_u64(offset, cur_line);
                     }
-                    break;
                 }
-                case PrimTypeKind::U64:
-                case PrimTypeKind::I64:
-                case PrimTypeKind::F64: {
-                    offset >>= 1;
-                    if (offset <= UINT8_MAX) {
-                        if (offset < 4) {
-                            emit_byte((OpCode)((u32)OpCode::lload_0 + offset), cur_line);
-                        }
-                        else {
-                            emit_byte(OpCode::lload_s, cur_line);
-                            emit_byte(offset);
-                        }
-                    }
-                    else {
-                        emit_byte(OpCode::lload, cur_line);
-                        emit_u16((u16)offset);
-                    }
-                    break;
-                }
-                case PrimTypeKind::String: {
-                    offset >>= 1;
-                    if (offset <= UINT8_MAX) {
-                        if (offset < 4) {
-                            emit_byte((OpCode)((u32)OpCode::rload_0 + offset), cur_line);
-                        }
-                        else {
-                            emit_byte(OpCode::rload_s, cur_line);
-                            emit_byte(offset);
-                        }
-                    }
-                    else {
-                        emit_byte(OpCode::rload, cur_line);
-                        emit_u16((u16)offset);
-                    }
-                    break;
-                }
-                default:
-                    unimplemented();
+            }
+            else if (auto struct_type = var_type->try_cast<StructType>()) {
+                return unimplemented();
+            }
+            else if (auto fun_type = var_type->try_cast<FunctionType>()) {
+                return unimplemented();
+            }
+            else {
+                return unreachable();
             }
         }
         else if (AstFunDecl* fun_decl = expr.fun_origin.get()) {
             // TODO: Loading function pointers from local table
-            unimplemented();
+            return unimplemented();
         }
         else {
-            unreachable();
+            return unreachable();
         }
 
         return ok();
@@ -955,9 +809,126 @@ private:
         return unimplemented();
     }
 
-    CompileResult visit_impl(GetExpr& expr) { return unimplemented(); }
+    CompileResult visit_impl(GetExpr& expr) {
+        u32 cur_line = m_scanner->get_line(expr.get_source_loc());
 
-    CompileResult visit_impl(SetExpr& expr) { return unimplemented(); }
+        auto obj_expr = expr.object.get();
+        if (auto obj_var_expr = obj_expr->try_cast<VariableExpr>()) {
+            auto var_origin = obj_var_expr->var_origin.get();
+            u16 parent_offset = m_cur_fn_env->get_local_offset(var_origin->local_index);
+
+            auto field_name = expr.name.str(m_scanner->source());
+            auto parent_obj_type = expr.object->type.get();
+            if (auto parent_struct_type = parent_obj_type->try_cast<StructType>()) {
+                u32 decl_idx;
+                for (decl_idx = 0; decl_idx < parent_struct_type->declarations.size(); decl_idx++) {
+                    auto& decl = parent_struct_type->declarations[decl_idx];
+                    auto decl_name = decl.name.str(m_scanner->source());
+                    if (field_name == decl_name) {
+                        break;
+                    }
+                }
+                if (decl_idx == parent_struct_type->declarations.size()) {
+                    return error("Cannot find field in struct.");
+                }
+
+                auto& found_decl = parent_struct_type->declarations[decl_idx];
+                auto field_type = found_decl.type.get();
+                if (auto field_prim_type = field_type->try_cast<PrimitiveType>()) {
+                    if (field_prim_type->is_4_bytes()) {
+                        emit_load_u32(parent_offset + found_decl.offset_bytes_from_parent / 4, cur_line);
+                    }
+                    else if (field_prim_type->is_8_bytes()) {
+                        if (field_prim_type->is_string()) {
+                            emit_load_ref(parent_offset + found_decl.offset_bytes_from_parent / 4, cur_line);
+                        }
+                        else {
+                            emit_load_u64(parent_offset + found_decl.offset_bytes_from_parent / 4, cur_line);
+                        }
+                    }
+                    // Else... we need to do some finicky bit manipulations that I haven't implemented yet
+                    else {
+                        return unimplemented();
+                    }
+                }
+                else if (auto field_struct_type = field_type->try_cast<StructType>()) {
+                    return unimplemented();
+                }
+                else if (auto field_fun_type = field_type->try_cast<FunctionType>()) {
+                    return unimplemented();
+                }
+                return ok();
+            }
+            else {
+                return unreachable();
+            }
+        }
+        else {
+            return unimplemented();
+        }
+    }
+
+    CompileResult visit_impl(SetExpr& expr) {
+        u32 cur_line = m_scanner->get_line(expr.get_source_loc());
+
+        auto obj_expr = expr.object.get();
+        if (auto obj_var_expr = obj_expr->try_cast<VariableExpr>()) {
+            auto var_origin = obj_var_expr->var_origin.get();
+            u16 parent_offset = m_cur_fn_env->get_local_offset(var_origin->local_index);
+
+            COMP_TRY(visit(*expr.value));
+
+            auto field_name = expr.name.str(m_scanner->source());
+            auto parent_obj_type = expr.object->type.get();
+            if (auto parent_struct_type = parent_obj_type->try_cast<StructType>()) {
+                u32 decl_idx;
+                for (decl_idx = 0; decl_idx < parent_struct_type->declarations.size(); decl_idx++) {
+                    auto& decl = parent_struct_type->declarations[decl_idx];
+                    auto decl_name = decl.name.str(m_scanner->source());
+                    if (field_name == decl_name) {
+                        break;
+                    }
+                }
+                if (decl_idx == parent_struct_type->declarations.size()) {
+                    return error("Cannot find field in struct.");
+                }
+
+                const auto& found_decl = parent_struct_type->declarations[decl_idx];
+                auto field_type = found_decl.type.get();
+                if (auto field_prim_type = field_type->try_cast<PrimitiveType>()) {
+                    // If offset is aligned to 4 bytes, we can use istore
+                    if (field_prim_type->is_4_bytes()) {
+                        emit_store_u32(parent_offset + found_decl.offset_bytes_from_parent / 4, cur_line);
+                    }
+                    else if (field_prim_type->is_8_bytes()) {
+                        if (field_prim_type->is_string()) {
+                            emit_store_ref(parent_offset + found_decl.offset_bytes_from_parent / 4, cur_line);
+                        }
+                        else {
+                            emit_store_u64(parent_offset + found_decl.offset_bytes_from_parent / 4, cur_line);
+                        }
+                    }
+                    else {
+                        // Else... we need to do some finicky bit manipulations that I haven't implemented yet
+                        return unimplemented();
+                    }
+                }
+                else if (auto field_struct_type = field_type->try_cast<StructType>()) {
+                    return unimplemented();
+                }
+                else if (auto field_fun_type = field_type->try_cast<FunctionType>()) {
+                    return unimplemented();
+                }
+                return ok();
+            }
+            else {
+                return unimplemented();
+            }
+        }
+        else {
+            unimplemented();
+        }
+    }
 
     static inline CompileResult ok() { return {CompileResultType::Ok, ""}; }
 
@@ -1029,6 +1000,106 @@ private:
 
         u32 offset = m_cur_chunk->m_bytecode.size() - loop_start + 4;
         emit_u32(offset);
+    }
+
+    void emit_load_u32(u32 offset, u32 line) {
+        if (offset <= UINT8_MAX) {
+            if (offset < 4) {
+                emit_byte((OpCode)((u32)OpCode::iload_0 + offset), line);
+            }
+            else {
+                emit_byte(OpCode::iload_s, line);
+                emit_byte(offset);
+            }
+        }
+        else {
+            emit_byte(OpCode::iload, line);
+            emit_u16((u16)offset);
+        }
+    }
+
+    void emit_load_u64(u32 offset, u32 line) {
+        offset >>= 1;
+        if (offset <= UINT8_MAX) {
+            if (offset < 4) {
+                emit_byte((OpCode)((u32)OpCode::lload_0 + offset), line);
+            }
+            else {
+                emit_byte(OpCode::lload_s, line);
+                emit_byte(offset);
+            }
+        }
+        else {
+            emit_byte(OpCode::lload, line);
+            emit_u16((u16)offset);
+        }
+    }
+
+    void emit_load_ref(u32 offset, u32 line) {
+        offset >>= 1;
+        if (offset <= UINT8_MAX) {
+            if (offset < 4) {
+                emit_byte((OpCode)((u32)OpCode::rload_0 + offset), line);
+            }
+            else {
+                emit_byte(OpCode::rload_s, line);
+                emit_byte(offset);
+            }
+        }
+        else {
+            emit_byte(OpCode::rload, line);
+            emit_u16((u16)offset);
+        }
+    }
+
+    void emit_store_u32(u16 offset, u32 cur_line) {
+        if (offset < 256) {
+            if (offset < 4) {
+                emit_byte((OpCode)((u32)OpCode::istore_0 + (u32)offset), cur_line);
+            }
+            else {
+                emit_byte(OpCode::istore_s, cur_line);
+                emit_byte((u8)offset);
+            }
+        }
+        else {
+            emit_byte(OpCode::istore, cur_line);
+            emit_u16(offset);
+        }
+    }
+
+    void emit_store_u64(u16 offset, u32 cur_line) {
+        offset >>= 1;
+        if (offset < 256) {
+            if (offset < 4) {
+                emit_byte((OpCode)((u32)OpCode::lstore_0 + (u32)offset), cur_line);
+            }
+            else {
+                emit_byte(OpCode::lstore_s, cur_line);
+                emit_byte((u8)offset);
+            }
+        }
+        else {
+            emit_byte(OpCode::lstore, cur_line);
+            emit_u16(offset);
+        }
+    }
+
+    void emit_store_ref(u16 offset, u32 cur_line) {
+        offset >>= 1;
+        if (offset < 256) {
+            if (offset < 4) {
+                emit_byte((OpCode)((u32)OpCode::rstore_0 + (u32)offset), cur_line);
+            }
+            else {
+                emit_byte(OpCode::rstore_s, cur_line);
+                emit_byte((u8)offset);
+            }
+        }
+        else {
+            emit_byte(OpCode::rstore, cur_line);
+            emit_u16(offset);
+        }
     }
 };
 }

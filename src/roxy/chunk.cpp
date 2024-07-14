@@ -96,8 +96,10 @@ u32 Chunk::disassemble_instruction(u32 offset) {
     case OpCode::iconst_6:
     case OpCode::iconst_7:
     case OpCode::iconst_8:
-    case OpCode::dup:
-    case OpCode::pop:
+    case OpCode::idup:
+    case OpCode::ipop:
+    case OpCode::ldup:
+    case OpCode::lpop:
     case OpCode::ret:
     case OpCode::iret:
     case OpCode::lret:

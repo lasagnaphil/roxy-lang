@@ -401,6 +401,12 @@ private:
                     }
                 }
                 break;
+            case 'd':
+                if (name.size() == 6) {
+                    if (name.substr(1, 5) == "ouble") {
+                        prim_kind = PrimTypeKind::F64; return true;
+                    }
+                }
         }
         if (include_void) {
             if (name == "void") {

@@ -311,9 +311,13 @@ InterpretResult VM::run() {
             break;
         case OpCode::dconst: push_f64(read_f64());
             break;
-        case OpCode::dup: push_u32(top());
+        case OpCode::idup: push_u32(top());
             break;
-        case OpCode::pop: pop_u32();
+        case OpCode::ipop: pop_u32();
+            break;
+        case OpCode::ldup: push_u64(top_u64());
+            break;
+        case OpCode::lpop: pop_u64();
             break;
         case OpCode::call: {
             u16 offset = read_u16();

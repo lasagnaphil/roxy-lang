@@ -17,6 +17,7 @@ struct A {
 fun f() {
     var a = A(); // This variable occupies the stack of f1()
     var b: double = 1.0;
+    a.y = 3;
     a.y *= 2;
     b *= 2;
     f2(a, b);
@@ -34,16 +35,20 @@ fun pass_by_ref(a: ref A, b: double) { // The variable is now a pointer to the s
 
 ```
 f():
-    iconst_0        // Init var a
-    iconst_0
-    dconst      1.0
-    iconst_0
-    iconst_0
-    dconst      1.0 // Init var b
-    lload_0         
-    dconst      2.0
-    dmul
+    lconst_0        // Init var a
+    lconst_0
+    lconst_0
+    lstore_0
     lstore_1
+    lstore_2
+    dconst      1.0
+    lstore_3        // Init var b
+    dconst      3.0
+    lstore_1        // a.y = 3
+    lload_1         
+    dconst      2.0
+    dmul            
+    lstore_1        // a.y *= 2;
     lload_0         // Value of a
     lload_1
     lload_2

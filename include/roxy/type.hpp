@@ -202,6 +202,15 @@ struct PrimitiveType : public Type {
         return prim_kind == PrimTypeKind::F32 || prim_kind == PrimTypeKind::F64;
     }
 
+    bool is_4_bytes() const {
+        return prim_kind == PrimTypeKind::I32 || prim_kind == PrimTypeKind::U32 || prim_kind == PrimTypeKind::F32;
+    }
+
+    bool is_8_bytes() const {
+        return prim_kind == PrimTypeKind::I64 || prim_kind == PrimTypeKind::U64 ||
+            prim_kind == PrimTypeKind::F64 || prim_kind == PrimTypeKind::String;
+    }
+
     bool is_within_4_bytes() const {
         return prim_kind == PrimTypeKind::Bool ||
             prim_kind == PrimTypeKind::I32 || prim_kind == PrimTypeKind::U32 || prim_kind == PrimTypeKind::F32 ||
@@ -226,15 +235,15 @@ struct StructType : public Type {
     StructType(Token name, Span<AstVarDecl> declarations) : Type(s_kind), name(name), declarations(declarations) {
         size = 0;
         alignment = 0;
-
     }
 
     void calc_size_and_alignment() {
-        for (const auto& decl : declarations) {
+        for (auto& decl : declarations) {
             auto field_type = decl.type.get();
             u32 aligned_size = (size + field_type->alignment - 1) & ~(field_type->alignment - 1);
             size = aligned_size + field_type->size;
             alignment = field_type->alignment > alignment ? field_type->alignment : alignment;
+            decl.offset_bytes_from_parent = aligned_size;
         }
     }
 };
