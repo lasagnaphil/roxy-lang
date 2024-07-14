@@ -281,7 +281,7 @@ private:
 
     void revert_parent_env() {}
 
-    SemaResult report_error(const SemaResult& res) {
+    SemaResult report_error(SemaResult res) {
         m_errors.push_back(res);
         return res;
     }
@@ -307,7 +307,7 @@ public:
             }
             else if (auto fun_stmt = inner_stmt->try_cast<FunctionStmt>()) {
                 if (fun_stmt->is_public) {
-                    auto res = visit_impl(*fun_stmt, true);
+                    auto res = typecheck_fun_decl(*fun_stmt);
                     if (!res.is_ok()) errors.push_back(res);
                     fun_stmt->fun_decl.module = module_name;
                     exports.push_back(&fun_stmt->fun_decl);
@@ -323,20 +323,22 @@ public:
         return errors;
     }
 
-    Vector<SemaResult> typecheck(ModuleStmt* stmt, ImportMap& import_map) {
-        SemaEnv module_env(m_cur_env, stmt);
+    Vector<SemaResult> typecheck(ModuleStmt* module_stmt, ImportMap& import_map) {
+        SemaEnv module_env(m_cur_env, module_stmt);
         m_cur_env = &module_env;
         m_import_map = &import_map;
 
+        // Add imported functions to the environment
         for (auto [name, import_fun_stmt] : import_map) {
             m_cur_env->set_function(name, import_fun_stmt);
         }
 
-        visit_impl(*stmt);
+        // Visit the AST for semantic analysis
+        visit_impl(*module_stmt);
 
         m_cur_env = nullptr;
         m_import_map = nullptr;
-        stmt->set_locals(m_allocator->alloc_vector<RelPtr<AstVarDecl>, AstVarDecl*>(module_env.get_locals()));
+        module_stmt->set_locals(m_allocator->alloc_vector<RelPtr<AstVarDecl>, AstVarDecl*>(module_env.get_locals()));
 
         auto errors = m_errors;
         m_errors.clear();
@@ -349,6 +351,20 @@ public:
     SemaResult visit_impl(BlockStmt& stmt) {
         SemaEnv block_env(m_cur_env);
         m_cur_env = &block_env;
+
+        // For the first pass, scan all function definitions and add them to the env first
+        for (RelPtr<Stmt>& inner_stmt : stmt.statements) {
+            if (auto fun_stmt = inner_stmt->try_cast<FunctionStmt>()) {
+                if (fun_stmt->is_native) {
+                    // Native function declarations should be only at the module level!
+                    return error_invalid_native_fun_declaration(&fun_stmt->fun_decl);
+                }
+                auto fun_name = fun_stmt->fun_decl.name.str(m_source);
+                m_cur_env->set_function(fun_name, &fun_stmt->fun_decl);
+            }
+        }
+
+        // Inside the second pass, do a proper sema visit
         for (RelPtr<Stmt>& inner_stmt : stmt.statements) {
             // Do not return on error result, since we want to scan all statements inside the block.
             auto _ = visit(*inner_stmt.get());
@@ -383,8 +399,6 @@ public:
         auto struct_type = m_allocator->alloc<StructType>(stmt.name, fields);
 
         // Calculate size and alignment of newly made struct type
-        u16 size = 0;
-        u16 alignment = 0;
         for (auto& field : fields) {
             auto field_type = field.type.get();
             auto unassigned_type = field_type->try_cast<UnassignedType>();
@@ -399,23 +413,17 @@ public:
                     continue;
                 }
             }
-            u32 aligned_size = (size + field_type->alignment - 1) & ~(field_type->alignment - 1);
-            size = aligned_size + field_type->size;
-            alignment = field_type->alignment > alignment ? field_type->alignment : alignment;
         }
-        struct_type->size = size;
-        struct_type->alignment = alignment;
+        struct_type->calc_size_and_alignment();
 
         stmt.type = struct_type;
-
         m_cur_env->set_struct(stmt.name.str(m_source), &stmt);
 
         return ok();
     }
 
-    SemaResult visit_impl(FunctionStmt& stmt, bool dependency_scan_mode = false) {
-        auto fn_name = stmt.fun_decl.name.str(m_source);
-
+    // Helper function that only registers the function stmt declaration, but doesn't analyze the inner contents.
+    SemaResult typecheck_fun_decl(FunctionStmt& stmt) {
         // Find return type
         if (auto unassigned_type = stmt.fun_decl.ret_type->try_cast<UnassignedType>()) {
             auto param_type_name = unassigned_type->name.str(m_source);
@@ -426,16 +434,6 @@ public:
             else {
                 auto _ = error_cannot_find_type(unassigned_type);
             }
-        }
-
-        // If function declaration is not at the module scope, then it isn't pre-added to the module,
-        // so we need to add these manually.
-        if (!m_cur_env->is_module_scope()) {
-            if (stmt.is_native) {
-                // Native function declarations should be only at the module level!
-                return error_invalid_native_fun_declaration(&stmt.fun_decl);
-            }
-            m_cur_env->set_function(fn_name, &stmt.fun_decl);
         }
 
         Vector<Type*> param_types;
@@ -451,17 +449,22 @@ public:
             }
             param_types.push_back(param.type.get());
         }
+
         stmt.fun_decl.type = m_allocator->alloc<FunctionType>(
                 m_allocator->alloc_vector<RelPtr<Type>, Type*>(std::move(param_types)),
                 stmt.fun_decl.ret_type.get());
 
-        // For native functions there is no body to typecheck.
-        if (stmt.is_native) {
-            return ok();
+        return ok();
+    }
+
+    SemaResult visit_impl(FunctionStmt& stmt) {
+        // Type-check the function, if it isn't already done so.
+        if (!stmt.fun_decl.type.get()) {
+            SEMA_TRY(typecheck_fun_decl(stmt));
         }
 
-        // For an initial dependency scan, we don't need to typecheck the contents.
-        if (dependency_scan_mode) {
+        // For native functions there is no body to typecheck.
+        if (stmt.is_native) {
             return ok();
         }
 
@@ -490,11 +493,6 @@ public:
             }
             m_cur_env->set_var(param_name, &param);
         }
-
-        // Add the created function to the TypeEnv.
-        stmt.fun_decl.type = m_allocator->alloc<FunctionType>(
-            m_allocator->alloc_vector<RelPtr<Type>, Type*>(std::move(param_types)),
-            stmt.fun_decl.ret_type.get());
 
         // Do a sema pass on the statements inside the body.
         for (auto& body_stmt : stmt.body) {
@@ -781,8 +779,8 @@ public:
     SemaResult visit_impl(CallExpr& expr) {
         auto callee_expr = expr.callee.get();
         SEMA_TRY(visit(*callee_expr));
-        auto function_type = callee_expr->type->try_cast<FunctionType>();
-        if (function_type) {
+        auto callee_type = callee_expr->type.get();
+        if (auto function_type = callee_type->try_cast<FunctionType>()) {
             expr.type = function_type->ret.get();
             for (u32 i = 0; i < expr.arguments.size(); i++) {
                 auto arg_expr = expr.arguments[i].get();

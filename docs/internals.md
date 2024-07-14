@@ -48,10 +48,10 @@ f():
     lload_1
     lload_2
     lload_3         // Value of b
-    call        f2
+    call        pass_by_value
     iconst      -6  // Address to a (dword offset)
     lload_3         // Value of b
-    call        f3
+    call        pass_by_ref
 
 pass_by_value():
     iload_1

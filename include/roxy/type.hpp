@@ -94,7 +94,13 @@ struct AstVarDecl {
     RelPtr<Type> type;
 
     // Added in sema analyzer
+
+    // Local offset inside chunk (when this is a variable).
     u16 local_index = 0;
+
+    // Offset inside struct (when this is a struct field declaration)
+    // or offset inside param list (when this is a param declaration)
+    u16 offset_bytes_from_parent = 0;
 
     AstVarDecl(VarDecl var_decl) : name(var_decl.name), type(var_decl.type) {}
     AstVarDecl(Token name, Type* type) : name(name), type(type) {}
@@ -218,7 +224,18 @@ struct StructType : public Type {
     RelSpan<AstVarDecl> declarations;
 
     StructType(Token name, Span<AstVarDecl> declarations) : Type(s_kind), name(name), declarations(declarations) {
-        size = alignment = 0;
+        size = 0;
+        alignment = 0;
+
+    }
+
+    void calc_size_and_alignment() {
+        for (const auto& decl : declarations) {
+            auto field_type = decl.type.get();
+            u32 aligned_size = (size + field_type->alignment - 1) & ~(field_type->alignment - 1);
+            size = aligned_size + field_type->size;
+            alignment = field_type->alignment > alignment ? field_type->alignment : alignment;
+        }
     }
 };
 
