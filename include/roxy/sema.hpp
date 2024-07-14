@@ -440,6 +440,15 @@ public:
 
         Vector<Type*> param_types;
         for (auto& param : stmt.fun_decl.params) {
+            if (auto unassigned_param_type = param.type->try_cast<UnassignedType>()) {
+                auto struct_stmt = m_cur_env->get_struct(unassigned_param_type->name.str(m_source));
+                if (struct_stmt) {
+                    param.type = struct_stmt->type.get();
+                }
+                else {
+                    auto _ = error_cannot_find_type(unassigned_param_type);
+                }
+            }
             param_types.push_back(param.type.get());
         }
         stmt.fun_decl.type = m_allocator->alloc<FunctionType>(
