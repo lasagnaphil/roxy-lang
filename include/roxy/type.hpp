@@ -3,6 +3,8 @@
 #include "roxy/core/types.hpp"
 #include "roxy/core/rel_ptr.hpp"
 #include "roxy/token.hpp"
+#include "roxy/opcode.hpp"
+#include "roxy/il.hpp"
 
 struct ObjString;
 
@@ -102,8 +104,10 @@ struct AstVarDecl {
     // or offset inside param list (when this is a param declaration)
     u16 offset_bytes_from_parent = 0;
 
-    AstVarDecl(VarDecl var_decl) : name(var_decl.name), type(var_decl.type) {}
-    AstVarDecl(Token name, Type* type) : name(name), type(type) {}
+    ILAddress il_address;
+
+    AstVarDecl(VarDecl var_decl) : name(var_decl.name), type(var_decl.type), il_address(ILAddress::make_invalid()) {}
+    AstVarDecl(Token name, Type* type) : name(name), type(type), il_address(ILAddress::make_invalid()) {}
 };
 
 struct FunctionType;
@@ -296,4 +300,167 @@ inline bool Type::is_string() const {
     auto prim_type = try_cast<PrimitiveType>();
     return prim_type && prim_type->prim_kind == PrimTypeKind::String;
 }
+
+constexpr ILOperator il_op_add(PrimTypeKind kind) {
+    switch (kind) {
+    case PrimTypeKind::U8:
+    case PrimTypeKind::U16:
+    case PrimTypeKind::U32:
+    case PrimTypeKind::I8:
+    case PrimTypeKind::I16:
+    case PrimTypeKind::I32:
+        return ILOperator::AddI;
+    case PrimTypeKind::U64:
+    case PrimTypeKind::I64:
+        return ILOperator::AddL;
+    case PrimTypeKind::F32:
+        return ILOperator::AddF;
+    case PrimTypeKind::F64:
+        return ILOperator::AddD;
+    default:
+        return ILOperator::Invalid;
+    }
+}
+
+constexpr ILOperator il_op_sub(PrimTypeKind kind) {
+    switch (kind) {
+    case PrimTypeKind::U8:
+    case PrimTypeKind::U16:
+    case PrimTypeKind::U32:
+    case PrimTypeKind::I8:
+    case PrimTypeKind::I16:
+    case PrimTypeKind::I32:
+        return ILOperator::SubI;
+    case PrimTypeKind::U64:
+    case PrimTypeKind::I64:
+        return ILOperator::SubL;
+    case PrimTypeKind::F32:
+        return ILOperator::SubF;
+    case PrimTypeKind::F64:
+        return ILOperator::SubD;
+    default:
+        return ILOperator::Invalid;
+    }
+}
+
+constexpr ILOperator il_op_mul(PrimTypeKind kind) {
+    switch (kind) {
+    case PrimTypeKind::U8:
+    case PrimTypeKind::U16:
+    case PrimTypeKind::U32:
+        return ILOperator::MulUI;
+    case PrimTypeKind::I8:
+    case PrimTypeKind::I16:
+    case PrimTypeKind::I32:
+        return ILOperator::MulI;
+    case PrimTypeKind::U64:
+    case PrimTypeKind::I64:
+        return ILOperator::MulL;
+    case PrimTypeKind::F32:
+        return ILOperator::MulF;
+    case PrimTypeKind::F64:
+        return ILOperator::MulD;
+    default:
+        return ILOperator::Invalid;
+    }
+}
+
+constexpr ILOperator il_op_div(PrimTypeKind kind) {
+    switch (kind) {
+    case PrimTypeKind::U8:
+    case PrimTypeKind::U16:
+    case PrimTypeKind::U32:
+        return ILOperator::DivUI;
+    case PrimTypeKind::I8:
+    case PrimTypeKind::I16:
+    case PrimTypeKind::I32:
+        return ILOperator::DivI;
+    case PrimTypeKind::U64:
+    case PrimTypeKind::I64:
+        return ILOperator::DivL;
+    case PrimTypeKind::F32:
+        return ILOperator::DivF;
+    case PrimTypeKind::F64:
+        return ILOperator::DivD;
+    default:
+        return ILOperator::Invalid;
+    }
+}
+
+constexpr ILOperator il_op_mod(PrimTypeKind kind) {
+    switch (kind) {
+    case PrimTypeKind::U8:
+    case PrimTypeKind::U16:
+    case PrimTypeKind::U32:
+    case PrimTypeKind::I8:
+    case PrimTypeKind::I16:
+    case PrimTypeKind::I32:
+        return ILOperator::ModI;
+    case PrimTypeKind::U64:
+    case PrimTypeKind::I64:
+        return ILOperator::ModL;
+    default:
+        return ILOperator::Invalid;
+    }
+}
+
+constexpr ILOperator il_op_assign(PrimTypeKind kind) {
+    switch (kind) {
+    case PrimTypeKind::U8:
+    case PrimTypeKind::U16:
+    case PrimTypeKind::U32:
+    case PrimTypeKind::I8:
+    case PrimTypeKind::I16:
+    case PrimTypeKind::I32:
+        return ILOperator::AssignI;
+    case PrimTypeKind::U64:
+    case PrimTypeKind::I64:
+        return ILOperator::AssignL;
+    case PrimTypeKind::F32:
+        return ILOperator::AssignF;
+    case PrimTypeKind::F64:
+        return ILOperator::AssignD;
+    default:
+        return ILOperator::Invalid;
+    }
+}
+
+constexpr ILOperator il_op_binary(PrimTypeKind kind, TokenType type) {
+    switch (type) {
+    case TokenType::Plus:
+        return il_op_add(kind);
+    case TokenType::Minus:
+        return il_op_sub(kind);
+    case TokenType::Star:
+        return il_op_mul(kind);
+    case TokenType::Slash:
+        return il_op_div(kind);
+    case TokenType::Percent:
+        return il_op_mod(kind);
+    default:
+        return ILOperator::Invalid;
+    }
+}
+
+constexpr ILAddress make_const_value(PrimTypeKind kind) {
+switch (kind) {
+    case PrimTypeKind::U8:
+    case PrimTypeKind::U16:
+    case PrimTypeKind::U32:
+    case PrimTypeKind::I8:
+    case PrimTypeKind::I16:
+    case PrimTypeKind::I32:
+        return ILAddress::make_const_int(0);
+    case PrimTypeKind::U64:
+    case PrimTypeKind::I64:
+        return ILAddress::make_const_long(0);
+    case PrimTypeKind::F32:
+        return ILAddress::make_const_float(0);
+    case PrimTypeKind::F64:
+        return ILAddress::make_const_double(0);
+    default:
+        return ILAddress::make_invalid();
+    }
+}
+
 }

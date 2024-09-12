@@ -1,5 +1,6 @@
 #include "roxy/vm.hpp"
 #include "roxy/opcode.hpp"
+#include "roxy/il_compiler.hpp"
 
 #include <fmt/core.h>
 

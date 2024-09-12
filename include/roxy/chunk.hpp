@@ -103,12 +103,14 @@ struct LocalTableEntry {
 class Module;
 class ArgStack;
 class StringTable;
+class ILCode;
 
 using NativeFunctionRef = void(*)(ArgStack*);
 
 struct Chunk {
     std::string m_name;
     Vector<u8> m_bytecode;
+    Vector<ILCode> m_ilcode;
     Vector<LocalTableEntry> m_param_table;
     Vector<LocalTableEntry> m_local_table;
     Module* m_outer_module;

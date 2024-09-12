@@ -7,6 +7,7 @@
 #include "roxy/anyvalue.hpp"
 
 #include <cassert>
+#include <il.hpp>
 
 namespace rx {
 
@@ -32,12 +33,16 @@ struct Expr {
 #endif
 
     u32 source_loc;
+    RelPtr<Type> type;
     u16 length;
     ExprKind kind;
-    RelPtr<Type> type;
+
+    ILOperandKind il_address_kind;
+    ILAddress il_address;
 
     Expr(ExprKind kind, SourceLocation loc) :
         source_loc(loc.source_loc), length(loc.length),
+        il_address_kind(ILOperandKind::Invalid), il_address(ILAddress::make_invalid()),
         kind(kind), type(nullptr) {}
 
     template <typename ExprT, typename = std::enable_if_t<std::is_base_of_v<Expr, ExprT>>>

@@ -112,6 +112,7 @@ struct NativeFunctionTableEntry {
 
 class Module {
     friend class Compiler;
+    friend class ILCompiler;
     friend class Library;
 
 public:
