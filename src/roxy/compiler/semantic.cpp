@@ -611,38 +611,58 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
 Type* SemanticAnalyzer::analyze_expr(Expr* expr) {
     if (!expr) return m_types.error_type();
 
+    Type* result = nullptr;
     switch (expr->kind) {
         case AstKind::ExprLiteral:
-            return analyze_literal_expr(expr);
+            result = analyze_literal_expr(expr);
+            break;
         case AstKind::ExprIdentifier:
-            return analyze_identifier_expr(expr);
+            result = analyze_identifier_expr(expr);
+            break;
         case AstKind::ExprUnary:
-            return analyze_unary_expr(expr);
+            result = analyze_unary_expr(expr);
+            break;
         case AstKind::ExprBinary:
-            return analyze_binary_expr(expr);
+            result = analyze_binary_expr(expr);
+            break;
         case AstKind::ExprTernary:
-            return analyze_ternary_expr(expr);
+            result = analyze_ternary_expr(expr);
+            break;
         case AstKind::ExprCall:
-            return analyze_call_expr(expr);
+            result = analyze_call_expr(expr);
+            break;
         case AstKind::ExprIndex:
-            return analyze_index_expr(expr);
+            result = analyze_index_expr(expr);
+            break;
         case AstKind::ExprGet:
-            return analyze_get_expr(expr);
+            result = analyze_get_expr(expr);
+            break;
         case AstKind::ExprStaticGet:
-            return analyze_static_get_expr(expr);
+            result = analyze_static_get_expr(expr);
+            break;
         case AstKind::ExprAssign:
-            return analyze_assign_expr(expr);
+            result = analyze_assign_expr(expr);
+            break;
         case AstKind::ExprGrouping:
-            return analyze_grouping_expr(expr);
+            result = analyze_grouping_expr(expr);
+            break;
         case AstKind::ExprThis:
-            return analyze_this_expr(expr);
+            result = analyze_this_expr(expr);
+            break;
         case AstKind::ExprSuper:
-            return analyze_super_expr(expr);
+            result = analyze_super_expr(expr);
+            break;
         case AstKind::ExprNew:
-            return analyze_new_expr(expr);
+            result = analyze_new_expr(expr);
+            break;
         default:
-            return m_types.error_type();
+            result = m_types.error_type();
+            break;
     }
+
+    // Store the resolved type in the AST node for later use (e.g., IR generation)
+    expr->resolved_type = result;
+    return result;
 }
 
 Type* SemanticAnalyzer::analyze_literal_expr(Expr* expr) {

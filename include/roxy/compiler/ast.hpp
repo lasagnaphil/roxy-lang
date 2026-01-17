@@ -191,10 +191,14 @@ struct NewExpr {
     Span<Expr*> arguments;
 };
 
+// Forward declaration
+struct Type;
+
 // Expression node
 struct Expr {
     AstKind kind;
     SourceLocation loc;
+    Type* resolved_type;  // Set by semantic analysis, nullptr before analysis
     union {
         LiteralExpr literal;
         IdentifierExpr identifier;
@@ -212,7 +216,7 @@ struct Expr {
         NewExpr new_expr;
     };
 
-    Expr() : kind(AstKind::ExprLiteral), loc{0, 0, 0} {
+    Expr() : kind(AstKind::ExprLiteral), loc{0, 0, 0}, resolved_type(nullptr) {
         memset(&literal, 0, sizeof(literal));
     }
     ~Expr() {}

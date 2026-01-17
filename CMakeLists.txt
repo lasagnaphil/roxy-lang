@@ -27,10 +27,21 @@ endif()
 # Include directories
 include_directories(include)
 
-# Core library (header-only for now, but file.cpp exists)
+# Core library
 add_library(roxy_core
     src/roxy/core/file.cpp
+    src/roxy/core/fmt/format.cc
+    src/roxy/core/fmt/os.cc
 )
+
+# Disable ASAN for fmt library files (known compatibility issue with clang-cl ASAN)
+if(ENABLE_ASAN)
+    set_source_files_properties(
+        src/roxy/core/fmt/format.cc
+        src/roxy/core/fmt/os.cc
+        PROPERTIES COMPILE_FLAGS "-fno-sanitize=address"
+    )
+endif()
 
 # Shared library (lexer, tokens)
 add_library(roxy_shared
@@ -39,12 +50,14 @@ add_library(roxy_shared
 )
 target_link_libraries(roxy_shared roxy_core)
 
-# Compiler library (parser, AST, semantic analysis)
+# Compiler library (parser, AST, semantic analysis, SSA IR)
 add_library(roxy_compiler
     src/roxy/compiler/parser.cpp
     src/roxy/compiler/types.cpp
     src/roxy/compiler/symbol_table.cpp
     src/roxy/compiler/semantic.cpp
+    src/roxy/compiler/ssa_ir.cpp
+    src/roxy/compiler/ir_builder.cpp
 )
 target_link_libraries(roxy_compiler roxy_shared)
 
@@ -59,3 +72,7 @@ target_link_libraries(parser_test roxy_compiler)
 # Semantic test executable
 add_executable(semantic_test tests/semantic_test.cpp)
 target_link_libraries(semantic_test roxy_compiler)
+
+# SSA IR test executable
+add_executable(ssa_ir_test tests/ssa_ir_test.cpp)
+target_link_libraries(ssa_ir_test roxy_compiler)
