@@ -39,10 +39,13 @@ ninja
 ```
 roxy-v2/
 ├── include/roxy/
-│   ├── core/           # Core utilities (types, containers)
+│   ├── core/           # Core utilities (types, containers, vendored libs)
 │   │   ├── types.hpp   # Type aliases (u32, i64, f64, etc.)
 │   │   ├── span.hpp    # Non-owning array view
 │   │   ├── vector.hpp  # Dynamic array
+│   │   ├── doctest/    # Vendored doctest testing framework
+│   │   ├── fmt/        # Vendored fmt formatting library
+│   │   ├── tsl/        # Vendored robin map/set
 │   │   └── ...
 │   ├── shared/         # Shared frontend components
 │   │   ├── token_kinds.hpp  # TokenKind enum
@@ -110,6 +113,10 @@ The lexer tokenizes Roxy source code. Features:
 - C++ interop layer
 
 ## Testing
+
+- **Framework:** doctest (vendored in `include/roxy/core/doctest/`)
+- Use `TEST_CASE` and `SUBCASE` for test organization
+- Use `CHECK` for assertions, `REQUIRE` for critical checks
 
 Run tests after building:
 ```bash
