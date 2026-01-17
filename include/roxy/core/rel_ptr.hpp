@@ -4,14 +4,15 @@
 #include "roxy/core/span.hpp"
 
 #include <type_traits>
+#include <bit>
+#include <cassert>
 
 namespace rx {
 template <typename T, u32 Alignment = 1>
 struct RelPtr {
     static_assert((Alignment & (Alignment - 1)) == 0, "Alignment must be power of two");
 
-    // TODO: Need separate code for MSVC
-    static constexpr u32 AlignmentBits = __builtin_ctz(Alignment);
+    static constexpr u32 AlignmentBits = std::countr_zero(Alignment);
 
     // NOTE: We make this type non-copyable and non-moveable,
     //  since this type should only live inside a bump allocator

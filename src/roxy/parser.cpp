@@ -2,60 +2,121 @@
 
 namespace rx {
 
+// ParseRule array indexed by TokenType enum values
+// Order must match the TokenType enum in token.hpp
 ParseRule Parser::s_parse_rules[] = {
-        [(u32) TokenType::LeftParen]     = {&Parser::grouping,   &Parser::call,          Precedence::Call},
-        [(u32) TokenType::RightParen]    = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::LeftBrace]     = {&Parser::table,      NULL,                   Precedence::None},
-        [(u32) TokenType::RightBrace]    = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::LeftBrace]     = {&Parser::array,      &Parser::subscript,     Precedence::Call},
-        [(u32) TokenType::RightBrace]    = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Comma]         = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Dot]           = {NULL,                &Parser::dot,           Precedence::Call},
-        [(u32) TokenType::Minus]         = {&Parser::unary,      &Parser::binary,        Precedence::Term},
-        [(u32) TokenType::Plus]          = {NULL,                &Parser::binary,        Precedence::Term},
-        [(u32) TokenType::Semicolon]     = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Slash]         = {NULL,                &Parser::binary,        Precedence::Factor},
-        [(u32) TokenType::Star]          = {NULL,                &Parser::binary,        Precedence::Factor},
-        [(u32) TokenType::Percent]       = {NULL,                &Parser::binary,        Precedence::Term},
-        [(u32) TokenType::QuestionMark]  = {NULL,                &Parser::ternary,       Precedence::Ternary},
-        [(u32) TokenType::Colon]         = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Ampersand]     = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Bar]           = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Tilde]         = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Caret]         = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Bang]          = {&Parser::unary,      NULL,                   Precedence::None},
-        [(u32) TokenType::BangEqual]     = {NULL,                &Parser::binary,        Precedence::Equality},
-        [(u32) TokenType::Equal]         = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::EqualEqual]    = {NULL,                &Parser::binary,        Precedence::Equality},
-        [(u32) TokenType::Greater]       = {NULL,                &Parser::binary,        Precedence::Comparison},
-        [(u32) TokenType::GreaterEqual]  = {NULL,                &Parser::binary,        Precedence::Comparison},
-        [(u32) TokenType::Less]          = {NULL,                &Parser::binary,        Precedence::Comparison},
-        [(u32) TokenType::LessEqual]     = {NULL,                &Parser::binary,        Precedence::Comparison},
-        [(u32) TokenType::AmpAmp]        = {NULL,                &Parser::logical_and,   Precedence::And},
-        [(u32) TokenType::BarBar]        = {NULL,                &Parser::logical_or,    Precedence::Or},
-        [(u32) TokenType::ColonColon]    = {NULL,                &Parser::package_get,   Precedence::Call},
-        [(u32) TokenType::Identifier]    = {&Parser::variable,   NULL,                   Precedence::None},
-        [(u32) TokenType::String]        = {&Parser::string,     NULL,                   Precedence::None},
-        [(u32) TokenType::NumberInt]     = {&Parser::number_i,   NULL,                   Precedence::None},
-        [(u32) TokenType::NumberFloat]   = {&Parser::number_f,   NULL,                   Precedence::None},
-        [(u32) TokenType::Struct]        = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Else]          = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::False]         = {&Parser::literal,    NULL,                   Precedence::None},
-        [(u32) TokenType::For]           = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Fun]           = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::If]            = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Nil]           = {&Parser::literal,    NULL,                   Precedence::None},
-        [(u32) TokenType::Native]        = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Pub]           = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Return]        = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Super]         = {&Parser::super,      NULL,                   Precedence::None},
-        [(u32) TokenType::This]          = {&Parser::this_,      NULL,                   Precedence::None},
-        [(u32) TokenType::True]          = {&Parser::literal,    NULL,                   Precedence::None},
-        [(u32) TokenType::Var]           = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::While]         = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::Eof]           = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::ErrorUnterminatedString]           = {NULL,                NULL,                   Precedence::None},
-        [(u32) TokenType::ErrorUnexpectedCharacter]           = {NULL,                NULL,                   Precedence::None},
+    // Empty (0)
+    {nullptr,             nullptr,                Precedence::None},
+    // LeftParen (1)
+    {&Parser::grouping,   &Parser::call,          Precedence::Call},
+    // RightParen (2)
+    {nullptr,             nullptr,                Precedence::None},
+    // LeftBrace (3)
+    {&Parser::table,      nullptr,                Precedence::None},
+    // RightBrace (4)
+    {nullptr,             nullptr,                Precedence::None},
+    // LeftBracket (5)
+    {&Parser::array,      &Parser::subscript,     Precedence::Call},
+    // RightBracket (6)
+    {nullptr,             nullptr,                Precedence::None},
+    // Comma (7)
+    {nullptr,             nullptr,                Precedence::None},
+    // Dot (8)
+    {nullptr,             &Parser::dot,           Precedence::Call},
+    // Minus (9)
+    {&Parser::unary,      &Parser::binary,        Precedence::Term},
+    // Plus (10)
+    {nullptr,             &Parser::binary,        Precedence::Term},
+    // Semicolon (11)
+    {nullptr,             nullptr,                Precedence::None},
+    // Slash (12)
+    {nullptr,             &Parser::binary,        Precedence::Factor},
+    // Star (13)
+    {nullptr,             &Parser::binary,        Precedence::Factor},
+    // Percent (14)
+    {nullptr,             &Parser::binary,        Precedence::Term},
+    // QuestionMark (15)
+    {nullptr,             &Parser::ternary,       Precedence::Ternary},
+    // Colon (16)
+    {nullptr,             nullptr,                Precedence::None},
+    // Ampersand (17)
+    {nullptr,             nullptr,                Precedence::None},
+    // Bar (18)
+    {nullptr,             nullptr,                Precedence::None},
+    // Tilde (19)
+    {nullptr,             nullptr,                Precedence::None},
+    // Caret (20)
+    {nullptr,             nullptr,                Precedence::None},
+    // Bang (21)
+    {&Parser::unary,      nullptr,                Precedence::None},
+    // BangEqual (22)
+    {nullptr,             &Parser::binary,        Precedence::Equality},
+    // Equal (23)
+    {nullptr,             nullptr,                Precedence::None},
+    // EqualEqual (24)
+    {nullptr,             &Parser::binary,        Precedence::Equality},
+    // Greater (25)
+    {nullptr,             &Parser::binary,        Precedence::Comparison},
+    // GreaterEqual (26)
+    {nullptr,             &Parser::binary,        Precedence::Comparison},
+    // Less (27)
+    {nullptr,             &Parser::binary,        Precedence::Comparison},
+    // LessEqual (28)
+    {nullptr,             &Parser::binary,        Precedence::Comparison},
+    // AmpAmp (29)
+    {nullptr,             &Parser::logical_and,   Precedence::And},
+    // BarBar (30)
+    {nullptr,             &Parser::logical_or,    Precedence::Or},
+    // ColonColon (31)
+    {nullptr,             &Parser::package_get,   Precedence::Call},
+    // Identifier (32)
+    {&Parser::variable,   nullptr,                Precedence::None},
+    // String (33)
+    {&Parser::string,     nullptr,                Precedence::None},
+    // NumberInt (34)
+    {&Parser::number_i,   nullptr,                Precedence::None},
+    // NumberFloat (35)
+    {&Parser::number_f,   nullptr,                Precedence::None},
+    // Struct (36)
+    {nullptr,             nullptr,                Precedence::None},
+    // Else (37)
+    {nullptr,             nullptr,                Precedence::None},
+    // False (38)
+    {&Parser::literal,    nullptr,                Precedence::None},
+    // For (39)
+    {nullptr,             nullptr,                Precedence::None},
+    // From (40)
+    {nullptr,             nullptr,                Precedence::None},
+    // Fun (41)
+    {nullptr,             nullptr,                Precedence::None},
+    // If (42)
+    {nullptr,             nullptr,                Precedence::None},
+    // Import (43)
+    {nullptr,             nullptr,                Precedence::None},
+    // Nil (44)
+    {&Parser::literal,    nullptr,                Precedence::None},
+    // Native (45)
+    {nullptr,             nullptr,                Precedence::None},
+    // Pub (46)
+    {nullptr,             nullptr,                Precedence::None},
+    // Return (47)
+    {nullptr,             nullptr,                Precedence::None},
+    // Super (48)
+    {&Parser::super,      nullptr,                Precedence::None},
+    // This (49)
+    {&Parser::this_,      nullptr,                Precedence::None},
+    // True (50)
+    {&Parser::literal,    nullptr,                Precedence::None},
+    // Var (51)
+    {nullptr,             nullptr,                Precedence::None},
+    // While (52)
+    {nullptr,             nullptr,                Precedence::None},
+    // Break (53)
+    {nullptr,             nullptr,                Precedence::None},
+    // Continue (54)
+    {nullptr,             nullptr,                Precedence::None},
+    // Eof (55)
+    {nullptr,             nullptr,                Precedence::None},
 };
 
 }

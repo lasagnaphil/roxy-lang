@@ -2,6 +2,9 @@
 
 #include "roxy/core/types.hpp"
 
+#include <type_traits>
+#include <cassert>
+
 namespace rx {
 
 template <typename T, typename Index = u32>
@@ -30,7 +33,7 @@ public:
     }
 
     Index size() const { return m_size; }
-    Index ssize() const { return (std::make_signed_t<Index>) m_size; }
+    Index ssize() const { return static_cast<std::make_signed_t<Index>>(m_size); }
 };
 
 }

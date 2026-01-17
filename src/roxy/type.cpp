@@ -1,19 +1,23 @@
 #include "roxy/type.hpp"
 
 namespace rx {
+
+// Array of primitive type sizes indexed by PrimTypeKind
+// Order must match the PrimTypeKind enum in type.hpp
 u16 PrimitiveType::s_prim_type_sizes[] = {
-    [(u32)PrimTypeKind::Void] = 0,
-    [(u32)PrimTypeKind::Bool] = 1,
-    [(u32)PrimTypeKind::I8] = 1,
-    [(u32)PrimTypeKind::I16] = 2,
-    [(u32)PrimTypeKind::I32] = 4,
-    [(u32)PrimTypeKind::I64] = 8,
-    [(u32)PrimTypeKind::U8] = 1,
-    [(u32)PrimTypeKind::U16] = 2,
-    [(u32)PrimTypeKind::U32] = 4,
-    [(u32)PrimTypeKind::U64] = 8,
-    [(u32)PrimTypeKind::F32] = 4,
-    [(u32)PrimTypeKind::F64] = 8,
-    [(u32)PrimTypeKind::String] = 8,
+    0,  // Void (0)
+    1,  // Bool (1)
+    1,  // U8 (2)
+    2,  // U16 (3)
+    4,  // U32 (4)
+    8,  // U64 (5)
+    1,  // I8 (6)
+    2,  // I16 (7)
+    4,  // I32 (8)
+    8,  // I64 (9)
+    4,  // F32 (10)
+    8,  // F64 (11)
+    8,  // String (12)
 };
+
 }

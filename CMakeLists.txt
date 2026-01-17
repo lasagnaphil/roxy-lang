@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.26)
+cmake_minimum_required(VERSION 3.20)
 project(roxy_lang)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -24,7 +24,11 @@ add_library(roxy STATIC
 target_include_directories(roxy PUBLIC include)
 target_include_directories(roxy PRIVATE include/roxy)
 target_compile_definitions(roxy PRIVATE FMT_EXCEPTIONS=0 XXH_INLINE_ALL)
-target_compile_options(roxy PRIVATE -Wreturn-type -Wno-c99-designator)
+if(MSVC)
+    target_compile_options(roxy PRIVATE /W3)
+else()
+    target_compile_options(roxy PRIVATE -Wreturn-type -Wno-c99-designator)
+endif()
 
 add_executable(roxy_bin src/roxy-bin/main.cpp)
 target_link_libraries(roxy_bin PRIVATE roxy)

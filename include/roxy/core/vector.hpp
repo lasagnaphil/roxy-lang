@@ -4,6 +4,7 @@
 
 #include <type_traits>
 #include <initializer_list>
+#include <iterator>
 #include <cstring>
 #include <cassert>
 
