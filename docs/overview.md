@@ -1,5 +1,9 @@
 # Roxy Language
 
+> **Note:** This document is a design document and roadmap for the Roxy language.
+> Many features described here are planned but not yet implemented.
+> For the current language grammar, see [grammar.md](grammar.md).
+
 ## How does it look like?
 
 ```kotlin
