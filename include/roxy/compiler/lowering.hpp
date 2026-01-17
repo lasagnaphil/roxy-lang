@@ -1,0 +1,82 @@
+#pragma once
+
+#include "roxy/core/types.hpp"
+#include "roxy/core/vector.hpp"
+#include "roxy/compiler/ssa_ir.hpp"
+#include "roxy/compiler/symbol_table.hpp"
+#include "roxy/vm/bytecode.hpp"
+
+#include "roxy/core/tsl/robin_map.h"
+
+namespace rx {
+
+// BytecodeBuilder lowers SSA IR to bytecode
+class BytecodeBuilder {
+public:
+    BytecodeBuilder();
+
+    // Build bytecode module from IR module
+    BCModule* build(IRModule* ir_module);
+
+    // Build bytecode for a single function
+    BCFunction* build_function(IRFunction* ir_func);
+
+private:
+    // Register allocation - maps ValueId to register number
+    u8 allocate_register(ValueId value);
+    u8 get_register(ValueId value);
+    bool has_register(ValueId value) const;
+
+    // Constant pool management
+    u16 add_constant(const BCConstant& c);
+    u16 add_int_constant(i64 value);
+    u16 add_float_constant(f64 value);
+    u16 add_string_constant(const char* data, u32 length);
+
+    // Block lowering
+    void lower_block(IRBlock* block);
+    void lower_instruction(IRInst* inst);
+    void lower_terminator(IRBlock* block);
+
+    // Block argument handling at jump sites
+    void emit_block_args(const JumpTarget& target);
+
+    // Emit bytecode instruction
+    void emit(u32 instr);
+    void emit_abc(Opcode op, u8 a, u8 b, u8 c);
+    void emit_abi(Opcode op, u8 a, u16 imm);
+    void emit_aoff(Opcode op, u8 a, i16 offset);
+
+    // Jump patching
+    struct JumpPatch {
+        u32 instruction_index;  // Index of instruction to patch
+        BlockId target_block;   // Target block
+    };
+    Vector<JumpPatch> m_jump_patches;
+
+    // Block offsets for jump resolution
+    tsl::robin_map<u32, u32> m_block_offsets;  // BlockId.id -> code offset
+
+    // Patch jump offsets after all blocks are emitted
+    void patch_jumps();
+
+    // Get opcode for IR operation
+    Opcode get_opcode(IROp op) const;
+
+    // Current function being built
+    BCFunction* m_current_func;
+    IRFunction* m_current_ir_func;
+
+    // Register allocation map: ValueId.id -> register
+    tsl::robin_map<u32, u8> m_value_to_reg;
+    u8 m_next_reg;
+
+    // Current module
+    BCModule* m_module;
+    IRModule* m_ir_module;
+
+    // Function name to index mapping
+    tsl::robin_map<StringView, u32, StringViewHash, StringViewEqual> m_func_indices;
+};
+
+}
