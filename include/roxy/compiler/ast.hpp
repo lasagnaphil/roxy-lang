@@ -2,6 +2,7 @@
 
 #include "roxy/core/types.hpp"
 #include "roxy/core/span.hpp"
+#include "roxy/core/string_view.hpp"
 #include "roxy/shared/token.hpp"
 
 namespace rx {
@@ -92,7 +93,7 @@ enum class AssignOp : u8 {
 
 // Type expression for type annotations
 struct TypeExpr {
-    Span<const char> name;
+    StringView name;
     SourceLocation loc;
     bool is_uniq;
     bool is_ref;
@@ -107,13 +108,13 @@ struct LiteralExpr {
         bool bool_value;
         i64 int_value;
         f64 float_value;
-        Span<const char> string_value;
+        StringView string_value;
     };
 };
 
 // Identifier expression: foo, bar
 struct IdentifierExpr {
-    Span<const char> name;
+    StringView name;
 };
 
 // Unary expression: -x, !x, ~x
@@ -151,13 +152,13 @@ struct IndexExpr {
 // Get expression: obj.field
 struct GetExpr {
     Expr* object;
-    Span<const char> name;
+    StringView name;
 };
 
 // Static get expression: Type::method
 struct StaticGetExpr {
-    Span<const char> type_name;
-    Span<const char> member_name;
+    StringView type_name;
+    StringView member_name;
 };
 
 // Assignment expression: x = 5, x += 1
@@ -179,7 +180,7 @@ struct ThisExpr {
 
 // Super expression: super.method
 struct SuperExpr {
-    Span<const char> method_name;
+    StringView method_name;
 };
 
 // New expression: new Type(args)
@@ -287,7 +288,7 @@ enum class ParamModifier : u8 {
 
 // Function parameter
 struct Param {
-    Span<const char> name;
+    StringView name;
     TypeExpr* type;
     ParamModifier modifier;
     SourceLocation loc;
@@ -295,7 +296,7 @@ struct Param {
 
 // Variable declaration: var name: Type = init;
 struct VarDecl {
-    Span<const char> name;
+    StringView name;
     TypeExpr* type;     // nullptr if type inference
     Expr* initializer;  // nullptr if no initializer
     bool is_pub;
@@ -303,7 +304,7 @@ struct VarDecl {
 
 // Function declaration: fun name(params): RetType { body }
 struct FunDecl {
-    Span<const char> name;
+    StringView name;
     Span<Param> params;
     TypeExpr* return_type;  // nullptr if void
     Stmt* body;             // BlockStmt, nullptr if native
@@ -313,7 +314,7 @@ struct FunDecl {
 
 // Struct field declaration
 struct FieldDecl {
-    Span<const char> name;
+    StringView name;
     TypeExpr* type;
     Expr* default_value;  // nullptr if no default
     bool is_pub;
@@ -322,8 +323,8 @@ struct FieldDecl {
 
 // Struct declaration: struct Name : Parent { fields, methods }
 struct StructDecl {
-    Span<const char> name;
-    Span<const char> parent_name;  // empty if no parent
+    StringView name;
+    StringView parent_name;  // empty if no parent
     Span<FieldDecl> fields;
     Span<FunDecl*> methods;
     bool is_pub;
@@ -331,22 +332,22 @@ struct StructDecl {
 
 // Enum variant
 struct EnumVariant {
-    Span<const char> name;
+    StringView name;
     Expr* value;  // nullptr if auto-assigned
     SourceLocation loc;
 };
 
 // Enum declaration: enum Name { variants }
 struct EnumDecl {
-    Span<const char> name;
+    StringView name;
     Span<EnumVariant> variants;
     bool is_pub;
 };
 
 // Import name for selective imports
 struct ImportName {
-    Span<const char> name;
-    Span<const char> alias;  // empty if no alias
+    StringView name;
+    StringView alias;  // empty if no alias
     SourceLocation loc;
 };
 
@@ -355,7 +356,7 @@ struct ImportName {
 // from pkg import name1, name2;
 // from pkg import name as alias;
 struct ImportDecl {
-    Span<const char> module_path;
+    StringView module_path;
     Span<ImportName> names;  // empty for "import pkg;" style
     bool is_from_import;
 };

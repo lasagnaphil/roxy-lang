@@ -20,9 +20,8 @@ Program* parse_source(const char* source, BumpAllocator& allocator, ParseError* 
 }
 
 // Helper to check identifier name
-bool check_identifier(Span<const char> span, const char* expected) {
-    return span.size() == strlen(expected) &&
-           memcmp(span.data(), expected, span.size()) == 0;
+bool check_identifier(StringView sv, const char* expected) {
+    return sv == expected;
 }
 
 TEST_CASE("Parser: Literal Expressions") {

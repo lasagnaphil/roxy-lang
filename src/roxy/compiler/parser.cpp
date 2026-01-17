@@ -1004,7 +1004,7 @@ Decl* Parser::struct_declaration(bool is_pub) {
     Token name_token = consume(TokenKind::Identifier, "Expected struct name");
     if (m_has_error) return nullptr;
 
-    Span<const char> parent_name;
+    StringView parent_name;
     if (match(TokenKind::Colon)) {
         Token parent_token = consume(TokenKind::Identifier, "Expected parent struct name");
         if (m_has_error) return nullptr;
@@ -1208,7 +1208,7 @@ TypeExpr* Parser::type_expression() {
         if (m_has_error) return nullptr;
 
         TypeExpr* array_type = alloc<TypeExpr>();
-        array_type->name = Span<const char>(nullptr, 0);  // Array types don't have a direct name
+        array_type->name = StringView();  // Array types don't have a direct name
         array_type->loc = type->loc;
         array_type->is_uniq = false;
         array_type->is_ref = false;

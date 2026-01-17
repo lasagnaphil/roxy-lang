@@ -1,7 +1,7 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
-#include "roxy/core/span.hpp"
+#include "roxy/core/string_view.hpp"
 #include "roxy/shared/token_kinds.hpp"
 
 namespace rx {
@@ -25,7 +25,7 @@ struct Token {
     };
 
     // Helper to get string view of token text
-    Span<const char> text() const { return {start, length}; }
+    StringView text() const { return {start, length}; }
 };
 
 }
