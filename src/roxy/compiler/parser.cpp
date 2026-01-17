@@ -1,0 +1,1223 @@
+#include "roxy/compiler/parser.hpp"
+
+#include <cstring>
+
+namespace rx {
+
+Parser::Parser(Lexer& lexer, BumpAllocator& allocator)
+    : m_lexer(lexer)
+    , m_allocator(allocator)
+    , m_has_error(false)
+{
+    m_current = m_lexer.next_token();
+    m_previous = m_current;
+}
+
+Program* Parser::parse() {
+    Vector<Decl*> declarations;
+
+    while (!is_at_end()) {
+        Decl* decl = declaration();
+        if (m_has_error) return nullptr;
+        if (decl) {
+            declarations.push_back(decl);
+        }
+    }
+
+    Program* program = alloc<Program>();
+    program->declarations = alloc_span(declarations);
+    return program;
+}
+
+// Token operations
+
+void Parser::advance() {
+    m_previous = m_current;
+    m_current = m_lexer.next_token();
+
+    if (m_current.kind == TokenKind::Error) {
+        report_error_at(m_current, m_current.start);
+    }
+}
+
+bool Parser::check(TokenKind kind) const {
+    return m_current.kind == kind;
+}
+
+bool Parser::match(TokenKind kind) {
+    if (!check(kind)) return false;
+    advance();
+    return true;
+}
+
+Token Parser::consume(TokenKind kind, const char* message) {
+    if (check(kind)) {
+        Token token = m_current;
+        advance();
+        return token;
+    }
+    report_error(message);
+    return m_current;
+}
+
+bool Parser::is_at_end() const {
+    return m_current.kind == TokenKind::Eof;
+}
+
+// Error handling
+
+void Parser::report_error(const char* message) {
+    report_error_at(m_current, message);
+}
+
+void Parser::report_error_at(const Token& token, const char* message) {
+    if (m_has_error) return;  // Only report first error
+    m_has_error = true;
+    m_error.loc = token.loc;
+    m_error.message = message;
+}
+
+// Allocation helper
+
+template <typename T>
+Span<T> Parser::alloc_span(const Vector<T>& vec) {
+    if (vec.empty()) {
+        return Span<T>(nullptr, 0);
+    }
+    T* data = reinterpret_cast<T*>(m_allocator.alloc_bytes(sizeof(T) * vec.size(), alignof(T)));
+    for (u32 i = 0; i < vec.size(); i++) {
+        new (data + i) T(vec[i]);
+    }
+    return Span<T>(data, vec.size());
+}
+
+// Expression parsing
+
+Expr* Parser::expression() {
+    return assignment();
+}
+
+Expr* Parser::assignment() {
+    Expr* expr = ternary();
+    if (m_has_error) return nullptr;
+
+    if (check(TokenKind::Equal) || check(TokenKind::PlusEqual) ||
+        check(TokenKind::MinusEqual) || check(TokenKind::StarEqual) ||
+        check(TokenKind::SlashEqual) || check(TokenKind::PercentEqual)) {
+
+        Token op_token = m_current;
+        AssignOp op;
+        switch (m_current.kind) {
+            case TokenKind::Equal:        op = AssignOp::Assign; break;
+            case TokenKind::PlusEqual:    op = AssignOp::AddAssign; break;
+            case TokenKind::MinusEqual:   op = AssignOp::SubAssign; break;
+            case TokenKind::StarEqual:    op = AssignOp::MulAssign; break;
+            case TokenKind::SlashEqual:   op = AssignOp::DivAssign; break;
+            case TokenKind::PercentEqual: op = AssignOp::ModAssign; break;
+            default: op = AssignOp::Assign; break;
+        }
+        advance();
+
+        Expr* value = assignment();  // Right-associative
+        if (m_has_error) return nullptr;
+
+        Expr* assign_expr = alloc<Expr>();
+        assign_expr->kind = AstKind::ExprAssign;
+        assign_expr->loc = op_token.loc;
+        assign_expr->assign.op = op;
+        assign_expr->assign.target = expr;
+        assign_expr->assign.value = value;
+        return assign_expr;
+    }
+
+    return expr;
+}
+
+Expr* Parser::ternary() {
+    Expr* expr = logic_or();
+    if (m_has_error) return nullptr;
+
+    if (match(TokenKind::Question)) {
+        SourceLocation loc = m_previous.loc;
+        Expr* then_expr = expression();
+        if (m_has_error) return nullptr;
+
+        consume(TokenKind::Colon, "Expected ':' in ternary expression");
+        if (m_has_error) return nullptr;
+
+        Expr* else_expr = ternary();
+        if (m_has_error) return nullptr;
+
+        Expr* ternary_expr = alloc<Expr>();
+        ternary_expr->kind = AstKind::ExprTernary;
+        ternary_expr->loc = loc;
+        ternary_expr->ternary.condition = expr;
+        ternary_expr->ternary.then_expr = then_expr;
+        ternary_expr->ternary.else_expr = else_expr;
+        return ternary_expr;
+    }
+
+    return expr;
+}
+
+Expr* Parser::logic_or() {
+    Expr* expr = logic_and();
+    if (m_has_error) return nullptr;
+
+    while (match(TokenKind::PipePipe)) {
+        SourceLocation loc = m_previous.loc;
+        Expr* right = logic_and();
+        if (m_has_error) return nullptr;
+
+        Expr* binary = alloc<Expr>();
+        binary->kind = AstKind::ExprBinary;
+        binary->loc = loc;
+        binary->binary.op = BinaryOp::Or;
+        binary->binary.left = expr;
+        binary->binary.right = right;
+        expr = binary;
+    }
+
+    return expr;
+}
+
+Expr* Parser::logic_and() {
+    Expr* expr = bit_or();
+    if (m_has_error) return nullptr;
+
+    while (match(TokenKind::AmpAmp)) {
+        SourceLocation loc = m_previous.loc;
+        Expr* right = bit_or();
+        if (m_has_error) return nullptr;
+
+        Expr* binary = alloc<Expr>();
+        binary->kind = AstKind::ExprBinary;
+        binary->loc = loc;
+        binary->binary.op = BinaryOp::And;
+        binary->binary.left = expr;
+        binary->binary.right = right;
+        expr = binary;
+    }
+
+    return expr;
+}
+
+Expr* Parser::bit_or() {
+    Expr* expr = bit_and();
+    if (m_has_error) return nullptr;
+
+    while (match(TokenKind::Pipe)) {
+        SourceLocation loc = m_previous.loc;
+        Expr* right = bit_and();
+        if (m_has_error) return nullptr;
+
+        Expr* binary = alloc<Expr>();
+        binary->kind = AstKind::ExprBinary;
+        binary->loc = loc;
+        binary->binary.op = BinaryOp::BitOr;
+        binary->binary.left = expr;
+        binary->binary.right = right;
+        expr = binary;
+    }
+
+    return expr;
+}
+
+Expr* Parser::bit_and() {
+    Expr* expr = equality();
+    if (m_has_error) return nullptr;
+
+    while (match(TokenKind::Amp)) {
+        SourceLocation loc = m_previous.loc;
+        Expr* right = equality();
+        if (m_has_error) return nullptr;
+
+        Expr* binary = alloc<Expr>();
+        binary->kind = AstKind::ExprBinary;
+        binary->loc = loc;
+        binary->binary.op = BinaryOp::BitAnd;
+        binary->binary.left = expr;
+        binary->binary.right = right;
+        expr = binary;
+    }
+
+    return expr;
+}
+
+Expr* Parser::equality() {
+    Expr* expr = comparison();
+    if (m_has_error) return nullptr;
+
+    while (check(TokenKind::EqualEqual) || check(TokenKind::BangEqual)) {
+        BinaryOp op = m_current.kind == TokenKind::EqualEqual ? BinaryOp::Equal : BinaryOp::NotEqual;
+        SourceLocation loc = m_current.loc;
+        advance();
+
+        Expr* right = comparison();
+        if (m_has_error) return nullptr;
+
+        Expr* binary = alloc<Expr>();
+        binary->kind = AstKind::ExprBinary;
+        binary->loc = loc;
+        binary->binary.op = op;
+        binary->binary.left = expr;
+        binary->binary.right = right;
+        expr = binary;
+    }
+
+    return expr;
+}
+
+Expr* Parser::comparison() {
+    Expr* expr = term();
+    if (m_has_error) return nullptr;
+
+    while (check(TokenKind::Less) || check(TokenKind::LessEqual) ||
+           check(TokenKind::Greater) || check(TokenKind::GreaterEqual)) {
+        BinaryOp op;
+        switch (m_current.kind) {
+            case TokenKind::Less:         op = BinaryOp::Less; break;
+            case TokenKind::LessEqual:    op = BinaryOp::LessEq; break;
+            case TokenKind::Greater:      op = BinaryOp::Greater; break;
+            case TokenKind::GreaterEqual: op = BinaryOp::GreaterEq; break;
+            default: op = BinaryOp::Less; break;
+        }
+        SourceLocation loc = m_current.loc;
+        advance();
+
+        Expr* right = term();
+        if (m_has_error) return nullptr;
+
+        Expr* binary = alloc<Expr>();
+        binary->kind = AstKind::ExprBinary;
+        binary->loc = loc;
+        binary->binary.op = op;
+        binary->binary.left = expr;
+        binary->binary.right = right;
+        expr = binary;
+    }
+
+    return expr;
+}
+
+Expr* Parser::term() {
+    Expr* expr = factor();
+    if (m_has_error) return nullptr;
+
+    while (check(TokenKind::Plus) || check(TokenKind::Minus)) {
+        BinaryOp op = m_current.kind == TokenKind::Plus ? BinaryOp::Add : BinaryOp::Sub;
+        SourceLocation loc = m_current.loc;
+        advance();
+
+        Expr* right = factor();
+        if (m_has_error) return nullptr;
+
+        Expr* binary = alloc<Expr>();
+        binary->kind = AstKind::ExprBinary;
+        binary->loc = loc;
+        binary->binary.op = op;
+        binary->binary.left = expr;
+        binary->binary.right = right;
+        expr = binary;
+    }
+
+    return expr;
+}
+
+Expr* Parser::factor() {
+    Expr* expr = unary();
+    if (m_has_error) return nullptr;
+
+    while (check(TokenKind::Star) || check(TokenKind::Slash) || check(TokenKind::Percent)) {
+        BinaryOp op;
+        switch (m_current.kind) {
+            case TokenKind::Star:    op = BinaryOp::Mul; break;
+            case TokenKind::Slash:   op = BinaryOp::Div; break;
+            case TokenKind::Percent: op = BinaryOp::Mod; break;
+            default: op = BinaryOp::Mul; break;
+        }
+        SourceLocation loc = m_current.loc;
+        advance();
+
+        Expr* right = unary();
+        if (m_has_error) return nullptr;
+
+        Expr* binary = alloc<Expr>();
+        binary->kind = AstKind::ExprBinary;
+        binary->loc = loc;
+        binary->binary.op = op;
+        binary->binary.left = expr;
+        binary->binary.right = right;
+        expr = binary;
+    }
+
+    return expr;
+}
+
+Expr* Parser::unary() {
+    if (check(TokenKind::Bang) || check(TokenKind::Minus) || check(TokenKind::Tilde)) {
+        UnaryOp op;
+        switch (m_current.kind) {
+            case TokenKind::Bang:  op = UnaryOp::Not; break;
+            case TokenKind::Minus: op = UnaryOp::Negate; break;
+            case TokenKind::Tilde: op = UnaryOp::BitNot; break;
+            default: op = UnaryOp::Not; break;
+        }
+        SourceLocation loc = m_current.loc;
+        advance();
+
+        Expr* operand = unary();
+        if (m_has_error) return nullptr;
+
+        Expr* unary_expr = alloc<Expr>();
+        unary_expr->kind = AstKind::ExprUnary;
+        unary_expr->loc = loc;
+        unary_expr->unary.op = op;
+        unary_expr->unary.operand = operand;
+        return unary_expr;
+    }
+
+    return call();
+}
+
+Expr* Parser::call() {
+    Expr* expr = primary();
+    if (m_has_error) return nullptr;
+
+    while (true) {
+        if (match(TokenKind::LeftParen)) {
+            expr = finish_call(expr);
+            if (m_has_error) return nullptr;
+        } else if (match(TokenKind::Dot)) {
+            Token name_token = consume(TokenKind::Identifier, "Expected property name after '.'");
+            if (m_has_error) return nullptr;
+
+            Expr* get_expr = alloc<Expr>();
+            get_expr->kind = AstKind::ExprGet;
+            get_expr->loc = name_token.loc;
+            get_expr->get.object = expr;
+            get_expr->get.name = name_token.text();
+            expr = get_expr;
+        } else if (match(TokenKind::LeftBracket)) {
+            expr = finish_index(expr);
+            if (m_has_error) return nullptr;
+        } else {
+            break;
+        }
+    }
+
+    return expr;
+}
+
+Expr* Parser::finish_call(Expr* callee) {
+    Vector<Expr*> arguments;
+    SourceLocation loc = m_previous.loc;
+
+    if (!check(TokenKind::RightParen)) {
+        do {
+            Expr* arg = expression();
+            if (m_has_error) return nullptr;
+            arguments.push_back(arg);
+        } while (match(TokenKind::Comma));
+    }
+
+    consume(TokenKind::RightParen, "Expected ')' after arguments");
+    if (m_has_error) return nullptr;
+
+    Expr* call_expr = alloc<Expr>();
+    call_expr->kind = AstKind::ExprCall;
+    call_expr->loc = loc;
+    call_expr->call.callee = callee;
+    call_expr->call.arguments = alloc_span(arguments);
+    return call_expr;
+}
+
+Expr* Parser::finish_index(Expr* object) {
+    SourceLocation loc = m_previous.loc;
+
+    Expr* index = expression();
+    if (m_has_error) return nullptr;
+
+    consume(TokenKind::RightBracket, "Expected ']' after index");
+    if (m_has_error) return nullptr;
+
+    Expr* index_expr = alloc<Expr>();
+    index_expr->kind = AstKind::ExprIndex;
+    index_expr->loc = loc;
+    index_expr->index.object = object;
+    index_expr->index.index = index;
+    return index_expr;
+}
+
+Expr* Parser::primary() {
+    // Literals
+    if (match(TokenKind::KwNil)) {
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprLiteral;
+        expr->loc = m_previous.loc;
+        expr->literal.literal_kind = LiteralKind::Nil;
+        return expr;
+    }
+
+    if (match(TokenKind::KwTrue)) {
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprLiteral;
+        expr->loc = m_previous.loc;
+        expr->literal.literal_kind = LiteralKind::Bool;
+        expr->literal.bool_value = true;
+        return expr;
+    }
+
+    if (match(TokenKind::KwFalse)) {
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprLiteral;
+        expr->loc = m_previous.loc;
+        expr->literal.literal_kind = LiteralKind::Bool;
+        expr->literal.bool_value = false;
+        return expr;
+    }
+
+    if (match(TokenKind::IntLiteral)) {
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprLiteral;
+        expr->loc = m_previous.loc;
+        expr->literal.literal_kind = LiteralKind::Int;
+        expr->literal.int_value = m_previous.int_value;
+        return expr;
+    }
+
+    if (match(TokenKind::FloatLiteral)) {
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprLiteral;
+        expr->loc = m_previous.loc;
+        expr->literal.literal_kind = LiteralKind::Float;
+        expr->literal.float_value = m_previous.float_value;
+        return expr;
+    }
+
+    if (match(TokenKind::StringLiteral)) {
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprLiteral;
+        expr->loc = m_previous.loc;
+        expr->literal.literal_kind = LiteralKind::String;
+        // Store the string including quotes - semantic analysis can strip them
+        expr->literal.string_value = m_previous.text();
+        return expr;
+    }
+
+    // Identifier or static get (Type::member)
+    if (match(TokenKind::Identifier)) {
+        Token name_token = m_previous;
+
+        // Check for static member access (Type::member)
+        if (match(TokenKind::ColonColon)) {
+            Token member_token = consume(TokenKind::Identifier, "Expected member name after '::'");
+            if (m_has_error) return nullptr;
+
+            Expr* expr = alloc<Expr>();
+            expr->kind = AstKind::ExprStaticGet;
+            expr->loc = name_token.loc;
+            expr->static_get.type_name = name_token.text();
+            expr->static_get.member_name = member_token.text();
+            return expr;
+        }
+
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprIdentifier;
+        expr->loc = name_token.loc;
+        expr->identifier.name = name_token.text();
+        return expr;
+    }
+
+    // this
+    if (match(TokenKind::KwThis)) {
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprThis;
+        expr->loc = m_previous.loc;
+        return expr;
+    }
+
+    // super.method
+    if (match(TokenKind::KwSuper)) {
+        SourceLocation loc = m_previous.loc;
+        consume(TokenKind::Dot, "Expected '.' after 'super'");
+        if (m_has_error) return nullptr;
+
+        Token method_token = consume(TokenKind::Identifier, "Expected method name after 'super.'");
+        if (m_has_error) return nullptr;
+
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprSuper;
+        expr->loc = loc;
+        expr->super_expr.method_name = method_token.text();
+        return expr;
+    }
+
+    // new Type(args)
+    if (match(TokenKind::KwNew)) {
+        SourceLocation loc = m_previous.loc;
+
+        TypeExpr* type = type_expression();
+        if (m_has_error) return nullptr;
+
+        consume(TokenKind::LeftParen, "Expected '(' after type in 'new' expression");
+        if (m_has_error) return nullptr;
+
+        Vector<Expr*> arguments;
+        if (!check(TokenKind::RightParen)) {
+            do {
+                Expr* arg = expression();
+                if (m_has_error) return nullptr;
+                arguments.push_back(arg);
+            } while (match(TokenKind::Comma));
+        }
+
+        consume(TokenKind::RightParen, "Expected ')' after arguments");
+        if (m_has_error) return nullptr;
+
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprNew;
+        expr->loc = loc;
+        expr->new_expr.type = type;
+        expr->new_expr.arguments = alloc_span(arguments);
+        return expr;
+    }
+
+    // Grouping: (expr)
+    if (match(TokenKind::LeftParen)) {
+        SourceLocation loc = m_previous.loc;
+        Expr* inner = expression();
+        if (m_has_error) return nullptr;
+
+        consume(TokenKind::RightParen, "Expected ')' after expression");
+        if (m_has_error) return nullptr;
+
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprGrouping;
+        expr->loc = loc;
+        expr->grouping.expr = inner;
+        return expr;
+    }
+
+    report_error("Expected expression");
+    return nullptr;
+}
+
+// Statement parsing
+
+Stmt* Parser::statement() {
+    if (match(TokenKind::LeftBrace)) {
+        return block_statement();
+    }
+    if (match(TokenKind::KwIf)) {
+        return if_statement();
+    }
+    if (match(TokenKind::KwWhile)) {
+        return while_statement();
+    }
+    if (match(TokenKind::KwFor)) {
+        return for_statement();
+    }
+    if (match(TokenKind::KwReturn)) {
+        return return_statement();
+    }
+    if (match(TokenKind::KwBreak)) {
+        return break_statement();
+    }
+    if (match(TokenKind::KwContinue)) {
+        return continue_statement();
+    }
+    if (match(TokenKind::KwDelete)) {
+        return delete_statement();
+    }
+
+    return expression_statement();
+}
+
+Stmt* Parser::block_statement() {
+    SourceLocation loc = m_previous.loc;
+    Vector<Decl*> declarations;
+
+    while (!check(TokenKind::RightBrace) && !is_at_end()) {
+        Decl* decl = declaration();
+        if (m_has_error) return nullptr;
+        if (decl) {
+            declarations.push_back(decl);
+        }
+    }
+
+    consume(TokenKind::RightBrace, "Expected '}' after block");
+    if (m_has_error) return nullptr;
+
+    Stmt* stmt = alloc<Stmt>();
+    stmt->kind = AstKind::StmtBlock;
+    stmt->loc = loc;
+    stmt->block.declarations = alloc_span(declarations);
+    return stmt;
+}
+
+Stmt* Parser::if_statement() {
+    SourceLocation loc = m_previous.loc;
+
+    consume(TokenKind::LeftParen, "Expected '(' after 'if'");
+    if (m_has_error) return nullptr;
+
+    Expr* condition = expression();
+    if (m_has_error) return nullptr;
+
+    consume(TokenKind::RightParen, "Expected ')' after if condition");
+    if (m_has_error) return nullptr;
+
+    Stmt* then_branch = statement();
+    if (m_has_error) return nullptr;
+
+    Stmt* else_branch = nullptr;
+    if (match(TokenKind::KwElse)) {
+        else_branch = statement();
+        if (m_has_error) return nullptr;
+    }
+
+    Stmt* stmt = alloc<Stmt>();
+    stmt->kind = AstKind::StmtIf;
+    stmt->loc = loc;
+    stmt->if_stmt.condition = condition;
+    stmt->if_stmt.then_branch = then_branch;
+    stmt->if_stmt.else_branch = else_branch;
+    return stmt;
+}
+
+Stmt* Parser::while_statement() {
+    SourceLocation loc = m_previous.loc;
+
+    consume(TokenKind::LeftParen, "Expected '(' after 'while'");
+    if (m_has_error) return nullptr;
+
+    Expr* condition = expression();
+    if (m_has_error) return nullptr;
+
+    consume(TokenKind::RightParen, "Expected ')' after while condition");
+    if (m_has_error) return nullptr;
+
+    Stmt* body = statement();
+    if (m_has_error) return nullptr;
+
+    Stmt* stmt = alloc<Stmt>();
+    stmt->kind = AstKind::StmtWhile;
+    stmt->loc = loc;
+    stmt->while_stmt.condition = condition;
+    stmt->while_stmt.body = body;
+    return stmt;
+}
+
+Stmt* Parser::for_statement() {
+    SourceLocation loc = m_previous.loc;
+
+    consume(TokenKind::LeftParen, "Expected '(' after 'for'");
+    if (m_has_error) return nullptr;
+
+    // Initializer
+    Decl* initializer = nullptr;
+    if (match(TokenKind::Semicolon)) {
+        // No initializer
+    } else if (match(TokenKind::KwVar)) {
+        initializer = var_declaration(false);
+        if (m_has_error) return nullptr;
+    } else {
+        // Expression statement as initializer
+        Stmt* expr_stmt = expression_statement();
+        if (m_has_error) return nullptr;
+
+        initializer = alloc<Decl>();
+        initializer->kind = AstKind::StmtExpr;
+        initializer->loc = expr_stmt->loc;
+        initializer->stmt = *expr_stmt;
+    }
+
+    // Condition
+    Expr* condition = nullptr;
+    if (!check(TokenKind::Semicolon)) {
+        condition = expression();
+        if (m_has_error) return nullptr;
+    }
+    consume(TokenKind::Semicolon, "Expected ';' after for condition");
+    if (m_has_error) return nullptr;
+
+    // Increment
+    Expr* increment = nullptr;
+    if (!check(TokenKind::RightParen)) {
+        increment = expression();
+        if (m_has_error) return nullptr;
+    }
+    consume(TokenKind::RightParen, "Expected ')' after for clauses");
+    if (m_has_error) return nullptr;
+
+    Stmt* body = statement();
+    if (m_has_error) return nullptr;
+
+    Stmt* stmt = alloc<Stmt>();
+    stmt->kind = AstKind::StmtFor;
+    stmt->loc = loc;
+    stmt->for_stmt.initializer = initializer;
+    stmt->for_stmt.condition = condition;
+    stmt->for_stmt.increment = increment;
+    stmt->for_stmt.body = body;
+    return stmt;
+}
+
+Stmt* Parser::return_statement() {
+    SourceLocation loc = m_previous.loc;
+
+    Expr* value = nullptr;
+    if (!check(TokenKind::Semicolon)) {
+        value = expression();
+        if (m_has_error) return nullptr;
+    }
+
+    consume(TokenKind::Semicolon, "Expected ';' after return value");
+    if (m_has_error) return nullptr;
+
+    Stmt* stmt = alloc<Stmt>();
+    stmt->kind = AstKind::StmtReturn;
+    stmt->loc = loc;
+    stmt->return_stmt.value = value;
+    return stmt;
+}
+
+Stmt* Parser::break_statement() {
+    SourceLocation loc = m_previous.loc;
+    consume(TokenKind::Semicolon, "Expected ';' after 'break'");
+    if (m_has_error) return nullptr;
+
+    Stmt* stmt = alloc<Stmt>();
+    stmt->kind = AstKind::StmtBreak;
+    stmt->loc = loc;
+    return stmt;
+}
+
+Stmt* Parser::continue_statement() {
+    SourceLocation loc = m_previous.loc;
+    consume(TokenKind::Semicolon, "Expected ';' after 'continue'");
+    if (m_has_error) return nullptr;
+
+    Stmt* stmt = alloc<Stmt>();
+    stmt->kind = AstKind::StmtContinue;
+    stmt->loc = loc;
+    return stmt;
+}
+
+Stmt* Parser::delete_statement() {
+    SourceLocation loc = m_previous.loc;
+
+    Expr* expr = expression();
+    if (m_has_error) return nullptr;
+
+    consume(TokenKind::Semicolon, "Expected ';' after delete expression");
+    if (m_has_error) return nullptr;
+
+    Stmt* stmt = alloc<Stmt>();
+    stmt->kind = AstKind::StmtDelete;
+    stmt->loc = loc;
+    stmt->delete_stmt.expr = expr;
+    return stmt;
+}
+
+Stmt* Parser::expression_statement() {
+    SourceLocation loc = m_current.loc;
+
+    Expr* expr = expression();
+    if (m_has_error) return nullptr;
+
+    consume(TokenKind::Semicolon, "Expected ';' after expression");
+    if (m_has_error) return nullptr;
+
+    Stmt* stmt = alloc<Stmt>();
+    stmt->kind = AstKind::StmtExpr;
+    stmt->loc = loc;
+    stmt->expr_stmt.expr = expr;
+    return stmt;
+}
+
+// Declaration parsing
+
+Decl* Parser::declaration() {
+    bool is_pub = match(TokenKind::KwPub);
+
+    if (match(TokenKind::KwVar)) {
+        return var_declaration(is_pub);
+    }
+
+    bool is_native = match(TokenKind::KwNative);
+    if (match(TokenKind::KwFun)) {
+        return fun_declaration(is_pub, is_native);
+    }
+
+    if (is_native) {
+        report_error("'native' can only precede 'fun'");
+        return nullptr;
+    }
+
+    if (match(TokenKind::KwStruct)) {
+        return struct_declaration(is_pub);
+    }
+
+    if (match(TokenKind::KwEnum)) {
+        return enum_declaration(is_pub);
+    }
+
+    if (is_pub) {
+        report_error("'pub' can only precede declarations");
+        return nullptr;
+    }
+
+    if (match(TokenKind::KwImport) || match(TokenKind::KwFrom)) {
+        TokenKind prev_kind = m_previous.kind;
+        if (prev_kind == TokenKind::KwFrom) {
+            // Put back in "from" state for import_declaration
+            // We need to handle "from pkg import ..."
+        }
+        return import_declaration();
+    }
+
+    // Statement (wrapped in a Decl)
+    Stmt* stmt = statement();
+    if (m_has_error) return nullptr;
+
+    Decl* decl = alloc<Decl>();
+    decl->kind = stmt->kind;
+    decl->loc = stmt->loc;
+    decl->stmt = *stmt;
+    return decl;
+}
+
+Decl* Parser::var_declaration(bool is_pub) {
+    SourceLocation loc = m_previous.loc;
+
+    Token name_token = consume(TokenKind::Identifier, "Expected variable name");
+    if (m_has_error) return nullptr;
+
+    TypeExpr* type = nullptr;
+    if (match(TokenKind::Colon)) {
+        type = type_expression();
+        if (m_has_error) return nullptr;
+    }
+
+    Expr* initializer = nullptr;
+    if (match(TokenKind::Equal)) {
+        initializer = expression();
+        if (m_has_error) return nullptr;
+    }
+
+    consume(TokenKind::Semicolon, "Expected ';' after variable declaration");
+    if (m_has_error) return nullptr;
+
+    Decl* decl = alloc<Decl>();
+    decl->kind = AstKind::DeclVar;
+    decl->loc = loc;
+    decl->var_decl.name = name_token.text();
+    decl->var_decl.type = type;
+    decl->var_decl.initializer = initializer;
+    decl->var_decl.is_pub = is_pub;
+    return decl;
+}
+
+Vector<Param> Parser::parse_parameters() {
+    Vector<Param> params;
+
+    if (!check(TokenKind::RightParen)) {
+        do {
+            Param param;
+            param.modifier = ParamModifier::None;
+
+            // Check for parameter modifiers
+            if (match(TokenKind::KwOut)) {
+                param.modifier = ParamModifier::Out;
+            } else if (match(TokenKind::KwInout)) {
+                param.modifier = ParamModifier::Inout;
+            }
+
+            Token name_token = consume(TokenKind::Identifier, "Expected parameter name");
+            if (m_has_error) return params;
+            param.name = name_token.text();
+            param.loc = name_token.loc;
+
+            consume(TokenKind::Colon, "Expected ':' after parameter name");
+            if (m_has_error) return params;
+
+            param.type = type_expression();
+            if (m_has_error) return params;
+
+            params.push_back(param);
+        } while (match(TokenKind::Comma));
+    }
+
+    return params;
+}
+
+Decl* Parser::fun_declaration(bool is_pub, bool is_native) {
+    SourceLocation loc = m_previous.loc;
+
+    Token name_token = consume(TokenKind::Identifier, "Expected function name");
+    if (m_has_error) return nullptr;
+
+    consume(TokenKind::LeftParen, "Expected '(' after function name");
+    if (m_has_error) return nullptr;
+
+    Vector<Param> params = parse_parameters();
+    if (m_has_error) return nullptr;
+
+    consume(TokenKind::RightParen, "Expected ')' after parameters");
+    if (m_has_error) return nullptr;
+
+    TypeExpr* return_type = nullptr;
+    if (match(TokenKind::Colon)) {
+        return_type = type_expression();
+        if (m_has_error) return nullptr;
+    }
+
+    Stmt* body = nullptr;
+    if (is_native) {
+        consume(TokenKind::Semicolon, "Expected ';' after native function declaration");
+        if (m_has_error) return nullptr;
+    } else {
+        consume(TokenKind::LeftBrace, "Expected '{' before function body");
+        if (m_has_error) return nullptr;
+
+        body = block_statement();
+        if (m_has_error) return nullptr;
+    }
+
+    Decl* decl = alloc<Decl>();
+    decl->kind = AstKind::DeclFun;
+    decl->loc = loc;
+    decl->fun_decl.name = name_token.text();
+    decl->fun_decl.params = alloc_span(params);
+    decl->fun_decl.return_type = return_type;
+    decl->fun_decl.body = body;
+    decl->fun_decl.is_pub = is_pub;
+    decl->fun_decl.is_native = is_native;
+    return decl;
+}
+
+Decl* Parser::struct_declaration(bool is_pub) {
+    SourceLocation loc = m_previous.loc;
+
+    Token name_token = consume(TokenKind::Identifier, "Expected struct name");
+    if (m_has_error) return nullptr;
+
+    Span<const char> parent_name;
+    if (match(TokenKind::Colon)) {
+        Token parent_token = consume(TokenKind::Identifier, "Expected parent struct name");
+        if (m_has_error) return nullptr;
+        parent_name = parent_token.text();
+    }
+
+    consume(TokenKind::LeftBrace, "Expected '{' before struct body");
+    if (m_has_error) return nullptr;
+
+    Vector<FieldDecl> fields;
+    Vector<FunDecl*> methods;
+
+    while (!check(TokenKind::RightBrace) && !is_at_end()) {
+        bool member_is_pub = match(TokenKind::KwPub);
+        bool member_is_native = match(TokenKind::KwNative);
+
+        if (match(TokenKind::KwFun)) {
+            // Method
+            Decl* method_decl = fun_declaration(member_is_pub, member_is_native);
+            if (m_has_error) return nullptr;
+            methods.push_back(&method_decl->fun_decl);
+        } else {
+            if (member_is_native) {
+                report_error("'native' can only precede 'fun'");
+                return nullptr;
+            }
+
+            // Field
+            Token field_name = consume(TokenKind::Identifier, "Expected field name");
+            if (m_has_error) return nullptr;
+
+            consume(TokenKind::Colon, "Expected ':' after field name");
+            if (m_has_error) return nullptr;
+
+            TypeExpr* field_type = type_expression();
+            if (m_has_error) return nullptr;
+
+            Expr* default_value = nullptr;
+            if (match(TokenKind::Equal)) {
+                default_value = expression();
+                if (m_has_error) return nullptr;
+            }
+
+            consume(TokenKind::Semicolon, "Expected ';' after field declaration");
+            if (m_has_error) return nullptr;
+
+            FieldDecl field;
+            field.name = field_name.text();
+            field.type = field_type;
+            field.default_value = default_value;
+            field.is_pub = member_is_pub;
+            field.loc = field_name.loc;
+            fields.push_back(field);
+        }
+    }
+
+    consume(TokenKind::RightBrace, "Expected '}' after struct body");
+    if (m_has_error) return nullptr;
+
+    Decl* decl = alloc<Decl>();
+    decl->kind = AstKind::DeclStruct;
+    decl->loc = loc;
+    decl->struct_decl.name = name_token.text();
+    decl->struct_decl.parent_name = parent_name;
+    decl->struct_decl.fields = alloc_span(fields);
+    decl->struct_decl.methods = alloc_span(methods);
+    decl->struct_decl.is_pub = is_pub;
+    return decl;
+}
+
+Decl* Parser::enum_declaration(bool is_pub) {
+    SourceLocation loc = m_previous.loc;
+
+    Token name_token = consume(TokenKind::Identifier, "Expected enum name");
+    if (m_has_error) return nullptr;
+
+    consume(TokenKind::LeftBrace, "Expected '{' before enum body");
+    if (m_has_error) return nullptr;
+
+    Vector<EnumVariant> variants;
+
+    if (!check(TokenKind::RightBrace)) {
+        do {
+            Token variant_name = consume(TokenKind::Identifier, "Expected enum variant name");
+            if (m_has_error) return nullptr;
+
+            Expr* value = nullptr;
+            if (match(TokenKind::Equal)) {
+                value = expression();
+                if (m_has_error) return nullptr;
+            }
+
+            EnumVariant variant;
+            variant.name = variant_name.text();
+            variant.value = value;
+            variant.loc = variant_name.loc;
+            variants.push_back(variant);
+        } while (match(TokenKind::Comma) && !check(TokenKind::RightBrace));
+    }
+
+    consume(TokenKind::RightBrace, "Expected '}' after enum body");
+    if (m_has_error) return nullptr;
+
+    Decl* decl = alloc<Decl>();
+    decl->kind = AstKind::DeclEnum;
+    decl->loc = loc;
+    decl->enum_decl.name = name_token.text();
+    decl->enum_decl.variants = alloc_span(variants);
+    decl->enum_decl.is_pub = is_pub;
+    return decl;
+}
+
+Decl* Parser::import_declaration() {
+    SourceLocation loc = m_previous.loc;
+    bool is_from_import = m_previous.kind == TokenKind::KwFrom;
+
+    if (is_from_import) {
+        // from pkg import name1, name2;
+        Token module_token = consume(TokenKind::Identifier, "Expected module name after 'from'");
+        if (m_has_error) return nullptr;
+
+        consume(TokenKind::KwImport, "Expected 'import' after module name");
+        if (m_has_error) return nullptr;
+
+        Vector<ImportName> names;
+        do {
+            Token name_token = consume(TokenKind::Identifier, "Expected import name");
+            if (m_has_error) return nullptr;
+
+            ImportName import_name;
+            import_name.name = name_token.text();
+            import_name.loc = name_token.loc;
+
+            // Check for alias: "as alias_name"
+            if (check(TokenKind::Identifier) && m_current.length == 2 &&
+                m_current.start[0] == 'a' && m_current.start[1] == 's') {
+                advance();  // consume "as"
+                Token alias_token = consume(TokenKind::Identifier, "Expected alias name after 'as'");
+                if (m_has_error) return nullptr;
+                import_name.alias = alias_token.text();
+            }
+
+            names.push_back(import_name);
+        } while (match(TokenKind::Comma));
+
+        consume(TokenKind::Semicolon, "Expected ';' after import");
+        if (m_has_error) return nullptr;
+
+        Decl* decl = alloc<Decl>();
+        decl->kind = AstKind::DeclImport;
+        decl->loc = loc;
+        decl->import_decl.module_path = module_token.text();
+        decl->import_decl.names = alloc_span(names);
+        decl->import_decl.is_from_import = true;
+        return decl;
+    } else {
+        // import pkg;
+        Token module_token = consume(TokenKind::Identifier, "Expected module name after 'import'");
+        if (m_has_error) return nullptr;
+
+        consume(TokenKind::Semicolon, "Expected ';' after import");
+        if (m_has_error) return nullptr;
+
+        Decl* decl = alloc<Decl>();
+        decl->kind = AstKind::DeclImport;
+        decl->loc = loc;
+        decl->import_decl.module_path = module_token.text();
+        decl->import_decl.names = Span<ImportName>(nullptr, 0);
+        decl->import_decl.is_from_import = false;
+        return decl;
+    }
+}
+
+// Type expression parsing
+
+TypeExpr* Parser::type_expression() {
+    TypeExpr* type = alloc<TypeExpr>();
+    type->is_uniq = false;
+    type->is_ref = false;
+    type->is_weak = false;
+    type->element_type = nullptr;
+
+    // Check for reference modifiers
+    if (match(TokenKind::KwUniq)) {
+        type->is_uniq = true;
+    } else if (match(TokenKind::KwRef)) {
+        type->is_ref = true;
+    } else if (match(TokenKind::KwWeak)) {
+        type->is_weak = true;
+    }
+
+    Token name_token = consume(TokenKind::Identifier, "Expected type name");
+    if (m_has_error) return nullptr;
+
+    type->name = name_token.text();
+    type->loc = name_token.loc;
+
+    // Check for array type: Type[]
+    if (match(TokenKind::LeftBracket)) {
+        consume(TokenKind::RightBracket, "Expected ']' for array type");
+        if (m_has_error) return nullptr;
+
+        TypeExpr* array_type = alloc<TypeExpr>();
+        array_type->name = Span<const char>(nullptr, 0);  // Array types don't have a direct name
+        array_type->loc = type->loc;
+        array_type->is_uniq = false;
+        array_type->is_ref = false;
+        array_type->is_weak = false;
+        array_type->element_type = type;
+        return array_type;
+    }
+
+    return type;
+}
+
+}

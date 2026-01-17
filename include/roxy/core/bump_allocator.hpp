@@ -3,6 +3,7 @@
 #include "roxy/core/types.hpp"
 
 #include <cassert>
+#include <cstring>
 #include <utility>
 
 namespace rx {
@@ -40,6 +41,12 @@ public:
     T* emplace(Args&&... args) {
         u8* ptr = alloc_bytes(sizeof(T), alignof(T));
         new (ptr) T(std::forward<Args>(args)...);
+        return reinterpret_cast<T*>(ptr);
+    }
+
+    template <typename T>
+    T* alloc() {
+        u8* ptr = alloc_bytes(sizeof(T), alignof(T));
         return reinterpret_cast<T*>(ptr);
     }
 

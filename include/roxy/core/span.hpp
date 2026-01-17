@@ -9,11 +9,12 @@ namespace rx {
 
 template <typename T, typename Index = u32>
 class Span {
-    T* m_data;
-    Index m_size;
+    T* m_data = nullptr;
+    Index m_size = 0;
 
 public:
-    Span(T* data = nullptr, Index size = 0) : m_data(data), m_size(size) {}
+    Span() = default;
+    Span(T* data, Index size) : m_data(data), m_size(size) {}
 
     const T* data() const { return m_data; }
     T* data() { return m_data; }

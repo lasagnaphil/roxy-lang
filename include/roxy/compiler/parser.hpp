@@ -1,0 +1,100 @@
+#pragma once
+
+#include "roxy/core/types.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/vector.hpp"
+#include "roxy/shared/lexer.hpp"
+#include "roxy/compiler/ast.hpp"
+
+namespace rx {
+
+struct ParseError {
+    SourceLocation loc;
+    const char* message;
+};
+
+class Parser {
+public:
+    Parser(Lexer& lexer, BumpAllocator& allocator);
+
+    Program* parse();
+
+    bool has_error() const { return m_has_error; }
+    const ParseError& error() const { return m_error; }
+
+private:
+    Lexer& m_lexer;
+    BumpAllocator& m_allocator;
+    Token m_current;
+    Token m_previous;
+    bool m_has_error;
+    ParseError m_error;
+
+    // Token operations
+    void advance();
+    bool check(TokenKind kind) const;
+    bool match(TokenKind kind);
+    Token consume(TokenKind kind, const char* message);
+    bool is_at_end() const;
+
+    // Error handling
+    void report_error(const char* message);
+    void report_error_at(const Token& token, const char* message);
+
+    // Allocation helpers
+    template <typename T>
+    T* alloc() {
+        return m_allocator.alloc<T>();
+    }
+
+    template <typename T>
+    Span<T> alloc_span(const Vector<T>& vec);
+
+    // Expression parsing (recursive descent with precedence)
+    Expr* expression();
+    Expr* assignment();
+    Expr* ternary();
+    Expr* logic_or();
+    Expr* logic_and();
+    Expr* bit_or();
+    Expr* bit_and();
+    Expr* equality();
+    Expr* comparison();
+    Expr* term();
+    Expr* factor();
+    Expr* unary();
+    Expr* call();
+    Expr* primary();
+
+    // Call expression helpers
+    Expr* finish_call(Expr* callee);
+    Expr* finish_index(Expr* object);
+
+    // Statement parsing
+    Stmt* statement();
+    Stmt* block_statement();
+    Stmt* if_statement();
+    Stmt* while_statement();
+    Stmt* for_statement();
+    Stmt* return_statement();
+    Stmt* break_statement();
+    Stmt* continue_statement();
+    Stmt* delete_statement();
+    Stmt* expression_statement();
+
+    // Declaration parsing
+    Decl* declaration();
+    Decl* var_declaration(bool is_pub);
+    Decl* fun_declaration(bool is_pub, bool is_native);
+    Decl* struct_declaration(bool is_pub);
+    Decl* enum_declaration(bool is_pub);
+    Decl* import_declaration();
+
+    // Type parsing
+    TypeExpr* type_expression();
+
+    // Helper to parse parameter list
+    Vector<Param> parse_parameters();
+};
+
+}
