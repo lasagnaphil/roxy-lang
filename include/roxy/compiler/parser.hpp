@@ -50,21 +50,15 @@ private:
     template <typename T>
     Span<T> alloc_span(const Vector<T>& vec);
 
-    // Expression parsing (recursive descent with precedence)
+    // Expression parsing (Pratt parser)
     Expr* expression();
-    Expr* assignment();
-    Expr* ternary();
-    Expr* logic_or();
-    Expr* logic_and();
-    Expr* bit_or();
-    Expr* bit_and();
-    Expr* equality();
-    Expr* comparison();
-    Expr* term();
-    Expr* factor();
+    Expr* parse_precedence(u8 min_prec);
     Expr* unary();
-    Expr* call();
+    Expr* postfix(Expr* left);
     Expr* primary();
+
+    // Helper to create binary expression node
+    Expr* make_binary(Expr* left, BinaryOp op, Expr* right, SourceLocation loc);
 
     // Call expression helpers
     Expr* finish_call(Expr* callee);

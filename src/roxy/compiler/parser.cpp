@@ -91,16 +91,92 @@ Span<T> Parser::alloc_span(const Vector<T>& vec) {
     return Span<T>(data, vec.size());
 }
 
-// Expression parsing
+// Expression parsing - Pratt parser
 
-Expr* Parser::expression() {
-    return assignment();
+// Infix operator rule: precedence, right-associativity, and binary operator
+struct InfixRule {
+    u8 precedence;      // 0 means not an infix operator
+    bool right_assoc;
+    BinaryOp op;
+};
+
+// Get the infix parsing rule for a token kind
+// Precedence levels (higher = tighter binding):
+//   1: || (logical or)
+//   2: && (logical and)
+//   3: |  (bitwise or)
+//   4: &  (bitwise and)
+//   5: == != (equality)
+//   6: < <= > >= (comparison)
+//   7: + - (additive)
+//   8: * / % (multiplicative)
+static InfixRule get_infix_rule(TokenKind kind) {
+    switch (kind) {
+        // Precedence 1: logical or
+        case TokenKind::PipePipe:     return {1, false, BinaryOp::Or};
+        // Precedence 2: logical and
+        case TokenKind::AmpAmp:       return {2, false, BinaryOp::And};
+        // Precedence 3: bitwise or
+        case TokenKind::Pipe:         return {3, false, BinaryOp::BitOr};
+        // Precedence 4: bitwise and
+        case TokenKind::Amp:          return {4, false, BinaryOp::BitAnd};
+        // Precedence 5: equality
+        case TokenKind::EqualEqual:   return {5, false, BinaryOp::Equal};
+        case TokenKind::BangEqual:    return {5, false, BinaryOp::NotEqual};
+        // Precedence 6: comparison
+        case TokenKind::Less:         return {6, false, BinaryOp::Less};
+        case TokenKind::LessEqual:    return {6, false, BinaryOp::LessEq};
+        case TokenKind::Greater:      return {6, false, BinaryOp::Greater};
+        case TokenKind::GreaterEqual: return {6, false, BinaryOp::GreaterEq};
+        // Precedence 7: additive
+        case TokenKind::Plus:         return {7, false, BinaryOp::Add};
+        case TokenKind::Minus:        return {7, false, BinaryOp::Sub};
+        // Precedence 8: multiplicative
+        case TokenKind::Star:         return {8, false, BinaryOp::Mul};
+        case TokenKind::Slash:        return {8, false, BinaryOp::Div};
+        case TokenKind::Percent:      return {8, false, BinaryOp::Mod};
+        // Not an infix operator
+        default:                      return {0, false, {}};
+    }
 }
 
-Expr* Parser::assignment() {
-    Expr* expr = ternary();
+Expr* Parser::make_binary(Expr* left, BinaryOp op, Expr* right, SourceLocation loc) {
+    Expr* binary = alloc<Expr>();
+    binary->kind = AstKind::ExprBinary;
+    binary->loc = loc;
+    binary->binary.op = op;
+    binary->binary.left = left;
+    binary->binary.right = right;
+    return binary;
+}
+
+Expr* Parser::expression() {
+    // Parse with precedence 0 to get the full expression
+    Expr* expr = parse_precedence(1);
     if (m_has_error) return nullptr;
 
+    // Handle ternary operator (lower precedence than binary ops)
+    if (match(TokenKind::Question)) {
+        SourceLocation loc = m_previous.loc;
+        Expr* then_expr = expression();
+        if (m_has_error) return nullptr;
+
+        consume(TokenKind::Colon, "Expected ':' in ternary expression");
+        if (m_has_error) return nullptr;
+
+        Expr* else_expr = expression();
+        if (m_has_error) return nullptr;
+
+        Expr* ternary_expr = alloc<Expr>();
+        ternary_expr->kind = AstKind::ExprTernary;
+        ternary_expr->loc = loc;
+        ternary_expr->ternary.condition = expr;
+        ternary_expr->ternary.then_expr = then_expr;
+        ternary_expr->ternary.else_expr = else_expr;
+        expr = ternary_expr;
+    }
+
+    // Handle assignment (lowest precedence, right-associative)
     if (check(TokenKind::Equal) || check(TokenKind::PlusEqual) ||
         check(TokenKind::MinusEqual) || check(TokenKind::StarEqual) ||
         check(TokenKind::SlashEqual) || check(TokenKind::PercentEqual)) {
@@ -118,7 +194,7 @@ Expr* Parser::assignment() {
         }
         advance();
 
-        Expr* value = assignment();  // Right-associative
+        Expr* value = expression();  // Right-associative
         if (m_has_error) return nullptr;
 
         Expr* assign_expr = alloc<Expr>();
@@ -133,225 +209,30 @@ Expr* Parser::assignment() {
     return expr;
 }
 
-Expr* Parser::ternary() {
-    Expr* expr = logic_or();
+Expr* Parser::parse_precedence(u8 min_prec) {
+    // Parse prefix expression (unary operators and primary)
+    Expr* left = unary();
     if (m_has_error) return nullptr;
 
-    if (match(TokenKind::Question)) {
-        SourceLocation loc = m_previous.loc;
-        Expr* then_expr = expression();
-        if (m_has_error) return nullptr;
+    // Parse infix operators using Pratt parsing
+    while (true) {
+        InfixRule rule = get_infix_rule(m_current.kind);
 
-        consume(TokenKind::Colon, "Expected ':' in ternary expression");
-        if (m_has_error) return nullptr;
+        // Stop if not an infix operator or precedence is too low
+        if (rule.precedence == 0 || rule.precedence < min_prec) break;
 
-        Expr* else_expr = ternary();
-        if (m_has_error) return nullptr;
-
-        Expr* ternary_expr = alloc<Expr>();
-        ternary_expr->kind = AstKind::ExprTernary;
-        ternary_expr->loc = loc;
-        ternary_expr->ternary.condition = expr;
-        ternary_expr->ternary.then_expr = then_expr;
-        ternary_expr->ternary.else_expr = else_expr;
-        return ternary_expr;
-    }
-
-    return expr;
-}
-
-Expr* Parser::logic_or() {
-    Expr* expr = logic_and();
-    if (m_has_error) return nullptr;
-
-    while (match(TokenKind::PipePipe)) {
-        SourceLocation loc = m_previous.loc;
-        Expr* right = logic_and();
-        if (m_has_error) return nullptr;
-
-        Expr* binary = alloc<Expr>();
-        binary->kind = AstKind::ExprBinary;
-        binary->loc = loc;
-        binary->binary.op = BinaryOp::Or;
-        binary->binary.left = expr;
-        binary->binary.right = right;
-        expr = binary;
-    }
-
-    return expr;
-}
-
-Expr* Parser::logic_and() {
-    Expr* expr = bit_or();
-    if (m_has_error) return nullptr;
-
-    while (match(TokenKind::AmpAmp)) {
-        SourceLocation loc = m_previous.loc;
-        Expr* right = bit_or();
-        if (m_has_error) return nullptr;
-
-        Expr* binary = alloc<Expr>();
-        binary->kind = AstKind::ExprBinary;
-        binary->loc = loc;
-        binary->binary.op = BinaryOp::And;
-        binary->binary.left = expr;
-        binary->binary.right = right;
-        expr = binary;
-    }
-
-    return expr;
-}
-
-Expr* Parser::bit_or() {
-    Expr* expr = bit_and();
-    if (m_has_error) return nullptr;
-
-    while (match(TokenKind::Pipe)) {
-        SourceLocation loc = m_previous.loc;
-        Expr* right = bit_and();
-        if (m_has_error) return nullptr;
-
-        Expr* binary = alloc<Expr>();
-        binary->kind = AstKind::ExprBinary;
-        binary->loc = loc;
-        binary->binary.op = BinaryOp::BitOr;
-        binary->binary.left = expr;
-        binary->binary.right = right;
-        expr = binary;
-    }
-
-    return expr;
-}
-
-Expr* Parser::bit_and() {
-    Expr* expr = equality();
-    if (m_has_error) return nullptr;
-
-    while (match(TokenKind::Amp)) {
-        SourceLocation loc = m_previous.loc;
-        Expr* right = equality();
-        if (m_has_error) return nullptr;
-
-        Expr* binary = alloc<Expr>();
-        binary->kind = AstKind::ExprBinary;
-        binary->loc = loc;
-        binary->binary.op = BinaryOp::BitAnd;
-        binary->binary.left = expr;
-        binary->binary.right = right;
-        expr = binary;
-    }
-
-    return expr;
-}
-
-Expr* Parser::equality() {
-    Expr* expr = comparison();
-    if (m_has_error) return nullptr;
-
-    while (check(TokenKind::EqualEqual) || check(TokenKind::BangEqual)) {
-        BinaryOp op = m_current.kind == TokenKind::EqualEqual ? BinaryOp::Equal : BinaryOp::NotEqual;
         SourceLocation loc = m_current.loc;
         advance();
 
-        Expr* right = comparison();
+        // For right-associative operators, use same precedence; for left-associative, use higher
+        u8 next_prec = rule.right_assoc ? rule.precedence : rule.precedence + 1;
+        Expr* right = parse_precedence(next_prec);
         if (m_has_error) return nullptr;
 
-        Expr* binary = alloc<Expr>();
-        binary->kind = AstKind::ExprBinary;
-        binary->loc = loc;
-        binary->binary.op = op;
-        binary->binary.left = expr;
-        binary->binary.right = right;
-        expr = binary;
+        left = make_binary(left, rule.op, right, loc);
     }
 
-    return expr;
-}
-
-Expr* Parser::comparison() {
-    Expr* expr = term();
-    if (m_has_error) return nullptr;
-
-    while (check(TokenKind::Less) || check(TokenKind::LessEqual) ||
-           check(TokenKind::Greater) || check(TokenKind::GreaterEqual)) {
-        BinaryOp op;
-        switch (m_current.kind) {
-            case TokenKind::Less:         op = BinaryOp::Less; break;
-            case TokenKind::LessEqual:    op = BinaryOp::LessEq; break;
-            case TokenKind::Greater:      op = BinaryOp::Greater; break;
-            case TokenKind::GreaterEqual: op = BinaryOp::GreaterEq; break;
-            default: op = BinaryOp::Less; break;
-        }
-        SourceLocation loc = m_current.loc;
-        advance();
-
-        Expr* right = term();
-        if (m_has_error) return nullptr;
-
-        Expr* binary = alloc<Expr>();
-        binary->kind = AstKind::ExprBinary;
-        binary->loc = loc;
-        binary->binary.op = op;
-        binary->binary.left = expr;
-        binary->binary.right = right;
-        expr = binary;
-    }
-
-    return expr;
-}
-
-Expr* Parser::term() {
-    Expr* expr = factor();
-    if (m_has_error) return nullptr;
-
-    while (check(TokenKind::Plus) || check(TokenKind::Minus)) {
-        BinaryOp op = m_current.kind == TokenKind::Plus ? BinaryOp::Add : BinaryOp::Sub;
-        SourceLocation loc = m_current.loc;
-        advance();
-
-        Expr* right = factor();
-        if (m_has_error) return nullptr;
-
-        Expr* binary = alloc<Expr>();
-        binary->kind = AstKind::ExprBinary;
-        binary->loc = loc;
-        binary->binary.op = op;
-        binary->binary.left = expr;
-        binary->binary.right = right;
-        expr = binary;
-    }
-
-    return expr;
-}
-
-Expr* Parser::factor() {
-    Expr* expr = unary();
-    if (m_has_error) return nullptr;
-
-    while (check(TokenKind::Star) || check(TokenKind::Slash) || check(TokenKind::Percent)) {
-        BinaryOp op;
-        switch (m_current.kind) {
-            case TokenKind::Star:    op = BinaryOp::Mul; break;
-            case TokenKind::Slash:   op = BinaryOp::Div; break;
-            case TokenKind::Percent: op = BinaryOp::Mod; break;
-            default: op = BinaryOp::Mul; break;
-        }
-        SourceLocation loc = m_current.loc;
-        advance();
-
-        Expr* right = unary();
-        if (m_has_error) return nullptr;
-
-        Expr* binary = alloc<Expr>();
-        binary->kind = AstKind::ExprBinary;
-        binary->loc = loc;
-        binary->binary.op = op;
-        binary->binary.left = expr;
-        binary->binary.right = right;
-        expr = binary;
-    }
-
-    return expr;
+    return left;
 }
 
 Expr* Parser::unary() {
@@ -377,11 +258,10 @@ Expr* Parser::unary() {
         return unary_expr;
     }
 
-    return call();
+    return postfix(primary());
 }
 
-Expr* Parser::call() {
-    Expr* expr = primary();
+Expr* Parser::postfix(Expr* expr) {
     if (m_has_error) return nullptr;
 
     while (true) {
