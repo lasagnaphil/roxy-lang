@@ -52,25 +52,60 @@ Struct fields must use `uniq` (ownership) or `weak` (back-references).
 
 ### Object Header
 
+**Status: ✅ Implemented** (`include/roxy/vm/object.hpp`, `src/roxy/vm/object.cpp`)
+
 ```cpp
 struct ObjectHeader {
-    uint32_t ref_count;        // Number of active 'ref' pointers
-    uint32_t weak_generation;  // Bumped on delete to invalidate weak refs
-    uint32_t type_id;
-    uint32_t size;
+    u32 ref_count;          // Number of active 'ref' pointers
+    u32 weak_generation;    // Bumped on delete to invalidate weak refs
+    u32 type_id;            // Type identifier for runtime type info
+    u32 size;               // Total size including header
+
+    void* data();           // Get pointer to object data (after header)
 };
+
+// Reference counting operations
+void ref_inc(void* data);
+bool ref_dec(RoxyVM* vm, void* data);  // Returns true if deallocated
+
+// Weak reference operations
+u32 weak_ref_create(void* data);
+bool weak_ref_valid(void* data, u32 generation);
+void weak_ref_invalidate(void* data);
+
+// Object allocation/deallocation
+void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size);
+void object_free(RoxyVM* vm, void* data);
 ```
 
 ---
 
 ## Bytecode Format
 
+**Status: ✅ Implemented** (`include/roxy/vm/bytecode.hpp`, `src/roxy/vm/bytecode.cpp`)
+
 ### Instruction Encoding
 
+All instructions are 32-bit fixed-width with three formats:
+
 ```
-Format A: [opcode:8][dst:8][src1:8][src2:8]    — 3-operand
-Format B: [opcode:8][dst:8][imm16:16]          — immediate
-Format C: [opcode:8][reg:8][offset:16]         — branch/field access
+Format A: [opcode:8][dst:8][src1:8][src2:8]    — 3-operand (arithmetic, comparisons)
+Format B: [opcode:8][dst:8][imm16:16]          — immediate (constants, loads)
+Format C: [opcode:8][reg:8][offset:16]         — branch/field access (jumps)
+```
+
+Helper functions for encoding/decoding:
+```cpp
+u32 encode_abc(Opcode op, u8 dst, u8 src1, u8 src2);
+u32 encode_abi(Opcode op, u8 dst, u16 imm);
+u32 encode_aoff(Opcode op, u8 reg, i16 offset);
+
+Opcode decode_opcode(u32 instr);
+u8 decode_a(u32 instr);  // dst or reg
+u8 decode_b(u32 instr);  // src1
+u8 decode_c(u32 instr);  // src2
+u16 decode_imm16(u32 instr);
+i16 decode_offset(u32 instr);
 ```
 
 ### Calling Convention
@@ -80,24 +115,59 @@ Arguments:  R0, R1, R2, R3, ... (left to right)
 Return:     R0
 ```
 
+Each function call allocates a new register window from the shared register file.
+
 ### Core Opcode Categories
 
-| Range | Category |
-|-------|----------|
-| 0x00-0x0F | Constants, Moves |
-| 0x10-0x1F | Integer Arithmetic |
-| 0x20-0x2F | Float Arithmetic |
-| 0x30-0x3F | Bitwise |
-| 0x40-0x5F | Comparisons |
-| 0x60-0x7F | Logical |
-| 0x80-0x8F | Type Conversions |
-| 0x90-0x9F | Control Flow |
-| 0xA0-0xAF | Function Calls |
-| 0xB0-0xCF | Field Access |
-| 0xD0-0xDF | Object Lifecycle |
-| 0xE0-0xEF | Reference Counting |
-| 0xF0-0xF7 | Containers |
-| 0xF8-0xFF | Debug/Special |
+| Range | Category | Key Opcodes |
+|-------|----------|-------------|
+| 0x00-0x0F | Constants, Moves | `LOAD_NULL`, `LOAD_TRUE`, `LOAD_FALSE`, `LOAD_INT`, `LOAD_CONST`, `MOV` |
+| 0x10-0x1F | Integer Arithmetic | `ADD_I`, `SUB_I`, `MUL_I`, `DIV_I`, `MOD_I`, `NEG_I` |
+| 0x20-0x2F | Float Arithmetic | `ADD_F`, `SUB_F`, `MUL_F`, `DIV_F`, `NEG_F` |
+| 0x30-0x3F | Bitwise | `BIT_AND`, `BIT_OR`, `BIT_XOR`, `BIT_NOT`, `SHL`, `SHR`, `USHR` |
+| 0x40-0x4F | Integer Comparisons | `EQ_I`, `NE_I`, `LT_I`, `LE_I`, `GT_I`, `GE_I`, `LT_U`, `LE_U`, `GT_U`, `GE_U` |
+| 0x50-0x5F | Float Comparisons | `EQ_F`, `NE_F`, `LT_F`, `LE_F`, `GT_F`, `GE_F` |
+| 0x60-0x6F | Logical | `NOT`, `AND`, `OR` |
+| 0x80-0x8F | Type Conversions | `I2F`, `F2I`, `I2B`, `B2I` |
+| 0x90-0x9F | Control Flow | `JMP`, `JMP_IF`, `JMP_IF_NOT`, `RET`, `RET_VOID` |
+| 0xA0-0xAF | Function Calls | `CALL`, `CALL_NATIVE` |
+| 0xB0-0xBF | Field Access | `GET_FIELD`, `SET_FIELD` |
+| 0xC0-0xCF | Index Access | `GET_INDEX`, `SET_INDEX` |
+| 0xD0-0xDF | Object Lifecycle | `NEW_OBJ`, `DEL_OBJ` |
+| 0xE0-0xEF | Reference Counting | `REF_INC`, `REF_DEC`, `WEAK_CHECK` |
+| 0xFE-0xFF | Debug/Special | `NOP`, `HALT` |
+
+### Bytecode Structures
+
+```cpp
+// Constant pool entry
+struct BCConstant {
+    enum Type : u8 { Null, Bool, Int, Float, String };
+    Type type;
+    union {
+        bool as_bool;
+        i64 as_int;
+        f64 as_float;
+        struct { const char* data; u32 length; } as_string;
+    };
+};
+
+// Bytecode function
+struct BCFunction {
+    StringView name;
+    u32 param_count;
+    u32 register_count;
+    Vector<u32> code;           // Bytecode instructions
+    Vector<BCConstant> constants; // Constant pool
+};
+
+// Bytecode module
+struct BCModule {
+    StringView name;
+    Vector<BCFunction*> functions;
+    Vector<BCNativeFunction> native_functions;
+};
+```
 
 ---
 
@@ -105,45 +175,69 @@ Return:     R0
 
 ### Value Representation
 
+**Status: ✅ Implemented** (`include/roxy/vm/value.hpp`, `src/roxy/vm/value.cpp`)
+
 ```cpp
 struct Value {
-    enum class Type : uint8_t { 
-        Null, Bool, Int, Float, Ptr, Weak 
+    enum Type : u8 {
+        Null, Bool, Int, Float, Ptr, Weak
     };
-    
+
     Type type;
     union {
         bool as_bool;
-        int64_t as_int;
-        double as_float;
+        i64 as_int;
+        f64 as_float;
         void* as_ptr;
-        struct { void* ptr; uint32_t generation; } as_weak;
+        struct { void* ptr; u32 generation; } as_weak;
     };
+
+    // Factory methods
+    static Value make_null();
+    static Value make_bool(bool b);
+    static Value make_int(i64 i);
+    static Value make_float(f64 f);
+    static Value make_ptr(void* p);
+    static Value make_weak(void* p, u32 generation);
+
+    // Type checks and utilities
+    bool is_null() const;
+    bool is_truthy() const;
+    bool is_weak_valid() const;
 };
 ```
 
 ### VM State
 
+**Status: ✅ Implemented** (`include/roxy/vm/vm.hpp`, `src/roxy/vm/vm.cpp`)
+
 ```cpp
 struct RoxyVM {
-    Module* module;
-    
+    BCModule* module;
+
     Value* register_file;          // Shared register window
-    uint32_t register_file_size;
-    uint32_t register_top;
-    
-    std::vector<CallFrame> call_stack;
-    
+    u32 register_file_size;
+    u32 register_top;              // Current top of register allocation
+
+    Vector<CallFrame> call_stack;
+
     bool running;
     const char* error;
 };
 
 struct CallFrame {
-    const Function* func;
-    uint32_t* pc;
+    const BCFunction* func;
+    const u32* pc;                 // Program counter (pointer into code)
     Value* registers;              // Window into register_file
-    uint32_t return_reg;
+    u8 return_reg;                 // Register for return value in caller
 };
+
+// VM API
+bool vm_init(RoxyVM* vm, const VMConfig& config = VMConfig());
+void vm_destroy(RoxyVM* vm);
+bool vm_load_module(RoxyVM* vm, BCModule* module);
+bool vm_call(RoxyVM* vm, StringView func_name, Span<Value> args);
+Value vm_get_result(RoxyVM* vm);
 ```
 
 ### Type Descriptor
@@ -172,76 +266,96 @@ struct FieldDescriptor {
 
 ---
 
-## Interpreter Loop (Computed Goto)
+## Interpreter Loop
+
+**Status: ✅ Implemented** (`include/roxy/vm/interpreter.hpp`, `src/roxy/vm/interpreter.cpp`)
+
+The interpreter uses a switch-based dispatch loop for portability (works with MSVC/clang-cl on Windows):
 
 ```cpp
-ExecResult execute(RoxyVM& vm) {
-    static const void* dispatch[] = {
-        [OP_LOAD_NULL] = &&op_load_null,
-        [OP_ADD_I]     = &&op_add_i,
-        // ... all opcodes
-    };
-    
-    CallFrame* frame = &vm.call_stack.back();
-    uint32_t* pc = frame->pc;
+bool interpret(RoxyVM* vm) {
+    CallFrame* frame = &vm->call_stack.back();
+    const BCFunction* func = frame->func;
+    const u32* pc = frame->pc;
     Value* regs = frame->registers;
-    uint32_t inst;
-    
-    #define DISPATCH() do { inst = *pc++; goto *dispatch[OPCODE(inst)]; } while(0)
-    
-    DISPATCH();
-    
-op_load_null:
-    regs[DST(inst)] = Value::null_val();
-    DISPATCH();
 
-op_add_i:
-    regs[DST(inst)] = Value::from_int(
-        regs[SRC1(inst)].as_int + regs[SRC2(inst)].as_int
-    );
-    DISPATCH();
+    while (vm->running) {
+        u32 instr = *pc++;
+        Opcode op = decode_opcode(instr);
+        u8 a = decode_a(instr);
+        u8 b = decode_b(instr);
+        u8 c = decode_c(instr);
 
-op_call: {
-    uint16_t func_idx = IMM16(inst);
-    const Function& callee = vm.module->functions[func_idx];
-    
-    frame->pc = pc;
-    
-    Value* callee_regs = vm.register_file + vm.register_top;
-    vm.register_top += callee.register_count;
-    
-    for (int i = 0; i < callee.param_count; i++) {
-        callee_regs[i] = regs[i];
+        switch (op) {
+            case Opcode::LOAD_NULL:
+                regs[a] = Value::make_null();
+                break;
+
+            case Opcode::ADD_I:
+                regs[a] = Value::make_int(regs[b].as_int + regs[c].as_int);
+                break;
+
+            case Opcode::JMP:
+                pc += decode_offset(instr);
+                break;
+
+            case Opcode::JMP_IF:
+                if (regs[a].is_truthy()) {
+                    pc += decode_offset(instr);
+                }
+                break;
+
+            case Opcode::CALL: {
+                // Save current PC, allocate callee registers
+                frame->pc = pc;
+                Value* callee_regs = &vm->register_file[vm->register_top];
+                vm->register_top += callee->register_count;
+
+                // Copy arguments, push new frame
+                for (u8 i = 0; i < arg_count; i++) {
+                    callee_regs[i] = regs[first_arg + i];
+                }
+                vm->call_stack.push_back(CallFrame(callee, callee->code.data(), callee_regs, dst));
+
+                // Update cached frame pointers
+                frame = &vm->call_stack.back();
+                func = frame->func;
+                pc = frame->pc;
+                regs = frame->registers;
+                break;
+            }
+
+            case Opcode::RET: {
+                Value result = regs[a];
+                vm->call_stack.pop_back();
+                vm->register_top -= func->register_count;
+
+                if (vm->call_stack.empty()) {
+                    vm->register_file[0] = result;
+                    vm->running = false;
+                    return true;
+                }
+
+                // Restore caller frame
+                frame = &vm->call_stack.back();
+                func = frame->func;
+                pc = frame->pc;
+                regs = frame->registers;
+                regs[frame->return_reg] = result;
+                break;
+            }
+
+            // ... all other opcodes
+        }
     }
-    
-    vm.call_stack.push_back({&callee, callee.code, callee_regs, 0});
-    
-    frame = &vm.call_stack.back();
-    pc = frame->pc;
-    regs = frame->registers;
-    DISPATCH();
-}
-
-op_ret: {
-    Value result = regs[0];
-    vm.register_top -= frame->func->register_count;
-    vm.call_stack.pop_back();
-    
-    if (vm.call_stack.empty()) {
-        vm.register_file[0] = result;
-        return ExecResult::Ok;
-    }
-    
-    frame = &vm.call_stack.back();
-    pc = frame->pc;
-    regs = frame->registers;
-    regs[0] = result;
-    DISPATCH();
-}
-
-// ... remaining opcodes
+    return true;
 }
 ```
+
+Key implementation notes:
+- Division by zero is checked and returns an error
+- All opcodes are implemented except field/index access (placeholder)
+- Error messages are stored in `vm->error`
 
 ---
 
@@ -324,6 +438,8 @@ void dealloc(void* obj) {
 
 ## SSA IR with Block Arguments
 
+**Status: ✅ Implemented** (SSA IR: `include/roxy/compiler/ssa_ir.hpp`, Lowering: `include/roxy/compiler/lowering.hpp`)
+
 ```
 entry:
     goto loop(0, 1)              // initial values
@@ -343,7 +459,9 @@ exit(result):
 
 ### Lowering to Bytecode
 
-Block arguments become MOV instructions:
+**Status: ✅ Implemented** (`include/roxy/compiler/lowering.hpp`, `src/roxy/compiler/lowering.cpp`)
+
+Block arguments become MOV instructions at jump sites:
 
 ```
 entry:
@@ -363,6 +481,41 @@ exit:
     MOV       R0, R1             // result = sum
     RET
 ```
+
+### BytecodeBuilder
+
+```cpp
+class BytecodeBuilder {
+public:
+    BCModule* build(IRModule* ir_module);
+    BCFunction* build_function(IRFunction* ir_func);
+
+private:
+    // Register allocation: ValueId -> register number
+    u8 allocate_register(ValueId value);
+    u8 get_register(ValueId value);
+
+    // Constant pool management
+    u16 add_constant(const BCConstant& c);
+
+    // Block lowering
+    void lower_block(IRBlock* block);
+    void lower_instruction(IRInst* inst);
+    void lower_terminator(IRBlock* block);
+
+    // Block argument handling
+    void emit_block_args(const JumpTarget& target);
+
+    // Two-pass jump resolution
+    void patch_jumps();
+};
+```
+
+Key lowering decisions:
+- **Simple register allocation**: Uses SSA value ID as register number (max 255 values per function)
+- **Two-pass emission**: First pass records block offsets, second pass patches jump targets
+- **Constant pool**: Values that don't fit in 16-bit immediate go to constant pool
+- **Block arguments**: Lowered to MOV instructions before each jump
 
 ---
 
@@ -456,17 +609,58 @@ roxy/
 
 ---
 
+## Implementation Status
+
+| Component | Status | Files |
+|-----------|--------|-------|
+| Lexer | ✅ Done | `include/roxy/shared/lexer.hpp` |
+| Compiler Parser | ✅ Done | `include/roxy/compiler/parser.hpp` |
+| AST | ✅ Done | `include/roxy/compiler/ast.hpp` |
+| Type System | ✅ Done | `include/roxy/compiler/types.hpp` |
+| Semantic Analysis | ✅ Done | `include/roxy/compiler/semantic.hpp` |
+| SSA IR | ✅ Done | `include/roxy/compiler/ssa_ir.hpp` |
+| IR Builder | ✅ Done | `include/roxy/compiler/ir_builder.hpp` |
+| Bytecode Format | ✅ Done | `include/roxy/vm/bytecode.hpp` |
+| Value/Object | ✅ Done | `include/roxy/vm/value.hpp`, `object.hpp` |
+| VM Core | ✅ Done | `include/roxy/vm/vm.hpp` |
+| Interpreter | ✅ Done | `include/roxy/vm/interpreter.hpp` |
+| SSA Lowering | ✅ Done | `include/roxy/compiler/lowering.hpp` |
+| C++ Interop | ⏳ Planned | — |
+| LSP Parser | ⏳ Planned | — |
+| LSP Features | ⏳ Planned | — |
+
 ## Next Steps
 
-1. **Lexer** — Shared between compiler and LSP
-2. **Compiler parser** — Simple, fail-fast
-3. **SSA IR** — Block arguments representation
-4. **Bytecode lowering** — Register allocation, instruction selection
-5. **VM interpreter** — Computed goto dispatch loop
+1. ~~**Lexer** — Shared between compiler and LSP~~ ✅
+2. ~~**Compiler parser** — Simple, fail-fast~~ ✅
+3. ~~**SSA IR** — Block arguments representation~~ ✅
+4. ~~**Bytecode lowering** — Register allocation, instruction selection~~ ✅
+5. ~~**VM interpreter** — Switch-based dispatch loop~~ ✅
 6. **C++ interop** — Type registration, native binding
-7. **LSP parser** — Error recovery, lossless CST
-8. **LSP features** — Completion, hover, go-to-definition
+7. **Field/Index access** — Complete GET_FIELD, SET_FIELD, GET_INDEX, SET_INDEX opcodes
+8. **LSP parser** — Error recovery, lossless CST
+9. **LSP features** — Completion, hover, go-to-definition
 
 ---
 
-This should give you a solid foundation to start implementing. Want me to create any specific files to get you started?
+## Test Coverage
+
+All components have test coverage:
+
+```
+tests/
+├── lexer_test.cpp      # Token scanning tests
+├── parser_test.cpp     # AST construction tests
+├── semantic_test.cpp   # Type checking tests
+├── ssa_ir_test.cpp     # IR generation tests
+├── bytecode_test.cpp   # Instruction encoding tests
+├── vm_test.cpp         # VM execution tests
+└── lowering_test.cpp   # SSA to bytecode tests
+```
+
+Run all tests:
+```bash
+cd build
+./lexer_test.exe && ./parser_test.exe && ./semantic_test.exe && \
+./ssa_ir_test.exe && ./bytecode_test.exe && ./vm_test.exe && ./lowering_test.exe
+```
