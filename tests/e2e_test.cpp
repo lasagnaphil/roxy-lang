@@ -1,0 +1,760 @@
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "roxy/core/doctest/doctest.h"
+
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/shared/lexer.hpp"
+#include "roxy/compiler/parser.hpp"
+#include "roxy/compiler/semantic.hpp"
+#include "roxy/compiler/ssa_ir.hpp"
+#include "roxy/compiler/ir_builder.hpp"
+#include "roxy/compiler/lowering.hpp"
+#include "roxy/vm/vm.hpp"
+#include "roxy/vm/interpreter.hpp"
+
+using namespace rx;
+
+// Helper to compile Roxy source to bytecode module
+static BCModule* compile(BumpAllocator& allocator, const char* source) {
+    u32 len = 0;
+    while (source[len]) len++;
+
+    Lexer lexer(source, len);
+    Parser parser(lexer, allocator);
+    Program* program = parser.parse();
+
+    if (!program || parser.has_error()) {
+        return nullptr;
+    }
+
+    SemanticAnalyzer analyzer(allocator);
+    if (!analyzer.analyze(program)) {
+        return nullptr;
+    }
+
+    IRBuilder ir_builder(allocator, analyzer.types());
+    IRModule* ir_module = ir_builder.build(program);
+    if (!ir_module) {
+        return nullptr;
+    }
+
+    BytecodeBuilder bc_builder;
+    return bc_builder.build(ir_module);
+}
+
+// Helper to compile and run, returning result
+static Value compile_and_run(const char* source, StringView func_name, Span<Value> args = {}) {
+    BumpAllocator allocator(8192);
+    BCModule* module = compile(allocator, source);
+    if (!module) {
+        return Value::make_null();
+    }
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    if (!vm_call(&vm, func_name, args)) {
+        vm_destroy(&vm);
+        delete module;
+        return Value::make_null();
+    }
+
+    Value result = vm_get_result(&vm);
+    vm_destroy(&vm);
+    delete module;
+    return result;
+}
+
+// ============================================================================
+// Basic Tests
+// ============================================================================
+
+TEST_CASE("E2E - Return constant") {
+    const char* source = R"(
+        fun answer(): i32 {
+            return 42;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("answer"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 42);
+}
+
+TEST_CASE("E2E - Arithmetic expressions") {
+    SUBCASE("Addition") {
+        const char* source = R"(
+            fun calc(): i32 {
+                return 10 + 32;
+            }
+        )";
+        Value result = compile_and_run(source, StringView("calc"));
+        CHECK(result.as_int == 42);
+    }
+
+    SUBCASE("Complex expression") {
+        const char* source = R"(
+            fun calc(): i32 {
+                return 1 + 2 * 3 + 4 * 5;
+            }
+        )";
+        // 1 + 6 + 20 = 27
+        Value result = compile_and_run(source, StringView("calc"));
+        CHECK(result.as_int == 27);
+    }
+
+    SUBCASE("Parentheses") {
+        const char* source = R"(
+            fun calc(): i32 {
+                return (1 + 2) * (3 + 4);
+            }
+        )";
+        // 3 * 7 = 21
+        Value result = compile_and_run(source, StringView("calc"));
+        CHECK(result.as_int == 21);
+    }
+
+    SUBCASE("Division and modulo") {
+        const char* source = R"(
+            fun calc(): i32 {
+                return 100 / 3;
+            }
+        )";
+        Value result = compile_and_run(source, StringView("calc"));
+        CHECK(result.as_int == 33);
+    }
+
+    SUBCASE("Negation") {
+        const char* source = R"(
+            fun calc(): i32 {
+                return -42;
+            }
+        )";
+        Value result = compile_and_run(source, StringView("calc"));
+        CHECK(result.as_int == -42);
+    }
+}
+
+TEST_CASE("E2E - Local variables") {
+    const char* source = R"(
+        fun calc(): i32 {
+            var a: i32 = 10;
+            var b: i32 = 20;
+            var c: i32 = a + b;
+            return c;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("calc"));
+    CHECK(result.as_int == 30);
+}
+
+TEST_CASE("E2E - Function parameters") {
+    const char* source = R"(
+        fun add(a: i32, b: i32): i32 {
+            return a + b;
+        }
+    )";
+
+    BumpAllocator allocator(4096);
+    BCModule* module = compile(allocator, source);
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    Value args[2] = {Value::make_int(17), Value::make_int(25)};
+    CHECK(vm_call(&vm, StringView("add"), Span<Value>(args, 2)));
+    CHECK(vm_get_result(&vm).as_int == 42);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+// ============================================================================
+// Control Flow Tests
+// ============================================================================
+
+TEST_CASE("E2E - If statement") {
+    const char* source = R"(
+        fun abs(x: i32): i32 {
+            if (x < 0) {
+                return -x;
+            }
+            return x;
+        }
+    )";
+
+    BumpAllocator allocator(4096);
+    BCModule* module = compile(allocator, source);
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    // Test positive
+    Value args1[1] = {Value::make_int(42)};
+    CHECK(vm_call(&vm, StringView("abs"), Span<Value>(args1, 1)));
+    CHECK(vm_get_result(&vm).as_int == 42);
+
+    // Test negative
+    Value args2[1] = {Value::make_int(-42)};
+    CHECK(vm_call(&vm, StringView("abs"), Span<Value>(args2, 1)));
+    CHECK(vm_get_result(&vm).as_int == 42);
+
+    // Test zero
+    Value args3[1] = {Value::make_int(0)};
+    CHECK(vm_call(&vm, StringView("abs"), Span<Value>(args3, 1)));
+    CHECK(vm_get_result(&vm).as_int == 0);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+TEST_CASE("E2E - If-else statement") {
+    const char* source = R"(
+        fun max(a: i32, b: i32): i32 {
+            if (a > b) {
+                return a;
+            } else {
+                return b;
+            }
+        }
+    )";
+
+    BumpAllocator allocator(4096);
+    BCModule* module = compile(allocator, source);
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    Value args1[2] = {Value::make_int(10), Value::make_int(5)};
+    CHECK(vm_call(&vm, StringView("max"), Span<Value>(args1, 2)));
+    CHECK(vm_get_result(&vm).as_int == 10);
+
+    Value args2[2] = {Value::make_int(3), Value::make_int(7)};
+    CHECK(vm_call(&vm, StringView("max"), Span<Value>(args2, 2)));
+    CHECK(vm_get_result(&vm).as_int == 7);
+
+    Value args3[2] = {Value::make_int(5), Value::make_int(5)};
+    CHECK(vm_call(&vm, StringView("max"), Span<Value>(args3, 2)));
+    CHECK(vm_get_result(&vm).as_int == 5);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+// SKIP: Requires proper SSA construction for loop variables (phi nodes/block arguments)
+TEST_CASE("E2E - While loop" * doctest::skip()) {
+    const char* source = R"(
+        fun sum_to_n(n: i32): i32 {
+            var sum: i32 = 0;
+            var i: i32 = 1;
+            while (i <= n) {
+                sum = sum + i;
+                i = i + 1;
+            }
+            return sum;
+        }
+    )";
+
+    BumpAllocator allocator(4096);
+    BCModule* module = compile(allocator, source);
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    // sum(1..10) = 55
+    Value args[1] = {Value::make_int(10)};
+    CHECK(vm_call(&vm, StringView("sum_to_n"), Span<Value>(args, 1)));
+    CHECK(vm_get_result(&vm).as_int == 55);
+
+    // sum(1..100) = 5050
+    Value args2[1] = {Value::make_int(100)};
+    CHECK(vm_call(&vm, StringView("sum_to_n"), Span<Value>(args2, 1)));
+    CHECK(vm_get_result(&vm).as_int == 5050);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+// SKIP: Requires proper SSA construction for loop variables (phi nodes/block arguments)
+TEST_CASE("E2E - For loop" * doctest::skip()) {
+    const char* source = R"(
+        fun sum_to_n(n: i32): i32 {
+            var sum: i32 = 0;
+            for (var i: i32 = 1; i <= n; i = i + 1) {
+                sum = sum + i;
+            }
+            return sum;
+        }
+    )";
+
+    BumpAllocator allocator(4096);
+    BCModule* module = compile(allocator, source);
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    Value args[1] = {Value::make_int(10)};
+    CHECK(vm_call(&vm, StringView("sum_to_n"), Span<Value>(args, 1)));
+    CHECK(vm_get_result(&vm).as_int == 55);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+// ============================================================================
+// Recursive Function Tests
+// ============================================================================
+
+TEST_CASE("E2E - Factorial (recursive)") {
+    const char* source = R"(
+        fun factorial(n: i32): i32 {
+            if (n <= 1) {
+                return 1;
+            }
+            return n * factorial(n - 1);
+        }
+    )";
+
+    BumpAllocator allocator(4096);
+    BCModule* module = compile(allocator, source);
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    // factorial(0) = 1
+    Value args0[1] = {Value::make_int(0)};
+    CHECK(vm_call(&vm, StringView("factorial"), Span<Value>(args0, 1)));
+    CHECK(vm_get_result(&vm).as_int == 1);
+
+    // factorial(1) = 1
+    Value args1[1] = {Value::make_int(1)};
+    CHECK(vm_call(&vm, StringView("factorial"), Span<Value>(args1, 1)));
+    CHECK(vm_get_result(&vm).as_int == 1);
+
+    // factorial(5) = 120
+    Value args5[1] = {Value::make_int(5)};
+    CHECK(vm_call(&vm, StringView("factorial"), Span<Value>(args5, 1)));
+    CHECK(vm_get_result(&vm).as_int == 120);
+
+    // factorial(10) = 3628800
+    Value args10[1] = {Value::make_int(10)};
+    CHECK(vm_call(&vm, StringView("factorial"), Span<Value>(args10, 1)));
+    CHECK(vm_get_result(&vm).as_int == 3628800);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+TEST_CASE("E2E - Fibonacci (recursive)") {
+    const char* source = R"(
+        fun fib(n: i32): i32 {
+            if (n <= 1) {
+                return n;
+            }
+            return fib(n - 1) + fib(n - 2);
+        }
+    )";
+
+    BumpAllocator allocator(4096);
+    BCModule* module = compile(allocator, source);
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    // fib(0) = 0
+    Value args0[1] = {Value::make_int(0)};
+    CHECK(vm_call(&vm, StringView("fib"), Span<Value>(args0, 1)));
+    CHECK(vm_get_result(&vm).as_int == 0);
+
+    // fib(1) = 1
+    Value args1[1] = {Value::make_int(1)};
+    CHECK(vm_call(&vm, StringView("fib"), Span<Value>(args1, 1)));
+    CHECK(vm_get_result(&vm).as_int == 1);
+
+    // fib(10) = 55
+    Value args10[1] = {Value::make_int(10)};
+    CHECK(vm_call(&vm, StringView("fib"), Span<Value>(args10, 1)));
+    CHECK(vm_get_result(&vm).as_int == 55);
+
+    // fib(15) = 610
+    Value args15[1] = {Value::make_int(15)};
+    CHECK(vm_call(&vm, StringView("fib"), Span<Value>(args15, 1)));
+    CHECK(vm_get_result(&vm).as_int == 610);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+TEST_CASE("E2E - GCD (Euclidean algorithm)") {
+    const char* source = R"(
+        fun gcd(a: i32, b: i32): i32 {
+            if (b == 0) {
+                return a;
+            }
+            return gcd(b, a % b);
+        }
+    )";
+
+    BumpAllocator allocator(4096);
+    BCModule* module = compile(allocator, source);
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    // gcd(48, 18) = 6
+    Value args1[2] = {Value::make_int(48), Value::make_int(18)};
+    CHECK(vm_call(&vm, StringView("gcd"), Span<Value>(args1, 2)));
+    CHECK(vm_get_result(&vm).as_int == 6);
+
+    // gcd(100, 35) = 5
+    Value args2[2] = {Value::make_int(100), Value::make_int(35)};
+    CHECK(vm_call(&vm, StringView("gcd"), Span<Value>(args2, 2)));
+    CHECK(vm_get_result(&vm).as_int == 5);
+
+    // gcd(17, 13) = 1 (coprime)
+    Value args3[2] = {Value::make_int(17), Value::make_int(13)};
+    CHECK(vm_call(&vm, StringView("gcd"), Span<Value>(args3, 2)));
+    CHECK(vm_get_result(&vm).as_int == 1);
+
+    // gcd(12, 12) = 12
+    Value args4[2] = {Value::make_int(12), Value::make_int(12)};
+    CHECK(vm_call(&vm, StringView("gcd"), Span<Value>(args4, 2)));
+    CHECK(vm_get_result(&vm).as_int == 12);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+TEST_CASE("E2E - Power function (recursive)") {
+    const char* source = R"(
+        fun power(base: i32, exp: i32): i32 {
+            if (exp == 0) {
+                return 1;
+            }
+            return base * power(base, exp - 1);
+        }
+    )";
+
+    BumpAllocator allocator(4096);
+    BCModule* module = compile(allocator, source);
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    // 2^0 = 1
+    Value args1[2] = {Value::make_int(2), Value::make_int(0)};
+    CHECK(vm_call(&vm, StringView("power"), Span<Value>(args1, 2)));
+    CHECK(vm_get_result(&vm).as_int == 1);
+
+    // 2^10 = 1024
+    Value args2[2] = {Value::make_int(2), Value::make_int(10)};
+    CHECK(vm_call(&vm, StringView("power"), Span<Value>(args2, 2)));
+    CHECK(vm_get_result(&vm).as_int == 1024);
+
+    // 3^5 = 243
+    Value args3[2] = {Value::make_int(3), Value::make_int(5)};
+    CHECK(vm_call(&vm, StringView("power"), Span<Value>(args3, 2)));
+    CHECK(vm_get_result(&vm).as_int == 243);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+// ============================================================================
+// Multiple Functions Tests
+// ============================================================================
+
+TEST_CASE("E2E - Simple function call") {
+    const char* source = R"(
+        fun square(x: i32): i32 {
+            return x * x;
+        }
+
+        fun main(): i32 {
+            return square(5);
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.as_int == 25);
+}
+
+TEST_CASE("E2E - Multiple functions calling each other") {
+    const char* source = R"(
+        fun square(x: i32): i32 {
+            return x * x;
+        }
+
+        fun sum_of_squares(a: i32, b: i32): i32 {
+            return square(a) + square(b);
+        }
+
+        fun main(): i32 {
+            return sum_of_squares(3, 4);
+        }
+    )";
+
+    // 3^2 + 4^2 = 9 + 16 = 25
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.as_int == 25);
+}
+
+TEST_CASE("E2E - Mutual recursion") {
+    const char* source = R"(
+        fun is_even(n: i32): bool {
+            if (n == 0) {
+                return true;
+            }
+            return is_odd(n - 1);
+        }
+
+        fun is_odd(n: i32): bool {
+            if (n == 0) {
+                return false;
+            }
+            return is_even(n - 1);
+        }
+    )";
+
+    BumpAllocator allocator(4096);
+    BCModule* module = compile(allocator, source);
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    // is_even(0) = true
+    Value args0[1] = {Value::make_int(0)};
+    CHECK(vm_call(&vm, StringView("is_even"), Span<Value>(args0, 1)));
+    CHECK(vm_get_result(&vm).as_bool == true);
+
+    // is_even(4) = true
+    Value args4[1] = {Value::make_int(4)};
+    CHECK(vm_call(&vm, StringView("is_even"), Span<Value>(args4, 1)));
+    CHECK(vm_get_result(&vm).as_bool == true);
+
+    // is_even(7) = false
+    Value args7[1] = {Value::make_int(7)};
+    CHECK(vm_call(&vm, StringView("is_even"), Span<Value>(args7, 1)));
+    CHECK(vm_get_result(&vm).as_bool == false);
+
+    // is_odd(5) = true
+    Value args5[1] = {Value::make_int(5)};
+    CHECK(vm_call(&vm, StringView("is_odd"), Span<Value>(args5, 1)));
+    CHECK(vm_get_result(&vm).as_bool == true);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+// ============================================================================
+// Float Tests
+// ============================================================================
+
+TEST_CASE("E2E - Float arithmetic") {
+    const char* source = R"(
+        fun calc(): f64 {
+            var a: f64 = 3.5;
+            var b: f64 = 2.5;
+            return a + b;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("calc"));
+    CHECK(result.is_float());
+    CHECK(result.as_float == doctest::Approx(6.0));
+}
+
+TEST_CASE("E2E - Float comparison") {
+    const char* source = R"(
+        fun max_float(a: f64, b: f64): f64 {
+            if (a > b) {
+                return a;
+            }
+            return b;
+        }
+    )";
+
+    BumpAllocator allocator(4096);
+    BCModule* module = compile(allocator, source);
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    Value args[2] = {Value::make_float(3.14), Value::make_float(2.71)};
+    CHECK(vm_call(&vm, StringView("max_float"), Span<Value>(args, 2)));
+    CHECK(vm_get_result(&vm).as_float == doctest::Approx(3.14));
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+// ============================================================================
+// Complex Algorithm Tests
+// ============================================================================
+
+TEST_CASE("E2E - Ackermann function (deeply recursive)") {
+    const char* source = R"(
+        fun ackermann(m: i32, n: i32): i32 {
+            if (m == 0) {
+                return n + 1;
+            }
+            if (n == 0) {
+                return ackermann(m - 1, 1);
+            }
+            return ackermann(m - 1, ackermann(m, n - 1));
+        }
+    )";
+
+    BumpAllocator allocator(4096);
+    BCModule* module = compile(allocator, source);
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    VMConfig config;
+    config.register_file_size = 65536;  // Need more registers for deep recursion
+    config.max_call_depth = 4096;
+    vm_init(&vm, config);
+    vm_load_module(&vm, module);
+
+    // A(0, 0) = 1
+    Value args1[2] = {Value::make_int(0), Value::make_int(0)};
+    CHECK(vm_call(&vm, StringView("ackermann"), Span<Value>(args1, 2)));
+    CHECK(vm_get_result(&vm).as_int == 1);
+
+    // A(1, 1) = 3
+    Value args2[2] = {Value::make_int(1), Value::make_int(1)};
+    CHECK(vm_call(&vm, StringView("ackermann"), Span<Value>(args2, 2)));
+    CHECK(vm_get_result(&vm).as_int == 3);
+
+    // A(2, 2) = 7
+    Value args3[2] = {Value::make_int(2), Value::make_int(2)};
+    CHECK(vm_call(&vm, StringView("ackermann"), Span<Value>(args3, 2)));
+    CHECK(vm_get_result(&vm).as_int == 7);
+
+    // A(3, 2) = 29
+    Value args4[2] = {Value::make_int(3), Value::make_int(2)};
+    CHECK(vm_call(&vm, StringView("ackermann"), Span<Value>(args4, 2)));
+    CHECK(vm_get_result(&vm).as_int == 29);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+// SKIP: Uses while loop which requires proper SSA construction
+TEST_CASE("E2E - Collatz conjecture steps" * doctest::skip()) {
+    const char* source = R"(
+        fun collatz_steps(n: i32): i32 {
+            var steps: i32 = 0;
+            while (n != 1) {
+                if (n % 2 == 0) {
+                    n = n / 2;
+                } else {
+                    n = 3 * n + 1;
+                }
+                steps = steps + 1;
+            }
+            return steps;
+        }
+    )";
+
+    BumpAllocator allocator(4096);
+    BCModule* module = compile(allocator, source);
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    // collatz_steps(1) = 0
+    Value args1[1] = {Value::make_int(1)};
+    CHECK(vm_call(&vm, StringView("collatz_steps"), Span<Value>(args1, 1)));
+    CHECK(vm_get_result(&vm).as_int == 0);
+
+    // collatz_steps(6) = 8 (6 -> 3 -> 10 -> 5 -> 16 -> 8 -> 4 -> 2 -> 1)
+    Value args6[1] = {Value::make_int(6)};
+    CHECK(vm_call(&vm, StringView("collatz_steps"), Span<Value>(args6, 1)));
+    CHECK(vm_get_result(&vm).as_int == 8);
+
+    // collatz_steps(27) = 111
+    Value args27[1] = {Value::make_int(27)};
+    CHECK(vm_call(&vm, StringView("collatz_steps"), Span<Value>(args27, 1)));
+    CHECK(vm_get_result(&vm).as_int == 111);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+// SKIP: Uses while loop which requires proper SSA construction
+TEST_CASE("E2E - Prime checking" * doctest::skip()) {
+    const char* source = R"(
+        fun is_prime(n: i32): bool {
+            if (n <= 1) {
+                return false;
+            }
+            if (n <= 3) {
+                return true;
+            }
+            if (n % 2 == 0) {
+                return false;
+            }
+            var i: i32 = 3;
+            while (i * i <= n) {
+                if (n % i == 0) {
+                    return false;
+                }
+                i = i + 2;
+            }
+            return true;
+        }
+    )";
+
+    BumpAllocator allocator(4096);
+    BCModule* module = compile(allocator, source);
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    // Test primes
+    i32 primes[] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 97};
+    for (i32 p : primes) {
+        Value args[1] = {Value::make_int(p)};
+        CHECK(vm_call(&vm, StringView("is_prime"), Span<Value>(args, 1)));
+        CHECK(vm_get_result(&vm).as_bool == true);
+    }
+
+    // Test non-primes
+    i32 non_primes[] = {0, 1, 4, 6, 8, 9, 10, 12, 15, 21, 100};
+    for (i32 np : non_primes) {
+        Value args[1] = {Value::make_int(np)};
+        CHECK(vm_call(&vm, StringView("is_prime"), Span<Value>(args, 1)));
+        CHECK(vm_get_result(&vm).as_bool == false);
+    }
+
+    vm_destroy(&vm);
+    delete module;
+}

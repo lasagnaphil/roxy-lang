@@ -63,6 +63,15 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             if (inst->result.is_valid() && !has_register(inst->result)) {
                 allocate_register(inst->result);
             }
+
+            // For calls, we also need registers for arguments (at dst+1, dst+2, ...)
+            if (inst->op == IROp::Call && inst->result.is_valid()) {
+                u8 dst = get_register(inst->result);
+                u8 needed_regs = dst + 1 + static_cast<u8>(inst->call.args.size());
+                while (m_next_reg < needed_regs) {
+                    m_next_reg++;
+                }
+            }
         }
     }
 
@@ -267,7 +276,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             u8 arg_count = static_cast<u8>(inst->call.args.size());
 
             // Copy arguments to consecutive registers starting from dst+1
-            // (assuming calling convention uses sequential registers for args)
+            // (calling convention: arguments follow the destination register)
             u8 first_arg_reg = dst + 1;
             for (u32 i = 0; i < inst->call.args.size(); i++) {
                 u8 arg_src = get_register(inst->call.args[i]);
@@ -277,15 +286,8 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             }
 
             // Emit call: dst = call func_idx(args...)
-            // Format: [CALL][dst][func_idx:arg_count][first_arg]
-            u16 call_info = (static_cast<u16>(func_idx) << 8) | arg_count;
-            emit(encode_abc(Opcode::CALL, dst, first_arg_reg, 0) | (call_info & 0xFFFF));
-            // Re-emit properly
-            m_current_func->code.pop_back();
-            emit((static_cast<u32>(Opcode::CALL) << 24) |
-                 (static_cast<u32>(dst) << 16) |
-                 (static_cast<u32>(func_idx) << 8) |
-                 arg_count);
+            // Format: [CALL][dst][func_idx][arg_count]
+            emit_abc(Opcode::CALL, dst, func_idx, arg_count);
             break;
         }
 

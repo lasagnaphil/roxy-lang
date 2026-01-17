@@ -99,3 +99,7 @@ target_link_libraries(vm_test roxy_vm)
 # Lowering test executable
 add_executable(lowering_test tests/lowering_test.cpp)
 target_link_libraries(lowering_test roxy_vm)
+
+# End-to-end test executable
+add_executable(e2e_test tests/e2e_test.cpp)
+target_link_libraries(e2e_test roxy_vm)

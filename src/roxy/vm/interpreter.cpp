@@ -283,6 +283,9 @@ bool interpret(RoxyVM* vm) {
             case Opcode::RET: {
                 Value result = regs[a];
 
+                // Save return register before popping frame
+                u32 return_reg = frame->return_reg;
+
                 // Pop current frame
                 vm->call_stack.pop_back();
                 vm->register_top -= func->register_count;
@@ -301,8 +304,8 @@ bool interpret(RoxyVM* vm) {
                 pc = frame->pc;
                 regs = frame->registers;
 
-                // Store result in caller's return register
-                regs[frame->return_reg] = result;
+                // Store result in caller's return register (saved from callee frame)
+                regs[return_reg] = result;
                 break;
             }
 
@@ -328,11 +331,12 @@ bool interpret(RoxyVM* vm) {
 
             // Function Calls
             case Opcode::CALL: {
-                // Format: CALL dst, func_idx_high:arg_count, first_arg
+                // Format: CALL dst, func_idx, arg_count
+                // Arguments are at dst+1, dst+2, ... (set up by caller)
                 u8 dst = a;
-                u8 func_idx = static_cast<u8>(imm >> 8);
-                u8 arg_count = static_cast<u8>(imm & 0xFF);
-                u8 first_arg = b;
+                u8 func_idx = b;
+                u8 arg_count = c;
+                u8 first_arg = dst + 1;  // Arguments follow the destination register
 
                 if (func_idx >= vm->module->functions.size()) {
                     vm->error = "Invalid function index";
@@ -383,11 +387,12 @@ bool interpret(RoxyVM* vm) {
             }
 
             case Opcode::CALL_NATIVE: {
-                // Format: CALL_NATIVE dst, func_idx_high:arg_count, first_arg
+                // Format: CALL_NATIVE dst, func_idx, arg_count
+                // Arguments are at dst+1, dst+2, ... (set up by caller)
                 u8 dst = a;
-                u8 func_idx = static_cast<u8>(imm >> 8);
-                u8 arg_count = static_cast<u8>(imm & 0xFF);
-                u8 first_arg = b;
+                u8 func_idx = b;
+                u8 arg_count = c;
+                u8 first_arg = dst + 1;
 
                 if (func_idx >= vm->module->native_functions.size()) {
                     vm->error = "Invalid native function index";

@@ -208,10 +208,10 @@ void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out) {
             snprintf(buf, sizeof(buf), "R%u", a);
             break;
 
-        // Format: dst, func_idx, arg_count, first_arg
+        // Format: dst, func_idx, arg_count (args at dst+1, dst+2, ...)
         case Opcode::CALL:
         case Opcode::CALL_NATIVE:
-            snprintf(buf, sizeof(buf), "R%u, func[%u], %u args from R%u", a, imm >> 8, imm & 0xFF, b);
+            snprintf(buf, sizeof(buf), "R%u, func[%u], %u args from R%u", a, b, c, a + 1);
             break;
 
         // Format: dst, src, field_idx
