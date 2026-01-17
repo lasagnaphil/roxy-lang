@@ -8,33 +8,62 @@
 
 namespace rx {
 
+// Chunk-based bump allocator that never frees memory until destruction.
+// This ensures pointers remain valid even when new chunks are allocated.
 class BumpAllocator {
+    struct Chunk {
+        Chunk* next;
+        u64 capacity;
+        u64 used;
+        // Data follows immediately after this header
+        u8* data() { return reinterpret_cast<u8*>(this + 1); }
+    };
+
 public:
-    BumpAllocator(u64 capacity) : m_start(nullptr), m_current(nullptr), m_capacity(0) {
-        assert(capacity >= 64);
-        reallocate(capacity);
+    BumpAllocator(u64 initial_capacity) : m_head(nullptr), m_current(nullptr) {
+        assert(initial_capacity >= 64);
+        m_current = m_head = allocate_chunk(initial_capacity);
     }
 
     ~BumpAllocator() {
-        free(m_start);
+        Chunk* chunk = m_head;
+        while (chunk) {
+            Chunk* next = chunk->next;
+            free(chunk);
+            chunk = next;
+        }
     }
 
     u8* alloc_bytes(u64 size, u64 align) {
         assert(align > 0);
         assert((align & (align - 1)) == 0); // power of two
 
-        u8* aligned = (u8*)((uintptr_t)(m_current + align - 1) & ~(align - 1));
+        u8* base = m_current->data() + m_current->used;
+        u8* aligned = reinterpret_cast<u8*>((reinterpret_cast<uintptr_t>(base) + align - 1) & ~(align - 1));
+        u64 padding = static_cast<u64>(aligned - base);
+        u64 total_size = padding + size;
 
-        // TODO: There is a potential UB when size is really large and the addition overflows.
-        //  Probably use __builtin_add_overflow intrinsic (or MSVC equivalent) to optimize bounds checking.
-        u8* new_ptr = aligned + size;
+        // Check if current chunk has enough space
+        if (m_current->used + total_size > m_current->capacity) {
+            // Allocate a new chunk (at least double the size, or enough for this allocation)
+            u64 new_capacity = m_current->capacity * 2;
+            if (new_capacity < size + align) {
+                new_capacity = size + align;
+            }
+            Chunk* new_chunk = allocate_chunk(new_capacity);
+            new_chunk->next = nullptr;
+            m_current->next = new_chunk;
+            m_current = new_chunk;
 
-        if (new_ptr - m_current > m_capacity) {
-            reallocate(m_capacity << 1);
+            // Recalculate alignment in new chunk
+            base = m_current->data();
+            aligned = reinterpret_cast<u8*>((reinterpret_cast<uintptr_t>(base) + align - 1) & ~(align - 1));
+            padding = static_cast<u64>(aligned - base);
+            total_size = padding + size;
         }
-        u8* ptr = aligned;
-        m_current = aligned + size;
-        return ptr;
+
+        m_current->used += total_size;
+        return aligned;
     }
 
     template <typename T, typename ... Args>
@@ -44,28 +73,17 @@ public:
         return reinterpret_cast<T*>(ptr);
     }
 
-    template <typename T>
-    T* alloc() {
-        u8* ptr = alloc_bytes(sizeof(T), alignof(T));
-        return reinterpret_cast<T*>(ptr);
+private:
+    static Chunk* allocate_chunk(u64 capacity) {
+        Chunk* chunk = static_cast<Chunk*>(malloc(sizeof(Chunk) + capacity));
+        chunk->next = nullptr;
+        chunk->capacity = capacity;
+        chunk->used = 0;
+        return chunk;
     }
 
-private:
-    void reallocate(u64 new_capacity) {
-        u8* new_ptr = reinterpret_cast<u8*>(malloc(new_capacity));
-        u8* new_addr = new_ptr + (m_current - m_start);
-        if (m_start) {
-            memcpy(new_ptr, m_start, m_capacity);
-            free(m_start);
-        }
-        m_start = new_ptr;
-        m_current = new_addr;
-        m_capacity = new_capacity;
-    }
-private:
-    u8* m_start;
-    u8* m_current;
-    u64 m_capacity;
+    Chunk* m_head;     // First chunk in the list
+    Chunk* m_current;  // Current chunk being allocated from
 };
 
 }

@@ -5,6 +5,8 @@
 #include "roxy/core/string_view.hpp"
 #include "roxy/shared/token.hpp"
 
+#include <cstring>
+
 namespace rx {
 
 // Forward declarations
@@ -209,6 +211,11 @@ struct Expr {
         SuperExpr super_expr;
         NewExpr new_expr;
     };
+
+    Expr() : kind(AstKind::ExprLiteral), loc{0, 0, 0} {
+        memset(&literal, 0, sizeof(literal));
+    }
+    ~Expr() {}
 };
 
 // Expression statement: expr;
@@ -277,6 +284,11 @@ struct Stmt {
         ContinueStmt continue_stmt;
         DeleteStmt delete_stmt;
     };
+
+    Stmt() : kind(AstKind::StmtExpr), loc{0, 0, 0} {
+        memset(&expr_stmt, 0, sizeof(expr_stmt));
+    }
+    ~Stmt() {}
 };
 
 // Parameter modifier for function parameters
@@ -374,6 +386,11 @@ struct Decl {
         ImportDecl import_decl;
         Stmt stmt;  // For statement declarations (like expression statements)
     };
+
+    Decl() : kind(AstKind::DeclVar), loc{0, 0, 0} {
+        memset(&var_decl, 0, sizeof(var_decl));
+    }
+    ~Decl() {}
 };
 
 // Program - the root AST node

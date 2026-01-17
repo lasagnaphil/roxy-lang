@@ -44,7 +44,7 @@ private:
     // Allocation helpers
     template <typename T>
     T* alloc() {
-        return m_allocator.alloc<T>();
+        return m_allocator.emplace<T>();
     }
 
     template <typename T>
