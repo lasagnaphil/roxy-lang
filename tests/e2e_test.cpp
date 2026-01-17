@@ -14,7 +14,8 @@
 using namespace rx;
 
 // Helper to compile Roxy source to bytecode module
-static BCModule* compile(BumpAllocator& allocator, const char* source) {
+// Set debug=true to print generated IR for debugging
+static BCModule* compile(BumpAllocator& allocator, const char* source, bool debug = false) {
     u32 len = 0;
     while (source[len]) len++;
 
@@ -35,6 +36,13 @@ static BCModule* compile(BumpAllocator& allocator, const char* source) {
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         return nullptr;
+    }
+
+    if (debug) {
+        Vector<char> ir_str;
+        ir_module_to_string(ir_module, ir_str);
+        ir_str.push_back('\0');
+        printf("=== IR ===\n%s\n", ir_str.data());
     }
 
     BytecodeBuilder bc_builder;
@@ -248,8 +256,7 @@ TEST_CASE("E2E - If-else statement") {
     delete module;
 }
 
-// SKIP: Requires proper SSA construction for loop variables (phi nodes/block arguments)
-TEST_CASE("E2E - While loop" * doctest::skip()) {
+TEST_CASE("E2E - While loop") {
     const char* source = R"(
         fun sum_to_n(n: i32): i32 {
             var sum: i32 = 0;
@@ -284,8 +291,7 @@ TEST_CASE("E2E - While loop" * doctest::skip()) {
     delete module;
 }
 
-// SKIP: Requires proper SSA construction for loop variables (phi nodes/block arguments)
-TEST_CASE("E2E - For loop" * doctest::skip()) {
+TEST_CASE("E2E - For loop") {
     const char* source = R"(
         fun sum_to_n(n: i32): i32 {
             var sum: i32 = 0;
@@ -663,8 +669,7 @@ TEST_CASE("E2E - Ackermann function (deeply recursive)") {
     delete module;
 }
 
-// SKIP: Uses while loop which requires proper SSA construction
-TEST_CASE("E2E - Collatz conjecture steps" * doctest::skip()) {
+TEST_CASE("E2E - Collatz conjecture steps") {
     const char* source = R"(
         fun collatz_steps(n: i32): i32 {
             var steps: i32 = 0;
@@ -707,8 +712,7 @@ TEST_CASE("E2E - Collatz conjecture steps" * doctest::skip()) {
     delete module;
 }
 
-// SKIP: Uses while loop which requires proper SSA construction
-TEST_CASE("E2E - Prime checking" * doctest::skip()) {
+TEST_CASE("E2E - Prime checking") {
     const char* source = R"(
         fun is_prime(n: i32): bool {
             if (n <= 1) {

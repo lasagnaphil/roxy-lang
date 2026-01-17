@@ -83,10 +83,6 @@ private:
     void gen_decl(Decl* decl);
     void gen_var_decl(Decl* decl);
 
-    // Variable management
-    void define_local(StringView name, ValueId value, Type* type);
-    ValueId lookup_local(StringView name);
-
     // Get the appropriate binary opcode for a type
     IROp get_binary_op(BinaryOp op, Type* type);
     IROp get_comparison_op(BinaryOp op, Type* type);
@@ -106,12 +102,32 @@ private:
     };
     Vector<tsl::robin_map<StringView, LocalVar, StringViewHash, StringViewEqual>> m_local_scopes;
 
+    // Info about a variable that needs a phi at loop header
+    struct LoopVarInfo {
+        StringView name;
+        Type* type;
+        ValueId header_param;   // Block param ValueId in header
+        ValueId initial_value;  // Value before loop
+    };
+
     // Loop control flow info (for break/continue)
     struct LoopInfo {
-        IRBlock* header_block;    // Loop header (for continue)
-        IRBlock* exit_block;      // Exit block (for break)
+        IRBlock* header_block;       // Loop header (for continue in while, or header in for)
+        IRBlock* exit_block;         // Exit block (for break)
+        IRBlock* continue_block;     // Continue target (same as header for while, increment for for)
+        Vector<LoopVarInfo> loop_vars;  // Variables modified in loop
     };
     Vector<LoopInfo> m_loop_stack;
+
+    // Variable management (declared after LocalVar struct)
+    void define_local(StringView name, ValueId value, Type* type);
+    ValueId lookup_local(StringView name);
+    LocalVar* find_local(StringView name);  // Returns pointer to LocalVar or nullptr
+
+    // Loop variable analysis (declared after LoopVarInfo struct)
+    void collect_assigned_vars(Stmt* stmt, Vector<StringView>& out);
+    void collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out);
+    Span<BlockArgPair> make_loop_args(const Vector<LoopVarInfo>& loop_vars);
 
     // Helper to create a span in the allocator
     template<typename T>
@@ -119,6 +135,17 @@ private:
         if (count == 0) return {};
         T* data = reinterpret_cast<T*>(m_allocator.alloc_bytes(sizeof(T) * count, alignof(T)));
         return Span<T>(data, count);
+    }
+
+    // Helper to allocate a span from a vector
+    template<typename T>
+    Span<T> alloc_span(const Vector<T>& vec) {
+        if (vec.empty()) return {};
+        Span<T> span = alloc_span<T>(static_cast<u32>(vec.size()));
+        for (u32 i = 0; i < vec.size(); i++) {
+            span[i] = vec[i];
+        }
+        return span;
     }
 
     // Push/pop scope for local variables

@@ -362,10 +362,58 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     // Evaluate condition
     ValueId cond = gen_expr(is.condition);
 
+    // Collect variables assigned in both branches
+    Vector<StringView> then_modified, else_modified;
+    collect_assigned_vars(is.then_branch, then_modified);
+    if (is.else_branch) {
+        collect_assigned_vars(is.else_branch, else_modified);
+    }
+
+    // Find variables that are assigned in either branch and exist before the if
+    // These need phi nodes (block params) at the merge point
+    Vector<StringView> phi_vars;
+    for (u32 i = 0; i < then_modified.size(); i++) {
+        LocalVar* lv = find_local(then_modified[i]);
+        if (lv && lv->value.is_valid()) {
+            bool found = false;
+            for (u32 j = 0; j < phi_vars.size(); j++) {
+                if (phi_vars[j] == then_modified[i]) { found = true; break; }
+            }
+            if (!found) phi_vars.push_back(then_modified[i]);
+        }
+    }
+    for (u32 i = 0; i < else_modified.size(); i++) {
+        LocalVar* lv = find_local(else_modified[i]);
+        if (lv && lv->value.is_valid()) {
+            bool found = false;
+            for (u32 j = 0; j < phi_vars.size(); j++) {
+                if (phi_vars[j] == else_modified[i]) { found = true; break; }
+            }
+            if (!found) phi_vars.push_back(else_modified[i]);
+        }
+    }
+
     // Create blocks
     IRBlock* then_block = create_block(StringView("then", 4));
     IRBlock* else_block = is.else_branch ? create_block(StringView("else", 4)) : nullptr;
     IRBlock* merge_block = create_block(StringView("endif", 5));
+
+    // Create block params on merge block for phi variables
+    struct PhiInfo {
+        StringView name;
+        Type* type;
+        ValueId merge_param;
+        ValueId original_value;
+    };
+    Vector<PhiInfo> phi_info;
+    for (u32 i = 0; i < phi_vars.size(); i++) {
+        LocalVar* lv = find_local(phi_vars[i]);
+        if (lv) {
+            ValueId param = m_current_func->new_value();
+            merge_block->params.push_back({param, lv->type, phi_vars[i]});
+            phi_info.push_back({phi_vars[i], lv->type, param, lv->value});
+        }
+    }
 
     // Branch based on condition
     if (else_block) {
@@ -374,56 +422,116 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
         finish_block_branch(cond, then_block->id, merge_block->id);
     }
 
+    // Save variable state before then branch (so else branch sees original values)
+    Vector<tsl::robin_map<StringView, LocalVar, StringViewHash, StringViewEqual>> saved_scopes;
+    if (else_block) {
+        saved_scopes.reserve(m_local_scopes.size());
+        for (auto& scope : m_local_scopes) {
+            saved_scopes.push_back(scope);
+        }
+    }
+
     // Generate then branch
     set_current_block(then_block);
     gen_stmt(is.then_branch);
     if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-        finish_block_goto(merge_block->id);
+        // Build args for merge block
+        Vector<BlockArgPair> then_args;
+        for (u32 i = 0; i < phi_info.size(); i++) {
+            ValueId val = lookup_local(phi_info[i].name);
+            then_args.push_back({val});
+        }
+        finish_block_goto(merge_block->id, alloc_span(then_args));
     }
 
     // Generate else branch
     if (else_block) {
+        // Restore variable state so else branch sees original values
+        m_local_scopes = std::move(saved_scopes);
+
         set_current_block(else_block);
         gen_stmt(is.else_branch);
         if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-            finish_block_goto(merge_block->id);
+            // Build args for merge block
+            Vector<BlockArgPair> else_args;
+            for (u32 i = 0; i < phi_info.size(); i++) {
+                ValueId val = lookup_local(phi_info[i].name);
+                else_args.push_back({val});
+            }
+            finish_block_goto(merge_block->id, alloc_span(else_args));
         }
     }
 
     // Continue with merge block
     set_current_block(merge_block);
+
+    // Bind variables to merge block params (phi results)
+    for (u32 i = 0; i < phi_info.size(); i++) {
+        define_local(phi_info[i].name, phi_info[i].merge_param, phi_info[i].type);
+    }
 }
 
 void IRBuilder::gen_while_stmt(Stmt* stmt) {
     WhileStmt& ws = stmt->while_stmt;
 
-    // Create blocks
+    // 1. Collect variables assigned in the loop body
+    Vector<StringView> modified_vars;
+    collect_assigned_vars(ws.body, modified_vars);
+
+    // 2. Create blocks
     IRBlock* header_block = create_block(StringView("while", 5));
     IRBlock* body_block = create_block(StringView("body", 4));
     IRBlock* exit_block = create_block(StringView("endwhile", 8));
 
-    // Jump to header
-    finish_block_goto(header_block->id);
+    // 3. Create block params for modified vars that exist before the loop
+    Vector<LoopVarInfo> loop_vars;
+    Vector<BlockArgPair> initial_args;
+    for (u32 i = 0; i < modified_vars.size(); i++) {
+        StringView name = modified_vars[i];
+        LocalVar* lv = find_local(name);
+        if (lv && lv->value.is_valid()) {
+            ValueId param = m_current_func->new_value();
+            header_block->params.push_back({param, lv->type, name});
+            loop_vars.push_back({name, lv->type, param, lv->value});
+            initial_args.push_back({lv->value});
+        }
+    }
 
-    // Header: evaluate condition and branch
+    // 4. Jump to header with initial values
+    finish_block_goto(header_block->id, alloc_span(initial_args));
+
+    // 5. In header, bind locals to block params
     set_current_block(header_block);
+    for (u32 i = 0; i < loop_vars.size(); i++) {
+        define_local(loop_vars[i].name, loop_vars[i].header_param, loop_vars[i].type);
+    }
+
+    // 6. Condition and branch
     ValueId cond = gen_expr(ws.condition);
     finish_block_branch(cond, body_block->id, exit_block->id);
 
-    // Push loop info for break/continue
-    m_loop_stack.push_back({header_block, exit_block});
+    // 7. Push loop info for break/continue
+    m_loop_stack.push_back({header_block, exit_block, header_block, loop_vars});
 
-    // Body
+    // 8. Generate body
     set_current_block(body_block);
     gen_stmt(ws.body);
+
+    // 9. Back edge with updated values
     if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-        finish_block_goto(header_block->id);
+        Span<BlockArgPair> back_args = make_loop_args(m_loop_stack.back().loop_vars);
+        finish_block_goto(header_block->id, back_args);
     }
 
+    // Save the loop vars before popping (need them for exit block)
+    Vector<LoopVarInfo> saved_loop_vars = m_loop_stack.back().loop_vars;  // copy, not move
     m_loop_stack.pop_back();
 
-    // Continue with exit block
+    // 10. Exit block - use header params as final values
     set_current_block(exit_block);
+    for (u32 i = 0; i < saved_loop_vars.size(); i++) {
+        define_local(saved_loop_vars[i].name, saved_loop_vars[i].header_param, saved_loop_vars[i].type);
+    }
 }
 
 void IRBuilder::gen_for_stmt(Stmt* stmt) {
@@ -431,22 +539,46 @@ void IRBuilder::gen_for_stmt(Stmt* stmt) {
 
     push_scope();
 
-    // Initialize
+    // 1. Initialize (creates the loop variable in scope)
     if (fs.initializer) {
         gen_decl(fs.initializer);
     }
 
-    // Create blocks
+    // 2. Collect variables assigned in the loop body AND increment
+    Vector<StringView> modified_vars;
+    collect_assigned_vars(fs.body, modified_vars);
+    collect_assigned_vars_expr(fs.increment, modified_vars);
+
+    // 3. Create blocks
     IRBlock* header_block = create_block(StringView("for", 3));
     IRBlock* body_block = create_block(StringView("forbody", 7));
     IRBlock* incr_block = create_block(StringView("forinc", 6));
     IRBlock* exit_block = create_block(StringView("endfor", 6));
 
-    // Jump to header
-    finish_block_goto(header_block->id);
+    // 4. Create block params on header for modified vars that exist before the loop
+    Vector<LoopVarInfo> loop_vars;
+    Vector<BlockArgPair> initial_args;
+    for (u32 i = 0; i < modified_vars.size(); i++) {
+        StringView name = modified_vars[i];
+        LocalVar* lv = find_local(name);
+        if (lv && lv->value.is_valid()) {
+            ValueId param = m_current_func->new_value();
+            header_block->params.push_back({param, lv->type, name});
+            loop_vars.push_back({name, lv->type, param, lv->value});
+            initial_args.push_back({lv->value});
+        }
+    }
 
-    // Header: evaluate condition and branch
+    // 5. Jump to header with initial values
+    finish_block_goto(header_block->id, alloc_span(initial_args));
+
+    // 6. In header, bind locals to block params
     set_current_block(header_block);
+    for (u32 i = 0; i < loop_vars.size(); i++) {
+        define_local(loop_vars[i].name, loop_vars[i].header_param, loop_vars[i].type);
+    }
+
+    // 7. Condition and branch
     if (fs.condition) {
         ValueId cond = gen_expr(fs.condition);
         finish_block_branch(cond, body_block->id, exit_block->id);
@@ -455,29 +587,36 @@ void IRBuilder::gen_for_stmt(Stmt* stmt) {
         finish_block_goto(body_block->id);
     }
 
-    // Push loop info for break/continue (continue goes to increment block)
-    m_loop_stack.push_back({incr_block, exit_block});
+    // 8. Push loop info for break/continue
+    // continue goes to increment block, but we need to pass args to header after increment
+    m_loop_stack.push_back({header_block, exit_block, incr_block, loop_vars});
 
-    // Body
+    // 9. Generate body
     set_current_block(body_block);
     gen_stmt(fs.body);
     if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
         finish_block_goto(incr_block->id);
     }
 
-    // Increment
+    // 10. Increment block - generate increment, then jump back to header with args
     set_current_block(incr_block);
     if (fs.increment) {
         gen_expr(fs.increment);
     }
-    finish_block_goto(header_block->id);
+    Span<BlockArgPair> back_args = make_loop_args(m_loop_stack.back().loop_vars);
+    finish_block_goto(header_block->id, back_args);
 
+    // Save the loop vars before popping (need them for exit block)
+    Vector<LoopVarInfo> saved_loop_vars = m_loop_stack.back().loop_vars;  // copy, not move
     m_loop_stack.pop_back();
 
     pop_scope();
 
-    // Continue with exit block
+    // 11. Exit block - use header params as final values
     set_current_block(exit_block);
+    for (u32 i = 0; i < saved_loop_vars.size(); i++) {
+        define_local(saved_loop_vars[i].name, saved_loop_vars[i].header_param, saved_loop_vars[i].type);
+    }
 }
 
 void IRBuilder::gen_return_stmt(Stmt* stmt) {
@@ -495,6 +634,7 @@ void IRBuilder::gen_break_stmt(Stmt*) {
     if (m_loop_stack.empty()) return;  // Should be caught by semantic analysis
 
     LoopInfo& loop = m_loop_stack.back();
+    // Exit block doesn't have parameters - it uses header params
     finish_block_goto(loop.exit_block->id);
 }
 
@@ -502,7 +642,16 @@ void IRBuilder::gen_continue_stmt(Stmt*) {
     if (m_loop_stack.empty()) return;  // Should be caught by semantic analysis
 
     LoopInfo& loop = m_loop_stack.back();
-    finish_block_goto(loop.header_block->id);
+    // For while loops: continue_block == header_block, needs args
+    // For for loops: continue_block == incr_block, no args needed
+    if (loop.continue_block == loop.header_block) {
+        // While loop - pass current values to header
+        Span<BlockArgPair> args = make_loop_args(loop.loop_vars);
+        finish_block_goto(loop.continue_block->id, args);
+    } else {
+        // For loop - just jump to increment block (no args)
+        finish_block_goto(loop.continue_block->id);
+    }
 }
 
 void IRBuilder::gen_delete_stmt(Stmt* stmt) {
@@ -857,6 +1006,18 @@ void IRBuilder::gen_var_decl(Decl* decl) {
 
 void IRBuilder::define_local(StringView name, ValueId value, Type* type) {
     if (m_local_scopes.empty()) return;
+
+    // Search for an existing binding in outer scopes and update it
+    // This is necessary for SSA - assignments should update the existing definition
+    for (i32 i = static_cast<i32>(m_local_scopes.size()) - 1; i >= 0; i--) {
+        auto it = m_local_scopes[i].find(name);
+        if (it != m_local_scopes[i].end()) {
+            m_local_scopes[i][name] = {value, type};
+            return;
+        }
+    }
+
+    // If no existing binding, add to innermost scope (new variable declaration)
     m_local_scopes.back()[name] = {value, type};
 }
 
@@ -879,6 +1040,121 @@ void IRBuilder::pop_scope() {
     if (!m_local_scopes.empty()) {
         m_local_scopes.pop_back();
     }
+}
+
+IRBuilder::LocalVar* IRBuilder::find_local(StringView name) {
+    // Search from innermost to outermost scope
+    for (i32 i = static_cast<i32>(m_local_scopes.size()) - 1; i >= 0; i--) {
+        auto it = m_local_scopes[i].find(name);
+        if (it != m_local_scopes[i].end()) {
+            return &it.value();
+        }
+    }
+    return nullptr;
+}
+
+void IRBuilder::collect_assigned_vars(Stmt* stmt, Vector<StringView>& out) {
+    if (!stmt) return;
+
+    switch (stmt->kind) {
+        case AstKind::StmtExpr:
+            collect_assigned_vars_expr(stmt->expr_stmt.expr, out);
+            break;
+        case AstKind::StmtBlock: {
+            BlockStmt& block = stmt->block;
+            for (u32 i = 0; i < block.declarations.size(); i++) {
+                Decl* d = block.declarations[i];
+                if (!d) continue;
+                // Recurse into statements (not var decls - those are new vars)
+                if (d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtDelete) {
+                    collect_assigned_vars(&d->stmt, out);
+                }
+            }
+            break;
+        }
+        case AstKind::StmtIf:
+            collect_assigned_vars(stmt->if_stmt.then_branch, out);
+            collect_assigned_vars(stmt->if_stmt.else_branch, out);
+            break;
+        case AstKind::StmtWhile:
+            collect_assigned_vars(stmt->while_stmt.body, out);
+            break;
+        case AstKind::StmtFor:
+            collect_assigned_vars(stmt->for_stmt.body, out);
+            collect_assigned_vars_expr(stmt->for_stmt.increment, out);
+            break;
+        default:
+            break;
+    }
+}
+
+void IRBuilder::collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out) {
+    if (!expr) return;
+
+    switch (expr->kind) {
+        case AstKind::ExprAssign: {
+            // Check if the target is an identifier
+            if (expr->assign.target->kind == AstKind::ExprIdentifier) {
+                StringView name = expr->assign.target->identifier.name;
+                // Add if not already present
+                bool found = false;
+                for (u32 i = 0; i < out.size(); i++) {
+                    if (out[i] == name) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    out.push_back(name);
+                }
+            }
+            // Recurse into value expression (it might have nested assignments)
+            collect_assigned_vars_expr(expr->assign.value, out);
+            break;
+        }
+        case AstKind::ExprBinary:
+            collect_assigned_vars_expr(expr->binary.left, out);
+            collect_assigned_vars_expr(expr->binary.right, out);
+            break;
+        case AstKind::ExprUnary:
+            collect_assigned_vars_expr(expr->unary.operand, out);
+            break;
+        case AstKind::ExprTernary:
+            collect_assigned_vars_expr(expr->ternary.condition, out);
+            collect_assigned_vars_expr(expr->ternary.then_expr, out);
+            collect_assigned_vars_expr(expr->ternary.else_expr, out);
+            break;
+        case AstKind::ExprCall:
+            collect_assigned_vars_expr(expr->call.callee, out);
+            for (u32 i = 0; i < expr->call.arguments.size(); i++) {
+                collect_assigned_vars_expr(expr->call.arguments[i], out);
+            }
+            break;
+        case AstKind::ExprIndex:
+            collect_assigned_vars_expr(expr->index.object, out);
+            collect_assigned_vars_expr(expr->index.index, out);
+            break;
+        case AstKind::ExprGet:
+            collect_assigned_vars_expr(expr->get.object, out);
+            break;
+        case AstKind::ExprGrouping:
+            collect_assigned_vars_expr(expr->grouping.expr, out);
+            break;
+        default:
+            break;
+    }
+}
+
+Span<BlockArgPair> IRBuilder::make_loop_args(const Vector<LoopVarInfo>& loop_vars) {
+    if (loop_vars.empty()) return {};
+
+    Vector<BlockArgPair> args;
+    for (u32 i = 0; i < loop_vars.size(); i++) {
+        // Look up the current value of this variable
+        ValueId current_val = lookup_local(loop_vars[i].name);
+        args.push_back({current_val});
+    }
+    return alloc_span(args);
 }
 
 // Opcode selection
