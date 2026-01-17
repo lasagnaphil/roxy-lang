@@ -1,0 +1,18 @@
+struct Base {}
+
+fun Base.toString() { return "Base"; }
+
+struct Derived : Base {}
+
+fun Derived.getClosure() {
+    fun closure() {
+        return super.toString();
+    }
+    return closure;
+}
+
+fun Derived.toString() { return "Derived"; }
+
+var derived: Derived;
+var closure = derived.getClosure();
+print(closure()); // expect: Base

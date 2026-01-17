@@ -1,0 +1,3 @@
+var a: string = "value";
+var a: string = a;
+print(a); // expect: value

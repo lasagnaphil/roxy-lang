@@ -1,0 +1,2 @@
+struct Foo {}
+Foo.bar = "value"; // expect error: Undefined variable.

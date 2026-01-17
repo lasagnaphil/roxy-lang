@@ -1,0 +1,22 @@
+struct Outer {}
+
+fun Outer.method() {
+  print(this); // expect: Outer instance
+
+  fun f() {
+    print(this); // expect: Outer instance
+
+    struct Inner {}
+
+    fun Inner.method() {
+      print(this); // expect: Inner instance
+    }
+
+    var inner: Inner;
+    inner.method();
+  }
+  f();
+}
+
+var outer: Outer;
+outer.method();

@@ -3,7 +3,7 @@ struct Foo {
     b: int
 }
 
-fun new Foo(a, b) {
+fun new Foo(a: int, b: int) {
     print("init");
     this.a = a;
     this.b = b;

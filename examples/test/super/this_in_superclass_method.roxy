@@ -1,0 +1,20 @@
+struct Base {
+    a: string
+}
+
+fun new Base(a: string) {
+    this.a = a;
+}
+
+struct Derived : Base {
+    b: string
+}
+
+fun new Derived(a: string, b: string) {
+    super.init(a);
+    this.b = b;
+}
+
+var derived = Derived("a", "b");
+print(derived.a); // expect: a
+print(derived.b); // expect: b

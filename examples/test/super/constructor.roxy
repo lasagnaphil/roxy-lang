@@ -1,0 +1,16 @@
+struct Base {}
+
+fun new Base(a: string, b: string) {
+    print("Base.init(" + a + ", " + b + ")");
+}
+
+struct Derived : Base {}
+
+fun new Derived() {
+    print("Derived.init()");
+    super.init("a", "b");
+}
+
+var derived = Derived();
+// expect: Derived.init()
+// expect: Base.init(a, b)

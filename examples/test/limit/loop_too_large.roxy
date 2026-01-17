@@ -1,0 +1,4 @@
+// This test file is intentionally large to test loop jump offset limits.
+// The loop_too_large.lox file in the Lox test suite is too large to convert directly.
+// This is a placeholder - the actual test would need to be generated programmatically.
+// Error: Loop body too large.

@@ -1,0 +1,22 @@
+struct Foo {}
+
+fun Foo.method0(): string { return "no args"; }
+fun Foo.method1(a: int): int { return a; }
+fun Foo.method2(a: int, b: int): int { return a + b; }
+fun Foo.method3(a: int, b: int, c: int): int { return a + b + c; }
+fun Foo.method4(a: int, b: int, c: int, d: int): int { return a + b + c + d; }
+fun Foo.method5(a: int, b: int, c: int, d: int, e: int): int { return a + b + c + d + e; }
+fun Foo.method6(a: int, b: int, c: int, d: int, e: int, f: int): int { return a + b + c + d + e + f; }
+fun Foo.method7(a: int, b: int, c: int, d: int, e: int, f: int, g: int): int { return a + b + c + d + e + f + g; }
+fun Foo.method8(a: int, b: int, c: int, d: int, e: int, f: int, g: int, h: int): int { return a + b + c + d + e + f + g + h; }
+
+var foo: Foo;
+print(foo.method0()); // expect: no args
+print(foo.method1(1)); // expect: 1
+print(foo.method2(1, 2)); // expect: 3
+print(foo.method3(1, 2, 3)); // expect: 6
+print(foo.method4(1, 2, 3, 4)); // expect: 10
+print(foo.method5(1, 2, 3, 4, 5)); // expect: 15
+print(foo.method6(1, 2, 3, 4, 5, 6)); // expect: 21
+print(foo.method7(1, 2, 3, 4, 5, 6, 7)); // expect: 28
+print(foo.method8(1, 2, 3, 4, 5, 6, 7, 8)); // expect: 36

@@ -1,0 +1,5 @@
+fun f(): string {
+  if (false) "no"; else return "ok";
+}
+
+print(f()); // expect: ok

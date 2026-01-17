@@ -1,0 +1,6 @@
+struct Foo {}
+
+fun Foo.bar() {}
+
+var foo: Foo;
+print(foo.bar()); // expect: nil

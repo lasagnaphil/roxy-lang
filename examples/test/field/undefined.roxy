@@ -1,0 +1,4 @@
+struct Foo {}
+var foo: Foo;
+
+foo.bar; // expect error: Cannot find field.

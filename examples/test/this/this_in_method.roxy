@@ -1,0 +1,7 @@
+struct Foo {}
+
+fun Foo.bar() { return this; }
+fun Foo.baz() { return "baz"; }
+
+var foo: Foo;
+print(foo.bar().baz()); // expect: baz

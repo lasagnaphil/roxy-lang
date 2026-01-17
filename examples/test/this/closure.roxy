@@ -1,0 +1,14 @@
+struct Foo {}
+
+fun Foo.getClosure() {
+  fun closure() {
+    return this.toString();
+  }
+  return closure;
+}
+
+fun Foo.toString() { return "Foo"; }
+
+var foo: Foo;
+var closure = foo.getClosure();
+print(closure()); // expect: Foo

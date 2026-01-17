@@ -1,0 +1,4 @@
+struct Bar {}
+print(!Bar);      // expect: false
+var bar: Bar;
+print(!bar);    // expect: false

@@ -1,0 +1,10 @@
+var foo: string = "variable";
+
+struct Foo {}
+
+fun Foo.method() {
+  print(foo);
+}
+
+var f: Foo;
+f.method(); // expect: variable

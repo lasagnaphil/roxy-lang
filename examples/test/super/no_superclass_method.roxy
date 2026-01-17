@@ -1,0 +1,10 @@
+struct Base {}
+
+struct Derived : Base {}
+
+fun Derived.foo() {
+    super.doesNotExist(1); // expect error: Cannot find field.
+}
+
+var derived: Derived;
+derived.foo();

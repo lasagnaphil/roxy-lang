@@ -1,0 +1,20 @@
+struct Foo {}
+
+fun Foo.getClosure() {
+  fun f() {
+    fun g() {
+      fun h() {
+        return this.toString();
+      }
+      return h;
+    }
+    return g;
+  }
+  return f;
+}
+
+fun Foo.toString() { return "Foo"; }
+
+var foo: Foo;
+var closure = foo.getClosure();
+print(closure()()()); // expect: Foo

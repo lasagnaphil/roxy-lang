@@ -1,0 +1,1 @@
+"s" + nil; // expect error: Incompatible types between string and nil.

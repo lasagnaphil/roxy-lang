@@ -1,0 +1,9 @@
+{
+  var a: string = "first";
+  print(a); // expect: first
+}
+
+{
+  var a: string = "second";
+  print(a); // expect: second
+}

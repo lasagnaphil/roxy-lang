@@ -1,0 +1,1 @@
+nil + nil; // expect error: Incompatible types between nil and nil.

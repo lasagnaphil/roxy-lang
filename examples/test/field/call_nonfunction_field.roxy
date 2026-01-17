@@ -1,0 +1,8 @@
+struct Foo {
+    bar: string
+}
+
+var foo: Foo;
+foo.bar = "not fn";
+
+foo.bar(); // expect error: Cannot call on type string

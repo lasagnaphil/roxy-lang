@@ -1,0 +1,4 @@
+struct Foo {}
+
+// [line 4] Error at '(': Expect superclass name.
+struct Bar : (Foo) {}

@@ -1,0 +1,14 @@
+struct Foo {}
+
+fun Foo.methodOnFoo() { print("foo"); }
+fun Foo.override() { print("foo"); }
+
+struct Bar : Foo {}
+
+fun Bar.methodOnBar() { print("bar"); }
+fun Bar.override() { print("bar"); }
+
+var bar: Bar;
+bar.methodOnFoo(); // expect: foo
+bar.methodOnBar(); // expect: bar
+bar.override(); // expect: bar

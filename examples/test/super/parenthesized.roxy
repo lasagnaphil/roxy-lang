@@ -1,0 +1,10 @@
+struct A {}
+
+fun A.method() {}
+
+struct B : A {}
+
+fun B.method() {
+    // [line 8] Error at ')': Expect '.' after 'super'.
+    (super).method();
+}

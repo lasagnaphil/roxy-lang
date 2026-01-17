@@ -1,0 +1,9 @@
+struct Foo {}
+
+fun Foo.method(): string {
+  return "ok";
+  print("bad");
+}
+
+var foo: Foo;
+print(foo.method()); // expect: ok

@@ -1,0 +1,1 @@
+true + 123; // expect error: Incompatible types between bool and i32.

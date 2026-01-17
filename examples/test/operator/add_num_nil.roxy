@@ -1,0 +1,1 @@
+1 + nil; // expect error: Incompatible types between i32 and nil.

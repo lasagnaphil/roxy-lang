@@ -1,0 +1,1 @@
+"1" - 1; // expect error: Incompatible types between string and i32.

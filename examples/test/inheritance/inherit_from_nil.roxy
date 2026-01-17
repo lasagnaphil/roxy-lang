@@ -1,0 +1,2 @@
+var Nil = nil;
+struct Foo : Nil {} // expect error: Cannot find type Nil.

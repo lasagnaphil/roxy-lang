@@ -1,0 +1,15 @@
+struct Base {}
+
+fun Base.foo(a: string, b: string) {
+    print("Base.foo(" + a + ", " + b + ")");
+}
+
+struct Derived : Base {}
+
+fun Derived.foo() {
+    print("Derived.foo()"); // expect: Derived.foo()
+    super.foo("a", "b", "c", "d"); // expect runtime error: Expected 2 arguments but got 4.
+}
+
+var derived: Derived;
+derived.foo();

@@ -1,0 +1,8 @@
+struct Foo {}
+
+fun Foo.method() {
+    print(method); // expect error: Undefined variable.
+}
+
+var foo: Foo;
+foo.method();

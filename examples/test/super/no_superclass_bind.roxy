@@ -1,0 +1,8 @@
+struct Base {}
+
+fun Base.foo() {
+    super.doesNotExist; // Error at 'super': Can't use 'super' in a struct with no superclass.
+}
+
+var base: Base;
+base.foo();

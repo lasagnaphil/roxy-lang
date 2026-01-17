@@ -1,0 +1,9 @@
+struct Foo {}
+
+fun Foo.bar(arg: str) {
+  print(arg);
+}
+
+var bar = { var f: Foo; f }.bar;
+print("got method"); // expect: got method
+bar("arg");          // expect: arg

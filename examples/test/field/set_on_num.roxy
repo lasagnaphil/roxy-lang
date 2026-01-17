@@ -1,0 +1,1 @@
+123.foo = "value"; // expect error: Cannot dot access on type i32

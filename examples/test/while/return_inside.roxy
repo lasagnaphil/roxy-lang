@@ -1,0 +1,9 @@
+fun f(): string {
+  while (true) {
+    var i: string = "i";
+    return i;
+  }
+}
+
+print(f());
+// expect: i

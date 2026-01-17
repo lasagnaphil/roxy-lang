@@ -1,0 +1,19 @@
+struct A {}
+
+fun A.foo() {
+    print("A.foo()");
+}
+
+struct B : A {}
+
+struct C : B {}
+
+fun C.foo() {
+    print("C.foo()");
+    super.foo();
+}
+
+var c: C;
+c.foo();
+// expect: C.foo()
+// expect: A.foo()

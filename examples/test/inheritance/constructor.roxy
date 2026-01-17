@@ -1,0 +1,17 @@
+struct A {
+  field: string;
+}
+
+fun A.init(param: string) {
+  this.field = param;
+}
+
+fun A.test() {
+  print(this.field);
+}
+
+struct B : A {}
+
+var b: B;
+b.init("value");
+b.test(); // expect: value

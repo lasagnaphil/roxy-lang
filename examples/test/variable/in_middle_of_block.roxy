@@ -1,0 +1,10 @@
+{
+  var a: string = "a";
+  print(a); // expect: a
+  var b: string = a + " b";
+  print(b); // expect: a b
+  var c: string = a + " c";
+  print(c); // expect: a c
+  var d: string = b + " d";
+  print(d); // expect: a b d
+}

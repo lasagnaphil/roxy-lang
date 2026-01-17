@@ -1,0 +1,19 @@
+struct A {}
+
+fun A.method(arg: string) {
+    print("A.method(" + arg + ")");
+}
+
+struct B : A {}
+
+fun B.getClosure() {
+    return super.method;
+}
+
+fun B.method(arg: string) {
+    print("B.method(" + arg + ")");
+}
+
+var b: B;
+var closure = b.getClosure();
+closure("arg"); // expect: A.method(arg)

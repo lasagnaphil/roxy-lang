@@ -1,0 +1,22 @@
+struct Base {}
+
+fun Base.method() {
+    print("Base.method()");
+}
+
+struct Derived : Base {}
+
+fun Derived.method() {
+    super.method();
+}
+
+struct OtherBase {}
+
+fun OtherBase.method() {
+    print("OtherBase.method()");
+}
+
+var derived: Derived;
+derived.method(); // expect: Base.method()
+Base = OtherBase;
+derived.method(); // expect: Base.method()

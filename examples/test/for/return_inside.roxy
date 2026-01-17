@@ -1,0 +1,9 @@
+fun f(): string {
+  for (;;) {
+    var i: string = "i";
+    return i;
+  }
+}
+
+print(f());
+// expect: i

@@ -1,0 +1,17 @@
+struct Base {}
+
+fun Base.foo() {
+    print("Base.foo()");
+}
+
+struct Derived : Base {}
+
+fun Derived.foo() {
+    print("Derived.foo()");
+    super.foo();
+}
+
+var derived: Derived;
+derived.foo();
+// expect: Derived.foo()
+// expect: Base.foo()

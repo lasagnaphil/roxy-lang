@@ -1,0 +1,1 @@
+true + nil; // expect error: Incompatible types between bool and nil.

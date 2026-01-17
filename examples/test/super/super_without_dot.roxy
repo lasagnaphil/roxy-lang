@@ -1,0 +1,8 @@
+struct A {}
+
+struct B : A {}
+
+fun B.method() {
+    // [line 6] Error at ';': Expect '.' after 'super'.
+    super;
+}

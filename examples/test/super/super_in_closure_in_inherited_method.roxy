@@ -1,0 +1,27 @@
+struct A {}
+
+fun A.say() {
+    print("A");
+}
+
+struct B : A {}
+
+fun B.getClosure() {
+    fun closure() {
+        super.say();
+    }
+    return closure;
+}
+
+fun B.say() {
+    print("B");
+}
+
+struct C : B {}
+
+fun C.say() {
+    print("C");
+}
+
+var c: C;
+c.getClosure()(); // expect: A

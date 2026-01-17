@@ -1,4 +1,4 @@
-class Foo {}
+struct Foo {}
 
-var foo = Foo();
-foo(); // expect runtime error: Can only call functions and classes.
+var foo: Foo;
+foo(); // expect error: Cannot call on type Foo

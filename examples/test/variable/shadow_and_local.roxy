@@ -1,0 +1,8 @@
+{
+  var a: string = "outer";
+  {
+    print(a); // expect: outer
+    var a: string = "inner";
+    print(a); // expect: inner
+  }
+}

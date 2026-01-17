@@ -1,0 +1,3 @@
+{
+  print(notDefined);  // expect error: Undefined variable.
+}
