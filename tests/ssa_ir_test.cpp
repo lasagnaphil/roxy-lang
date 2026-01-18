@@ -7,6 +7,8 @@
 #include "roxy/compiler/semantic.hpp"
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
+#include "roxy/vm/natives.hpp"
+#include "roxy/vm/binding/registry.hpp"
 
 using namespace rx;
 
@@ -14,6 +16,10 @@ using namespace rx;
 static IRModule* build_ir(BumpAllocator& allocator, const char* source) {
     u32 len = 0;
     while (source[len]) len++;
+
+    TypeCache types(allocator);
+    NativeRegistry registry(allocator, types);
+    register_builtin_natives(registry);
 
     Lexer lexer(source, len);
     Parser parser(lexer, allocator);
@@ -23,12 +29,12 @@ static IRModule* build_ir(BumpAllocator& allocator, const char* source) {
         return nullptr;
     }
 
-    SemanticAnalyzer analyzer(allocator);
+    SemanticAnalyzer analyzer(allocator, &registry);
     if (!analyzer.analyze(program)) {
         return nullptr;
     }
 
-    IRBuilder builder(allocator, analyzer.types());
+    IRBuilder builder(allocator, analyzer.types(), registry);
     return builder.build(program);
 }
 

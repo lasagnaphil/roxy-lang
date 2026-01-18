@@ -70,7 +70,7 @@ static Value compile_and_run_with_registry(const char* source, StringView func_n
         return Value::make_null();
     }
 
-    IRBuilder ir_builder(allocator, analyzer.types(), &registry);
+    IRBuilder ir_builder(allocator, analyzer.types(), registry);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         return Value::make_null();
@@ -127,7 +127,7 @@ static Value compile_and_run_with_builtins(const char* source, StringView func_n
         return Value::make_null();
     }
 
-    IRBuilder ir_builder(allocator, analyzer.types(), &registry);
+    IRBuilder ir_builder(allocator, analyzer.types(), registry);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         return Value::make_null();
@@ -542,7 +542,7 @@ static Value compile_and_run_mixed(const char* source, StringView func_name, Bin
         return Value::make_null();
     }
 
-    IRBuilder ir_builder(allocator, analyzer.types(), &registry);
+    IRBuilder ir_builder(allocator, analyzer.types(), registry);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         return Value::make_null();

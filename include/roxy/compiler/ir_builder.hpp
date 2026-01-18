@@ -19,11 +19,7 @@ class NativeRegistry;
 // Assumes semantic analysis has already been performed and expr->resolved_type is set
 class IRBuilder {
 public:
-    // Constructor without registry - uses hardcoded native function lookup
-    explicit IRBuilder(BumpAllocator& allocator, TypeCache& types);
-
-    // Constructor with registry - uses registry for native function lookup
-    IRBuilder(BumpAllocator& allocator, TypeCache& types, NativeRegistry* registry);
+    IRBuilder(BumpAllocator& allocator, TypeCache& types, NativeRegistry& registry);
 
     // Build IR module from a program
     IRModule* build(Program* program);
@@ -100,7 +96,7 @@ private:
 
     BumpAllocator& m_allocator;
     TypeCache& m_types;
-    NativeRegistry* m_registry;  // Optional registry for native function lookup
+    NativeRegistry& m_registry;
 
     // Current function being built
     IRFunction* m_current_func;

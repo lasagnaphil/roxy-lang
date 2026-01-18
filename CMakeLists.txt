@@ -75,7 +75,7 @@ target_link_libraries(semantic_test roxy_compiler)
 
 # SSA IR test executable
 add_executable(ssa_ir_test tests/ssa_ir_test.cpp)
-target_link_libraries(ssa_ir_test roxy_compiler)
+target_link_libraries(ssa_ir_test roxy_vm)
 
 # VM library (bytecode, value, object, vm, interpreter, lowering, array, natives)
 add_library(roxy_vm
