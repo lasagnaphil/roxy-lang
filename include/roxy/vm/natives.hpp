@@ -7,7 +7,8 @@ namespace rx {
 
 // Forward declarations
 struct RoxyVM;
-struct BCModule;
+class TypeCache;
+class NativeRegistry;
 
 // Native function: array_new_int(size: i32) -> i32[]
 // Creates a new integer array initialized to 0
@@ -21,8 +22,8 @@ void native_array_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
 // Prints an integer value followed by newline
 void native_print(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
 
-// Register all built-in native functions with the module
-void register_builtin_natives(BCModule* module);
+// Register all built-in native functions with the registry
+void register_builtin_natives(NativeRegistry& registry);
 
 // Built-in native function names (for lookup during compilation)
 constexpr const char* NATIVE_ARRAY_NEW_INT = "array_new_int";

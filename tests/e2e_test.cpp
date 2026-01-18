@@ -11,6 +11,7 @@
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/natives.hpp"
+#include "roxy/vm/binding/registry.hpp"
 
 using namespace rx;
 
@@ -20,6 +21,11 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, bool debu
     u32 len = 0;
     while (source[len]) len++;
 
+    // Create type cache and registry
+    TypeCache types(allocator);
+    NativeRegistry registry(allocator, types);
+    register_builtin_natives(registry);
+
     Lexer lexer(source, len);
     Parser parser(lexer, allocator);
     Program* program = parser.parse();
@@ -28,12 +34,12 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, bool debu
         return nullptr;
     }
 
-    SemanticAnalyzer analyzer(allocator);
+    SemanticAnalyzer analyzer(allocator, &registry);
     if (!analyzer.analyze(program)) {
         return nullptr;
     }
 
-    IRBuilder ir_builder(allocator, analyzer.types());
+    IRBuilder ir_builder(allocator, analyzer.types(), &registry);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         return nullptr;
@@ -49,8 +55,8 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, bool debu
     BytecodeBuilder bc_builder;
     BCModule* module = bc_builder.build(ir_module);
     if (module) {
-        // Register built-in native functions
-        register_builtin_natives(module);
+        // Register native functions with the module for runtime
+        registry.apply_to_module(module);
     }
     return module;
 }

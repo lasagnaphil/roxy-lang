@@ -1,16 +1,18 @@
 #include "roxy/compiler/ir_builder.hpp"
+#include "roxy/vm/binding/registry.hpp"
 
 #include <cassert>
 #include <cstring>
 
 namespace {
-// Built-in native function names - must match order in natives.cpp
+// Built-in native function names - must match order in natives.cpp (for backwards compatibility)
 constexpr const char* NATIVE_ARRAY_NEW_INT = "array_new_int";
 constexpr const char* NATIVE_ARRAY_LEN = "array_len";
 constexpr const char* NATIVE_PRINT = "print";
 
 // Get the native function index for a built-in (-1 if not found)
-rx::i32 get_native_index(const char* name, rx::u32 len) {
+// Used as fallback when no registry is provided
+rx::i32 get_native_index_fallback(const char* name, rx::u32 len) {
     if (len == 13 && strncmp(name, NATIVE_ARRAY_NEW_INT, len) == 0) {
         return 0;
     }
@@ -29,6 +31,16 @@ namespace rx {
 IRBuilder::IRBuilder(BumpAllocator& allocator, TypeCache& types)
     : m_allocator(allocator)
     , m_types(types)
+    , m_registry(nullptr)
+    , m_current_func(nullptr)
+    , m_current_block(nullptr)
+{
+}
+
+IRBuilder::IRBuilder(BumpAllocator& allocator, TypeCache& types, NativeRegistry* registry)
+    : m_allocator(allocator)
+    , m_types(types)
+    , m_registry(registry)
     , m_current_func(nullptr)
     , m_current_block(nullptr)
 {
@@ -878,8 +890,15 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     if (ce.callee->kind == AstKind::ExprIdentifier) {
         StringView func_name = ce.callee->identifier.name;
 
-        // Check if this is a built-in native function
-        i32 native_idx = get_native_index(func_name.data(), func_name.size());
+        // Check if this is a native function
+        i32 native_idx = -1;
+        if (m_registry) {
+            native_idx = m_registry->get_index(func_name);
+        } else {
+            // Fallback to hardcoded lookup for backwards compatibility
+            native_idx = get_native_index_fallback(func_name.data(), static_cast<u32>(func_name.size()));
+        }
+
         if (native_idx >= 0) {
             return emit_call_native(func_name, args, expr->resolved_type, static_cast<u8>(native_idx));
         }

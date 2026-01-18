@@ -13,6 +13,7 @@
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/natives.hpp"
+#include "roxy/vm/binding/interop.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -64,7 +65,8 @@ static bool parse_args(int argc, char** argv, Options& opts) {
     return true;
 }
 
-static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len, bool print_ir) {
+static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len,
+                         NativeRegistry& registry, bool print_ir) {
     Lexer lexer(source, len);
     Parser parser(lexer, allocator);
     Program* program = parser.parse();
@@ -76,7 +78,7 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len, 
         return nullptr;
     }
 
-    SemanticAnalyzer analyzer(allocator);
+    SemanticAnalyzer analyzer(allocator, &registry);
     if (!analyzer.analyze(program)) {
         fprintf(stderr, "Semantic errors:\n");
         for (const auto& err : analyzer.errors()) {
@@ -86,7 +88,7 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len, 
         return nullptr;
     }
 
-    IRBuilder ir_builder(allocator, analyzer.types());
+    IRBuilder ir_builder(allocator, analyzer.types(), &registry);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         fprintf(stderr, "IR generation failed\n");
@@ -107,7 +109,7 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len, 
         return nullptr;
     }
 
-    register_builtin_natives(module);
+    registry.apply_to_module(module);
     return module;
 }
 
@@ -128,9 +130,16 @@ int main(int argc, char** argv) {
     const char* source = reinterpret_cast<const char*>(source_buf.data());
     u32 len = static_cast<u32>(source_buf.size() - 1);  // Exclude null terminator
 
-    // Compile
+    // Create allocator and type cache for interop
     BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source, len, opts.print_ir);
+    TypeCache types(allocator);
+
+    // Create registry and register built-in natives
+    NativeRegistry registry(allocator, types);
+    register_builtin_natives(registry);
+
+    // Compile
+    BCModule* module = compile(allocator, source, len, registry, opts.print_ir);
     if (!module) {
         return 1;
     }

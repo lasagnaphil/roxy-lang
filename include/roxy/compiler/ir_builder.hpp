@@ -12,11 +12,18 @@
 
 namespace rx {
 
+// Forward declaration
+class NativeRegistry;
+
 // IRBuilder generates SSA IR from a type-checked AST
 // Assumes semantic analysis has already been performed and expr->resolved_type is set
 class IRBuilder {
 public:
+    // Constructor without registry - uses hardcoded native function lookup
     explicit IRBuilder(BumpAllocator& allocator, TypeCache& types);
+
+    // Constructor with registry - uses registry for native function lookup
+    IRBuilder(BumpAllocator& allocator, TypeCache& types, NativeRegistry* registry);
 
     // Build IR module from a program
     IRModule* build(Program* program);
@@ -91,6 +98,7 @@ private:
 
     BumpAllocator& m_allocator;
     TypeCache& m_types;
+    NativeRegistry* m_registry;  // Optional registry for native function lookup
 
     // Current function being built
     IRFunction* m_current_func;

@@ -10,6 +10,9 @@
 
 namespace rx {
 
+// Forward declaration
+class NativeRegistry;
+
 // Semantic error with location information
 struct SemanticError {
     SourceLocation loc;
@@ -25,7 +28,15 @@ constexpr u32 MAX_SEMANTIC_ERRORS = 20;
 // SemanticAnalyzer performs type checking and symbol resolution
 class SemanticAnalyzer {
 public:
+    // Constructor without registry - uses hardcoded builtins
     explicit SemanticAnalyzer(BumpAllocator& allocator);
+
+    // Constructor with registry - uses registry for native functions
+    SemanticAnalyzer(BumpAllocator& allocator, NativeRegistry* registry);
+
+    // Constructor with registry and external TypeCache - for full type consistency
+    // The TypeCache must outlive the SemanticAnalyzer
+    SemanticAnalyzer(BumpAllocator& allocator, NativeRegistry* registry, TypeCache& types);
 
     // Analyze a program - returns true if no errors
     bool analyze(Program* program);
@@ -108,6 +119,7 @@ private:
     TypeCache m_types;
     SymbolTable m_symbols;
     Vector<SemanticError> m_errors;
+    NativeRegistry* m_registry;  // Optional registry for native functions
 
     // Named type lookup (structs/enums by name)
     tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_named_types;

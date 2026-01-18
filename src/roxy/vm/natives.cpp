@@ -2,6 +2,7 @@
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/array.hpp"
 #include "roxy/vm/value.hpp"
+#include "roxy/vm/binding/registry.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -97,27 +98,21 @@ void native_print(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = Value::make_null();
 }
 
-void register_builtin_natives(BCModule* module) {
-    // Register array_new_int
-    BCNativeFunction array_new_int_fn;
-    array_new_int_fn.name = StringView(NATIVE_ARRAY_NEW_INT, strlen(NATIVE_ARRAY_NEW_INT));
-    array_new_int_fn.func = native_array_new_int;
-    array_new_int_fn.param_count = 1;
-    module->native_functions.push_back(array_new_int_fn);
+void register_builtin_natives(NativeRegistry& registry) {
+    using TK = NativeTypeKind;
 
-    // Register array_len
-    BCNativeFunction array_len_fn;
-    array_len_fn.name = StringView(NATIVE_ARRAY_LEN, strlen(NATIVE_ARRAY_LEN));
-    array_len_fn.func = native_array_len;
-    array_len_fn.param_count = 1;
-    module->native_functions.push_back(array_len_fn);
+    // Register array_new_int(size: i32) -> i32[]
+    // Use bind_native with type kinds for TypeCache-independent registration
+    registry.bind_native(NATIVE_ARRAY_NEW_INT, native_array_new_int,
+                         {TK::I32}, TK::ArrayI32);
 
-    // Register print
-    BCNativeFunction print_fn;
-    print_fn.name = StringView(NATIVE_PRINT, strlen(NATIVE_PRINT));
-    print_fn.func = native_print;
-    print_fn.param_count = 1;
-    module->native_functions.push_back(print_fn);
+    // Register array_len(arr: i32[]) -> i32
+    registry.bind_native(NATIVE_ARRAY_LEN, native_array_len,
+                         {TK::ArrayI32}, TK::I32);
+
+    // Register print(value: i32) -> void
+    registry.bind_native(NATIVE_PRINT, native_print,
+                         {TK::I32}, TK::Void);
 }
 
 bool is_builtin_native(const char* name, u32 len) {

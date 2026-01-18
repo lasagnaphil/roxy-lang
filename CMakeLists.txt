@@ -106,6 +106,10 @@ target_link_libraries(lowering_test roxy_vm)
 add_executable(e2e_test tests/e2e_test.cpp)
 target_link_libraries(e2e_test roxy_vm)
 
+# Interop test executable
+add_executable(interop_test tests/interop_test.cpp)
+target_link_libraries(interop_test roxy_vm)
+
 # Standalone interpreter executable
 add_executable(roxy src/roxy.cpp)
 target_link_libraries(roxy roxy_vm)

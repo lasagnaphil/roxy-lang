@@ -1,4 +1,5 @@
 #include "roxy/compiler/semantic.hpp"
+#include "roxy/vm/binding/registry.hpp"
 
 #include <cstdarg>
 #include <cstdio>
@@ -10,12 +11,31 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator)
     : m_allocator(allocator)
     , m_types(allocator)
     , m_symbols(allocator)
+    , m_registry(nullptr)
 {
-    // Register built-in native functions
+    // Register built-in native functions (hardcoded fallback)
+    register_builtins();
+}
+
+SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, NativeRegistry* registry)
+    : m_allocator(allocator)
+    , m_types(allocator)
+    , m_symbols(allocator)
+    , m_registry(registry)
+{
+    // Register native functions from registry
     register_builtins();
 }
 
 void SemanticAnalyzer::register_builtins() {
+    // If registry is provided, use it for native function registration
+    // Use the SemanticAnalyzer's own TypeCache so types match during type checking
+    if (m_registry) {
+        m_registry->apply_to_symbols(m_symbols, m_types, m_allocator);
+        return;
+    }
+
+    // Otherwise fall back to hardcoded registration for backwards compatibility
     // array_new_int(size: i32) -> i32[]
     // Creates function type: (i32) -> i32[]
     Type* i32_type = m_types.i32_type();
