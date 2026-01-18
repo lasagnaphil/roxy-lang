@@ -66,22 +66,6 @@ add_library(roxy_compiler
 )
 target_link_libraries(roxy_compiler roxy_shared)
 
-# Lexer test executable
-add_executable(lexer_test tests/lexer_test.cpp)
-target_link_libraries(lexer_test roxy_shared)
-
-# Parser test executable
-add_executable(parser_test tests/parser_test.cpp)
-target_link_libraries(parser_test roxy_compiler)
-
-# Semantic test executable
-add_executable(semantic_test tests/semantic_test.cpp)
-target_link_libraries(semantic_test roxy_compiler)
-
-# SSA IR test executable
-add_executable(ssa_ir_test tests/ssa_ir_test.cpp)
-target_link_libraries(ssa_ir_test roxy_vm)
-
 # VM library (bytecode, value, object, vm, interpreter, lowering, array, natives)
 add_library(roxy_vm
     src/roxy/vm/bytecode.cpp
@@ -95,25 +79,31 @@ add_library(roxy_vm
 )
 target_link_libraries(roxy_vm roxy_compiler)
 
-# Bytecode test executable
-add_executable(bytecode_test tests/bytecode_test.cpp)
-target_link_libraries(bytecode_test roxy_vm)
+# Single unified test executable
+add_executable(roxy_tests
+    # Main entry point
+    tests/test_main.cpp
 
-# VM test executable
-add_executable(vm_test tests/vm_test.cpp)
-target_link_libraries(vm_test roxy_vm)
+    # Unit tests
+    tests/unit/lexer_test.cpp
+    tests/unit/parser_test.cpp
+    tests/unit/semantic_test.cpp
+    tests/unit/ssa_ir_test.cpp
+    tests/unit/bytecode_test.cpp
+    tests/unit/vm_test.cpp
+    tests/unit/lowering_test.cpp
 
-# Lowering test executable
-add_executable(lowering_test tests/lowering_test.cpp)
-target_link_libraries(lowering_test roxy_vm)
-
-# End-to-end test executable
-add_executable(e2e_test tests/e2e_test.cpp)
-target_link_libraries(e2e_test roxy_vm)
-
-# Interop test executable
-add_executable(interop_test tests/interop_test.cpp)
-target_link_libraries(interop_test roxy_vm)
+    # E2E tests
+    tests/e2e/e2e_test_helpers.cpp
+    tests/e2e/e2e_basics_test.cpp
+    tests/e2e/e2e_recursion_test.cpp
+    tests/e2e/e2e_algorithms_test.cpp
+    tests/e2e/e2e_arrays_test.cpp
+    tests/e2e/e2e_structs_test.cpp
+    tests/e2e/e2e_params_test.cpp
+    tests/e2e/e2e_interop_test.cpp
+)
+target_link_libraries(roxy_tests roxy_vm)
 
 # Standalone interpreter executable
 add_executable(roxy src/roxy.cpp)
