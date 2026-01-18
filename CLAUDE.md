@@ -310,6 +310,20 @@ Stack-allocated value-type structs with packed field layout:
 - **Default values**: Fields with defaults can be omitted from literals
 - **Nested structs**: Supported via `GET_FIELD_ADDR` opcode for address computation
 
+**Struct parameters and returns** with automatic value/reference semantics:
+
+| Struct Size | Slots | Passing Mode | Mechanism |
+|-------------|-------|--------------|-----------|
+| 1-8 bytes   | 1-2   | By value     | 1 register |
+| 9-16 bytes  | 3-4   | By value     | 2 registers |
+| >16 bytes   | >4    | By reference | Pointer (callee copies) |
+
+- **Value semantics**: Callee always receives a copy - modifications don't affect caller
+- **Small struct returns**: Returned in 1-2 registers, unpacked by caller
+- **Large struct returns**: Caller passes hidden output pointer (not yet implemented)
+- **Bytecode opcodes**: `STRUCT_LOAD_REGS`, `STRUCT_STORE_REGS`, `STRUCT_COPY`, `RET_STRUCT_SMALL`
+- **SSA IR opcode**: `StructCopy` for memory-to-memory struct copies
+
 Example struct layout:
 ```
 struct Point { x: i32; y: i32; }  → 2 slots (8 bytes)
@@ -320,6 +334,16 @@ Example struct literal:
 ```
 struct Config { width: i32 = 800; height: i32 = 600; }
 var c = Config { width = 1920 };  // height uses default
+```
+
+Example struct parameter and return:
+```
+fun make_point(x: i32, y: i32): Point {
+    return Point { x = x, y = y };
+}
+fun distance_sq(p: Point): i32 {
+    return p.x * p.x + p.y * p.y;
+}
 ```
 
 Key types:
@@ -336,8 +360,7 @@ Key types:
 
 ## Planned Components (Not Yet Implemented)
 
-- Passing structs by value to functions (copy semantics)
-- Returning structs from functions
+- Large struct returns (>16 bytes) via hidden output pointer
 - Heap allocation via `new` and `uniq`/`ref`/`weak`
 - LSP parser (error recovery, lossless CST)
 - LSP server features (completion, hover, go-to-definition)

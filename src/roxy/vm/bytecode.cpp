@@ -82,6 +82,12 @@ const char* opcode_to_string(Opcode op) {
         // Field Access
         case Opcode::GET_FIELD:     return "GET_FIELD";
         case Opcode::SET_FIELD:     return "SET_FIELD";
+        case Opcode::STACK_ADDR:    return "STACK_ADDR";
+        case Opcode::GET_FIELD_ADDR: return "GET_FIELD_ADDR";
+        case Opcode::STRUCT_LOAD_REGS:  return "STRUCT_LOAD_REGS";
+        case Opcode::STRUCT_STORE_REGS: return "STRUCT_STORE_REGS";
+        case Opcode::STRUCT_COPY:       return "STRUCT_COPY";
+        case Opcode::RET_STRUCT_SMALL:  return "RET_STRUCT_SMALL";
 
         // Index Access
         case Opcode::GET_INDEX:     return "GET_INDEX";
@@ -223,6 +229,33 @@ void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out) {
         // Format: dst, type_idx
         case Opcode::NEW_OBJ:
             snprintf(buf, sizeof(buf), "R%u, type[%u]", a, imm);
+            break;
+
+        // Format: dst, imm16 (stack address)
+        case Opcode::STACK_ADDR:
+            snprintf(buf, sizeof(buf), "R%u, stack[%u]", a, imm);
+            break;
+
+        // Format: dst, src, slot_offset (two-word instruction)
+        case Opcode::GET_FIELD_ADDR:
+            snprintf(buf, sizeof(buf), "R%u, R%u  ; (two-word)", a, b);
+            break;
+
+        // Format: dst, src, slot_count (struct operations)
+        case Opcode::STRUCT_LOAD_REGS:
+            snprintf(buf, sizeof(buf), "R%u, R%u, slots=%u", a, b, c);
+            break;
+
+        case Opcode::STRUCT_STORE_REGS:
+            snprintf(buf, sizeof(buf), "R%u, R%u, slots=%u", a, b, c);
+            break;
+
+        case Opcode::STRUCT_COPY:
+            snprintf(buf, sizeof(buf), "R%u, R%u, slots=%u", a, b, c);
+            break;
+
+        case Opcode::RET_STRUCT_SMALL:
+            snprintf(buf, sizeof(buf), "R%u, slots=%u", a, b);
             break;
 
         case Opcode::NOP:

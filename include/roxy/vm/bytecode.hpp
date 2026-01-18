@@ -93,6 +93,10 @@ enum class Opcode : u8 {
     SET_FIELD       = 0xB1, // dst.field[slot_offset] = src1 (two-word: ABC + offset)
     STACK_ADDR      = 0xB2, // dst = &local_stack[local_stack_base + imm16]
     GET_FIELD_ADDR  = 0xB3, // dst = &src1.field[slot_offset] (two-word: ABI format)
+    STRUCT_LOAD_REGS  = 0xB4, // dst = *src (load struct to consecutive registers)
+    STRUCT_STORE_REGS = 0xB5, // *dst = src (store consecutive registers to struct)
+    STRUCT_COPY       = 0xB6, // [dst_ptr src_ptr slot_count] - memory copy
+    RET_STRUCT_SMALL  = 0xB7, // return small struct (≤4 slots) in registers
 
     // 0xC0-0xCF: Index Access
     GET_INDEX   = 0xC0,     // dst = src1[src2]

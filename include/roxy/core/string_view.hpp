@@ -64,4 +64,23 @@ public:
     bool operator!=(const char* str) const { return !equals(str); }
 };
 
+// Hash function for StringView (for use in hash maps)
+struct StringViewHash {
+    u64 operator()(StringView sv) const {
+        u64 hash = 14695981039346656037ULL;
+        for (u32 i = 0; i < sv.size(); i++) {
+            hash ^= static_cast<u64>(sv[i]);
+            hash *= 1099511628211ULL;
+        }
+        return hash;
+    }
+};
+
+// Equality function for StringView (for use in hash maps)
+struct StringViewEqual {
+    bool operator()(StringView a, StringView b) const {
+        return a == b;
+    }
+};
+
 }

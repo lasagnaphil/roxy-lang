@@ -54,8 +54,8 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
         Type* param_type = nullptr;
         if (param.type) {
             // Get the resolved type from the TypeExpr
-            // For now we'll re-resolve it (ideally this would be cached)
-            param_type = m_types.primitive_by_name(param.type->name);
+            // Uses type_by_name which checks both primitives and named types (structs)
+            param_type = m_types.type_by_name(param.type->name);
             if (!param_type) {
                 param_type = m_types.error_type();
             }
@@ -70,7 +70,7 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
 
     // Resolve return type
     if (decl->return_type) {
-        m_current_func->return_type = m_types.primitive_by_name(decl->return_type->name);
+        m_current_func->return_type = m_types.type_by_name(decl->return_type->name);
         if (!m_current_func->return_type) {
             m_current_func->return_type = m_types.void_type();
         }
@@ -1121,8 +1121,14 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         // If the initializer is a struct literal, it already allocates and initializes
         if (vd.initializer && vd.initializer->kind == AstKind::ExprStructLiteral) {
             value = gen_expr(vd.initializer);
+        } else if (vd.initializer) {
+            // Initializer is an expression returning a struct (e.g., function call)
+            // The call returns a pointer to struct data that we need to copy
+            value = gen_expr(vd.initializer);
+            // Note: The lowering handles struct return unpacking, so value is already
+            // a pointer to the struct data on the local stack
         } else {
-            // Allocate stack space for the struct (zero-initialized by VM)
+            // No initializer - allocate stack space for the struct (zero-initialized by VM)
             u32 slot_count = type->struct_info.slot_count;
             value = emit_stack_alloc(slot_count, type);
         }

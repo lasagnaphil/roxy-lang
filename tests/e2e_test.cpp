@@ -1349,3 +1349,196 @@ TEST_CASE("E2E - Struct literal with 64-bit field") {
     Value result = compile_and_run(source, StringView("main"));
     CHECK(result.as_int == 100000000010);  // 10 + 100000000000
 }
+
+// ============================================================================
+// Struct Parameter Tests
+// ============================================================================
+
+TEST_CASE("E2E - Small struct parameter") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun distance_sq(p: Point): i32 {
+            return p.x * p.x + p.y * p.y;
+        }
+
+        fun main(): i32 {
+            var pt = Point { x = 3, y = 4 };
+            return distance_sq(pt);
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 25);  // 3^2 + 4^2 = 9 + 16
+}
+
+TEST_CASE("E2E - Struct parameter value semantics") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun modify(p: Point): i32 {
+            p.x = 100;
+            return p.x;
+        }
+
+        fun main(): i32 {
+            var pt = Point { x = 5, y = 10 };
+            modify(pt);
+            return pt.x;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 5);  // Should still be 5 (value semantics)
+}
+
+TEST_CASE("E2E - Multiple struct parameters") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun add(a: Point, b: Point): i32 {
+            return a.x + b.x + a.y + b.y;
+        }
+
+        fun main(): i32 {
+            var p1 = Point { x = 1, y = 2 };
+            var p2 = Point { x = 10, y = 20 };
+            return add(p1, p2);
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 33);  // 1 + 10 + 2 + 20
+}
+
+TEST_CASE("E2E - Mixed struct and primitive parameters") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun scale(p: Point, factor: i32): i32 {
+            return (p.x + p.y) * factor;
+        }
+
+        fun main(): i32 {
+            var pt = Point { x = 3, y = 7 };
+            return scale(pt, 5);
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 50);  // (3 + 7) * 5
+}
+
+// ============================================================================
+// Struct Return Tests
+// ============================================================================
+
+TEST_CASE("E2E - Return small struct") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun make_point(x: i32, y: i32): Point {
+            var p = Point { x = x, y = y };
+            return p;
+        }
+
+        fun main(): i32 {
+            var pt = make_point(10, 20);
+            return pt.x + pt.y;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 30);  // 10 + 20
+}
+
+TEST_CASE("E2E - Return struct with modification") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun double_point(p: Point): Point {
+            var result = Point { x = p.x * 2, y = p.y * 2 };
+            return result;
+        }
+
+        fun main(): i32 {
+            var p1 = Point { x = 5, y = 10 };
+            var p2 = double_point(p1);
+            return p2.x + p2.y;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 30);  // (5*2) + (10*2) = 10 + 20
+}
+
+TEST_CASE("E2E - Chain struct returns") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun origin(): Point {
+            return Point { x = 0, y = 0 };
+        }
+
+        fun offset(p: Point, dx: i32, dy: i32): Point {
+            return Point { x = p.x + dx, y = p.y + dy };
+        }
+
+        fun main(): i32 {
+            var p = offset(origin(), 5, 10);
+            return p.x + p.y;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 15);  // 5 + 10
+}
+
+TEST_CASE("E2E - Struct return used in expression") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun make_point(x: i32, y: i32): Point {
+            return Point { x = x, y = y };
+        }
+
+        fun main(): i32 {
+            return make_point(7, 8).x + make_point(3, 4).y;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 11);  // 7 + 4
+}

@@ -120,6 +120,9 @@ enum class IROp : u8 {
 
     // Copy (for SSA value passing)
     Copy,           // Simple copy of a value
+
+    // Struct operations
+    StructCopy,     // Memory-to-memory struct copy
 };
 
 // Constant data for ConstXxx instructions
@@ -166,6 +169,13 @@ struct StackAllocData {
     u32 slot_count;     // Number of u32 slots to allocate
 };
 
+// Struct copy data
+struct StructCopyData {
+    ValueId dest_ptr;
+    ValueId source_ptr;
+    u32 slot_count;
+};
+
 // IR Instruction - represents a single operation that produces a value
 struct IRInst {
     IROp op;
@@ -185,6 +195,7 @@ struct IRInst {
         IndexData index;                // For GetIndex/SetIndex
         NewData new_data;               // For New
         StackAllocData stack_alloc;     // For StackAlloc
+        StructCopyData struct_copy;     // For StructCopy
         u32 block_arg_index;            // For BlockArg (parameter index)
     };
 

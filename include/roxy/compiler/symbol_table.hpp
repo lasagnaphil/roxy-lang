@@ -78,23 +78,6 @@ struct Scope {
     };
 };
 
-// Hash function for StringView (for use in unordered_map)
-struct StringViewHash {
-    u64 operator()(const StringView& sv) const {
-        u64 hash = 5381;
-        for (u32 i = 0; i < sv.size(); i++) {
-            hash = ((hash << 5) + hash) + static_cast<u64>(sv[i]);
-        }
-        return hash;
-    }
-};
-
-struct StringViewEqual {
-    bool operator()(const StringView& a, const StringView& b) const {
-        return a == b;
-    }
-};
-
 // Symbol table manages scopes and symbol lookup
 class SymbolTable {
 public:

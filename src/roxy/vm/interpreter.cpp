@@ -496,6 +496,106 @@ bool interpret(RoxyVM* vm) {
                 break;
             }
 
+            case Opcode::STRUCT_LOAD_REGS: {
+                // Format: [STRUCT_LOAD_REGS dst src_ptr slot_count][pad]
+                // Load struct data from memory to consecutive registers
+                u8 dst_reg = a;
+                u8 src_ptr_reg = b;
+                u8 slot_count = c;
+                pc++;  // Skip padding word
+
+                u32* src = reinterpret_cast<u32*>(regs[src_ptr_reg]);
+                u8 reg_count = (slot_count + 1) / 2;
+
+                for (u8 r = 0; r < reg_count; r++) {
+                    u32 slot_idx = r * 2;
+                    u64 value = 0;
+                    if (slot_idx < slot_count) value = src[slot_idx];
+                    if (slot_idx + 1 < slot_count) value |= static_cast<u64>(src[slot_idx + 1]) << 32;
+                    regs[dst_reg + r] = value;
+                }
+                break;
+            }
+
+            case Opcode::STRUCT_STORE_REGS: {
+                // Format: [STRUCT_STORE_REGS dst_ptr src_reg slot_count][pad]
+                // Store consecutive registers to struct memory
+                u8 dst_ptr_reg = a;
+                u8 src_reg = b;
+                u8 slot_count = c;
+                pc++;  // Skip padding word
+
+                u32* dst = reinterpret_cast<u32*>(regs[dst_ptr_reg]);
+                u8 reg_count = (slot_count + 1) / 2;
+
+                for (u8 r = 0; r < reg_count; r++) {
+                    u64 value = regs[src_reg + r];
+                    u32 slot_idx = r * 2;
+                    if (slot_idx < slot_count) dst[slot_idx] = static_cast<u32>(value);
+                    if (slot_idx + 1 < slot_count) dst[slot_idx + 1] = static_cast<u32>(value >> 32);
+                }
+                break;
+            }
+
+            case Opcode::STRUCT_COPY: {
+                // Format: [STRUCT_COPY dst_ptr src_ptr slot_count]
+                // Memory-to-memory struct copy
+                u8 dst_ptr_reg = a;
+                u8 src_ptr_reg = b;
+                u8 slot_count = c;
+                u32* dst = reinterpret_cast<u32*>(regs[dst_ptr_reg]);
+                u32* src = reinterpret_cast<u32*>(regs[src_ptr_reg]);
+                for (u8 i = 0; i < slot_count; i++) {
+                    dst[i] = src[i];
+                }
+                break;
+            }
+
+            case Opcode::RET_STRUCT_SMALL: {
+                // Format: [RET_STRUCT_SMALL src_ptr slot_count 0]
+                // Return small struct (≤4 slots) in registers
+                u8 src_ptr_reg = a;
+                u8 slot_count = b;
+                u32* src = reinterpret_cast<u32*>(regs[src_ptr_reg]);
+                u8 reg_count = (slot_count + 1) / 2;
+
+                // Pack struct into temp values
+                u64 ret_vals[2] = {0, 0};
+                for (u8 r = 0; r < reg_count; r++) {
+                    u32 slot_idx = r * 2;
+                    if (slot_idx < slot_count) ret_vals[r] = src[slot_idx];
+                    if (slot_idx + 1 < slot_count) ret_vals[r] |= static_cast<u64>(src[slot_idx + 1]) << 32;
+                }
+
+                // Save frame info before popping
+                u8 return_reg = frame->return_reg;
+                u32 local_stack_base = frame->local_stack_base;
+
+                vm->call_stack.pop_back();
+                vm->register_top -= func->register_count;
+                vm->local_stack_top = local_stack_base;
+
+                if (vm->call_stack.empty()) {
+                    // Top-level return - store in R0, R1
+                    for (u8 r = 0; r < reg_count; r++) {
+                        vm->register_file[r] = ret_vals[r];
+                    }
+                    vm->running = false;
+                    return true;
+                }
+
+                // Restore caller frame and store return values
+                frame = &vm->call_stack.back();
+                func = frame->func;
+                pc = frame->pc;
+                regs = frame->registers;
+
+                for (u8 r = 0; r < reg_count; r++) {
+                    regs[return_reg + r] = ret_vals[r];
+                }
+                break;
+            }
+
             // Index Access
             case Opcode::GET_INDEX: {
                 // Format: GET_INDEX dst, arr, idx

@@ -230,6 +230,13 @@ public:
     // Lookup primitive type by name
     Type* primitive_by_name(StringView name);
 
+    // Named type registration and lookup (for structs and enums)
+    void register_named_type(StringView name, Type* type);
+    Type* named_type_by_name(StringView name);
+
+    // Lookup any type by name (primitives first, then named types)
+    Type* type_by_name(StringView name);
+
 private:
     Type* create_primitive(TypeKind kind);
     Type* intern_type(Type* type);
@@ -255,6 +262,9 @@ private:
 
     // Type interning cache for compound types
     tsl::robin_map<Type*, Type*, TypeHash, TypeEqual> m_interned;
+
+    // Named type registry (structs and enums)
+    tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_named_types;
 };
 
 // String representation of types (for error messages)

@@ -71,6 +71,8 @@ const char* ir_op_to_string(IROp op) {
 
         case IROp::BlockArg: return "block_arg";
         case IROp::Copy:     return "copy";
+
+        case IROp::StructCopy: return "struct_copy";
     }
     return "unknown";
 }
@@ -267,6 +269,16 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
 
         case IROp::BlockArg: {
             auto s = fmt::format(" #{}", inst->block_arg_index);
+            for (char c : s) out.push_back(c);
+            break;
+        }
+
+        case IROp::StructCopy: {
+            append_str(out, " ");
+            append_value_id(out, inst->struct_copy.dest_ptr);
+            append_str(out, " <- ");
+            append_value_id(out, inst->struct_copy.source_ptr);
+            auto s = fmt::format(" ({})", inst->struct_copy.slot_count);
             for (char c : s) out.push_back(c);
             break;
         }

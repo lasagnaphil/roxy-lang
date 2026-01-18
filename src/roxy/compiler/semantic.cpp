@@ -170,6 +170,7 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
             // Create the struct type
             Type* type = m_types.struct_type(name, decl);
             m_named_types[name] = type;
+            m_types.register_named_type(name, type);  // Register with TypeCache for IR builder access
 
             // Define in global scope
             m_symbols.define(SymbolKind::Struct, name, type, decl->loc, decl);

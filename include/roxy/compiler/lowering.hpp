@@ -63,6 +63,12 @@ private:
     // Get opcode for IR operation
     Opcode get_opcode(IROp op) const;
 
+    // Check if type is a struct that should be passed by reference (>4 slots)
+    bool is_large_struct(Type* type) const;
+
+    // Get slot count for a struct type, or 0 if not a struct
+    u32 get_struct_slot_count(Type* type) const;
+
     // Current function being built
     BCFunction* m_current_func;
     IRFunction* m_current_ir_func;
@@ -74,6 +80,9 @@ private:
     // Local stack allocation: maps ValueId.id -> stack slot offset
     tsl::robin_map<u32, u32> m_value_to_stack_slot;
     u32 m_next_stack_slot;
+
+    // Type information: maps ValueId.id -> Type*
+    tsl::robin_map<u32, Type*> m_value_types;
 
     // Current module
     BCModule* m_module;
