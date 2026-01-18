@@ -64,6 +64,9 @@ private:
     Expr* finish_call(Expr* callee);
     Expr* finish_index(Expr* object);
 
+    // Struct literal helper
+    Expr* struct_literal(Token type_token);
+
     // Statement parsing
     Stmt* statement();
     Stmt* block_statement();

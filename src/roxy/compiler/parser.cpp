@@ -385,7 +385,7 @@ Expr* Parser::primary() {
         return expr;
     }
 
-    // Identifier or static get (Type::member)
+    // Identifier or static get (Type::member) or struct literal
     if (match(TokenKind::Identifier)) {
         Token name_token = m_previous;
 
@@ -400,6 +400,11 @@ Expr* Parser::primary() {
             expr->static_get.type_name = name_token.text();
             expr->static_get.member_name = member_token.text();
             return expr;
+        }
+
+        // Check for struct literal: TypeName { field = value, ... }
+        if (match(TokenKind::LeftBrace)) {
+            return struct_literal(name_token);
         }
 
         Expr* expr = alloc<Expr>();
@@ -481,6 +486,39 @@ Expr* Parser::primary() {
 
     report_error("Expected expression");
     return nullptr;
+}
+
+Expr* Parser::struct_literal(Token type_token) {
+    Vector<FieldInit> fields;
+
+    if (!check(TokenKind::RightBrace)) {
+        do {
+            Token field_name = consume(TokenKind::Identifier, "Expected field name");
+            if (m_has_error) return nullptr;
+
+            consume(TokenKind::Equal, "Expected '=' after field name");
+            if (m_has_error) return nullptr;
+
+            Expr* value = expression();
+            if (m_has_error) return nullptr;
+
+            FieldInit init;
+            init.name = field_name.text();
+            init.value = value;
+            init.loc = field_name.loc;
+            fields.push_back(init);
+        } while (match(TokenKind::Comma));
+    }
+
+    consume(TokenKind::RightBrace, "Expected '}' after struct literal");
+    if (m_has_error) return nullptr;
+
+    Expr* expr = alloc<Expr>();
+    expr->kind = AstKind::ExprStructLiteral;
+    expr->loc = type_token.loc;
+    expr->struct_literal.type_name = type_token.text();
+    expr->struct_literal.fields = alloc_span(fields);
+    return expr;
 }
 
 // Statement parsing

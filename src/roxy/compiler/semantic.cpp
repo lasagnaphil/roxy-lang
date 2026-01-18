@@ -766,6 +766,9 @@ Type* SemanticAnalyzer::analyze_expr(Expr* expr) {
         case AstKind::ExprNew:
             result = analyze_new_expr(expr);
             break;
+        case AstKind::ExprStructLiteral:
+            result = analyze_struct_literal_expr(expr);
+            break;
         default:
             result = m_types.error_type();
             break;
@@ -1060,6 +1063,75 @@ Type* SemanticAnalyzer::analyze_new_expr(Expr* expr) {
     // TODO: Check constructor arguments
 
     return m_types.uniq_type(base);
+}
+
+Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
+    StructLiteralExpr& sl = expr->struct_literal;
+
+    // Look up struct type
+    auto it = m_named_types.find(sl.type_name);
+    if (it == m_named_types.end()) {
+        error_fmt(expr->loc, "unknown struct type '%.*s'",
+                 sl.type_name.size(), sl.type_name.data());
+        return m_types.error_type();
+    }
+
+    Type* type = it->second;
+    if (!type->is_struct()) {
+        error_fmt(expr->loc, "'%.*s' is not a struct type",
+                 sl.type_name.size(), sl.type_name.data());
+        return m_types.error_type();
+    }
+
+    // Get StructDecl to access default values
+    StructDecl& sd = type->struct_info.decl->struct_decl;
+
+    // Track which fields have been initialized
+    Vector<bool> field_initialized(type->struct_info.fields.size(), false);
+
+    // Validate each field initializer
+    for (u32 i = 0; i < sl.fields.size(); i++) {
+        FieldInit& fi = sl.fields[i];
+
+        // Find field in struct
+        i32 field_idx = -1;
+        for (u32 j = 0; j < type->struct_info.fields.size(); j++) {
+            if (type->struct_info.fields[j].name == fi.name) {
+                field_idx = static_cast<i32>(j);
+                break;
+            }
+        }
+
+        if (field_idx < 0) {
+            error_fmt(fi.loc, "struct '%.*s' has no field '%.*s'",
+                     sl.type_name.size(), sl.type_name.data(),
+                     fi.name.size(), fi.name.data());
+            continue;
+        }
+
+        if (field_initialized[field_idx]) {
+            error_fmt(fi.loc, "duplicate field '%.*s'",
+                     fi.name.size(), fi.name.data());
+            continue;
+        }
+
+        field_initialized[field_idx] = true;
+
+        // Type-check field value
+        Type* value_type = analyze_expr(fi.value);
+        Type* field_type = type->struct_info.fields[field_idx].type;
+        check_assignable(field_type, value_type, fi.loc);
+    }
+
+    // Check all fields without defaults are initialized
+    for (u32 i = 0; i < field_initialized.size(); i++) {
+        if (!field_initialized[i] && sd.fields[i].default_value == nullptr) {
+            error_fmt(expr->loc, "missing field '%.*s' (no default value)",
+                     sd.fields[i].name.size(), sd.fields[i].name.data());
+        }
+    }
+
+    return type;
 }
 
 // Type checking helpers

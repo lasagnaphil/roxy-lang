@@ -100,6 +100,7 @@ private:
     Type* analyze_this_expr(Expr* expr);
     Type* analyze_super_expr(Expr* expr);
     Type* analyze_new_expr(Expr* expr);
+    Type* analyze_struct_literal_expr(Expr* expr);
 
     // Type checking helpers
     bool check_assignable(Type* target, Type* source, SourceLocation loc);

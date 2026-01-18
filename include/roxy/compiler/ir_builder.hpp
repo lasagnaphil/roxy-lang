@@ -84,6 +84,7 @@ private:
     ValueId gen_grouping_expr(Expr* expr);
     ValueId gen_this_expr(Expr* expr);
     ValueId gen_new_expr(Expr* expr);
+    ValueId gen_struct_literal_expr(Expr* expr);
 
     // Declaration generation
     void gen_decl(Decl* decl);

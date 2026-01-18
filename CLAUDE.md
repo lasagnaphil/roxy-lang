@@ -306,6 +306,9 @@ Stack-allocated value-type structs with packed field layout:
 - **16-byte aligned frames**: `local_stack_base` aligned to 4 slots for C++ interop
 - **SSA IR**: `StackAlloc` instruction allocates struct space, returns pointer
 - **Field access**: `GET_FIELD`/`SET_FIELD` opcodes with slot_offset and slot_count
+- **Struct literals**: `Point { x = 10, y = 20 }` syntax with field order independence
+- **Default values**: Fields with defaults can be omitted from literals
+- **Nested structs**: Supported via `GET_FIELD_ADDR` opcode for address computation
 
 Example struct layout:
 ```
@@ -313,11 +316,18 @@ struct Point { x: i32; y: i32; }  → 2 slots (8 bytes)
 struct Data { a: i32; b: i64; }   → 3 slots (12 bytes)
 ```
 
+Example struct literal:
+```
+struct Config { width: i32 = 800; height: i32 = 600; }
+var c = Config { width = 1920 };  // height uses default
+```
+
 Key types:
 - `FieldInfo.slot_offset` / `FieldInfo.slot_count` - Field position in struct
 - `StructTypeInfo.slot_count` - Total slots for struct
 - `BCFunction.local_stack_slots` - Stack space needed per function
 - `VarDecl.resolved_type` - Type resolved by semantic analysis
+- `FieldInit` / `StructLiteralExpr` - AST nodes for struct literals
 
 ## Partially Implemented (TODOs in code)
 
@@ -326,10 +336,8 @@ Key types:
 
 ## Planned Components (Not Yet Implemented)
 
-- Struct literal syntax: `Point { x = 1, y = 2 }`
 - Passing structs by value to functions (copy semantics)
 - Returning structs from functions
-- Nested structs
 - Heap allocation via `new` and `uniq`/`ref`/`weak`
 - LSP parser (error recovery, lossless CST)
 - LSP server features (completion, hover, go-to-definition)

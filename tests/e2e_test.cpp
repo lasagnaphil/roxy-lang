@@ -1216,17 +1216,17 @@ TEST_CASE("E2E - Multiple nested struct variables") {
         fun main(): i32 {
             var line1: Line;
             var line2: Line;
-            
+
             line1.start.x = 0;
             line1.start.y = 0;
             line1.end.x = 10;
             line1.end.y = 10;
-            
+
             line2.start.x = 5;
             line2.start.y = 5;
             line2.end.x = 15;
             line2.end.y = 15;
-            
+
             return line1.end.x + line2.start.x;
         }
     )";
@@ -1234,4 +1234,118 @@ TEST_CASE("E2E - Multiple nested struct variables") {
     Value result = compile_and_run(source, StringView("main"));
     CHECK(result.is_int());
     CHECK(result.as_int == 15);  // 10 + 5
+}
+
+// ============================================================================
+// Struct Literal Tests
+// ============================================================================
+
+TEST_CASE("E2E - Struct literal") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var p = Point { x = 10, y = 20 };
+            return p.x + p.y;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 30);
+}
+
+TEST_CASE("E2E - Struct literal with default values") {
+    const char* source = R"(
+        struct Config {
+            width: i32 = 800;
+            height: i32 = 600;
+            fullscreen: i32 = 0;
+        }
+
+        fun main(): i32 {
+            var c = Config { width = 1920 };
+            return c.width + c.height + c.fullscreen;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 2520);  // 1920 + 600 + 0
+}
+
+TEST_CASE("E2E - Struct literal field order") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var p = Point { y = 20, x = 10 };
+            return p.x * 100 + p.y;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 1020);  // 10 * 100 + 20
+}
+
+TEST_CASE("E2E - Empty struct literal (all defaults)") {
+    const char* source = R"(
+        struct Defaults {
+            a: i32 = 1;
+            b: i32 = 2;
+            c: i32 = 3;
+        }
+
+        fun main(): i32 {
+            var d = Defaults {};
+            return d.a + d.b + d.c;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 6);  // 1 + 2 + 3
+}
+
+TEST_CASE("E2E - Struct literal with expressions") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var a = 5;
+            var p = Point { x = a * 2, y = a + 10 };
+            return p.x + p.y;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 25);  // (5 * 2) + (5 + 10) = 10 + 15
+}
+
+TEST_CASE("E2E - Struct literal with 64-bit field") {
+    const char* source = R"(
+        struct Data {
+            a: i32;
+            b: i64;
+        }
+
+        fun main(): i64 {
+            var d = Data { a = 10, b = 100000000000 };
+            return d.a + d.b;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.as_int == 100000000010);  // 10 + 100000000000
 }

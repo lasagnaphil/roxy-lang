@@ -31,6 +31,7 @@ enum class AstKind : u8 {
     ExprThis,
     ExprSuper,
     ExprNew,
+    ExprStructLiteral,
 
     // Statements
     StmtExpr,
@@ -191,6 +192,19 @@ struct NewExpr {
     Span<Expr*> arguments;
 };
 
+// Field initializer for struct literals
+struct FieldInit {
+    StringView name;
+    Expr* value;
+    SourceLocation loc;
+};
+
+// Struct literal expression: Point { x = 1, y = 2 }
+struct StructLiteralExpr {
+    StringView type_name;
+    Span<FieldInit> fields;
+};
+
 // Forward declaration
 struct Type;
 
@@ -214,6 +228,7 @@ struct Expr {
         ThisExpr this_expr;
         SuperExpr super_expr;
         NewExpr new_expr;
+        StructLiteralExpr struct_literal;
     };
 
     Expr() : kind(AstKind::ExprLiteral), loc{0, 0, 0}, resolved_type(nullptr) {

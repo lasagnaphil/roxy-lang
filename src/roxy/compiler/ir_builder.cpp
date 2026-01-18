@@ -737,6 +737,8 @@ ValueId IRBuilder::gen_expr(Expr* expr) {
             return gen_this_expr(expr);
         case AstKind::ExprNew:
             return gen_new_expr(expr);
+        case AstKind::ExprStructLiteral:
+            return gen_struct_literal_expr(expr);
         default:
             return ValueId::invalid();
     }
@@ -1048,6 +1050,43 @@ ValueId IRBuilder::gen_new_expr(Expr* expr) {
     return emit_new(ne.type->name, args, expr->resolved_type);
 }
 
+ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
+    StructLiteralExpr& sl = expr->struct_literal;
+    Type* type = expr->resolved_type;
+
+    // Allocate stack space for the struct
+    u32 slot_count = type->struct_info.slot_count;
+    ValueId struct_ptr = emit_stack_alloc(slot_count, type);
+
+    // Get StructDecl for default values
+    StructDecl& sd = type->struct_info.decl->struct_decl;
+
+    // Build map of provided field initializers
+    tsl::robin_map<StringView, Expr*, StringViewHash, StringViewEqual> provided_fields;
+    for (u32 i = 0; i < sl.fields.size(); i++) {
+        provided_fields[sl.fields[i].name] = sl.fields[i].value;
+    }
+
+    // Initialize ALL fields (provided or default)
+    for (u32 i = 0; i < type->struct_info.fields.size(); i++) {
+        FieldInfo& fi = type->struct_info.fields[i];
+        Expr* value_expr = nullptr;
+
+        auto it = provided_fields.find(fi.name);
+        if (it != provided_fields.end()) {
+            value_expr = it->second;
+        } else {
+            // Use default value from struct declaration
+            value_expr = sd.fields[i].default_value;
+        }
+
+        ValueId value = gen_expr(value_expr);
+        emit_set_field(struct_ptr, fi.name, fi.slot_offset, fi.slot_count, value, fi.type);
+    }
+
+    return struct_ptr;
+}
+
 // Declaration generation
 
 void IRBuilder::gen_decl(Decl* decl) {
@@ -1079,12 +1118,14 @@ void IRBuilder::gen_var_decl(Decl* decl) {
 
     // Check if this is a struct type - needs stack allocation
     if (type->is_struct()) {
-        // Allocate stack space for the struct
-        u32 slot_count = type->struct_info.slot_count;
-        value = emit_stack_alloc(slot_count, type);
-
-        // If there's an initializer, we'd need to copy the data
-        // For now, structs are zero-initialized by the VM
+        // If the initializer is a struct literal, it already allocates and initializes
+        if (vd.initializer && vd.initializer->kind == AstKind::ExprStructLiteral) {
+            value = gen_expr(vd.initializer);
+        } else {
+            // Allocate stack space for the struct (zero-initialized by VM)
+            u32 slot_count = type->struct_info.slot_count;
+            value = emit_stack_alloc(slot_count, type);
+        }
     } else {
         // Non-struct types: use register storage
         if (vd.initializer) {

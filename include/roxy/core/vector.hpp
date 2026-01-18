@@ -18,7 +18,7 @@ class Vector {
 public:
     Vector(Index size = 0) : m_capacity(size), m_size(size), m_data(size ? new T[size] : nullptr) {}
 
-    Vector(Index size, const T& item) {
+    Vector(Index size, const T& item) : m_capacity(size), m_size(size), m_data(size ? new T[size] : nullptr) {
         for (Index i = 0; i < m_size; i++) {
             m_data[i] = item;
         }

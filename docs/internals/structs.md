@@ -255,18 +255,82 @@ case Opcode::SET_FIELD: {
 }
 ```
 
+## Struct Literals
+
+Struct literals allow inline initialization with named field syntax:
+
+```
+struct Point { x: i32; y: i32; }
+struct Config { width: i32 = 800; height: i32 = 600; fullscreen: i32 = 0; }
+
+fun main(): i32 {
+    var p = Point { x = 10, y = 20 };       // All fields required
+    var c = Config { width = 1920 };         // Uses defaults for height, fullscreen
+    var d = Config {};                       // All defaults
+    var q = Point { y = 5, x = 3 };          // Order doesn't matter
+    return p.x + c.width;
+}
+```
+
+### Grammar
+
+```
+struct_literal  -> Identifier "{" field_init_list? "}"
+field_init_list -> field_init ("," field_init)*
+field_init      -> Identifier "=" expression
+```
+
+### AST Representation
+
+```cpp
+struct FieldInit {
+    StringView name;
+    Expr* value;
+    SourceLocation loc;
+};
+
+struct StructLiteralExpr {
+    StringView type_name;
+    Span<FieldInit> fields;
+};
+```
+
+### Semantic Analysis
+
+The `analyze_struct_literal_expr()` method validates:
+1. Type name resolves to a struct type
+2. All field names exist in the struct
+3. No duplicate field initializers
+4. All fields without default values are provided
+5. Field value types are assignable to field types
+
+### IR Generation
+
+Struct literals emit `StackAlloc` followed by `SetField` for each field:
+
+```
+v0 = stack_alloc 2           // Allocate Point (2 slots)
+v1 = const_int 10
+v2 = set_field v0.x <- v1    // Initialize x
+v3 = const_int 20
+v4 = set_field v0.y <- v3    // Initialize y
+// v0 is the struct pointer
+```
+
+For fields with default values that aren't provided in the literal, the default expression is evaluated and used.
+
 ## Limitations (Future Work)
 
-- **No struct literals**: `Point { x = 1, y = 2 }` syntax not yet supported
 - **No pass-by-value**: Structs cannot be passed to functions by value
 - **No return structs**: Functions cannot return struct values
-- **No nested structs**: Struct fields cannot be other structs
 - **No heap allocation**: `new`/`uniq`/`ref`/`weak` for structs not implemented
 
 ## Files
 
+- `include/roxy/compiler/ast.hpp` - FieldInit, StructLiteralExpr AST nodes
 - `include/roxy/compiler/types.hpp` - FieldInfo, StructTypeInfo definitions
-- `src/roxy/compiler/semantic.cpp` - Slot count computation
-- `src/roxy/compiler/ir_builder.cpp` - StackAlloc emission
+- `src/roxy/compiler/parser.cpp` - Struct literal parsing
+- `src/roxy/compiler/semantic.cpp` - Slot count computation, struct literal validation
+- `src/roxy/compiler/ir_builder.cpp` - StackAlloc and struct literal IR emission
 - `src/roxy/compiler/lowering.cpp` - Stack slot allocation, field access lowering
 - `src/roxy/vm/interpreter.cpp` - Field access opcodes

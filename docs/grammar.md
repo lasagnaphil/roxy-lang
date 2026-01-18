@@ -81,8 +81,13 @@ factor          -> unary ( ( "/" | "*" | "%" ) unary )* ;
 unary           -> ( "!" | "-" | "~" ) unary | call ;
 call            -> primary ( "(" arguments? ")" | "." Identifier | "::" Identifier )* ;
 primary         -> "true" | "false" | "nil" | "this"
-                 | Number | String | Identifier | "(" expression ")"
-                 | "super" "." Identifier ;
+                 | Number | String | "(" expression ")"
+                 | "super" "." Identifier
+                 | struct_literal
+                 | Identifier ;
+struct_literal  -> Identifier "{" field_init_list? "}" ;
+field_init_list -> field_init ( "," field_init )* ;
+field_init      -> Identifier "=" expression ;
 ```
 
 ## Utility rules
