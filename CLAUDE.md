@@ -27,7 +27,7 @@ ninja
 **macOS/Linux:**
 ```bash
 cd build
-cmake .. -G Ninja
+cmake .. -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 ninja
 ```
 
