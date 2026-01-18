@@ -99,7 +99,13 @@ roxy-v2/
 │       ├── array.hpp            # Array runtime support
 │       ├── natives.hpp          # Built-in native functions
 │       ├── vm.hpp               # VM state and API
-│       └── interpreter.hpp      # Interpreter loop
+│       ├── interpreter.hpp      # Interpreter loop
+│       └── binding/             # C++ interop system
+│           ├── type_traits.hpp      # RoxyType<T> mappings
+│           ├── function_traits.hpp  # Compile-time signature extraction
+│           ├── binder.hpp           # Automatic wrapper generation
+│           ├── registry.hpp         # NativeRegistry class
+│           └── interop.hpp          # Convenience header
 │
 ├── src/roxy/
 │   ├── core/
@@ -132,7 +138,8 @@ roxy-v2/
 │   ├── bytecode_test.cpp        # Bytecode encoding/decoding
 │   ├── vm_test.cpp              # VM execution and runtime
 │   ├── lowering_test.cpp        # SSA to bytecode lowering
-│   └── e2e_test.cpp             # End-to-end compilation and execution
+│   ├── e2e_test.cpp             # End-to-end compilation and execution
+│   └── interop_test.cpp         # C++ interop and function binding
 │
 ├── docs/
 │   ├── overview.md              # Language features and design
@@ -268,8 +275,27 @@ Array runtime support:
 Built-in native function support:
 - `array_new_int(size)` - Allocate integer array
 - `array_len(arr)` - Get array length
-- Automatic registration during semantic analysis
+- `print(value)` - Print value to stdout
+- Registration via `NativeRegistry`
 - `CALL_NATIVE` opcode and lowering
+
+### C++ Interop (`include/roxy/vm/binding/`)
+
+Type-safe C++ function binding with automatic wrapper generation:
+- **RoxyType<T>** - Maps C++ types to Roxy types at compile time
+- **FunctionTraits** - Extracts function signature info
+- **FunctionBinder** - Generates native wrappers automatically
+- **NativeRegistry** - Unified registration for compile-time and runtime
+
+Example usage:
+```cpp
+i32 my_add(i32 a, i32 b) { return a + b; }
+
+NativeRegistry registry(allocator, types);
+registry.bind<my_add>("add");  // Automatic wrapper generation
+registry.apply_to_symbols(symbols);  // For semantic analysis
+registry.apply_to_module(module);    // For runtime
+```
 
 ## Partially Implemented (TODOs in code)
 
@@ -279,7 +305,6 @@ Built-in native function support:
 
 ## Planned Components (Not Yet Implemented)
 
-- C++ interop layer (type registration, native binding)
 - LSP parser (error recovery, lossless CST)
 - LSP server features (completion, hover, go-to-definition)
 - Optimizations
@@ -296,7 +321,7 @@ Built-in native function support:
 cd build
 ./lexer_test && ./parser_test && ./semantic_test && \
 ./ssa_ir_test && ./bytecode_test && ./vm_test && \
-./lowering_test && ./e2e_test
+./lowering_test && ./e2e_test && ./interop_test
 ```
 
 On Windows, use `.exe` extension.

@@ -456,44 +456,116 @@ The IR builder detects calls to these functions and emits `CallNative` IR instea
 
 ## C++ Interop
 
-### Type Registration (Builder Pattern)
+**Status: ✅ Implemented** (`include/roxy/vm/binding/`)
+
+The interop system provides type-safe C++ function binding with automatic wrapper generation.
+
+### Core Components
+
+| File | Purpose |
+|------|---------|
+| `type_traits.hpp` | `RoxyType<T>` - Maps C++ types to Roxy types |
+| `function_traits.hpp` | `FunctionTraits` - Compile-time signature extraction |
+| `binder.hpp` | `FunctionBinder` - Automatic wrapper generation |
+| `registry.hpp` | `NativeRegistry` - Unified registration system |
+
+### Type Traits
 
 ```cpp
-vm.register_type(
-    type<Vec3>("Vec3")
-        .field("x", &Vec3::x)
-        .field("y", &Vec3::y)
-        .field("z", &Vec3::z)
-        .method("length", ROXY_METHOD(&Vec3::length))
-        .method("normalize", ROXY_METHOD(&Vec3::normalize))
-        .build()
-);
+// Maps C++ types to Roxy types at compile time
+template<> struct RoxyType<i32> {
+    static Type* get(TypeCache& tc) { return tc.i32_type(); }
+    static i32 from_value(const Value& v) { return static_cast<i32>(v.as_int); }
+    static Value to_value(i32 val) { return Value::make_int(val); }
+};
+// Specializations for: void, bool, i8-i64, u8-u64, f32, f64
 ```
 
-### Native Function Binding
+### Function Binder
 
 ```cpp
-// Automatic wrapper via templates
-#define ROXY_BIND(fn) decltype(make_binder(fn))::invoke<fn>
-
-void register_math(RoxyVM& vm) {
-    vm.register_native("vec3_add", ROXY_BIND(vec3_add), 6, 3);
-    vm.register_native("sin", ROXY_BIND(std::sin), 1, 1);
-}
+// Automatically generates native wrapper for any C++ function
+template<auto FnPtr>
+struct FunctionBinder {
+    static void invoke(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+        Value* regs = vm->call_stack.back().registers;
+        // Extract args from registers, call function, store result
+        auto result = call_with_args(FnPtr, regs, first_arg);
+        regs[dst] = RoxyType<decltype(result)>::to_value(result);
+    }
+    static NativeFunction get() { return &invoke; }
+};
 ```
 
-### Method Binding
+### NativeRegistry
 
 ```cpp
-#define ROXY_METHOD(method) \
-    decltype(method_binder(method))::invoke<method>
+class NativeRegistry {
+public:
+    // Automatic binding - generates wrapper from C++ function
+    template<auto FnPtr>
+    void bind(const char* name);
 
-vm.register_type(
-    type<Entity>("Entity")
-        .method("take_damage", ROXY_METHOD(&Entity::take_damage))
-        .method("is_alive", ROXY_METHOD(&Entity::is_alive))
-        .build()
-);
+    // Manual binding - for functions needing VM access (arrays, etc.)
+    void bind_native(const char* name, NativeFunction func,
+                     std::initializer_list<NativeTypeKind> params,
+                     NativeTypeKind return_type);
+
+    // Apply to compiler (semantic analysis)
+    void apply_to_symbols(SymbolTable& symbols);
+
+    // Apply to runtime (VM execution)
+    void apply_to_module(BCModule* module);
+
+    // Lookup for IR builder
+    i32 get_index(StringView name) const;
+    bool is_native(StringView name) const;
+};
+```
+
+### Usage Example
+
+```cpp
+// Simple C++ functions
+i32 my_add(i32 a, i32 b) { return a + b; }
+f64 my_sqrt(f64 x) { return std::sqrt(x); }
+
+// Setup
+BumpAllocator allocator(8192);
+TypeCache types(allocator);
+NativeRegistry registry(allocator, types);
+
+// Automatic binding - wrapper generated at compile time
+registry.bind<my_add>("add");
+registry.bind<my_sqrt>("sqrt");
+
+// Register built-in natives (array_new_int, array_len, print)
+register_builtin_natives(registry);
+
+// Use in compilation
+SemanticAnalyzer analyzer(allocator, &registry);
+IRBuilder ir_builder(allocator, types, &registry);
+
+// Apply to bytecode module for runtime
+registry.apply_to_module(module);
+```
+
+### NativeTypeKind
+
+For functions needing VM access (like array operations), use `bind_native` with type kinds:
+
+```cpp
+enum class NativeTypeKind : u8 {
+    Void, Bool,
+    I8, I16, I32, I64,
+    U8, U16, U32, U64,
+    F32, F64,
+    ArrayI32,  // i32[]
+};
+
+// Example: array_new_int(size: i32) -> i32[]
+registry.bind_native("array_new_int", native_array_new_int,
+                     {NativeTypeKind::I32}, NativeTypeKind::ArrayI32);
 ```
 
 ---
@@ -683,10 +755,12 @@ roxy/
 │   ├── interpreter.cpp       // Main dispatch loop
 │   └── natives.h/.cpp        // Built-in functions
 │
-├── interop/
-│   ├── type_builder.h        // C++ type registration
-│   ├── function_binder.h     // Native function binding
-│   └── method_binder.h       // Method binding templates
+├── vm/binding/
+│   ├── type_traits.hpp       // RoxyType<T> mappings
+│   ├── function_traits.hpp   // Compile-time signature extraction
+│   ├── binder.hpp            // Automatic wrapper generation
+│   ├── registry.hpp          // NativeRegistry class
+│   └── interop.hpp           // Convenience header
 │
 ├── lsp/
 │   ├── parser.h/.cpp         // Error-recovering parser
@@ -697,9 +771,14 @@ roxy/
 └── tests/
     ├── lexer_test.cpp
     ├── parser_test.cpp
+    ├── semantic_test.cpp
+    ├── ssa_ir_test.cpp
+    ├── bytecode_test.cpp
     ├── vm_test.cpp
-    ├── interop_test.cpp
-    └── consistency_test.cpp  // Verify compiler/LSP agree
+    ├── lowering_test.cpp
+    ├── e2e_test.cpp
+    ├── interop_test.cpp      // C++ interop and function binding
+    └── consistency_test.cpp  // Verify compiler/LSP agree (planned)
 ```
 
 ---
@@ -722,7 +801,7 @@ roxy/
 | SSA Lowering | ✅ Done | `include/roxy/compiler/lowering.hpp` |
 | Arrays | ✅ Done | `include/roxy/vm/array.hpp`, `natives.hpp` |
 | Native Functions | ✅ Done | `include/roxy/vm/natives.hpp` |
-| C++ Interop | ⏳ Planned | — |
+| C++ Interop | ✅ Done | `include/roxy/vm/binding/` |
 | LSP Parser | ⏳ Planned | — |
 | LSP Features | ⏳ Planned | — |
 
@@ -734,8 +813,8 @@ roxy/
 4. ~~**Bytecode lowering** — Register allocation, instruction selection~~ ✅
 5. ~~**VM interpreter** — Switch-based dispatch loop~~ ✅
 6. ~~**Arrays** — GET_INDEX, SET_INDEX, native functions (array_new_int, array_len)~~ ✅
-7. **Field access** — Complete GET_FIELD, SET_FIELD opcodes
-8. **C++ interop** — Type registration, native binding
+7. ~~**C++ interop** — Type-safe binding with automatic wrapper generation~~ ✅
+8. **Field access** — Complete GET_FIELD, SET_FIELD opcodes
 9. **LSP parser** — Error recovery, lossless CST
 10. **LSP features** — Completion, hover, go-to-definition
 
@@ -762,5 +841,5 @@ Run all tests:
 cd build
 ./lexer_test && ./parser_test && ./semantic_test && \
 ./ssa_ir_test && ./bytecode_test && ./vm_test && \
-./lowering_test && ./e2e_test
+./lowering_test && ./e2e_test && ./interop_test
 ```
