@@ -1170,3 +1170,68 @@ TEST_CASE("E2E - Nested structs") {
     CHECK(result.is_int());
     CHECK(result.as_int == 330);  // 10 + 20 + 100 + 200
 }
+
+TEST_CASE("E2E - Deeply nested structs (3 levels)") {
+    const char* source = R"(
+        struct Inner {
+            value: i32;
+        }
+
+        struct Middle {
+            inner: Inner;
+            data: i32;
+        }
+
+        struct Outer {
+            middle: Middle;
+            id: i32;
+        }
+
+        fun main(): i32 {
+            var o: Outer;
+            o.id = 1;
+            o.middle.data = 10;
+            o.middle.inner.value = 100;
+            return o.id + o.middle.data + o.middle.inner.value;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 111);  // 1 + 10 + 100
+}
+
+TEST_CASE("E2E - Multiple nested struct variables") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        struct Line {
+            start: Point;
+            end: Point;
+        }
+
+        fun main(): i32 {
+            var line1: Line;
+            var line2: Line;
+            
+            line1.start.x = 0;
+            line1.start.y = 0;
+            line1.end.x = 10;
+            line1.end.y = 10;
+            
+            line2.start.x = 5;
+            line2.start.y = 5;
+            line2.end.x = 15;
+            line2.end.y = 15;
+            
+            return line1.end.x + line2.start.x;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 15);  // 10 + 5
+}
