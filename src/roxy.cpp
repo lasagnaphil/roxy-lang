@@ -110,29 +110,6 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len, 
     return module;
 }
 
-static void print_value(const Value& val) {
-    switch (val.type) {
-        case Value::Type::Null:
-            printf("null");
-            break;
-        case Value::Type::Bool:
-            printf("%s", val.as_bool ? "true" : "false");
-            break;
-        case Value::Type::Int:
-            printf("%lld", (long long)val.as_int);
-            break;
-        case Value::Type::Float:
-            printf("%g", val.as_float);
-            break;
-        case Value::Type::Ptr:
-            printf("<ptr %p>", val.as_ptr);
-            break;
-        case Value::Type::Weak:
-            printf("<weak %p>", val.as_weak.ptr);
-            break;
-    }
-}
-
 int main(int argc, char** argv) {
     Options opts;
     if (!parse_args(argc, argv, opts)) {
@@ -197,10 +174,13 @@ int main(int argc, char** argv) {
     }
 
     Value result = vm_get_result(&vm);
-    print_value(result);
-    printf("\n");
 
     vm_destroy(&vm);
     delete module;
+
+    // Use integer return value as exit code
+    if (result.is_int()) {
+        return static_cast<int>(result.as_int);
+    }
     return 0;
 }

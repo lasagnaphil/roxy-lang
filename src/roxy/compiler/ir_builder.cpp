@@ -7,6 +7,7 @@ namespace {
 // Built-in native function names - must match order in natives.cpp
 constexpr const char* NATIVE_ARRAY_NEW_INT = "array_new_int";
 constexpr const char* NATIVE_ARRAY_LEN = "array_len";
+constexpr const char* NATIVE_PRINT = "print";
 
 // Get the native function index for a built-in (-1 if not found)
 rx::i32 get_native_index(const char* name, rx::u32 len) {
@@ -15,6 +16,9 @@ rx::i32 get_native_index(const char* name, rx::u32 len) {
     }
     if (len == 9 && strncmp(name, NATIVE_ARRAY_LEN, len) == 0) {
         return 1;
+    }
+    if (len == 5 && strncmp(name, NATIVE_PRINT, len) == 0) {
+        return 2;
     }
     return -1;
 }

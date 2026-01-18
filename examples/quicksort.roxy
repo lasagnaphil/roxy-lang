@@ -35,7 +35,10 @@ fun main(): i32 {
 
     quicksort(arr, 0, array_len(arr) - 1);
 
-    // Return encoded sorted array: arr[0] + arr[1]*10 + arr[2]*100 + arr[3]*1000 + arr[4]*10000
-    // Expected: 1 + 2*10 + 5*100 + 8*1000 + 9*10000 = 98521
-    return arr[0] + arr[1] * 10 + arr[2] * 100 + arr[3] * 1000 + arr[4] * 10000;
+    // Print sorted array
+    for (var i: i32 = 0; i < array_len(arr); i = i + 1) {
+        print(arr[i]);
+    }
+
+    return 0;
 }

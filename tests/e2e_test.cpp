@@ -770,6 +770,27 @@ TEST_CASE("E2E - Prime checking") {
 }
 
 // ============================================================================
+// Print Tests
+// ============================================================================
+
+TEST_CASE("E2E - Print function") {
+    // Test that print() compiles and runs without error
+    // (output goes to stdout, we just verify it doesn't crash)
+    const char* source = R"(
+        fun test_print(): i32 {
+            print(42);
+            print(123);
+            print(0);
+            return 0;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("test_print"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 0);
+}
+
+// ============================================================================
 // Array Tests
 // ============================================================================
 
@@ -780,6 +801,9 @@ TEST_CASE("E2E - Array basic operations") {
             arr[0] = 10;
             arr[1] = 20;
             arr[2] = 30;
+            print(arr[0]);
+            print(arr[1]);
+            print(arr[2]);
             return arr[0] + arr[1] + arr[2];
         }
     )";
@@ -793,6 +817,7 @@ TEST_CASE("E2E - Array length") {
     const char* source = R"(
         fun test_len(): i32 {
             var arr: i32[] = array_new_int(7);
+            print(array_len(arr));
             return array_len(arr);
         }
     )";
@@ -814,6 +839,7 @@ TEST_CASE("E2E - Array with loop") {
 
             var sum: i32 = 0;
             for (var i: i32 = 0; i < array_len(arr); i = i + 1) {
+                print(arr[i]);
                 sum = sum + arr[i];
             }
             return sum;
@@ -839,6 +865,9 @@ TEST_CASE("E2E - Array swap") {
             arr[1] = 20;
             arr[2] = 30;
             swap(arr, 0, 2);
+            print(arr[0]);
+            print(arr[1]);
+            print(arr[2]);
             return arr[0] * 100 + arr[1] * 10 + arr[2];
         }
     )";
@@ -886,6 +915,11 @@ TEST_CASE("E2E - Quicksort") {
             arr[4] = 9;
 
             quicksort(arr, 0, array_len(arr) - 1);
+
+            // Print sorted array
+            for (var i: i32 = 0; i < array_len(arr); i = i + 1) {
+                print(arr[i]);
+            }
 
             return arr[0];
         }
@@ -935,8 +969,12 @@ TEST_CASE("E2E - Quicksort verify all elements") {
 
             quicksort(arr, 0, array_len(arr) - 1);
 
-            // Return encoded sorted array: arr[0] + arr[1]*10 + arr[2]*100 + arr[3]*1000 + arr[4]*10000
-            // Expected: 1 + 2*10 + 5*100 + 8*1000 + 9*10000 = 1 + 20 + 500 + 8000 + 90000 = 98521
+            // Print sorted array
+            for (var i: i32 = 0; i < array_len(arr); i = i + 1) {
+                print(arr[i]);
+            }
+
+            // Return encoded sorted array for verification
             return arr[0] + arr[1] * 10 + arr[2] * 100 + arr[3] * 1000 + arr[4] * 10000;
         }
     )";

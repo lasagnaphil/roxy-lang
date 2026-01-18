@@ -3,6 +3,7 @@
 #include "roxy/vm/array.hpp"
 #include "roxy/vm/value.hpp"
 
+#include <cstdio>
 #include <cstring>
 
 namespace rx {
@@ -61,6 +62,41 @@ void native_array_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = Value::make_int(static_cast<i64>(len));
 }
 
+// Native function: print(value: i32)
+void native_print(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    if (argc < 1) {
+        vm->error = "print requires 1 argument";
+        return;
+    }
+
+    Value* regs = vm->call_stack.back().registers;
+    Value val = regs[first_arg];
+
+    switch (val.type) {
+        case Value::Type::Null:
+            printf("null\n");
+            break;
+        case Value::Type::Bool:
+            printf("%s\n", val.as_bool ? "true" : "false");
+            break;
+        case Value::Type::Int:
+            printf("%lld\n", (long long)val.as_int);
+            break;
+        case Value::Type::Float:
+            printf("%g\n", val.as_float);
+            break;
+        case Value::Type::Ptr:
+            printf("<ptr %p>\n", val.as_ptr);
+            break;
+        case Value::Type::Weak:
+            printf("<weak %p>\n", val.as_weak.ptr);
+            break;
+    }
+
+    // print returns void, but we set dst to null for safety
+    regs[dst] = Value::make_null();
+}
+
 void register_builtin_natives(BCModule* module) {
     // Register array_new_int
     BCNativeFunction array_new_int_fn;
@@ -75,6 +111,13 @@ void register_builtin_natives(BCModule* module) {
     array_len_fn.func = native_array_len;
     array_len_fn.param_count = 1;
     module->native_functions.push_back(array_len_fn);
+
+    // Register print
+    BCNativeFunction print_fn;
+    print_fn.name = StringView(NATIVE_PRINT, strlen(NATIVE_PRINT));
+    print_fn.func = native_print;
+    print_fn.param_count = 1;
+    module->native_functions.push_back(print_fn);
 }
 
 bool is_builtin_native(const char* name, u32 len) {
@@ -86,11 +129,15 @@ bool is_builtin_native(const char* name, u32 len) {
         strncmp(name, NATIVE_ARRAY_LEN, len) == 0) {
         return true;
     }
+    if (len == strlen(NATIVE_PRINT) &&
+        strncmp(name, NATIVE_PRINT, len) == 0) {
+        return true;
+    }
     return false;
 }
 
 i32 get_builtin_native_index(const char* name, u32 len) {
-    // Native functions are registered in this order: array_new_int (0), array_len (1)
+    // Native functions are registered in this order: array_new_int (0), array_len (1), print (2)
     if (len == strlen(NATIVE_ARRAY_NEW_INT) &&
         strncmp(name, NATIVE_ARRAY_NEW_INT, len) == 0) {
         return 0;
@@ -98,6 +145,10 @@ i32 get_builtin_native_index(const char* name, u32 len) {
     if (len == strlen(NATIVE_ARRAY_LEN) &&
         strncmp(name, NATIVE_ARRAY_LEN, len) == 0) {
         return 1;
+    }
+    if (len == strlen(NATIVE_PRINT) &&
+        strncmp(name, NATIVE_PRINT, len) == 0) {
+        return 2;
     }
     return -1;
 }

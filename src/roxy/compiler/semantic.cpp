@@ -42,6 +42,16 @@ void SemanticAnalyzer::register_builtins() {
 
     m_symbols.define(SymbolKind::Function, StringView("array_len", 9),
                      array_len_type, SourceLocation{0, 0}, nullptr);
+
+    // print(value: i32) -> void
+    Type** param_types_3 = reinterpret_cast<Type**>(
+        m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
+    param_types_3[0] = i32_type;
+    Type* print_type = m_types.function_type(
+        Span<Type*>(param_types_3, 1), m_types.void_type());
+
+    m_symbols.define(SymbolKind::Function, StringView("print", 5),
+                     print_type, SourceLocation{0, 0}, nullptr);
 }
 
 bool SemanticAnalyzer::analyze(Program* program) {
