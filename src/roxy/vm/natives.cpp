@@ -16,8 +16,8 @@ void native_array_new_int(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
 
-    Value* regs = vm->call_stack.back().registers;
-    i64 size = regs[first_arg].as_int;
+    u64* regs = vm->call_stack.back().registers;
+    i64 size = static_cast<i64>(regs[first_arg]);
 
     if (size < 0) {
         vm->error = "array size cannot be negative";
@@ -41,7 +41,7 @@ void native_array_new_int(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         elements[i] = Value::make_int(0);
     }
 
-    regs[dst] = Value::make_ptr(arr);
+    regs[dst] = reinterpret_cast<u64>(arr);
 }
 
 // Native function: array_len(arr: T[]) -> i32
@@ -51,51 +51,34 @@ void native_array_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
 
-    Value* regs = vm->call_stack.back().registers;
-    Value arr_val = regs[first_arg];
+    u64* regs = vm->call_stack.back().registers;
+    void* arr_ptr = reinterpret_cast<void*>(regs[first_arg]);
 
-    if (!arr_val.is_ptr() || arr_val.as_ptr == nullptr) {
+    if (arr_ptr == nullptr) {
         vm->error = "array_len: null array reference";
         return;
     }
 
-    u32 len = array_length(arr_val.as_ptr);
-    regs[dst] = Value::make_int(static_cast<i64>(len));
+    u32 len = array_length(arr_ptr);
+    regs[dst] = static_cast<u64>(len);
 }
 
 // Native function: print(value: i32)
+// Note: With untyped registers, we interpret the value as i64 by default
 void native_print(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 1) {
         vm->error = "print requires 1 argument";
         return;
     }
 
-    Value* regs = vm->call_stack.back().registers;
-    Value val = regs[first_arg];
+    u64* regs = vm->call_stack.back().registers;
+    i64 val = static_cast<i64>(regs[first_arg]);
 
-    switch (val.type) {
-        case Value::Type::Null:
-            printf("null\n");
-            break;
-        case Value::Type::Bool:
-            printf("%s\n", val.as_bool ? "true" : "false");
-            break;
-        case Value::Type::Int:
-            printf("%lld\n", (long long)val.as_int);
-            break;
-        case Value::Type::Float:
-            printf("%g\n", val.as_float);
-            break;
-        case Value::Type::Ptr:
-            printf("<ptr %p>\n", val.as_ptr);
-            break;
-        case Value::Type::Weak:
-            printf("<weak %p>\n", val.as_weak.ptr);
-            break;
-    }
+    // With untyped registers, we just print as integer
+    printf("%lld\n", (long long)val);
 
-    // print returns void, but we set dst to null for safety
-    regs[dst] = Value::make_null();
+    // print returns void, but we set dst to 0 for safety
+    regs[dst] = 0;
 }
 
 void register_builtin_natives(NativeRegistry& registry) {

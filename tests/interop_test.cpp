@@ -374,8 +374,8 @@ TEST_CASE("Interop - Bound boolean functions") {
             }
         )";
         Value result = compile_and_run_with_registry(source, StringView("test", 4), registry);
-        CHECK(result.is_bool());
-        CHECK(result.as_bool == true);
+        // With untyped registers, bools are 0 or 1
+        CHECK(result.as_u64() == 1);  // true
     }
 
     SUBCASE("is_positive(-5) = false") {
@@ -385,8 +385,8 @@ TEST_CASE("Interop - Bound boolean functions") {
             }
         )";
         Value result = compile_and_run_with_registry(source, StringView("test", 4), registry);
-        CHECK(result.is_bool());
-        CHECK(result.as_bool == false);
+        // With untyped registers, bools are 0 or 1
+        CHECK(result.as_u64() == 0);  // false
     }
 
     SUBCASE("is_even(4) = true") {
@@ -396,8 +396,8 @@ TEST_CASE("Interop - Bound boolean functions") {
             }
         )";
         Value result = compile_and_run_with_registry(source, StringView("test", 4), registry);
-        CHECK(result.is_bool());
-        CHECK(result.as_bool == true);
+        // With untyped registers, bools are 0 or 1
+        CHECK(result.as_u64() == 1);  // true
     }
 }
 
@@ -416,8 +416,9 @@ TEST_CASE("Interop - Bound float functions") {
             }
         )";
         Value result = compile_and_run_with_registry(source, StringView("test", 4), registry);
-        CHECK(result.is_float());
-        CHECK(result.as_float == doctest::Approx(2.0));
+        // With untyped registers, interpret result bits as float
+        Value float_result = Value::float_from_u64(result.as_u64());
+        CHECK(float_result.as_float == doctest::Approx(2.0));
     }
 
     SUBCASE("sqrt(2.0) = 1.414...") {
@@ -427,8 +428,9 @@ TEST_CASE("Interop - Bound float functions") {
             }
         )";
         Value result = compile_and_run_with_registry(source, StringView("test", 4), registry);
-        CHECK(result.is_float());
-        CHECK(result.as_float == doctest::Approx(1.41421356));
+        // With untyped registers, interpret result bits as float
+        Value float_result = Value::float_from_u64(result.as_u64());
+        CHECK(float_result.as_float == doctest::Approx(1.41421356));
     }
 
     SUBCASE("add_f(1.5, 2.5) = 4.0") {
@@ -438,8 +440,9 @@ TEST_CASE("Interop - Bound float functions") {
             }
         )";
         Value result = compile_and_run_with_registry(source, StringView("test", 4), registry);
-        CHECK(result.is_float());
-        CHECK(result.as_float == doctest::Approx(4.0));
+        // With untyped registers, interpret result bits as float
+        Value float_result = Value::float_from_u64(result.as_u64());
+        CHECK(float_result.as_float == doctest::Approx(4.0));
     }
 }
 

@@ -11,23 +11,26 @@ namespace rx {
 struct CallFrame {
     const BCFunction* func;     // Current function
     const u32* pc;              // Program counter (pointer into code)
-    Value* registers;           // Register window base
+    u64* registers;             // Register window base (untyped 8-byte slots)
     u8 return_reg;              // Register to store return value in caller
+    u32 local_stack_base;       // Base slot index in local_stack for this frame
 
     CallFrame()
-        : func(nullptr), pc(nullptr), registers(nullptr), return_reg(0) {}
+        : func(nullptr), pc(nullptr), registers(nullptr), return_reg(0), local_stack_base(0) {}
 
-    CallFrame(const BCFunction* f, const u32* p, Value* r, u8 ret)
-        : func(f), pc(p), registers(r), return_reg(ret) {}
+    CallFrame(const BCFunction* f, const u32* p, u64* r, u8 ret, u32 stack_base)
+        : func(f), pc(p), registers(r), return_reg(ret), local_stack_base(stack_base) {}
 };
 
 // VM configuration
 struct VMConfig {
-    u32 register_file_size;     // Maximum number of registers
+    u32 register_file_size;     // Maximum number of registers (8-byte slots)
+    u32 local_stack_size;       // Maximum local stack size (4-byte slots)
     u32 max_call_depth;         // Maximum call stack depth
 
     VMConfig()
         : register_file_size(65536)
+        , local_stack_size(262144)  // 256K slots = 1MB
         , max_call_depth(1024)
     {}
 };
@@ -35,9 +38,14 @@ struct VMConfig {
 // Roxy Virtual Machine
 struct RoxyVM {
     BCModule* module;               // Loaded module
-    Value* register_file;           // Register file
+    u64* register_file;             // Register file (untyped 8-byte slots)
     u32 register_file_size;         // Total register capacity
     u32 register_top;               // Current top of register allocation
+
+    u32* local_stack;               // Local stack for struct data (4-byte slots)
+    u32 local_stack_size;           // Total local stack capacity in slots
+    u32 local_stack_top;            // Current top of local stack allocation
+
     Vector<CallFrame> call_stack;   // Call stack
     bool running;                   // Execution state
     const char* error;              // Error message (null if no error)
@@ -47,6 +55,9 @@ struct RoxyVM {
         , register_file(nullptr)
         , register_file_size(0)
         , register_top(0)
+        , local_stack(nullptr)
+        , local_stack_size(0)
+        , local_stack_top(0)
         , running(false)
         , error(nullptr)
     {}

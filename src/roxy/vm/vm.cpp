@@ -8,17 +8,25 @@ namespace rx {
 
 bool vm_init(RoxyVM* vm, const VMConfig& config) {
     vm->module = nullptr;
+
+    // Initialize register file (untyped 8-byte slots)
     vm->register_file_size = config.register_file_size;
-    vm->register_file = new Value[config.register_file_size];
+    vm->register_file = new u64[config.register_file_size];
     vm->register_top = 0;
+
+    // Initialize all registers to zero
+    for (u32 i = 0; i < config.register_file_size; i++) {
+        vm->register_file[i] = 0;
+    }
+
+    // Initialize local stack (4-byte slots for struct data)
+    vm->local_stack_size = config.local_stack_size;
+    vm->local_stack = new u32[config.local_stack_size];
+    vm->local_stack_top = 0;
+
     vm->call_stack.reserve(config.max_call_depth);
     vm->running = false;
     vm->error = nullptr;
-
-    // Initialize all registers to null
-    for (u32 i = 0; i < config.register_file_size; i++) {
-        vm->register_file[i] = Value::make_null();
-    }
 
     return true;
 }
@@ -30,6 +38,14 @@ void vm_destroy(RoxyVM* vm) {
     }
     vm->register_file_size = 0;
     vm->register_top = 0;
+
+    if (vm->local_stack) {
+        delete[] vm->local_stack;
+        vm->local_stack = nullptr;
+    }
+    vm->local_stack_size = 0;
+    vm->local_stack_top = 0;
+
     vm->call_stack.clear();
     vm->module = nullptr;
     vm->running = false;
@@ -82,22 +98,31 @@ bool vm_call_index(RoxyVM* vm, u32 func_index, Span<Value> args) {
     }
 
     // Allocate registers for this call
-    Value* registers = &vm->register_file[vm->register_top];
+    u64* registers = &vm->register_file[vm->register_top];
     vm->register_top += func->register_count;
 
     // Clear registers
     for (u32 i = 0; i < func->register_count; i++) {
-        registers[i] = Value::make_null();
+        registers[i] = 0;
     }
 
     // Copy arguments to registers R0, R1, ...
+    // Convert Value to u64 (store raw bits)
     for (u32 i = 0; i < args.size(); i++) {
-        registers[i] = args[i];
+        registers[i] = args[i].as_u64();
     }
+
+    // Allocate local stack space for this function (16-byte aligned)
+    u32 local_stack_base = (vm->local_stack_top + 3) & ~3u;  // Align to 4 slots (16 bytes)
+    if (local_stack_base + func->local_stack_slots > vm->local_stack_size) {
+        vm->error = "Local stack overflow";
+        return false;
+    }
+    vm->local_stack_top = local_stack_base + func->local_stack_slots;
 
     // Push call frame
     // For top-level call, return_reg is 0 (result goes to R0 of this frame)
-    CallFrame frame(func, func->code.data(), registers, 0);
+    CallFrame frame(func, func->code.data(), registers, 0, local_stack_base);
     vm->call_stack.push_back(frame);
 
     // Execute
@@ -113,7 +138,7 @@ bool vm_call_index(RoxyVM* vm, u32 func_index, Span<Value> args) {
 Value vm_get_result(RoxyVM* vm) {
     // Result is in the first register after all frames have been popped
     if (vm->register_file && vm->register_file_size > 0) {
-        return vm->register_file[0];
+        return Value::from_u64(vm->register_file[0]);
     }
     return Value::make_null();
 }

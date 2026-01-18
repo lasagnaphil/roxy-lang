@@ -124,6 +124,42 @@ struct Value {
 
     bool operator==(const Value& other) const { return equals(other); }
     bool operator!=(const Value& other) const { return !equals(other); }
+
+    // Convert value to raw u64 for register storage
+    // For Int/Ptr types, stores the raw bits
+    // For Float, uses type punning to store the bits
+    u64 as_u64() const {
+        switch (type) {
+            case Bool: return as_bool ? 1 : 0;
+            case Int: return static_cast<u64>(as_int);
+            case Float: {
+                u64 bits;
+                __builtin_memcpy(&bits, &as_float, sizeof(bits));
+                return bits;
+            }
+            case Ptr: return reinterpret_cast<u64>(as_ptr);
+            case Weak: return reinterpret_cast<u64>(as_weak.ptr);
+            default: return 0;
+        }
+    }
+
+    // Create Value from raw u64 register value
+    // Assumes the value is an integer (default interpretation)
+    static Value from_u64(u64 bits) {
+        return make_int(static_cast<i64>(bits));
+    }
+
+    // Create float Value from raw u64 bits
+    static Value float_from_u64(u64 bits) {
+        f64 f;
+        __builtin_memcpy(&f, &bits, sizeof(f));
+        return make_float(f);
+    }
+
+    // Create pointer Value from raw u64 bits
+    static Value ptr_from_u64(u64 bits) {
+        return make_ptr(reinterpret_cast<void*>(bits));
+    }
 };
 
 // Type name for debugging

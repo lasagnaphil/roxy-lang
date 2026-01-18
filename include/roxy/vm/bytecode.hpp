@@ -88,9 +88,10 @@ enum class Opcode : u8 {
     CALL        = 0xA0,     // dst = call func_idx(args...)
     CALL_NATIVE = 0xA1,     // dst = call_native func_idx(args...)
 
-    // 0xB0-0xBF: Field Access
-    GET_FIELD   = 0xB0,     // dst = src1.field[imm16]
-    SET_FIELD   = 0xB1,     // dst.field[imm16] = src1
+    // 0xB0-0xBF: Field and Stack Access
+    GET_FIELD   = 0xB0,     // dst = src1.field[slot_offset] (two-word: ABC + offset)
+    SET_FIELD   = 0xB1,     // dst.field[slot_offset] = src1 (two-word: ABC + offset)
+    STACK_ADDR  = 0xB2,     // dst = &local_stack[local_stack_base + imm16]
 
     // 0xC0-0xCF: Index Access
     GET_INDEX   = 0xC0,     // dst = src1[src2]
@@ -220,10 +221,11 @@ struct BCFunction {
     StringView name;            // Function name
     u32 param_count;            // Number of parameters
     u32 register_count;         // Total registers needed
+    u32 local_stack_slots;      // Local stack slots needed for struct data
     Vector<u32> code;           // Bytecode instructions
     Vector<BCConstant> constants; // Constant pool
 
-    BCFunction() : param_count(0), register_count(0) {}
+    BCFunction() : param_count(0), register_count(0), local_stack_slots(0) {}
 };
 
 // Native function signature

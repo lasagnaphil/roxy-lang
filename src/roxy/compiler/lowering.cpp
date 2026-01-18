@@ -9,6 +9,7 @@ BytecodeBuilder::BytecodeBuilder()
     : m_current_func(nullptr)
     , m_current_ir_func(nullptr)
     , m_next_reg(0)
+    , m_next_stack_slot(0)
     , m_module(nullptr)
     , m_ir_module(nullptr)
 {}
@@ -41,9 +42,11 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
 
     // Reset state
     m_value_to_reg.clear();
+    m_value_to_stack_slot.clear();
     m_block_offsets.clear();
     m_jump_patches.clear();
     m_next_reg = 0;
+    m_next_stack_slot = 0;
 
     // Allocate registers for function parameters
     for (const auto& param : ir_func->params) {
@@ -94,6 +97,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     patch_jumps();
 
     m_current_func->register_count = m_next_reg;
+    m_current_func->local_stack_slots = m_next_stack_slot;
     return m_current_func;
 }
 
@@ -312,27 +316,23 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         }
 
         case IROp::GetField: {
+            // Format: [GET_FIELD dst obj slot_count] + [slot_offset:16 padding:16]
             u8 obj = get_register(inst->field.object);
-            u16 field_idx = static_cast<u16>(inst->field.field_index);
-            emit_abc(Opcode::GET_FIELD, dst, obj, 0);
-            // Need to encode field index - use next instruction or embed differently
-            // For now, use format B encoding
-            m_current_func->code.pop_back();
-            emit((static_cast<u32>(Opcode::GET_FIELD) << 24) |
-                 (static_cast<u32>(dst) << 16) |
-                 (static_cast<u32>(obj) << 8) |
-                 (field_idx & 0xFF));
+            u8 slot_count = static_cast<u8>(inst->field.slot_count);
+            u16 slot_offset = static_cast<u16>(inst->field.slot_offset);
+            emit_abc(Opcode::GET_FIELD, dst, obj, slot_count);
+            emit(static_cast<u32>(slot_offset));  // Second instruction word with slot offset
             break;
         }
 
         case IROp::SetField: {
+            // Format: [SET_FIELD obj val slot_count] + [slot_offset:16 padding:16]
             u8 obj = get_register(inst->field.object);
             u8 val = get_register(inst->store_value);
-            u16 field_idx = static_cast<u16>(inst->field.field_index);
-            emit((static_cast<u32>(Opcode::SET_FIELD) << 24) |
-                 (static_cast<u32>(obj) << 16) |
-                 (static_cast<u32>(val) << 8) |
-                 (field_idx & 0xFF));
+            u8 slot_count = static_cast<u8>(inst->field.slot_count);
+            u16 slot_offset = static_cast<u16>(inst->field.slot_offset);
+            emit_abc(Opcode::SET_FIELD, obj, val, slot_count);
+            emit(static_cast<u32>(slot_offset));  // Second instruction word with slot offset
             break;
         }
 
@@ -379,6 +379,20 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::Delete: {
             u8 ptr = get_register(inst->unary);
             emit_abc(Opcode::DEL_OBJ, ptr, 0, 0);
+            break;
+        }
+
+        case IROp::StackAlloc: {
+            // Allocate slots on the local stack
+            u32 slot_count = inst->stack_alloc.slot_count;
+            u32 slot_offset = m_next_stack_slot;
+            m_next_stack_slot += slot_count;
+            
+            // Record the stack slot offset for this value
+            m_value_to_stack_slot[inst->result.id] = slot_offset;
+            
+            // Emit STACK_ADDR to get a pointer to the allocated space
+            emit_abi(Opcode::STACK_ADDR, dst, static_cast<u16>(slot_offset));
             break;
         }
     }

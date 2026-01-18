@@ -797,6 +797,7 @@ Decl* Parser::var_declaration(bool is_pub) {
     decl->var_decl.type = type;
     decl->var_decl.initializer = initializer;
     decl->var_decl.is_pub = is_pub;
+    decl->var_decl.resolved_type = nullptr;
     return decl;
 }
 

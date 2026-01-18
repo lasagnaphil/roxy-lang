@@ -330,8 +330,9 @@ TEST_CASE("Lower float constant") {
 
     CHECK(vm_call(&vm, StringView("main"), {}));
     Value result = vm_get_result(&vm);
-    CHECK(result.is_float());
-    CHECK(result.as_float == doctest::Approx(3.14159));
+    // With untyped u64 registers, type info is not preserved - use float_from_u64
+    Value float_result = Value::float_from_u64(result.as_u64());
+    CHECK(float_result.as_float == doctest::Approx(3.14159));
 
     vm_destroy(&vm);
     delete bc_module;

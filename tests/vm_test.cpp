@@ -235,8 +235,9 @@ TEST_CASE("Execute float arithmetic") {
     Value args[2] = {Value::make_float(3.14), Value::make_float(2.86)};
     CHECK(vm_call(&vm, StringView("addf"), Span<Value>(args, 2)));
     Value result = vm_get_result(&vm);
-    CHECK(result.is_float());
-    CHECK(result.as_float == doctest::Approx(6.0));
+    // With untyped registers, interpret result bits as float
+    Value float_result = Value::float_from_u64(result.as_u64());
+    CHECK(float_result.as_float == doctest::Approx(6.0));
 
     vm_destroy(&vm);
     delete module;
@@ -263,8 +264,8 @@ TEST_CASE("Execute comparison operations") {
         Value args[2] = {Value::make_int(5), Value::make_int(10)};
         CHECK(vm_call(&vm, StringView("lt"), Span<Value>(args, 2)));
         Value result = vm_get_result(&vm);
-        CHECK(result.is_bool());
-        CHECK(result.as_bool == true);
+        // With untyped registers, bools are 0 or 1
+        CHECK(result.as_u64() == 1);  // true
     }
 
     SUBCASE("Less than (false)") {
@@ -282,8 +283,8 @@ TEST_CASE("Execute comparison operations") {
         Value args[2] = {Value::make_int(10), Value::make_int(5)};
         CHECK(vm_call(&vm, StringView("lt"), Span<Value>(args, 2)));
         Value result = vm_get_result(&vm);
-        CHECK(result.is_bool());
-        CHECK(result.as_bool == false);
+        // With untyped registers, bools are 0 or 1
+        CHECK(result.as_u64() == 0);  // false
     }
 
     vm_destroy(&vm);
@@ -374,8 +375,9 @@ TEST_CASE("Execute type conversions") {
         Value args[1] = {Value::make_int(42)};
         CHECK(vm_call(&vm, StringView("i2f"), Span<Value>(args, 1)));
         Value result = vm_get_result(&vm);
-        CHECK(result.is_float());
-        CHECK(result.as_float == 42.0);
+        // With untyped registers, interpret result bits as float
+        Value float_result = Value::float_from_u64(result.as_u64());
+        CHECK(float_result.as_float == 42.0);
     }
 
     SUBCASE("Float to int") {

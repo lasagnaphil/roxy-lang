@@ -599,8 +599,9 @@ TEST_CASE("E2E - Float arithmetic") {
     )";
 
     Value result = compile_and_run(source, StringView("calc"));
-    CHECK(result.is_float());
-    CHECK(result.as_float == doctest::Approx(6.0));
+    // With untyped registers, we need to interpret the raw bits as float
+    Value float_result = Value::float_from_u64(result.as_u64());
+    CHECK(float_result.as_float == doctest::Approx(6.0));
 }
 
 TEST_CASE("E2E - Float comparison") {
@@ -623,7 +624,9 @@ TEST_CASE("E2E - Float comparison") {
 
     Value args[2] = {Value::make_float(3.14), Value::make_float(2.71)};
     CHECK(vm_call(&vm, StringView("max_float"), Span<Value>(args, 2)));
-    CHECK(vm_get_result(&vm).as_float == doctest::Approx(3.14));
+    // With untyped registers, interpret result bits as float
+    Value float_result = Value::float_from_u64(vm_get_result(&vm).as_u64());
+    CHECK(float_result.as_float == doctest::Approx(3.14));
 
     vm_destroy(&vm);
     delete module;
@@ -988,4 +991,155 @@ TEST_CASE("E2E - Quicksort verify all elements") {
     Value result = compile_and_run(source, StringView("verify_sorted"));
     CHECK(result.is_int());
     CHECK(result.as_int == 98521);  // [1, 2, 5, 8, 9] encoded
+}
+
+// ============================================================================
+// Struct Tests
+// ============================================================================
+
+TEST_CASE("E2E - Basic struct field access") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var p: Point;
+            p.x = 10;
+            p.y = 20;
+            return p.x + p.y;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 30);  // 10 + 20
+}
+
+TEST_CASE("E2E - Struct with 64-bit field") {
+    const char* source = R"(
+        struct Data {
+            a: i32;
+            b: i64;
+        }
+
+        fun main(): i64 {
+            var d: Data;
+            d.a = 10;
+            d.b = 100000000000;
+            return d.a + d.b;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.as_int == 100000000010);  // 10 + 100000000000
+}
+
+TEST_CASE("E2E - Multiple struct variables") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var p1: Point;
+            var p2: Point;
+            p1.x = 1;
+            p1.y = 2;
+            p2.x = 3;
+            p2.y = 4;
+            return p1.x + p1.y + p2.x + p2.y;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 10);  // 1 + 2 + 3 + 4
+}
+
+TEST_CASE("E2E - Struct field assignment from expression") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var p: Point;
+            p.x = 3 * 4;
+            p.y = p.x + 5;
+            return p.y;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 17);  // 12 + 5
+}
+
+TEST_CASE("E2E - Struct with float fields") {
+    const char* source = R"(
+        struct Vec2 {
+            x: f64;
+            y: f64;
+        }
+
+        fun main(): f64 {
+            var v: Vec2;
+            v.x = 1.5;
+            v.y = 2.5;
+            return v.x + v.y;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    Value float_result = Value::float_from_u64(result.as_u64());
+    CHECK(float_result.as_float == doctest::Approx(4.0));  // 1.5 + 2.5
+}
+
+TEST_CASE("E2E - Struct in conditional") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var p: Point;
+            p.x = 10;
+            p.y = 5;
+            if (p.x > p.y) {
+                return p.x;
+            } else {
+                return p.y;
+            }
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 10);
+}
+
+TEST_CASE("E2E - Struct in loop") {
+    const char* source = R"(
+        struct Counter {
+            value: i32;
+        }
+
+        fun main(): i32 {
+            var c: Counter;
+            c.value = 0;
+            for (var i: i32 = 0; i < 10; i = i + 1) {
+                c.value = c.value + i;
+            }
+            return c.value;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 45);  // 0 + 1 + 2 + ... + 9
 }

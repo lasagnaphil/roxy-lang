@@ -4,31 +4,42 @@
 
 #include <cmath>
 #include <cassert>
+#include <cstring>
 
 namespace rx {
 
-// Helper to get constant from constant pool
-static Value load_constant(const BCFunction* func, u16 index) {
+// Helper functions for type punning with untyped registers
+inline i64 reg_as_i64(u64 r) { return static_cast<i64>(r); }
+inline f64 reg_as_f64(u64 r) { f64 v; memcpy(&v, &r, sizeof(v)); return v; }
+inline void* reg_as_ptr(u64 r) { return reinterpret_cast<void*>(r); }
+
+inline u64 reg_from_i64(i64 v) { return static_cast<u64>(v); }
+inline u64 reg_from_f64(f64 v) { u64 r; memcpy(&r, &v, sizeof(r)); return r; }
+inline u64 reg_from_ptr(void* p) { return reinterpret_cast<u64>(p); }
+inline u64 reg_from_bool(bool b) { return b ? 1 : 0; }
+inline bool reg_is_truthy(u64 r) { return r != 0; }
+
+// Helper to load constant from constant pool into a u64 register
+static u64 load_constant(const BCFunction* func, u16 index) {
     if (index >= func->constants.size()) {
-        return Value::make_null();
+        return 0;
     }
 
     const BCConstant& c = func->constants[index];
     switch (c.type) {
         case BCConstant::Null:
-            return Value::make_null();
+            return 0;
         case BCConstant::Bool:
-            return Value::make_bool(c.as_bool);
+            return c.as_bool ? 1 : 0;
         case BCConstant::Int:
-            return Value::make_int(c.as_int);
+            return reg_from_i64(c.as_int);
         case BCConstant::Float:
-            return Value::make_float(c.as_float);
+            return reg_from_f64(c.as_float);
         case BCConstant::String:
             // For now, strings are stored as pointers to constant data
-            // TODO: Proper string object handling
-            return Value::make_ptr(const_cast<char*>(c.as_string.data));
+            return reg_from_ptr(const_cast<char*>(c.as_string.data));
         default:
-            return Value::make_null();
+            return 0;
     }
 }
 
@@ -42,7 +53,7 @@ bool interpret(RoxyVM* vm) {
     CallFrame* frame = &vm->call_stack.back();
     const BCFunction* func = frame->func;
     const u32* pc = frame->pc;
-    Value* regs = frame->registers;
+    u64* regs = frame->registers;
 
     // Main dispatch loop
     while (vm->running) {
@@ -57,19 +68,19 @@ bool interpret(RoxyVM* vm) {
         switch (op) {
             // Constants and Moves
             case Opcode::LOAD_NULL:
-                regs[a] = Value::make_null();
+                regs[a] = 0;
                 break;
 
             case Opcode::LOAD_TRUE:
-                regs[a] = Value::make_bool(true);
+                regs[a] = 1;
                 break;
 
             case Opcode::LOAD_FALSE:
-                regs[a] = Value::make_bool(false);
+                regs[a] = 0;
                 break;
 
             case Opcode::LOAD_INT:
-                regs[a] = Value::make_int(static_cast<i16>(imm));
+                regs[a] = reg_from_i64(static_cast<i16>(imm));
                 break;
 
             case Opcode::LOAD_CONST:
@@ -82,186 +93,185 @@ bool interpret(RoxyVM* vm) {
 
             // Integer Arithmetic
             case Opcode::ADD_I:
-                regs[a] = Value::make_int(regs[b].as_int + regs[c].as_int);
+                regs[a] = reg_from_i64(reg_as_i64(regs[b]) + reg_as_i64(regs[c]));
                 break;
 
             case Opcode::SUB_I:
-                regs[a] = Value::make_int(regs[b].as_int - regs[c].as_int);
+                regs[a] = reg_from_i64(reg_as_i64(regs[b]) - reg_as_i64(regs[c]));
                 break;
 
             case Opcode::MUL_I:
-                regs[a] = Value::make_int(regs[b].as_int * regs[c].as_int);
+                regs[a] = reg_from_i64(reg_as_i64(regs[b]) * reg_as_i64(regs[c]));
                 break;
 
-            case Opcode::DIV_I:
-                if (regs[c].as_int == 0) {
+            case Opcode::DIV_I: {
+                i64 divisor = reg_as_i64(regs[c]);
+                if (divisor == 0) {
                     vm->error = "Division by zero";
                     return false;
                 }
-                regs[a] = Value::make_int(regs[b].as_int / regs[c].as_int);
+                regs[a] = reg_from_i64(reg_as_i64(regs[b]) / divisor);
                 break;
+            }
 
-            case Opcode::MOD_I:
-                if (regs[c].as_int == 0) {
+            case Opcode::MOD_I: {
+                i64 divisor = reg_as_i64(regs[c]);
+                if (divisor == 0) {
                     vm->error = "Division by zero";
                     return false;
                 }
-                regs[a] = Value::make_int(regs[b].as_int % regs[c].as_int);
+                regs[a] = reg_from_i64(reg_as_i64(regs[b]) % divisor);
                 break;
+            }
 
             case Opcode::NEG_I:
-                regs[a] = Value::make_int(-regs[b].as_int);
+                regs[a] = reg_from_i64(-reg_as_i64(regs[b]));
                 break;
 
             // Float Arithmetic
             case Opcode::ADD_F:
-                regs[a] = Value::make_float(regs[b].as_float + regs[c].as_float);
+                regs[a] = reg_from_f64(reg_as_f64(regs[b]) + reg_as_f64(regs[c]));
                 break;
 
             case Opcode::SUB_F:
-                regs[a] = Value::make_float(regs[b].as_float - regs[c].as_float);
+                regs[a] = reg_from_f64(reg_as_f64(regs[b]) - reg_as_f64(regs[c]));
                 break;
 
             case Opcode::MUL_F:
-                regs[a] = Value::make_float(regs[b].as_float * regs[c].as_float);
+                regs[a] = reg_from_f64(reg_as_f64(regs[b]) * reg_as_f64(regs[c]));
                 break;
 
             case Opcode::DIV_F:
-                regs[a] = Value::make_float(regs[b].as_float / regs[c].as_float);
+                regs[a] = reg_from_f64(reg_as_f64(regs[b]) / reg_as_f64(regs[c]));
                 break;
 
             case Opcode::NEG_F:
-                regs[a] = Value::make_float(-regs[b].as_float);
+                regs[a] = reg_from_f64(-reg_as_f64(regs[b]));
                 break;
 
             // Bitwise Operations
             case Opcode::BIT_AND:
-                regs[a] = Value::make_int(regs[b].as_int & regs[c].as_int);
+                regs[a] = regs[b] & regs[c];
                 break;
 
             case Opcode::BIT_OR:
-                regs[a] = Value::make_int(regs[b].as_int | regs[c].as_int);
+                regs[a] = regs[b] | regs[c];
                 break;
 
             case Opcode::BIT_XOR:
-                regs[a] = Value::make_int(regs[b].as_int ^ regs[c].as_int);
+                regs[a] = regs[b] ^ regs[c];
                 break;
 
             case Opcode::BIT_NOT:
-                regs[a] = Value::make_int(~regs[b].as_int);
+                regs[a] = ~regs[b];
                 break;
 
             case Opcode::SHL:
-                regs[a] = Value::make_int(regs[b].as_int << regs[c].as_int);
+                regs[a] = reg_from_i64(reg_as_i64(regs[b]) << regs[c]);
                 break;
 
             case Opcode::SHR:
-                regs[a] = Value::make_int(regs[b].as_int >> regs[c].as_int);
+                regs[a] = reg_from_i64(reg_as_i64(regs[b]) >> regs[c]);
                 break;
 
             case Opcode::USHR:
-                regs[a] = Value::make_int(
-                    static_cast<i64>(static_cast<u64>(regs[b].as_int) >> regs[c].as_int));
+                regs[a] = regs[b] >> regs[c];
                 break;
 
             // Integer Comparisons
             case Opcode::EQ_I:
-                regs[a] = Value::make_bool(regs[b].as_int == regs[c].as_int);
+                regs[a] = reg_from_bool(reg_as_i64(regs[b]) == reg_as_i64(regs[c]));
                 break;
 
             case Opcode::NE_I:
-                regs[a] = Value::make_bool(regs[b].as_int != regs[c].as_int);
+                regs[a] = reg_from_bool(reg_as_i64(regs[b]) != reg_as_i64(regs[c]));
                 break;
 
             case Opcode::LT_I:
-                regs[a] = Value::make_bool(regs[b].as_int < regs[c].as_int);
+                regs[a] = reg_from_bool(reg_as_i64(regs[b]) < reg_as_i64(regs[c]));
                 break;
 
             case Opcode::LE_I:
-                regs[a] = Value::make_bool(regs[b].as_int <= regs[c].as_int);
+                regs[a] = reg_from_bool(reg_as_i64(regs[b]) <= reg_as_i64(regs[c]));
                 break;
 
             case Opcode::GT_I:
-                regs[a] = Value::make_bool(regs[b].as_int > regs[c].as_int);
+                regs[a] = reg_from_bool(reg_as_i64(regs[b]) > reg_as_i64(regs[c]));
                 break;
 
             case Opcode::GE_I:
-                regs[a] = Value::make_bool(regs[b].as_int >= regs[c].as_int);
+                regs[a] = reg_from_bool(reg_as_i64(regs[b]) >= reg_as_i64(regs[c]));
                 break;
 
             case Opcode::LT_U:
-                regs[a] = Value::make_bool(
-                    static_cast<u64>(regs[b].as_int) < static_cast<u64>(regs[c].as_int));
+                regs[a] = reg_from_bool(regs[b] < regs[c]);
                 break;
 
             case Opcode::LE_U:
-                regs[a] = Value::make_bool(
-                    static_cast<u64>(regs[b].as_int) <= static_cast<u64>(regs[c].as_int));
+                regs[a] = reg_from_bool(regs[b] <= regs[c]);
                 break;
 
             case Opcode::GT_U:
-                regs[a] = Value::make_bool(
-                    static_cast<u64>(regs[b].as_int) > static_cast<u64>(regs[c].as_int));
+                regs[a] = reg_from_bool(regs[b] > regs[c]);
                 break;
 
             case Opcode::GE_U:
-                regs[a] = Value::make_bool(
-                    static_cast<u64>(regs[b].as_int) >= static_cast<u64>(regs[c].as_int));
+                regs[a] = reg_from_bool(regs[b] >= regs[c]);
                 break;
 
             // Float Comparisons
             case Opcode::EQ_F:
-                regs[a] = Value::make_bool(regs[b].as_float == regs[c].as_float);
+                regs[a] = reg_from_bool(reg_as_f64(regs[b]) == reg_as_f64(regs[c]));
                 break;
 
             case Opcode::NE_F:
-                regs[a] = Value::make_bool(regs[b].as_float != regs[c].as_float);
+                regs[a] = reg_from_bool(reg_as_f64(regs[b]) != reg_as_f64(regs[c]));
                 break;
 
             case Opcode::LT_F:
-                regs[a] = Value::make_bool(regs[b].as_float < regs[c].as_float);
+                regs[a] = reg_from_bool(reg_as_f64(regs[b]) < reg_as_f64(regs[c]));
                 break;
 
             case Opcode::LE_F:
-                regs[a] = Value::make_bool(regs[b].as_float <= regs[c].as_float);
+                regs[a] = reg_from_bool(reg_as_f64(regs[b]) <= reg_as_f64(regs[c]));
                 break;
 
             case Opcode::GT_F:
-                regs[a] = Value::make_bool(regs[b].as_float > regs[c].as_float);
+                regs[a] = reg_from_bool(reg_as_f64(regs[b]) > reg_as_f64(regs[c]));
                 break;
 
             case Opcode::GE_F:
-                regs[a] = Value::make_bool(regs[b].as_float >= regs[c].as_float);
+                regs[a] = reg_from_bool(reg_as_f64(regs[b]) >= reg_as_f64(regs[c]));
                 break;
 
             // Logical Operations
             case Opcode::NOT:
-                regs[a] = Value::make_bool(!regs[b].is_truthy());
+                regs[a] = reg_from_bool(!reg_is_truthy(regs[b]));
                 break;
 
             case Opcode::AND:
-                regs[a] = Value::make_bool(regs[b].is_truthy() && regs[c].is_truthy());
+                regs[a] = reg_from_bool(reg_is_truthy(regs[b]) && reg_is_truthy(regs[c]));
                 break;
 
             case Opcode::OR:
-                regs[a] = Value::make_bool(regs[b].is_truthy() || regs[c].is_truthy());
+                regs[a] = reg_from_bool(reg_is_truthy(regs[b]) || reg_is_truthy(regs[c]));
                 break;
 
             // Type Conversions
             case Opcode::I2F:
-                regs[a] = Value::make_float(static_cast<f64>(regs[b].as_int));
+                regs[a] = reg_from_f64(static_cast<f64>(reg_as_i64(regs[b])));
                 break;
 
             case Opcode::F2I:
-                regs[a] = Value::make_int(static_cast<i64>(regs[b].as_float));
+                regs[a] = reg_from_i64(static_cast<i64>(reg_as_f64(regs[b])));
                 break;
 
             case Opcode::I2B:
-                regs[a] = Value::make_bool(regs[b].as_int != 0);
+                regs[a] = reg_from_bool(reg_as_i64(regs[b]) != 0);
                 break;
 
             case Opcode::B2I:
-                regs[a] = Value::make_int(regs[b].as_bool ? 1 : 0);
+                regs[a] = reg_is_truthy(regs[b]) ? 1 : 0;
                 break;
 
             // Control Flow
@@ -270,26 +280,28 @@ bool interpret(RoxyVM* vm) {
                 break;
 
             case Opcode::JMP_IF:
-                if (regs[a].is_truthy()) {
+                if (reg_is_truthy(regs[a])) {
                     pc += offset;
                 }
                 break;
 
             case Opcode::JMP_IF_NOT:
-                if (!regs[a].is_truthy()) {
+                if (!reg_is_truthy(regs[a])) {
                     pc += offset;
                 }
                 break;
 
             case Opcode::RET: {
-                Value result = regs[a];
+                u64 result = regs[a];
 
-                // Save return register before popping frame
+                // Save return register and local stack base before popping frame
                 u32 return_reg = frame->return_reg;
+                u32 local_stack_base = frame->local_stack_base;
 
                 // Pop current frame
                 vm->call_stack.pop_back();
                 vm->register_top -= func->register_count;
+                vm->local_stack_top = local_stack_base;  // Deallocate local stack
 
                 if (vm->call_stack.empty()) {
                     // Return from top-level function
@@ -311,13 +323,17 @@ bool interpret(RoxyVM* vm) {
             }
 
             case Opcode::RET_VOID: {
+                // Save local stack base before popping frame
+                u32 local_stack_base = frame->local_stack_base;
+
                 // Pop current frame
                 vm->call_stack.pop_back();
                 vm->register_top -= func->register_count;
+                vm->local_stack_top = local_stack_base;  // Deallocate local stack
 
                 if (vm->call_stack.empty()) {
                     // Return from top-level function
-                    vm->register_file[0] = Value::make_null();
+                    vm->register_file[0] = 0;
                     vm->running = false;
                     return true;
                 }
@@ -362,12 +378,12 @@ bool interpret(RoxyVM* vm) {
                 frame->pc = pc;
 
                 // Allocate registers for callee
-                Value* callee_regs = &vm->register_file[vm->register_top];
+                u64* callee_regs = &vm->register_file[vm->register_top];
                 vm->register_top += callee->register_count;
 
                 // Clear callee registers
                 for (u32 i = 0; i < callee->register_count; i++) {
-                    callee_regs[i] = Value::make_null();
+                    callee_regs[i] = 0;
                 }
 
                 // Copy arguments
@@ -375,8 +391,16 @@ bool interpret(RoxyVM* vm) {
                     callee_regs[i] = regs[first_arg + i];
                 }
 
+                // Allocate local stack space for callee (16-byte aligned)
+                u32 local_stack_base = (vm->local_stack_top + 3) & ~3u;  // Align to 4 slots (16 bytes)
+                if (local_stack_base + callee->local_stack_slots > vm->local_stack_size) {
+                    vm->error = "Local stack overflow";
+                    return false;
+                }
+                vm->local_stack_top = local_stack_base + callee->local_stack_slots;
+
                 // Push new call frame
-                CallFrame new_frame(callee, callee->code.data(), callee_regs, dst);
+                CallFrame new_frame(callee, callee->code.data(), callee_regs, dst, local_stack_base);
                 vm->call_stack.push_back(new_frame);
 
                 // Update cached values
@@ -411,39 +435,75 @@ bool interpret(RoxyVM* vm) {
                 break;
             }
 
+            // Stack Address
+            case Opcode::STACK_ADDR: {
+                // Format: STACK_ADDR dst, slot_offset
+                // dst = pointer to local_stack[local_stack_base + slot_offset]
+                u16 slot_offset = imm;
+                u32* addr = vm->local_stack + frame->local_stack_base + slot_offset;
+                regs[a] = reg_from_ptr(addr);
+                break;
+            }
+
             // Field Access
             case Opcode::GET_FIELD: {
-                // TODO: Implement struct field access
-                vm->error = "GET_FIELD not implemented";
-                return false;
+                // Format: [GET_FIELD dst obj slot_count] + [slot_offset:16 padding:16]
+                u8 slot_count = c;
+                u16 slot_offset = static_cast<u16>(*pc++);  // Read second instruction word
+
+                u32* base = reinterpret_cast<u32*>(reg_as_ptr(regs[b]));
+                u32* field = base + slot_offset;
+
+                if (slot_count == 1) {
+                    // 32-bit field: zero-extend to 64-bit
+                    regs[a] = static_cast<u64>(*field);
+                } else {
+                    // 64-bit field: read two consecutive slots (little-endian)
+                    regs[a] = static_cast<u64>(field[0]) | (static_cast<u64>(field[1]) << 32);
+                }
+                break;
             }
 
             case Opcode::SET_FIELD: {
-                // TODO: Implement struct field access
-                vm->error = "SET_FIELD not implemented";
-                return false;
+                // Format: [SET_FIELD obj val slot_count] + [slot_offset:16 padding:16]
+                u8 slot_count = c;
+                u16 slot_offset = static_cast<u16>(*pc++);  // Read second instruction word
+
+                u32* base = reinterpret_cast<u32*>(reg_as_ptr(regs[a]));
+                u32* field = base + slot_offset;
+                u64 val = regs[b];
+
+                if (slot_count == 1) {
+                    // 32-bit field
+                    *field = static_cast<u32>(val);
+                } else {
+                    // 64-bit field: write two consecutive slots (little-endian)
+                    field[0] = static_cast<u32>(val);
+                    field[1] = static_cast<u32>(val >> 32);
+                }
+                break;
             }
 
             // Index Access
             case Opcode::GET_INDEX: {
                 // Format: GET_INDEX dst, arr, idx
                 // dst = arr[idx]
-                void* arr = regs[b].as_ptr;
-                i64 index = regs[c].as_int;
+                void* arr = reg_as_ptr(regs[b]);
+                i64 index = reg_as_i64(regs[c]);
                 Value result;
                 if (!array_get(arr, index, result, &vm->error)) {
                     return false;
                 }
-                regs[a] = result;
+                regs[a] = result.as_u64();
                 break;
             }
 
             case Opcode::SET_INDEX: {
                 // Format: SET_INDEX arr, idx, val
                 // arr[idx] = val
-                void* arr = regs[a].as_ptr;
-                i64 index = regs[b].as_int;
-                Value value = regs[c];
+                void* arr = reg_as_ptr(regs[a]);
+                i64 index = reg_as_i64(regs[b]);
+                Value value = Value::from_u64(regs[c]);
                 if (!array_set(arr, index, value, &vm->error)) {
                     return false;
                 }
@@ -465,35 +525,40 @@ bool interpret(RoxyVM* vm) {
                     return false;
                 }
 
-                regs[a] = Value::make_ptr(data);
+                regs[a] = reg_from_ptr(data);
                 break;
             }
 
             case Opcode::DEL_OBJ: {
-                if (regs[a].is_ptr() && regs[a].as_ptr != nullptr) {
-                    object_free(vm, regs[a].as_ptr);
-                    regs[a] = Value::make_null();
+                void* ptr = reg_as_ptr(regs[a]);
+                if (ptr != nullptr) {
+                    object_free(vm, ptr);
+                    regs[a] = 0;
                 }
                 break;
             }
 
             // Reference Counting
             case Opcode::REF_INC: {
-                if (regs[a].is_ptr() && regs[a].as_ptr != nullptr) {
-                    ref_inc(regs[a].as_ptr);
+                void* ptr = reg_as_ptr(regs[a]);
+                if (ptr != nullptr) {
+                    ref_inc(ptr);
                 }
                 break;
             }
 
             case Opcode::REF_DEC: {
-                if (regs[a].is_ptr() && regs[a].as_ptr != nullptr) {
-                    ref_dec(vm, regs[a].as_ptr);
+                void* ptr = reg_as_ptr(regs[a]);
+                if (ptr != nullptr) {
+                    ref_dec(vm, ptr);
                 }
                 break;
             }
 
             case Opcode::WEAK_CHECK: {
-                regs[a] = Value::make_bool(regs[b].is_weak_valid());
+                // For weak reference check, we need to access the generation
+                // For now, just check if pointer is non-null
+                regs[a] = reg_from_bool(reg_as_ptr(regs[b]) != nullptr);
                 break;
             }
 

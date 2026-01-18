@@ -305,23 +305,34 @@ ValueId IRBuilder::emit_new(StringView type_name, Span<ValueId> args, Type* resu
     return ValueId::invalid();
 }
 
-ValueId IRBuilder::emit_get_field(ValueId object, StringView field_name, u32 field_index, Type* result_type) {
-    IRInst* inst = emit_inst(IROp::GetField, result_type);
+ValueId IRBuilder::emit_stack_alloc(u32 slot_count, Type* result_type) {
+    IRInst* inst = emit_inst(IROp::StackAlloc, result_type);
     if (inst) {
-        inst->field.object = object;
-        inst->field.field_name = field_name;
-        inst->field.field_index = field_index;
+        inst->stack_alloc.slot_count = slot_count;
         return inst->result;
     }
     return ValueId::invalid();
 }
 
-ValueId IRBuilder::emit_set_field(ValueId object, StringView field_name, u32 field_index, ValueId value, Type* result_type) {
+ValueId IRBuilder::emit_get_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, Type* result_type) {
+    IRInst* inst = emit_inst(IROp::GetField, result_type);
+    if (inst) {
+        inst->field.object = object;
+        inst->field.field_name = field_name;
+        inst->field.slot_offset = slot_offset;
+        inst->field.slot_count = slot_count;
+        return inst->result;
+    }
+    return ValueId::invalid();
+}
+
+ValueId IRBuilder::emit_set_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, ValueId value, Type* result_type) {
     IRInst* inst = emit_inst(IROp::SetField, result_type);
     if (inst) {
         inst->field.object = object;
         inst->field.field_name = field_name;
-        inst->field.field_index = field_index;
+        inst->field.slot_offset = slot_offset;
+        inst->field.slot_count = slot_count;
         inst->store_value = value;
         return inst->result;
     }
@@ -937,9 +948,23 @@ ValueId IRBuilder::gen_get_expr(Expr* expr) {
 
     ValueId obj = gen_expr(ge.object);
 
-    // Field index would come from type info
-    // For now use 0 as placeholder
-    return emit_get_field(obj, ge.name, 0, expr->resolved_type);
+    // Get the struct type from the object
+    Type* obj_type = ge.object->resolved_type;
+    Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
+
+    u32 slot_offset = 0;
+    u32 slot_count = 1;
+    if (struct_type && struct_type->is_struct()) {
+        for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
+            if (struct_type->struct_info.fields[i].name == ge.name) {
+                slot_offset = struct_type->struct_info.fields[i].slot_offset;
+                slot_count = struct_type->struct_info.fields[i].slot_count;
+                break;
+            }
+        }
+    }
+
+    return emit_get_field(obj, ge.name, slot_offset, slot_count, expr->resolved_type);
 }
 
 ValueId IRBuilder::gen_assign_expr(Expr* expr) {
@@ -989,7 +1014,24 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
         // Field assignment
         GetExpr& ge = ae.target->get;
         ValueId obj = gen_expr(ge.object);
-        return emit_set_field(obj, ge.name, 0, value, expr->resolved_type);
+
+        // Get the struct type from the object
+        Type* obj_type = ge.object->resolved_type;
+        Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
+
+        u32 slot_offset = 0;
+        u32 slot_count = 1;
+        if (struct_type && struct_type->is_struct()) {
+            for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
+                if (struct_type->struct_info.fields[i].name == ge.name) {
+                    slot_offset = struct_type->struct_info.fields[i].slot_offset;
+                    slot_count = struct_type->struct_info.fields[i].slot_count;
+                    break;
+                }
+            }
+        }
+
+        return emit_set_field(obj, ge.name, slot_offset, slot_count, value, expr->resolved_type);
     }
     else if (ae.target->kind == AstKind::ExprIndex) {
         // Index assignment
@@ -1044,24 +1086,30 @@ void IRBuilder::gen_decl(Decl* decl) {
 void IRBuilder::gen_var_decl(Decl* decl) {
     VarDecl& vd = decl->var_decl;
 
-    ValueId value;
-    if (vd.initializer) {
-        value = gen_expr(vd.initializer);
-    } else {
-        // Default initialization
-        value = emit_const_null();
-    }
-
-    // Determine type
-    Type* type = nullptr;
-    if (vd.type) {
-        type = m_types.primitive_by_name(vd.type->name);
-    }
-    if (!type && vd.initializer && vd.initializer->resolved_type) {
-        type = vd.initializer->resolved_type;
-    }
+    // Use the resolved type from semantic analysis
+    Type* type = vd.resolved_type;
     if (!type) {
         type = m_types.error_type();
+    }
+
+    ValueId value;
+
+    // Check if this is a struct type - needs stack allocation
+    if (type->is_struct()) {
+        // Allocate stack space for the struct
+        u32 slot_count = type->struct_info.slot_count;
+        value = emit_stack_alloc(slot_count, type);
+
+        // If there's an initializer, we'd need to copy the data
+        // For now, structs are zero-initialized by the VM
+    } else {
+        // Non-struct types: use register storage
+        if (vd.initializer) {
+            value = gen_expr(vd.initializer);
+        } else {
+            // Default initialization
+            value = emit_const_null();
+        }
     }
 
     define_local(vd.name, value, type);

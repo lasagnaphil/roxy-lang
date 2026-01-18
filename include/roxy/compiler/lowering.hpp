@@ -71,6 +71,10 @@ private:
     tsl::robin_map<u32, u8> m_value_to_reg;
     u8 m_next_reg;
 
+    // Local stack allocation: maps ValueId.id -> stack slot offset
+    tsl::robin_map<u32, u32> m_value_to_stack_slot;
+    u32 m_next_stack_slot;
+
     // Current module
     BCModule* m_module;
     IRModule* m_ir_module;

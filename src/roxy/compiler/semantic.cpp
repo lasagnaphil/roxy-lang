@@ -7,6 +7,42 @@
 
 namespace rx {
 
+// Returns number of u32 slots needed for a type
+// 1 slot = 4 bytes (for bool, i8-i32, u8-u32, f32)
+// 2 slots = 8 bytes (for i64, u64, f64, pointers)
+static u32 get_type_slot_count(Type* type) {
+    if (!type) return 0;
+    
+    switch (type->kind) {
+        // 1 slot (4 bytes) - small types widened to 32-bit
+        case TypeKind::Bool:
+        case TypeKind::I8:  case TypeKind::U8:
+        case TypeKind::I16: case TypeKind::U16:
+        case TypeKind::I32: case TypeKind::U32:
+        case TypeKind::F32:
+            return 1;
+        
+        // 2 slots (8 bytes)
+        case TypeKind::I64: case TypeKind::U64:
+        case TypeKind::F64:
+        case TypeKind::Uniq:
+        case TypeKind::Ref:
+        case TypeKind::Weak:
+            return 2;
+        
+        // Structs: use computed slot_count
+        case TypeKind::Struct:
+            return type->struct_info.slot_count;
+        
+        // Arrays are pointers (2 slots)
+        case TypeKind::Array:
+            return 2;
+        
+        default:
+            return 0;
+    }
+}
+
 SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator)
     : m_allocator(allocator)
     , m_types(allocator)
@@ -213,8 +249,20 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                 info.type = field_type;
                 info.is_pub = fd.is_pub;
                 info.index = static_cast<u32>(fields.size());
+                info.slot_offset = 0;  // Will be computed below
+                info.slot_count = 0;   // Will be computed below
                 fields.push_back(info);
             }
+
+            // Compute field slot offsets
+            u32 current_slot = 0;
+            for (u32 j = 0; j < fields.size(); j++) {
+                FieldInfo& fi = fields[j];
+                fi.slot_count = get_type_slot_count(fi.type);
+                fi.slot_offset = current_slot;
+                current_slot += fi.slot_count;
+            }
+            type->struct_info.slot_count = current_slot;
 
             // Allocate fields in bump allocator
             FieldInfo* field_data = reinterpret_cast<FieldInfo*>(
@@ -305,6 +353,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                 var_type = m_types.error_type();
             }
 
+            vd.resolved_type = var_type;
             Symbol* sym = m_symbols.define(SymbolKind::Variable, vd.name, var_type, decl->loc, decl);
             sym->is_pub = vd.is_pub;
         }
@@ -445,6 +494,7 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
         var_type = m_types.error_type();
     }
 
+    vd.resolved_type = var_type;
     m_symbols.define(SymbolKind::Variable, vd.name, var_type, decl->loc, decl);
 }
 

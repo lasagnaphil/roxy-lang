@@ -52,6 +52,7 @@ const char* ir_op_to_string(IROp op) {
         case IROp::I2B: return "i2b";
         case IROp::B2I: return "b2i";
 
+        case IROp::StackAlloc: return "stack_alloc";
         case IROp::GetField: return "get_field";
         case IROp::SetField: return "set_field";
         case IROp::GetIndex: return "get_index";
@@ -183,6 +184,12 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
             append_str(out, " ");
             append_value_id(out, inst->unary);
             break;
+
+        case IROp::StackAlloc: {
+            auto s = fmt::format(" {}", inst->stack_alloc.slot_count);
+            for (char c : s) out.push_back(c);
+            break;
+        }
 
         case IROp::GetField:
             append_str(out, " ");

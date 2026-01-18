@@ -95,6 +95,7 @@ enum class IROp : u8 {
     B2I,            // bool to int
 
     // Memory operations
+    StackAlloc,     // allocate slots on local stack, returns pointer
     GetField,       // obj.field
     SetField,       // obj.field = value
     GetIndex,       // arr[i]
@@ -143,7 +144,8 @@ struct CallData {
 struct FieldData {
     ValueId object;
     StringView field_name;
-    u32 field_index;
+    u32 slot_offset;   // Offset in u32 slots from struct start
+    u32 slot_count;    // Number of u32 slots (1 for 32-bit, 2 for 64-bit)
 };
 
 // Index access data
@@ -156,6 +158,11 @@ struct IndexData {
 struct NewData {
     StringView type_name;
     Span<ValueId> args;
+};
+
+// Stack allocation data
+struct StackAllocData {
+    u32 slot_count;     // Number of u32 slots to allocate
 };
 
 // IR Instruction - represents a single operation that produces a value
@@ -176,6 +183,7 @@ struct IRInst {
         FieldData field;                // For GetField/SetField
         IndexData index;                // For GetIndex/SetIndex
         NewData new_data;               // For New
+        StackAllocData stack_alloc;     // For StackAlloc
         u32 block_arg_index;            // For BlockArg (parameter index)
     };
 

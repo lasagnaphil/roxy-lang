@@ -297,14 +297,40 @@ registry.apply_to_symbols(symbols);  // For semantic analysis
 registry.apply_to_module(module);    // For runtime
 ```
 
+### Structs (`types.hpp`, `semantic.cpp`, `ir_builder.cpp`, `lowering.cpp`, `interpreter.cpp`)
+
+Stack-allocated value-type structs with packed field layout:
+- **Slot-based memory model**: Fields use 4-byte (u32) slots - i32/f32 = 1 slot, i64/f64 = 2 slots
+- **Untyped registers**: VM registers are `u64*` (type info for debug mode only)
+- **Separate local stack**: Per-function `u32* local_stack` for struct data
+- **16-byte aligned frames**: `local_stack_base` aligned to 4 slots for C++ interop
+- **SSA IR**: `StackAlloc` instruction allocates struct space, returns pointer
+- **Field access**: `GET_FIELD`/`SET_FIELD` opcodes with slot_offset and slot_count
+
+Example struct layout:
+```
+struct Point { x: i32; y: i32; }  → 2 slots (8 bytes)
+struct Data { a: i32; b: i64; }   → 3 slots (12 bytes)
+```
+
+Key types:
+- `FieldInfo.slot_offset` / `FieldInfo.slot_count` - Field position in struct
+- `StructTypeInfo.slot_count` - Total slots for struct
+- `BCFunction.local_stack_slots` - Stack space needed per function
+- `VarDecl.resolved_type` - Type resolved by semantic analysis
+
 ## Partially Implemented (TODOs in code)
 
-- **Field Access** - `GET_FIELD`/`SET_FIELD` opcodes defined and lowering works, interpreter has placeholder
 - **Method Lookup** - Semantic analysis has placeholder for proper method resolution
 - **String Objects** - Basic value representation exists, full handling incomplete
 
 ## Planned Components (Not Yet Implemented)
 
+- Struct literal syntax: `Point { x = 1, y = 2 }`
+- Passing structs by value to functions (copy semantics)
+- Returning structs from functions
+- Nested structs
+- Heap allocation via `new` and `uniq`/`ref`/`weak`
 - LSP parser (error recovery, lossless CST)
 - LSP server features (completion, hover, go-to-definition)
 - Optimizations

@@ -313,9 +313,10 @@ struct Param {
 // Variable declaration: var name: Type = init;
 struct VarDecl {
     StringView name;
-    TypeExpr* type;     // nullptr if type inference
-    Expr* initializer;  // nullptr if no initializer
+    TypeExpr* type;         // nullptr if type inference
+    Expr* initializer;      // nullptr if no initializer
     bool is_pub;
+    Type* resolved_type;    // Set by semantic analysis
 };
 
 // Function declaration: fun name(params): RetType { body }

@@ -50,6 +50,7 @@ struct StructTypeInfo {
     Decl* decl;                    // Points to the StructDecl AST node
     Type* parent;                  // Parent struct type, nullptr if no inheritance
     Span<struct FieldInfo> fields; // All fields including inherited
+    u32 slot_count;                // Total u32 slots needed for this struct
 };
 
 // Field information for struct types
@@ -57,7 +58,9 @@ struct FieldInfo {
     StringView name;
     Type* type;
     bool is_pub;
-    u32 index;  // Field index for layout
+    u32 index;       // Field index in declaration order
+    u32 slot_offset; // Offset in u32 slots from struct start
+    u32 slot_count;  // Number of u32 slots this field occupies (1 for 32-bit, 2 for 64-bit)
 };
 
 // Type info for enum types
