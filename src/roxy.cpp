@@ -1,5 +1,5 @@
 // Roxy standalone interpreter
-// Usage: roxy <source_file> [function_name]
+// Usage: roxy <source_file>
 
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/file.hpp"
@@ -20,20 +20,20 @@
 using namespace rx;
 
 static void print_usage(const char* program) {
-    fprintf(stderr, "Usage: %s <source_file> [function_name]\n", program);
+    fprintf(stderr, "Usage: %s [options] <source_file>\n", program);
     fprintf(stderr, "\n");
     fprintf(stderr, "Arguments:\n");
     fprintf(stderr, "  source_file    Path to a .roxy source file\n");
-    fprintf(stderr, "  function_name  Function to execute (default: main)\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  --ir           Print generated SSA IR\n");
     fprintf(stderr, "  --help, -h     Show this help message\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "The program must define a main() function as the entry point.\n");
 }
 
 struct Options {
     const char* source_file = nullptr;
-    const char* func_name = "main";
     bool print_ir = false;
 };
 
@@ -50,7 +50,8 @@ static bool parse_args(int argc, char** argv, Options& opts) {
         } else if (!opts.source_file) {
             opts.source_file = argv[i];
         } else {
-            opts.func_name = argv[i];
+            fprintf(stderr, "Error: Unexpected argument '%s'\n", argv[i]);
+            return false;
         }
     }
 
@@ -134,29 +135,25 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Find the function to run
-    StringView func_name(opts.func_name, static_cast<u32>(strlen(opts.func_name)));
-    BCFunction* target_func = nullptr;
+    // Find main() function
+    StringView main_name("main", 4);
+    BCFunction* main_func = nullptr;
     for (auto* fn : module->functions) {
-        if (fn->name == func_name) {
-            target_func = fn;
+        if (fn->name == main_name) {
+            main_func = fn;
             break;
         }
     }
 
-    if (!target_func) {
-        fprintf(stderr, "Error: Function '%s' not found\n", opts.func_name);
-        fprintf(stderr, "Available functions:\n");
-        for (auto* fn : module->functions) {
-            fprintf(stderr, "  %.*s\n", (int)fn->name.size(), fn->name.data());
-        }
+    if (!main_func) {
+        fprintf(stderr, "Error: No main() function found\n");
         delete module;
         return 1;
     }
 
-    if (target_func->param_count > 0) {
-        fprintf(stderr, "Error: Function '%s' requires %u arguments (entry function must take no arguments)\n",
-                opts.func_name, target_func->param_count);
+    if (main_func->param_count > 0) {
+        fprintf(stderr, "Error: main() must take no arguments (found %u parameters)\n",
+                main_func->param_count);
         delete module;
         return 1;
     }
@@ -166,7 +163,7 @@ int main(int argc, char** argv) {
     vm_init(&vm);
     vm_load_module(&vm, module);
 
-    if (!vm_call(&vm, func_name, {})) {
+    if (!vm_call(&vm, main_name, {})) {
         fprintf(stderr, "Runtime error: %s\n", vm.error ? vm.error : "unknown error");
         vm_destroy(&vm);
         delete module;
