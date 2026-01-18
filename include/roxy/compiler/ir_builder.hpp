@@ -57,6 +57,13 @@ private:
     ValueId emit_set_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, ValueId value, Type* result_type);
     ValueId emit_get_index(ValueId object, ValueId index, Type* result_type);
     ValueId emit_set_index(ValueId object, ValueId index, ValueId value, Type* result_type);
+    ValueId emit_load_ptr(ValueId ptr, u32 slot_count, Type* result_type);
+    ValueId emit_store_ptr(ValueId ptr, ValueId value, u32 slot_count, Type* result_type);
+    void emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_count);
+    ValueId emit_var_addr(StringView name, Type* result_type);
+
+    // Generate address of an lvalue expression (for out/inout arguments)
+    ValueId gen_lvalue_addr(Expr* expr);
 
     // Statement generation
     void gen_stmt(Stmt* stmt);
@@ -109,6 +116,9 @@ private:
         Type* type;
     };
     Vector<tsl::robin_map<StringView, LocalVar, StringViewHash, StringViewEqual>> m_local_scopes;
+
+    // Track which parameters are pointers (for out/inout semantics)
+    tsl::robin_map<StringView, bool, StringViewHash, StringViewEqual> m_param_is_ptr;
 
     // Info about a variable that needs a phi at loop header
     struct LoopVarInfo {

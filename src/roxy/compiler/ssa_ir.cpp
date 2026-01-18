@@ -73,6 +73,10 @@ const char* ir_op_to_string(IROp op) {
         case IROp::Copy:     return "copy";
 
         case IROp::StructCopy: return "struct_copy";
+
+        case IROp::LoadPtr:  return "load_ptr";
+        case IROp::StorePtr: return "store_ptr";
+        case IROp::VarAddr:  return "var_addr";
     }
     return "unknown";
 }
@@ -80,6 +84,12 @@ const char* ir_op_to_string(IROp op) {
 static void append_str(Vector<char>& out, const char* str) {
     while (*str) {
         out.push_back(*str++);
+    }
+}
+
+static void append_string_view(Vector<char>& out, StringView sv) {
+    for (u32 i = 0; i < sv.size(); i++) {
+        out.push_back(sv[i]);
     }
 }
 
@@ -280,6 +290,30 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
             append_value_id(out, inst->struct_copy.source_ptr);
             auto s = fmt::format(" ({})", inst->struct_copy.slot_count);
             for (char c : s) out.push_back(c);
+            break;
+        }
+
+        case IROp::LoadPtr: {
+            append_str(out, " *");
+            append_value_id(out, inst->load_ptr.ptr);
+            auto s = fmt::format(" ({})", inst->load_ptr.slot_count);
+            for (char c : s) out.push_back(c);
+            break;
+        }
+
+        case IROp::StorePtr: {
+            append_str(out, " *");
+            append_value_id(out, inst->store_ptr.ptr);
+            append_str(out, " = ");
+            append_value_id(out, inst->store_ptr.value);
+            auto s = fmt::format(" ({})", inst->store_ptr.slot_count);
+            for (char c : s) out.push_back(c);
+            break;
+        }
+
+        case IROp::VarAddr: {
+            append_str(out, " &");
+            append_string_view(out, inst->var_addr.name);
             break;
         }
     }

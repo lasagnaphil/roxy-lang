@@ -93,9 +93,11 @@ field_init      -> Identifier "=" expression ;
 ## Utility rules
 
 ```
-parameters       -> typed_identifier ( "," typed_identifier )* ;
-typed_identifier -> Identifier ( ":" Identifier )? ;
-arguments        -> expression ( "," expression )* ;
+parameters       -> parameter ( "," parameter )* ;
+parameter        -> Identifier ":" ( "out" | "inout" )? type_expr ;
+type_expr        -> ( "uniq" | "ref" | "weak" )? Identifier ( "[" "]" )? ;
+arguments        -> argument ( "," argument )* ;
+argument         -> ( "out" | "inout" )? expression ;
 ```
 
 ## Lexical Grammar

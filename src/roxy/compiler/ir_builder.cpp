@@ -48,6 +48,9 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     m_current_func = m_allocator.emplace<IRFunction>();
     m_current_func->name = decl->name;
 
+    // Clear pointer parameter tracking
+    m_param_is_ptr.clear();
+
     // Set up parameters
     for (u32 i = 0; i < decl->params.size(); i++) {
         Param& param = decl->params[i];
@@ -61,11 +64,18 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
             }
         }
 
+        // Track pointer parameters (out/inout modifiers)
+        bool is_ptr = (param.modifier != ParamModifier::None);
+        if (is_ptr) {
+            m_param_is_ptr[param.name] = true;
+        }
+
         BlockParam bp;
         bp.value = m_current_func->new_value();
         bp.type = param_type;
         bp.name = param.name;
         m_current_func->params.push_back(bp);
+        m_current_func->param_is_ptr.push_back(is_ptr);
     }
 
     // Resolve return type
@@ -336,6 +346,45 @@ ValueId IRBuilder::emit_set_index(ValueId object, ValueId index, ValueId value, 
         inst->index.object = object;
         inst->index.index = index;
         inst->store_value = value;
+        return inst->result;
+    }
+    return ValueId::invalid();
+}
+
+ValueId IRBuilder::emit_load_ptr(ValueId ptr, u32 slot_count, Type* result_type) {
+    IRInst* inst = emit_inst(IROp::LoadPtr, result_type);
+    if (inst) {
+        inst->load_ptr.ptr = ptr;
+        inst->load_ptr.slot_count = slot_count;
+        return inst->result;
+    }
+    return ValueId::invalid();
+}
+
+ValueId IRBuilder::emit_store_ptr(ValueId ptr, ValueId value, u32 slot_count, Type* result_type) {
+    IRInst* inst = emit_inst(IROp::StorePtr, result_type);
+    if (inst) {
+        inst->store_ptr.ptr = ptr;
+        inst->store_ptr.value = value;
+        inst->store_ptr.slot_count = slot_count;
+        return inst->result;
+    }
+    return ValueId::invalid();
+}
+
+void IRBuilder::emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_count) {
+    IRInst* inst = emit_inst(IROp::StructCopy, nullptr);
+    if (inst) {
+        inst->struct_copy.dest_ptr = dest_ptr;
+        inst->struct_copy.source_ptr = source_ptr;
+        inst->struct_copy.slot_count = slot_count;
+    }
+}
+
+ValueId IRBuilder::emit_var_addr(StringView name, Type* result_type) {
+    IRInst* inst = emit_inst(IROp::VarAddr, result_type);
+    if (inst) {
+        inst->var_addr.name = name;
         return inst->result;
     }
     return ValueId::invalid();
@@ -764,7 +813,28 @@ ValueId IRBuilder::gen_literal_expr(Expr* expr) {
 
 ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
     IdentifierExpr& id = expr->identifier;
-    return lookup_local(id.name);
+    ValueId val = lookup_local(id.name);
+
+    // If this is a pointer parameter (out/inout), handle specially
+    if (m_param_is_ptr.count(id.name)) {
+        Type* type = expr->resolved_type;
+
+        // For struct types, the pointer IS what we need for field access.
+        // Don't dereference - struct operations (GET_FIELD, SET_FIELD) expect pointers.
+        if (type && type->is_struct()) {
+            return val;
+        }
+
+        // For primitive types, dereference the pointer to get the value
+        u32 slot_count = 1;
+        if (type && (type->kind == TypeKind::I64 || type->kind == TypeKind::U64 ||
+                    type->kind == TypeKind::F64)) {
+            slot_count = 2;
+        }
+        return emit_load_ptr(val, slot_count, type);
+    }
+
+    return val;
 }
 
 ValueId IRBuilder::gen_unary_expr(Expr* expr) {
@@ -874,11 +944,46 @@ ValueId IRBuilder::gen_ternary_expr(Expr* expr) {
 ValueId IRBuilder::gen_call_expr(Expr* expr) {
     CallExpr& ce = expr->call;
 
-    // Evaluate arguments
+    // Track which arguments are inout and their addresses, so we can reload after
+    struct InoutArg {
+        StringView name;
+        ValueId addr;
+        Type* type;
+        u32 slot_count;
+    };
+    Vector<InoutArg> inout_args;
+
+    // Evaluate arguments - for out/inout args, pass address instead of value
     Span<ValueId> args = alloc_span<ValueId>(ce.arguments.size());
     for (u32 i = 0; i < ce.arguments.size(); i++) {
-        args[i] = gen_expr(ce.arguments[i]);
+        CallArg& arg = ce.arguments[i];
+        if (arg.modifier != ParamModifier::None) {
+            // Pass address of lvalue
+            args[i] = gen_lvalue_addr(arg.expr);
+
+            // If this is an identifier and modifier is Inout/Out, track it for reload
+            // But only for primitive types - structs are modified in place through the pointer
+            if (arg.modifier == ParamModifier::Inout || arg.modifier == ParamModifier::Out) {
+                if (arg.expr->kind == AstKind::ExprIdentifier && !m_param_is_ptr.count(arg.expr->identifier.name)) {
+                    Type* type = arg.expr->resolved_type;
+                    // Skip structs - they're modified in place, no reload needed
+                    if (type && type->is_struct()) {
+                        continue;
+                    }
+                    u32 slot_count = 1;
+                    if (type && (type->kind == TypeKind::I64 || type->kind == TypeKind::U64 ||
+                                type->kind == TypeKind::F64)) {
+                        slot_count = 2;
+                    }
+                    inout_args.push_back({arg.expr->identifier.name, args[i], type, slot_count});
+                }
+            }
+        } else {
+            args[i] = gen_expr(arg.expr);
+        }
     }
+
+    ValueId result;
 
     // Get function name from callee
     if (ce.callee->kind == AstKind::ExprIdentifier) {
@@ -888,10 +993,10 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         i32 native_idx = m_registry.get_index(func_name);
 
         if (native_idx >= 0) {
-            return emit_call_native(func_name, args, expr->resolved_type, static_cast<u8>(native_idx));
+            result = emit_call_native(func_name, args, expr->resolved_type, static_cast<u8>(native_idx));
+        } else {
+            result = emit_call(func_name, args, expr->resolved_type);
         }
-
-        return emit_call(func_name, args, expr->resolved_type);
     }
     else if (ce.callee->kind == AstKind::ExprGet) {
         // Method call: obj.method(args)
@@ -905,10 +1010,19 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             method_args[i + 1] = args[i];
         }
 
-        return emit_call(ge.name, method_args, expr->resolved_type);
+        result = emit_call(ge.name, method_args, expr->resolved_type);
+    }
+    else {
+        return ValueId::invalid();
     }
 
-    return ValueId::invalid();
+    // After the call, reload inout variables from their stack addresses
+    for (const InoutArg& ia : inout_args) {
+        ValueId new_val = emit_load_ptr(ia.addr, ia.slot_count, ia.type);
+        define_local(ia.name, new_val, ia.type);
+    }
+
+    return result;
 }
 
 ValueId IRBuilder::gen_index_expr(Expr* expr) {
@@ -990,8 +1104,23 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
 
     // Assign based on target type
     if (ae.target->kind == AstKind::ExprIdentifier) {
-        // Variable assignment - in SSA, we create a new value
         StringView name = ae.target->identifier.name;
+
+        // If this is a pointer parameter (out/inout), store through the pointer
+        if (m_param_is_ptr.count(name)) {
+            ValueId ptr = lookup_local(name);
+            Type* type = expr->resolved_type;
+            u32 slot_count = 1;
+            if (type && type->is_struct()) {
+                slot_count = type->struct_info.slot_count;
+            } else if (type && (type->kind == TypeKind::I64 || type->kind == TypeKind::U64 ||
+                               type->kind == TypeKind::F64)) {
+                slot_count = 2;
+            }
+            return emit_store_ptr(ptr, value, slot_count, type);
+        }
+
+        // Normal variable assignment - in SSA, we create a new value
         define_local(name, value, expr->resolved_type);
         return value;
     }
@@ -1081,10 +1210,88 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         }
 
         ValueId value = gen_expr(value_expr);
-        emit_set_field(struct_ptr, fi.name, fi.slot_offset, fi.slot_count, value, fi.type);
+
+        // For struct-typed fields, use StructCopy since the value is a pointer
+        if (fi.type && fi.type->is_struct()) {
+            // Get address of the field
+            ValueId field_addr = emit_get_field_addr(struct_ptr, fi.name, fi.slot_offset, fi.type);
+            // Copy struct data from value (source pointer) to field_addr (dest pointer)
+            emit_struct_copy(field_addr, value, fi.slot_count);
+        } else {
+            emit_set_field(struct_ptr, fi.name, fi.slot_offset, fi.slot_count, value, fi.type);
+        }
     }
 
     return struct_ptr;
+}
+
+ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {
+    if (!expr) return ValueId::invalid();
+
+    switch (expr->kind) {
+        case AstKind::ExprIdentifier: {
+            StringView name = expr->identifier.name;
+            // If this is already a pointer parameter, return its value directly
+            if (m_param_is_ptr.count(name)) {
+                return lookup_local(name);
+            }
+
+            ValueId current_val = lookup_local(name);
+            Type* type = expr->resolved_type;
+
+            // For struct types, the variable is already a pointer to stack-allocated data.
+            // Just return the existing pointer - no copy needed.
+            if (type && type->is_struct()) {
+                return current_val;
+            }
+
+            // For primitive types, we need to:
+            // 1. Allocate a stack slot
+            // 2. Store the current value to the slot
+            // 3. Return the address
+
+            // Calculate slot count
+            u32 slot_count = 1;
+            if (type && (type->kind == TypeKind::I64 || type->kind == TypeKind::U64 ||
+                        type->kind == TypeKind::F64)) {
+                slot_count = 2;
+            }
+
+            // Allocate stack space
+            ValueId addr = emit_stack_alloc(slot_count, type);
+
+            // Store current value to the stack slot (using SetField with offset 0)
+            emit_set_field(addr, name, 0, slot_count, current_val, type);
+
+            return addr;
+        }
+        case AstKind::ExprGet: {
+            // Field access - use GET_FIELD_ADDR
+            GetExpr& ge = expr->get;
+            ValueId obj = gen_expr(ge.object);
+
+            // Get the struct type from the object
+            Type* obj_type = ge.object->resolved_type;
+            Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
+
+            u32 slot_offset = 0;
+            if (struct_type && struct_type->is_struct()) {
+                for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
+                    if (struct_type->struct_info.fields[i].name == ge.name) {
+                        slot_offset = struct_type->struct_info.fields[i].slot_offset;
+                        break;
+                    }
+                }
+            }
+
+            return emit_get_field_addr(obj, ge.name, slot_offset, expr->resolved_type);
+        }
+        case AstKind::ExprGrouping:
+            return gen_lvalue_addr(expr->grouping.expr);
+        default:
+            // Should not happen - semantic analysis validated lvalues
+            return ValueId::invalid();
+    }
 }
 
 // Declaration generation
@@ -1270,7 +1477,7 @@ void IRBuilder::collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out) 
         case AstKind::ExprCall:
             collect_assigned_vars_expr(expr->call.callee, out);
             for (u32 i = 0; i < expr->call.arguments.size(); i++) {
-                collect_assigned_vars_expr(expr->call.arguments[i], out);
+                collect_assigned_vars_expr(expr->call.arguments[i].expr, out);
             }
             break;
         case AstKind::ExprIndex:

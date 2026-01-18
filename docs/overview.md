@@ -185,6 +185,28 @@ fun main(args: List<string>) {
 
     - Inout reference (inout): the combination of the two (ref parameter in C#)
 
+    - Syntax: modifier goes before the type in declarations, before the argument at call sites
+
+        ```kotlin
+        // Declaration: name: modifier Type
+        fun swap(a: inout i32, b: inout i32) {
+            var temp = a;
+            a = b;
+            b = temp;
+        }
+
+        fun init_pair(x: out i32, y: out i32) {
+            x = 10;
+            y = 20;
+        }
+
+        // Call site: modifier argument
+        var x = 1;
+        var y = 2;
+        swap(inout x, inout y);
+        init_pair(out x, out y);
+        ```
+
     - Note that these references cannot be converted to uniq / ref / weak in any way!
 
     - There is no 'in' reference, just pass by value instead!

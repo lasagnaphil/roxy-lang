@@ -884,11 +884,51 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         return fti.return_type;
     }
 
-    // Check argument types
+    // Try to get the FunDecl to access parameter modifiers
+    FunDecl* fun_decl = nullptr;
+    if (ce.callee->kind == AstKind::ExprIdentifier) {
+        Symbol* sym = m_symbols.lookup(ce.callee->identifier.name);
+        if (sym && sym->kind == SymbolKind::Function && sym->decl) {
+            fun_decl = &sym->decl->fun_decl;
+        }
+    }
+
+    // Check argument types and modifiers
     for (u32 i = 0; i < ce.arguments.size(); i++) {
-        Type* arg_type = analyze_expr(ce.arguments[i]);
-        if (!check_assignable(fti.param_types[i], arg_type, ce.arguments[i]->loc)) {
-            // Error already reported
+        CallArg& arg = ce.arguments[i];
+
+        // Get expected modifier from FunDecl
+        ParamModifier expected_mod = ParamModifier::None;
+        if (fun_decl && i < fun_decl->params.size()) {
+            expected_mod = fun_decl->params[i].modifier;
+        }
+
+        // Check modifier matches
+        if (expected_mod != arg.modifier) {
+            if (expected_mod == ParamModifier::Out) {
+                error(arg.expr->loc, "argument requires 'out' modifier");
+            } else if (expected_mod == ParamModifier::Inout) {
+                error(arg.expr->loc, "argument requires 'inout' modifier");
+            } else if (arg.modifier != ParamModifier::None) {
+                error(arg.modifier_loc, "unexpected modifier for this parameter");
+            }
+        }
+
+        // Check lvalue requirement for out/inout
+        if (arg.modifier == ParamModifier::Out || arg.modifier == ParamModifier::Inout) {
+            if (!is_lvalue(arg.expr)) {
+                error(arg.expr->loc, "'out'/'inout' argument must be a variable");
+            }
+        }
+
+        // Analyze argument expression
+        Type* arg_type = analyze_expr(arg.expr);
+
+        // Type check (skip for 'out' since it's write-only - callee doesn't read the value)
+        if (arg.modifier != ParamModifier::Out) {
+            if (!check_assignable(fti.param_types[i], arg_type, arg.expr->loc)) {
+                // Error already reported
+            }
         }
     }
 

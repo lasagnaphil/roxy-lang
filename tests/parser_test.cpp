@@ -540,7 +540,7 @@ TEST_CASE("Parser: Function Declaration") {
     }
 
     SUBCASE("Function with out parameter") {
-        Program* program = parse_source("fun swap(out a: i32, inout b: i32) { }", allocator);
+        Program* program = parse_source("fun swap(a: out i32, b: inout i32) { }", allocator);
         REQUIRE(program != nullptr);
         auto& decl = program->declarations[0];
         CHECK(decl->fun_decl.params[0].modifier == ParamModifier::Out);

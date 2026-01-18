@@ -123,6 +123,11 @@ enum class IROp : u8 {
 
     // Struct operations
     StructCopy,     // Memory-to-memory struct copy
+
+    // Pointer operations (for out/inout parameters)
+    LoadPtr,        // Load value through pointer: dst = *ptr
+    StorePtr,       // Store value through pointer: *ptr = val
+    VarAddr,        // Get address of local variable
 };
 
 // Constant data for ConstXxx instructions
@@ -176,6 +181,24 @@ struct StructCopyData {
     u32 slot_count;
 };
 
+// Load through pointer data
+struct LoadPtrData {
+    ValueId ptr;
+    u32 slot_count;  // Number of slots to load (1 or 2 for primitives)
+};
+
+// Store through pointer data
+struct StorePtrData {
+    ValueId ptr;
+    ValueId value;
+    u32 slot_count;  // Number of slots to store (1 or 2 for primitives)
+};
+
+// Variable address data
+struct VarAddrData {
+    StringView name;  // Name of the local variable
+};
+
 // IR Instruction - represents a single operation that produces a value
 struct IRInst {
     IROp op;
@@ -196,6 +219,9 @@ struct IRInst {
         NewData new_data;               // For New
         StackAllocData stack_alloc;     // For StackAlloc
         StructCopyData struct_copy;     // For StructCopy
+        LoadPtrData load_ptr;           // For LoadPtr
+        StorePtrData store_ptr;         // For StorePtr
+        VarAddrData var_addr;           // For VarAddr
         u32 block_arg_index;            // For BlockArg (parameter index)
     };
 
@@ -271,6 +297,7 @@ struct IRFunction {
     StringView name;
     Type* return_type;
     Vector<BlockParam> params;          // Function parameters (become entry block args)
+    Vector<bool> param_is_ptr;          // True if param is a pointer (out/inout parameter)
     Vector<IRBlock*> blocks;            // Basic blocks, blocks[0] is entry
     u32 next_value_id;                  // Counter for generating unique value IDs
 

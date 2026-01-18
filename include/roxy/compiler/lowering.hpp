@@ -79,6 +79,10 @@ private:
 
     // Local stack allocation: maps ValueId.id -> stack slot offset
     tsl::robin_map<u32, u32> m_value_to_stack_slot;
+
+    // Variable name to stack slot mapping (for VarAddr on local variables)
+    tsl::robin_map<StringView, u32, StringViewHash, StringViewEqual> m_var_name_to_stack_slot;
+
     u32 m_next_stack_slot;
 
     // Type information: maps ValueId.id -> Type*

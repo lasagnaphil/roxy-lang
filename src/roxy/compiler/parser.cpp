@@ -290,12 +290,25 @@ Expr* Parser::postfix(Expr* expr) {
 }
 
 Expr* Parser::finish_call(Expr* callee) {
-    Vector<Expr*> arguments;
+    Vector<CallArg> arguments;
     SourceLocation loc = m_previous.loc;
 
     if (!check(TokenKind::RightParen)) {
         do {
-            Expr* arg = expression();
+            CallArg arg;
+            arg.modifier = ParamModifier::None;
+            arg.modifier_loc = {};
+
+            // Check for out/inout modifier
+            if (match(TokenKind::KwOut)) {
+                arg.modifier = ParamModifier::Out;
+                arg.modifier_loc = m_previous.loc;
+            } else if (match(TokenKind::KwInout)) {
+                arg.modifier = ParamModifier::Inout;
+                arg.modifier_loc = m_previous.loc;
+            }
+
+            arg.expr = expression();
             if (m_has_error) return nullptr;
             arguments.push_back(arg);
         } while (match(TokenKind::Comma));
@@ -847,13 +860,6 @@ Vector<Param> Parser::parse_parameters() {
             Param param;
             param.modifier = ParamModifier::None;
 
-            // Check for parameter modifiers
-            if (match(TokenKind::KwOut)) {
-                param.modifier = ParamModifier::Out;
-            } else if (match(TokenKind::KwInout)) {
-                param.modifier = ParamModifier::Inout;
-            }
-
             Token name_token = consume(TokenKind::Identifier, "Expected parameter name");
             if (m_has_error) return params;
             param.name = name_token.text();
@@ -861,6 +867,13 @@ Vector<Param> Parser::parse_parameters() {
 
             consume(TokenKind::Colon, "Expected ':' after parameter name");
             if (m_has_error) return params;
+
+            // Check for parameter modifiers (out/inout) before the type
+            if (match(TokenKind::KwOut)) {
+                param.modifier = ParamModifier::Out;
+            } else if (match(TokenKind::KwInout)) {
+                param.modifier = ParamModifier::Inout;
+            }
 
             param.type = type_expression();
             if (m_has_error) return params;

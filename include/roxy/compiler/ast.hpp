@@ -94,6 +94,13 @@ enum class AssignOp : u8 {
     ModAssign,  // %=
 };
 
+// Parameter modifier for function parameters (also used in call arguments)
+enum class ParamModifier : u8 {
+    None,
+    Out,
+    Inout,
+};
+
 // Type expression for type annotations
 struct TypeExpr {
     StringView name;
@@ -140,10 +147,17 @@ struct TernaryExpr {
     Expr* else_expr;
 };
 
-// Call expression: foo(a, b, c)
+// Call argument with optional modifier (for out/inout parameters)
+struct CallArg {
+    Expr* expr;
+    ParamModifier modifier;
+    SourceLocation modifier_loc;
+};
+
+// Call expression: foo(a, b, c) or foo(inout x, out y)
 struct CallExpr {
     Expr* callee;
-    Span<Expr*> arguments;
+    Span<CallArg> arguments;
 };
 
 // Index expression: arr[i]
@@ -308,13 +322,6 @@ struct Stmt {
         memset(&expr_stmt, 0, sizeof(expr_stmt));
     }
     ~Stmt() {}
-};
-
-// Parameter modifier for function parameters
-enum class ParamModifier : u8 {
-    None,
-    Out,
-    Inout,
 };
 
 // Function parameter

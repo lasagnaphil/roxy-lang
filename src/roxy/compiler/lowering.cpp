@@ -43,6 +43,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     // Reset state
     m_value_to_reg.clear();
     m_value_to_stack_slot.clear();
+    m_var_name_to_stack_slot.clear();
     m_value_types.clear();
     m_block_offsets.clear();
     m_jump_patches.clear();
@@ -100,6 +101,15 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     // Emit function prologue: unpack struct parameters from registers to local stack
     for (u32 i = 0; i < ir_func->params.size(); i++) {
         const auto& param = ir_func->params[i];
+
+        // Check if this parameter is a pointer (out/inout parameter)
+        bool is_ptr_param = (i < ir_func->param_is_ptr.size() && ir_func->param_is_ptr[i]);
+
+        // Skip unpacking for pointer parameters - they already contain a pointer
+        if (is_ptr_param) {
+            continue;
+        }
+
         u32 slot_count = get_struct_slot_count(param.type);
 
         if (slot_count > 0 && slot_count <= 4) {
@@ -326,6 +336,9 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             u8 func_idx = static_cast<u8>(it->second);
             u8 arg_count = static_cast<u8>(inst->call.args.size());
 
+            // Get callee function to check for pointer parameters
+            IRFunction* callee_func = m_ir_module->functions[func_idx];
+
             // Check if return type is a struct
             u32 ret_slot_count = get_struct_slot_count(inst->type);
             bool returns_small_struct = (ret_slot_count > 0 && ret_slot_count <= 4);
@@ -338,26 +351,36 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 ValueId arg_val = inst->call.args[i];
                 u8 arg_src = get_register(arg_val);
 
-                // Check if argument is a struct
-                auto type_it = m_value_types.find(arg_val.id);
-                Type* arg_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
-                u32 arg_slot_count = get_struct_slot_count(arg_type);
+                // Check if this parameter is a pointer (out/inout)
+                bool param_is_ptr = (i < callee_func->param_is_ptr.size() && callee_func->param_is_ptr[i]);
 
-                if (arg_slot_count > 0 && arg_slot_count <= 4) {
-                    // Small struct: load struct data from memory to consecutive registers
-                    u8 arg_reg_count = static_cast<u8>((arg_slot_count + 1) / 2);
-                    emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + static_cast<u8>(i), arg_src, static_cast<u8>(arg_slot_count));
-                    emit(0);  // Padding word
-                    // TODO: Track that this argument uses multiple registers
-                } else if (arg_slot_count > 4) {
-                    // Large struct: pass pointer
+                if (param_is_ptr) {
+                    // Pointer parameter: pass the pointer directly (already computed by gen_lvalue_addr)
                     if (arg_src != first_arg_reg + i) {
                         emit_abc(Opcode::MOV, first_arg_reg + static_cast<u8>(i), arg_src, 0);
                     }
                 } else {
-                    // Regular value
-                    if (arg_src != first_arg_reg + i) {
-                        emit_abc(Opcode::MOV, first_arg_reg + static_cast<u8>(i), arg_src, 0);
+                    // Check if argument is a struct
+                    auto type_it = m_value_types.find(arg_val.id);
+                    Type* arg_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+                    u32 arg_slot_count = get_struct_slot_count(arg_type);
+
+                    if (arg_slot_count > 0 && arg_slot_count <= 4) {
+                        // Small struct: load struct data from memory to consecutive registers
+                        u8 arg_reg_count = static_cast<u8>((arg_slot_count + 1) / 2);
+                        emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + static_cast<u8>(i), arg_src, static_cast<u8>(arg_slot_count));
+                        emit(0);  // Padding word
+                        // TODO: Track that this argument uses multiple registers
+                    } else if (arg_slot_count > 4) {
+                        // Large struct: pass pointer
+                        if (arg_src != first_arg_reg + i) {
+                            emit_abc(Opcode::MOV, first_arg_reg + static_cast<u8>(i), arg_src, 0);
+                        }
+                    } else {
+                        // Regular value
+                        if (arg_src != first_arg_reg + i) {
+                            emit_abc(Opcode::MOV, first_arg_reg + static_cast<u8>(i), arg_src, 0);
+                        }
                     }
                 }
             }
@@ -511,6 +534,49 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             u8 src_ptr = get_register(inst->struct_copy.source_ptr);
             u8 slot_count = static_cast<u8>(inst->struct_copy.slot_count);
             emit_abc(Opcode::STRUCT_COPY, dest_ptr, src_ptr, slot_count);
+            break;
+        }
+
+        case IROp::LoadPtr: {
+            // Load value through pointer - reuse GET_FIELD with offset 0
+            u8 ptr_reg = get_register(inst->load_ptr.ptr);
+            u8 slot_count = static_cast<u8>(inst->load_ptr.slot_count);
+            emit_abc(Opcode::GET_FIELD, dst, ptr_reg, slot_count);
+            emit(0);  // offset = 0
+            break;
+        }
+
+        case IROp::StorePtr: {
+            // Store value through pointer - reuse SET_FIELD with offset 0
+            u8 ptr_reg = get_register(inst->store_ptr.ptr);
+            u8 val_reg = get_register(inst->store_ptr.value);
+            u8 slot_count = static_cast<u8>(inst->store_ptr.slot_count);
+            emit_abc(Opcode::SET_FIELD, ptr_reg, val_reg, slot_count);
+            emit(0);  // offset = 0
+            break;
+        }
+
+        case IROp::VarAddr: {
+            // Get address of local variable - lookup its stack slot and emit STACK_ADDR
+            StringView name = inst->var_addr.name;
+            // Look up the variable's value ID to find its stack slot
+            // For now, we need to find if it has a corresponding StackAlloc
+            // or if it's just a regular value.
+            // Since variables passed as out/inout need to be stack-allocated,
+            // we should track this. For now, let's allocate a new slot.
+
+            // Check if this variable already has a stack slot from StackAlloc
+            // If not, we need to allocate one on-demand
+            auto it = m_var_name_to_stack_slot.find(name);
+            if (it != m_var_name_to_stack_slot.end()) {
+                emit_abi(Opcode::STACK_ADDR, dst, static_cast<u16>(it->second));
+            } else {
+                // Allocate a new stack slot for this variable
+                u32 slot_offset = m_next_stack_slot;
+                m_next_stack_slot += 1;  // Assume 1 slot for now (primitives)
+                m_var_name_to_stack_slot[name] = slot_offset;
+                emit_abi(Opcode::STACK_ADDR, dst, static_cast<u16>(slot_offset));
+            }
             break;
         }
     }
