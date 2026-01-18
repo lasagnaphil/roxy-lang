@@ -131,20 +131,39 @@ roxy-v2/
 │       └── interpreter.cpp      # Interpreter loop (503 lines)
 │
 ├── tests/
-│   ├── lexer_test.cpp           # Lexer/token tests
-│   ├── parser_test.cpp          # Parser and AST construction
-│   ├── semantic_test.cpp        # Type checking and symbol resolution
-│   ├── ssa_ir_test.cpp          # IR generation and construction
-│   ├── bytecode_test.cpp        # Bytecode encoding/decoding
-│   ├── vm_test.cpp              # VM execution and runtime
-│   ├── lowering_test.cpp        # SSA to bytecode lowering
-│   ├── e2e_test.cpp             # End-to-end compilation and execution
-│   └── interop_test.cpp         # C++ interop and function binding
+│   ├── test_main.cpp            # Single doctest entry point
+│   ├── unit/                    # Unit tests (7 files)
+│   │   ├── lexer_test.cpp       # Lexer/token tests
+│   │   ├── parser_test.cpp      # Parser and AST construction
+│   │   ├── semantic_test.cpp    # Type checking and symbol resolution
+│   │   ├── ssa_ir_test.cpp      # IR generation and construction
+│   │   ├── bytecode_test.cpp    # Bytecode encoding/decoding
+│   │   ├── vm_test.cpp          # VM execution and runtime
+│   │   └── lowering_test.cpp    # SSA to bytecode lowering
+│   └── e2e/                     # End-to-end tests (8 files)
+│       ├── e2e_test_helpers.hpp # Shared compile/run helpers
+│       ├── e2e_test_helpers.cpp
+│       ├── e2e_basics_test.cpp  # Variables, arithmetic, control flow
+│       ├── e2e_recursion_test.cpp # Recursive functions
+│       ├── e2e_algorithms_test.cpp # Complex algorithms, floats
+│       ├── e2e_arrays_test.cpp  # Array operations, quicksort
+│       ├── e2e_structs_test.cpp # Struct fields, literals, params
+│       ├── e2e_params_test.cpp  # Out/inout parameter tests
+│       └── e2e_interop_test.cpp # C++ interop tests
 │
 ├── docs/
 │   ├── overview.md              # Language features and design
-│   └── grammar.md               # Roxy grammar specification
-├── DESIGN.md                    # Detailed VM and compiler design
+│   ├── grammar.md               # Roxy grammar specification
+│   ├── libraries.md             # Vendored library documentation
+│   └── internals/               # Implementation documentation
+│       ├── vm.md                # VM state, interpreter loop
+│       ├── bytecode.md          # Instruction encoding, opcodes
+│       ├── ssa-ir.md            # Block arguments, lowering
+│       ├── memory.md            # Reference types, object header
+│       ├── structs.md           # Stack-allocated structs
+│       ├── arrays.md            # Dynamic arrays
+│       ├── interop.md           # C++ function binding
+│       └── frontend.md          # Lexer, parser, semantic analysis
 └── CMakeLists.txt
 ```
 
@@ -195,9 +214,10 @@ Recursive descent parser with Pratt parsing for expressions:
 ### AST (`include/roxy/compiler/ast.hpp`)
 
 Complete AST node definitions:
-- 24 expression types (literals, binary ops, unary ops, calls, etc.)
-- 9 statement types (if, while, for, return, block, etc.)
-- 5 declaration types (function, variable, struct, enum, import)
+- 14 expression types (literals, identifiers, binary/unary ops, calls, indexing, field access, assignments, ternary, struct literals)
+- 9 statement types (expr, block, if, while, for, return, break, continue, delete)
+- 6 declaration types (variable, function, struct, enum, field, import)
+- ParamModifier enum (None, Out, Inout) for function parameters
 
 ### Type System (`include/roxy/compiler/types.hpp`, `src/roxy/compiler/types.cpp`)
 
@@ -218,7 +238,14 @@ Multi-pass semantic analyzer:
 ### SSA IR (`include/roxy/compiler/ssa_ir.hpp`, `src/roxy/compiler/ssa_ir.cpp`)
 
 SSA IR with block arguments (not phi nodes):
-- 30+ IR opcodes covering all basic operations
+- 42 IR operations covering all basic operations:
+  - Constants: ConstNull, ConstBool, ConstInt, ConstFloat, ConstString
+  - Arithmetic: AddI/F, SubI/F, MulI/F, DivI/F, ModI, NegI/F
+  - Comparisons: EqI/F, NeI/F, LtI/F, LeI/F, GtI/F, GeI/F
+  - Logical: Not, And, Or; Bitwise: BitAnd, BitOr, BitNot
+  - Memory: StackAlloc, GetField, GetFieldAddr, SetField, GetIndex, SetIndex
+  - Structs: StructCopy, LoadPtr, StorePtr, VarAddr
+  - Calls: Call, CallNative
 - ValueId and BlockId for unique identification
 - Block parameters for control flow merging
 - Clean dataflow representation
@@ -234,7 +261,15 @@ Converts type-checked AST to SSA IR:
 
 32-bit fixed-width register-based bytecode:
 - Three instruction formats: ABC (3-operand), ABI (immediate), AOFF (offset)
-- 30+ opcodes for arithmetic, logic, control flow, objects
+- 58 opcodes organized by category:
+  - Constants/Moves: LOAD_NULL, LOAD_TRUE, LOAD_FALSE, LOAD_INT, LOAD_CONST, MOV
+  - Arithmetic: ADD_I/F, SUB_I/F, MUL_I/F, DIV_I/F, MOD_I, NEG_I/F
+  - Bitwise: BIT_AND, BIT_OR, BIT_XOR, BIT_NOT, SHL, SHR, USHR
+  - Comparisons: EQ_I/F, NE_I/F, LT_I/F, LE_I/F, GT_I/F, GE_I/F (+ unsigned)
+  - Control flow: JMP, JMP_IF, JMP_IF_NOT, RET, RET_VOID, RET_STRUCT_SMALL
+  - Calls: CALL, CALL_NATIVE
+  - Structs: GET_FIELD, SET_FIELD, STACK_ADDR, GET_FIELD_ADDR, STRUCT_LOAD_REGS, STRUCT_STORE_REGS, STRUCT_COPY
+  - Arrays: GET_INDEX, SET_INDEX
 - Constant pool for large values
 - BCFunction and BCModule structures
 
@@ -248,7 +283,7 @@ Virtual machine core:
 ### Interpreter (`include/roxy/vm/interpreter.hpp`, `src/roxy/vm/interpreter.cpp`)
 
 Switch-based interpreter loop:
-- Handles ~35 opcodes
+- Handles 50+ opcodes
 - Division by zero checking
 - Array bounds checking
 - Error reporting via `vm->error`
@@ -369,6 +404,7 @@ Key types:
 ## Testing
 
 - **Framework:** doctest (vendored in `include/roxy/core/doctest/`)
+- **Single executable:** `roxy_tests` contains all unit and E2E tests
 - Use `TEST_CASE` and `SUBCASE` for test organization
 - Use `CHECK` for assertions, `REQUIRE` for critical checks
 
@@ -376,23 +412,36 @@ Key types:
 
 ```bash
 cd build
-./lexer_test && ./parser_test && ./semantic_test && \
-./ssa_ir_test && ./bytecode_test && ./vm_test && \
-./lowering_test && ./e2e_test && ./interop_test
+
+# Run all tests
+./roxy_tests
+
+# Run only unit tests
+./roxy_tests --test-case-exclude="E2E*"
+
+# Run only E2E tests
+./roxy_tests --test-case="E2E*"
+
+# Run specific category
+./roxy_tests --test-case="E2E - Struct*"
+
+# List all test cases
+./roxy_tests --list-test-cases
 ```
 
 On Windows, use `.exe` extension.
 
 ## Documentation
 
-- `docs/overview.md` - Language design and features
+- `CLAUDE.md` - This file, project guide for Claude Code
+- `docs/overview.md` - Language design philosophy and roadmap
 - `docs/grammar.md` - Formal grammar specification
-- `DESIGN.md` - Architecture overview and implementation status
+- `docs/libraries.md` - Vendored library documentation
 - `docs/internals/` - Detailed implementation documentation:
   - `vm.md` - VM state, interpreter loop, value representation
   - `bytecode.md` - Instruction encoding, opcode reference
   - `memory.md` - Reference types, object header, ref counting
-  - `structs.md` - Stack-allocated structs, slot-based layout
+  - `structs.md` - Stack-allocated structs, slot-based layout, struct parameters/returns
   - `arrays.md` - Dynamic arrays, bounds checking
   - `ssa-ir.md` - Block arguments, lowering to bytecode
   - `interop.md` - Native functions, automatic C++ binding

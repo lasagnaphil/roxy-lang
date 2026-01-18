@@ -319,10 +319,65 @@ v4 = set_field v0.y <- v3    // Initialize y
 
 For fields with default values that aren't provided in the literal, the default expression is evaluated and used.
 
+## Struct Parameters and Returns
+
+Structs can be passed to and returned from functions with automatic value semantics:
+
+| Struct Size | Slots | Passing Mode | Mechanism |
+|-------------|-------|--------------|-----------|
+| 1-8 bytes   | 1-2   | By value     | 1 register |
+| 9-16 bytes  | 3-4   | By value     | 2 registers |
+| >16 bytes   | >4    | By reference | Pointer (callee copies) |
+
+### Small Struct Passing (≤16 bytes)
+
+Small structs are packed into 1-2 registers:
+- `STRUCT_LOAD_REGS` - Pack struct slots into registers at call site
+- `STRUCT_STORE_REGS` - Unpack registers into struct slots in callee
+
+### Small Struct Returns
+
+Small structs are returned in 1-2 registers:
+- `RET_STRUCT_SMALL` - Pack struct and return
+- Caller unpacks into destination struct
+
+### Value Semantics
+
+Callee always receives a copy - modifications don't affect caller:
+
+```
+fun modify(p: Point): i32 {
+    p.x = 100;      // Modifies local copy
+    return p.x;
+}
+
+fun main(): i32 {
+    var pt = Point { x = 5, y = 10 };
+    modify(pt);     // pt.x is still 5
+    return pt.x;    // Returns 5
+}
+```
+
+## Out/Inout Parameters
+
+For modifying caller's struct, use `inout` or `out` modifiers:
+
+```
+fun double_point(p: inout Point) {
+    p.x = p.x * 2;
+    p.y = p.y * 2;
+}
+
+fun main(): i32 {
+    var pt = Point { x = 10, y = 20 };
+    double_point(inout pt);  // pt is now {20, 40}
+    return pt.x + pt.y;      // Returns 60
+}
+```
+
 ## Limitations (Future Work)
 
-- **No pass-by-value**: Structs cannot be passed to functions by value
-- **No return structs**: Functions cannot return struct values
+- **Large struct returns**: Structs >16 bytes via hidden output pointer not yet implemented
 - **No heap allocation**: `new`/`uniq`/`ref`/`weak` for structs not implemented
 
 ## Files

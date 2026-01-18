@@ -36,7 +36,7 @@ Return:     R0
 
 Each function call allocates a new register window from the shared register file.
 
-## Opcode Categories
+## Opcode Categories (58 total)
 
 | Range | Category | Key Opcodes |
 |-------|----------|-------------|
@@ -48,9 +48,9 @@ Each function call allocates a new register window from the shared register file
 | 0x50-0x5F | Float Comparisons | `EQ_F`, `NE_F`, `LT_F`, `LE_F`, `GT_F`, `GE_F` |
 | 0x60-0x6F | Logical | `NOT`, `AND`, `OR` |
 | 0x80-0x8F | Type Conversions | `I2F`, `F2I`, `I2B`, `B2I` |
-| 0x90-0x9F | Control Flow | `JMP`, `JMP_IF`, `JMP_IF_NOT`, `RET`, `RET_VOID` |
+| 0x90-0x9F | Control Flow | `JMP`, `JMP_IF`, `JMP_IF_NOT`, `RET`, `RET_VOID`, `RET_STRUCT_SMALL` |
 | 0xA0-0xAF | Function Calls | `CALL`, `CALL_NATIVE` |
-| 0xB0-0xBF | Field Access | `GET_FIELD`, `SET_FIELD`, `STACK_ADDR` |
+| 0xB0-0xBF | Struct Access | `GET_FIELD`, `SET_FIELD`, `STACK_ADDR`, `GET_FIELD_ADDR`, `STRUCT_LOAD_REGS`, `STRUCT_STORE_REGS`, `STRUCT_COPY` |
 | 0xC0-0xCF | Index Access | `GET_INDEX`, `SET_INDEX` |
 | 0xD0-0xDF | Object Lifecycle | `NEW_OBJ`, `DEL_OBJ` |
 | 0xE0-0xEF | Reference Counting | `REF_INC`, `REF_DEC`, `WEAK_CHECK` |

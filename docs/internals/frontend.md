@@ -95,6 +95,9 @@ Features:
 - Type inference and type checking
 - Function signature validation
 - Error reporting with source locations
+- NativeRegistry integration for built-in functions
+- Struct slot count computation for memory layout
+- Out/inout parameter validation
 
 ## Files
 

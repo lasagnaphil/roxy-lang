@@ -1,8 +1,29 @@
 # Roxy Language
 
 > **Note:** This document is a design document and roadmap for the Roxy language.
-> Many features described here are planned but not yet implemented.
+> Some features described here are implemented, others are planned.
 > For the current language grammar, see [grammar.md](grammar.md).
+> For implementation details, see [CLAUDE.md](../CLAUDE.md) and [internals/](internals/).
+
+## Implementation Status
+
+**Implemented:**
+- Static typing with type inference
+- Stack-allocated value-type structs with field access
+- Struct literals with named field syntax and default values
+- Struct parameters and return values (≤16 bytes)
+- Out/inout parameter modifiers for value semantics
+- Arrays with bounds checking
+- Native function binding with automatic C++ wrapper generation
+- SSA IR with block arguments and bytecode lowering
+- Register-based VM with interpreter
+
+**Planned:**
+- Heap allocation with `new`/`uniq`/`ref`/`weak`
+- Large struct returns (>16 bytes)
+- Named constructors/destructors
+- LSP server for IDE support
+- AOT compilation to C
 
 ## How does it look like?
 
