@@ -96,6 +96,8 @@ roxy-v2/
 │       ├── bytecode.hpp         # Opcode definitions (284 lines)
 │       ├── value.hpp            # Value representation (135 lines)
 │       ├── object.hpp           # Object header and ref counting
+│       ├── array.hpp            # Array runtime support
+│       ├── natives.hpp          # Built-in native functions
 │       ├── vm.hpp               # VM state and API
 │       └── interpreter.hpp      # Interpreter loop
 │
@@ -117,6 +119,8 @@ roxy-v2/
 │       ├── bytecode.cpp         # Bytecode encoding/decoding
 │       ├── value.cpp            # Value operations
 │       ├── object.cpp           # Object allocation/ref counting
+│       ├── array.cpp            # Array allocation and access
+│       ├── natives.cpp          # Built-in native function implementations
 │       ├── vm.cpp               # VM initialization and execution
 │       └── interpreter.cpp      # Interpreter loop (503 lines)
 │
@@ -239,6 +243,7 @@ Virtual machine core:
 Switch-based interpreter loop:
 - Handles ~35 opcodes
 - Division by zero checking
+- Array bounds checking
 - Error reporting via `vm->error`
 
 ### Lowering (`include/roxy/compiler/lowering.hpp`, `src/roxy/compiler/lowering.cpp`)
@@ -248,12 +253,27 @@ SSA IR to bytecode conversion:
 - Block arguments become MOV instructions
 - Simple register allocation (SSA value ID = register number)
 - Constant pool management
+- Native function call lowering
+
+### Arrays (`include/roxy/vm/array.hpp`, `src/roxy/vm/array.cpp`)
+
+Array runtime support:
+- `ArrayHeader` struct with length/capacity
+- Bounds-checked `array_get`/`array_set` operations
+- Integration with object system for memory management
+- `GET_INDEX`/`SET_INDEX` opcodes fully implemented
+
+### Native Functions (`include/roxy/vm/natives.hpp`, `src/roxy/vm/natives.cpp`)
+
+Built-in native function support:
+- `array_new_int(size)` - Allocate integer array
+- `array_len(arr)` - Get array length
+- Automatic registration during semantic analysis
+- `CALL_NATIVE` opcode and lowering
 
 ## Partially Implemented (TODOs in code)
 
 - **Field Access** - `GET_FIELD`/`SET_FIELD` opcodes defined and lowering works, interpreter has placeholder
-- **Index Access** - `GET_INDEX`/`SET_INDEX` opcodes defined and lowering works, interpreter has placeholder
-- **Native Function Calls** - Basic infrastructure exists, full lowering incomplete
 - **Method Lookup** - Semantic analysis has placeholder for proper method resolution
 - **String Objects** - Basic value representation exists, full handling incomplete
 

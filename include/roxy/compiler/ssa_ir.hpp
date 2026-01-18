@@ -136,6 +136,7 @@ struct ConstData {
 struct CallData {
     StringView func_name;
     Span<ValueId> args;
+    u8 native_index;  // For CallNative: index into module's native_functions
 };
 
 // Field access data

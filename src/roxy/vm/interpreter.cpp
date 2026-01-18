@@ -1,5 +1,6 @@
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/object.hpp"
+#include "roxy/vm/array.hpp"
 
 #include <cmath>
 #include <cassert>
@@ -425,15 +426,28 @@ bool interpret(RoxyVM* vm) {
 
             // Index Access
             case Opcode::GET_INDEX: {
-                // TODO: Implement array index access
-                vm->error = "GET_INDEX not implemented";
-                return false;
+                // Format: GET_INDEX dst, arr, idx
+                // dst = arr[idx]
+                void* arr = regs[b].as_ptr;
+                i64 index = regs[c].as_int;
+                Value result;
+                if (!array_get(arr, index, result, &vm->error)) {
+                    return false;
+                }
+                regs[a] = result;
+                break;
             }
 
             case Opcode::SET_INDEX: {
-                // TODO: Implement array index access
-                vm->error = "SET_INDEX not implemented";
-                return false;
+                // Format: SET_INDEX arr, idx, val
+                // arr[idx] = val
+                void* arr = regs[a].as_ptr;
+                i64 index = regs[b].as_int;
+                Value value = regs[c];
+                if (!array_set(arr, index, value, &vm->error)) {
+                    return false;
+                }
+                break;
             }
 
             // Object Lifecycle

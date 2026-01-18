@@ -1,4 +1,5 @@
 #include "roxy/compiler/lowering.hpp"
+#include "roxy/vm/natives.hpp"
 
 #include <cassert>
 
@@ -65,7 +66,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             }
 
             // For calls, we also need registers for arguments (at dst+1, dst+2, ...)
-            if (inst->op == IROp::Call && inst->result.is_valid()) {
+            if ((inst->op == IROp::Call || inst->op == IROp::CallNative) && inst->result.is_valid()) {
                 u8 dst = get_register(inst->result);
                 u8 needed_regs = dst + 1 + static_cast<u8>(inst->call.args.size());
                 while (m_next_reg < needed_regs) {
@@ -293,7 +294,20 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
 
         case IROp::CallNative: {
             // Similar to Call but uses CALL_NATIVE opcode
-            // TODO: Implement native function call lowering
+            u8 func_idx = inst->call.native_index;
+            u8 arg_count = static_cast<u8>(inst->call.args.size());
+
+            // Copy arguments to consecutive registers starting from dst+1
+            u8 first_arg_reg = dst + 1;
+            for (u32 i = 0; i < inst->call.args.size(); i++) {
+                u8 arg_src = get_register(inst->call.args[i]);
+                if (arg_src != first_arg_reg + i) {
+                    emit_abc(Opcode::MOV, first_arg_reg + i, arg_src, 0);
+                }
+            }
+
+            // Emit call: dst = call_native func_idx(args...)
+            emit_abc(Opcode::CALL_NATIVE, dst, func_idx, arg_count);
             break;
         }
 

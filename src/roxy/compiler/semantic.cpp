@@ -11,6 +11,37 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator)
     , m_types(allocator)
     , m_symbols(allocator)
 {
+    // Register built-in native functions
+    register_builtins();
+}
+
+void SemanticAnalyzer::register_builtins() {
+    // array_new_int(size: i32) -> i32[]
+    // Creates function type: (i32) -> i32[]
+    Type* i32_type = m_types.i32_type();
+    Type* i32_array_type = m_types.array_type(i32_type);
+
+    Type** param_types_1 = reinterpret_cast<Type**>(
+        m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
+    param_types_1[0] = i32_type;
+    Type* array_new_int_type = m_types.function_type(
+        Span<Type*>(param_types_1, 1), i32_array_type);
+
+    m_symbols.define(SymbolKind::Function, StringView("array_new_int", 13),
+                     array_new_int_type, SourceLocation{0, 0}, nullptr);
+
+    // array_len(arr: i32[]) -> i32
+    // Note: This works with any array type, but for simplicity we register
+    // it with i32[] as the parameter type. Semantic analysis will still work
+    // because array types are compatible.
+    Type** param_types_2 = reinterpret_cast<Type**>(
+        m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
+    param_types_2[0] = i32_array_type;
+    Type* array_len_type = m_types.function_type(
+        Span<Type*>(param_types_2, 1), i32_type);
+
+    m_symbols.define(SymbolKind::Function, StringView("array_len", 9),
+                     array_len_type, SourceLocation{0, 0}, nullptr);
 }
 
 bool SemanticAnalyzer::analyze(Program* program) {

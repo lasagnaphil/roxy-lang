@@ -1,6 +1,24 @@
 #include "roxy/compiler/ir_builder.hpp"
 
 #include <cassert>
+#include <cstring>
+
+namespace {
+// Built-in native function names - must match order in natives.cpp
+constexpr const char* NATIVE_ARRAY_NEW_INT = "array_new_int";
+constexpr const char* NATIVE_ARRAY_LEN = "array_len";
+
+// Get the native function index for a built-in (-1 if not found)
+rx::i32 get_native_index(const char* name, rx::u32 len) {
+    if (len == 13 && strncmp(name, NATIVE_ARRAY_NEW_INT, len) == 0) {
+        return 0;
+    }
+    if (len == 9 && strncmp(name, NATIVE_ARRAY_LEN, len) == 0) {
+        return 1;
+    }
+    return -1;
+}
+}
 
 namespace rx {
 
@@ -244,6 +262,18 @@ ValueId IRBuilder::emit_call(StringView func_name, Span<ValueId> args, Type* res
     if (inst) {
         inst->call.func_name = func_name;
         inst->call.args = args;
+        inst->call.native_index = 0;
+        return inst->result;
+    }
+    return ValueId::invalid();
+}
+
+ValueId IRBuilder::emit_call_native(StringView func_name, Span<ValueId> args, Type* result_type, u8 native_index) {
+    IRInst* inst = emit_inst(IROp::CallNative, result_type);
+    if (inst) {
+        inst->call.func_name = func_name;
+        inst->call.args = args;
+        inst->call.native_index = native_index;
         return inst->result;
     }
     return ValueId::invalid();
@@ -419,7 +449,12 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     if (else_block) {
         finish_block_branch(cond, then_block->id, else_block->id);
     } else {
-        finish_block_branch(cond, then_block->id, merge_block->id);
+        // No else branch - pass original values as args to merge_block
+        Vector<BlockArgPair> fallthrough_args;
+        for (u32 i = 0; i < phi_info.size(); i++) {
+            fallthrough_args.push_back({phi_info[i].original_value});
+        }
+        finish_block_branch(cond, then_block->id, merge_block->id, {}, alloc_span(fallthrough_args));
     }
 
     // Save variable state before then branch (so else branch sees original values)
@@ -838,6 +873,13 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     // Get function name from callee
     if (ce.callee->kind == AstKind::ExprIdentifier) {
         StringView func_name = ce.callee->identifier.name;
+
+        // Check if this is a built-in native function
+        i32 native_idx = get_native_index(func_name.data(), func_name.size());
+        if (native_idx >= 0) {
+            return emit_call_native(func_name, args, expr->resolved_type, static_cast<u8>(native_idx));
+        }
+
         return emit_call(func_name, args, expr->resolved_type);
     }
     else if (ce.callee->kind == AstKind::ExprGet) {

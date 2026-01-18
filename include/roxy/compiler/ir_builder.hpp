@@ -46,6 +46,7 @@ private:
     ValueId emit_copy(ValueId value, Type* type);
 
     ValueId emit_call(StringView func_name, Span<ValueId> args, Type* result_type);
+    ValueId emit_call_native(StringView func_name, Span<ValueId> args, Type* result_type, u8 native_index);
     ValueId emit_new(StringView type_name, Span<ValueId> args, Type* result_type);
     ValueId emit_get_field(ValueId object, StringView field_name, u32 field_index, Type* result_type);
     ValueId emit_set_field(ValueId object, StringView field_name, u32 field_index, ValueId value, Type* result_type);

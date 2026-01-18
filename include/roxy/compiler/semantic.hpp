@@ -43,6 +43,9 @@ private:
     void error_fmt(SourceLocation loc, const char* fmt, ...);
     bool too_many_errors() const { return m_errors.size() >= MAX_SEMANTIC_ERRORS; }
 
+    // Built-in function registration
+    void register_builtins();
+
     // Multi-pass analysis
     void collect_type_declarations(Program* program);
     void resolve_type_members(Program* program);

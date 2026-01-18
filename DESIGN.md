@@ -354,8 +354,103 @@ bool interpret(RoxyVM* vm) {
 
 Key implementation notes:
 - Division by zero is checked and returns an error
-- All opcodes are implemented except field/index access (placeholder)
+- Array bounds checking with error reporting
+- All opcodes are implemented except field access (GET_FIELD/SET_FIELD have placeholders)
 - Error messages are stored in `vm->error`
+
+---
+
+## Arrays
+
+**Status: ✅ Implemented** (`include/roxy/vm/array.hpp`, `src/roxy/vm/array.cpp`)
+
+### Array Layout
+
+Arrays are stored as objects with an ArrayHeader followed by Value elements:
+
+```cpp
+struct ArrayHeader {
+    u32 length;    // Number of elements
+    u32 capacity;  // Allocated capacity (for future growth)
+};
+
+// Memory layout: [ObjectHeader][ArrayHeader][Value * length]
+```
+
+### Array Operations
+
+```cpp
+// Allocate an array with given length (capacity = length)
+void* array_alloc(RoxyVM* vm, u32 length);
+
+// Get array length
+u32 array_length(void* data);
+
+// Bounds-checked element access
+bool array_get(void* data, i64 index, Value& out, const char** error);
+bool array_set(void* data, i64 index, Value value, const char** error);
+```
+
+### Array Opcodes
+
+| Opcode | Format | Description |
+|--------|--------|-------------|
+| `GET_INDEX` (0xC0) | ABC | `dst = src1[src2]` - Load array element |
+| `SET_INDEX` (0xC1) | ABC | `dst[src1] = src2` - Store array element |
+
+Both opcodes perform null checks and bounds checking, setting `vm->error` on failure.
+
+---
+
+## Native Functions
+
+**Status: ✅ Implemented** (`include/roxy/vm/natives.hpp`, `src/roxy/vm/natives.cpp`)
+
+### Native Function Infrastructure
+
+Native functions are registered with the bytecode module and called via `CALL_NATIVE`:
+
+```cpp
+// Native function signature
+typedef void (*NativeFunction)(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
+
+// Register a native function
+void vm_register_native(BCModule* module, StringView name, NativeFunction func);
+```
+
+### Built-in Array Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `array_new_int` | `(size: i32) -> i32[]` | Allocate int array initialized to 0 |
+| `array_len` | `(arr: i32[]) -> i32` | Return array length |
+
+### Calling Convention
+
+```
+CALL_NATIVE dst, func_idx, argc
+
+Arguments:  dst+1, dst+2, ... (consecutive registers)
+Return:     dst
+```
+
+The native function reads arguments from `vm->call_stack.back().registers[first_arg + i]` and writes the result to `registers[dst]`.
+
+### Semantic Integration
+
+Built-in functions are registered during semantic analysis initialization:
+
+```cpp
+void SemanticAnalyzer::register_builtins() {
+    Type* i32_type = m_types.i32_type();
+    Type* i32_array = m_types.array_type(i32_type);
+
+    declare_native("array_new_int", {i32_type}, i32_array);
+    declare_native("array_len", {i32_array}, i32_type);
+}
+```
+
+The IR builder detects calls to these functions and emits `CallNative` IR instead of regular `Call` IR.
 
 ---
 
@@ -625,6 +720,8 @@ roxy/
 | VM Core | ✅ Done | `include/roxy/vm/vm.hpp` |
 | Interpreter | ✅ Done | `include/roxy/vm/interpreter.hpp` |
 | SSA Lowering | ✅ Done | `include/roxy/compiler/lowering.hpp` |
+| Arrays | ✅ Done | `include/roxy/vm/array.hpp`, `natives.hpp` |
+| Native Functions | ✅ Done | `include/roxy/vm/natives.hpp` |
 | C++ Interop | ⏳ Planned | — |
 | LSP Parser | ⏳ Planned | — |
 | LSP Features | ⏳ Planned | — |
@@ -636,10 +733,11 @@ roxy/
 3. ~~**SSA IR** — Block arguments representation~~ ✅
 4. ~~**Bytecode lowering** — Register allocation, instruction selection~~ ✅
 5. ~~**VM interpreter** — Switch-based dispatch loop~~ ✅
-6. **C++ interop** — Type registration, native binding
-7. **Field/Index access** — Complete GET_FIELD, SET_FIELD, GET_INDEX, SET_INDEX opcodes
-8. **LSP parser** — Error recovery, lossless CST
-9. **LSP features** — Completion, hover, go-to-definition
+6. ~~**Arrays** — GET_INDEX, SET_INDEX, native functions (array_new_int, array_len)~~ ✅
+7. **Field access** — Complete GET_FIELD, SET_FIELD opcodes
+8. **C++ interop** — Type registration, native binding
+9. **LSP parser** — Error recovery, lossless CST
+10. **LSP features** — Completion, hover, go-to-definition
 
 ---
 
@@ -655,12 +753,14 @@ tests/
 ├── ssa_ir_test.cpp     # IR generation tests
 ├── bytecode_test.cpp   # Instruction encoding tests
 ├── vm_test.cpp         # VM execution tests
-└── lowering_test.cpp   # SSA to bytecode tests
+├── lowering_test.cpp   # SSA to bytecode tests
+└── e2e_test.cpp        # End-to-end compilation and execution tests
 ```
 
 Run all tests:
 ```bash
 cd build
-./lexer_test.exe && ./parser_test.exe && ./semantic_test.exe && \
-./ssa_ir_test.exe && ./bytecode_test.exe && ./vm_test.exe && ./lowering_test.exe
+./lexer_test && ./parser_test && ./semantic_test && \
+./ssa_ir_test && ./bytecode_test && ./vm_test && \
+./lowering_test && ./e2e_test
 ```
