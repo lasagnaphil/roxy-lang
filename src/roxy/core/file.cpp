@@ -6,6 +6,8 @@
 #define WIN32_MEAN_AND_LEAN
 #endif
 #include "Windows.h"
+#else
+#include <cstdio>
 #endif
 
 namespace rx {
@@ -23,7 +25,7 @@ bool read_file_to_buf(const char* path, u8*& buf, BumpAllocator& bump_allocator)
     CloseHandle(file);
 #else
     FILE* file;
-    if (fopen_s(&file, path, "rb") != 0) {
+    if ((file = fopen(path, "rb")) != nullptr) {
         return false;
     }
 
@@ -31,7 +33,7 @@ bool read_file_to_buf(const char* path, u8*& buf, BumpAllocator& bump_allocator)
     size_t file_size = ftell(file);
     rewind(file);
 
-    buf = bump_allocator.alloc_bytes(file_size + 1);
+    buf = bump_allocator.alloc_bytes(file_size + 1, 8);
     size_t bytes_read = fread(buf, sizeof(char), file_size, file);
     if (bytes_read < file_size) {
         return false;
@@ -57,7 +59,7 @@ bool read_file_to_buf(const char* path, Vector<u8>& buf) {
     CloseHandle(file);
 #else
     FILE* file;
-    if (fopen_s(&file, path, "rb") != 0) {
+    if ((file = fopen(path, "rb")) != 0) {
         return false;
     }
 
