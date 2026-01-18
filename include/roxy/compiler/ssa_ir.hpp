@@ -96,7 +96,8 @@ enum class IROp : u8 {
 
     // Memory operations
     StackAlloc,     // allocate slots on local stack, returns pointer
-    GetField,       // obj.field
+    GetField,       // obj.field (load value)
+    GetFieldAddr,   // &obj.field (compute address, for nested struct access)
     SetField,       // obj.field = value
     GetIndex,       // arr[i]
     SetIndex,       // arr[i] = value

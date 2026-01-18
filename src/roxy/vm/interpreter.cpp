@@ -464,6 +464,18 @@ bool interpret(RoxyVM* vm) {
                 break;
             }
 
+            case Opcode::GET_FIELD_ADDR: {
+                // Format: [GET_FIELD_ADDR dst obj 0] + [slot_offset:16 padding:16]
+                // Computes: dst = obj_ptr + slot_offset * sizeof(u32)
+                u16 slot_offset = static_cast<u16>(*pc++);  // Read second instruction word
+
+                u32* base = reinterpret_cast<u32*>(reg_as_ptr(regs[b]));
+                u32* field_addr = base + slot_offset;
+
+                regs[a] = reg_from_ptr(field_addr);
+                break;
+            }
+
             case Opcode::SET_FIELD: {
                 // Format: [SET_FIELD obj val slot_count] + [slot_offset:16 padding:16]
                 u8 slot_count = c;

@@ -54,6 +54,7 @@ const char* ir_op_to_string(IROp op) {
 
         case IROp::StackAlloc: return "stack_alloc";
         case IROp::GetField: return "get_field";
+        case IROp::GetFieldAddr: return "get_field_addr";
         case IROp::SetField: return "set_field";
         case IROp::GetIndex: return "get_index";
         case IROp::SetIndex: return "set_index";
@@ -193,6 +194,15 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
 
         case IROp::GetField:
             append_str(out, " ");
+            append_value_id(out, inst->field.object);
+            append_str(out, ".");
+            for (u32 i = 0; i < inst->field.field_name.size(); i++) {
+                out.push_back(inst->field.field_name[i]);
+            }
+            break;
+
+        case IROp::GetFieldAddr:
+            append_str(out, " &");
             append_value_id(out, inst->field.object);
             append_str(out, ".");
             for (u32 i = 0; i < inst->field.field_name.size(); i++) {

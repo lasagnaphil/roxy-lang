@@ -326,6 +326,18 @@ ValueId IRBuilder::emit_get_field(ValueId object, StringView field_name, u32 slo
     return ValueId::invalid();
 }
 
+ValueId IRBuilder::emit_get_field_addr(ValueId object, StringView field_name, u32 slot_offset, Type* result_type) {
+    IRInst* inst = emit_inst(IROp::GetFieldAddr, result_type);
+    if (inst) {
+        inst->field.object = object;
+        inst->field.field_name = field_name;
+        inst->field.slot_offset = slot_offset;
+        inst->field.slot_count = 0;  // Not used for address computation
+        return inst->result;
+    }
+    return ValueId::invalid();
+}
+
 ValueId IRBuilder::emit_set_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, ValueId value, Type* result_type) {
     IRInst* inst = emit_inst(IROp::SetField, result_type);
     if (inst) {
@@ -954,14 +966,22 @@ ValueId IRBuilder::gen_get_expr(Expr* expr) {
 
     u32 slot_offset = 0;
     u32 slot_count = 1;
+    Type* field_type = nullptr;
     if (struct_type && struct_type->is_struct()) {
         for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
             if (struct_type->struct_info.fields[i].name == ge.name) {
                 slot_offset = struct_type->struct_info.fields[i].slot_offset;
                 slot_count = struct_type->struct_info.fields[i].slot_count;
+                field_type = struct_type->struct_info.fields[i].type;
                 break;
             }
         }
+    }
+
+    // If the field is a struct type, we need to compute its address (pointer)
+    // instead of loading its value, since nested struct access needs the address.
+    if (field_type && field_type->is_struct()) {
+        return emit_get_field_addr(obj, ge.name, slot_offset, expr->resolved_type);
     }
 
     return emit_get_field(obj, ge.name, slot_offset, slot_count, expr->resolved_type);

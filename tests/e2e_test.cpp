@@ -1143,3 +1143,30 @@ TEST_CASE("E2E - Struct in loop") {
     CHECK(result.is_int());
     CHECK(result.as_int == 45);  // 0 + 1 + 2 + ... + 9
 }
+
+TEST_CASE("E2E - Nested structs") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        struct Rect {
+            origin: Point;
+            size: Point;
+        }
+
+        fun main(): i32 {
+            var r: Rect;
+            r.origin.x = 10;
+            r.origin.y = 20;
+            r.size.x = 100;
+            r.size.y = 200;
+            return r.origin.x + r.origin.y + r.size.x + r.size.y;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 330);  // 10 + 20 + 100 + 200
+}

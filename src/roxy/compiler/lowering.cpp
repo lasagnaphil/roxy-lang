@@ -325,6 +325,16 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             break;
         }
 
+        case IROp::GetFieldAddr: {
+            // Format: [GET_FIELD_ADDR dst obj 0] + [slot_offset:16 padding:16]
+            // Computes: dst = obj_ptr + slot_offset * 4 (pointer arithmetic)
+            u8 obj = get_register(inst->field.object);
+            u16 slot_offset = static_cast<u16>(inst->field.slot_offset);
+            emit_abc(Opcode::GET_FIELD_ADDR, dst, obj, 0);
+            emit(static_cast<u32>(slot_offset));  // Second instruction word with slot offset
+            break;
+        }
+
         case IROp::SetField: {
             // Format: [SET_FIELD obj val slot_count] + [slot_offset:16 padding:16]
             u8 obj = get_register(inst->field.object);

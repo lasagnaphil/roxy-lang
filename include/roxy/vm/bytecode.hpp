@@ -89,9 +89,10 @@ enum class Opcode : u8 {
     CALL_NATIVE = 0xA1,     // dst = call_native func_idx(args...)
 
     // 0xB0-0xBF: Field and Stack Access
-    GET_FIELD   = 0xB0,     // dst = src1.field[slot_offset] (two-word: ABC + offset)
-    SET_FIELD   = 0xB1,     // dst.field[slot_offset] = src1 (two-word: ABC + offset)
-    STACK_ADDR  = 0xB2,     // dst = &local_stack[local_stack_base + imm16]
+    GET_FIELD       = 0xB0, // dst = src1.field[slot_offset] (two-word: ABC + offset)
+    SET_FIELD       = 0xB1, // dst.field[slot_offset] = src1 (two-word: ABC + offset)
+    STACK_ADDR      = 0xB2, // dst = &local_stack[local_stack_base + imm16]
+    GET_FIELD_ADDR  = 0xB3, // dst = &src1.field[slot_offset] (two-word: ABI format)
 
     // 0xC0-0xCF: Index Access
     GET_INDEX   = 0xC0,     // dst = src1[src2]
