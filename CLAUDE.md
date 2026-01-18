@@ -356,4 +356,13 @@ On Windows, use `.exe` extension.
 
 - `docs/overview.md` - Language design and features
 - `docs/grammar.md` - Formal grammar specification
-- `DESIGN.md` - Detailed implementation design (VM, bytecode, interop)
+- `DESIGN.md` - Architecture overview and implementation status
+- `docs/internals/` - Detailed implementation documentation:
+  - `vm.md` - VM state, interpreter loop, value representation
+  - `bytecode.md` - Instruction encoding, opcode reference
+  - `memory.md` - Reference types, object header, ref counting
+  - `structs.md` - Stack-allocated structs, slot-based layout
+  - `arrays.md` - Dynamic arrays, bounds checking
+  - `ssa-ir.md` - Block arguments, lowering to bytecode
+  - `interop.md` - Native functions, automatic C++ binding
+  - `frontend.md` - Lexer, parser, semantic analysis
