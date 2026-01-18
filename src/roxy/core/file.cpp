@@ -24,8 +24,8 @@ bool read_file_to_buf(const char* path, u8*& buf, BumpAllocator& bump_allocator)
     buf[file_size] = 0;
     CloseHandle(file);
 #else
-    FILE* file;
-    if ((file = fopen(path, "rb")) != nullptr) {
+    FILE* file = fopen(path, "rb");
+    if (!file) {
         return false;
     }
 
@@ -36,6 +36,7 @@ bool read_file_to_buf(const char* path, u8*& buf, BumpAllocator& bump_allocator)
     buf = bump_allocator.alloc_bytes(file_size + 1, 8);
     size_t bytes_read = fread(buf, sizeof(char), file_size, file);
     if (bytes_read < file_size) {
+        fclose(file);
         return false;
     }
     buf[file_size] = 0;
@@ -58,8 +59,8 @@ bool read_file_to_buf(const char* path, Vector<u8>& buf) {
     buf[file_size] = 0;
     CloseHandle(file);
 #else
-    FILE* file;
-    if ((file = fopen(path, "rb")) != 0) {
+    FILE* file = fopen(path, "rb");
+    if (!file) {
         return false;
     }
 
@@ -70,6 +71,7 @@ bool read_file_to_buf(const char* path, Vector<u8>& buf) {
     buf.resize(file_size + 1);
     size_t bytes_read = fread(buf.data(), sizeof(char), file_size, file);
     if (bytes_read < file_size) {
+        fclose(file);
         return false;
     }
     buf[file_size] = 0;

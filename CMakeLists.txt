@@ -105,3 +105,7 @@ target_link_libraries(lowering_test roxy_vm)
 # End-to-end test executable
 add_executable(e2e_test tests/e2e_test.cpp)
 target_link_libraries(e2e_test roxy_vm)
+
+# Standalone interpreter executable
+add_executable(roxy src/roxy.cpp)
+target_link_libraries(roxy roxy_vm)

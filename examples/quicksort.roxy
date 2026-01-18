@@ -1,0 +1,41 @@
+fun swap(arr: i32[], i: i32, j: i32) {
+    var temp: i32 = arr[i];
+    arr[i] = arr[j];
+    arr[j] = temp;
+}
+
+fun partition(arr: i32[], low: i32, high: i32): i32 {
+    var pivot: i32 = arr[high];
+    var i: i32 = low - 1;
+    for (var j: i32 = low; j < high; j = j + 1) {
+        if (arr[j] <= pivot) {
+            i = i + 1;
+            swap(arr, i, j);
+        }
+    }
+    swap(arr, i + 1, high);
+    return i + 1;
+}
+
+fun quicksort(arr: i32[], low: i32, high: i32) {
+    if (low < high) {
+        var pi: i32 = partition(arr, low, high);
+        quicksort(arr, low, pi - 1);
+        quicksort(arr, pi + 1, high);
+    }
+}
+
+fun main(): i32 {
+    var arr: i32[] = array_new_int(5);
+    arr[0] = 5;
+    arr[1] = 2;
+    arr[2] = 8;
+    arr[3] = 1;
+    arr[4] = 9;
+
+    quicksort(arr, 0, array_len(arr) - 1);
+
+    // Return encoded sorted array: arr[0] + arr[1]*10 + arr[2]*100 + arr[3]*1000 + arr[4]*10000
+    // Expected: 1 + 2*10 + 5*100 + 8*1000 + 9*10000 = 98521
+    return arr[0] + arr[1] * 10 + arr[2] * 100 + arr[3] * 1000 + arr[4] * 10000;
+}
