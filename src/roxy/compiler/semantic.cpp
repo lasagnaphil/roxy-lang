@@ -1082,10 +1082,10 @@ Type* SemanticAnalyzer::analyze_super_expr(Expr* expr) {
 
     // Look up method in parent
     Type* parent = struct_type->struct_info.parent;
-    // For now, we don't have method lookup in Type - this would need to be implemented
-    // by looking at the parent's StructDecl
+    (void)parent;  // Unused for now
 
-    return m_types.error_type();  // TODO: Implement proper method lookup
+    error(expr->loc, "Method calls are not yet implemented");
+    return m_types.error_type();
 }
 
 Type* SemanticAnalyzer::analyze_new_expr(Expr* expr) {

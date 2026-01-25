@@ -12,9 +12,22 @@ BytecodeBuilder::BytecodeBuilder()
     , m_next_stack_slot(0)
     , m_module(nullptr)
     , m_ir_module(nullptr)
+    , m_has_error(false)
+    , m_error(nullptr)
 {}
 
+void BytecodeBuilder::report_error(const char* message) {
+    if (!m_has_error) {
+        m_has_error = true;
+        m_error = message;
+    }
+}
+
 BCModule* BytecodeBuilder::build(IRModule* ir_module) {
+    // Reset error state
+    m_has_error = false;
+    m_error = nullptr;
+
     m_ir_module = ir_module;
     m_module = new BCModule();
     m_module->name = ir_module->name;
@@ -29,6 +42,11 @@ BCModule* BytecodeBuilder::build(IRModule* ir_module) {
     for (IRFunction* ir_func : ir_module->functions) {
         BCFunction* bc_func = build_function(ir_func);
         m_module->functions.push_back(bc_func);
+
+        if (m_has_error) {
+            delete m_module;
+            return nullptr;
+        }
     }
 
     return m_module;
@@ -347,9 +365,9 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             StringView func_name = inst->call.func_name;
             auto it = m_func_indices.find(func_name);
             if (it == m_func_indices.end()) {
-                // Could be a native function - check module
-                // For now, emit as regular call and let runtime handle it
-                assert(false && "Function not found");
+                // Internal compiler error: function should have been resolved by semantic analysis
+                report_error("Internal error: function not found during bytecode lowering");
+                break;
             }
             u8 func_idx = static_cast<u8>(it->second);
             u8 arg_count = static_cast<u8>(inst->call.args.size());
@@ -520,15 +538,12 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         }
 
         case IROp::New: {
-            // TODO: Type lookup and encoding
-            u16 type_idx = 0;  // Placeholder
-            emit_abi(Opcode::NEW_OBJ, dst, type_idx);
+            report_error("'new' expressions are not yet implemented");
             break;
         }
 
         case IROp::Delete: {
-            u8 ptr = get_register(inst->unary);
-            emit_abc(Opcode::DEL_OBJ, ptr, 0, 0);
+            report_error("'delete' expressions are not yet implemented");
             break;
         }
 

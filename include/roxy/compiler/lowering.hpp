@@ -16,12 +16,19 @@ public:
     BytecodeBuilder();
 
     // Build bytecode module from IR module
+    // Returns nullptr if an internal error occurred
     BCModule* build(IRModule* ir_module);
 
     // Build bytecode for a single function
     BCFunction* build_function(IRFunction* ir_func);
 
+    // Error reporting
+    bool has_error() const { return m_has_error; }
+    const char* error() const { return m_error; }
+
 private:
+    // Report an internal compiler error
+    void report_error(const char* message);
     // Register allocation - maps ValueId to register number
     u8 allocate_register(ValueId value);
     u8 get_register(ValueId value);
@@ -94,6 +101,10 @@ private:
 
     // Function name to index mapping
     tsl::robin_map<StringView, u32, StringViewHash, StringViewEqual> m_func_indices;
+
+    // Error state
+    bool m_has_error;
+    const char* m_error;
 };
 
 }
