@@ -28,7 +28,7 @@ struct Value {
         void* as_ptr;
         struct {
             void* ptr;
-            u32 generation;
+            u64 generation;  // 64-bit random generation for weak reference validation
         } as_weak;
     };
 
@@ -71,7 +71,7 @@ struct Value {
         return v;
     }
 
-    static Value make_weak(void* p, u32 generation) {
+    static Value make_weak(void* p, u64 generation) {
         Value v;
         v.type = Weak;
         v.as_weak.ptr = p;

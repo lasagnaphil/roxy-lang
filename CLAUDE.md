@@ -96,6 +96,8 @@ roxy-v2/
 │       ├── bytecode.hpp         # Opcode definitions (284 lines)
 │       ├── value.hpp            # Value representation (135 lines)
 │       ├── object.hpp           # Object header and ref counting
+│       ├── vmem.hpp             # Virtual memory operations interface
+│       ├── slab_allocator.hpp   # Slab allocator with tombstoning
 │       ├── array.hpp            # Array runtime support
 │       ├── string.hpp           # String runtime support
 │       ├── natives.hpp          # Built-in native functions
@@ -126,6 +128,9 @@ roxy-v2/
 │       ├── bytecode.cpp         # Bytecode encoding/decoding
 │       ├── value.cpp            # Value operations
 │       ├── object.cpp           # Object allocation/ref counting
+│       ├── vmem_win32.cpp       # Windows virtual memory implementation
+│       ├── vmem_unix.cpp        # Unix virtual memory implementation
+│       ├── slab_allocator.cpp   # Slab allocator implementation
 │       ├── array.cpp            # Array allocation and access
 │       ├── string.cpp           # String allocation and operations
 │       ├── natives.cpp          # Built-in native function implementations
@@ -134,14 +139,15 @@ roxy-v2/
 │
 ├── tests/
 │   ├── test_main.cpp            # Single doctest entry point
-│   ├── unit/                    # Unit tests (7 files)
+│   ├── unit/                    # Unit tests (8 files)
 │   │   ├── lexer_test.cpp       # Lexer/token tests
 │   │   ├── parser_test.cpp      # Parser and AST construction
 │   │   ├── semantic_test.cpp    # Type checking and symbol resolution
 │   │   ├── ssa_ir_test.cpp      # IR generation and construction
 │   │   ├── bytecode_test.cpp    # Bytecode encoding/decoding
 │   │   ├── vm_test.cpp          # VM execution and runtime
-│   │   └── lowering_test.cpp    # SSA to bytecode lowering
+│   │   ├── lowering_test.cpp    # SSA to bytecode lowering
+│   │   └── slab_allocator_test.cpp # Slab allocator and weak refs
 │   └── e2e/                     # End-to-end tests (9 files)
 │       ├── test_helpers.hpp     # Shared compile/run helpers
 │       ├── test_helpers.cpp
@@ -424,13 +430,46 @@ Key types:
 - `VarDecl.resolved_type` - Type resolved by semantic analysis
 - `FieldInit` / `StructLiteralExpr` - AST nodes for struct literals
 
+### Slab Allocator (`include/roxy/vm/slab_allocator.hpp`, `src/roxy/vm/slab_allocator.cpp`)
+
+Custom slab allocator for heap objects with Vale-style random generational references:
+
+- **Size classes**: 8 classes (32B to 4KB) plus large object support
+- **Virtual memory**: Platform-specific `VirtualMemoryOps` for reserve/commit/decommit
+- **Tombstoning**: Freed objects keep memory mapped, zeroed for safe weak ref checks
+- **64-bit random generations**: xorshift128+ PRNG for weak reference validation
+- **No generation reuse**: Random generations prevent wrap-around attacks
+
+**ObjectHeader** (24 bytes):
+```cpp
+struct ObjectHeader {
+    u64 weak_generation;    // 64-bit random generation
+    u32 ref_count;          // Active ref borrows
+    u32 type_id;            // Runtime type info
+    u32 size;               // Total size including header
+    u32 flags;              // FLAG_ALIVE or FLAG_TOMBSTONE
+};
+```
+
+**Weak reference validation**:
+```cpp
+bool weak_ref_valid(void* data, u64 generation) {
+    ObjectHeader* header = get_header_from_data(data);
+    return header->is_alive() && (header->weak_generation == generation);
+}
+```
+
+Key files:
+- `include/roxy/vm/vmem.hpp` - Virtual memory interface
+- `src/roxy/vm/vmem_win32.cpp` - Windows implementation (VirtualAlloc)
+- `src/roxy/vm/vmem_unix.cpp` - Unix implementation (mmap)
+
 ## Partially Implemented (TODOs in code)
 
 - **Method Lookup** - Semantic analysis has placeholder for proper method resolution
 
 ## Planned Components (Not Yet Implemented)
 
-- Heap allocation via `new` and `uniq`/`ref`/`weak`
 - LSP parser (error recovery, lossless CST)
 - LSP server features (completion, hover, go-to-definition)
 - Optimizations

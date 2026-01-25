@@ -76,8 +76,17 @@ add_library(roxy_vm
     src/roxy/vm/array.cpp
     src/roxy/vm/string.cpp
     src/roxy/vm/natives.cpp
+    src/roxy/vm/slab_allocator.cpp
     src/roxy/compiler/lowering.cpp
 )
+
+# Platform-specific virtual memory implementations
+if(WIN32)
+    target_sources(roxy_vm PRIVATE src/roxy/vm/vmem_win32.cpp)
+else()
+    target_sources(roxy_vm PRIVATE src/roxy/vm/vmem_unix.cpp)
+endif()
+
 target_link_libraries(roxy_vm roxy_compiler)
 
 # Single unified test executable
@@ -93,6 +102,7 @@ add_executable(roxy_tests
     tests/unit/bytecode_test.cpp
     tests/unit/vm_test.cpp
     tests/unit/lowering_test.cpp
+    tests/unit/slab_allocator_test.cpp
 
     # E2E tests
     tests/e2e/test_helpers.cpp

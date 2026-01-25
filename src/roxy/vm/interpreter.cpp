@@ -682,9 +682,19 @@ bool interpret(RoxyVM* vm) {
             }
 
             case Opcode::WEAK_CHECK: {
-                // For weak reference check, we need to access the generation
-                // For now, just check if pointer is non-null
-                regs[a] = reg_from_bool(reg_as_ptr(regs[b]) != nullptr);
+                // Format: WEAK_CHECK dst, ptr_reg, gen_reg
+                // Check if weak reference is still valid using 64-bit generation
+                void* ptr = reg_as_ptr(regs[b]);
+                u64 gen = regs[c];
+
+                if (ptr == nullptr) {
+                    regs[a] = 0;  // false - null pointer
+                } else {
+                    // Safe to read: memory is always mapped (active or tombstoned)
+                    // Tombstoned memory returns zeros, so is_alive() will be false
+                    bool valid = weak_ref_valid(ptr, gen);
+                    regs[a] = reg_from_bool(valid);
+                }
                 break;
             }
 

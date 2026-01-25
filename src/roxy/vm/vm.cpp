@@ -1,6 +1,7 @@
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/object.hpp"
+#include "roxy/vm/slab_allocator.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -25,6 +26,18 @@ bool vm_init(RoxyVM* vm, const VMConfig& config) {
     vm->local_stack = new u32[config.local_stack_size];
     vm->local_stack_top = 0;
 
+    // Initialize slab allocator for heap objects
+    vm->allocator = new SlabAllocator();
+    if (!vm->allocator->init()) {
+        delete vm->allocator;
+        vm->allocator = nullptr;
+        delete[] vm->register_file;
+        delete[] vm->local_stack;
+        vm->register_file = nullptr;
+        vm->local_stack = nullptr;
+        return false;
+    }
+
     vm->call_stack.reserve(config.max_call_depth);
     vm->running = false;
     vm->error = nullptr;
@@ -46,6 +59,13 @@ void vm_destroy(RoxyVM* vm) {
     }
     vm->local_stack_size = 0;
     vm->local_stack_top = 0;
+
+    // Destroy slab allocator
+    if (vm->allocator) {
+        vm->allocator->shutdown();
+        delete vm->allocator;
+        vm->allocator = nullptr;
+    }
 
     vm->call_stack.clear();
     vm->module = nullptr;

@@ -7,6 +7,9 @@
 
 namespace rx {
 
+// Forward declaration
+struct SlabAllocator;
+
 // Call frame - represents an active function call
 struct CallFrame {
     const BCFunction* func;     // Current function
@@ -46,6 +49,8 @@ struct RoxyVM {
     u32 local_stack_size;           // Total local stack capacity in slots
     u32 local_stack_top;            // Current top of local stack allocation
 
+    SlabAllocator* allocator;       // Slab allocator for heap objects
+
     Vector<CallFrame> call_stack;   // Call stack
     bool running;                   // Execution state
     const char* error;              // Error message (null if no error)
@@ -58,6 +63,7 @@ struct RoxyVM {
         , local_stack(nullptr)
         , local_stack_size(0)
         , local_stack_top(0)
+        , allocator(nullptr)
         , running(false)
         , error(nullptr)
     {}

@@ -6,15 +6,33 @@ namespace rx {
 
 // Object header - precedes all heap-allocated objects
 // Memory layout: [ObjectHeader][object data...]
+// Size: 24 bytes (was 16 bytes before 64-bit generation)
 struct ObjectHeader {
-    u32 ref_count;          // Reference count for uniq/ref
-    u32 weak_generation;    // Generation counter for weak reference validation
+    u64 weak_generation;    // 64-bit random generation for weak reference validation
+    u32 ref_count;          // Reference count for ref borrows
     u32 type_id;            // Type identifier for runtime type info
     u32 size;               // Total size of object including header
+    u32 flags;              // Object state flags
+
+    // Object state flags
+    enum Flags : u32 {
+        FLAG_NONE      = 0x00,
+        FLAG_ALIVE     = 0x01,  // Object is alive and valid
+        FLAG_TOMBSTONE = 0x02,  // Object was freed, memory is zeroed
+    };
 
     // ref_count starts at 0 for constraint reference model:
     // uniq doesn't affect ref_count, only ref borrows increment it
-    ObjectHeader() : ref_count(0), weak_generation(0), type_id(0), size(0) {}
+    ObjectHeader()
+        : weak_generation(0)
+        , ref_count(0)
+        , type_id(0)
+        , size(0)
+        , flags(FLAG_NONE)
+    {}
+
+    // Check if the object is alive (not tombstoned)
+    bool is_alive() const { return (flags & FLAG_ALIVE) != 0; }
 
     // Get pointer to object data (after header)
     void* data() {
@@ -56,14 +74,16 @@ inline void ref_inc(void* data) {
 bool ref_dec(RoxyVM* vm, void* data);
 
 // Create a weak reference from a strong pointer
-// Returns the current generation for validation
-u32 weak_ref_create(void* data);
+// Returns the current 64-bit generation for validation
+u64 weak_ref_create(void* data);
 
 // Check if a weak reference is still valid
-bool weak_ref_valid(void* data, u32 generation);
+// Uses 64-bit generation and checks FLAG_ALIVE
+bool weak_ref_valid(void* data, u64 generation);
 
-// Invalidate all weak references to an object (bump generation)
-void weak_ref_invalidate(void* data);
+// Invalidate all weak references to an object (set new random generation)
+// Called by the allocator during free - not typically called directly
+void weak_ref_invalidate(void* data, u64 new_generation);
 
 // Deallocate an object (for explicit delete)
 void object_free(RoxyVM* vm, void* data);

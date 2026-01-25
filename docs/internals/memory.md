@@ -20,94 +20,138 @@ Struct fields must use `uniq` (ownership) or `weak` (back-references).
 
 ## Object Header
 
-Every heap-allocated object has a header:
+Every heap-allocated object has a header (24 bytes):
 
 ```cpp
 struct ObjectHeader {
+    u64 weak_generation;    // 64-bit random generation for weak refs
     u32 ref_count;          // Number of active 'ref' pointers
-    u32 weak_generation;    // Bumped on delete to invalidate weak refs
     u32 type_id;            // Type identifier for runtime type info
     u32 size;               // Total size including header
+    u32 flags;              // FLAG_ALIVE or FLAG_TOMBSTONE
 
+    enum Flags : u32 {
+        FLAG_NONE      = 0x00,
+        FLAG_ALIVE     = 0x01,
+        FLAG_TOMBSTONE = 0x02,
+    };
+
+    bool is_alive() const;  // Check if object is alive (not tombstoned)
     void* data();           // Get pointer to object data (after header)
 };
 ```
+
+## Slab Allocator
+
+Roxy uses a custom slab allocator for heap objects with the following features:
+
+### Size Classes
+
+Objects are allocated from fixed-size slabs based on their size:
+
+| Class | Slot Size |
+|-------|-----------|
+| 0 | 32 bytes |
+| 1 | 64 bytes |
+| 2 | 128 bytes |
+| 3 | 256 bytes |
+| 4 | 512 bytes |
+| 5 | 1024 bytes |
+| 6 | 2048 bytes |
+| 7 | 4096 bytes |
+| 8+ | Large objects (multiple pages) |
+
+### Virtual Memory
+
+The allocator uses platform-specific virtual memory operations:
+
+```cpp
+struct VirtualMemoryOps {
+    static void* reserve(u64 size);           // Reserve address space
+    static bool commit(void* addr, u64 size); // Commit physical memory
+    static bool decommit(void* addr, u64 size); // Release physical memory
+    static void release(void* addr, u64 size);  // Release address space
+    static bool remap_to_zero(void* addr, u64 size); // Zero + read-only
+    static u64 page_size();                   // System page size
+};
+```
+
+### Tombstoning
+
+When an object is freed, it becomes a "tombstone":
+1. The `flags` field is set to `FLAG_TOMBSTONE`
+2. Object data is zeroed
+3. Memory remains mapped (read-only zeros on some platforms)
+4. Weak references can safely check the tombstoned memory
+
+This allows weak references to safely detect invalidation without crashes.
+
+## Random Generational References
+
+Weak references use 64-bit random generations (Vale-style) for validation:
+
+### Why Random Generations?
+
+- **64-bit random** prevents generation reuse attacks
+- **No wrap-around** issues (unlike 32-bit incrementing counters)
+- **xorshift128+** PRNG is fast and has good statistical properties
+
+### Random Number Generator
+
+```cpp
+struct RandomGen {
+    u64 state[2];
+
+    void seed(u64 s);   // SplitMix64 initialization
+    u64 next();         // xorshift128+ algorithm
+};
+```
+
+Seeding uses high-resolution timer + process ID for uniqueness.
 
 ## Reference Counting Operations
 
 ```cpp
 // Reference counting operations
 void ref_inc(void* data);
-bool ref_dec(RoxyVM* vm, void* data);  // Returns true if deallocated
+bool ref_dec(RoxyVM* vm, void* data);
 
-// Weak reference operations
-u32 weak_ref_create(void* data);
-bool weak_ref_valid(void* data, u32 generation);
-void weak_ref_invalidate(void* data);
+// Weak reference operations (64-bit generation)
+u64 weak_ref_create(void* data);
+bool weak_ref_valid(void* data, u64 generation);
+void weak_ref_invalidate(void* data, u64 new_generation);
 
 // Object allocation/deallocation
 void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size);
 void object_free(RoxyVM* vm, void* data);
 ```
 
-### Implementation Details
+### Weak Reference Validation
 
 ```cpp
-inline void ref_inc(void* obj) {
-    get_header(obj)->ref_count++;
-}
-
-inline void ref_dec(void* obj) {
-    ObjectHeader* header = get_header(obj);
-    assert(header->ref_count > 0);
-    header->ref_count--;
-}
-
-inline bool weak_is_valid(void* ptr, uint32_t generation) {
-    if (!ptr) return false;
-    return get_header(ptr)->weak_generation == generation;
-}
-
-void dealloc(void* obj) {
-    ObjectHeader* header = get_header(obj);
-    
-    if (header->ref_count > 0) {
-        panic("Cannot delete object with active refs");
-    }
-    
-    header->weak_generation++;  // Invalidate weak refs
-    release_field_refs(obj, header->type_id);
-    std::free(header);
+bool weak_ref_valid(void* data, u64 generation) {
+    if (data == nullptr) return false;
+    // Safe to read: memory is always mapped (active or tombstoned)
+    ObjectHeader* header = get_header_from_data(data);
+    return header->is_alive() && (header->weak_generation == generation);
 }
 ```
 
-## Type Descriptor
+## Constraint Reference Model
 
-For runtime type information:
+Roxy uses a "constraint reference" model where:
 
-```cpp
-struct TypeDescriptor {
-    const char* name;
-    uint32_t size;
-    uint32_t alignment;
-    std::vector<FieldDescriptor> fields;
-    std::vector<MethodDescriptor> methods;
-    
-    // For ref counting during destruction
-    std::vector<uint16_t> ref_field_offsets;
-    std::vector<uint16_t> weak_field_offsets;
-};
-
-struct FieldDescriptor {
-    const char* name;
-    FieldType type;       // Int, Float, Bool, Struct, Ref, Weak, Uniq
-    uint16_t offset;
-    uint16_t size;
-    TypeId nested_type;
-};
-```
+1. `uniq` owns the object but doesn't affect `ref_count`
+2. `ref` borrows increment `ref_count` at creation, decrement at destruction
+3. `delete` fails at runtime if `ref_count > 0`
+4. This prevents use-after-free while allowing flexible borrowing
 
 ## Files
 
 - `include/roxy/vm/object.hpp` - Object header and ref counting declarations
 - `src/roxy/vm/object.cpp` - Object allocation and ref counting implementation
+- `include/roxy/vm/vmem.hpp` - Virtual memory operations interface
+- `src/roxy/vm/vmem_win32.cpp` - Windows virtual memory implementation
+- `src/roxy/vm/vmem_unix.cpp` - Unix virtual memory implementation
+- `include/roxy/vm/slab_allocator.hpp` - Slab allocator declarations
+- `src/roxy/vm/slab_allocator.cpp` - Slab allocator implementation

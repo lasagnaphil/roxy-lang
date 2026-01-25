@@ -51,7 +51,8 @@ void value_to_string(const Value& value, char* buf, u32 buf_size) {
             snprintf(buf, buf_size, "ptr(%p)", value.as_ptr);
             break;
         case Value::Weak:
-            snprintf(buf, buf_size, "weak(%p, gen=%u)", value.as_weak.ptr, value.as_weak.generation);
+            snprintf(buf, buf_size, "weak(%p, gen=%llu)", value.as_weak.ptr,
+                     static_cast<unsigned long long>(value.as_weak.generation));
             break;
         default:
             snprintf(buf, buf_size, "unknown");
