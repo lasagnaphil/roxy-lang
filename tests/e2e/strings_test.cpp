@@ -1,5 +1,5 @@
 #include "roxy/core/doctest/doctest.h"
-#include "e2e_test_helpers.hpp"
+#include "test_helpers.hpp"
 
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"

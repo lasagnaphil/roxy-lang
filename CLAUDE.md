@@ -143,16 +143,16 @@ roxy-v2/
 │   │   ├── vm_test.cpp          # VM execution and runtime
 │   │   └── lowering_test.cpp    # SSA to bytecode lowering
 │   └── e2e/                     # End-to-end tests (9 files)
-│       ├── e2e_test_helpers.hpp # Shared compile/run helpers
-│       ├── e2e_test_helpers.cpp
-│       ├── e2e_basics_test.cpp  # Variables, arithmetic, control flow
-│       ├── e2e_recursion_test.cpp # Recursive functions
-│       ├── e2e_algorithms_test.cpp # Complex algorithms, floats
-│       ├── e2e_arrays_test.cpp  # Array operations, quicksort
-│       ├── e2e_structs_test.cpp # Struct fields, literals, params
-│       ├── e2e_params_test.cpp  # Out/inout parameter tests
-│       ├── e2e_interop_test.cpp # C++ interop tests
-│       └── e2e_strings_test.cpp # String operations, concatenation
+│       ├── test_helpers.hpp     # Shared compile/run helpers
+│       ├── test_helpers.cpp
+│       ├── basics_test.cpp      # Variables, arithmetic, control flow
+│       ├── recursion_test.cpp   # Recursive functions
+│       ├── algorithms_test.cpp  # Complex algorithms, floats
+│       ├── arrays_test.cpp      # Array operations, quicksort
+│       ├── structs_test.cpp     # Struct fields, literals, params
+│       ├── params_test.cpp      # Out/inout parameter tests
+│       ├── interop_test.cpp     # C++ interop tests
+│       └── strings_test.cpp     # String operations, concatenation
 │
 ├── docs/
 │   ├── overview.md              # Language features and design

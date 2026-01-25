@@ -95,15 +95,15 @@ add_executable(roxy_tests
     tests/unit/lowering_test.cpp
 
     # E2E tests
-    tests/e2e/e2e_test_helpers.cpp
-    tests/e2e/e2e_basics_test.cpp
-    tests/e2e/e2e_recursion_test.cpp
-    tests/e2e/e2e_algorithms_test.cpp
-    tests/e2e/e2e_arrays_test.cpp
-    tests/e2e/e2e_structs_test.cpp
-    tests/e2e/e2e_params_test.cpp
-    tests/e2e/e2e_interop_test.cpp
-    tests/e2e/e2e_strings_test.cpp
+    tests/e2e/test_helpers.cpp
+    tests/e2e/basics_test.cpp
+    tests/e2e/recursion_test.cpp
+    tests/e2e/algorithms_test.cpp
+    tests/e2e/arrays_test.cpp
+    tests/e2e/structs_test.cpp
+    tests/e2e/params_test.cpp
+    tests/e2e/interop_test.cpp
+    tests/e2e/strings_test.cpp
 )
 target_link_libraries(roxy_tests roxy_vm)
 

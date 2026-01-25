@@ -1,4 +1,4 @@
-#include "e2e_test_helpers.hpp"
+#include "test_helpers.hpp"
 
 #include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/parser.hpp"
