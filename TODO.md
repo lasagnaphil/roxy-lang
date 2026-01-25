@@ -2,7 +2,7 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2025-01-25
+Last updated: 2025-01-26
 
 ---
 
@@ -16,7 +16,7 @@ Last updated: 2025-01-25
 - [x] **Placeholder type index for `new` expressions**
   - File: `src/roxy/compiler/lowering.cpp:540-551`
   - Issue: `u16 type_idx = 0; // Placeholder` - all `new` expressions use hardcoded type 0
-  - Fix: Now reports "not yet implemented" error instead of emitting broken bytecode
+  - Fix: Implemented proper type registration via `BCTypeInfo` and `BCModule::types`
 
 - [x] **Method lookup not implemented**
   - File: `src/roxy/compiler/semantic.cpp:1088`
@@ -105,7 +105,13 @@ Last updated: 2025-01-25
 
 These are documented in `docs/overview.md` as planned but not yet implemented:
 
-- [ ] Heap allocation with `new`/`uniq`/`ref`/`weak`
+- [x] Heap allocation with `new`/`uniq`/`ref` (constraint reference model)
+  - `new`/`delete` for heap-allocated structs
+  - `uniq<T>` owning references (ref_count starts at 0)
+  - `ref<T>` borrow references with RefInc/RefDec at function boundaries
+  - Borrow violation detection (compile-time and runtime)
+  - Type checking for reference assignments (ref→uniq forbidden, etc.)
+  - [ ] `weak<T>` references (deferred - needs design for ptr+generation representation)
 - [ ] Named constructors/destructors
 - [ ] Method calls (requires type system extension for methods on structs)
 - [ ] Function overloading
