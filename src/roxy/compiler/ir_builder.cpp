@@ -56,15 +56,21 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
         Param& param = decl->params[i];
         Type* param_type = nullptr;
         if (param.type) {
-            // Get the resolved type from the TypeExpr
-            // Uses type_by_name which checks both primitives and named types (structs)
+            // Get the base type from the TypeExpr name
             param_type = m_types.type_by_name(param.type->name);
             if (!param_type) {
                 param_type = m_types.error_type();
             }
+            // Wrap in reference type if specified
+            switch (param.type->ref_kind) {
+                case RefKind::Uniq: param_type = m_types.uniq_type(param_type); break;
+                case RefKind::Ref:  param_type = m_types.ref_type(param_type); break;
+                case RefKind::Weak: param_type = m_types.weak_type(param_type); break;
+                case RefKind::None: break;
+            }
         }
 
-        // Track pointer parameters (out/inout modifiers)
+        // Track pointer parameters (out/inout modifiers or reference types)
         bool is_ptr = (param.modifier != ParamModifier::None);
         if (is_ptr) {
             m_param_is_ptr[param.name] = true;
@@ -83,6 +89,13 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
         m_current_func->return_type = m_types.type_by_name(decl->return_type->name);
         if (!m_current_func->return_type) {
             m_current_func->return_type = m_types.void_type();
+        }
+        // Wrap in reference type if specified
+        switch (decl->return_type->ref_kind) {
+            case RefKind::Uniq: m_current_func->return_type = m_types.uniq_type(m_current_func->return_type); break;
+            case RefKind::Ref:  m_current_func->return_type = m_types.ref_type(m_current_func->return_type); break;
+            case RefKind::Weak: m_current_func->return_type = m_types.weak_type(m_current_func->return_type); break;
+            case RefKind::None: break;
         }
     } else {
         m_current_func->return_type = m_types.void_type();
@@ -402,6 +415,16 @@ ValueId IRBuilder::emit_var_addr(StringView name, Type* result_type) {
         return inst->result;
     }
     return ValueId::invalid();
+}
+
+void IRBuilder::emit_ref_inc(ValueId ptr) {
+    IRInst* inst = emit_inst(IROp::RefInc, m_types.void_type());
+    if (inst) inst->unary = ptr;
+}
+
+void IRBuilder::emit_ref_dec(ValueId ptr) {
+    IRInst* inst = emit_inst(IROp::RefDec, m_types.void_type());
+    if (inst) inst->unary = ptr;
 }
 
 // Statement generation

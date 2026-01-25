@@ -1114,18 +1114,16 @@ Decl* Parser::import_declaration() {
 
 TypeExpr* Parser::type_expression() {
     TypeExpr* type = alloc<TypeExpr>();
-    type->is_uniq = false;
-    type->is_ref = false;
-    type->is_weak = false;
+    type->ref_kind = RefKind::None;
     type->element_type = nullptr;
 
     // Check for reference modifiers
     if (match(TokenKind::KwUniq)) {
-        type->is_uniq = true;
+        type->ref_kind = RefKind::Uniq;
     } else if (match(TokenKind::KwRef)) {
-        type->is_ref = true;
+        type->ref_kind = RefKind::Ref;
     } else if (match(TokenKind::KwWeak)) {
-        type->is_weak = true;
+        type->ref_kind = RefKind::Weak;
     }
 
     Token name_token = consume(TokenKind::Identifier, "Expected type name");
@@ -1142,9 +1140,7 @@ TypeExpr* Parser::type_expression() {
         TypeExpr* array_type = alloc<TypeExpr>();
         array_type->name = StringView();  // Array types don't have a direct name
         array_type->loc = type->loc;
-        array_type->is_uniq = false;
-        array_type->is_ref = false;
-        array_type->is_weak = false;
+        array_type->ref_kind = RefKind::None;
         array_type->element_type = type;
         return array_type;
     }

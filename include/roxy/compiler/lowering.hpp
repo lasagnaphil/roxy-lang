@@ -102,6 +102,9 @@ private:
     // Function name to index mapping
     tsl::robin_map<StringView, u32, StringViewHash, StringViewEqual> m_func_indices;
 
+    // Type name to index mapping (for heap allocation)
+    tsl::robin_map<StringView, u16, StringViewHash, StringViewEqual> m_type_indices;
+
     // Error state
     bool m_has_error;
     const char* m_error;

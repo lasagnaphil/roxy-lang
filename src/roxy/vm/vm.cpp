@@ -1,5 +1,6 @@
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
+#include "roxy/vm/object.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -54,6 +55,15 @@ void vm_destroy(RoxyVM* vm) {
 
 bool vm_load_module(RoxyVM* vm, BCModule* module) {
     vm->module = module;
+
+    // Register types from module for heap allocation
+    // Store the global type IDs so NEW_OBJ can find them
+    module->type_ids.clear();
+    for (const BCTypeInfo& type_info : module->types) {
+        u32 type_id = register_object_type(type_info.name.data(), type_info.size_bytes, nullptr);
+        module->type_ids.push_back(type_id);
+    }
+
     return true;
 }
 

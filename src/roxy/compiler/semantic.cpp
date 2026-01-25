@@ -435,12 +435,11 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
     }
 
     // Apply reference modifiers
-    if (type_expr->is_uniq) {
-        base_type = m_types.uniq_type(base_type);
-    } else if (type_expr->is_ref) {
-        base_type = m_types.ref_type(base_type);
-    } else if (type_expr->is_weak) {
-        base_type = m_types.weak_type(base_type);
+    switch (type_expr->ref_kind) {
+        case RefKind::Uniq: base_type = m_types.uniq_type(base_type); break;
+        case RefKind::Ref:  base_type = m_types.ref_type(base_type); break;
+        case RefKind::Weak: base_type = m_types.weak_type(base_type); break;
+        case RefKind::None: break;
     }
 
     return base_type;

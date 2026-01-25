@@ -12,7 +12,9 @@ struct ObjectHeader {
     u32 type_id;            // Type identifier for runtime type info
     u32 size;               // Total size of object including header
 
-    ObjectHeader() : ref_count(1), weak_generation(0), type_id(0), size(0) {}
+    // ref_count starts at 0 for constraint reference model:
+    // uniq doesn't affect ref_count, only ref borrows increment it
+    ObjectHeader() : ref_count(0), weak_generation(0), type_id(0), size(0) {}
 
     // Get pointer to object data (after header)
     void* data() {

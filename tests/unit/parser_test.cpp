@@ -679,17 +679,17 @@ TEST_CASE("Parser: Type Expressions") {
         BumpAllocator alloc1(4096);
         Program* prog1 = parse_source("var x: uniq Foo;", alloc1);
         REQUIRE(prog1 != nullptr);
-        CHECK(prog1->declarations[0]->var_decl.type->is_uniq == true);
+        CHECK(prog1->declarations[0]->var_decl.type->ref_kind == RefKind::Uniq);
 
         BumpAllocator alloc2(4096);
         Program* prog2 = parse_source("var x: ref Foo;", alloc2);
         REQUIRE(prog2 != nullptr);
-        CHECK(prog2->declarations[0]->var_decl.type->is_ref == true);
+        CHECK(prog2->declarations[0]->var_decl.type->ref_kind == RefKind::Ref);
 
         BumpAllocator alloc3(4096);
         Program* prog3 = parse_source("var x: weak Foo;", alloc3);
         REQUIRE(prog3 != nullptr);
-        CHECK(prog3->declarations[0]->var_decl.type->is_weak == true);
+        CHECK(prog3->declarations[0]->var_decl.type->ref_kind == RefKind::Weak);
     }
 
     SUBCASE("Array type") {

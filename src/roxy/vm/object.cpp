@@ -37,8 +37,10 @@ void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size) {
     }
 
     // Initialize header
+    // ref_count starts at 0 for constraint reference model:
+    // uniq doesn't affect ref_count, only ref borrows increment it
     ObjectHeader* header = static_cast<ObjectHeader*>(mem);
-    header->ref_count = 1;
+    header->ref_count = 0;
     header->weak_generation = 0;
     header->type_id = type_id;
     header->size = total_size;
@@ -51,27 +53,16 @@ void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size) {
 }
 
 bool ref_dec(RoxyVM* vm, void* data) {
+    (void)vm;  // Not used in constraint reference model
     if (data == nullptr) return false;
 
     ObjectHeader* header = get_header_from_data(data);
     assert(header->ref_count > 0);
 
+    // In constraint reference model, ref_count tracks borrows, not ownership.
+    // Decrement borrow count - deallocation is handled by owner via delete.
     header->ref_count--;
-    if (header->ref_count == 0) {
-        // Call destructor if registered
-        const ObjectTypeInfo* type_info = get_object_type(header->type_id);
-        if (type_info && type_info->destructor) {
-            type_info->destructor(vm, data);
-        }
-
-        // Invalidate weak references before freeing
-        weak_ref_invalidate(data);
-
-        // Free memory
-        std::free(header);
-        return true;
-    }
-    return false;
+    return false;  // Never deallocates - owner is responsible
 }
 
 u32 weak_ref_create(void* data) {

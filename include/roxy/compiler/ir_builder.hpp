@@ -62,6 +62,10 @@ private:
     void emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_count);
     ValueId emit_var_addr(StringView name, Type* result_type);
 
+    // Reference counting for constraint reference model
+    void emit_ref_inc(ValueId ptr);
+    void emit_ref_dec(ValueId ptr);
+
     // Generate address of an lvalue expression (for out/inout arguments)
     ValueId gen_lvalue_addr(Expr* expr);
 

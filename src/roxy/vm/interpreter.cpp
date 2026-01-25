@@ -625,7 +625,14 @@ bool interpret(RoxyVM* vm) {
 
             // Object Lifecycle
             case Opcode::NEW_OBJ: {
-                u32 type_id = imm;
+                // imm is the module's type index, look up the global type_id
+                u16 type_idx = imm;
+                if (type_idx >= vm->module->type_ids.size()) {
+                    vm->error = "Invalid type index";
+                    return false;
+                }
+                u32 type_id = vm->module->type_ids[type_idx];
+
                 const ObjectTypeInfo* type_info = get_object_type(type_id);
                 if (type_info == nullptr) {
                     vm->error = "Invalid type ID";
@@ -645,6 +652,12 @@ bool interpret(RoxyVM* vm) {
             case Opcode::DEL_OBJ: {
                 void* ptr = reg_as_ptr(regs[a]);
                 if (ptr != nullptr) {
+                    // Constraint reference model: check for active borrows
+                    ObjectHeader* header = get_header_from_data(ptr);
+                    if (header->ref_count > 0) {
+                        vm->error = "Cannot delete: object has active borrows";
+                        return false;
+                    }
                     object_free(vm, ptr);
                     regs[a] = 0;
                 }

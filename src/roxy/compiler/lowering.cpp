@@ -538,12 +538,31 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         }
 
         case IROp::New: {
-            report_error("'new' expressions are not yet implemented");
+            StringView type_name = inst->new_data.type_name;
+
+            // Lookup or register type in module's type table
+            auto it = m_type_indices.find(type_name);
+            u16 type_idx;
+            if (it != m_type_indices.end()) {
+                type_idx = it->second;
+            } else {
+                Type* uniq_type = inst->type;
+                Type* struct_type = uniq_type->base_type();
+                u32 size_bytes = struct_type->struct_info.slot_count * sizeof(u32);
+
+                type_idx = static_cast<u16>(m_module->types.size());
+                m_module->types.push_back({type_name, size_bytes, struct_type->struct_info.slot_count});
+                m_type_indices[type_name] = type_idx;
+            }
+
+            emit_abi(Opcode::NEW_OBJ, dst, type_idx);
             break;
         }
 
         case IROp::Delete: {
-            report_error("'delete' expressions are not yet implemented");
+            u8 ptr_reg = get_register(inst->unary);
+            // In constraint reference mode, interpreter will check ref_count == 0
+            emit_abc(Opcode::DEL_OBJ, ptr_reg, 0, 0);
             break;
         }
 

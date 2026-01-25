@@ -104,6 +104,7 @@ add_executable(roxy_tests
     tests/e2e/params_test.cpp
     tests/e2e/interop_test.cpp
     tests/e2e/strings_test.cpp
+    tests/e2e/heap_test.cpp
 )
 target_link_libraries(roxy_tests roxy_vm)
 

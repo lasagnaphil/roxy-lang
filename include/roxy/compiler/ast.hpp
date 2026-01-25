@@ -101,13 +101,19 @@ enum class ParamModifier : u8 {
     Inout,
 };
 
+// Reference kind for type expressions
+enum class RefKind : u8 {
+    None,   // Value type (no reference wrapper)
+    Uniq,   // uniq<T> - owning reference
+    Ref,    // ref<T> - borrowed reference
+    Weak,   // weak<T> - weak reference
+};
+
 // Type expression for type annotations
 struct TypeExpr {
     StringView name;
     SourceLocation loc;
-    bool is_uniq;
-    bool is_ref;
-    bool is_weak;
+    RefKind ref_kind;
     TypeExpr* element_type;  // For array types: element_type[]
 };
 

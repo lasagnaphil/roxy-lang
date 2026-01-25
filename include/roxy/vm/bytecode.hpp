@@ -221,6 +221,13 @@ struct BCConstant {
     }
 };
 
+// Type info for heap allocation - maps type_idx to allocation info
+struct BCTypeInfo {
+    StringView name;      // Struct name
+    u32 size_bytes;       // Size for object_alloc
+    u32 slot_count;       // For field access
+};
+
 // Bytecode function
 struct BCFunction {
     StringView name;            // Function name
@@ -250,6 +257,8 @@ struct BCModule {
     StringView name;                        // Module name
     Vector<BCFunction*> functions;          // User-defined functions
     Vector<BCNativeFunction> native_functions; // Native functions
+    Vector<BCTypeInfo> types;               // Type table for heap allocation
+    Vector<u32> type_ids;                   // Global type IDs after registration
 
     BCModule() = default;
     ~BCModule() {
