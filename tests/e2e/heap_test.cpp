@@ -425,3 +425,120 @@ TEST_CASE("E2E - Runtime error: delete with active borrow") {
     TestResult result = run_and_capture(source, StringView("main"));
     CHECK(result.success == false);  // Should fail - can't delete with active borrow
 }
+
+// ============================================================================
+// Reference Type Checking Tests
+// ============================================================================
+
+TEST_CASE("E2E - Compile error: ref to uniq assignment") {
+    // Cannot assign ref to uniq - would create ownership from borrow
+    const char* source = R"(
+        struct Point { x: i32; y: i32; }
+
+        fun bad_assign(p: ref Point): uniq Point {
+            var owner: uniq Point = p;  // ERROR: ref -> uniq
+            return owner;
+        }
+
+        fun main(): i32 { return 0; }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail to compile
+}
+
+TEST_CASE("E2E - Compile error: weak to uniq assignment") {
+    // Cannot assign weak to uniq - weak cannot become owner
+    const char* source = R"(
+        struct Point { x: i32; y: i32; }
+
+        fun bad_assign(p: weak Point): uniq Point {
+            var owner: uniq Point = p;  // ERROR: weak -> uniq
+            return owner;
+        }
+
+        fun main(): i32 { return 0; }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail to compile
+}
+
+TEST_CASE("E2E - Compile error: weak to ref assignment") {
+    // Cannot assign weak to ref - weak cannot become strong borrow
+    const char* source = R"(
+        struct Point { x: i32; y: i32; }
+
+        fun bad_assign(p: weak Point): i32 {
+            var borrowed: ref Point = p;  // ERROR: weak -> ref
+            return borrowed.x;
+        }
+
+        fun main(): i32 { return 0; }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail to compile
+}
+
+TEST_CASE("E2E - Compile error: nil to value type") {
+    // Cannot assign nil to non-reference types
+    const char* source = R"(
+        struct Point { x: i32; y: i32; }
+
+        fun main(): i32 {
+            var p: Point = nil;  // ERROR: nil to value type
+            return 0;
+        }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail to compile
+}
+
+TEST_CASE("E2E - Valid: uniq to ref conversion") {
+    // uniq -> ref is allowed (borrowing from owner)
+    const char* source = R"(
+        struct Point { x: i32; y: i32; }
+
+        fun borrow(p: ref Point): i32 {
+            return p.x + p.y;
+        }
+
+        fun main(): i32 {
+            var owner: uniq Point = new Point();
+            owner.x = 10;
+            owner.y = 20;
+            var result: i32 = borrow(owner);  // uniq -> ref OK
+            delete owner;
+            print(result);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "30\n");
+}
+
+TEST_CASE("E2E - Valid: nil to uniq assignment") {
+    // nil -> uniq is allowed
+    const char* source = R"(
+        struct Point { x: i32; y: i32; }
+
+        fun main(): i32 {
+            var p: uniq Point = nil;
+            delete p;  // Safe to delete nil
+            print(42);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "42\n");
+}

@@ -1206,6 +1206,26 @@ bool SemanticAnalyzer::check_assignable(Type* target, Type* source, SourceLocati
         return true;
     }
 
+    // Specific error messages for forbidden reference conversions
+    if (source->kind == TypeKind::Ref && target->kind == TypeKind::Uniq) {
+        error(loc, "cannot convert 'ref' to 'uniq': borrowing does not transfer ownership");
+        return false;
+    }
+    if (source->kind == TypeKind::Weak && target->kind == TypeKind::Uniq) {
+        error(loc, "cannot convert 'weak' to 'uniq': weak reference cannot become owner");
+        return false;
+    }
+    if (source->kind == TypeKind::Weak && target->kind == TypeKind::Ref) {
+        error(loc, "cannot convert 'weak' to 'ref': weak reference cannot become strong borrow");
+        return false;
+    }
+
+    // nil can only be assigned to reference types
+    if (source->is_nil() && !target->is_reference()) {
+        error(loc, "'nil' can only be assigned to reference types (uniq, ref, weak)");
+        return false;
+    }
+
     Vector<char> target_str, source_str;
     type_to_string(target, target_str);
     type_to_string(source, source_str);
