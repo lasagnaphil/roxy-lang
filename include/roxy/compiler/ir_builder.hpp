@@ -65,6 +65,7 @@ private:
     // Reference counting for constraint reference model
     void emit_ref_inc(ValueId ptr);
     void emit_ref_dec(ValueId ptr);
+    void emit_ref_param_decrements();  // Emit RefDec for all ref-typed parameters
 
     // Generate address of an lvalue expression (for out/inout arguments)
     ValueId gen_lvalue_addr(Expr* expr);
@@ -123,6 +124,9 @@ private:
 
     // Track which parameters are pointers (for out/inout semantics)
     tsl::robin_map<StringView, bool, StringViewHash, StringViewEqual> m_param_is_ptr;
+
+    // Track ref-typed parameters for RefInc/RefDec at function boundaries
+    Vector<ValueId> m_ref_params;
 
     // Info about a variable that needs a phi at loop header
     struct LoopVarInfo {

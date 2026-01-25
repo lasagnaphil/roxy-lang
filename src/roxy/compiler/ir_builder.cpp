@@ -48,8 +48,9 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     m_current_func = m_allocator.emplace<IRFunction>();
     m_current_func->name = decl->name;
 
-    // Clear pointer parameter tracking
+    // Clear parameter tracking
     m_param_is_ptr.clear();
+    m_ref_params.clear();
 
     // Set up parameters
     for (u32 i = 0; i < decl->params.size(); i++) {
@@ -82,6 +83,11 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
         bp.name = param.name;
         m_current_func->params.push_back(bp);
         m_current_func->param_is_ptr.push_back(is_ptr);
+
+        // Track ref-typed parameters for RefInc/RefDec at boundaries
+        if (param_type && param_type->kind == TypeKind::Ref) {
+            m_ref_params.push_back(bp.value);
+        }
     }
 
     // Resolve return type
@@ -127,6 +133,12 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     for (u32 i = 0; i < param_count; i++) {
         BlockParam& bp = m_current_func->params[i];
         define_local(bp.name, bp.value, bp.type);
+    }
+
+    // Emit RefInc for ref-typed parameters at function entry
+    // This tracks borrows in the constraint reference model
+    for (ValueId ref_param : m_ref_params) {
+        emit_ref_inc(ref_param);
     }
 
     // Generate body
@@ -191,6 +203,10 @@ void IRBuilder::finish_block_branch(ValueId cond, BlockId then_block, BlockId el
 
 void IRBuilder::finish_block_return(ValueId value) {
     if (!m_current_block) return;
+
+    // Release ref borrows before returning (constraint reference model)
+    emit_ref_param_decrements();
+
     m_current_block->terminator.kind = TerminatorKind::Return;
     m_current_block->terminator.return_value = value;
 }
@@ -425,6 +441,13 @@ void IRBuilder::emit_ref_inc(ValueId ptr) {
 void IRBuilder::emit_ref_dec(ValueId ptr) {
     IRInst* inst = emit_inst(IROp::RefDec, m_types.void_type());
     if (inst) inst->unary = ptr;
+}
+
+void IRBuilder::emit_ref_param_decrements() {
+    // Emit RefDec for all ref-typed parameters before function exit
+    for (ValueId param_val : m_ref_params) {
+        emit_ref_dec(param_val);
+    }
 }
 
 // Statement generation

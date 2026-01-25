@@ -253,6 +253,103 @@ TEST_CASE("E2E - Constraint reference borrow check success") {
     CHECK(result.stdout_output == "50\n");
 }
 
+TEST_CASE("E2E - Ref parameter borrow tracking") {
+    // Test that ref parameters properly track borrows via RefInc/RefDec
+    // The ref parameter increments ref_count at entry, decrements at exit
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun borrow_point(p: ref Point): i32 {
+            // p is a borrowed reference - ref_count was incremented at entry
+            return p.x + p.y;
+            // ref_count is decremented before return
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = new Point();
+            p.x = 10;
+            p.y = 25;
+            var result: i32 = borrow_point(p);  // Pass uniq as ref
+            // After function returns, ref_count is back to 0
+            delete p;  // Should succeed - no active borrows
+            print(result);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "35\n");
+}
+
+TEST_CASE("E2E - Multiple ref borrows in sequence") {
+    // Test multiple sequential borrows
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun get_x(p: ref Point): i32 {
+            return p.x;
+        }
+
+        fun get_y(p: ref Point): i32 {
+            return p.y;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = new Point();
+            p.x = 100;
+            p.y = 200;
+            var x: i32 = get_x(p);  // Borrow 1
+            var y: i32 = get_y(p);  // Borrow 2
+            delete p;
+            print(x);
+            print(y);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "100\n200\n");
+}
+
+TEST_CASE("E2E - Ref parameter with multiple returns") {
+    // Test that RefDec is emitted on all return paths
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun max_coord(p: ref Point): i32 {
+            if (p.x > p.y) {
+                return p.x;  // RefDec before this return
+            }
+            return p.y;  // RefDec before this return too
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = new Point();
+            p.x = 50;
+            p.y = 30;
+            var m: i32 = max_coord(p);
+            delete p;
+            print(m);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "50\n");
+}
+
 TEST_CASE("E2E - Delete null pointer is safe") {
     const char* source = R"(
         struct Point {
