@@ -118,6 +118,19 @@ public:
         return m_data[--m_size];
     }
 
+    // Insert element at position, shifting subsequent elements right
+    void insert(T* pos, T elem) {
+        Index idx = static_cast<Index>(pos - m_data);
+        assert(idx <= m_size);
+        ensure_capacity(m_size + 1);
+        // Shift elements right
+        for (Index i = m_size; i > idx; i--) {
+            m_data[i] = std::move(m_data[i - 1]);
+        }
+        m_data[idx] = std::move(elem);
+        m_size++;
+    }
+
     void resize(Index new_size) {
         T* new_data = new T[new_size];
         move(m_data, m_size, new_data);

@@ -132,7 +132,25 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             // Remap the parameter value to the stack pointer register
             m_value_to_reg[param.value.id] = stack_ptr_reg;
         }
-        // Large structs (>4 slots) are passed by pointer, no unpacking needed
+        else if (slot_count > 4) {
+            // Large struct: param register holds pointer to caller's data
+            // For value semantics, we need to copy to local stack
+            u32 stack_offset = m_next_stack_slot;
+            m_next_stack_slot += slot_count;
+            m_value_to_stack_slot[param.value.id] = stack_offset;
+
+            u8 param_reg = get_register(param.value);  // Source pointer (caller's data)
+
+            // Get local stack address into a new register
+            u8 stack_ptr_reg = m_next_reg++;
+            emit_abi(Opcode::STACK_ADDR, stack_ptr_reg, static_cast<u16>(stack_offset));
+
+            // Copy struct data from caller to local stack (value semantics)
+            emit_abc(Opcode::STRUCT_COPY, stack_ptr_reg, param_reg, static_cast<u8>(slot_count));
+
+            // Remap the parameter value to the local stack pointer register
+            m_value_to_reg[param.value.id] = stack_ptr_reg;
+        }
     }
 
     // Second pass: emit bytecode

@@ -88,6 +88,16 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
         m_current_func->return_type = m_types.void_type();
     }
 
+    // Check for large struct return - add hidden output pointer as last parameter
+    if (m_current_func->returns_large_struct()) {
+        BlockParam hidden_param;
+        hidden_param.value = m_current_func->new_value();
+        hidden_param.type = m_current_func->return_type;  // Pointer to struct
+        hidden_param.name = StringView("__ret_ptr", 9);
+        m_current_func->params.push_back(hidden_param);
+        m_current_func->param_is_ptr.push_back(true);
+    }
+
     // Create entry block
     IRBlock* entry = create_block(StringView("entry", 5));
     set_current_block(entry);
@@ -97,7 +107,11 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     push_scope();
 
     // Add function parameters to local scope
-    for (u32 i = 0; i < m_current_func->params.size(); i++) {
+    // Skip the hidden return pointer parameter (last param for large struct returns)
+    u32 param_count = m_current_func->returns_large_struct()
+        ? m_current_func->params.size() - 1
+        : m_current_func->params.size();
+    for (u32 i = 0; i < param_count; i++) {
         BlockParam& bp = m_current_func->params[i];
         define_local(bp.name, bp.value, bp.type);
     }
@@ -716,7 +730,17 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
 
     if (rs.value) {
         ValueId val = gen_expr(rs.value);
-        finish_block_return(val);
+
+        // Check if returning a large struct
+        if (m_current_func->returns_large_struct()) {
+            // Large struct: copy to hidden output pointer (last parameter)
+            ValueId output_ptr = m_current_func->params.back().value;
+            u32 slot_count = m_current_func->return_type->struct_info.slot_count;
+            emit_struct_copy(output_ptr, val, slot_count);
+            finish_block_return(ValueId::invalid());  // Return void
+        } else {
+            finish_block_return(val);
+        }
     } else {
         finish_block_return(ValueId::invalid());
     }
@@ -953,6 +977,19 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     };
     Vector<InoutArg> inout_args;
 
+    // Check if callee returns a large struct
+    Type* callee_return_type = expr->resolved_type;
+    bool callee_returns_large_struct = callee_return_type &&
+        callee_return_type->is_struct() &&
+        callee_return_type->struct_info.slot_count > 4;
+
+    // For large struct returns, allocate stack space and prepare output pointer
+    ValueId output_ptr = ValueId::invalid();
+    if (callee_returns_large_struct) {
+        u32 slot_count = callee_return_type->struct_info.slot_count;
+        output_ptr = emit_stack_alloc(slot_count, callee_return_type);
+    }
+
     // Evaluate arguments - for out/inout args, pass address instead of value
     Span<ValueId> args = alloc_span<ValueId>(ce.arguments.size());
     for (u32 i = 0; i < ce.arguments.size(); i++) {
@@ -983,6 +1020,18 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         }
     }
 
+    // For large struct returns, append the output pointer to arguments
+    Span<ValueId> final_args;
+    if (callee_returns_large_struct) {
+        final_args = alloc_span<ValueId>(args.size() + 1);
+        for (u32 i = 0; i < args.size(); i++) {
+            final_args[i] = args[i];
+        }
+        final_args[args.size()] = output_ptr;
+    } else {
+        final_args = args;
+    }
+
     ValueId result;
 
     // Get function name from callee
@@ -993,9 +1042,14 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         i32 native_idx = m_registry.get_index(func_name);
 
         if (native_idx >= 0) {
-            result = emit_call_native(func_name, args, expr->resolved_type, static_cast<u8>(native_idx));
+            result = emit_call_native(func_name, final_args, expr->resolved_type, static_cast<u8>(native_idx));
         } else {
-            result = emit_call(func_name, args, expr->resolved_type);
+            result = emit_call(func_name, final_args, expr->resolved_type);
+        }
+
+        // For large struct returns, the result is the output pointer (already allocated)
+        if (callee_returns_large_struct) {
+            result = output_ptr;
         }
     }
     else if (ce.callee->kind == AstKind::ExprGet) {
@@ -1003,14 +1057,30 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         GetExpr& ge = ce.callee->get;
         ValueId obj = gen_expr(ge.object);
 
-        // Prepend object to arguments
-        Span<ValueId> method_args = alloc_span<ValueId>(args.size() + 1);
-        method_args[0] = obj;
-        for (u32 i = 0; i < args.size(); i++) {
-            method_args[i + 1] = args[i];
+        // Prepend object to arguments, append output pointer if large struct return
+        Span<ValueId> method_args;
+        if (callee_returns_large_struct) {
+            // obj + args + output_ptr
+            method_args = alloc_span<ValueId>(args.size() + 2);
+            method_args[0] = obj;
+            for (u32 i = 0; i < args.size(); i++) {
+                method_args[i + 1] = args[i];
+            }
+            method_args[args.size() + 1] = output_ptr;
+        } else {
+            method_args = alloc_span<ValueId>(args.size() + 1);
+            method_args[0] = obj;
+            for (u32 i = 0; i < args.size(); i++) {
+                method_args[i + 1] = args[i];
+            }
         }
 
         result = emit_call(ge.name, method_args, expr->resolved_type);
+
+        // For large struct returns, the result is the output pointer
+        if (callee_returns_large_struct) {
+            result = output_ptr;
+        }
     }
     else {
         return ValueId::invalid();

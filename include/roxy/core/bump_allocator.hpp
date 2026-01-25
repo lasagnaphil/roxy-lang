@@ -3,6 +3,7 @@
 #include "roxy/core/types.hpp"
 
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <utility>
 

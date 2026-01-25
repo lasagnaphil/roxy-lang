@@ -555,3 +555,149 @@ TEST_CASE("E2E - Struct return used in expression") {
     CHECK(result.is_int());
     CHECK(result.as_int == 11);  // 7 + 4
 }
+
+// ============================================================================
+// Large Struct Return Tests (>16 bytes / >4 slots)
+// ============================================================================
+
+TEST_CASE("E2E - Large struct return (>16 bytes)") {
+    const char* source = R"(
+        struct BigData {
+            a: i32;
+            b: i32;
+            c: i32;
+            d: i32;
+            e: i32;
+        }
+
+        fun make_big(x: i32): BigData {
+            return BigData { a = x, b = x + 1, c = x + 2, d = x + 3, e = x + 4 };
+        }
+
+        fun main(): i32 {
+            var data = make_big(10);
+            return data.a + data.b + data.c + data.d + data.e;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 60);  // 10 + 11 + 12 + 13 + 14
+}
+
+TEST_CASE("E2E - Large struct return value semantics") {
+    const char* source = R"(
+        struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
+
+        fun modify_big(data: BigData): i32 {
+            data.a = 999;
+            return data.a;
+        }
+
+        fun make_big(): BigData {
+            return BigData { a = 1, b = 2, c = 3, d = 4, e = 5 };
+        }
+
+        fun main(): i32 {
+            var data = make_big();
+            modify_big(data);
+            return data.a;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 1);  // Should still be 1 (value semantics)
+}
+
+TEST_CASE("E2E - Large struct chained returns") {
+    const char* source = R"(
+        struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
+
+        fun make_big(x: i32): BigData {
+            return BigData { a = x, b = x, c = x, d = x, e = x };
+        }
+
+        fun sum_big(data: BigData): i32 {
+            return data.a + data.b + data.c + data.d + data.e;
+        }
+
+        fun main(): i32 {
+            return sum_big(make_big(5));
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 25);  // 5 * 5
+}
+
+TEST_CASE("E2E - Large struct return with 64-bit field") {
+    const char* source = R"(
+        struct BigData {
+            a: i32;
+            b: i32;
+            c: i64;
+            d: i32;
+        }
+
+        fun make_big(): BigData {
+            return BigData { a = 1, b = 2, c = 100000000000, d = 4 };
+        }
+
+        fun main(): i64 {
+            var data = make_big();
+            return data.a + data.b + data.c + data.d;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.as_int == 100000000007);  // 1 + 2 + 100000000000 + 4
+}
+
+TEST_CASE("E2E - Large struct return used in expression") {
+    const char* source = R"(
+        struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
+
+        fun make_big(x: i32): BigData {
+            return BigData { a = x, b = x * 2, c = x * 3, d = x * 4, e = x * 5 };
+        }
+
+        fun main(): i32 {
+            return make_big(2).c + make_big(3).d;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 18);  // (2*3) + (3*4) = 6 + 12
+}
+
+TEST_CASE("E2E - Large struct return chained function calls") {
+    const char* source = R"(
+        struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
+
+        fun make_big(x: i32): BigData {
+            return BigData { a = x, b = x, c = x, d = x, e = x };
+        }
+
+        fun add_big(a: BigData, b: BigData): BigData {
+            return BigData {
+                a = a.a + b.a,
+                b = a.b + b.b,
+                c = a.c + b.c,
+                d = a.d + b.d,
+                e = a.e + b.e
+            };
+        }
+
+        fun main(): i32 {
+            var result = add_big(make_big(10), make_big(5));
+            return result.a + result.e;
+        }
+    )";
+
+    Value result = compile_and_run(source, StringView("main"));
+    CHECK(result.is_int());
+    CHECK(result.as_int == 30);  // (10+5) + (10+5) = 15 + 15
+}

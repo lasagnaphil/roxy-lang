@@ -355,7 +355,7 @@ Stack-allocated value-type structs with packed field layout:
 
 - **Value semantics**: Callee always receives a copy - modifications don't affect caller
 - **Small struct returns**: Returned in 1-2 registers, unpacked by caller
-- **Large struct returns**: Caller passes hidden output pointer (not yet implemented)
+- **Large struct returns**: Caller passes hidden output pointer as last parameter, callee copies to it
 - **Bytecode opcodes**: `STRUCT_LOAD_REGS`, `STRUCT_STORE_REGS`, `STRUCT_COPY`, `RET_STRUCT_SMALL`
 - **SSA IR opcode**: `StructCopy` for memory-to-memory struct copies
 
@@ -395,7 +395,6 @@ Key types:
 
 ## Planned Components (Not Yet Implemented)
 
-- Large struct returns (>16 bytes) via hidden output pointer
 - Heap allocation via `new` and `uniq`/`ref`/`weak`
 - LSP parser (error recovery, lossless CST)
 - LSP server features (completion, hover, go-to-definition)

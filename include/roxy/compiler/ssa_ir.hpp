@@ -306,6 +306,13 @@ struct IRFunction {
     ValueId new_value() {
         return ValueId{next_value_id++};
     }
+
+    // Check if this function returns a large struct (>4 slots, >16 bytes)
+    // Large structs are returned via hidden output pointer
+    bool returns_large_struct() const {
+        return return_type && return_type->is_struct() &&
+               return_type->struct_info.slot_count > 4;
+    }
 };
 
 // IR Module - collection of functions
