@@ -24,13 +24,6 @@ Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA
 | Batch processing | Incremental, lazy analysis |
 | Arena allocation | NodeID + hash map |
 
-## Compiler Parser
-
-The compiler parser is a recursive descent parser with Pratt parsing for expressions:
-- Fail-fast design (stops on first error)
-- Produces typed AST nodes
-- Arena allocation for all nodes
-
 ## LSP Parser (Planned)
 
 The LSP parser will use error recovery to always produce a tree:
@@ -70,11 +63,19 @@ class SyntaxTree {
 The lexer tokenizes Roxy source code:
 - Decimal, hex (`0xFF`), binary (`0b1010`), octal (`0o77`) number literals
 - Integer suffixes (`u`, `l`, `ul`) and float suffix (`f`)
-- String literals with escape sequences (`\n`, `\t`, `\\`, `\"`)
+- String literals (raw tokens with quotes)
 - All operators including two-character ones (`::`, `&&`, `||`, `+=`, etc.)
 - Line comments (`//`) and nested block comments (`/* */`)
 - Keyword recognition via trie-style switch
 - Accurate line/column tracking
+
+## Parser
+
+The compiler parser is a recursive descent parser with Pratt parsing for expressions:
+- Fail-fast design (stops on first error)
+- Produces typed AST nodes
+- Arena allocation for all nodes
+- **String literal processing**: Strips quotes and handles escape sequences (`\n`, `\t`, `\r`, `\\`, `\"`, `\0`)
 
 ## AST
 

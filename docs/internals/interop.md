@@ -129,6 +129,7 @@ enum class NativeTypeKind : u8 {
     I8, I16, I32, I64,
     U8, U16, U32, U64,
     F32, F64,
+    String,    // string
     ArrayI32,  // i32[]
 };
 
@@ -139,11 +140,28 @@ registry.bind_native("array_new_int", native_array_new_int,
 
 ## Built-in Native Functions
 
+### Array Functions
+
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `array_new_int` | `(size: i32) -> i32[]` | Allocate int array initialized to 0 |
 | `array_len` | `(arr: i32[]) -> i32` | Return array length |
-| `print` | `(value: i32) -> void` | Print value to stdout |
+
+### String Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `str_concat` | `(a: string, b: string) -> string` | Concatenate two strings |
+| `str_eq` | `(a: string, b: string) -> bool` | Test string equality |
+| `str_ne` | `(a: string, b: string) -> bool` | Test string inequality |
+| `str_len` | `(s: string) -> i32` | Return string length |
+| `print_str` | `(s: string) -> void` | Print string to stdout |
+
+### Other Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `print` | `(value: i32) -> void` | Print integer to stdout |
 
 ## Semantic Integration
 

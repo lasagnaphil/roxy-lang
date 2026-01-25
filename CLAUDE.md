@@ -97,6 +97,7 @@ roxy-v2/
 │       ├── value.hpp            # Value representation (135 lines)
 │       ├── object.hpp           # Object header and ref counting
 │       ├── array.hpp            # Array runtime support
+│       ├── string.hpp           # String runtime support
 │       ├── natives.hpp          # Built-in native functions
 │       ├── vm.hpp               # VM state and API
 │       ├── interpreter.hpp      # Interpreter loop
@@ -126,6 +127,7 @@ roxy-v2/
 │       ├── value.cpp            # Value operations
 │       ├── object.cpp           # Object allocation/ref counting
 │       ├── array.cpp            # Array allocation and access
+│       ├── string.cpp           # String allocation and operations
 │       ├── natives.cpp          # Built-in native function implementations
 │       ├── vm.cpp               # VM initialization and execution
 │       └── interpreter.cpp      # Interpreter loop (503 lines)
@@ -140,7 +142,7 @@ roxy-v2/
 │   │   ├── bytecode_test.cpp    # Bytecode encoding/decoding
 │   │   ├── vm_test.cpp          # VM execution and runtime
 │   │   └── lowering_test.cpp    # SSA to bytecode lowering
-│   └── e2e/                     # End-to-end tests (8 files)
+│   └── e2e/                     # End-to-end tests (9 files)
 │       ├── e2e_test_helpers.hpp # Shared compile/run helpers
 │       ├── e2e_test_helpers.cpp
 │       ├── e2e_basics_test.cpp  # Variables, arithmetic, control flow
@@ -149,7 +151,8 @@ roxy-v2/
 │       ├── e2e_arrays_test.cpp  # Array operations, quicksort
 │       ├── e2e_structs_test.cpp # Struct fields, literals, params
 │       ├── e2e_params_test.cpp  # Out/inout parameter tests
-│       └── e2e_interop_test.cpp # C++ interop tests
+│       ├── e2e_interop_test.cpp # C++ interop tests
+│       └── e2e_strings_test.cpp # String operations, concatenation
 │
 ├── docs/
 │   ├── overview.md              # Language features and design
@@ -305,12 +308,45 @@ Array runtime support:
 - Integration with object system for memory management
 - `GET_INDEX`/`SET_INDEX` opcodes fully implemented
 
+### Strings (`include/roxy/vm/string.hpp`, `src/roxy/vm/string.cpp`)
+
+Heap-allocated string objects with full runtime support:
+- **Memory layout**: `[ObjectHeader][StringHeader][char data + null]`
+- **StringHeader**: Contains `length` and `capacity` fields
+- **Escape sequences**: Parser handles `\n`, `\t`, `\r`, `\\`, `\"`, `\0`
+- **Operations via native functions**: Concatenation, equality, length
+- **Syntax rewriting**: IR builder rewrites `+` → `str_concat`, `==` → `str_eq`, `!=` → `str_ne`
+
+Example string operations:
+```
+var s: string = "hello";
+var greeting: string = "Hello, " + name + "!";
+if (password == "secret") { ... }
+var len: i32 = str_len(s);
+print_str(greeting);
+```
+
+Key functions:
+- `string_alloc(vm, data, length)` - Allocate new string, copies data
+- `string_concat(vm, str1, str2)` - Concatenate two strings
+- `string_equals(str1, str2)` - Compare strings for equality
+- `string_length(data)` - Get string length
+- `string_chars(data)` - Get pointer to character data
+
 ### Native Functions (`include/roxy/vm/natives.hpp`, `src/roxy/vm/natives.cpp`)
 
 Built-in native function support:
-- `array_new_int(size)` - Allocate integer array
-- `array_len(arr)` - Get array length
-- `print(value)` - Print value to stdout
+- **Array functions:**
+  - `array_new_int(size)` - Allocate integer array
+  - `array_len(arr)` - Get array length
+- **String functions:**
+  - `str_concat(a, b)` - Concatenate two strings
+  - `str_eq(a, b)` - String equality comparison
+  - `str_ne(a, b)` - String inequality comparison
+  - `str_len(s)` - Get string length
+  - `print_str(s)` - Print string to stdout
+- **Other:**
+  - `print(value)` - Print integer value to stdout
 - Registration via `NativeRegistry`
 - `CALL_NATIVE` opcode and lowering
 
@@ -391,7 +427,6 @@ Key types:
 ## Partially Implemented (TODOs in code)
 
 - **Method Lookup** - Semantic analysis has placeholder for proper method resolution
-- **String Objects** - Basic value representation exists, full handling incomplete
 
 ## Planned Components (Not Yet Implemented)
 
@@ -442,6 +477,7 @@ On Windows, use `.exe` extension.
   - `memory.md` - Reference types, object header, ref counting
   - `structs.md` - Stack-allocated structs, slot-based layout, struct parameters/returns
   - `arrays.md` - Dynamic arrays, bounds checking
+  - `strings.md` - String objects, concatenation, comparison
   - `ssa-ir.md` - Block arguments, lowering to bytecode
   - `interop.md` - Native functions, automatic C++ binding
   - `frontend.md` - Lexer, parser, semantic analysis

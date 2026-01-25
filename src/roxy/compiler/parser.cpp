@@ -393,8 +393,8 @@ Expr* Parser::primary() {
         expr->kind = AstKind::ExprLiteral;
         expr->loc = m_previous.loc;
         expr->literal.literal_kind = LiteralKind::String;
-        // Store the string including quotes - semantic analysis can strip them
-        expr->literal.string_value = m_previous.text();
+        // Strip quotes and process escape sequences
+        expr->literal.string_value = process_string_literal(m_previous);
         return expr;
     }
 
@@ -1150,6 +1150,52 @@ TypeExpr* Parser::type_expression() {
     }
 
     return type;
+}
+
+StringView Parser::process_string_literal(const Token& token) {
+    // Token includes the quotes: "content"
+    // We need to strip quotes and process escape sequences
+    const char* src = token.start;
+    u32 src_len = token.length;
+
+    if (src_len < 2 || src[0] != '"' || src[src_len - 1] != '"') {
+        // Invalid string literal format
+        return StringView(src, src_len);
+    }
+
+    // Calculate the max output size (same as input without quotes)
+    u32 max_len = src_len - 2;
+
+    // Allocate buffer for processed string
+    char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(max_len + 1, 1));
+    if (!buf) {
+        return StringView();
+    }
+
+    u32 out_idx = 0;
+    for (u32 i = 1; i < src_len - 1; i++) {
+        if (src[i] == '\\' && i + 1 < src_len - 1) {
+            // Escape sequence
+            i++;
+            switch (src[i]) {
+                case 'n': buf[out_idx++] = '\n'; break;
+                case 't': buf[out_idx++] = '\t'; break;
+                case 'r': buf[out_idx++] = '\r'; break;
+                case '\\': buf[out_idx++] = '\\'; break;
+                case '"': buf[out_idx++] = '"'; break;
+                case '0': buf[out_idx++] = '\0'; break;
+                default:
+                    // Unknown escape - keep as-is
+                    buf[out_idx++] = '\\';
+                    buf[out_idx++] = src[i];
+                    break;
+            }
+        } else {
+            buf[out_idx++] = src[i];
+        }
+    }
+
+    return StringView(buf, out_idx);
 }
 
 }

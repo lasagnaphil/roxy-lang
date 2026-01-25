@@ -874,6 +874,46 @@ ValueId IRBuilder::gen_unary_expr(Expr* expr) {
 ValueId IRBuilder::gen_binary_expr(Expr* expr) {
     BinaryExpr& be = expr->binary;
 
+    // Check for string operations - rewrite to native function calls
+    Type* left_type = be.left->resolved_type;
+    if (left_type && left_type->kind == TypeKind::String) {
+        ValueId left = gen_expr(be.left);
+        ValueId right = gen_expr(be.right);
+
+        StringView func_name;
+        Type* result_type = nullptr;
+        i32 native_idx = -1;
+
+        switch (be.op) {
+            case BinaryOp::Add:
+                func_name = StringView("str_concat", 10);
+                result_type = m_types.string_type();
+                native_idx = m_registry.get_index(func_name);
+                break;
+            case BinaryOp::Equal:
+                func_name = StringView("str_eq", 6);
+                result_type = m_types.bool_type();
+                native_idx = m_registry.get_index(func_name);
+                break;
+            case BinaryOp::NotEqual:
+                func_name = StringView("str_ne", 6);
+                result_type = m_types.bool_type();
+                native_idx = m_registry.get_index(func_name);
+                break;
+            default:
+                // Unsupported string operation - fall through to regular handling
+                // (will likely cause a type error)
+                break;
+        }
+
+        if (native_idx >= 0) {
+            Span<ValueId> args = alloc_span<ValueId>(2);
+            args[0] = left;
+            args[1] = right;
+            return emit_call_native(func_name, args, result_type, static_cast<u8>(native_idx));
+        }
+    }
+
     // Short-circuit evaluation for && and ||
     if (be.op == BinaryOp::And) {
         ValueId left = gen_expr(be.left);

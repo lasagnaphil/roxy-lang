@@ -12,15 +12,16 @@
 - Stack-allocated value-type structs with field access
 - Struct literals with named field syntax and default values
 - Struct parameters and return values (≤16 bytes)
+- Large struct parameters and returns (>16 bytes)
 - Out/inout parameter modifiers for value semantics
 - Arrays with bounds checking
+- Strings with concatenation, comparison, and escape sequences
 - Native function binding with automatic C++ wrapper generation
 - SSA IR with block arguments and bytecode lowering
 - Register-based VM with interpreter
 
 **Planned:**
 - Heap allocation with `new`/`uniq`/`ref`/`weak`
-- Large struct returns (>16 bytes)
 - Named constructors/destructors
 - LSP server for IDE support
 - AOT compilation to C

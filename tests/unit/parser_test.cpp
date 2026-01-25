@@ -71,7 +71,8 @@ TEST_CASE("Parser: Literal Expressions") {
         REQUIRE(program != nullptr);
         auto& expr = program->declarations[0]->stmt.expr_stmt.expr;
         CHECK(expr->literal.literal_kind == LiteralKind::String);
-        CHECK(check_identifier(expr->literal.string_value, "\"hello\""));
+        // Parser strips quotes and processes escape sequences
+        CHECK(check_identifier(expr->literal.string_value, "hello"));
     }
 }
 

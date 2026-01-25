@@ -1,6 +1,7 @@
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/object.hpp"
 #include "roxy/vm/array.hpp"
+#include "roxy/vm/string.hpp"
 
 #include <cmath>
 #include <cassert>
@@ -20,7 +21,7 @@ inline u64 reg_from_bool(bool b) { return b ? 1 : 0; }
 inline bool reg_is_truthy(u64 r) { return r != 0; }
 
 // Helper to load constant from constant pool into a u64 register
-static u64 load_constant(const BCFunction* func, u16 index) {
+static u64 load_constant(RoxyVM* vm, const BCFunction* func, u16 index) {
     if (index >= func->constants.size()) {
         return 0;
     }
@@ -36,8 +37,8 @@ static u64 load_constant(const BCFunction* func, u16 index) {
         case BCConstant::Float:
             return reg_from_f64(c.as_float);
         case BCConstant::String:
-            // For now, strings are stored as pointers to constant data
-            return reg_from_ptr(const_cast<char*>(c.as_string.data));
+            // Create a StringObject from the constant string data
+            return reg_from_ptr(string_alloc(vm, c.as_string.data, c.as_string.length));
         default:
             return 0;
     }
@@ -84,7 +85,7 @@ bool interpret(RoxyVM* vm) {
                 break;
 
             case Opcode::LOAD_CONST:
-                regs[a] = load_constant(func, imm);
+                regs[a] = load_constant(vm, func, imm);
                 break;
 
             case Opcode::MOV:

@@ -66,7 +66,7 @@ add_library(roxy_compiler
 )
 target_link_libraries(roxy_compiler roxy_shared)
 
-# VM library (bytecode, value, object, vm, interpreter, lowering, array, natives)
+# VM library (bytecode, value, object, vm, interpreter, lowering, array, string, natives)
 add_library(roxy_vm
     src/roxy/vm/bytecode.cpp
     src/roxy/vm/value.cpp
@@ -74,6 +74,7 @@ add_library(roxy_vm
     src/roxy/vm/vm.cpp
     src/roxy/vm/interpreter.cpp
     src/roxy/vm/array.cpp
+    src/roxy/vm/string.cpp
     src/roxy/vm/natives.cpp
     src/roxy/compiler/lowering.cpp
 )
@@ -102,6 +103,7 @@ add_executable(roxy_tests
     tests/e2e/e2e_structs_test.cpp
     tests/e2e/e2e_params_test.cpp
     tests/e2e/e2e_interop_test.cpp
+    tests/e2e/e2e_strings_test.cpp
 )
 target_link_libraries(roxy_tests roxy_vm)
 

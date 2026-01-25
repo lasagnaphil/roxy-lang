@@ -25,6 +25,7 @@ enum class NativeTypeKind : u8 {
     I8, I16, I32, I64,
     U8, U16, U32, U64,
     F32, F64,
+    String,    // string
     // Array types (element type follows in the element_type_kind field)
     ArrayI32,  // i32[]
 };
@@ -221,6 +222,7 @@ private:
             case NativeTypeKind::U64: return types.u64_type();
             case NativeTypeKind::F32: return types.f32_type();
             case NativeTypeKind::F64: return types.f64_type();
+            case NativeTypeKind::String: return types.string_type();
             case NativeTypeKind::ArrayI32: return types.array_type(types.i32_type());
             default: return types.error_type();
         }
