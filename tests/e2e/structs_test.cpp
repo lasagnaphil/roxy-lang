@@ -21,13 +21,15 @@ TEST_CASE("E2E - Basic struct field access") {
             var p: Point;
             p.x = 10;
             p.y = 20;
-            return p.x + p.y;
+            print(p.x);
+            print(p.y);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 30);  // 10 + 20
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "10\n20\n");
 }
 
 TEST_CASE("E2E - Struct with 64-bit field") {
@@ -37,16 +39,19 @@ TEST_CASE("E2E - Struct with 64-bit field") {
             b: i64;
         }
 
-        fun main(): i64 {
+        fun main(): i32 {
             var d: Data;
             d.a = 10;
             d.b = 100000000000;
-            return d.a + d.b;
+            print(d.a);
+            print(d.b);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.as_int == 100000000010);  // 10 + 100000000000
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "10\n100000000000\n");
 }
 
 TEST_CASE("E2E - Multiple struct variables") {
@@ -63,13 +68,17 @@ TEST_CASE("E2E - Multiple struct variables") {
             p1.y = 2;
             p2.x = 3;
             p2.y = 4;
-            return p1.x + p1.y + p2.x + p2.y;
+            print(p1.x);
+            print(p1.y);
+            print(p2.x);
+            print(p2.y);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 10);  // 1 + 2 + 3 + 4
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "1\n2\n3\n4\n");
 }
 
 TEST_CASE("E2E - Struct field assignment from expression") {
@@ -83,13 +92,15 @@ TEST_CASE("E2E - Struct field assignment from expression") {
             var p: Point;
             p.x = 3 * 4;
             p.y = p.x + 5;
-            return p.y;
+            print(p.x);
+            print(p.y);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 17);  // 12 + 5
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "12\n17\n");
 }
 
 TEST_CASE("E2E - Struct with float fields") {
@@ -124,16 +135,17 @@ TEST_CASE("E2E - Struct in conditional") {
             p.x = 10;
             p.y = 5;
             if (p.x > p.y) {
-                return p.x;
+                print(p.x);
             } else {
-                return p.y;
+                print(p.y);
             }
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 10);
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "10\n");
 }
 
 TEST_CASE("E2E - Struct in loop") {
@@ -145,16 +157,17 @@ TEST_CASE("E2E - Struct in loop") {
         fun main(): i32 {
             var c: Counter;
             c.value = 0;
-            for (var i: i32 = 0; i < 10; i = i + 1) {
+            for (var i: i32 = 0; i < 5; i = i + 1) {
                 c.value = c.value + i;
+                print(c.value);
             }
-            return c.value;
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 45);  // 0 + 1 + 2 + ... + 9
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "0\n1\n3\n6\n10\n");  // cumulative: 0, 0+1, 1+2, 3+3, 6+4
 }
 
 TEST_CASE("E2E - Nested structs") {
@@ -175,13 +188,17 @@ TEST_CASE("E2E - Nested structs") {
             r.origin.y = 20;
             r.size.x = 100;
             r.size.y = 200;
-            return r.origin.x + r.origin.y + r.size.x + r.size.y;
+            print(r.origin.x);
+            print(r.origin.y);
+            print(r.size.x);
+            print(r.size.y);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 330);  // 10 + 20 + 100 + 200
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "10\n20\n100\n200\n");
 }
 
 TEST_CASE("E2E - Deeply nested structs (3 levels)") {
@@ -205,13 +222,16 @@ TEST_CASE("E2E - Deeply nested structs (3 levels)") {
             o.id = 1;
             o.middle.data = 10;
             o.middle.inner.value = 100;
-            return o.id + o.middle.data + o.middle.inner.value;
+            print(o.id);
+            print(o.middle.data);
+            print(o.middle.inner.value);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 111);  // 1 + 10 + 100
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "1\n10\n100\n");
 }
 
 TEST_CASE("E2E - Multiple nested struct variables") {
@@ -240,13 +260,15 @@ TEST_CASE("E2E - Multiple nested struct variables") {
             line2.end.x = 15;
             line2.end.y = 15;
 
-            return line1.end.x + line2.start.x;
+            print(line1.end.x);
+            print(line2.start.x);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 15);  // 10 + 5
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "10\n5\n");
 }
 
 // ============================================================================
@@ -262,13 +284,15 @@ TEST_CASE("E2E - Struct literal") {
 
         fun main(): i32 {
             var p = Point { x = 10, y = 20 };
-            return p.x + p.y;
+            print(p.x);
+            print(p.y);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 30);
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "10\n20\n");
 }
 
 TEST_CASE("E2E - Struct literal with default values") {
@@ -281,13 +305,16 @@ TEST_CASE("E2E - Struct literal with default values") {
 
         fun main(): i32 {
             var c = Config { width = 1920 };
-            return c.width + c.height + c.fullscreen;
+            print(c.width);
+            print(c.height);
+            print(c.fullscreen);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 2520);  // 1920 + 600 + 0
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "1920\n600\n0\n");
 }
 
 TEST_CASE("E2E - Struct literal field order") {
@@ -299,13 +326,15 @@ TEST_CASE("E2E - Struct literal field order") {
 
         fun main(): i32 {
             var p = Point { y = 20, x = 10 };
-            return p.x * 100 + p.y;
+            print(p.x);
+            print(p.y);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 1020);  // 10 * 100 + 20
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "10\n20\n");
 }
 
 TEST_CASE("E2E - Empty struct literal (all defaults)") {
@@ -318,13 +347,16 @@ TEST_CASE("E2E - Empty struct literal (all defaults)") {
 
         fun main(): i32 {
             var d = Defaults {};
-            return d.a + d.b + d.c;
+            print(d.a);
+            print(d.b);
+            print(d.c);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 6);  // 1 + 2 + 3
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "1\n2\n3\n");
 }
 
 TEST_CASE("E2E - Struct literal with expressions") {
@@ -337,13 +369,15 @@ TEST_CASE("E2E - Struct literal with expressions") {
         fun main(): i32 {
             var a = 5;
             var p = Point { x = a * 2, y = a + 10 };
-            return p.x + p.y;
+            print(p.x);
+            print(p.y);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 25);  // (5 * 2) + (5 + 10) = 10 + 15
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "10\n15\n");  // 5*2=10, 5+10=15
 }
 
 TEST_CASE("E2E - Struct literal with 64-bit field") {
@@ -353,14 +387,17 @@ TEST_CASE("E2E - Struct literal with 64-bit field") {
             b: i64;
         }
 
-        fun main(): i64 {
+        fun main(): i32 {
             var d = Data { a = 10, b = 100000000000 };
-            return d.a + d.b;
+            print(d.a);
+            print(d.b);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.as_int == 100000000010);  // 10 + 100000000000
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "10\n100000000000\n");
 }
 
 // ============================================================================
@@ -380,13 +417,14 @@ TEST_CASE("E2E - Small struct parameter") {
 
         fun main(): i32 {
             var pt = Point { x = 3, y = 4 };
-            return distance_sq(pt);
+            print(distance_sq(pt));
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 25);  // 3^2 + 4^2 = 9 + 16
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "25\n");  // 3^2 + 4^2 = 9 + 16
 }
 
 TEST_CASE("E2E - Struct parameter value semantics") {
@@ -403,14 +441,15 @@ TEST_CASE("E2E - Struct parameter value semantics") {
 
         fun main(): i32 {
             var pt = Point { x = 5, y = 10 };
-            modify(pt);
-            return pt.x;
+            print(modify(pt));
+            print(pt.x);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 5);  // Should still be 5 (value semantics)
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "100\n5\n");  // modify returns 100, but pt.x is still 5 (value semantics)
 }
 
 TEST_CASE("E2E - Multiple struct parameters") {
@@ -421,19 +460,24 @@ TEST_CASE("E2E - Multiple struct parameters") {
         }
 
         fun add(a: Point, b: Point): i32 {
-            return a.x + b.x + a.y + b.y;
+            print(a.x);
+            print(a.y);
+            print(b.x);
+            print(b.y);
+            return 0;
         }
 
         fun main(): i32 {
             var p1 = Point { x = 1, y = 2 };
             var p2 = Point { x = 10, y = 20 };
-            return add(p1, p2);
+            add(p1, p2);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 33);  // 1 + 10 + 2 + 20
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "1\n2\n10\n20\n");
 }
 
 TEST_CASE("E2E - Mixed struct and primitive parameters") {
@@ -444,18 +488,22 @@ TEST_CASE("E2E - Mixed struct and primitive parameters") {
         }
 
         fun scale(p: Point, factor: i32): i32 {
+            print(p.x);
+            print(p.y);
+            print(factor);
             return (p.x + p.y) * factor;
         }
 
         fun main(): i32 {
             var pt = Point { x = 3, y = 7 };
-            return scale(pt, 5);
+            print(scale(pt, 5));
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 50);  // (3 + 7) * 5
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "3\n7\n5\n50\n");  // p.x, p.y, factor, result
 }
 
 // ============================================================================
@@ -476,13 +524,15 @@ TEST_CASE("E2E - Return small struct") {
 
         fun main(): i32 {
             var pt = make_point(10, 20);
-            return pt.x + pt.y;
+            print(pt.x);
+            print(pt.y);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 30);  // 10 + 20
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "10\n20\n");
 }
 
 TEST_CASE("E2E - Return struct with modification") {
@@ -500,13 +550,15 @@ TEST_CASE("E2E - Return struct with modification") {
         fun main(): i32 {
             var p1 = Point { x = 5, y = 10 };
             var p2 = double_point(p1);
-            return p2.x + p2.y;
+            print(p2.x);
+            print(p2.y);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 30);  // (5*2) + (10*2) = 10 + 20
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "10\n20\n");  // 5*2, 10*2
 }
 
 TEST_CASE("E2E - Chain struct returns") {
@@ -526,13 +578,15 @@ TEST_CASE("E2E - Chain struct returns") {
 
         fun main(): i32 {
             var p = offset(origin(), 5, 10);
-            return p.x + p.y;
+            print(p.x);
+            print(p.y);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 15);  // 5 + 10
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "5\n10\n");
 }
 
 TEST_CASE("E2E - Struct return used in expression") {
@@ -547,13 +601,15 @@ TEST_CASE("E2E - Struct return used in expression") {
         }
 
         fun main(): i32 {
-            return make_point(7, 8).x + make_point(3, 4).y;
+            print(make_point(7, 8).x);
+            print(make_point(3, 4).y);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 11);  // 7 + 4
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "7\n4\n");
 }
 
 // ============================================================================
@@ -576,13 +632,18 @@ TEST_CASE("E2E - Large struct return (>16 bytes)") {
 
         fun main(): i32 {
             var data = make_big(10);
-            return data.a + data.b + data.c + data.d + data.e;
+            print(data.a);
+            print(data.b);
+            print(data.c);
+            print(data.d);
+            print(data.e);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 60);  // 10 + 11 + 12 + 13 + 14
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "10\n11\n12\n13\n14\n");
 }
 
 TEST_CASE("E2E - Large struct return value semantics") {
@@ -600,14 +661,15 @@ TEST_CASE("E2E - Large struct return value semantics") {
 
         fun main(): i32 {
             var data = make_big();
-            modify_big(data);
-            return data.a;
+            print(modify_big(data));
+            print(data.a);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 1);  // Should still be 1 (value semantics)
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "999\n1\n");  // modify_big returns 999, but data.a is still 1
 }
 
 TEST_CASE("E2E - Large struct chained returns") {
@@ -623,13 +685,14 @@ TEST_CASE("E2E - Large struct chained returns") {
         }
 
         fun main(): i32 {
-            return sum_big(make_big(5));
+            print(sum_big(make_big(5)));
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 25);  // 5 * 5
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "25\n");  // 5 * 5
 }
 
 TEST_CASE("E2E - Large struct return with 64-bit field") {
@@ -645,14 +708,19 @@ TEST_CASE("E2E - Large struct return with 64-bit field") {
             return BigData { a = 1, b = 2, c = 100000000000, d = 4 };
         }
 
-        fun main(): i64 {
+        fun main(): i32 {
             var data = make_big();
-            return data.a + data.b + data.c + data.d;
+            print(data.a);
+            print(data.b);
+            print(data.c);
+            print(data.d);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.as_int == 100000000007);  // 1 + 2 + 100000000000 + 4
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "1\n2\n100000000000\n4\n");
 }
 
 TEST_CASE("E2E - Large struct return used in expression") {
@@ -664,13 +732,15 @@ TEST_CASE("E2E - Large struct return used in expression") {
         }
 
         fun main(): i32 {
-            return make_big(2).c + make_big(3).d;
+            print(make_big(2).c);
+            print(make_big(3).d);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 18);  // (2*3) + (3*4) = 6 + 12
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "6\n12\n");  // 2*3=6, 3*4=12
 }
 
 TEST_CASE("E2E - Large struct return chained function calls") {
@@ -693,11 +763,16 @@ TEST_CASE("E2E - Large struct return chained function calls") {
 
         fun main(): i32 {
             var result = add_big(make_big(10), make_big(5));
-            return result.a + result.e;
+            print(result.a);
+            print(result.b);
+            print(result.c);
+            print(result.d);
+            print(result.e);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 30);  // (10+5) + (10+5) = 15 + 15
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "15\n15\n15\n15\n15\n");  // 10+5 for each field
 }

@@ -442,6 +442,47 @@ Key types:
 - Use `TEST_CASE` and `SUBCASE` for test organization
 - Use `CHECK` for assertions, `REQUIRE` for critical checks
 
+### Test Helpers (`tests/e2e/test_helpers.hpp`)
+
+The E2E tests use helper functions for compiling and running Roxy code:
+
+```cpp
+// Compile source to bytecode module
+BCModule* compile(BumpAllocator& allocator, const char* source, bool debug = false);
+
+// Compile and run, returning the result value
+Value compile_and_run(const char* source, StringView func_name, Span<Value> args = {}, bool debug = false);
+
+// Compile and run with stdout capture - preferred for E2E tests
+TestResult run_and_capture(const char* source, StringView func_name, Span<Value> args = {}, bool debug = false);
+```
+
+**TestResult struct:**
+```cpp
+struct TestResult {
+    i64 value;                    // Return value (always integer in Roxy)
+    std::string stdout_output;    // Captured stdout
+    bool success;                 // true if compilation and execution succeeded
+};
+```
+
+**E2E test pattern:** Use `print()` and `print_str()` to output values, then verify with `stdout_output`:
+```cpp
+TEST_CASE("E2E - Example test") {
+    const char* source = R"(
+        fun main(): i32 {
+            print(42);
+            print_str("hello");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "42\nhello\n");
+}
+```
+
 ### Running Tests
 
 ```bash

@@ -1,156 +1,160 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
 
-#include "roxy/vm/vm.hpp"
-#include "roxy/vm/interpreter.hpp"
-
 using namespace rx;
 
 // ============================================================================
 // String Tests
 // ============================================================================
 
-TEST_CASE("E2E - String literal and length") {
+TEST_CASE("E2E - String literal") {
     const char* source = R"(
         fun main(): i32 {
             var s: string = "hello";
-            return str_len(s);
+            print_str(s);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 5);
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "hello\n");
 }
 
 TEST_CASE("E2E - Empty string") {
     const char* source = R"(
         fun main(): i32 {
             var s: string = "";
-            return str_len(s);
+            print_str(s);
+            print_str("done");
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 0);
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "\ndone\n");
+}
+
+TEST_CASE("E2E - String length") {
+    const char* source = R"(
+        fun main(): i32 {
+            print(str_len("hello"));
+            print(str_len(""));
+            print(str_len("hello world"));
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "5\n0\n11\n");
 }
 
 TEST_CASE("E2E - String concatenation with str_concat") {
     const char* source = R"(
         fun main(): i32 {
             var s: string = str_concat("hello", " world");
-            return str_len(s);
+            print_str(s);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 11);  // "hello world" = 11 chars
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "hello world\n");
 }
 
 TEST_CASE("E2E - String concatenation with + operator") {
     const char* source = R"(
         fun main(): i32 {
             var s: string = "hello" + " world";
-            return str_len(s);
+            print_str(s);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 11);  // "hello world" = 11 chars
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "hello world\n");
 }
 
 TEST_CASE("E2E - Multiple string concatenations") {
     const char* source = R"(
         fun main(): i32 {
             var s: string = "a" + "b" + "c" + "d";
-            return str_len(s);
+            print_str(s);
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 4);  // "abcd" = 4 chars
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "abcd\n");
 }
 
-TEST_CASE("E2E - String equality - same strings") {
+TEST_CASE("E2E - String equality") {
     const char* source = R"(
-        fun main(): bool {
-            return "abc" == "abc";
+        fun bool_to_str(b: bool): string {
+            if (b) { return "true"; }
+            return "false";
         }
-    )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    // VM returns booleans as integers (0 or 1) due to untyped registers
-    CHECK(result.is_int());
-    CHECK(result.as_int == 1);  // true
-}
-
-TEST_CASE("E2E - String equality - different strings") {
-    const char* source = R"(
-        fun main(): bool {
-            return "abc" == "def";
-        }
-    )";
-
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 0);  // false
-}
-
-TEST_CASE("E2E - String equality with variables") {
-    const char* source = R"(
-        fun main(): bool {
+        fun main(): i32 {
+            // Same strings
+            print_str(bool_to_str("abc" == "abc"));
+            // Different strings
+            print_str(bool_to_str("abc" == "def"));
+            // With variables
             var a: string = "hello";
             var b: string = "hello";
-            return a == b;
+            print_str(bool_to_str(a == b));
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 1);  // true
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "true\nfalse\ntrue\n");
 }
 
 TEST_CASE("E2E - String inequality") {
     const char* source = R"(
-        fun main(): bool {
-            return "abc" != "def";
+        fun bool_to_str(b: bool): string {
+            if (b) { return "true"; }
+            return "false";
+        }
+
+        fun main(): i32 {
+            // Different strings
+            print_str(bool_to_str("abc" != "def"));
+            // Same strings
+            print_str(bool_to_str("abc" != "abc"));
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 1);  // true
-}
-
-TEST_CASE("E2E - String inequality - same strings") {
-    const char* source = R"(
-        fun main(): bool {
-            return "abc" != "abc";
-        }
-    )";
-
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 0);  // false
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "true\nfalse\n");
 }
 
 TEST_CASE("E2E - String as function parameter") {
     const char* source = R"(
-        fun get_len(s: string): i32 {
-            return str_len(s);
+        fun print_greeting(name: string) {
+            print_str("Hello, ");
+            print_str(name);
         }
+
         fun main(): i32 {
-            return get_len("test");
+            print_greeting("World");
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 4);
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "Hello, \nWorld\n");
 }
 
 TEST_CASE("E2E - String as return value") {
@@ -158,14 +162,16 @@ TEST_CASE("E2E - String as return value") {
         fun make_greeting(): string {
             return "hello";
         }
+
         fun main(): i32 {
-            return str_len(make_greeting());
+            print_str(make_greeting());
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 5);
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "hello\n");
 }
 
 TEST_CASE("E2E - String concatenation in function") {
@@ -173,116 +179,122 @@ TEST_CASE("E2E - String concatenation in function") {
         fun greet(name: string): string {
             return "Hello, " + name + "!";
         }
+
         fun main(): i32 {
-            return str_len(greet("World"));
+            print_str(greet("World"));
+            print_str(greet("Roxy"));
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 13);  // "Hello, World!" = 13 chars
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "Hello, World!\nHello, Roxy!\n");
 }
 
 TEST_CASE("E2E - String comparison in if statement") {
     const char* source = R"(
-        fun check(s: string): i32 {
+        fun check(s: string): string {
             if (s == "yes") {
-                return 1;
+                return "accepted";
             } else {
-                return 0;
+                return "rejected";
             }
         }
+
         fun main(): i32 {
-            return check("yes") + check("no") * 10;
+            print_str(check("yes"));
+            print_str(check("no"));
+            print_str(check("maybe"));
+            return 0;
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 1);  // check("yes") = 1, check("no") = 0, so 1 + 0*10 = 1
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "accepted\nrejected\nrejected\n");
 }
 
 TEST_CASE("E2E - String variable reassignment") {
     const char* source = R"(
         fun main(): i32 {
             var s: string = "short";
+            print_str(s);
             s = "much longer string";
-            return str_len(s);
-        }
-    )";
-
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 18);  // "much longer string" = 18 chars
-}
-
-TEST_CASE("E2E - String equality after concatenation") {
-    const char* source = R"(
-        fun main(): bool {
-            var a: string = "hel" + "lo";
-            var b: string = "hello";
-            return a == b;
-        }
-    )";
-
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 1);  // true
-}
-
-TEST_CASE("E2E - print_str function with output capture") {
-    const char* source = R"(
-        fun main(): i32 {
-            print_str("Hello, World!");
-            return 42;
+            print_str(s);
+            return 0;
         }
     )";
 
     TestResult result = run_and_capture(source, StringView("main"));
     CHECK(result.success);
-    CHECK(result.value == 42);
-    CHECK(result.stdout_output == "Hello, World!\n");
+    CHECK(result.stdout_output == "short\nmuch longer string\n");
+}
+
+TEST_CASE("E2E - String equality after concatenation") {
+    const char* source = R"(
+        fun bool_to_str(b: bool): string {
+            if (b) { return "true"; }
+            return "false";
+        }
+
+        fun main(): i32 {
+            var a: string = "hel" + "lo";
+            var b: string = "hello";
+            print_str(bool_to_str(a == b));
+            print_str(a);
+            print_str(b);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "true\nhello\nhello\n");
 }
 
 TEST_CASE("E2E - String with special characters") {
     const char* source = R"(
         fun main(): i32 {
             var s: string = "hello\nworld";
-            return str_len(s);
-        }
-    )";
-
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 11);  // "hello\nworld" = 11 chars (including newline)
-}
-
-TEST_CASE("E2E - Multiple print_str calls with output capture") {
-    const char* source = R"(
-        fun main(): i32 {
-            print_str("Line 1");
-            print_str("Line 2");
-            print_str("Line 3");
+            print_str(s);
             return 0;
         }
     )";
 
     TestResult result = run_and_capture(source, StringView("main"));
     CHECK(result.success);
-    CHECK(result.stdout_output == "Line 1\nLine 2\nLine 3\n");
+    CHECK(result.stdout_output == "hello\nworld\n");
 }
 
-TEST_CASE("E2E - Mixed print and print_str with output capture") {
+TEST_CASE("E2E - Mixed print and print_str") {
     const char* source = R"(
         fun main(): i32 {
             print(42);
             print_str("hello");
             print(123);
+            print_str("world");
             return 0;
         }
     )";
 
     TestResult result = run_and_capture(source, StringView("main"));
     CHECK(result.success);
-    CHECK(result.stdout_output == "42\nhello\n123\n");
+    CHECK(result.stdout_output == "42\nhello\n123\nworld\n");
+}
+
+TEST_CASE("E2E - String in loop") {
+    const char* source = R"(
+        fun main(): i32 {
+            for (var i: i32 = 0; i < 3; i = i + 1) {
+                print_str("iteration");
+                print(i);
+            }
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "iteration\n0\niteration\n1\niteration\n2\n");
 }
