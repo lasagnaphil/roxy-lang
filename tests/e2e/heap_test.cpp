@@ -369,3 +369,59 @@ TEST_CASE("E2E - Delete null pointer is safe") {
     CHECK(result.success);
     CHECK(result.stdout_output == "42\n");
 }
+
+// ============================================================================
+// Borrow Violation Tests
+// ============================================================================
+
+TEST_CASE("E2E - Compile error: delete through ref") {
+    // Semantic analysis should reject delete on ref types
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun bad_delete(p: ref Point): i32 {
+            delete p;  // ERROR: can't delete through ref
+            return 0;
+        }
+
+        fun main(): i32 {
+            return 0;
+        }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail to compile
+}
+
+TEST_CASE("E2E - Runtime error: delete with active borrow") {
+    // Delete should fail at runtime when ref_count > 0
+    // Pass same object as both ref (creates borrow) and uniq (for delete)
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun try_delete_while_borrowed(borrowed: ref Point, owner: uniq Point): i32 {
+            // borrowed has incremented ref_count to 1
+            // Attempting to delete through owner should fail
+            delete owner;
+            return borrowed.x;  // Would be use-after-free if delete succeeded
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = new Point();
+            p.x = 42;
+            var result: i32 = try_delete_while_borrowed(p, p);
+            print(result);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success == false);  // Should fail - can't delete with active borrow
+}
