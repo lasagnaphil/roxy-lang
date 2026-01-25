@@ -162,6 +162,7 @@ Slab* SlabAllocator::find_or_create_slab(u32 class_idx) {
     slab->slot_count = static_cast<u32>(slab_size / slot_size);
     slab->free_head = 0;
     slab->live_count = 0;
+    slab->remapped = false;
 
     // Initialize slot states and free list
     slab->states.resize(slab->slot_count);
@@ -330,6 +331,30 @@ bool SlabAllocator::owns(void* ptr) const {
 
     // Check large objects
     return large_objects.find(ptr) != large_objects.end();
+}
+
+u32 SlabAllocator::reclaim_tombstoned() {
+    u32 total_reclaimed = 0;
+
+    for (u32 i = 0; i < NUM_SIZE_CLASSES; i++) {
+        for (Slab* slab : size_classes[i]) {
+            // Skip already reclaimed slabs
+            if (slab->remapped) {
+                continue;
+            }
+
+            // Check if all slots are tombstoned
+            if (slab->all_tombstoned()) {
+                // Remap the slab memory to zeros, releasing physical memory
+                u64 slab_size = static_cast<u64>(slab->page_count) * m_page_size;
+                VirtualMemoryOps::remap_to_zero(slab->base_addr, slab_size);
+                slab->remapped = true;
+                total_reclaimed += slab->page_count;
+            }
+        }
+    }
+
+    return total_reclaimed;
 }
 
 }

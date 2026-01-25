@@ -86,6 +86,27 @@ When an object is freed, it becomes a "tombstone":
 
 This allows weak references to safely detect invalidation without crashes.
 
+### Slab Reclamation
+
+Over time, tombstoned slots accumulate and consume physical memory. The allocator provides a reclamation mechanism to release physical memory from fully tombstoned slabs:
+
+```cpp
+// Scan all slabs and reclaim fully tombstoned ones
+// Returns number of pages reclaimed
+u32 reclaim_tombstoned();
+```
+
+A slab is reclaimable when:
+- All slots have been allocated at some point (no free slots remaining)
+- All allocated objects have been freed (all slots are tombstoned)
+
+Reclamation calls `remap_to_zero()` on the slab, which:
+- Releases physical memory back to the OS
+- Keeps virtual addresses mapped for safe weak reference reads
+- Marks the slab as `remapped` to avoid redundant reclamation
+
+The `remapped` flag ensures idempotency - calling `reclaim_tombstoned()` multiple times is safe and efficient.
+
 ## Random Generational References
 
 Weak references use 64-bit random generations (Vale-style) for validation:

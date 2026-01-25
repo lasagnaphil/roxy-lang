@@ -704,6 +704,206 @@ TEST_CASE("Stress - ObjectHeader integrity under allocation pressure") {
     vm_destroy(&vm);
 }
 
+// ============================================================================
+// Slab Reclamation Tests
+// ============================================================================
+
+TEST_CASE("Unit - SlabAllocator reclaim_tombstoned basic") {
+    SlabAllocator allocator;
+    REQUIRE(allocator.init());
+
+    // Allocate enough objects to COMPLETELY fill at least one slab
+    // For 32-byte size class with 4KB pages: 4096/32 = 128 slots per slab
+    // We allocate 150 to ensure at least one slab is completely filled
+    constexpr u32 NUM_OBJECTS = 150;
+    struct AllocInfo {
+        void* ptr;
+        u64 gen;
+    };
+    std::vector<AllocInfo> allocs(NUM_OBJECTS);
+
+    for (u32 i = 0; i < NUM_OBJECTS; i++) {
+        allocs[i].ptr = allocator.alloc(32, &allocs[i].gen);
+        REQUIRE(allocs[i].ptr != nullptr);
+    }
+
+    // Free all objects (they become tombstoned)
+    for (u32 i = 0; i < NUM_OBJECTS; i++) {
+        allocator.free(allocs[i].ptr);
+    }
+
+    // Reclaim tombstoned slabs - should reclaim at least the fully-filled first slab
+    u32 pages_reclaimed = allocator.reclaim_tombstoned();
+    CHECK(pages_reclaimed > 0);
+
+    // Calling reclaim again should return 0 (already reclaimed)
+    u32 pages_reclaimed_again = allocator.reclaim_tombstoned();
+    CHECK(pages_reclaimed_again == 0);
+
+    allocator.shutdown();
+}
+
+TEST_CASE("Unit - SlabAllocator reclaim_tombstoned with live objects") {
+    SlabAllocator allocator;
+    REQUIRE(allocator.init());
+
+    // Allocate enough to fill multiple slabs (128 slots per slab for 32-byte class)
+    constexpr u32 NUM_OBJECTS = 300;
+    struct AllocInfo {
+        void* ptr;
+        u64 gen;
+    };
+    std::vector<AllocInfo> allocs(NUM_OBJECTS);
+
+    for (u32 i = 0; i < NUM_OBJECTS; i++) {
+        allocs[i].ptr = allocator.alloc(32, &allocs[i].gen);
+        REQUIRE(allocs[i].ptr != nullptr);
+    }
+
+    // Free only the first 128 objects (first slab completely)
+    // Keep some alive in subsequent slabs
+    for (u32 i = 0; i < 128; i++) {
+        allocator.free(allocs[i].ptr);
+        allocs[i].ptr = nullptr;
+    }
+
+    // Reclaim should succeed for the first slab (all tombstoned)
+    u32 pages_reclaimed = allocator.reclaim_tombstoned();
+    CHECK(pages_reclaimed > 0);
+
+    // Verify live objects are still accessible
+    for (u32 i = 128; i < NUM_OBJECTS; i++) {
+        CHECK(allocs[i].ptr != nullptr);
+        // Write and read to verify memory is still valid
+        *static_cast<u32*>(allocs[i].ptr) = 0xDEADBEEF;
+        CHECK(*static_cast<u32*>(allocs[i].ptr) == 0xDEADBEEF);
+    }
+
+    // Free remaining objects
+    for (u32 i = 128; i < NUM_OBJECTS; i++) {
+        allocator.free(allocs[i].ptr);
+    }
+
+    // Now reclaim should reclaim more slabs
+    u32 more_reclaimed = allocator.reclaim_tombstoned();
+    CHECK(more_reclaimed > 0);
+
+    allocator.shutdown();
+}
+
+TEST_CASE("Unit - SlabAllocator reclaim_tombstoned idempotency") {
+    SlabAllocator allocator;
+    REQUIRE(allocator.init());
+
+    // Allocate enough to fill at least one slab completely
+    constexpr u32 NUM_OBJECTS = 150;
+    std::vector<void*> ptrs(NUM_OBJECTS);
+    u64 gen;
+
+    for (u32 i = 0; i < NUM_OBJECTS; i++) {
+        ptrs[i] = allocator.alloc(32, &gen);
+        REQUIRE(ptrs[i] != nullptr);
+    }
+
+    // Free all
+    for (u32 i = 0; i < NUM_OBJECTS; i++) {
+        allocator.free(ptrs[i]);
+    }
+
+    // Reclaim multiple times - should be safe
+    u32 pages1 = allocator.reclaim_tombstoned();
+    u32 pages2 = allocator.reclaim_tombstoned();
+    u32 pages3 = allocator.reclaim_tombstoned();
+
+    CHECK(pages1 > 0);
+    CHECK(pages2 == 0);
+    CHECK(pages3 == 0);
+
+    allocator.shutdown();
+}
+
+TEST_CASE("Unit - SlabAllocator reclaim_tombstoned memory still readable") {
+    SlabAllocator allocator;
+    REQUIRE(allocator.init());
+
+    // Allocate exactly 128 objects to fill one slab completely
+    // (128 slots per slab for 32-byte class with 4KB pages)
+    constexpr u32 NUM_OBJECTS = 128;
+    std::vector<void*> ptrs(NUM_OBJECTS);
+    u64 gen;
+
+    for (u32 i = 0; i < NUM_OBJECTS; i++) {
+        ptrs[i] = allocator.alloc(32, &gen);
+        REQUIRE(ptrs[i] != nullptr);
+        // Write non-zero data
+        std::memset(ptrs[i], 0xAB, 32);
+    }
+
+    // Free all
+    for (u32 i = 0; i < NUM_OBJECTS; i++) {
+        allocator.free(ptrs[i]);
+    }
+
+    // Reclaim tombstoned slabs
+    u32 pages_reclaimed = allocator.reclaim_tombstoned();
+    CHECK(pages_reclaimed > 0);
+
+    // After reclamation, memory should still be readable (for weak ref safety)
+    // The actual content depends on platform - Windows MEM_RESET may or may not
+    // zero memory immediately, but reading should not crash
+    u64 sum = 0;
+    for (u32 i = 0; i < NUM_OBJECTS; i++) {
+        u8* bytes = static_cast<u8*>(ptrs[i]);
+        for (u32 j = 0; j < 32; j++) {
+            sum += bytes[j];  // Just read the memory to verify it's accessible
+        }
+    }
+    // The sum will be something - we just want to verify no crash
+    (void)sum;
+
+    allocator.shutdown();
+}
+
+TEST_CASE("Unit - SlabAllocator reclaim_tombstoned multiple size classes") {
+    SlabAllocator allocator;
+    REQUIRE(allocator.init());
+
+    // Allocate objects in multiple size classes
+    // Each slab has 4KB / slot_size slots. We need to fill at least one slab per class.
+    // 32-byte: 128 slots, 64-byte: 64 slots, 128-byte: 32 slots, 256-byte: 16 slots
+    constexpr u32 SIZE_CLASSES[] = {32, 64, 128, 256};
+    constexpr u32 NUM_CLASSES = sizeof(SIZE_CLASSES) / sizeof(SIZE_CLASSES[0]);
+    constexpr u32 OBJECTS_PER_CLASS = 150;  // Enough to fill at least one slab for all classes
+
+    std::vector<std::vector<void*>> allocs(NUM_CLASSES);
+    u64 gen;
+
+    for (u32 c = 0; c < NUM_CLASSES; c++) {
+        allocs[c].resize(OBJECTS_PER_CLASS);
+        for (u32 i = 0; i < OBJECTS_PER_CLASS; i++) {
+            allocs[c][i] = allocator.alloc(SIZE_CLASSES[c], &gen);
+            REQUIRE(allocs[c][i] != nullptr);
+        }
+    }
+
+    // Free all objects in all size classes
+    for (u32 c = 0; c < NUM_CLASSES; c++) {
+        for (u32 i = 0; i < OBJECTS_PER_CLASS; i++) {
+            allocator.free(allocs[c][i]);
+        }
+    }
+
+    // Reclaim should reclaim slabs from all size classes
+    u32 pages_reclaimed = allocator.reclaim_tombstoned();
+    CHECK(pages_reclaimed > 0);
+
+    // Second call should return 0
+    u32 pages_again = allocator.reclaim_tombstoned();
+    CHECK(pages_again == 0);
+
+    allocator.shutdown();
+}
+
 TEST_CASE("Stress - Concurrent-like access pattern simulation") {
     // Simulate what might happen with multiple "threads" (sequentially)
     // Each "thread" has its own set of objects it manages

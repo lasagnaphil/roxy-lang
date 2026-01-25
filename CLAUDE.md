@@ -437,6 +437,7 @@ Custom slab allocator for heap objects with Vale-style random generational refer
 - **Size classes**: 8 classes (32B to 4KB) plus large object support
 - **Virtual memory**: Platform-specific `VirtualMemoryOps` for reserve/commit/decommit
 - **Tombstoning**: Freed objects keep memory mapped, zeroed for safe weak ref checks
+- **Slab reclamation**: `reclaim_tombstoned()` releases physical memory from fully tombstoned slabs
 - **64-bit random generations**: xorshift128+ PRNG for weak reference validation
 - **No generation reuse**: Random generations prevent wrap-around attacks
 

@@ -37,6 +37,7 @@ struct Slab {
     u32 slot_count;             // Total slots in slab
     u32 free_head;              // Index of first free slot (free list, 0xFFFFFFFF = empty)
     u32 live_count;             // Number of ALIVE objects
+    bool remapped;              // True if slab has been remapped to zeros (reclaimed)
     Vector<SlotState> states;   // Per-slot state
 
     // Get pointer to a specific slot
@@ -97,6 +98,11 @@ struct SlabAllocator {
 
     // Check if a pointer was allocated by this allocator
     bool owns(void* ptr) const;
+
+    // Scan all slabs and reclaim fully tombstoned ones
+    // Calls remap_to_zero() on slabs where all slots are tombstoned
+    // Returns number of pages reclaimed
+    u32 reclaim_tombstoned();
 
 private:
     // Get size class index for a given size, or NUM_SIZE_CLASSES if too large
