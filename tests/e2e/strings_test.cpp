@@ -230,7 +230,7 @@ TEST_CASE("E2E - String equality after concatenation") {
     CHECK(result.as_int == 1);  // true
 }
 
-TEST_CASE("E2E - print_str function") {
+TEST_CASE("E2E - print_str function with output capture") {
     const char* source = R"(
         fun main(): i32 {
             print_str("Hello, World!");
@@ -238,10 +238,10 @@ TEST_CASE("E2E - print_str function") {
         }
     )";
 
-    // This test mainly checks that print_str doesn't crash
-    Value result = compile_and_run(source, StringView("main"));
-    CHECK(result.is_int());
-    CHECK(result.as_int == 42);
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.value == 42);
+    CHECK(result.stdout_output == "Hello, World!\n");
 }
 
 TEST_CASE("E2E - String with special characters") {
@@ -255,4 +255,34 @@ TEST_CASE("E2E - String with special characters") {
     Value result = compile_and_run(source, StringView("main"));
     CHECK(result.is_int());
     CHECK(result.as_int == 11);  // "hello\nworld" = 11 chars (including newline)
+}
+
+TEST_CASE("E2E - Multiple print_str calls with output capture") {
+    const char* source = R"(
+        fun main(): i32 {
+            print_str("Line 1");
+            print_str("Line 2");
+            print_str("Line 3");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "Line 1\nLine 2\nLine 3\n");
+}
+
+TEST_CASE("E2E - Mixed print and print_str with output capture") {
+    const char* source = R"(
+        fun main(): i32 {
+            print(42);
+            print_str("hello");
+            print(123);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, StringView("main"));
+    CHECK(result.success);
+    CHECK(result.stdout_output == "42\nhello\n123\n");
 }
