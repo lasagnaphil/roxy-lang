@@ -377,10 +377,10 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::NegF:
         case IROp::BitNot:
         case IROp::Not:
-        case IROp::I2F:
-        case IROp::F2I:
-        case IROp::I2B:
-        case IROp::B2I: {
+        case IROp::I_TO_F64:
+        case IROp::F64_TO_I:
+        case IROp::I_TO_B:
+        case IROp::B_TO_I: {
             u8 src = get_register(inst->unary);
             emit_abc(get_opcode(inst->op), dst, src, 0);
             break;
@@ -738,6 +738,15 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             }
             break;
         }
+
+        case IROp::Cast: {
+            u8 src = get_register(inst->cast.source);
+            Type* source_type = inst->cast.source_type;
+            Type* target_type = inst->type;
+
+            emit_cast_bytecode(dst, src, source_type, target_type);
+            break;
+        }
     }
 }
 
@@ -919,13 +928,155 @@ Opcode BytecodeBuilder::get_opcode(IROp op) const {
         case IROp::BitNot:  return Opcode::BIT_NOT;
 
         // Type conversions
-        case IROp::I2F:     return Opcode::I2F;
-        case IROp::F2I:     return Opcode::F2I;
-        case IROp::I2B:     return Opcode::I2B;
-        case IROp::B2I:     return Opcode::B2I;
+        case IROp::I_TO_F64:  return Opcode::I_TO_F64;
+        case IROp::F64_TO_I:  return Opcode::F64_TO_I;
+        case IROp::I_TO_B:    return Opcode::I_TO_B;
+        case IROp::B_TO_I:    return Opcode::B_TO_I;
 
         default:
             return Opcode::NOP;
+    }
+}
+
+// Helper to get bit width of an integer type
+static u8 get_int_bits(TypeKind kind) {
+    switch (kind) {
+        case TypeKind::I8:  case TypeKind::U8:  return 8;
+        case TypeKind::I16: case TypeKind::U16: return 16;
+        case TypeKind::I32: case TypeKind::U32: return 32;
+        case TypeKind::I64: case TypeKind::U64: return 64;
+        default: return 64;  // Default to 64-bit
+    }
+}
+
+static bool is_signed_type(TypeKind kind) {
+    return kind == TypeKind::I8 || kind == TypeKind::I16 ||
+           kind == TypeKind::I32 || kind == TypeKind::I64;
+}
+
+void BytecodeBuilder::emit_cast_bytecode(u8 dst, u8 src, Type* source_type, Type* target_type) {
+    if (!source_type || !target_type) {
+        emit_abc(Opcode::MOV, dst, src, 0);
+        return;
+    }
+
+    TypeKind src_kind = source_type->kind;
+    TypeKind tgt_kind = target_type->kind;
+
+    // Same type: just MOV
+    if (src_kind == tgt_kind) {
+        if (dst != src) {
+            emit_abc(Opcode::MOV, dst, src, 0);
+        }
+        return;
+    }
+
+    // Any type to bool: use I_TO_B (normalizes to 0/1)
+    if (tgt_kind == TypeKind::Bool) {
+        emit_abc(Opcode::I_TO_B, dst, src, 0);
+        return;
+    }
+
+    // Bool to anything: MOV is sufficient since bool is already 0/1
+    if (src_kind == TypeKind::Bool) {
+        // Bool to integer: just MOV (already 0 or 1)
+        if (target_type->is_integer()) {
+            if (dst != src) {
+                emit_abc(Opcode::MOV, dst, src, 0);
+            }
+            return;
+        }
+        // Bool to f64
+        if (tgt_kind == TypeKind::F64) {
+            emit_abc(Opcode::I_TO_F64, dst, src, 0);
+            return;
+        }
+        // Bool to f32
+        if (tgt_kind == TypeKind::F32) {
+            emit_abc(Opcode::I_TO_F32, dst, src, 0);
+            return;
+        }
+    }
+
+    // Float conversions
+    if (source_type->is_float() && target_type->is_float()) {
+        if (src_kind == TypeKind::F32 && tgt_kind == TypeKind::F64) {
+            emit_abc(Opcode::F32_TO_F64, dst, src, 0);
+        } else {
+            emit_abc(Opcode::F64_TO_F32, dst, src, 0);
+        }
+        return;
+    }
+
+    // Integer to float
+    if (source_type->is_integer() && target_type->is_float()) {
+        if (tgt_kind == TypeKind::F64) {
+            emit_abc(Opcode::I_TO_F64, dst, src, 0);
+        } else {
+            emit_abc(Opcode::I_TO_F32, dst, src, 0);
+        }
+        return;
+    }
+
+    // Float to integer
+    if (source_type->is_float() && target_type->is_integer()) {
+        u8 temp = dst;
+        if (src_kind == TypeKind::F32) {
+            emit_abc(Opcode::F32_TO_I, temp, src, 0);
+        } else {
+            emit_abc(Opcode::F64_TO_I, temp, src, 0);
+        }
+        // If target is smaller than i64, truncate
+        u8 tgt_bits = get_int_bits(tgt_kind);
+        if (tgt_bits < 64) {
+            if (is_signed_type(tgt_kind)) {
+                emit_abc(Opcode::TRUNC_S, dst, temp, tgt_bits);
+            } else {
+                emit_abc(Opcode::TRUNC_U, dst, temp, tgt_bits);
+            }
+        } else if (dst != temp) {
+            emit_abc(Opcode::MOV, dst, temp, 0);
+        }
+        return;
+    }
+
+    // Integer to integer
+    if (source_type->is_integer() && target_type->is_integer()) {
+        u8 src_bits = get_int_bits(src_kind);
+        u8 tgt_bits = get_int_bits(tgt_kind);
+
+        if (tgt_bits < src_bits) {
+            // Narrowing: truncate
+            if (is_signed_type(tgt_kind)) {
+                emit_abc(Opcode::TRUNC_S, dst, src, tgt_bits);
+            } else {
+                emit_abc(Opcode::TRUNC_U, dst, src, tgt_bits);
+            }
+        } else if (tgt_bits > src_bits) {
+            // Widening: value is already properly represented in 64-bit register
+            // Just need to potentially sign-extend from the source width
+            if (is_signed_type(src_kind)) {
+                // Source is signed, need to sign-extend from src_bits to full 64-bit
+                // The TRUNC_S op will sign-extend from the specified bit width
+                emit_abc(Opcode::TRUNC_S, dst, src, src_bits);
+            } else {
+                // Source is unsigned, value is already zero-extended
+                if (dst != src) {
+                    emit_abc(Opcode::MOV, dst, src, 0);
+                }
+            }
+        } else {
+            // Same bit width, different signedness: just MOV
+            if (dst != src) {
+                emit_abc(Opcode::MOV, dst, src, 0);
+            }
+        }
+        return;
+    }
+
+    // Fallback: just MOV
+    if (dst != src) {
+        emit_abc(Opcode::MOV, dst, src, 0);
     }
 }
 

@@ -97,7 +97,11 @@ private:
     Type* analyze_binary_expr(Expr* expr);
     Type* analyze_ternary_expr(Expr* expr);
     Type* analyze_call_expr(Expr* expr);
+    Type* analyze_primitive_cast(Expr* expr, Type* target_type);
     Type* analyze_constructor_call(Expr* expr, Type* struct_type, StringView ctor_name, bool is_heap);
+
+    // Cast checking helper
+    bool can_cast(Type* source, Type* target);
     Type* analyze_index_expr(Expr* expr);
     Type* analyze_get_expr(Expr* expr);
     Type* analyze_static_get_expr(Expr* expr);

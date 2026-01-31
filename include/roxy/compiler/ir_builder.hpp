@@ -105,6 +105,7 @@ private:
     ValueId gen_binary_expr(Expr* expr);
     ValueId gen_ternary_expr(Expr* expr);
     ValueId gen_call_expr(Expr* expr);
+    ValueId gen_primitive_cast(Expr* expr);
     ValueId gen_constructor_call(Expr* expr);
     ValueId gen_super_call(Expr* expr);  // Handle super() and super.method() calls
     ValueId gen_index_expr(Expr* expr);

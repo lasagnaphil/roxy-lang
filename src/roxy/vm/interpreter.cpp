@@ -259,21 +259,84 @@ bool interpret(RoxyVM* vm) {
                 break;
 
             // Type Conversions
-            case Opcode::I2F:
+            case Opcode::I_TO_F64:
                 regs[a] = reg_from_f64(static_cast<f64>(reg_as_i64(regs[b])));
                 break;
 
-            case Opcode::F2I:
+            case Opcode::F64_TO_I:
                 regs[a] = reg_from_i64(static_cast<i64>(reg_as_f64(regs[b])));
                 break;
 
-            case Opcode::I2B:
+            case Opcode::I_TO_B:
                 regs[a] = reg_from_bool(reg_as_i64(regs[b]) != 0);
                 break;
 
-            case Opcode::B2I:
+            case Opcode::B_TO_I:
                 regs[a] = reg_is_truthy(regs[b]) ? 1 : 0;
                 break;
+
+            case Opcode::TRUNC_S: {
+                // Format: [TRUNC_S][dst][src][bits]
+                u8 bits = c;  // 8, 16, or 32
+                i64 val = reg_as_i64(regs[b]);
+                switch (bits) {
+                    case 8:  regs[a] = static_cast<u64>(static_cast<i64>(static_cast<i8>(val))); break;
+                    case 16: regs[a] = static_cast<u64>(static_cast<i64>(static_cast<i16>(val))); break;
+                    case 32: regs[a] = static_cast<u64>(static_cast<i64>(static_cast<i32>(val))); break;
+                    default: regs[a] = regs[b]; break;
+                }
+                break;
+            }
+
+            case Opcode::TRUNC_U: {
+                u8 bits = c;
+                u64 val = regs[b];
+                switch (bits) {
+                    case 8:  regs[a] = val & 0xFF; break;
+                    case 16: regs[a] = val & 0xFFFF; break;
+                    case 32: regs[a] = val & 0xFFFFFFFF; break;
+                    default: regs[a] = val; break;
+                }
+                break;
+            }
+
+            case Opcode::F32_TO_F64: {
+                // Convert f32 (stored in lower 32 bits) to f64
+                f32 fval;
+                u32 bits32 = static_cast<u32>(regs[b]);
+                memcpy(&fval, &bits32, sizeof(fval));
+                regs[a] = reg_from_f64(static_cast<f64>(fval));
+                break;
+            }
+
+            case Opcode::F64_TO_F32: {
+                // Convert f64 to f32 (stored in lower 32 bits)
+                f64 fval = reg_as_f64(regs[b]);
+                f32 result = static_cast<f32>(fval);
+                u32 bits32;
+                memcpy(&bits32, &result, sizeof(bits32));
+                regs[a] = static_cast<u64>(bits32);
+                break;
+            }
+
+            case Opcode::I_TO_F32: {
+                // Convert integer to f32 (stored in lower 32 bits)
+                i64 ival = reg_as_i64(regs[b]);
+                f32 result = static_cast<f32>(ival);
+                u32 bits32;
+                memcpy(&bits32, &result, sizeof(bits32));
+                regs[a] = static_cast<u64>(bits32);
+                break;
+            }
+
+            case Opcode::F32_TO_I: {
+                // Convert f32 (stored in lower 32 bits) to i64
+                f32 fval;
+                u32 bits32 = static_cast<u32>(regs[b]);
+                memcpy(&fval, &bits32, sizeof(fval));
+                regs[a] = static_cast<u64>(static_cast<i64>(fval));
+                break;
+            }
 
             // Control Flow
             case Opcode::JMP:

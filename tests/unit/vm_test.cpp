@@ -365,7 +365,7 @@ TEST_CASE("Execute type conversions") {
         func->name = "i2f";
         func->param_count = 1;
         func->register_count = 2;
-        func->code.push_back(encode_abc(Opcode::I2F, 1, 0, 0));
+        func->code.push_back(encode_abc(Opcode::I_TO_F64, 1, 0, 0));
         func->code.push_back(encode_abc(Opcode::RET, 1, 0, 0));
         module->functions.push_back(func);
 
@@ -385,7 +385,7 @@ TEST_CASE("Execute type conversions") {
         func->name = "f2i";
         func->param_count = 1;
         func->register_count = 2;
-        func->code.push_back(encode_abc(Opcode::F2I, 1, 0, 0));
+        func->code.push_back(encode_abc(Opcode::F64_TO_I, 1, 0, 0));
         func->code.push_back(encode_abc(Opcode::RET, 1, 0, 0));
         module->functions.push_back(func);
 

@@ -1352,6 +1352,13 @@ ValueId IRBuilder::gen_ternary_expr(Expr* expr) {
 ValueId IRBuilder::gen_call_expr(Expr* expr) {
     CallExpr& ce = expr->call;
 
+    // Check if this is a primitive type cast (set by semantic analysis)
+    if (ce.callee->kind == AstKind::ExprIdentifier &&
+        ce.callee->resolved_type && ce.callee->resolved_type->is_primitive() &&
+        !ce.callee->resolved_type->is_void()) {
+        return gen_primitive_cast(expr);
+    }
+
     // Check if this is a constructor call - callee has a struct type (set by semantic analysis)
     if (ce.callee->kind == AstKind::ExprIdentifier &&
         ce.callee->resolved_type && ce.callee->resolved_type->is_struct()) {
@@ -1690,6 +1697,28 @@ ValueId IRBuilder::gen_grouping_expr(Expr* expr) {
 ValueId IRBuilder::gen_this_expr(Expr* expr) {
     // 'self' is the first parameter in methods
     return lookup_local("self");
+}
+
+ValueId IRBuilder::gen_primitive_cast(Expr* expr) {
+    CallExpr& ce = expr->call;
+
+    // Get target type from callee (set by semantic analysis)
+    Type* target_type = ce.callee->resolved_type;
+
+    // Get source value and type
+    ValueId source = gen_expr(ce.arguments[0].expr);
+    Type* source_type = ce.arguments[0].expr->resolved_type;
+
+    // If same type, no-op
+    if (source_type == target_type) {
+        return source;
+    }
+
+    // Emit Cast instruction
+    IRInst* inst = emit_inst(IROp::Cast, target_type);
+    inst->cast.source = source;
+    inst->cast.source_type = source_type;
+    return inst->result;
 }
 
 ValueId IRBuilder::gen_constructor_call(Expr* expr) {

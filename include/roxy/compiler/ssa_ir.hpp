@@ -89,10 +89,10 @@ enum class IROp : u8 {
     BitNot,
 
     // Type conversions
-    I2F,            // int to float
-    F2I,            // float to int
-    I2B,            // int to bool
-    B2I,            // bool to int
+    I_TO_F64,       // int to f64
+    F64_TO_I,       // f64 to int
+    I_TO_B,         // int to bool
+    B_TO_I,         // bool to int
 
     // Memory operations
     StackAlloc,     // allocate slots on local stack, returns pointer
@@ -129,6 +129,9 @@ enum class IROp : u8 {
     LoadPtr,        // Load value through pointer: dst = *ptr
     StorePtr,       // Store value through pointer: *ptr = val
     VarAddr,        // Get address of local variable
+
+    // Type casting
+    Cast,           // Generic cast - uses source_type in CastData
 };
 
 // Constant data for ConstXxx instructions
@@ -207,6 +210,12 @@ struct VarAddrData {
     StringView name;  // Name of the local variable
 };
 
+// Cast data
+struct CastData {
+    ValueId source;
+    Type* source_type;  // Source type for determining conversion strategy
+};
+
 // IR Instruction - represents a single operation that produces a value
 struct IRInst {
     IROp op;
@@ -231,6 +240,7 @@ struct IRInst {
         LoadPtrData load_ptr;           // For LoadPtr
         StorePtrData store_ptr;         // For StorePtr
         VarAddrData var_addr;           // For VarAddr
+        CastData cast;                  // For Cast
         u32 block_arg_index;            // For BlockArg (parameter index)
     };
 

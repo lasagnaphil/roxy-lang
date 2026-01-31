@@ -70,6 +70,9 @@ private:
     // Get opcode for IR operation
     Opcode get_opcode(IROp op) const;
 
+    // Emit cast bytecode based on source and target types
+    void emit_cast_bytecode(u8 dst, u8 src, Type* source_type, Type* target_type);
+
     // Check if type is a struct that should be passed by reference (>4 slots)
     bool is_large_struct(Type* type) const;
 

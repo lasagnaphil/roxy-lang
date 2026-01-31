@@ -63,10 +63,16 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::OR:            return "OR";
 
         // Type Conversions
-        case Opcode::I2F:           return "I2F";
-        case Opcode::F2I:           return "F2I";
-        case Opcode::I2B:           return "I2B";
-        case Opcode::B2I:           return "B2I";
+        case Opcode::I_TO_F64:      return "I_TO_F64";
+        case Opcode::F64_TO_I:      return "F64_TO_I";
+        case Opcode::I_TO_B:        return "I_TO_B";
+        case Opcode::B_TO_I:        return "B_TO_I";
+        case Opcode::TRUNC_S:       return "TRUNC_S";
+        case Opcode::TRUNC_U:       return "TRUNC_U";
+        case Opcode::F32_TO_F64:    return "F32_TO_F64";
+        case Opcode::F64_TO_F32:    return "F64_TO_F32";
+        case Opcode::I_TO_F32:      return "I_TO_F32";
+        case Opcode::F32_TO_I:      return "F32_TO_I";
 
         // Control Flow
         case Opcode::JMP:           return "JMP";
@@ -149,15 +155,25 @@ void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out) {
         case Opcode::NEG_F:
         case Opcode::BIT_NOT:
         case Opcode::NOT:
-        case Opcode::I2F:
-        case Opcode::F2I:
-        case Opcode::I2B:
-        case Opcode::B2I:
+        case Opcode::I_TO_F64:
+        case Opcode::F64_TO_I:
+        case Opcode::I_TO_B:
+        case Opcode::B_TO_I:
+        case Opcode::F32_TO_F64:
+        case Opcode::F64_TO_F32:
+        case Opcode::I_TO_F32:
+        case Opcode::F32_TO_I:
         case Opcode::REF_INC:
         case Opcode::REF_DEC:
         case Opcode::WEAK_CHECK:
         case Opcode::DEL_OBJ:
             snprintf(buf, sizeof(buf), "R%u, R%u", a, b);
+            break;
+
+        // Format: dst, src, bits
+        case Opcode::TRUNC_S:
+        case Opcode::TRUNC_U:
+            snprintf(buf, sizeof(buf), "R%u, R%u, bits=%u", a, b, c);
             break;
 
         // Format: dst, src1, src2

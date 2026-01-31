@@ -47,10 +47,10 @@ const char* ir_op_to_string(IROp op) {
         case IROp::BitOr:  return "bit_or";
         case IROp::BitNot: return "bit_not";
 
-        case IROp::I2F: return "i2f";
-        case IROp::F2I: return "f2i";
-        case IROp::I2B: return "i2b";
-        case IROp::B2I: return "b2i";
+        case IROp::I_TO_F64: return "i_to_f64";
+        case IROp::F64_TO_I: return "f64_to_i";
+        case IROp::I_TO_B:   return "i_to_b";
+        case IROp::B_TO_I:   return "b_to_i";
 
         case IROp::StackAlloc: return "stack_alloc";
         case IROp::GetField: return "get_field";
@@ -78,6 +78,8 @@ const char* ir_op_to_string(IROp op) {
         case IROp::LoadPtr:  return "load_ptr";
         case IROp::StorePtr: return "store_ptr";
         case IROp::VarAddr:  return "var_addr";
+
+        case IROp::Cast:     return "cast";
     }
     return "unknown";
 }
@@ -186,10 +188,10 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
         case IROp::NegF:
         case IROp::Not:
         case IROp::BitNot:
-        case IROp::I2F:
-        case IROp::F2I:
-        case IROp::I2B:
-        case IROp::B2I:
+        case IROp::I_TO_F64:
+        case IROp::F64_TO_I:
+        case IROp::I_TO_B:
+        case IROp::B_TO_I:
         case IROp::RefInc:
         case IROp::RefDec:
         case IROp::WeakCheck:
@@ -328,6 +330,29 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
         case IROp::VarAddr: {
             append_str(out, " &");
             append_string_view(out, inst->var_addr.name);
+            break;
+        }
+
+        case IROp::Cast: {
+            append_str(out, " ");
+            append_value_id(out, inst->cast.source);
+            append_str(out, " (");
+            if (inst->cast.source_type) {
+                Vector<char> type_str;
+                type_to_string(inst->cast.source_type, type_str);
+                for (char ch : type_str) out.push_back(ch);
+            } else {
+                append_str(out, "?");
+            }
+            append_str(out, " -> ");
+            if (inst->type) {
+                Vector<char> type_str;
+                type_to_string(inst->type, type_str);
+                for (char ch : type_str) out.push_back(ch);
+            } else {
+                append_str(out, "?");
+            }
+            append_str(out, ")");
             break;
         }
     }

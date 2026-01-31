@@ -1371,6 +1371,15 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
 Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
     CallExpr& ce = expr->call;
 
+    // Check if this is a primitive type cast: i32(x), f64(x), bool(x)
+    if (ce.callee->kind == AstKind::ExprIdentifier) {
+        StringView type_name = ce.callee->identifier.name;
+        Type* target_type = m_types.primitive_by_name(type_name);
+        if (target_type != nullptr && !target_type->is_void() && !target_type->is_error()) {
+            return analyze_primitive_cast(expr, target_type);
+        }
+    }
+
     // Check if this is a constructor call: callee is an identifier that resolves to a struct type
     if (ce.callee->kind == AstKind::ExprIdentifier) {
         StringView type_name = ce.callee->identifier.name;
@@ -1686,6 +1695,67 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
     }
 
     return fti.return_type;
+}
+
+bool SemanticAnalyzer::can_cast(Type* source, Type* target) {
+    if (!source || !target) return false;
+    if (source->is_error() || target->is_error()) return true;  // Allow error types to avoid cascading errors
+
+    // Same type is always castable (no-op)
+    if (source == target) return true;
+
+    // Numeric to numeric: allowed
+    if (source->is_numeric() && target->is_numeric()) return true;
+
+    // Integer/float to bool: allowed
+    if ((source->is_numeric()) && target->is_bool()) return true;
+
+    // Bool to integer/float: allowed
+    if (source->is_bool() && target->is_numeric()) return true;
+
+    // String and void casts are not allowed
+    if (source->kind == TypeKind::String || target->kind == TypeKind::String) return false;
+    if (source->is_void() || target->is_void()) return false;
+
+    return false;
+}
+
+Type* SemanticAnalyzer::analyze_primitive_cast(Expr* expr, Type* target_type) {
+    CallExpr& ce = expr->call;
+
+    // Must have exactly one argument
+    if (ce.arguments.size() != 1) {
+        error_fmt(expr->loc, "type cast requires exactly 1 argument, got %u", ce.arguments.size());
+        return m_types.error_type();
+    }
+
+    // Check for modifiers (out/inout not allowed)
+    if (ce.arguments[0].modifier != ParamModifier::None) {
+        error(expr->loc, "type cast argument cannot have 'out' or 'inout' modifier");
+        return m_types.error_type();
+    }
+
+    // Analyze the source expression
+    Type* source_type = analyze_expr(ce.arguments[0].expr);
+    if (!source_type || source_type->is_error()) {
+        return m_types.error_type();
+    }
+
+    // Check if the cast is valid
+    if (!can_cast(source_type, target_type)) {
+        Vector<char> source_str, target_str;
+        type_to_string(source_type, source_str);
+        type_to_string(target_type, target_str);
+        source_str.push_back('\0');
+        target_str.push_back('\0');
+        error_fmt(expr->loc, "cannot cast '%s' to '%s'", source_str.data(), target_str.data());
+        return m_types.error_type();
+    }
+
+    // Store target type in callee for IR builder to detect this is a cast
+    ce.callee->resolved_type = target_type;
+
+    return target_type;
 }
 
 Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, StringView ctor_name, bool is_heap) {

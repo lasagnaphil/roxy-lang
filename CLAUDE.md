@@ -236,6 +236,31 @@ var z = x + 10;    // Inferred as i32 (from expression type)
 - Binary operators require matching types: `1 + 2l` is an error (i32 + i64)
 - Use explicit suffixes to match types: `1l + 2l` works (i64 + i64)
 
+### Primitive Type Casting
+
+Explicit type conversions use constructor-like syntax:
+
+```roxy
+var x: i64 = 1000l;
+var y: i32 = i32(x);      // Cast i64 to i32 (truncation)
+var z: f64 = f64(42);     // Cast i32 to f64
+var b: bool = bool(x);    // Cast integer to bool (0 = false, non-zero = true)
+```
+
+**Allowed conversions:**
+
+| Source | Target | Behavior |
+|--------|--------|----------|
+| Any integer | Any integer | Truncation or sign/zero extension |
+| Any integer | Any float | int-to-float conversion |
+| Any float | Any integer | Truncation toward zero |
+| f32 | f64 | Widening (lossless) |
+| f64 | f32 | Narrowing (may lose precision) |
+| Any integer/float | bool | Normalize: non-zero → true, zero → false |
+| bool | Any integer/float | 0 or 1 |
+
+**Disallowed:** `string` and `void` casts.
+
 ## Implemented Components
 
 ### Lexer (`include/roxy/shared/lexer.hpp`, `src/roxy/shared/lexer.cpp`)
@@ -306,11 +331,12 @@ Converts type-checked AST to SSA IR:
 
 32-bit fixed-width register-based bytecode:
 - Three instruction formats: ABC (3-operand), ABI (immediate), AOFF (offset)
-- 59 opcodes organized by category:
+- 64 opcodes organized by category:
   - Constants/Moves: LOAD_NULL, LOAD_TRUE, LOAD_FALSE, LOAD_INT, LOAD_CONST, MOV
   - Arithmetic: ADD_I/F, SUB_I/F, MUL_I/F, DIV_I/F, MOD_I, NEG_I/F
   - Bitwise: BIT_AND, BIT_OR, BIT_XOR, BIT_NOT, SHL, SHR, USHR
   - Comparisons: EQ_I/F, NE_I/F, LT_I/F, LE_I/F, GT_I/F, GE_I/F (+ unsigned)
+  - Type conversions: I_TO_F64, F64_TO_I, I_TO_B, B_TO_I, TRUNC_S, TRUNC_U, F32_TO_F64, F64_TO_F32, I_TO_F32, F32_TO_I
   - Control flow: JMP, JMP_IF, JMP_IF_NOT, RET, RET_VOID, RET_STRUCT_SMALL
   - Calls: CALL, CALL_NATIVE, CALL_EXTERNAL (cross-module)
   - Structs: GET_FIELD, SET_FIELD, STACK_ADDR, GET_FIELD_ADDR, STRUCT_LOAD_REGS, STRUCT_STORE_REGS, STRUCT_COPY

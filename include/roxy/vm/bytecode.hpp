@@ -73,10 +73,18 @@ enum class Opcode : u8 {
     OR          = 0x62,     // dst = src1 || src2 (not short-circuit in bytecode)
 
     // 0x80-0x8F: Type Conversions
-    I2F         = 0x80,     // dst = (float)src1
-    F2I         = 0x81,     // dst = (int)src1
-    I2B         = 0x82,     // dst = (bool)src1
-    B2I         = 0x83,     // dst = (int)src1
+    I_TO_F64    = 0x80,     // dst = (f64)src - integer to f64
+    F64_TO_I    = 0x81,     // dst = (i64)src - f64 to integer (truncate toward zero)
+    I_TO_B      = 0x82,     // dst = (bool)src - any value to bool (normalize to 0/1)
+    B_TO_I      = 0x83,     // dst = (int)src - bool to int
+    TRUNC_S     = 0x84,     // dst = truncate src to N bits, sign-extend back
+                            // Format: [TRUNC_S:8][dst:8][src:8][bits:8] (bits: 8, 16, or 32)
+    TRUNC_U     = 0x85,     // dst = truncate src to N bits, zero-extend back
+                            // Format: [TRUNC_U:8][dst:8][src:8][bits:8]
+    F32_TO_F64  = 0x86,     // dst = (f64)src where src is f32
+    F64_TO_F32  = 0x87,     // dst = (f32)src where src is f64
+    I_TO_F32    = 0x88,     // dst = (f32)src where src is integer
+    F32_TO_I    = 0x89,     // dst = (i64)src where src is f32 (truncate toward zero)
 
     // 0x90-0x9F: Control Flow
     JMP         = 0x90,     // pc += offset (signed 16-bit)
