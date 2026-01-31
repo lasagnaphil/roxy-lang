@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "roxy/vm/slab_allocator.hpp"
+#include "roxy/vm/vmem.hpp"
 #include "roxy/vm/object.hpp"
 #include "roxy/vm/vm.hpp"
 
@@ -10,6 +11,18 @@
 #include <cstring>
 
 using namespace rx;
+
+// Helper to calculate slots per slab for a given slot size
+// This accounts for different page sizes across platforms (4KB on Windows, 16KB on macOS ARM)
+static u32 calc_slots_per_slab(u32 slot_size) {
+    u64 page_size = VirtualMemoryOps::page_size();
+    // Slab allocator uses: max(1 page, ceil(slot_size * 64 / page_size) pages)
+    u64 min_slab_size = static_cast<u64>(slot_size) * 64;
+    u32 page_count = static_cast<u32>((min_slab_size + page_size - 1) / page_size);
+    if (page_count < 1) page_count = 1;
+    u64 slab_size = static_cast<u64>(page_count) * page_size;
+    return static_cast<u32>(slab_size / slot_size);
+}
 
 // ============================================================================
 // Slab Allocator Unit Tests
@@ -713,9 +726,9 @@ TEST_CASE("Unit - SlabAllocator reclaim_tombstoned basic") {
     REQUIRE(allocator.init());
 
     // Allocate enough objects to COMPLETELY fill at least one slab
-    // For 32-byte size class with 4KB pages: 4096/32 = 128 slots per slab
-    // We allocate 150 to ensure at least one slab is completely filled
-    constexpr u32 NUM_OBJECTS = 150;
+    // Slots per slab varies by platform (page size): 4KB=128 slots, 16KB=512 slots for 32-byte class
+    u32 slots_per_slab = calc_slots_per_slab(32);
+    u32 NUM_OBJECTS = slots_per_slab + 20;  // Fill one slab completely + some extra
     struct AllocInfo {
         void* ptr;
         u64 gen;
@@ -747,8 +760,10 @@ TEST_CASE("Unit - SlabAllocator reclaim_tombstoned with live objects") {
     SlabAllocator allocator;
     REQUIRE(allocator.init());
 
-    // Allocate enough to fill multiple slabs (128 slots per slab for 32-byte class)
-    constexpr u32 NUM_OBJECTS = 300;
+    // Allocate enough to fill multiple slabs
+    // Slots per slab varies by platform (page size)
+    u32 slots_per_slab = calc_slots_per_slab(32);
+    u32 NUM_OBJECTS = slots_per_slab * 2 + 50;  // Fill 2+ slabs
     struct AllocInfo {
         void* ptr;
         u64 gen;
@@ -760,9 +775,9 @@ TEST_CASE("Unit - SlabAllocator reclaim_tombstoned with live objects") {
         REQUIRE(allocs[i].ptr != nullptr);
     }
 
-    // Free only the first 128 objects (first slab completely)
+    // Free only the first slab's worth of objects (first slab completely)
     // Keep some alive in subsequent slabs
-    for (u32 i = 0; i < 128; i++) {
+    for (u32 i = 0; i < slots_per_slab; i++) {
         allocator.free(allocs[i].ptr);
         allocs[i].ptr = nullptr;
     }
@@ -772,7 +787,7 @@ TEST_CASE("Unit - SlabAllocator reclaim_tombstoned with live objects") {
     CHECK(pages_reclaimed > 0);
 
     // Verify live objects are still accessible
-    for (u32 i = 128; i < NUM_OBJECTS; i++) {
+    for (u32 i = slots_per_slab; i < NUM_OBJECTS; i++) {
         CHECK(allocs[i].ptr != nullptr);
         // Write and read to verify memory is still valid
         *static_cast<u32*>(allocs[i].ptr) = 0xDEADBEEF;
@@ -780,7 +795,7 @@ TEST_CASE("Unit - SlabAllocator reclaim_tombstoned with live objects") {
     }
 
     // Free remaining objects
-    for (u32 i = 128; i < NUM_OBJECTS; i++) {
+    for (u32 i = slots_per_slab; i < NUM_OBJECTS; i++) {
         allocator.free(allocs[i].ptr);
     }
 
@@ -796,7 +811,8 @@ TEST_CASE("Unit - SlabAllocator reclaim_tombstoned idempotency") {
     REQUIRE(allocator.init());
 
     // Allocate enough to fill at least one slab completely
-    constexpr u32 NUM_OBJECTS = 150;
+    u32 slots_per_slab = calc_slots_per_slab(32);
+    u32 NUM_OBJECTS = slots_per_slab + 20;
     std::vector<void*> ptrs(NUM_OBJECTS);
     u64 gen;
 
@@ -826,9 +842,9 @@ TEST_CASE("Unit - SlabAllocator reclaim_tombstoned memory still readable") {
     SlabAllocator allocator;
     REQUIRE(allocator.init());
 
-    // Allocate exactly 128 objects to fill one slab completely
-    // (128 slots per slab for 32-byte class with 4KB pages)
-    constexpr u32 NUM_OBJECTS = 128;
+    // Allocate exactly one slab's worth of objects to fill it completely
+    u32 slots_per_slab = calc_slots_per_slab(32);
+    u32 NUM_OBJECTS = slots_per_slab;
     std::vector<void*> ptrs(NUM_OBJECTS);
     u64 gen;
 
@@ -869,18 +885,19 @@ TEST_CASE("Unit - SlabAllocator reclaim_tombstoned multiple size classes") {
     REQUIRE(allocator.init());
 
     // Allocate objects in multiple size classes
-    // Each slab has 4KB / slot_size slots. We need to fill at least one slab per class.
-    // 32-byte: 128 slots, 64-byte: 64 slots, 128-byte: 32 slots, 256-byte: 16 slots
+    // Slots per slab varies by platform (page size)
     constexpr u32 SIZE_CLASSES[] = {32, 64, 128, 256};
     constexpr u32 NUM_CLASSES = sizeof(SIZE_CLASSES) / sizeof(SIZE_CLASSES[0]);
-    constexpr u32 OBJECTS_PER_CLASS = 150;  // Enough to fill at least one slab for all classes
 
     std::vector<std::vector<void*>> allocs(NUM_CLASSES);
     u64 gen;
 
     for (u32 c = 0; c < NUM_CLASSES; c++) {
-        allocs[c].resize(OBJECTS_PER_CLASS);
-        for (u32 i = 0; i < OBJECTS_PER_CLASS; i++) {
+        // Calculate how many objects needed to fill at least one slab for this size class
+        u32 slots_per_slab = calc_slots_per_slab(SIZE_CLASSES[c]);
+        u32 objects_to_alloc = slots_per_slab + 20;  // Fill one slab + extra
+        allocs[c].resize(objects_to_alloc);
+        for (u32 i = 0; i < objects_to_alloc; i++) {
             allocs[c][i] = allocator.alloc(SIZE_CLASSES[c], &gen);
             REQUIRE(allocs[c][i] != nullptr);
         }
@@ -888,7 +905,7 @@ TEST_CASE("Unit - SlabAllocator reclaim_tombstoned multiple size classes") {
 
     // Free all objects in all size classes
     for (u32 c = 0; c < NUM_CLASSES; c++) {
-        for (u32 i = 0; i < OBJECTS_PER_CLASS; i++) {
+        for (u32 i = 0; i < allocs[c].size(); i++) {
             allocator.free(allocs[c][i]);
         }
     }
