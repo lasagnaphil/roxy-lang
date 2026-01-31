@@ -71,7 +71,7 @@ enum class TokenKind {
     KwCase,
 
     // Keywords - OOP
-    KwThis,
+    KwSelf,
     KwSuper,
     KwNew,
     KwDelete,

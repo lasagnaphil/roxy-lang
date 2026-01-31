@@ -228,6 +228,7 @@ TokenKind Lexer::identifier_type() {
         case 's':
             if (m_current - m_start > 1) {
                 switch (m_source[m_start + 1]) {
+                    case 'e': return check_keyword(2, 2, "lf", TokenKind::KwSelf);
                     case 't': return check_keyword(2, 4, "ruct", TokenKind::KwStruct);
                     case 'u': return check_keyword(2, 3, "per", TokenKind::KwSuper);
                 }
@@ -236,7 +237,6 @@ TokenKind Lexer::identifier_type() {
         case 't':
             if (m_current - m_start > 1) {
                 switch (m_source[m_start + 1]) {
-                    case 'h': return check_keyword(2, 2, "is", TokenKind::KwThis);
                     case 'r': return check_keyword(2, 2, "ue", TokenKind::KwTrue);
                 }
             }

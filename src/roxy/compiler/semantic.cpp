@@ -255,6 +255,10 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                 field_data[j] = fields[j];
             }
             type->struct_info.fields = Span<FieldInfo>(field_data, fields.size());
+
+            // Initialize empty constructor/destructor lists
+            type->struct_info.constructors = Span<ConstructorInfo>(nullptr, 0);
+            type->struct_info.destructors = Span<DestructorInfo>(nullptr, 0);
         }
         else if (decl->kind == AstKind::DeclEnum) {
             EnumDecl& ed = decl->enum_decl;
@@ -341,6 +345,12 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             Symbol* sym = m_symbols.define(SymbolKind::Variable, vd.name, var_type, decl->loc, decl);
             sym->is_pub = vd.is_pub;
         }
+        else if (decl->kind == AstKind::DeclConstructor) {
+            analyze_constructor_decl(decl);
+        }
+        else if (decl->kind == AstKind::DeclDestructor) {
+            analyze_destructor_decl(decl);
+        }
     }
 }
 
@@ -382,6 +392,20 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
             }
 
             m_symbols.pop_scope();
+        }
+        else if (decl->kind == AstKind::DeclConstructor) {
+            ConstructorDecl& cd = decl->constructor_decl;
+            auto it = m_named_types.find(cd.struct_name);
+            if (it != m_named_types.end()) {
+                analyze_constructor_body(decl, it->second);
+            }
+        }
+        else if (decl->kind == AstKind::DeclDestructor) {
+            DestructorDecl& dd = decl->destructor_decl;
+            auto it = m_named_types.find(dd.struct_name);
+            if (it != m_named_types.end()) {
+                analyze_destructor_body(decl, it->second);
+            }
         }
     }
 }
@@ -591,6 +615,220 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
     }
 }
 
+void SemanticAnalyzer::analyze_constructor_decl(Decl* decl) {
+    ConstructorDecl& cd = decl->constructor_decl;
+
+    // Look up the struct type
+    auto it = m_named_types.find(cd.struct_name);
+    if (it == m_named_types.end()) {
+        error_fmt(decl->loc, "constructor for unknown struct '%.*s'",
+                 cd.struct_name.size(), cd.struct_name.data());
+        return;
+    }
+
+    Type* struct_type = it->second;
+    if (struct_type->kind != TypeKind::Struct) {
+        error_fmt(decl->loc, "'%.*s' is not a struct type",
+                 cd.struct_name.size(), cd.struct_name.data());
+        return;
+    }
+
+    // Check for duplicate constructor names
+    for (u32 i = 0; i < struct_type->struct_info.constructors.size(); i++) {
+        if (struct_type->struct_info.constructors[i].name == cd.name) {
+            if (cd.name.empty()) {
+                error_fmt(decl->loc, "duplicate default constructor for struct '%.*s'",
+                         cd.struct_name.size(), cd.struct_name.data());
+            } else {
+                error_fmt(decl->loc, "duplicate constructor '%.*s' for struct '%.*s'",
+                         cd.name.size(), cd.name.data(),
+                         cd.struct_name.size(), cd.struct_name.data());
+            }
+            return;
+        }
+    }
+
+    // Resolve parameter types
+    Vector<Type*> param_types;
+    for (u32 i = 0; i < cd.params.size(); i++) {
+        Type* ptype = resolve_type_expr(cd.params[i].type);
+        if (!ptype) ptype = m_types.error_type();
+        param_types.push_back(ptype);
+    }
+
+    // Allocate param_types in bump allocator
+    Type** ptypes = reinterpret_cast<Type**>(
+        m_allocator.alloc_bytes(sizeof(Type*) * param_types.size(), alignof(Type*)));
+    for (u32 i = 0; i < param_types.size(); i++) {
+        ptypes[i] = param_types[i];
+    }
+
+    // Create constructor info
+    ConstructorInfo ctor_info;
+    ctor_info.name = cd.name;
+    ctor_info.param_types = Span<Type*>(ptypes, param_types.size());
+    ctor_info.decl = decl;
+
+    // Add to struct's constructor list
+    Vector<ConstructorInfo> ctors;
+    for (u32 i = 0; i < struct_type->struct_info.constructors.size(); i++) {
+        ctors.push_back(struct_type->struct_info.constructors[i]);
+    }
+    ctors.push_back(ctor_info);
+
+    // Allocate and update
+    ConstructorInfo* ctor_data = reinterpret_cast<ConstructorInfo*>(
+        m_allocator.alloc_bytes(sizeof(ConstructorInfo) * ctors.size(), alignof(ConstructorInfo)));
+    for (u32 i = 0; i < ctors.size(); i++) {
+        ctor_data[i] = ctors[i];
+    }
+    struct_type->struct_info.constructors = Span<ConstructorInfo>(ctor_data, ctors.size());
+}
+
+void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
+    DestructorDecl& dd = decl->destructor_decl;
+
+    // Look up the struct type
+    auto it = m_named_types.find(dd.struct_name);
+    if (it == m_named_types.end()) {
+        error_fmt(decl->loc, "destructor for unknown struct '%.*s'",
+                 dd.struct_name.size(), dd.struct_name.data());
+        return;
+    }
+
+    Type* struct_type = it->second;
+    if (struct_type->kind != TypeKind::Struct) {
+        error_fmt(decl->loc, "'%.*s' is not a struct type",
+                 dd.struct_name.size(), dd.struct_name.data());
+        return;
+    }
+
+    // Check for duplicate destructor names
+    for (u32 i = 0; i < struct_type->struct_info.destructors.size(); i++) {
+        if (struct_type->struct_info.destructors[i].name == dd.name) {
+            if (dd.name.empty()) {
+                error_fmt(decl->loc, "duplicate default destructor for struct '%.*s'",
+                         dd.struct_name.size(), dd.struct_name.data());
+            } else {
+                error_fmt(decl->loc, "duplicate destructor '%.*s' for struct '%.*s'",
+                         dd.name.size(), dd.name.data(),
+                         dd.struct_name.size(), dd.struct_name.data());
+            }
+            return;
+        }
+    }
+
+    // Resolve parameter types
+    Vector<Type*> param_types;
+    for (u32 i = 0; i < dd.params.size(); i++) {
+        Type* ptype = resolve_type_expr(dd.params[i].type);
+        if (!ptype) ptype = m_types.error_type();
+        param_types.push_back(ptype);
+    }
+
+    // Allocate param_types in bump allocator
+    Type** ptypes = reinterpret_cast<Type**>(
+        m_allocator.alloc_bytes(sizeof(Type*) * param_types.size(), alignof(Type*)));
+    for (u32 i = 0; i < param_types.size(); i++) {
+        ptypes[i] = param_types[i];
+    }
+
+    // Create destructor info
+    DestructorInfo dtor_info;
+    dtor_info.name = dd.name;
+    dtor_info.param_types = Span<Type*>(ptypes, param_types.size());
+    dtor_info.decl = decl;
+
+    // Add to struct's destructor list
+    Vector<DestructorInfo> dtors;
+    for (u32 i = 0; i < struct_type->struct_info.destructors.size(); i++) {
+        dtors.push_back(struct_type->struct_info.destructors[i]);
+    }
+    dtors.push_back(dtor_info);
+
+    // Allocate and update
+    DestructorInfo* dtor_data = reinterpret_cast<DestructorInfo*>(
+        m_allocator.alloc_bytes(sizeof(DestructorInfo) * dtors.size(), alignof(DestructorInfo)));
+    for (u32 i = 0; i < dtors.size(); i++) {
+        dtor_data[i] = dtors[i];
+    }
+    struct_type->struct_info.destructors = Span<DestructorInfo>(dtor_data, dtors.size());
+}
+
+void SemanticAnalyzer::analyze_constructor_body(Decl* decl, Type* struct_type) {
+    ConstructorDecl& cd = decl->constructor_decl;
+
+    if (!cd.body) return;
+
+    // Push struct scope so 'self' and fields are accessible
+    m_symbols.push_struct_scope(struct_type);
+
+    // Define fields in scope
+    for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
+        FieldInfo& fi = struct_type->struct_info.fields[i];
+        m_symbols.define_field(fi.name, fi.type, decl->loc, fi.index, fi.is_pub);
+    }
+
+    // Push function scope (constructors return void)
+    m_symbols.push_function_scope(m_types.void_type());
+
+    // Define parameters
+    for (u32 i = 0; i < cd.params.size(); i++) {
+        Param& p = cd.params[i];
+        Type* ptype = resolve_type_expr(p.type);
+        if (!ptype) ptype = m_types.error_type();
+
+        if (m_symbols.lookup_local(p.name)) {
+            error_fmt(p.loc, "duplicate parameter name '%.*s'", p.name.size(), p.name.data());
+        } else {
+            m_symbols.define_parameter(p.name, ptype, p.loc, i);
+        }
+    }
+
+    // Analyze body
+    analyze_stmt(cd.body);
+
+    m_symbols.pop_scope();  // function scope
+    m_symbols.pop_scope();  // struct scope
+}
+
+void SemanticAnalyzer::analyze_destructor_body(Decl* decl, Type* struct_type) {
+    DestructorDecl& dd = decl->destructor_decl;
+
+    if (!dd.body) return;
+
+    // Push struct scope so 'self' and fields are accessible
+    m_symbols.push_struct_scope(struct_type);
+
+    // Define fields in scope
+    for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
+        FieldInfo& fi = struct_type->struct_info.fields[i];
+        m_symbols.define_field(fi.name, fi.type, decl->loc, fi.index, fi.is_pub);
+    }
+
+    // Push function scope (destructors return void)
+    m_symbols.push_function_scope(m_types.void_type());
+
+    // Define parameters
+    for (u32 i = 0; i < dd.params.size(); i++) {
+        Param& p = dd.params[i];
+        Type* ptype = resolve_type_expr(p.type);
+        if (!ptype) ptype = m_types.error_type();
+
+        if (m_symbols.lookup_local(p.name)) {
+            error_fmt(p.loc, "duplicate parameter name '%.*s'", p.name.size(), p.name.data());
+        } else {
+            m_symbols.define_parameter(p.name, ptype, p.loc, i);
+        }
+    }
+
+    // Analyze body
+    analyze_stmt(dd.body);
+
+    m_symbols.pop_scope();  // function scope
+    m_symbols.pop_scope();  // struct scope
+}
+
 // Statement analysis
 
 void SemanticAnalyzer::analyze_stmt(Stmt* stmt) {
@@ -759,6 +997,98 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
     // delete only works on uniq types
     if (type->kind != TypeKind::Uniq) {
         error(stmt->loc, "'delete' can only be used on 'uniq' types");
+        return;
+    }
+
+    // Get the inner struct type
+    Type* inner_type = type->ref_info.inner_type;
+    if (!inner_type || !inner_type->is_struct()) {
+        // No destructor validation needed for non-struct types
+        return;
+    }
+
+    StructTypeInfo& sti = inner_type->struct_info;
+
+    // Look up destructor by name
+    const DestructorInfo* dtor = nullptr;
+    for (u32 i = 0; i < sti.destructors.size(); i++) {
+        if (sti.destructors[i].name == ds.destructor_name) {
+            dtor = &sti.destructors[i];
+            break;
+        }
+    }
+
+    // If a destructor name was specified but not found
+    if (!ds.destructor_name.empty() && !dtor) {
+        error_fmt(stmt->loc, "struct '%.*s' has no destructor '%.*s'",
+                 sti.name.size(), sti.name.data(),
+                 ds.destructor_name.size(), ds.destructor_name.data());
+        return;
+    }
+
+    // If we have a destructor, type-check the arguments
+    if (dtor) {
+        // Check argument count
+        if (ds.arguments.size() != dtor->param_types.size()) {
+            error_fmt(stmt->loc, "destructor expects %u arguments but got %u",
+                     dtor->param_types.size(), ds.arguments.size());
+            return;
+        }
+
+        // Get destructor's parameter info
+        DestructorDecl* dtor_decl = &dtor->decl->destructor_decl;
+
+        // Check argument types and modifiers
+        for (u32 i = 0; i < ds.arguments.size(); i++) {
+            CallArg& arg = ds.arguments[i];
+
+            // Get expected modifier from DestructorDecl
+            ParamModifier expected_mod = ParamModifier::None;
+            if (i < dtor_decl->params.size()) {
+                expected_mod = dtor_decl->params[i].modifier;
+            }
+
+            // Check modifier matches
+            if (expected_mod != arg.modifier) {
+                if (expected_mod == ParamModifier::Out) {
+                    error(arg.expr->loc, "argument requires 'out' modifier");
+                } else if (expected_mod == ParamModifier::Inout) {
+                    error(arg.expr->loc, "argument requires 'inout' modifier");
+                } else if (arg.modifier != ParamModifier::None) {
+                    error(arg.modifier_loc, "unexpected modifier for this parameter");
+                }
+            }
+
+            // Check lvalue requirement for out/inout
+            if (arg.modifier == ParamModifier::Out || arg.modifier == ParamModifier::Inout) {
+                if (!is_lvalue(arg.expr)) {
+                    error(arg.expr->loc, "'out'/'inout' argument must be a variable");
+                }
+            }
+
+            // Analyze argument expression
+            Type* arg_type = analyze_expr(arg.expr);
+
+            // Type check (skip for 'out' since it's write-only)
+            if (arg.modifier != ParamModifier::Out) {
+                check_assignable(dtor->param_types[i], arg_type, arg.expr->loc);
+            }
+        }
+    } else {
+        // No destructor defined with this name
+        if (!ds.destructor_name.empty()) {
+            error_fmt(stmt->loc, "struct '%.*s' has no destructor '%.*s'",
+                     sti.name.size(), sti.name.data(),
+                     ds.destructor_name.size(), ds.destructor_name.data());
+            return;
+        }
+
+        // Named destructor arguments without a destructor is an error
+        if (ds.arguments.size() > 0) {
+            error_fmt(stmt->loc, "struct '%.*s' has no destructor to call",
+                     sti.name.size(), sti.name.data());
+            return;
+        }
     }
 }
 
@@ -1143,12 +1473,12 @@ Type* SemanticAnalyzer::analyze_grouping_expr(Expr* expr) {
 
 Type* SemanticAnalyzer::analyze_this_expr(Expr* expr) {
     if (!m_symbols.is_in_struct()) {
-        error(expr->loc, "'this' used outside of struct context");
+        error(expr->loc, "'self' used outside of struct context");
         return m_types.error_type();
     }
 
     Type* struct_type = m_symbols.current_struct_type();
-    // 'this' is a ref to the current struct
+    // 'self' is a ref to the current struct
     return m_types.ref_type(struct_type);
 }
 
@@ -1180,16 +1510,107 @@ Type* SemanticAnalyzer::analyze_new_expr(Expr* expr) {
     Type* type = resolve_type_expr(ne.type);
     if (!type || type->is_error()) return m_types.error_type();
 
-    // new creates a uniq reference
+    // Resolve base type
     Type* base = type->base_type();
     if (!base->is_struct()) {
         error(expr->loc, "'new' can only create struct instances");
         return m_types.error_type();
     }
 
-    // TODO: Check constructor arguments
+    StructTypeInfo& sti = base->struct_info;
 
-    return m_types.uniq_type(base);
+    // Look up constructor by name
+    const ConstructorInfo* ctor = nullptr;
+    for (u32 i = 0; i < sti.constructors.size(); i++) {
+        if (sti.constructors[i].name == ne.constructor_name) {
+            ctor = &sti.constructors[i];
+            break;
+        }
+    }
+
+    // If a constructor name was specified but not found
+    if (!ne.constructor_name.empty() && !ctor) {
+        error_fmt(expr->loc, "struct '%.*s' has no constructor '%.*s'",
+                 sti.name.size(), sti.name.data(),
+                 ne.constructor_name.size(), ne.constructor_name.data());
+        return m_types.error_type();
+    }
+
+    // Determine result type based on is_heap flag
+    // uniq new Type() -> uniq<Type>
+    // new Type() -> Type (value type, stack-allocated)
+    auto result_type = [&]() -> Type* {
+        return ne.is_heap ? m_types.uniq_type(base) : base;
+    };
+
+    // If we have a constructor, type-check the arguments
+    if (ctor) {
+        // Check argument count
+        if (ne.arguments.size() != ctor->param_types.size()) {
+            error_fmt(expr->loc, "constructor expects %u arguments but got %u",
+                     ctor->param_types.size(), ne.arguments.size());
+            return result_type();
+        }
+
+        // Get constructor's parameter info
+        ConstructorDecl* ctor_decl = &ctor->decl->constructor_decl;
+
+        // Check argument types and modifiers
+        for (u32 i = 0; i < ne.arguments.size(); i++) {
+            CallArg& arg = ne.arguments[i];
+
+            // Get expected modifier from ConstructorDecl
+            ParamModifier expected_mod = ParamModifier::None;
+            if (i < ctor_decl->params.size()) {
+                expected_mod = ctor_decl->params[i].modifier;
+            }
+
+            // Check modifier matches
+            if (expected_mod != arg.modifier) {
+                if (expected_mod == ParamModifier::Out) {
+                    error(arg.expr->loc, "argument requires 'out' modifier");
+                } else if (expected_mod == ParamModifier::Inout) {
+                    error(arg.expr->loc, "argument requires 'inout' modifier");
+                } else if (arg.modifier != ParamModifier::None) {
+                    error(arg.modifier_loc, "unexpected modifier for this parameter");
+                }
+            }
+
+            // Check lvalue requirement for out/inout
+            if (arg.modifier == ParamModifier::Out || arg.modifier == ParamModifier::Inout) {
+                if (!is_lvalue(arg.expr)) {
+                    error(arg.expr->loc, "'out'/'inout' argument must be a variable");
+                }
+            }
+
+            // Analyze argument expression
+            Type* arg_type = analyze_expr(arg.expr);
+
+            // Type check (skip for 'out' since it's write-only)
+            if (arg.modifier != ParamModifier::Out) {
+                check_assignable(ctor->param_types[i], arg_type, arg.expr->loc);
+            }
+        }
+    } else {
+        // No constructor defined - either using default construction or error
+        if (!ne.constructor_name.empty()) {
+            // Named constructor was requested but struct has no constructors
+            error_fmt(expr->loc, "struct '%.*s' has no constructor '%.*s'",
+                     sti.name.size(), sti.name.data(),
+                     ne.constructor_name.size(), ne.constructor_name.data());
+            return m_types.error_type();
+        }
+
+        // Default construction (no constructor, no arguments) - allowed
+        // Arguments without a constructor is an error
+        if (ne.arguments.size() > 0) {
+            error_fmt(expr->loc, "struct '%.*s' has no constructor to call",
+                     sti.name.size(), sti.name.data());
+            return m_types.error_type();
+        }
+    }
+
+    return result_type();
 }
 
 Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
@@ -1258,7 +1679,8 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
         }
     }
 
-    return type;
+    // Return uniq<type> for heap allocation, value type for stack
+    return sl.is_heap ? m_types.uniq_type(type) : type;
 }
 
 // Type checking helpers

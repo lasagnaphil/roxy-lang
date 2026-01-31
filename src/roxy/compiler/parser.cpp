@@ -415,11 +415,6 @@ Expr* Parser::primary() {
             return expr;
         }
 
-        // Check for struct literal: TypeName { field = value, ... }
-        if (match(TokenKind::LeftBrace)) {
-            return struct_literal(name_token);
-        }
-
         Expr* expr = alloc<Expr>();
         expr->kind = AstKind::ExprIdentifier;
         expr->loc = name_token.loc;
@@ -427,8 +422,8 @@ Expr* Parser::primary() {
         return expr;
     }
 
-    // this
-    if (match(TokenKind::KwThis)) {
+    // self
+    if (match(TokenKind::KwSelf)) {
         Expr* expr = alloc<Expr>();
         expr->kind = AstKind::ExprThis;
         expr->loc = m_previous.loc;
@@ -451,20 +446,91 @@ Expr* Parser::primary() {
         return expr;
     }
 
-    // new Type(args)
+    // uniq new Type(args) - heap allocation
+    // new Type(args) - stack allocation
+    bool is_heap = false;
+    if (match(TokenKind::KwUniq)) {
+        if (!check(TokenKind::KwNew)) {
+            report_error("Expected 'new' after 'uniq'");
+            return nullptr;
+        }
+        is_heap = true;
+    }
+
     if (match(TokenKind::KwNew)) {
         SourceLocation loc = m_previous.loc;
 
-        TypeExpr* type = type_expression();
+        // For struct literals, we need the type name directly
+        // type_expression() returns a TypeExpr which has the name
+        Token type_token = consume(TokenKind::Identifier, "Expected type name after 'new'");
         if (m_has_error) return nullptr;
 
-        consume(TokenKind::LeftParen, "Expected '(' after type in 'new' expression");
+        // Check for struct literal: new Type { ... }
+        if (match(TokenKind::LeftBrace)) {
+            // Parse as struct literal
+            Vector<FieldInit> fields;
+
+            if (!check(TokenKind::RightBrace)) {
+                do {
+                    Token name_token = consume(TokenKind::Identifier, "Expected field name");
+                    if (m_has_error) return nullptr;
+
+                    consume(TokenKind::Equal, "Expected '=' after field name");
+                    if (m_has_error) return nullptr;
+
+                    Expr* value = expression();
+                    if (m_has_error) return nullptr;
+
+                    FieldInit fi;
+                    fi.name = name_token.text();
+                    fi.value = value;
+                    fi.loc = name_token.loc;
+                    fields.push_back(fi);
+                } while (match(TokenKind::Comma));
+            }
+
+            consume(TokenKind::RightBrace, "Expected '}' after struct literal fields");
+            if (m_has_error) return nullptr;
+
+            Expr* expr = alloc<Expr>();
+            expr->kind = AstKind::ExprStructLiteral;
+            expr->loc = loc;
+            expr->struct_literal.type_name = type_token.text();
+            expr->struct_literal.fields = alloc_span(fields);
+            expr->struct_literal.is_heap = is_heap;
+            return expr;
+        }
+
+        // Otherwise parse as constructor call: new Type() or new Type.ctor_name()
+        StringView ctor_name(nullptr, 0);  // Empty for default constructor
+
+        // Check for named constructor: Type.ctor_name
+        if (match(TokenKind::Dot)) {
+            Token name_token = consume(TokenKind::Identifier, "Expected constructor name after '.'");
+            if (m_has_error) return nullptr;
+            ctor_name = name_token.text();
+        }
+
+        consume(TokenKind::LeftParen, "Expected '(' or '{' after type in 'new' expression");
         if (m_has_error) return nullptr;
 
-        Vector<Expr*> arguments;
+        Vector<CallArg> arguments;
         if (!check(TokenKind::RightParen)) {
             do {
-                Expr* arg = expression();
+                CallArg arg;
+                arg.modifier = ParamModifier::None;
+                arg.modifier_loc = {};
+
+                // Check for out/inout modifier
+                if (match(TokenKind::KwOut)) {
+                    arg.modifier = ParamModifier::Out;
+                    arg.modifier_loc = m_previous.loc;
+                } else if (match(TokenKind::KwInout)) {
+                    arg.modifier = ParamModifier::Inout;
+                    arg.modifier_loc = m_previous.loc;
+                }
+
+                arg.expr = expression();
                 if (m_has_error) return nullptr;
                 arguments.push_back(arg);
             } while (match(TokenKind::Comma));
@@ -473,11 +539,20 @@ Expr* Parser::primary() {
         consume(TokenKind::RightParen, "Expected ')' after arguments");
         if (m_has_error) return nullptr;
 
+        // Build TypeExpr for the new expression
+        TypeExpr* type = alloc<TypeExpr>();
+        type->name = type_token.text();
+        type->ref_kind = RefKind::None;
+        type->element_type = nullptr;
+        type->loc = type_token.loc;
+
         Expr* expr = alloc<Expr>();
         expr->kind = AstKind::ExprNew;
         expr->loc = loc;
         expr->new_expr.type = type;
+        expr->new_expr.constructor_name = ctor_name;
         expr->new_expr.arguments = alloc_span(arguments);
+        expr->new_expr.is_heap = is_heap;
         return expr;
     }
 
@@ -499,39 +574,6 @@ Expr* Parser::primary() {
 
     report_error("Expected expression");
     return nullptr;
-}
-
-Expr* Parser::struct_literal(Token type_token) {
-    Vector<FieldInit> fields;
-
-    if (!check(TokenKind::RightBrace)) {
-        do {
-            Token field_name = consume(TokenKind::Identifier, "Expected field name");
-            if (m_has_error) return nullptr;
-
-            consume(TokenKind::Equal, "Expected '=' after field name");
-            if (m_has_error) return nullptr;
-
-            Expr* value = expression();
-            if (m_has_error) return nullptr;
-
-            FieldInit init;
-            init.name = field_name.text();
-            init.value = value;
-            init.loc = field_name.loc;
-            fields.push_back(init);
-        } while (match(TokenKind::Comma));
-    }
-
-    consume(TokenKind::RightBrace, "Expected '}' after struct literal");
-    if (m_has_error) return nullptr;
-
-    Expr* expr = alloc<Expr>();
-    expr->kind = AstKind::ExprStructLiteral;
-    expr->loc = type_token.loc;
-    expr->struct_literal.type_name = type_token.text();
-    expr->struct_literal.fields = alloc_span(fields);
-    return expr;
 }
 
 // Statement parsing
@@ -739,16 +781,45 @@ Stmt* Parser::continue_statement() {
 Stmt* Parser::delete_statement() {
     SourceLocation loc = m_previous.loc;
 
+    // Parse the expression to delete
+    // We need to parse this carefully:
+    // - "delete expr;" where expr is any expression
+    // - "delete expr.dtor_name(args);" where dtor_name is a destructor
+    //
+    // Since expression() will parse d.save(5) as a call, we need to detect this.
+    // If we see an ExprCall where callee is ExprGet, we treat it as a destructor call.
+
     Expr* expr = expression();
     if (m_has_error) return nullptr;
 
-    consume(TokenKind::Semicolon, "Expected ';' after delete expression");
+    StringView dtor_name(nullptr, 0);  // Empty for default destructor
+    Vector<CallArg> arguments;
+
+    // Check if the expression is a call on a member (potential destructor call)
+    // e.g., d.save(5) where d is the object and save is the destructor
+    if (expr->kind == AstKind::ExprCall) {
+        CallExpr& ce = expr->call;
+        if (ce.callee->kind == AstKind::ExprGet) {
+            GetExpr& ge = ce.callee->get;
+            // This is a destructor call: object.destructor_name(args)
+            dtor_name = ge.name;
+            for (u32 i = 0; i < ce.arguments.size(); i++) {
+                arguments.push_back(ce.arguments[i]);
+            }
+            // The actual object to delete is the object of the get expression
+            expr = ge.object;
+        }
+    }
+
+    consume(TokenKind::Semicolon, "Expected ';' after delete statement");
     if (m_has_error) return nullptr;
 
     Stmt* stmt = alloc<Stmt>();
     stmt->kind = AstKind::StmtDelete;
     stmt->loc = loc;
     stmt->delete_stmt.expr = expr;
+    stmt->delete_stmt.destructor_name = dtor_name;
+    stmt->delete_stmt.arguments = alloc_span(arguments);
     return stmt;
 }
 
@@ -779,6 +850,22 @@ Decl* Parser::declaration() {
 
     bool is_native = match(TokenKind::KwNative);
     if (match(TokenKind::KwFun)) {
+        // Check for constructor: fun new StructName...
+        if (match(TokenKind::KwNew)) {
+            if (is_native) {
+                report_error("constructors cannot be 'native'");
+                return nullptr;
+            }
+            return constructor_declaration(is_pub);
+        }
+        // Check for destructor: fun delete StructName...
+        if (match(TokenKind::KwDelete)) {
+            if (is_native) {
+                report_error("destructors cannot be 'native'");
+                return nullptr;
+            }
+            return destructor_declaration(is_pub);
+        }
         return fun_declaration(is_pub, is_native);
     }
 
@@ -927,6 +1014,77 @@ Decl* Parser::fun_declaration(bool is_pub, bool is_native) {
     decl->fun_decl.body = body;
     decl->fun_decl.is_pub = is_pub;
     decl->fun_decl.is_native = is_native;
+    return decl;
+}
+
+bool Parser::parse_ctor_dtor_common(const char* kind_name, CtorDtorParsed& out) {
+    // Parse struct name: StructName or StructName.name
+    Token struct_token = consume(TokenKind::Identifier, "Expected struct name");
+    if (m_has_error) return false;
+
+    out.struct_name = struct_token.text();
+    out.name = StringView(nullptr, 0);  // Empty for default
+
+    // Check for named variant: StructName.name
+    if (match(TokenKind::Dot)) {
+        Token name_token = consume(TokenKind::Identifier, "Expected name after '.'");
+        if (m_has_error) return false;
+        out.name = name_token.text();
+    }
+
+    consume(TokenKind::LeftParen, "Expected '(' after name");
+    if (m_has_error) return false;
+
+    out.params = parse_parameters();
+    if (m_has_error) return false;
+
+    consume(TokenKind::RightParen, "Expected ')' after parameters");
+    if (m_has_error) return false;
+
+    consume(TokenKind::LeftBrace, "Expected '{' before body");
+    if (m_has_error) return false;
+
+    out.body = block_statement();
+    if (m_has_error) return false;
+
+    return true;
+}
+
+Decl* Parser::constructor_declaration(bool is_pub) {
+    SourceLocation loc = m_previous.loc;
+
+    CtorDtorParsed parsed;
+    if (!parse_ctor_dtor_common("constructor", parsed)) {
+        return nullptr;
+    }
+
+    Decl* decl = alloc<Decl>();
+    decl->kind = AstKind::DeclConstructor;
+    decl->loc = loc;
+    decl->constructor_decl.struct_name = parsed.struct_name;
+    decl->constructor_decl.name = parsed.name;
+    decl->constructor_decl.params = alloc_span(parsed.params);
+    decl->constructor_decl.body = parsed.body;
+    decl->constructor_decl.is_pub = is_pub;
+    return decl;
+}
+
+Decl* Parser::destructor_declaration(bool is_pub) {
+    SourceLocation loc = m_previous.loc;
+
+    CtorDtorParsed parsed;
+    if (!parse_ctor_dtor_common("destructor", parsed)) {
+        return nullptr;
+    }
+
+    Decl* decl = alloc<Decl>();
+    decl->kind = AstKind::DeclDestructor;
+    decl->loc = loc;
+    decl->destructor_decl.struct_name = parsed.struct_name;
+    decl->destructor_decl.name = parsed.name;
+    decl->destructor_decl.params = alloc_span(parsed.params);
+    decl->destructor_decl.body = parsed.body;
+    decl->destructor_decl.is_pub = is_pub;
     return decl;
 }
 

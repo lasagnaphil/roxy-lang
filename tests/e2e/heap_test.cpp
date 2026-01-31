@@ -18,7 +18,7 @@ TEST_CASE("E2E - Heap allocation basic") {
         }
 
         fun main(): i32 {
-            var p: uniq Point = new Point();
+            var p: uniq Point = uniq new Point();
             p.x = 10;
             p.y = 20;
             var result: i32 = p.x + p.y;
@@ -40,7 +40,7 @@ TEST_CASE("E2E - Heap allocation with print") {
         }
 
         fun main(): i32 {
-            var p: uniq Point = new Point();
+            var p: uniq Point = uniq new Point();
             p.x = 42;
             p.y = 58;
             print(p.x);
@@ -63,8 +63,8 @@ TEST_CASE("E2E - Multiple heap allocations") {
         }
 
         fun main(): i32 {
-            var p1: uniq Point = new Point();
-            var p2: uniq Point = new Point();
+            var p1: uniq Point = uniq new Point();
+            var p2: uniq Point = uniq new Point();
             p1.x = 1;
             p1.y = 2;
             p2.x = 10;
@@ -92,7 +92,7 @@ TEST_CASE("E2E - Heap allocation larger struct") {
         }
 
         fun main(): i32 {
-            var d: uniq Data = new Data();
+            var d: uniq Data = uniq new Data();
             d.a = 1;
             d.b = 2;
             d.c = 3;
@@ -119,7 +119,7 @@ TEST_CASE("E2E - Heap allocation with computation") {
         }
 
         fun main(): i32 {
-            var p: uniq Point = new Point();
+            var p: uniq Point = uniq new Point();
             p.x = 5;
             p.y = 7;
             var sum: i32 = p.x + p.y;
@@ -145,7 +145,7 @@ TEST_CASE("E2E - Heap allocation in loop") {
         fun main(): i32 {
             var sum: i32 = 0;
             for (var i: i32 = 0; i < 3; i = i + 1) {
-                var c: uniq Counter = new Counter();
+                var c: uniq Counter = uniq new Counter();
                 c.value = i * 10;
                 sum = sum + c.value;
                 delete c;
@@ -176,7 +176,7 @@ TEST_CASE("E2E - Uniq passed to function") {
         }
 
         fun main(): i32 {
-            var p: uniq Point = new Point();
+            var p: uniq Point = uniq new Point();
             p.x = 10;
             p.y = 20;
             var result: i32 = sum_point(p);
@@ -204,7 +204,7 @@ TEST_CASE("E2E - Heap allocation nested struct") {
         }
 
         fun main(): i32 {
-            var line: uniq Line = new Line();
+            var line: uniq Line = uniq new Line();
             line.start.x = 0;
             line.start.y = 0;
             line.end.x = 10;
@@ -238,7 +238,7 @@ TEST_CASE("E2E - Constraint reference borrow check success") {
         }
 
         fun main(): i32 {
-            var p: uniq Point = new Point();
+            var p: uniq Point = uniq new Point();
             p.x = 42;
             p.y = 8;
             var result: i32 = read_point(p);
@@ -269,7 +269,7 @@ TEST_CASE("E2E - Ref parameter borrow tracking") {
         }
 
         fun main(): i32 {
-            var p: uniq Point = new Point();
+            var p: uniq Point = uniq new Point();
             p.x = 10;
             p.y = 25;
             var result: i32 = borrow_point(p);  // Pass uniq as ref
@@ -302,7 +302,7 @@ TEST_CASE("E2E - Multiple ref borrows in sequence") {
         }
 
         fun main(): i32 {
-            var p: uniq Point = new Point();
+            var p: uniq Point = uniq new Point();
             p.x = 100;
             p.y = 200;
             var x: i32 = get_x(p);  // Borrow 1
@@ -335,7 +335,7 @@ TEST_CASE("E2E - Ref parameter with multiple returns") {
         }
 
         fun main(): i32 {
-            var p: uniq Point = new Point();
+            var p: uniq Point = uniq new Point();
             p.x = 50;
             p.y = 30;
             var m: i32 = max_coord(p);
@@ -414,7 +414,7 @@ TEST_CASE("E2E - Runtime error: delete with active borrow") {
         }
 
         fun main(): i32 {
-            var p: uniq Point = new Point();
+            var p: uniq Point = uniq new Point();
             p.x = 42;
             var result: i32 = try_delete_while_borrowed(p, p);
             print(result);
@@ -510,7 +510,7 @@ TEST_CASE("E2E - Valid: uniq to ref conversion") {
         }
 
         fun main(): i32 {
-            var owner: uniq Point = new Point();
+            var owner: uniq Point = uniq new Point();
             owner.x = 10;
             owner.y = 20;
             var result: i32 = borrow(owner);  // uniq -> ref OK

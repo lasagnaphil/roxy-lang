@@ -29,6 +29,15 @@ public:
     // Build IR for a single function
     IRFunction* build_function(FunDecl* decl);
 
+    // Build IR for a constructor
+    IRFunction* build_constructor(ConstructorDecl* decl, Type* struct_type);
+
+    // Build IR for a destructor
+    IRFunction* build_destructor(DestructorDecl* decl, Type* struct_type);
+
+    // Build synthesized default constructor for a struct type
+    IRFunction* build_synthesized_default_constructor(Type* struct_type);
+
 private:
     // Block management
     IRBlock* create_block(StringView name = {});

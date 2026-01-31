@@ -18,6 +18,8 @@ struct Decl;
 struct StructDecl;
 struct EnumDecl;
 struct FunDecl;
+struct ConstructorDecl;
+struct DestructorDecl;
 
 enum class TypeKind : u8 {
     // Primitives
@@ -44,6 +46,20 @@ enum class TypeKind : u8 {
     Error,  // Sentinel for type errors, allows analysis to continue
 };
 
+// Constructor information for struct types
+struct ConstructorInfo {
+    StringView name;               // empty for default constructor
+    Span<Type*> param_types;
+    Decl* decl;                    // Points to the ConstructorDecl AST node
+};
+
+// Destructor information for struct types
+struct DestructorInfo {
+    StringView name;               // empty for default destructor
+    Span<Type*> param_types;       // Destructors can have params
+    Decl* decl;                    // Points to the DestructorDecl AST node
+};
+
 // Type info for struct types
 struct StructTypeInfo {
     StringView name;
@@ -51,6 +67,8 @@ struct StructTypeInfo {
     Decl* decl;                    // Points to the StructDecl AST node
     Type* parent;                  // Parent struct type, nullptr if no inheritance
     Span<struct FieldInfo> fields; // All fields including inherited
+    Span<ConstructorInfo> constructors;  // Constructors for this struct
+    Span<DestructorInfo> destructors;    // Destructors for this struct
     u32 slot_count;                // Total u32 slots needed for this struct
 };
 

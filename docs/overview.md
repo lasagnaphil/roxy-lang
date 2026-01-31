@@ -19,10 +19,11 @@
 - Native function binding with automatic C++ wrapper generation
 - SSA IR with block arguments and bytecode lowering
 - Register-based VM with interpreter
+- Named constructors and destructors with `self` keyword
+- Stack allocation with `new Type()`, heap allocation with `uniq new Type()`
+- Synthesized default constructors with zero-initialization
 
 **Planned:**
-- Heap allocation with `new`/`uniq`/`ref`/`weak`
-- Named constructors/destructors
 - LSP server for IDE support
 - AOT compilation to C
 
@@ -281,17 +282,63 @@ fun main(args: List<string>) {
 
 ### Convenient and safe init / deinit via named constructors / destructors
 
-- Unlike C++, you can specify multiple versions of constructors / destructors
+- **Constructor syntax**: `fun new StructName(params) { ... }` or `fun new StructName.name(params) { ... }`
 
-    - Default constructor / destructor: is automatically run, use RAII semantics
+- **Destructor syntax**: `fun delete StructName() { ... }` or `fun delete StructName.name(params) { ... }`
 
-    - Custom constructor / destructor: called manually
+- Use `self` keyword to access struct fields inside constructors/destructors:
 
-    - If default constructor / destructor is not specified, usage of value before constructor / after destructor is caught at compile-time!
+    ```roxy
+    struct Point {
+        x: i32;
+        y: i32;
+    }
 
-    - Compiler does branch analysis to ensure that destructor is called at all times during the current scope
+    fun new Point(x: i32, y: i32) {
+        self.x = x;
+        self.y = y;
+    }
 
-- Values are always initialized to zero by default
+    fun new Point.origin() {
+        self.x = 0;
+        self.y = 0;
+    }
+
+    fun delete Point() {
+        print(self.x);  // cleanup logic
+    }
+    ```
+
+- **Allocation modes**:
+
+    - Stack allocation: `var p: Point = new Point(1, 2);` — returns value type
+    - Heap allocation: `var p: uniq Point = uniq new Point(1, 2);` — returns `uniq<Point>`
+
+- **Struct literals**: Use `new Type { field = value }` syntax:
+
+    ```roxy
+    var p: Point = new Point { x = 10, y = 20 };
+    var q: uniq Point = uniq new Point { x = 5, y = 15 };
+    ```
+
+- **Synthesized default constructors**: If no constructor is defined, a default constructor is synthesized that:
+    - Zero-initializes all fields, or
+    - Uses field default values if declared in the struct
+
+- Unlike C++, you can specify multiple versions of constructors / destructors (named constructors/destructors)
+
+- Destructors can have parameters for custom cleanup logic:
+
+    ```roxy
+    fun delete Resource.save_to(path: string) {
+        // Save before cleanup
+    }
+
+    // Usage:
+    delete resource.save_to("backup.dat");
+    ```
+
+- Values are always initialized to zero by default (safe initialization)
 
 ### Superb C/C++ embedding API, fast interop with C / C++ structs
 

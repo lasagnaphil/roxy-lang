@@ -283,7 +283,7 @@ TEST_CASE("E2E - Struct literal") {
         }
 
         fun main(): i32 {
-            var p = Point { x = 10, y = 20 };
+            var p = new Point { x = 10, y = 20 };
             print(p.x);
             print(p.y);
             return 0;
@@ -304,7 +304,7 @@ TEST_CASE("E2E - Struct literal with default values") {
         }
 
         fun main(): i32 {
-            var c = Config { width = 1920 };
+            var c = new Config { width = 1920 };
             print(c.width);
             print(c.height);
             print(c.fullscreen);
@@ -325,7 +325,7 @@ TEST_CASE("E2E - Struct literal field order") {
         }
 
         fun main(): i32 {
-            var p = Point { y = 20, x = 10 };
+            var p = new Point { y = 20, x = 10 };
             print(p.x);
             print(p.y);
             return 0;
@@ -346,7 +346,7 @@ TEST_CASE("E2E - Empty struct literal (all defaults)") {
         }
 
         fun main(): i32 {
-            var d = Defaults {};
+            var d = new Defaults {};
             print(d.a);
             print(d.b);
             print(d.c);
@@ -368,7 +368,7 @@ TEST_CASE("E2E - Struct literal with expressions") {
 
         fun main(): i32 {
             var a = 5;
-            var p = Point { x = a * 2, y = a + 10 };
+            var p = new Point { x = a * 2, y = a + 10 };
             print(p.x);
             print(p.y);
             return 0;
@@ -388,7 +388,7 @@ TEST_CASE("E2E - Struct literal with 64-bit field") {
         }
 
         fun main(): i32 {
-            var d = Data { a = 10, b = 100000000000 };
+            var d = new Data { a = 10, b = 100000000000 };
             print(d.a);
             print(d.b);
             return 0;
@@ -416,7 +416,7 @@ TEST_CASE("E2E - Small struct parameter") {
         }
 
         fun main(): i32 {
-            var pt = Point { x = 3, y = 4 };
+            var pt = new Point { x = 3, y = 4 };
             print(distance_sq(pt));
             return 0;
         }
@@ -440,7 +440,7 @@ TEST_CASE("E2E - Struct parameter value semantics") {
         }
 
         fun main(): i32 {
-            var pt = Point { x = 5, y = 10 };
+            var pt = new Point { x = 5, y = 10 };
             print(modify(pt));
             print(pt.x);
             return 0;
@@ -468,8 +468,8 @@ TEST_CASE("E2E - Multiple struct parameters") {
         }
 
         fun main(): i32 {
-            var p1 = Point { x = 1, y = 2 };
-            var p2 = Point { x = 10, y = 20 };
+            var p1 = new Point { x = 1, y = 2 };
+            var p2 = new Point { x = 10, y = 20 };
             add(p1, p2);
             return 0;
         }
@@ -495,7 +495,7 @@ TEST_CASE("E2E - Mixed struct and primitive parameters") {
         }
 
         fun main(): i32 {
-            var pt = Point { x = 3, y = 7 };
+            var pt = new Point { x = 3, y = 7 };
             print(scale(pt, 5));
             return 0;
         }
@@ -518,7 +518,7 @@ TEST_CASE("E2E - Return small struct") {
         }
 
         fun make_point(x: i32, y: i32): Point {
-            var p = Point { x = x, y = y };
+            var p = new Point { x = x, y = y };
             return p;
         }
 
@@ -543,12 +543,12 @@ TEST_CASE("E2E - Return struct with modification") {
         }
 
         fun double_point(p: Point): Point {
-            var result = Point { x = p.x * 2, y = p.y * 2 };
+            var result = new Point { x = p.x * 2, y = p.y * 2 };
             return result;
         }
 
         fun main(): i32 {
-            var p1 = Point { x = 5, y = 10 };
+            var p1 = new Point { x = 5, y = 10 };
             var p2 = double_point(p1);
             print(p2.x);
             print(p2.y);
@@ -569,11 +569,11 @@ TEST_CASE("E2E - Chain struct returns") {
         }
 
         fun origin(): Point {
-            return Point { x = 0, y = 0 };
+            return new Point { x = 0, y = 0 };
         }
 
         fun offset(p: Point, dx: i32, dy: i32): Point {
-            return Point { x = p.x + dx, y = p.y + dy };
+            return new Point { x = p.x + dx, y = p.y + dy };
         }
 
         fun main(): i32 {
@@ -597,7 +597,7 @@ TEST_CASE("E2E - Struct return used in expression") {
         }
 
         fun make_point(x: i32, y: i32): Point {
-            return Point { x = x, y = y };
+            return new Point { x = x, y = y };
         }
 
         fun main(): i32 {
@@ -627,7 +627,7 @@ TEST_CASE("E2E - Large struct return (>16 bytes)") {
         }
 
         fun make_big(x: i32): BigData {
-            return BigData { a = x, b = x + 1, c = x + 2, d = x + 3, e = x + 4 };
+            return new BigData { a = x, b = x + 1, c = x + 2, d = x + 3, e = x + 4 };
         }
 
         fun main(): i32 {
@@ -656,7 +656,7 @@ TEST_CASE("E2E - Large struct return value semantics") {
         }
 
         fun make_big(): BigData {
-            return BigData { a = 1, b = 2, c = 3, d = 4, e = 5 };
+            return new BigData { a = 1, b = 2, c = 3, d = 4, e = 5 };
         }
 
         fun main(): i32 {
@@ -677,7 +677,7 @@ TEST_CASE("E2E - Large struct chained returns") {
         struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
 
         fun make_big(x: i32): BigData {
-            return BigData { a = x, b = x, c = x, d = x, e = x };
+            return new BigData { a = x, b = x, c = x, d = x, e = x };
         }
 
         fun sum_big(data: BigData): i32 {
@@ -705,7 +705,7 @@ TEST_CASE("E2E - Large struct return with 64-bit field") {
         }
 
         fun make_big(): BigData {
-            return BigData { a = 1, b = 2, c = 100000000000, d = 4 };
+            return new BigData { a = 1, b = 2, c = 100000000000, d = 4 };
         }
 
         fun main(): i32 {
@@ -728,7 +728,7 @@ TEST_CASE("E2E - Large struct return used in expression") {
         struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
 
         fun make_big(x: i32): BigData {
-            return BigData { a = x, b = x * 2, c = x * 3, d = x * 4, e = x * 5 };
+            return new BigData { a = x, b = x * 2, c = x * 3, d = x * 4, e = x * 5 };
         }
 
         fun main(): i32 {
@@ -748,11 +748,11 @@ TEST_CASE("E2E - Large struct return chained function calls") {
         struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
 
         fun make_big(x: i32): BigData {
-            return BigData { a = x, b = x, c = x, d = x, e = x };
+            return new BigData { a = x, b = x, c = x, d = x, e = x };
         }
 
         fun add_big(a: BigData, b: BigData): BigData {
-            return BigData {
+            return new BigData {
                 a = a.a + b.a,
                 b = a.b + b.b,
                 c = a.c + b.c,

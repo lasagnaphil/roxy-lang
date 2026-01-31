@@ -202,7 +202,7 @@ Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA
 
 - Types/modifiers: `true false nil var fun struct enum pub native`
 - Control flow: `if else for while break continue return when case`
-- OOP: `this super new delete`
+- OOP: `self super new delete`
 - References: `uniq ref weak out inout`
 - Imports: `import from`
 
@@ -626,3 +626,4 @@ On Windows, use `.exe` extension.
   - `interop.md` - Native functions, automatic C++ binding
   - `frontend.md` - Lexer, parser, semantic analysis
   - `modules.md` - Module system, imports, multi-file compilation
+  - `constructors.md` - Named constructors/destructors, `self` keyword, synthesized defaults

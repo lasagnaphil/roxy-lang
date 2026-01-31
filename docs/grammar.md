@@ -80,7 +80,7 @@ factor          -> unary ( ( "/" | "*" | "%" ) unary )* ;
 
 unary           -> ( "!" | "-" | "~" ) unary | call ;
 call            -> primary ( "(" arguments? ")" | "." Identifier | "::" Identifier )* ;
-primary         -> "true" | "false" | "nil" | "this"
+primary         -> "true" | "false" | "nil" | "self"
                  | Number | String | "(" expression ")"
                  | "super" "." Identifier
                  | struct_literal

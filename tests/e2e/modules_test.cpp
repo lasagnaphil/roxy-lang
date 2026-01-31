@@ -405,7 +405,7 @@ TEST_CASE("E2E - Compiler: struct field visibility - same module private access 
         }
 
         fun main(): i32 {
-            var p: Point = Point { x = 10, y = 20 };
+            var p: Point = new Point { x = 10, y = 20 };
             return p.x + p.y;
         }
     )";
@@ -441,7 +441,7 @@ TEST_CASE("E2E - Compiler: struct field visibility - same module public fields w
         }
 
         fun main(): i32 {
-            var p: Point = Point { x = 5, y = 15 };
+            var p: Point = new Point { x = 5, y = 15 };
             return p.x + p.y;
         }
     )";

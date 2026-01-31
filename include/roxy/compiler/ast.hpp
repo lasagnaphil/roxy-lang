@@ -51,6 +51,8 @@ enum class AstKind : u8 {
     DeclField,
     DeclEnum,
     DeclImport,
+    DeclConstructor,
+    DeclDestructor,
 };
 
 enum class LiteralKind : u8 {
@@ -206,10 +208,14 @@ struct SuperExpr {
     StringView method_name;
 };
 
-// New expression: new Type(args)
+// New expression: new Type(args) or uniq new Type(args)
+// Stack allocation: new Type(args) -> returns value type T
+// Heap allocation: uniq new Type(args) -> returns uniq<T>
 struct NewExpr {
     TypeExpr* type;
-    Span<Expr*> arguments;
+    StringView constructor_name;  // Empty for default constructor
+    Span<CallArg> arguments;      // Constructor arguments with modifiers
+    bool is_heap;                 // true for "uniq new", false for just "new"
 };
 
 // Field initializer for struct literals
@@ -219,10 +225,11 @@ struct FieldInit {
     SourceLocation loc;
 };
 
-// Struct literal expression: Point { x = 1, y = 2 }
+// Struct literal expression: new Point { x = 1, y = 2 } or uniq new Point { x = 1, y = 2 }
 struct StructLiteralExpr {
     StringView type_name;
     Span<FieldInit> fields;
+    bool is_heap;                 // true for "uniq new", false for just "new"
 };
 
 // Forward declaration
@@ -303,9 +310,11 @@ struct ContinueStmt {
     // No additional data
 };
 
-// Delete statement: delete expr;
+// Delete statement: delete expr; or delete expr.dtor_name(args);
 struct DeleteStmt {
     Expr* expr;
+    StringView destructor_name;  // Empty for default destructor
+    Span<CallArg> arguments;     // Destructor arguments (named destructors can have args)
 };
 
 // Statement node
@@ -406,6 +415,26 @@ struct ImportDecl {
     bool is_from_import;
 };
 
+// Constructor declaration: fun new StructName(params) { body }
+// or: fun new StructName.ctor_name(params) { body }
+struct ConstructorDecl {
+    StringView struct_name;
+    StringView name;           // empty for default constructor
+    Span<Param> params;
+    Stmt* body;
+    bool is_pub;
+};
+
+// Destructor declaration: fun delete StructName(params) { body }
+// or: fun delete StructName.dtor_name(params) { body }
+struct DestructorDecl {
+    StringView struct_name;
+    StringView name;           // empty for default destructor
+    Span<Param> params;        // Destructors CAN have parameters
+    Stmt* body;
+    bool is_pub;
+};
+
 // Declaration node
 struct Decl {
     AstKind kind;
@@ -417,6 +446,8 @@ struct Decl {
         EnumDecl enum_decl;
         FieldDecl field_decl;
         ImportDecl import_decl;
+        ConstructorDecl constructor_decl;
+        DestructorDecl destructor_decl;
         Stmt stmt;  // For statement declarations (like expression statements)
     };
 

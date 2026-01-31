@@ -60,7 +60,7 @@ TEST_CASE("Lexer: Keywords") {
     auto tokens = lex_all(
         "true false nil var fun struct enum pub native "
         "if else for while break continue return when case "
-        "this super new delete "
+        "self super new delete "
         "uniq ref weak out inout "
         "import from"
     );
@@ -89,7 +89,7 @@ TEST_CASE("Lexer: Keywords") {
     check_token(tokens, i++, TokenKind::KwCase);
 
     // OOP
-    check_token(tokens, i++, TokenKind::KwThis);
+    check_token(tokens, i++, TokenKind::KwSelf);
     check_token(tokens, i++, TokenKind::KwSuper);
     check_token(tokens, i++, TokenKind::KwNew);
     check_token(tokens, i++, TokenKind::KwDelete);

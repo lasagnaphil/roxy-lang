@@ -72,7 +72,7 @@ const char* token_kind_to_string(TokenKind kind) {
         case TokenKind::KwCase:         return "case";
 
         // Keywords - OOP
-        case TokenKind::KwThis:         return "this";
+        case TokenKind::KwSelf:         return "self";
         case TokenKind::KwSuper:        return "super";
         case TokenKind::KwNew:          return "new";
         case TokenKind::KwDelete:       return "delete";

@@ -332,11 +332,11 @@ TEST_CASE("Parser: Assignment Expression") {
     }
 }
 
-TEST_CASE("Parser: This and Super") {
+TEST_CASE("Parser: Self and Super") {
     BumpAllocator allocator(4096);
 
-    SUBCASE("This expression") {
-        Program* program = parse_source("this;", allocator);
+    SUBCASE("Self expression") {
+        Program* program = parse_source("self;", allocator);
         REQUIRE(program != nullptr);
         auto& expr = program->declarations[0]->stmt.expr_stmt.expr;
         CHECK(expr->kind == AstKind::ExprThis);

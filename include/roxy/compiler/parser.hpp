@@ -64,9 +64,6 @@ private:
     Expr* finish_call(Expr* callee);
     Expr* finish_index(Expr* object);
 
-    // Struct literal helper
-    Expr* struct_literal(Token type_token);
-
     // Statement parsing
     Stmt* statement();
     Stmt* block_statement();
@@ -83,9 +80,20 @@ private:
     Decl* declaration();
     Decl* var_declaration(bool is_pub);
     Decl* fun_declaration(bool is_pub, bool is_native);
+    Decl* constructor_declaration(bool is_pub);
+    Decl* destructor_declaration(bool is_pub);
     Decl* struct_declaration(bool is_pub);
     Decl* enum_declaration(bool is_pub);
     Decl* import_declaration();
+
+    // Helper for parsing constructor/destructor (they share the same structure)
+    struct CtorDtorParsed {
+        StringView struct_name;
+        StringView name;
+        Vector<Param> params;
+        Stmt* body;
+    };
+    bool parse_ctor_dtor_common(const char* kind_name, CtorDtorParsed& out);
 
     // Type parsing
     TypeExpr* type_expression();

@@ -70,6 +70,10 @@ private:
     void analyze_struct_decl(Decl* decl);
     void analyze_enum_decl(Decl* decl);
     void analyze_import_decl(Decl* decl);
+    void analyze_constructor_decl(Decl* decl);
+    void analyze_destructor_decl(Decl* decl);
+    void analyze_constructor_body(Decl* decl, Type* struct_type);
+    void analyze_destructor_body(Decl* decl, Type* struct_type);
 
     // Statement analysis
     void analyze_stmt(Stmt* stmt);
