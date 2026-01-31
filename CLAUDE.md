@@ -819,3 +819,6 @@ On Windows, use `.exe` extension.
   - `constructors.md` - Named constructors/destructors, `self` keyword, synthesized defaults
   - `methods.md` - Struct methods, `self` parameter, name mangling
   - `inheritance.md` - Struct inheritance, subtyping, `super` keyword, constructor/destructor chaining
+  - `generics.md` - Generic functions and structs (NOT YET IMPLEMENTED - design document)
+  - `traits.md` - Traits and trait bounds (NOT YET IMPLEMENTED - design document)
+  - `operator-overloading.md` - Operator traits for custom operators (NOT YET IMPLEMENTED - design document)
