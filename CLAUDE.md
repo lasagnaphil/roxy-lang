@@ -165,7 +165,8 @@ roxy-v2/
 │       ├── strings_test.cpp     # String operations, concatenation
 │       ├── modules_test.cpp     # Module imports, multi-file compilation
 │       ├── constructors_test.cpp # Named constructors/destructors
-│       └── methods_test.cpp     # Struct method calls
+│       ├── methods_test.cpp     # Struct method calls
+│       └── inheritance_test.cpp # Struct inheritance, super calls
 │
 ├── docs/
 │   ├── overview.md              # Language features and design
@@ -512,6 +513,70 @@ fun main(): i32 {
 }
 ```
 
+### Struct Inheritance (`types.hpp`, `semantic.cpp`, `ir_builder.cpp`)
+
+Single inheritance for structs with static dispatch (no vtables):
+
+**Syntax:**
+```roxy
+struct Animal {
+    hp: i32;
+}
+
+fun Animal.speak(): i32 {
+    return 1;
+}
+
+struct Dog : Animal {
+    breed: i32;
+}
+
+fun Dog.speak(): i32 {
+    return super.speak() + 10;  // Calls parent method
+}
+
+fun new Dog(hp: i32, breed: i32) {
+    super(hp);        // Call parent constructor (or implicit if omitted)
+    self.breed = breed;
+}
+```
+
+**Key Features:**
+
+| Feature | Description |
+|---------|-------------|
+| Field inheritance | Child inherits all parent fields, laid out parent-first |
+| Method inheritance | Child can call inherited methods, override with same name |
+| `super.method()` | Call parent's version of a method |
+| `super()` / `super(args)` | Call parent constructor (implicit if omitted) |
+| Constructor chaining | Parent constructor runs before child |
+| Destructor chaining | Child destructor runs before parent (automatic) |
+| Value slicing | Assigning Child to Parent copies only parent fields |
+| Covariant references | `uniq<Child>` assignable to `ref<Parent>` |
+
+**Implementation:**
+
+- **Type system**: `StructTypeInfo.parent` stores parent type pointer
+- **Subtyping**: `is_subtype_of()` walks parent chain for compatibility checks
+- **Method lookup**: `lookup_method_in_hierarchy()` searches child-to-parent
+- **Name mangling**: Methods as `StructName$$method_name`, constructors as `StructName$$new`
+- **Static dispatch**: Method calls resolved at compile time based on declared type
+
+**Example multi-level inheritance:**
+```roxy
+struct Animal { hp: i32; }
+struct Dog : Animal { breed: i32; }
+struct Labrador : Dog { color: i32; }
+
+fun main(): i32 {
+    var lab: Labrador = Labrador { hp = 100, breed = 5, color = 3 };
+    print(lab.hp);     // 100 - inherited from Animal
+    print(lab.breed);  // 5 - inherited from Dog
+    print(lab.color);  // 3 - own field
+    return 0;
+}
+```
+
 ### Slab Allocator (`include/roxy/vm/slab_allocator.hpp`, `src/roxy/vm/slab_allocator.cpp`)
 
 Custom slab allocator for heap objects with Vale-style random generational references:
@@ -700,3 +765,4 @@ On Windows, use `.exe` extension.
   - `modules.md` - Module system, imports, multi-file compilation
   - `constructors.md` - Named constructors/destructors, `self` keyword, synthesized defaults
   - `methods.md` - Struct methods, `self` parameter, name mangling
+  - `inheritance.md` - Struct inheritance, subtyping, `super` keyword, constructor/destructor chaining

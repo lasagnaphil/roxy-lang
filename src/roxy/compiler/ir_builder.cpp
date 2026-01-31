@@ -306,6 +306,46 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
         define_local(bp.name, bp.value, bp.type);
     }
 
+    // Check if struct has a parent - if so, we may need to call parent constructor
+    Type* parent_type = struct_type->struct_info.parent;
+
+    // Detect if first statement is an explicit super() call
+    bool has_explicit_super = false;
+    if (decl->body && decl->body->kind == AstKind::StmtBlock) {
+        BlockStmt& block = decl->body->block;
+        if (block.declarations.size() > 0) {
+            Decl* first_decl = block.declarations[0];
+            if (first_decl && first_decl->kind == AstKind::StmtExpr) {
+                Expr* first_expr = first_decl->stmt.expr_stmt.expr;
+                if (first_expr && first_expr->kind == AstKind::ExprCall) {
+                    CallExpr& call = first_expr->call;
+                    if (call.callee && call.callee->kind == AstKind::ExprSuper) {
+                        has_explicit_super = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // If struct has parent and no explicit super(), call parent's default constructor
+    if (parent_type && !has_explicit_super) {
+        StructTypeInfo& parent_sti = parent_type->struct_info;
+
+        // Build mangled constructor name: ParentName$$new
+        char name_buf[256];
+        snprintf(name_buf, sizeof(name_buf), "%.*s$$new",
+                 static_cast<int>(parent_sti.name.size()), parent_sti.name.data());
+        u32 len = static_cast<u32>(strlen(name_buf));
+        char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
+        memcpy(name_ptr, name_buf, len + 1);
+        StringView parent_ctor_name(name_ptr, len);
+
+        // Call parent constructor with self pointer
+        Span<ValueId> ctor_args = alloc_span<ValueId>(1);
+        ctor_args[0] = self_param.value;
+        emit_call(parent_ctor_name, ctor_args, m_types.void_type());
+    }
+
     // Generate body
     if (decl->body && decl->body->kind == AstKind::StmtBlock) {
         BlockStmt& block = decl->body->block;
@@ -414,6 +454,28 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
         for (u32 i = 0; i < block.declarations.size(); i++) {
             gen_decl(block.declarations[i]);
         }
+    }
+
+    // After child destructor body, call parent's default destructor if present
+    // Only chain default destructors (named destructors are called explicitly)
+    Type* parent_type = struct_type->struct_info.parent;
+    if (parent_type && decl->name.empty()) {
+        // Call parent's default destructor
+        StructTypeInfo& parent_sti = parent_type->struct_info;
+
+        // Build mangled destructor name: ParentName$$delete
+        char name_buf[256];
+        snprintf(name_buf, sizeof(name_buf), "%.*s$$delete",
+                 static_cast<int>(parent_sti.name.size()), parent_sti.name.data());
+        u32 len = static_cast<u32>(strlen(name_buf));
+        char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
+        memcpy(name_ptr, name_buf, len + 1);
+        StringView parent_dtor_name(name_ptr, len);
+
+        // Call parent destructor with self pointer
+        Span<ValueId> dtor_args = alloc_span<ValueId>(1);
+        dtor_args[0] = self_param.value;
+        emit_call(parent_dtor_name, dtor_args, m_types.void_type());
     }
 
     // If current block doesn't have a terminator, add implicit void return
@@ -599,17 +661,42 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
     // Add 'self' to local scope
     define_local("self", self_param.value, self_param.type);
 
-    // Generate field initialization code
+    // If struct has parent, call parent's default constructor first
+    Type* parent_type = struct_type->struct_info.parent;
+    if (parent_type) {
+        StructTypeInfo& parent_sti = parent_type->struct_info;
+
+        // Build mangled constructor name: ParentName$$new
+        char name_buf[256];
+        snprintf(name_buf, sizeof(name_buf), "%.*s$$new",
+                 static_cast<int>(parent_sti.name.size()), parent_sti.name.data());
+        u32 len = static_cast<u32>(strlen(name_buf));
+        char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
+        memcpy(name_ptr, name_buf, len + 1);
+        StringView parent_ctor_name(name_ptr, len);
+
+        // Call parent constructor with self pointer
+        Span<ValueId> ctor_args = alloc_span<ValueId>(1);
+        ctor_args[0] = self_param.value;
+        emit_call(parent_ctor_name, ctor_args, m_types.void_type());
+    }
+
+    // Get the number of inherited fields (from parent)
+    u32 inherited_field_count = parent_type ? parent_type->struct_info.fields.size() : 0;
+
+    // Generate field initialization code (only for own fields, not inherited)
     StructDecl& sd = sti.decl->struct_decl;
     ValueId self_ptr = self_param.value;
 
-    for (u32 i = 0; i < sti.fields.size(); i++) {
+    for (u32 i = inherited_field_count; i < sti.fields.size(); i++) {
         FieldInfo& fi = sti.fields[i];
+        // Adjust index for the StructDecl (which doesn't include inherited fields)
+        u32 sd_index = i - inherited_field_count;
         ValueId value;
 
         // Use default value if defined, otherwise zero-init
-        if (sd.fields[i].default_value) {
-            value = gen_expr(sd.fields[i].default_value);
+        if (sd.fields[sd_index].default_value) {
+            value = gen_expr(sd.fields[sd_index].default_value);
         } else {
             // Generate zero value based on field type
             if (fi.type->is_bool()) {
@@ -654,7 +741,7 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
         }
 
         // For struct-typed fields with default values, use StructCopy
-        if (fi.type && fi.type->is_struct() && sd.fields[i].default_value) {
+        if (fi.type && fi.type->is_struct() && sd.fields[sd_index].default_value) {
             ValueId field_addr = emit_get_field_addr(self_ptr, fi.name, fi.slot_offset, fi.type);
             emit_struct_copy(field_addr, value, fi.slot_count);
         } else {
@@ -1639,6 +1726,22 @@ ValueId IRBuilder::gen_ternary_expr(Expr* expr) {
     return else_val;  // Simplified
 }
 
+// Helper to look up a method in the struct's type hierarchy (for IR builder)
+static const MethodInfo* lookup_method_in_hierarchy_ir(Type* struct_type, StringView name, Type** found_in_type = nullptr) {
+    Type* current = struct_type;
+    while (current && current->is_struct()) {
+        StructTypeInfo& sti = current->struct_info;
+        for (u32 i = 0; i < sti.methods.size(); i++) {
+            if (sti.methods[i].name == name) {
+                if (found_in_type) *found_in_type = current;
+                return &sti.methods[i];
+            }
+        }
+        current = sti.parent;
+    }
+    return nullptr;
+}
+
 ValueId IRBuilder::gen_call_expr(Expr* expr) {
     CallExpr& ce = expr->call;
 
@@ -1664,6 +1767,75 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             }
             // Otherwise, it's a method call on a variable - fall through
         }
+    }
+
+    // Check if this is a super call: super() / super.ctor_name() / super.method_name()
+    if (ce.callee->kind == AstKind::ExprSuper) {
+        SuperExpr& se = ce.callee->super_expr;
+
+        // Get the 'self' pointer
+        ValueId self_ptr = lookup_local("self");
+
+        // Get the parent struct type from the callee's resolved_type (ref<StructType>)
+        Type* ref_type = ce.callee->resolved_type;
+        Type* target_type = nullptr;
+        if (ref_type && ref_type->is_reference()) {
+            target_type = ref_type->ref_info.inner_type;
+        }
+
+        if (!target_type || !target_type->is_struct()) {
+            return ValueId::invalid();
+        }
+
+        // Determine if this is a constructor call or method call
+        // Constructor calls return void (expr->resolved_type is void)
+        // Method calls return the method's return type
+        bool is_constructor_call = expr->resolved_type && expr->resolved_type->kind == TypeKind::Void;
+
+        char name_buf[256];
+        StructTypeInfo& target_sti = target_type->struct_info;
+
+        if (is_constructor_call) {
+            // Build mangled constructor name: StructName$$new or StructName$$new$$ctor_name
+            if (se.method_name.empty()) {
+                snprintf(name_buf, sizeof(name_buf), "%.*s$$new",
+                         static_cast<int>(target_sti.name.size()), target_sti.name.data());
+            } else {
+                snprintf(name_buf, sizeof(name_buf), "%.*s$$new$$%.*s",
+                         static_cast<int>(target_sti.name.size()), target_sti.name.data(),
+                         static_cast<int>(se.method_name.size()), se.method_name.data());
+            }
+        } else {
+            // Build mangled method name: StructName$$method_name
+            snprintf(name_buf, sizeof(name_buf), "%.*s$$%.*s",
+                     static_cast<int>(target_sti.name.size()), target_sti.name.data(),
+                     static_cast<int>(se.method_name.size()), se.method_name.data());
+        }
+
+        u32 len = static_cast<u32>(strlen(name_buf));
+        char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
+        memcpy(name_ptr, name_buf, len + 1);
+        StringView call_name(name_ptr, len);
+
+        // Evaluate arguments
+        Span<ValueId> args = alloc_span<ValueId>(ce.arguments.size());
+        for (u32 i = 0; i < ce.arguments.size(); i++) {
+            CallArg& arg = ce.arguments[i];
+            if (arg.modifier != ParamModifier::None) {
+                args[i] = gen_lvalue_addr(arg.expr);
+            } else {
+                args[i] = gen_expr(arg.expr);
+            }
+        }
+
+        // Prepend self to arguments
+        Span<ValueId> call_args = alloc_span<ValueId>(args.size() + 1);
+        call_args[0] = self_ptr;
+        for (u32 i = 0; i < args.size(); i++) {
+            call_args[i + 1] = args[i];
+        }
+
+        return emit_call(call_name, call_args, expr->resolved_type);
     }
 
     // Track which arguments are inout and their addresses, so we can reload after
@@ -1786,14 +1958,18 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             // Method call: obj.method(args)
             ValueId obj = gen_expr(ge.object);
 
-            // Get the struct type from the object to build mangled name
+            // Get the struct type from the object
             Type* obj_type = ge.object->resolved_type;
             Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
 
-            // Build mangled method name: StructName$$method_name
+            // Look up method in the type hierarchy to find where it's defined
+            // This ensures we use the correct struct name for mangling (important for inheritance)
+            Type* method_owner = nullptr;
             StringView method_name = ge.name;
             if (struct_type && struct_type->is_struct()) {
-                StructTypeInfo& sti = struct_type->struct_info;
+                lookup_method_in_hierarchy_ir(struct_type, ge.name, &method_owner);
+                Type* name_type = method_owner ? method_owner : struct_type;
+                StructTypeInfo& sti = name_type->struct_info;
                 char name_buf[256];
                 snprintf(name_buf, sizeof(name_buf), "%.*s$$%.*s",
                          static_cast<int>(sti.name.size()), sti.name.data(),
@@ -2070,14 +2246,26 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         struct_ptr = emit_stack_alloc(slot_count, struct_type);
     }
 
-    // Get StructDecl for default values
-    StructDecl& sd = struct_type->struct_info.decl->struct_decl;
-
     // Build map of provided field initializers
     tsl::robin_map<StringView, Expr*, StringViewHash, StringViewEqual> provided_fields;
     for (u32 i = 0; i < sl.fields.size(); i++) {
         provided_fields[sl.fields[i].name] = sl.fields[i].value;
     }
+
+    // Helper to find default value for a field by searching the inheritance chain
+    auto find_field_default = [](Type* type, StringView field_name) -> Expr* {
+        Type* current = type;
+        while (current && current->is_struct()) {
+            StructDecl& sd = current->struct_info.decl->struct_decl;
+            for (u32 j = 0; j < sd.fields.size(); j++) {
+                if (sd.fields[j].name == field_name) {
+                    return sd.fields[j].default_value;
+                }
+            }
+            current = current->struct_info.parent;
+        }
+        return nullptr;
+    };
 
     // Initialize ALL fields (provided or default)
     for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
@@ -2088,8 +2276,8 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         if (it != provided_fields.end()) {
             value_expr = it->second;
         } else {
-            // Use default value from struct declaration
-            value_expr = sd.fields[i].default_value;
+            // Use default value from struct declaration (searching inheritance chain)
+            value_expr = find_field_default(struct_type, fi.name);
         }
 
         ValueId value = gen_expr(value_expr);

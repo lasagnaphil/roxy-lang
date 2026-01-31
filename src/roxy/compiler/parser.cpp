@@ -552,10 +552,23 @@ Expr* Parser::primary() {
         return expr;
     }
 
-    // super.method
+    // super() for constructor call, super.method for method call, super.ctor_name() for named constructor
     if (match(TokenKind::KwSuper)) {
         SourceLocation loc = m_previous.loc;
-        consume(TokenKind::Dot, "Expected '.' after 'super'");
+
+        // Check if this is super() - constructor call with no name
+        if (check(TokenKind::LeftParen)) {
+            // super() - default parent constructor call
+            // Return a SuperExpr with empty method_name to indicate constructor call
+            Expr* expr = alloc<Expr>();
+            expr->kind = AstKind::ExprSuper;
+            expr->loc = loc;
+            expr->super_expr.method_name = StringView(nullptr, 0);  // empty = default constructor
+            return expr;
+        }
+
+        // Otherwise, expect super.something
+        consume(TokenKind::Dot, "Expected '.' or '(' after 'super'");
         if (m_has_error) return nullptr;
 
         Token method_token = consume(TokenKind::Identifier, "Expected method name after 'super.'");

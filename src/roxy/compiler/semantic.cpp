@@ -8,6 +8,38 @@
 
 namespace rx {
 
+// Check if 'child' is a subtype of 'parent' (walks inheritance chain)
+// Returns true if child == parent or child inherits from parent
+static bool is_subtype_of(Type* child, Type* parent) {
+    if (child == parent) return true;
+    if (!child || !parent) return false;
+    if (!child->is_struct() || !parent->is_struct()) return false;
+
+    Type* current = child->struct_info.parent;
+    while (current) {
+        if (current == parent) return true;
+        current = current->struct_info.parent;
+    }
+    return false;
+}
+
+// Look up a method in the struct's type hierarchy (walks inheritance chain)
+// Returns the MethodInfo pointer and the struct type where it was found, or nullptr if not found
+static const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name, Type** found_in_type = nullptr) {
+    Type* current = struct_type;
+    while (current && current->is_struct()) {
+        StructTypeInfo& sti = current->struct_info;
+        for (u32 i = 0; i < sti.methods.size(); i++) {
+            if (sti.methods[i].name == name) {
+                if (found_in_type) *found_in_type = current;
+                return &sti.methods[i];
+            }
+        }
+        current = sti.parent;
+    }
+    return nullptr;
+}
+
 // Returns number of u32 slots needed for a type
 // 1 slot = 4 bytes (for bool, i8-i32, u8-u32, f32)
 // 2 slots = 8 bytes (for i64, u64, f64, pointers)
@@ -1396,6 +1428,129 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         }
     }
 
+    // Check if this is a super call: super() / super(args) / super.ctor_name() / super.method_name()
+    if (ce.callee->kind == AstKind::ExprSuper) {
+        SuperExpr& se = ce.callee->super_expr;
+
+        if (!m_symbols.is_in_struct()) {
+            error(expr->loc, "'super' used outside of struct context");
+            return m_types.error_type();
+        }
+
+        Type* struct_type = m_symbols.current_struct_type();
+        Type* parent_type = struct_type->struct_info.parent;
+
+        if (!parent_type) {
+            error(expr->loc, "'super' used in struct with no parent");
+            return m_types.error_type();
+        }
+
+        StructTypeInfo& parent_sti = parent_type->struct_info;
+
+        // If method_name is empty, this is super() or super(args) - constructor call
+        if (se.method_name.empty()) {
+            // Look for default constructor
+            const ConstructorInfo* ctor = nullptr;
+            for (u32 i = 0; i < parent_sti.constructors.size(); i++) {
+                if (parent_sti.constructors[i].name.empty()) {
+                    ctor = &parent_sti.constructors[i];
+                    break;
+                }
+            }
+
+            // If no default constructor but there are args, error
+            if (!ctor && ce.arguments.size() > 0) {
+                error_fmt(expr->loc, "parent struct '%.*s' has no constructor that takes arguments",
+                         static_cast<int>(parent_sti.name.size()), parent_sti.name.data());
+                return m_types.void_type();
+            }
+
+            // Type-check arguments if constructor found
+            if (ctor) {
+                if (ce.arguments.size() != ctor->param_types.size()) {
+                    error_fmt(expr->loc, "parent constructor expects %u arguments but got %u",
+                             ctor->param_types.size(), ce.arguments.size());
+                    return m_types.void_type();
+                }
+
+                for (u32 i = 0; i < ce.arguments.size(); i++) {
+                    CallArg& arg = ce.arguments[i];
+                    Type* arg_type = analyze_expr(arg.expr);
+                    if (!check_assignable(ctor->param_types[i], arg_type, arg.expr->loc)) {
+                        // Error already reported
+                    }
+                }
+            }
+
+            // Store parent type in callee for IR builder
+            ce.callee->resolved_type = m_types.ref_type(parent_type);
+            return m_types.void_type();
+        }
+
+        // method_name is not empty - this is super.name()
+        // First try to find it as a constructor, then as a method
+        const ConstructorInfo* ctor = nullptr;
+        for (u32 i = 0; i < parent_sti.constructors.size(); i++) {
+            if (parent_sti.constructors[i].name == se.method_name) {
+                ctor = &parent_sti.constructors[i];
+                break;
+            }
+        }
+
+        if (ctor) {
+            // It's a named constructor call
+            if (ce.arguments.size() != ctor->param_types.size()) {
+                error_fmt(expr->loc, "parent constructor expects %u arguments but got %u",
+                         ctor->param_types.size(), ce.arguments.size());
+                return m_types.void_type();
+            }
+
+            for (u32 i = 0; i < ce.arguments.size(); i++) {
+                CallArg& arg = ce.arguments[i];
+                Type* arg_type = analyze_expr(arg.expr);
+                if (!check_assignable(ctor->param_types[i], arg_type, arg.expr->loc)) {
+                    // Error already reported
+                }
+            }
+
+            ce.callee->resolved_type = m_types.ref_type(parent_type);
+            return m_types.void_type();
+        }
+
+        // Not a constructor - try method
+        Type* found_in_type = nullptr;
+        const MethodInfo* mi = lookup_method_in_hierarchy(parent_type, se.method_name, &found_in_type);
+
+        if (mi) {
+            // It's a super method call
+            // Type-check arguments
+            if (ce.arguments.size() != mi->param_types.size()) {
+                error_fmt(expr->loc, "method '%.*s' expects %u arguments but got %u",
+                         static_cast<int>(se.method_name.size()), se.method_name.data(),
+                         mi->param_types.size(), ce.arguments.size());
+                return mi->return_type;
+            }
+
+            for (u32 i = 0; i < ce.arguments.size(); i++) {
+                CallArg& arg = ce.arguments[i];
+                Type* arg_type = analyze_expr(arg.expr);
+                if (!check_assignable(mi->param_types[i], arg_type, arg.expr->loc)) {
+                    // Error already reported
+                }
+            }
+
+            // Store found_in_type for IR builder to mangle correctly
+            ce.callee->resolved_type = m_types.ref_type(found_in_type);
+            return mi->return_type;
+        }
+
+        // Neither constructor nor method
+        error_fmt(expr->loc, "parent struct '%.*s' has no constructor or method '%.*s'",
+                 static_cast<int>(parent_sti.name.size()), parent_sti.name.data(),
+                 static_cast<int>(se.method_name.size()), se.method_name.data());
+        return m_types.error_type();
+    }
+
     // Check if this is a method call: obj.method(args)
     // We need to detect this BEFORE calling analyze_expr(ce.callee) because
     // that would return a function type with 'self' as the first parameter.
@@ -1407,77 +1562,79 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         if (obj_type && !obj_type->is_error()) {
             Type* base_type = obj_type->base_type();
             if (base_type && base_type->is_struct()) {
-                StructTypeInfo& sti = base_type->struct_info;
+                // Look for a method with this name (walks inheritance hierarchy)
+                Type* found_in_type = nullptr;
+                const MethodInfo* mi = lookup_method_in_hierarchy(base_type, ge.name, &found_in_type);
+                if (mi) {
+                    // This is a method call!
 
-                // Look for a method with this name
-                for (u32 i = 0; i < sti.methods.size(); i++) {
-                    if (sti.methods[i].name == ge.name) {
-                        // This is a method call!
-                        MethodInfo& mi = sti.methods[i];
-
-                        // Check argument count (NOT including implicit self)
-                        if (ce.arguments.size() != mi.param_types.size()) {
-                            error_fmt(expr->loc, "method expects %u arguments but got %u",
-                                     mi.param_types.size(), ce.arguments.size());
-                            return mi.return_type;
-                        }
-
-                        // Get MethodDecl for parameter modifiers
-                        MethodDecl* method_decl = mi.decl ? &mi.decl->method_decl : nullptr;
-
-                        // Check argument types and modifiers
-                        for (u32 j = 0; j < ce.arguments.size(); j++) {
-                            CallArg& arg = ce.arguments[j];
-
-                            // Get expected modifier from MethodDecl
-                            ParamModifier expected_mod = ParamModifier::None;
-                            if (method_decl && j < method_decl->params.size()) {
-                                expected_mod = method_decl->params[j].modifier;
-                            }
-
-                            // Check modifier matches
-                            if (expected_mod != arg.modifier) {
-                                if (expected_mod == ParamModifier::Out) {
-                                    error(arg.expr->loc, "argument requires 'out' modifier");
-                                } else if (expected_mod == ParamModifier::Inout) {
-                                    error(arg.expr->loc, "argument requires 'inout' modifier");
-                                } else if (arg.modifier != ParamModifier::None) {
-                                    error(arg.modifier_loc, "unexpected modifier for this parameter");
-                                }
-                            }
-
-                            // Check lvalue requirement for out/inout
-                            if (arg.modifier == ParamModifier::Out || arg.modifier == ParamModifier::Inout) {
-                                if (!is_lvalue(arg.expr)) {
-                                    error(arg.expr->loc, "'out'/'inout' argument must be a variable");
-                                }
-                            }
-
-                            // Analyze argument expression
-                            Type* arg_type = analyze_expr(arg.expr);
-
-                            // Type check (skip for 'out' since it's write-only)
-                            if (arg.modifier != ParamModifier::Out) {
-                                if (!check_assignable(mi.param_types[j], arg_type, arg.expr->loc)) {
-                                    // Error already reported
-                                }
-                            }
-                        }
-
-                        // Set callee's resolved_type to a function type for IR builder
-                        // The function type includes 'self' as the first parameter
-                        u32 total_params = 1 + mi.param_types.size();
-                        Type** ptypes = reinterpret_cast<Type**>(
-                            m_allocator.alloc_bytes(sizeof(Type*) * total_params, alignof(Type*)));
-                        ptypes[0] = m_types.ref_type(base_type);
-                        for (u32 j = 0; j < mi.param_types.size(); j++) {
-                            ptypes[j + 1] = mi.param_types[j];
-                        }
-                        ce.callee->resolved_type = m_types.function_type(
-                            Span<Type*>(ptypes, total_params), mi.return_type);
-
-                        return mi.return_type;
+                    // Check argument count (NOT including implicit self)
+                    if (ce.arguments.size() != mi->param_types.size()) {
+                        error_fmt(expr->loc, "method expects %u arguments but got %u",
+                                 mi->param_types.size(), ce.arguments.size());
+                        return mi->return_type;
                     }
+
+                    // Get MethodDecl for parameter modifiers
+                    MethodDecl* method_decl = mi->decl ? &mi->decl->method_decl : nullptr;
+
+                    // Check argument types and modifiers
+                    for (u32 j = 0; j < ce.arguments.size(); j++) {
+                        CallArg& arg = ce.arguments[j];
+
+                        // Get expected modifier from MethodDecl
+                        ParamModifier expected_mod = ParamModifier::None;
+                        if (method_decl && j < method_decl->params.size()) {
+                            expected_mod = method_decl->params[j].modifier;
+                        }
+
+                        // Check modifier matches
+                        if (expected_mod != arg.modifier) {
+                            if (expected_mod == ParamModifier::Out) {
+                                error(arg.expr->loc, "argument requires 'out' modifier");
+                            } else if (expected_mod == ParamModifier::Inout) {
+                                error(arg.expr->loc, "argument requires 'inout' modifier");
+                            } else if (arg.modifier != ParamModifier::None) {
+                                error(arg.modifier_loc, "unexpected modifier for this parameter");
+                            }
+                        }
+
+                        // Check lvalue requirement for out/inout
+                        if (arg.modifier == ParamModifier::Out || arg.modifier == ParamModifier::Inout) {
+                            if (!is_lvalue(arg.expr)) {
+                                error(arg.expr->loc, "'out'/'inout' argument must be a variable");
+                            }
+                        }
+
+                        // Analyze argument expression
+                        Type* arg_type = analyze_expr(arg.expr);
+
+                        // Type check (skip for 'out' since it's write-only)
+                        if (arg.modifier != ParamModifier::Out) {
+                            if (!check_assignable(mi->param_types[j], arg_type, arg.expr->loc)) {
+                                // Error already reported
+                            }
+                        }
+                    }
+
+                    // Set callee's resolved_type to a function type for IR builder
+                    // The function type includes 'self' as the first parameter
+                    // Use found_in_type for proper method resolution (inheritance)
+                    u32 total_params = 1 + mi->param_types.size();
+                    Type** ptypes = reinterpret_cast<Type**>(
+                        m_allocator.alloc_bytes(sizeof(Type*) * total_params, alignof(Type*)));
+                    ptypes[0] = m_types.ref_type(found_in_type);  // Use the type where method was found
+                    for (u32 j = 0; j < mi->param_types.size(); j++) {
+                        ptypes[j + 1] = mi->param_types[j];
+                    }
+                    ce.callee->resolved_type = m_types.function_type(
+                        Span<Type*>(ptypes, total_params), mi->return_type);
+
+                    // Store the struct type where method was found in the GetExpr
+                    // IR builder will use this for correct method name mangling
+                    ge.object->resolved_type = obj_type;  // Keep original object type
+
+                    return mi->return_type;
                 }
             }
         }
@@ -1738,24 +1895,24 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
         }
     }
 
-    // Look up method
-    for (u32 i = 0; i < sti.methods.size(); i++) {
-        if (sti.methods[i].name == ge.name) {
-            // Build function type with implicit self parameter
-            // Method type: (ref<StructType>, param_types...) -> return_type
-            MethodInfo& mi = sti.methods[i];
+    // Look up method (walks inheritance hierarchy)
+    Type* found_in_type = nullptr;
+    const MethodInfo* mi = lookup_method_in_hierarchy(base_type, ge.name, &found_in_type);
+    if (mi) {
+        // Build function type with implicit self parameter
+        // Method type: (ref<StructType>, param_types...) -> return_type
 
-            // Build parameter types: ref<StructType> + method params
-            u32 total_params = 1 + mi.param_types.size();
-            Type** ptypes = reinterpret_cast<Type**>(
-                m_allocator.alloc_bytes(sizeof(Type*) * total_params, alignof(Type*)));
-            ptypes[0] = m_types.ref_type(base_type);  // self parameter
-            for (u32 j = 0; j < mi.param_types.size(); j++) {
-                ptypes[j + 1] = mi.param_types[j];
-            }
-
-            return m_types.function_type(Span<Type*>(ptypes, total_params), mi.return_type);
+        // Build parameter types: ref<StructType> + method params
+        // Use found_in_type for proper method resolution (inheritance)
+        u32 total_params = 1 + mi->param_types.size();
+        Type** ptypes = reinterpret_cast<Type**>(
+            m_allocator.alloc_bytes(sizeof(Type*) * total_params, alignof(Type*)));
+        ptypes[0] = m_types.ref_type(found_in_type);  // self parameter - type where method is defined
+        for (u32 j = 0; j < mi->param_types.size(); j++) {
+            ptypes[j + 1] = mi->param_types[j];
         }
+
+        return m_types.function_type(Span<Type*>(ptypes, total_params), mi->return_type);
     }
 
     error_fmt(expr->loc, "struct '%.*s' has no member '%.*s'",
@@ -1852,17 +2009,34 @@ Type* SemanticAnalyzer::analyze_super_expr(Expr* expr) {
     }
 
     Type* struct_type = m_symbols.current_struct_type();
-    if (!struct_type->struct_info.parent) {
+    Type* parent_type = struct_type->struct_info.parent;
+
+    if (!parent_type) {
         error(expr->loc, "'super' used in struct with no parent");
         return m_types.error_type();
     }
 
-    // Look up method in parent
-    Type* parent = struct_type->struct_info.parent;
-    (void)parent;  // Unused for now
+    // Look up method in parent (and its ancestors), NOT in child
+    Type* found_in_type = nullptr;
+    const MethodInfo* mi = lookup_method_in_hierarchy(parent_type, se.method_name, &found_in_type);
 
-    error(expr->loc, "Method calls are not yet implemented");
-    return m_types.error_type();
+    if (!mi) {
+        error_fmt(expr->loc, "parent struct has no method '%.*s'",
+                 static_cast<int>(se.method_name.size()), se.method_name.data());
+        return m_types.error_type();
+    }
+
+    // Build function type with ref<ParentType> as self
+    // The function type: (ref<ParentType>, param_types...) -> return_type
+    u32 total_params = 1 + mi->param_types.size();
+    Type** ptypes = reinterpret_cast<Type**>(
+        m_allocator.alloc_bytes(sizeof(Type*) * total_params, alignof(Type*)));
+    ptypes[0] = m_types.ref_type(found_in_type);  // self parameter - parent type
+    for (u32 j = 0; j < mi->param_types.size(); j++) {
+        ptypes[j + 1] = mi->param_types[j];
+    }
+
+    return m_types.function_type(Span<Type*>(ptypes, total_params), mi->return_type);
 }
 
 Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
@@ -1883,8 +2057,20 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
         return m_types.error_type();
     }
 
-    // Get StructDecl to access default values
-    StructDecl& sd = type->struct_info.decl->struct_decl;
+    // Helper to find field default value by searching inheritance chain
+    auto find_field_default = [](Type* struct_type, StringView field_name) -> Expr* {
+        Type* current = struct_type;
+        while (current && current->is_struct()) {
+            StructDecl& sd = current->struct_info.decl->struct_decl;
+            for (u32 j = 0; j < sd.fields.size(); j++) {
+                if (sd.fields[j].name == field_name) {
+                    return sd.fields[j].default_value;
+                }
+            }
+            current = current->struct_info.parent;
+        }
+        return nullptr;
+    };
 
     // Track which fields have been initialized
     Vector<bool> field_initialized(type->struct_info.fields.size(), false);
@@ -1925,9 +2111,13 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
 
     // Check all fields without defaults are initialized
     for (u32 i = 0; i < field_initialized.size(); i++) {
-        if (!field_initialized[i] && sd.fields[i].default_value == nullptr) {
-            error_fmt(expr->loc, "missing field '%.*s' (no default value)",
-                     sd.fields[i].name.size(), sd.fields[i].name.data());
+        if (!field_initialized[i]) {
+            FieldInfo& fi = type->struct_info.fields[i];
+            Expr* default_val = find_field_default(type, fi.name);
+            if (default_val == nullptr) {
+                error_fmt(expr->loc, "missing field '%.*s' (no default value)",
+                         fi.name.size(), fi.name.data());
+            }
         }
     }
 
@@ -1947,6 +2137,24 @@ bool SemanticAnalyzer::check_assignable(Type* target, Type* source, SourceLocati
     // nil is assignable to reference types
     if (source->is_nil() && target->is_reference()) return true;
     if (source->is_nil() && target->kind == TypeKind::Weak) return true;
+
+    // Struct subtyping: Child assignable to Parent (value slicing for values)
+    if (target->is_struct() && source->is_struct()) {
+        if (is_subtype_of(source, target)) {
+            return true;
+        }
+    }
+
+    // Reference subtyping: uniq<Child> -> uniq<Parent>, ref<Child> -> ref<Parent>, etc. (covariant)
+    if (target->is_reference() && source->is_reference()) {
+        if (target->kind == source->kind) {
+            Type* target_inner = target->ref_info.inner_type;
+            Type* source_inner = source->ref_info.inner_type;
+            if (is_subtype_of(source_inner, target_inner)) {
+                return true;
+            }
+        }
+    }
 
     // Check reference type conversions
     if (can_convert_ref(source, target)) return true;
@@ -2135,19 +2343,29 @@ bool SemanticAnalyzer::is_lvalue(Expr* expr) const {
 bool SemanticAnalyzer::can_convert_ref(Type* from, Type* to) const {
     if (!from || !to) return false;
 
+    // Helper to check inner type compatibility (same type or subtype)
+    auto inner_compatible = [](Type* from_inner, Type* to_inner) -> bool {
+        if (from_inner == to_inner) return true;
+        // Covariant: Child -> Parent
+        if (from_inner && to_inner && from_inner->is_struct() && to_inner->is_struct()) {
+            return is_subtype_of(from_inner, to_inner);
+        }
+        return false;
+    };
+
     // uniq -> ref conversion
     if (from->kind == TypeKind::Uniq && to->kind == TypeKind::Ref) {
-        return from->ref_info.inner_type == to->ref_info.inner_type;
+        return inner_compatible(from->ref_info.inner_type, to->ref_info.inner_type);
     }
 
     // ref -> weak conversion
     if (from->kind == TypeKind::Ref && to->kind == TypeKind::Weak) {
-        return from->ref_info.inner_type == to->ref_info.inner_type;
+        return inner_compatible(from->ref_info.inner_type, to->ref_info.inner_type);
     }
 
     // uniq -> weak conversion
     if (from->kind == TypeKind::Uniq && to->kind == TypeKind::Weak) {
-        return from->ref_info.inner_type == to->ref_info.inner_type;
+        return inner_compatible(from->ref_info.inner_type, to->ref_info.inner_type);
     }
 
     return false;

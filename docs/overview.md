@@ -22,6 +22,9 @@
 - Named constructors and destructors with `self` keyword
 - Stack allocation with `Type()`, heap allocation with `uniq Type()`
 - Synthesized default constructors with zero-initialization
+- Struct inheritance with subtyping and method inheritance
+- `super` keyword for parent method/constructor calls
+- Constructor and destructor chaining
 
 **Planned:**
 - LSP server for IDE support
