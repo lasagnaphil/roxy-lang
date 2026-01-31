@@ -22,6 +22,10 @@ void native_array_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
 // Prints an integer value followed by newline
 void native_print(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
 
+// Native function: print_i64(value: i64)
+// Prints a 64-bit integer value followed by newline
+void native_print_i64(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
+
 // Native function: str_concat(a: string, b: string) -> string
 // Concatenates two strings and returns a new string
 void native_str_concat(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
@@ -49,6 +53,7 @@ void register_builtin_natives(NativeRegistry& registry);
 constexpr const char* NATIVE_ARRAY_NEW_INT = "array_new_int";
 constexpr const char* NATIVE_ARRAY_LEN = "array_len";
 constexpr const char* NATIVE_PRINT = "print";
+constexpr const char* NATIVE_PRINT_I64 = "print_i64";
 constexpr const char* NATIVE_STR_CONCAT = "str_concat";
 constexpr const char* NATIVE_STR_EQ = "str_eq";
 constexpr const char* NATIVE_STR_NE = "str_ne";

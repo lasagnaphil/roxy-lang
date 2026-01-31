@@ -376,8 +376,32 @@ Expr* Parser::primary() {
         Expr* expr = alloc<Expr>();
         expr->kind = AstKind::ExprLiteral;
         expr->loc = m_previous.loc;
-        expr->literal.literal_kind = LiteralKind::Int;
         expr->literal.int_value = m_previous.int_value;
+
+        // Determine LiteralKind based on suffix
+        StringView text = m_previous.text();
+        if (!text.empty()) {
+            char last = text[text.size() - 1];
+            if (last == 'l' || last == 'L') {
+                // Check for 'ul' suffix
+                if (text.size() >= 2) {
+                    char prev = text[text.size() - 2];
+                    if (prev == 'u' || prev == 'U') {
+                        expr->literal.literal_kind = LiteralKind::U64;
+                    } else {
+                        expr->literal.literal_kind = LiteralKind::I64;
+                    }
+                } else {
+                    expr->literal.literal_kind = LiteralKind::I64;
+                }
+            } else if (last == 'u' || last == 'U') {
+                expr->literal.literal_kind = LiteralKind::U32;
+            } else {
+                expr->literal.literal_kind = LiteralKind::I32;
+            }
+        } else {
+            expr->literal.literal_kind = LiteralKind::I32;
+        }
         return expr;
     }
 
@@ -385,8 +409,20 @@ Expr* Parser::primary() {
         Expr* expr = alloc<Expr>();
         expr->kind = AstKind::ExprLiteral;
         expr->loc = m_previous.loc;
-        expr->literal.literal_kind = LiteralKind::Float;
         expr->literal.float_value = m_previous.float_value;
+
+        // Determine LiteralKind based on suffix
+        StringView text = m_previous.text();
+        if (!text.empty()) {
+            char last = text[text.size() - 1];
+            if (last == 'f' || last == 'F') {
+                expr->literal.literal_kind = LiteralKind::F32;
+            } else {
+                expr->literal.literal_kind = LiteralKind::F64;
+            }
+        } else {
+            expr->literal.literal_kind = LiteralKind::F64;
+        }
         return expr;
     }
 

@@ -82,6 +82,20 @@ void native_print(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = 0;
 }
 
+// Native function: print_i64(value: i64)
+void native_print_i64(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    if (argc < 1) {
+        vm->error = "print_i64 requires 1 argument";
+        return;
+    }
+
+    u64* regs = vm->call_stack.back().registers;
+    i64 val = static_cast<i64>(regs[first_arg]);
+
+    printf("%lld\n", (long long)val);
+    regs[dst] = 0;
+}
+
 // Native function: str_concat(a: string, b: string) -> string
 void native_str_concat(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 2) {
@@ -188,6 +202,10 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_native(NATIVE_PRINT, native_print,
                          {TK::I32}, TK::Void);
 
+    // Register print_i64(value: i64) -> void
+    registry.bind_native(NATIVE_PRINT_I64, native_print_i64,
+                         {TK::I64}, TK::Void);
+
     // String functions
     // Register str_concat(a: string, b: string) -> string
     registry.bind_native(NATIVE_STR_CONCAT, native_str_concat,
@@ -223,6 +241,10 @@ bool is_builtin_native(const char* name, u32 len) {
         strncmp(name, NATIVE_PRINT, len) == 0) {
         return true;
     }
+    if (len == strlen(NATIVE_PRINT_I64) &&
+        strncmp(name, NATIVE_PRINT_I64, len) == 0) {
+        return true;
+    }
     if (len == strlen(NATIVE_STR_CONCAT) &&
         strncmp(name, NATIVE_STR_CONCAT, len) == 0) {
         return true;
@@ -248,8 +270,8 @@ bool is_builtin_native(const char* name, u32 len) {
 
 i32 get_builtin_native_index(const char* name, u32 len) {
     // Native functions are registered in this order:
-    // array_new_int (0), array_len (1), print (2),
-    // str_concat (3), str_eq (4), str_ne (5), str_len (6), print_str (7)
+    // array_new_int (0), array_len (1), print (2), print_i64 (3),
+    // str_concat (4), str_eq (5), str_ne (6), str_len (7), print_str (8)
     if (len == strlen(NATIVE_ARRAY_NEW_INT) &&
         strncmp(name, NATIVE_ARRAY_NEW_INT, len) == 0) {
         return 0;
@@ -262,25 +284,29 @@ i32 get_builtin_native_index(const char* name, u32 len) {
         strncmp(name, NATIVE_PRINT, len) == 0) {
         return 2;
     }
+    if (len == strlen(NATIVE_PRINT_I64) &&
+        strncmp(name, NATIVE_PRINT_I64, len) == 0) {
+        return 3;
+    }
     if (len == strlen(NATIVE_STR_CONCAT) &&
         strncmp(name, NATIVE_STR_CONCAT, len) == 0) {
-        return 3;
+        return 4;
     }
     if (len == strlen(NATIVE_STR_EQ) &&
         strncmp(name, NATIVE_STR_EQ, len) == 0) {
-        return 4;
+        return 5;
     }
     if (len == strlen(NATIVE_STR_NE) &&
         strncmp(name, NATIVE_STR_NE, len) == 0) {
-        return 5;
+        return 6;
     }
     if (len == strlen(NATIVE_STR_LEN) &&
         strncmp(name, NATIVE_STR_LEN, len) == 0) {
-        return 6;
+        return 7;
     }
     if (len == strlen(NATIVE_PRINT_STR) &&
         strncmp(name, NATIVE_PRINT_STR, len) == 0) {
-        return 7;
+        return 8;
     }
     return -1;
 }

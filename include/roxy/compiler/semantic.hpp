@@ -115,6 +115,12 @@ private:
     Type* get_binary_result_type(BinaryOp op, Type* left, Type* right, SourceLocation loc);
     Type* get_unary_result_type(UnaryOp op, Type* operand, SourceLocation loc);
 
+    // Type mismatch error helpers
+    // Returns true if types match, false and reports error if they don't
+    bool require_types_match(Type* left, Type* right, SourceLocation loc, const char* context);
+    // Reports a type conversion error (source -> target)
+    void error_cannot_convert(Type* source, Type* target, SourceLocation loc, const char* context);
+
     // Lvalue checking for assignment
     bool is_lvalue(Expr* expr) const;
 

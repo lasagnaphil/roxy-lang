@@ -58,8 +58,12 @@ enum class AstKind : u8 {
 enum class LiteralKind : u8 {
     Nil,
     Bool,
-    Int,
-    Float,
+    I32,    // Integer literal (default, no suffix)
+    I64,    // Integer literal with 'l' suffix
+    U32,    // Integer literal with 'u' suffix
+    U64,    // Integer literal with 'ul' suffix
+    F32,    // Float literal with 'f' suffix
+    F64,    // Float literal (default, no suffix)
     String,
 };
 

@@ -1165,9 +1165,13 @@ ValueId IRBuilder::gen_literal_expr(Expr* expr) {
             return emit_const_null();
         case LiteralKind::Bool:
             return emit_const_bool(lit.bool_value);
-        case LiteralKind::Int:
+        case LiteralKind::I32:
+        case LiteralKind::I64:
+        case LiteralKind::U32:
+        case LiteralKind::U64:
             return emit_const_int(lit.int_value, expr->resolved_type);
-        case LiteralKind::Float:
+        case LiteralKind::F32:
+        case LiteralKind::F64:
             return emit_const_float(lit.float_value, expr->resolved_type);
         case LiteralKind::String:
             return emit_const_string(lit.string_value);

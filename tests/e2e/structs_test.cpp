@@ -42,9 +42,9 @@ TEST_CASE("E2E - Struct with 64-bit field") {
         fun main(): i32 {
             var d: Data;
             d.a = 10;
-            d.b = 100000000000;
+            d.b = 100000000000l;
             print(d.a);
-            print(d.b);
+            print_i64(d.b);
             return 0;
         }
     )";
@@ -388,9 +388,9 @@ TEST_CASE("E2E - Struct literal with 64-bit field") {
         }
 
         fun main(): i32 {
-            var d = Data { a = 10, b = 100000000000 };
+            var d = Data { a = 10, b = 100000000000l };
             print(d.a);
-            print(d.b);
+            print_i64(d.b);
             return 0;
         }
     )";
@@ -705,14 +705,14 @@ TEST_CASE("E2E - Large struct return with 64-bit field") {
         }
 
         fun make_big(): BigData {
-            return BigData { a = 1, b = 2, c = 100000000000, d = 4 };
+            return BigData { a = 1, b = 2, c = 100000000000l, d = 4 };
         }
 
         fun main(): i32 {
             var data = make_big();
             print(data.a);
             print(data.b);
-            print(data.c);
+            print_i64(data.c);
             print(data.d);
             return 0;
         }

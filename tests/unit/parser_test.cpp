@@ -54,7 +54,7 @@ TEST_CASE("Parser: Literal Expressions") {
         Program* program = parse_source("42;", allocator);
         REQUIRE(program != nullptr);
         auto& expr = program->declarations[0]->stmt.expr_stmt.expr;
-        CHECK(expr->literal.literal_kind == LiteralKind::Int);
+        CHECK(expr->literal.literal_kind == LiteralKind::I32);
         CHECK(expr->literal.int_value == 42);
     }
 
@@ -62,7 +62,7 @@ TEST_CASE("Parser: Literal Expressions") {
         Program* program = parse_source("3.14;", allocator);
         REQUIRE(program != nullptr);
         auto& expr = program->declarations[0]->stmt.expr_stmt.expr;
-        CHECK(expr->literal.literal_kind == LiteralKind::Float);
+        CHECK(expr->literal.literal_kind == LiteralKind::F64);
         CHECK(expr->literal.float_value == doctest::Approx(3.14));
     }
 

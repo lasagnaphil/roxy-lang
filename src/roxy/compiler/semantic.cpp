@@ -278,9 +278,12 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                         error_fmt(v.loc, "enum variant value must be an integer");
                     }
                     // For simplicity, we require compile-time integer literals
-                    if (v.value->kind == AstKind::ExprLiteral &&
-                        v.value->literal.literal_kind == LiteralKind::Int) {
-                        value = v.value->literal.int_value;
+                    if (v.value->kind == AstKind::ExprLiteral) {
+                        LiteralKind lk = v.value->literal.literal_kind;
+                        if (lk == LiteralKind::I32 || lk == LiteralKind::I64 ||
+                            lk == LiteralKind::U32 || lk == LiteralKind::U64) {
+                            value = v.value->literal.int_value;
+                        }
                     }
                 }
 
@@ -1281,10 +1284,18 @@ Type* SemanticAnalyzer::analyze_literal_expr(Expr* expr) {
             return m_types.nil_type();
         case LiteralKind::Bool:
             return m_types.bool_type();
-        case LiteralKind::Int:
-            return m_types.i64_type();  // Integer literals default to i64
-        case LiteralKind::Float:
-            return m_types.f64_type();  // Float literals default to f64
+        case LiteralKind::I32:
+            return m_types.i32_type();
+        case LiteralKind::I64:
+            return m_types.i64_type();
+        case LiteralKind::U32:
+            return m_types.u32_type();
+        case LiteralKind::U64:
+            return m_types.u64_type();
+        case LiteralKind::F32:
+            return m_types.f32_type();
+        case LiteralKind::F64:
+            return m_types.f64_type();
         case LiteralKind::String:
             return m_types.string_type();
     }
@@ -2127,20 +2138,10 @@ bool SemanticAnalyzer::check_assignable(Type* target, Type* source, SourceLocati
     // Check reference type conversions
     if (can_convert_ref(source, target)) return true;
 
-    // Numeric conversions (widening only for safety)
-    if (target->is_integer() && source->is_integer()) {
-        // For simplicity, allow all integer-to-integer conversions
-        // A stricter implementation would only allow widening
-        return true;
-    }
-
-    if (target->is_float() && source->is_float()) {
-        return true;
-    }
-
-    // Integer to float is allowed
-    if (target->is_float() && source->is_integer()) {
-        return true;
+    // Strict numeric typing: no implicit conversions between numeric types
+    if (target->is_numeric() && source->is_numeric() && target != source) {
+        error_cannot_convert(source, target, loc, "implicitly convert");
+        return false;
     }
 
     // Specific error messages for forbidden reference conversions
@@ -2200,6 +2201,29 @@ bool SemanticAnalyzer::check_boolean(Type* type, SourceLocation loc) {
     return true;
 }
 
+bool SemanticAnalyzer::require_types_match(Type* left, Type* right, SourceLocation loc, const char* context) {
+    if (left == right) return true;
+
+    Vector<char> left_str, right_str;
+    type_to_string(left, left_str);
+    type_to_string(right, right_str);
+    left_str.push_back('\0');
+    right_str.push_back('\0');
+    error_fmt(loc, "%s requires matching types, got '%s' and '%s'",
+              context, left_str.data(), right_str.data());
+    return false;
+}
+
+void SemanticAnalyzer::error_cannot_convert(Type* source, Type* target, SourceLocation loc, const char* context) {
+    Vector<char> source_str, target_str;
+    type_to_string(source, source_str);
+    type_to_string(target, target_str);
+    source_str.push_back('\0');
+    target_str.push_back('\0');
+    error_fmt(loc, "cannot %s '%s' to '%s'",
+              context, source_str.data(), target_str.data());
+}
+
 Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* right, SourceLocation loc) {
     switch (op) {
         // Arithmetic operators
@@ -2209,14 +2233,9 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
         case BinaryOp::Div:
         case BinaryOp::Mod:
             if (left->is_numeric() && right->is_numeric()) {
-                // Result type is the "larger" of the two
-                if (left->is_float() || right->is_float()) {
-                    if (left->kind == TypeKind::F64 || right->kind == TypeKind::F64) {
-                        return m_types.f64_type();
-                    }
-                    return m_types.f32_type();
+                if (!require_types_match(left, right, loc, "arithmetic operator")) {
+                    return m_types.error_type();
                 }
-                // Both integers - for simplicity, return the left type
                 return left;
             }
             // String concatenation for Add
@@ -2234,6 +2253,9 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
         case BinaryOp::Greater:
         case BinaryOp::GreaterEq:
             if (left->is_numeric() && right->is_numeric()) {
+                if (!require_types_match(left, right, loc, "comparison operator")) {
+                    return m_types.error_type();
+                }
                 return m_types.bool_type();
             }
             if (left == right) {
@@ -2255,6 +2277,9 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
         case BinaryOp::BitAnd:
         case BinaryOp::BitOr:
             if (left->is_integer() && right->is_integer()) {
+                if (!require_types_match(left, right, loc, "bitwise operator")) {
+                    return m_types.error_type();
+                }
                 return left;
             }
             error(loc, "bitwise operators require integer operands");

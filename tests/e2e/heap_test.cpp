@@ -96,11 +96,11 @@ TEST_CASE("E2E - Heap allocation larger struct") {
             d.a = 1;
             d.b = 2;
             d.c = 3;
-            d.d = 100000000000;
+            d.d = 100000000000l;
             print(d.a);
             print(d.b);
             print(d.c);
-            print(d.d);
+            print_i64(d.d);
             delete d;
             return 0;
         }

@@ -209,6 +209,33 @@ Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA
 - References: `uniq ref weak out inout`
 - Imports: `import from`
 
+### Type Inference and Numeric Literals
+
+Roxy supports local type inference with strict numeric typing:
+
+**Variable declaration with inference:**
+```roxy
+var x = 42;        // Inferred as i32
+var y = 3.14;      // Inferred as f64
+var z = x + 10;    // Inferred as i32 (from expression type)
+```
+
+**Numeric literal types:**
+
+| Literal | Type | Description |
+|---------|------|-------------|
+| `42` | `i32` | Default integer |
+| `42u` | `u32` | Unsigned 32-bit |
+| `42l` | `i64` | Signed 64-bit |
+| `42ul` | `u64` | Unsigned 64-bit |
+| `3.14` | `f64` | Default float |
+| `3.14f` | `f32` | 32-bit float |
+
+**Strict numeric typing:**
+- No implicit conversions between numeric types
+- Binary operators require matching types: `1 + 2l` is an error (i32 + i64)
+- Use explicit suffixes to match types: `1l + 2l` works (i64 + i64)
+
 ## Implemented Components
 
 ### Lexer (`include/roxy/shared/lexer.hpp`, `src/roxy/shared/lexer.cpp`)
