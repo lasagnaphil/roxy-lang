@@ -106,6 +106,7 @@ private:
     ValueId gen_ternary_expr(Expr* expr);
     ValueId gen_call_expr(Expr* expr);
     ValueId gen_constructor_call(Expr* expr);
+    ValueId gen_super_call(Expr* expr);  // Handle super() and super.method() calls
     ValueId gen_index_expr(Expr* expr);
     ValueId gen_get_expr(Expr* expr);
     ValueId gen_assign_expr(Expr* expr);
@@ -121,6 +122,25 @@ private:
     IROp get_binary_op(BinaryOp op, Type* type);
     IROp get_comparison_op(BinaryOp op, Type* type);
     IROp get_unary_op(UnaryOp op, Type* type);
+
+    // Name mangling helpers - allocate mangled names in the allocator
+    StringView mangle_method(StringView struct_name, StringView method_name);
+    StringView mangle_constructor(StringView struct_name, StringView ctor_name = {});
+    StringView mangle_destructor(StringView struct_name, StringView dtor_name = {});
+
+    // Apply reference wrapper to base type based on RefKind
+    Type* apply_ref_kind(Type* base_type, RefKind ref_kind);
+
+    // Set up function parameters from a list of Params
+    // If self_type is non-null, adds 'self' as the first parameter with ref<self_type>
+    void setup_parameters(Span<Param> params, Type* self_type = nullptr);
+
+    // Initialize function body: create entry block, push scope, add params to scope
+    // skip_hidden_return: if true, don't add the last parameter (hidden return ptr) to scope
+    void begin_function_body(bool skip_hidden_return = false);
+
+    // Finalize function body: add implicit return if needed, pop scope, cleanup
+    void end_function_body();
 
     BumpAllocator& m_allocator;
     TypeCache& m_types;

@@ -8,38 +8,6 @@
 
 namespace rx {
 
-// Check if 'child' is a subtype of 'parent' (walks inheritance chain)
-// Returns true if child == parent or child inherits from parent
-static bool is_subtype_of(Type* child, Type* parent) {
-    if (child == parent) return true;
-    if (!child || !parent) return false;
-    if (!child->is_struct() || !parent->is_struct()) return false;
-
-    Type* current = child->struct_info.parent;
-    while (current) {
-        if (current == parent) return true;
-        current = current->struct_info.parent;
-    }
-    return false;
-}
-
-// Look up a method in the struct's type hierarchy (walks inheritance chain)
-// Returns the MethodInfo pointer and the struct type where it was found, or nullptr if not found
-static const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name, Type** found_in_type = nullptr) {
-    Type* current = struct_type;
-    while (current && current->is_struct()) {
-        StructTypeInfo& sti = current->struct_info;
-        for (u32 i = 0; i < sti.methods.size(); i++) {
-            if (sti.methods[i].name == name) {
-                if (found_in_type) *found_in_type = current;
-                return &sti.methods[i];
-            }
-        }
-        current = sti.parent;
-    }
-    return nullptr;
-}
-
 // Returns number of u32 slots needed for a type
 // 1 slot = 4 bytes (for bool, i8-i32, u8-u32, f32)
 // 2 slots = 8 bytes (for i64, u64, f64, pointers)

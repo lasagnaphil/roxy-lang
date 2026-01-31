@@ -222,6 +222,43 @@ Type* TypeCache::type_by_name(StringView name) {
     return named_type_by_name(name);
 }
 
+const FieldInfo* StructTypeInfo::find_field(StringView field_name) const {
+    for (u32 i = 0; i < fields.size(); i++) {
+        if (fields[i].name == field_name) {
+            return &fields[i];
+        }
+    }
+    return nullptr;
+}
+
+const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name, Type** found_in_type) {
+    Type* current = struct_type;
+    while (current && current->is_struct()) {
+        StructTypeInfo& sti = current->struct_info;
+        for (u32 i = 0; i < sti.methods.size(); i++) {
+            if (sti.methods[i].name == name) {
+                if (found_in_type) *found_in_type = current;
+                return &sti.methods[i];
+            }
+        }
+        current = sti.parent;
+    }
+    return nullptr;
+}
+
+bool is_subtype_of(Type* child, Type* parent) {
+    if (child == parent) return true;
+    if (!child || !parent) return false;
+    if (!child->is_struct() || !parent->is_struct()) return false;
+
+    Type* current = child->struct_info.parent;
+    while (current) {
+        if (current == parent) return true;
+        current = current->struct_info.parent;
+    }
+    return false;
+}
+
 const char* type_kind_to_string(TypeKind kind) {
     switch (kind) {
         case TypeKind::Void: return "void";

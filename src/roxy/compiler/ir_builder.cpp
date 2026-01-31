@@ -104,47 +104,8 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     m_current_func = m_allocator.emplace<IRFunction>();
     m_current_func->name = decl->name;
 
-    // Clear parameter tracking
-    m_param_is_ptr.clear();
-    m_ref_params.clear();
-
     // Set up parameters
-    for (u32 i = 0; i < decl->params.size(); i++) {
-        Param& param = decl->params[i];
-        Type* param_type = nullptr;
-        if (param.type) {
-            // Get the base type from the TypeExpr name
-            param_type = m_types.type_by_name(param.type->name);
-            if (!param_type) {
-                param_type = m_types.error_type();
-            }
-            // Wrap in reference type if specified
-            switch (param.type->ref_kind) {
-                case RefKind::Uniq: param_type = m_types.uniq_type(param_type); break;
-                case RefKind::Ref:  param_type = m_types.ref_type(param_type); break;
-                case RefKind::Weak: param_type = m_types.weak_type(param_type); break;
-                case RefKind::None: break;
-            }
-        }
-
-        // Track pointer parameters (out/inout modifiers or reference types)
-        bool is_ptr = (param.modifier != ParamModifier::None);
-        if (is_ptr) {
-            m_param_is_ptr[param.name] = true;
-        }
-
-        BlockParam bp;
-        bp.value = m_current_func->new_value();
-        bp.type = param_type;
-        bp.name = param.name;
-        m_current_func->params.push_back(bp);
-        m_current_func->param_is_ptr.push_back(is_ptr);
-
-        // Track ref-typed parameters for RefInc/RefDec at boundaries
-        if (param_type && param_type->kind == TypeKind::Ref) {
-            m_ref_params.push_back(bp.value);
-        }
-    }
+    setup_parameters(decl->params);
 
     // Resolve return type
     if (decl->return_type) {
@@ -152,13 +113,7 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
         if (!m_current_func->return_type) {
             m_current_func->return_type = m_types.void_type();
         }
-        // Wrap in reference type if specified
-        switch (decl->return_type->ref_kind) {
-            case RefKind::Uniq: m_current_func->return_type = m_types.uniq_type(m_current_func->return_type); break;
-            case RefKind::Ref:  m_current_func->return_type = m_types.ref_type(m_current_func->return_type); break;
-            case RefKind::Weak: m_current_func->return_type = m_types.weak_type(m_current_func->return_type); break;
-            case RefKind::None: break;
-        }
+        m_current_func->return_type = apply_ref_kind(m_current_func->return_type, decl->return_type->ref_kind);
     } else {
         m_current_func->return_type = m_types.void_type();
     }
@@ -173,29 +128,8 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
         m_current_func->param_is_ptr.push_back(true);
     }
 
-    // Create entry block
-    IRBlock* entry = create_block("entry");
-    set_current_block(entry);
-
-    // Initialize local variable scopes
-    m_local_scopes.clear();
-    push_scope();
-
-    // Add function parameters to local scope
-    // Skip the hidden return pointer parameter (last param for large struct returns)
-    u32 param_count = m_current_func->returns_large_struct()
-        ? m_current_func->params.size() - 1
-        : m_current_func->params.size();
-    for (u32 i = 0; i < param_count; i++) {
-        BlockParam& bp = m_current_func->params[i];
-        define_local(bp.name, bp.value, bp.type);
-    }
-
-    // Emit RefInc for ref-typed parameters at function entry
-    // This tracks borrows in the constraint reference model
-    for (ValueId ref_param : m_ref_params) {
-        emit_ref_inc(ref_param);
-    }
+    // Begin function body
+    begin_function_body(true);  // skip hidden return pointer
 
     // Generate body
     if (decl->body && decl->body->kind == AstKind::StmtBlock) {
@@ -205,19 +139,8 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
         }
     }
 
-    // If current block doesn't have a terminator, add implicit return
-    if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-        if (m_current_func->return_type->is_void()) {
-            finish_block_return(ValueId::invalid());
-        } else {
-            // This shouldn't happen if semantic analysis passed
-            // Return a default value
-            ValueId default_val = emit_const_null();
-            finish_block_return(default_val);
-        }
-    }
-
-    pop_scope();
+    // End function body
+    end_function_body();
 
     IRFunction* result = m_current_func;
     m_current_func = nullptr;
@@ -227,84 +150,16 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
 
 IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_type) {
     m_current_func = m_allocator.emplace<IRFunction>();
+    m_current_func->name = mangle_constructor(decl->struct_name, decl->name);
 
-    // Mangle constructor name: StructName$$new or StructName$$new$$ctor_name
-    char name_buf[256];
-    if (decl->name.empty()) {
-        snprintf(name_buf, sizeof(name_buf), "%.*s$$new",
-                 static_cast<int>(decl->struct_name.size()), decl->struct_name.data());
-    } else {
-        snprintf(name_buf, sizeof(name_buf), "%.*s$$new$$%.*s",
-                 static_cast<int>(decl->struct_name.size()), decl->struct_name.data(),
-                 static_cast<int>(decl->name.size()), decl->name.data());
-    }
-    u32 len = static_cast<u32>(strlen(name_buf));
-    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-    memcpy(name_ptr, name_buf, len + 1);
-    m_current_func->name = StringView(name_ptr, len);
-
-    // Clear parameter tracking
-    m_param_is_ptr.clear();
-    m_ref_params.clear();
-
-    // First parameter is 'self' pointer
-    BlockParam self_param;
-    self_param.value = m_current_func->new_value();
-    self_param.type = m_types.ref_type(struct_type);
-    self_param.name = "self";
-    m_current_func->params.push_back(self_param);
-    m_current_func->param_is_ptr.push_back(true);
-    m_param_is_ptr["self"] = true;
-
-    // Set up other parameters
-    for (u32 i = 0; i < decl->params.size(); i++) {
-        Param& param = decl->params[i];
-        Type* param_type = nullptr;
-        if (param.type) {
-            param_type = m_types.type_by_name(param.type->name);
-            if (!param_type) {
-                param_type = m_types.error_type();
-            }
-            switch (param.type->ref_kind) {
-                case RefKind::Uniq: param_type = m_types.uniq_type(param_type); break;
-                case RefKind::Ref:  param_type = m_types.ref_type(param_type); break;
-                case RefKind::Weak: param_type = m_types.weak_type(param_type); break;
-                case RefKind::None: break;
-            }
-        }
-
-        bool is_ptr = (param.modifier != ParamModifier::None);
-        if (is_ptr) {
-            m_param_is_ptr[param.name] = true;
-        }
-
-        BlockParam bp;
-        bp.value = m_current_func->new_value();
-        bp.type = param_type;
-        bp.name = param.name;
-        m_current_func->params.push_back(bp);
-        m_current_func->param_is_ptr.push_back(is_ptr);
-    }
+    // Set up parameters with 'self' as first parameter
+    setup_parameters(decl->params, struct_type);
 
     // Constructors return void
     m_current_func->return_type = m_types.void_type();
 
-    // Create entry block
-    IRBlock* entry = create_block("entry");
-    set_current_block(entry);
-
-    // Initialize local variable scopes
-    m_local_scopes.clear();
-    push_scope();
-
-    // Add 'self' to local scope
-    define_local("self", self_param.value, self_param.type);
-
-    // Add other parameters to local scope
-    for (u32 i = 1; i < m_current_func->params.size(); i++) {
-        BlockParam& bp = m_current_func->params[i];
-        define_local(bp.name, bp.value, bp.type);
-    }
+    // Begin function body
+    begin_function_body(false);
 
     // Check if struct has a parent - if so, we may need to call parent constructor
     Type* parent_type = struct_type->struct_info.parent;
@@ -329,20 +184,9 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
 
     // If struct has parent and no explicit super(), call parent's default constructor
     if (parent_type && !has_explicit_super) {
-        StructTypeInfo& parent_sti = parent_type->struct_info;
-
-        // Build mangled constructor name: ParentName$$new
-        char name_buf[256];
-        snprintf(name_buf, sizeof(name_buf), "%.*s$$new",
-                 static_cast<int>(parent_sti.name.size()), parent_sti.name.data());
-        u32 len = static_cast<u32>(strlen(name_buf));
-        char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-        memcpy(name_ptr, name_buf, len + 1);
-        StringView parent_ctor_name(name_ptr, len);
-
-        // Call parent constructor with self pointer
+        StringView parent_ctor_name = mangle_constructor(parent_type->struct_info.name);
         Span<ValueId> ctor_args = alloc_span<ValueId>(1);
-        ctor_args[0] = self_param.value;
+        ctor_args[0] = m_current_func->params[0].value;  // 'self' is first parameter
         emit_call(parent_ctor_name, ctor_args, m_types.void_type());
     }
 
@@ -354,12 +198,8 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
         }
     }
 
-    // If current block doesn't have a terminator, add implicit void return
-    if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-        finish_block_return(ValueId::invalid());
-    }
-
-    pop_scope();
+    // End function body
+    end_function_body();
 
     IRFunction* result = m_current_func;
     m_current_func = nullptr;
@@ -369,84 +209,16 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
 
 IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type) {
     m_current_func = m_allocator.emplace<IRFunction>();
+    m_current_func->name = mangle_destructor(decl->struct_name, decl->name);
 
-    // Mangle destructor name: StructName$$delete or StructName$$delete$$dtor_name
-    char name_buf[256];
-    if (decl->name.empty()) {
-        snprintf(name_buf, sizeof(name_buf), "%.*s$$delete",
-                 static_cast<int>(decl->struct_name.size()), decl->struct_name.data());
-    } else {
-        snprintf(name_buf, sizeof(name_buf), "%.*s$$delete$$%.*s",
-                 static_cast<int>(decl->struct_name.size()), decl->struct_name.data(),
-                 static_cast<int>(decl->name.size()), decl->name.data());
-    }
-    u32 len = static_cast<u32>(strlen(name_buf));
-    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-    memcpy(name_ptr, name_buf, len + 1);
-    m_current_func->name = StringView(name_ptr, len);
-
-    // Clear parameter tracking
-    m_param_is_ptr.clear();
-    m_ref_params.clear();
-
-    // First parameter is 'self' pointer
-    BlockParam self_param;
-    self_param.value = m_current_func->new_value();
-    self_param.type = m_types.ref_type(struct_type);
-    self_param.name = "self";
-    m_current_func->params.push_back(self_param);
-    m_current_func->param_is_ptr.push_back(true);
-    m_param_is_ptr["self"] = true;
-
-    // Set up other parameters (destructors can have arguments!)
-    for (u32 i = 0; i < decl->params.size(); i++) {
-        Param& param = decl->params[i];
-        Type* param_type = nullptr;
-        if (param.type) {
-            param_type = m_types.type_by_name(param.type->name);
-            if (!param_type) {
-                param_type = m_types.error_type();
-            }
-            switch (param.type->ref_kind) {
-                case RefKind::Uniq: param_type = m_types.uniq_type(param_type); break;
-                case RefKind::Ref:  param_type = m_types.ref_type(param_type); break;
-                case RefKind::Weak: param_type = m_types.weak_type(param_type); break;
-                case RefKind::None: break;
-            }
-        }
-
-        bool is_ptr = (param.modifier != ParamModifier::None);
-        if (is_ptr) {
-            m_param_is_ptr[param.name] = true;
-        }
-
-        BlockParam bp;
-        bp.value = m_current_func->new_value();
-        bp.type = param_type;
-        bp.name = param.name;
-        m_current_func->params.push_back(bp);
-        m_current_func->param_is_ptr.push_back(is_ptr);
-    }
+    // Set up parameters with 'self' as first parameter
+    setup_parameters(decl->params, struct_type);
 
     // Destructors return void
     m_current_func->return_type = m_types.void_type();
 
-    // Create entry block
-    IRBlock* entry = create_block("entry");
-    set_current_block(entry);
-
-    // Initialize local variable scopes
-    m_local_scopes.clear();
-    push_scope();
-
-    // Add 'self' to local scope
-    define_local("self", self_param.value, self_param.type);
-
-    // Add other parameters to local scope
-    for (u32 i = 1; i < m_current_func->params.size(); i++) {
-        BlockParam& bp = m_current_func->params[i];
-        define_local(bp.name, bp.value, bp.type);
-    }
+    // Begin function body
+    begin_function_body(false);
 
     // Generate body
     if (decl->body && decl->body->kind == AstKind::StmtBlock) {
@@ -460,30 +232,14 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
     // Only chain default destructors (named destructors are called explicitly)
     Type* parent_type = struct_type->struct_info.parent;
     if (parent_type && decl->name.empty()) {
-        // Call parent's default destructor
-        StructTypeInfo& parent_sti = parent_type->struct_info;
-
-        // Build mangled destructor name: ParentName$$delete
-        char name_buf[256];
-        snprintf(name_buf, sizeof(name_buf), "%.*s$$delete",
-                 static_cast<int>(parent_sti.name.size()), parent_sti.name.data());
-        u32 len = static_cast<u32>(strlen(name_buf));
-        char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-        memcpy(name_ptr, name_buf, len + 1);
-        StringView parent_dtor_name(name_ptr, len);
-
-        // Call parent destructor with self pointer
+        StringView parent_dtor_name = mangle_destructor(parent_type->struct_info.name);
         Span<ValueId> dtor_args = alloc_span<ValueId>(1);
-        dtor_args[0] = self_param.value;
+        dtor_args[0] = m_current_func->params[0].value;  // 'self' is first parameter
         emit_call(parent_dtor_name, dtor_args, m_types.void_type());
     }
 
-    // If current block doesn't have a terminator, add implicit void return
-    if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-        finish_block_return(ValueId::invalid());
-    }
-
-    pop_scope();
+    // End function body
+    end_function_body();
 
     IRFunction* result = m_current_func;
     m_current_func = nullptr;
@@ -493,59 +249,10 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
 
 IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
     m_current_func = m_allocator.emplace<IRFunction>();
+    m_current_func->name = mangle_method(decl->struct_name, decl->name);
 
-    // Mangle method name: StructName$$method_name
-    char name_buf[256];
-    snprintf(name_buf, sizeof(name_buf), "%.*s$$%.*s",
-             static_cast<int>(decl->struct_name.size()), decl->struct_name.data(),
-             static_cast<int>(decl->name.size()), decl->name.data());
-    u32 len = static_cast<u32>(strlen(name_buf));
-    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-    memcpy(name_ptr, name_buf, len + 1);
-    m_current_func->name = StringView(name_ptr, len);
-
-    // Clear parameter tracking
-    m_param_is_ptr.clear();
-    m_ref_params.clear();
-
-    // First parameter is 'self' pointer
-    BlockParam self_param;
-    self_param.value = m_current_func->new_value();
-    self_param.type = m_types.ref_type(struct_type);
-    self_param.name = "self";
-    m_current_func->params.push_back(self_param);
-    m_current_func->param_is_ptr.push_back(true);
-    m_param_is_ptr["self"] = true;
-
-    // Set up other parameters
-    for (u32 i = 0; i < decl->params.size(); i++) {
-        Param& param = decl->params[i];
-        Type* param_type = nullptr;
-        if (param.type) {
-            param_type = m_types.type_by_name(param.type->name);
-            if (!param_type) {
-                param_type = m_types.error_type();
-            }
-            switch (param.type->ref_kind) {
-                case RefKind::Uniq: param_type = m_types.uniq_type(param_type); break;
-                case RefKind::Ref:  param_type = m_types.ref_type(param_type); break;
-                case RefKind::Weak: param_type = m_types.weak_type(param_type); break;
-                case RefKind::None: break;
-            }
-        }
-
-        bool is_ptr = (param.modifier != ParamModifier::None);
-        if (is_ptr) {
-            m_param_is_ptr[param.name] = true;
-        }
-
-        BlockParam bp;
-        bp.value = m_current_func->new_value();
-        bp.type = param_type;
-        bp.name = param.name;
-        m_current_func->params.push_back(bp);
-        m_current_func->param_is_ptr.push_back(is_ptr);
-    }
+    // Set up parameters with 'self' as first parameter
+    setup_parameters(decl->params, struct_type);
 
     // Resolve return type
     if (decl->return_type) {
@@ -553,12 +260,7 @@ IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
         if (!m_current_func->return_type) {
             m_current_func->return_type = m_types.void_type();
         }
-        switch (decl->return_type->ref_kind) {
-            case RefKind::Uniq: m_current_func->return_type = m_types.uniq_type(m_current_func->return_type); break;
-            case RefKind::Ref:  m_current_func->return_type = m_types.ref_type(m_current_func->return_type); break;
-            case RefKind::Weak: m_current_func->return_type = m_types.weak_type(m_current_func->return_type); break;
-            case RefKind::None: break;
-        }
+        m_current_func->return_type = apply_ref_kind(m_current_func->return_type, decl->return_type->ref_kind);
     } else {
         m_current_func->return_type = m_types.void_type();
     }
@@ -573,25 +275,8 @@ IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
         m_current_func->param_is_ptr.push_back(true);
     }
 
-    // Create entry block
-    IRBlock* entry = create_block("entry");
-    set_current_block(entry);
-
-    // Initialize local variable scopes
-    m_local_scopes.clear();
-    push_scope();
-
-    // Add 'self' to local scope
-    define_local("self", self_param.value, self_param.type);
-
-    // Add other parameters to local scope (skip hidden return pointer)
-    u32 param_count = m_current_func->returns_large_struct()
-        ? m_current_func->params.size() - 1
-        : m_current_func->params.size();
-    for (u32 i = 1; i < param_count; i++) {
-        BlockParam& bp = m_current_func->params[i];
-        define_local(bp.name, bp.value, bp.type);
-    }
+    // Begin function body
+    begin_function_body(true);  // skip hidden return pointer
 
     // Generate body
     if (decl->body && decl->body->kind == AstKind::StmtBlock) {
@@ -601,18 +286,8 @@ IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
         }
     }
 
-    // If current block doesn't have a terminator, add implicit return
-    if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-        if (m_current_func->return_type->is_void()) {
-            finish_block_return(ValueId::invalid());
-        } else {
-            // This shouldn't happen if semantic analysis passed
-            ValueId default_val = emit_const_null();
-            finish_block_return(default_val);
-        }
-    }
-
-    pop_scope();
+    // End function body
+    end_function_body();
 
     IRFunction* result = m_current_func;
     m_current_func = nullptr;
@@ -624,58 +299,24 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
     m_current_func = m_allocator.emplace<IRFunction>();
 
     StructTypeInfo& sti = struct_type->struct_info;
+    m_current_func->name = mangle_constructor(sti.name);
 
-    // Mangle constructor name: StructName$$new
-    char name_buf[256];
-    snprintf(name_buf, sizeof(name_buf), "%.*s$$new",
-             static_cast<int>(sti.name.size()), sti.name.data());
-    u32 len = static_cast<u32>(strlen(name_buf));
-    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-    memcpy(name_ptr, name_buf, len + 1);
-    m_current_func->name = StringView(name_ptr, len);
-
-    // Clear parameter tracking
-    m_param_is_ptr.clear();
-    m_ref_params.clear();
-
-    // Only parameter is 'self' pointer
-    BlockParam self_param;
-    self_param.value = m_current_func->new_value();
-    self_param.type = m_types.ref_type(struct_type);
-    self_param.name = "self";
-    m_current_func->params.push_back(self_param);
-    m_current_func->param_is_ptr.push_back(true);
-    m_param_is_ptr["self"] = true;
+    // Set up parameters - only 'self'
+    setup_parameters({}, struct_type);
 
     // Constructor returns void
     m_current_func->return_type = m_types.void_type();
 
-    // Create entry block
-    IRBlock* entry = create_block("entry");
-    set_current_block(entry);
+    // Begin function body
+    begin_function_body(false);
 
-    // Initialize local variable scopes
-    m_local_scopes.clear();
-    push_scope();
-
-    // Add 'self' to local scope
-    define_local("self", self_param.value, self_param.type);
+    // Get 'self' parameter value
+    BlockParam& self_param = m_current_func->params[0];
 
     // If struct has parent, call parent's default constructor first
     Type* parent_type = struct_type->struct_info.parent;
     if (parent_type) {
-        StructTypeInfo& parent_sti = parent_type->struct_info;
-
-        // Build mangled constructor name: ParentName$$new
-        char name_buf[256];
-        snprintf(name_buf, sizeof(name_buf), "%.*s$$new",
-                 static_cast<int>(parent_sti.name.size()), parent_sti.name.data());
-        u32 len = static_cast<u32>(strlen(name_buf));
-        char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-        memcpy(name_ptr, name_buf, len + 1);
-        StringView parent_ctor_name(name_ptr, len);
-
-        // Call parent constructor with self pointer
+        StringView parent_ctor_name = mangle_constructor(parent_type->struct_info.name);
         Span<ValueId> ctor_args = alloc_span<ValueId>(1);
         ctor_args[0] = self_param.value;
         emit_call(parent_ctor_name, ctor_args, m_types.void_type());
@@ -749,10 +390,8 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
         }
     }
 
-    // Return void
-    finish_block_return(ValueId::invalid());
-
-    pop_scope();
+    // End function body (will add implicit return)
+    end_function_body();
 
     IRFunction* result = m_current_func;
     m_current_func = nullptr;
@@ -1444,20 +1083,7 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
 
         if (dtor) {
             // Call the destructor
-            // Build mangled name: StructName$$delete or StructName$$delete$$dtor_name
-            char name_buf[256];
-            if (ds.destructor_name.empty()) {
-                snprintf(name_buf, sizeof(name_buf), "%.*s$$delete",
-                         static_cast<int>(sti.name.size()), sti.name.data());
-            } else {
-                snprintf(name_buf, sizeof(name_buf), "%.*s$$delete$$%.*s",
-                         static_cast<int>(sti.name.size()), sti.name.data(),
-                         static_cast<int>(ds.destructor_name.size()), ds.destructor_name.data());
-            }
-            u32 len = static_cast<u32>(strlen(name_buf));
-            char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-            memcpy(name_ptr, name_buf, len + 1);
-            StringView dtor_name(name_ptr, len);
+            StringView dtor_name = mangle_destructor(sti.name, ds.destructor_name);
 
             // Build arguments: 'self' pointer + destructor arguments
             Vector<ValueId> call_args;
@@ -1479,14 +1105,7 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
             for (u32 i = 0; i < sti.destructors.size(); i++) {
                 if (sti.destructors[i].name.empty()) {
                     // Found default destructor - call it
-                    char name_buf[256];
-                    snprintf(name_buf, sizeof(name_buf), "%.*s$$delete",
-                             static_cast<int>(sti.name.size()), sti.name.data());
-                    u32 len = static_cast<u32>(strlen(name_buf));
-                    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-                    memcpy(name_ptr, name_buf, len + 1);
-                    StringView dtor_name(name_ptr, len);
-
+                    StringView dtor_name = mangle_destructor(sti.name);
                     Vector<ValueId> call_args;
                     call_args.push_back(val);
                     emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
@@ -1726,22 +1345,6 @@ ValueId IRBuilder::gen_ternary_expr(Expr* expr) {
     return else_val;  // Simplified
 }
 
-// Helper to look up a method in the struct's type hierarchy (for IR builder)
-static const MethodInfo* lookup_method_in_hierarchy_ir(Type* struct_type, StringView name, Type** found_in_type = nullptr) {
-    Type* current = struct_type;
-    while (current && current->is_struct()) {
-        StructTypeInfo& sti = current->struct_info;
-        for (u32 i = 0; i < sti.methods.size(); i++) {
-            if (sti.methods[i].name == name) {
-                if (found_in_type) *found_in_type = current;
-                return &sti.methods[i];
-            }
-        }
-        current = sti.parent;
-    }
-    return nullptr;
-}
-
 ValueId IRBuilder::gen_call_expr(Expr* expr) {
     CallExpr& ce = expr->call;
 
@@ -1771,71 +1374,7 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
 
     // Check if this is a super call: super() / super.ctor_name() / super.method_name()
     if (ce.callee->kind == AstKind::ExprSuper) {
-        SuperExpr& se = ce.callee->super_expr;
-
-        // Get the 'self' pointer
-        ValueId self_ptr = lookup_local("self");
-
-        // Get the parent struct type from the callee's resolved_type (ref<StructType>)
-        Type* ref_type = ce.callee->resolved_type;
-        Type* target_type = nullptr;
-        if (ref_type && ref_type->is_reference()) {
-            target_type = ref_type->ref_info.inner_type;
-        }
-
-        if (!target_type || !target_type->is_struct()) {
-            return ValueId::invalid();
-        }
-
-        // Determine if this is a constructor call or method call
-        // Constructor calls return void (expr->resolved_type is void)
-        // Method calls return the method's return type
-        bool is_constructor_call = expr->resolved_type && expr->resolved_type->kind == TypeKind::Void;
-
-        char name_buf[256];
-        StructTypeInfo& target_sti = target_type->struct_info;
-
-        if (is_constructor_call) {
-            // Build mangled constructor name: StructName$$new or StructName$$new$$ctor_name
-            if (se.method_name.empty()) {
-                snprintf(name_buf, sizeof(name_buf), "%.*s$$new",
-                         static_cast<int>(target_sti.name.size()), target_sti.name.data());
-            } else {
-                snprintf(name_buf, sizeof(name_buf), "%.*s$$new$$%.*s",
-                         static_cast<int>(target_sti.name.size()), target_sti.name.data(),
-                         static_cast<int>(se.method_name.size()), se.method_name.data());
-            }
-        } else {
-            // Build mangled method name: StructName$$method_name
-            snprintf(name_buf, sizeof(name_buf), "%.*s$$%.*s",
-                     static_cast<int>(target_sti.name.size()), target_sti.name.data(),
-                     static_cast<int>(se.method_name.size()), se.method_name.data());
-        }
-
-        u32 len = static_cast<u32>(strlen(name_buf));
-        char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-        memcpy(name_ptr, name_buf, len + 1);
-        StringView call_name(name_ptr, len);
-
-        // Evaluate arguments
-        Span<ValueId> args = alloc_span<ValueId>(ce.arguments.size());
-        for (u32 i = 0; i < ce.arguments.size(); i++) {
-            CallArg& arg = ce.arguments[i];
-            if (arg.modifier != ParamModifier::None) {
-                args[i] = gen_lvalue_addr(arg.expr);
-            } else {
-                args[i] = gen_expr(arg.expr);
-            }
-        }
-
-        // Prepend self to arguments
-        Span<ValueId> call_args = alloc_span<ValueId>(args.size() + 1);
-        call_args[0] = self_ptr;
-        for (u32 i = 0; i < args.size(); i++) {
-            call_args[i + 1] = args[i];
-        }
-
-        return emit_call(call_name, call_args, expr->resolved_type);
+        return gen_super_call(expr);
     }
 
     // Track which arguments are inout and their addresses, so we can reload after
@@ -1967,17 +1506,9 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             Type* method_owner = nullptr;
             StringView method_name = ge.name;
             if (struct_type && struct_type->is_struct()) {
-                lookup_method_in_hierarchy_ir(struct_type, ge.name, &method_owner);
+                lookup_method_in_hierarchy(struct_type, ge.name, &method_owner);
                 Type* name_type = method_owner ? method_owner : struct_type;
-                StructTypeInfo& sti = name_type->struct_info;
-                char name_buf[256];
-                snprintf(name_buf, sizeof(name_buf), "%.*s$$%.*s",
-                         static_cast<int>(sti.name.size()), sti.name.data(),
-                         static_cast<int>(ge.name.size()), ge.name.data());
-                u32 len = static_cast<u32>(strlen(name_buf));
-                char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-                memcpy(name_ptr, name_buf, len + 1);
-                method_name = StringView(name_ptr, len);
+                method_name = mangle_method(name_type->struct_info.name, ge.name);
             }
 
             // Prepend object to arguments, append output pointer if large struct return
@@ -2041,13 +1572,11 @@ ValueId IRBuilder::gen_get_expr(Expr* expr) {
     u32 slot_count = 1;
     Type* field_type = nullptr;
     if (struct_type && struct_type->is_struct()) {
-        for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
-            if (struct_type->struct_info.fields[i].name == ge.name) {
-                slot_offset = struct_type->struct_info.fields[i].slot_offset;
-                slot_count = struct_type->struct_info.fields[i].slot_count;
-                field_type = struct_type->struct_info.fields[i].type;
-                break;
-            }
+        const FieldInfo* fi = struct_type->struct_info.find_field(ge.name);
+        if (fi) {
+            slot_offset = fi->slot_offset;
+            slot_count = fi->slot_count;
+            field_type = fi->type;
         }
     }
 
@@ -2130,12 +1659,10 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
         u32 slot_offset = 0;
         u32 slot_count = 1;
         if (struct_type && struct_type->is_struct()) {
-            for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
-                if (struct_type->struct_info.fields[i].name == ge.name) {
-                    slot_offset = struct_type->struct_info.fields[i].slot_offset;
-                    slot_count = struct_type->struct_info.fields[i].slot_count;
-                    break;
-                }
+            const FieldInfo* fi = struct_type->struct_info.find_field(ge.name);
+            if (fi) {
+                slot_offset = fi->slot_offset;
+                slot_count = fi->slot_count;
             }
         }
 
@@ -2191,21 +1718,7 @@ ValueId IRBuilder::gen_constructor_call(Expr* expr) {
 
     // Call constructor (user-defined or synthesized)
     StructTypeInfo& sti = struct_type->struct_info;
-
-    // Build mangled name: StructName$$new or StructName$$new$$ctor_name
-    char name_buf[256];
-    if (ce.constructor_name.empty()) {
-        snprintf(name_buf, sizeof(name_buf), "%.*s$$new",
-                 static_cast<int>(sti.name.size()), sti.name.data());
-    } else {
-        snprintf(name_buf, sizeof(name_buf), "%.*s$$new$$%.*s",
-                 static_cast<int>(sti.name.size()), sti.name.data(),
-                 static_cast<int>(ce.constructor_name.size()), ce.constructor_name.data());
-    }
-    u32 len = static_cast<u32>(strlen(name_buf));
-    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-    memcpy(name_ptr, name_buf, len + 1);
-    StringView ctor_name(name_ptr, len);
+    StringView ctor_name = mangle_constructor(sti.name, ce.constructor_name);
 
     // Build arguments: 'self' pointer + constructor arguments
     Vector<ValueId> call_args;
@@ -2224,6 +1737,59 @@ ValueId IRBuilder::gen_constructor_call(Expr* expr) {
     emit_call(ctor_name, alloc_span(call_args), m_types.void_type());
 
     return obj;
+}
+
+ValueId IRBuilder::gen_super_call(Expr* expr) {
+    CallExpr& ce = expr->call;
+    SuperExpr& se = ce.callee->super_expr;
+
+    // Get the 'self' pointer
+    ValueId self_ptr = lookup_local("self");
+
+    // Get the parent struct type from the callee's resolved_type (ref<StructType>)
+    Type* ref_type = ce.callee->resolved_type;
+    Type* target_type = nullptr;
+    if (ref_type && ref_type->is_reference()) {
+        target_type = ref_type->ref_info.inner_type;
+    }
+
+    if (!target_type || !target_type->is_struct()) {
+        return ValueId::invalid();
+    }
+
+    // Determine if this is a constructor call or method call
+    // Constructor calls return void (expr->resolved_type is void)
+    // Method calls return the method's return type
+    bool is_constructor_call = expr->resolved_type && expr->resolved_type->kind == TypeKind::Void;
+
+    StructTypeInfo& target_sti = target_type->struct_info;
+
+    StringView call_name;
+    if (is_constructor_call) {
+        call_name = mangle_constructor(target_sti.name, se.method_name);
+    } else {
+        call_name = mangle_method(target_sti.name, se.method_name);
+    }
+
+    // Evaluate arguments
+    Span<ValueId> args = alloc_span<ValueId>(ce.arguments.size());
+    for (u32 i = 0; i < ce.arguments.size(); i++) {
+        CallArg& arg = ce.arguments[i];
+        if (arg.modifier != ParamModifier::None) {
+            args[i] = gen_lvalue_addr(arg.expr);
+        } else {
+            args[i] = gen_expr(arg.expr);
+        }
+    }
+
+    // Prepend self to arguments
+    Span<ValueId> call_args = alloc_span<ValueId>(args.size() + 1);
+    call_args[0] = self_ptr;
+    for (u32 i = 0; i < args.size(); i++) {
+        call_args[i + 1] = args[i];
+    }
+
+    return emit_call(call_name, call_args, expr->resolved_type);
 }
 
 ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
@@ -2347,11 +1913,9 @@ ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {
 
             u32 slot_offset = 0;
             if (struct_type && struct_type->is_struct()) {
-                for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
-                    if (struct_type->struct_info.fields[i].name == ge.name) {
-                        slot_offset = struct_type->struct_info.fields[i].slot_offset;
-                        break;
-                    }
+                const FieldInfo* fi = struct_type->struct_info.find_field(ge.name);
+                if (fi) {
+                    slot_offset = fi->slot_offset;
                 }
             }
 
@@ -2634,6 +2198,150 @@ IROp IRBuilder::get_unary_op(UnaryOp op, Type* type) {
             return IROp::BitNot;
     }
     return IROp::Copy;
+}
+
+// Name mangling helpers
+
+StringView IRBuilder::mangle_method(StringView struct_name, StringView method_name) {
+    char name_buf[256];
+    snprintf(name_buf, sizeof(name_buf), "%.*s$$%.*s",
+             static_cast<int>(struct_name.size()), struct_name.data(),
+             static_cast<int>(method_name.size()), method_name.data());
+    u32 len = static_cast<u32>(strlen(name_buf));
+    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
+    memcpy(name_ptr, name_buf, len + 1);
+    return StringView(name_ptr, len);
+}
+
+StringView IRBuilder::mangle_constructor(StringView struct_name, StringView ctor_name) {
+    char name_buf[256];
+    if (ctor_name.empty()) {
+        snprintf(name_buf, sizeof(name_buf), "%.*s$$new",
+                 static_cast<int>(struct_name.size()), struct_name.data());
+    } else {
+        snprintf(name_buf, sizeof(name_buf), "%.*s$$new$$%.*s",
+                 static_cast<int>(struct_name.size()), struct_name.data(),
+                 static_cast<int>(ctor_name.size()), ctor_name.data());
+    }
+    u32 len = static_cast<u32>(strlen(name_buf));
+    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
+    memcpy(name_ptr, name_buf, len + 1);
+    return StringView(name_ptr, len);
+}
+
+Type* IRBuilder::apply_ref_kind(Type* base_type, RefKind ref_kind) {
+    switch (ref_kind) {
+        case RefKind::Uniq: return m_types.uniq_type(base_type);
+        case RefKind::Ref:  return m_types.ref_type(base_type);
+        case RefKind::Weak: return m_types.weak_type(base_type);
+        case RefKind::None: return base_type;
+    }
+    return base_type;
+}
+
+void IRBuilder::begin_function_body(bool skip_hidden_return) {
+    // Create entry block
+    IRBlock* entry = create_block("entry");
+    set_current_block(entry);
+
+    // Initialize local variable scopes
+    m_local_scopes.clear();
+    push_scope();
+
+    // Add function parameters to local scope
+    // Skip the hidden return pointer parameter if requested
+    u32 param_count = skip_hidden_return && m_current_func->returns_large_struct()
+        ? m_current_func->params.size() - 1
+        : m_current_func->params.size();
+    for (u32 i = 0; i < param_count; i++) {
+        BlockParam& bp = m_current_func->params[i];
+        define_local(bp.name, bp.value, bp.type);
+    }
+
+    // Emit RefInc for ref-typed parameters at function entry
+    // This tracks borrows in the constraint reference model
+    for (ValueId ref_param : m_ref_params) {
+        emit_ref_inc(ref_param);
+    }
+}
+
+void IRBuilder::end_function_body() {
+    // If current block doesn't have a terminator, add implicit return
+    if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+        if (m_current_func->return_type->is_void()) {
+            finish_block_return(ValueId::invalid());
+        } else {
+            // This shouldn't happen if semantic analysis passed
+            // Return a default value
+            ValueId default_val = emit_const_null();
+            finish_block_return(default_val);
+        }
+    }
+
+    pop_scope();
+}
+
+void IRBuilder::setup_parameters(Span<Param> params, Type* self_type) {
+    // Clear parameter tracking
+    m_param_is_ptr.clear();
+    m_ref_params.clear();
+
+    // Add 'self' parameter if this is a method/constructor/destructor
+    if (self_type) {
+        BlockParam self_param;
+        self_param.value = m_current_func->new_value();
+        self_param.type = m_types.ref_type(self_type);
+        self_param.name = "self";
+        m_current_func->params.push_back(self_param);
+        m_current_func->param_is_ptr.push_back(true);
+        m_param_is_ptr["self"] = true;
+    }
+
+    // Set up other parameters
+    for (u32 i = 0; i < params.size(); i++) {
+        Param& param = params[i];
+        Type* param_type = nullptr;
+        if (param.type) {
+            param_type = m_types.type_by_name(param.type->name);
+            if (!param_type) {
+                param_type = m_types.error_type();
+            }
+            param_type = apply_ref_kind(param_type, param.type->ref_kind);
+        }
+
+        bool is_ptr = (param.modifier != ParamModifier::None);
+        if (is_ptr) {
+            m_param_is_ptr[param.name] = true;
+        }
+
+        BlockParam bp;
+        bp.value = m_current_func->new_value();
+        bp.type = param_type;
+        bp.name = param.name;
+        m_current_func->params.push_back(bp);
+        m_current_func->param_is_ptr.push_back(is_ptr);
+
+        // Track ref-typed parameters for RefInc/RefDec at boundaries
+        if (param_type && param_type->kind == TypeKind::Ref) {
+            m_ref_params.push_back(bp.value);
+        }
+    }
+}
+
+StringView IRBuilder::mangle_destructor(StringView struct_name, StringView dtor_name) {
+    char name_buf[256];
+    if (dtor_name.empty()) {
+        snprintf(name_buf, sizeof(name_buf), "%.*s$$delete",
+                 static_cast<int>(struct_name.size()), struct_name.data());
+    } else {
+        snprintf(name_buf, sizeof(name_buf), "%.*s$$delete$$%.*s",
+                 static_cast<int>(struct_name.size()), struct_name.data(),
+                 static_cast<int>(dtor_name.size()), dtor_name.data());
+    }
+    u32 len = static_cast<u32>(strlen(name_buf));
+    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
+    memcpy(name_ptr, name_buf, len + 1);
+    return StringView(name_ptr, len);
 }
 
 }

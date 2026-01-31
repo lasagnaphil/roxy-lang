@@ -79,6 +79,9 @@ struct StructTypeInfo {
     Span<DestructorInfo> destructors;    // Destructors for this struct
     Span<MethodInfo> methods;            // Methods for this struct
     u32 slot_count;                // Total u32 slots needed for this struct
+
+    // Find a field by name, returns nullptr if not found
+    const struct FieldInfo* find_field(StringView field_name) const;
 };
 
 // Field information for struct types
@@ -298,5 +301,12 @@ private:
 // String representation of types (for error messages)
 const char* type_kind_to_string(TypeKind kind);
 void type_to_string(const Type* type, Vector<char>& out);
+
+// Look up a method in a struct's type hierarchy (walks inheritance chain)
+// Returns the MethodInfo and optionally sets found_in_type to where the method was defined
+const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name, Type** found_in_type = nullptr);
+
+// Check if 'child' is a subtype of 'parent' (walks inheritance chain)
+bool is_subtype_of(Type* child, Type* parent);
 
 }
