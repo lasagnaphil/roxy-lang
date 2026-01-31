@@ -16,7 +16,7 @@ TEST_CASE("E2E - String literal") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "hello\n");
 }
@@ -31,7 +31,7 @@ TEST_CASE("E2E - Empty string") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "\ndone\n");
 }
@@ -46,7 +46,7 @@ TEST_CASE("E2E - String length") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "5\n0\n11\n");
 }
@@ -60,7 +60,7 @@ TEST_CASE("E2E - String concatenation with str_concat") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "hello world\n");
 }
@@ -74,7 +74,7 @@ TEST_CASE("E2E - String concatenation with + operator") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "hello world\n");
 }
@@ -88,7 +88,7 @@ TEST_CASE("E2E - Multiple string concatenations") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "abcd\n");
 }
@@ -113,7 +113,7 @@ TEST_CASE("E2E - String equality") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "true\nfalse\ntrue\n");
 }
@@ -134,7 +134,7 @@ TEST_CASE("E2E - String inequality") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "true\nfalse\n");
 }
@@ -152,7 +152,7 @@ TEST_CASE("E2E - String as function parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "Hello, \nWorld\n");
 }
@@ -169,7 +169,7 @@ TEST_CASE("E2E - String as return value") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "hello\n");
 }
@@ -187,7 +187,7 @@ TEST_CASE("E2E - String concatenation in function") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "Hello, World!\nHello, Roxy!\n");
 }
@@ -210,7 +210,7 @@ TEST_CASE("E2E - String comparison in if statement") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "accepted\nrejected\nrejected\n");
 }
@@ -226,7 +226,7 @@ TEST_CASE("E2E - String variable reassignment") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "short\nmuch longer string\n");
 }
@@ -248,7 +248,7 @@ TEST_CASE("E2E - String equality after concatenation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "true\nhello\nhello\n");
 }
@@ -262,7 +262,7 @@ TEST_CASE("E2E - String with special characters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "hello\nworld\n");
 }
@@ -278,7 +278,7 @@ TEST_CASE("E2E - Mixed print and print_str") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "42\nhello\n123\nworld\n");
 }
@@ -294,7 +294,7 @@ TEST_CASE("E2E - String in loop") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "iteration\n0\niteration\n1\niteration\n2\n");
 }

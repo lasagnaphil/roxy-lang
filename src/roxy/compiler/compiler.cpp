@@ -21,9 +21,8 @@ Compiler::Compiler(BumpAllocator& allocator)
 {
     // Register built-in natives and add as "builtin" module (auto-imported as prelude)
     register_builtin_natives(*m_builtin_registry);
-    StringView builtin_name(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME));
-    m_module_registry.register_native_module(builtin_name, m_builtin_registry.get(), m_types);
-    m_native_registries.push_back({builtin_name, m_builtin_registry.get()});
+    m_module_registry.register_native_module(BUILTIN_MODULE_NAME, m_builtin_registry.get(), m_types);
+    m_native_registries.push_back({BUILTIN_MODULE_NAME, m_builtin_registry.get()});
 }
 
 void Compiler::add_native_registry(StringView module_name, NativeRegistry* registry) {
@@ -253,7 +252,7 @@ BCModule* Compiler::link_modules() {
 
     // Create merged IR module
     IRModule merged_ir;
-    merged_ir.name = StringView("linked", 6);
+    merged_ir.name = "linked";
 
     // Map from (module_name, func_name) to global function index
     tsl::robin_map<StringView, u32, StringViewHash, StringViewEqual> func_name_to_global_idx;

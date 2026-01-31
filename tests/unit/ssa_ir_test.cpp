@@ -33,8 +33,7 @@ static IRModule* build_ir(BumpAllocator& allocator, const char* source) {
 
     // Create module registry and register builtin module for prelude auto-import
     ModuleRegistry modules(allocator);
-    StringView builtin_name(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME));
-    modules.register_native_module(builtin_name, &registry, types);
+    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, types);
 
     SemanticAnalyzer analyzer(allocator, types);
     analyzer.set_module_registry(&modules);
@@ -65,7 +64,7 @@ TEST_CASE("SSA IR - Empty function") {
     REQUIRE(module->functions.size() == 1);
 
     IRFunction* func = module->functions[0];
-    CHECK(func->name == StringView("empty", 5));
+    CHECK(func->name == "empty");
     CHECK(func->params.empty());
     CHECK(func->blocks.size() >= 1);
 
@@ -88,7 +87,7 @@ TEST_CASE("SSA IR - Return literal") {
     REQUIRE(module->functions.size() == 1);
 
     IRFunction* func = module->functions[0];
-    CHECK(func->name == StringView("answer", 6));
+    CHECK(func->name == "answer");
 
     // Should have entry block with const and return
     IRBlock* entry = func->blocks[0];
@@ -438,7 +437,7 @@ TEST_CASE("SSA IR - Function call") {
     // Find the caller function
     IRFunction* caller = nullptr;
     for (IRFunction* func : module->functions) {
-        if (func->name == StringView("caller", 6)) {
+        if (func->name == "caller") {
             caller = func;
             break;
         }
@@ -451,7 +450,7 @@ TEST_CASE("SSA IR - Function call") {
     for (IRInst* inst : entry->instructions) {
         if (inst->op == IROp::Call) {
             found_call = true;
-            CHECK(inst->call.func_name == StringView("helper", 6));
+            CHECK(inst->call.func_name == "helper");
             CHECK(inst->call.args.size() == 1);
             break;
         }

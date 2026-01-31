@@ -25,7 +25,7 @@ TEST_CASE("E2E - Factorial (recursive)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "1\n1\n120\n3628800\n");
 }
@@ -48,7 +48,7 @@ TEST_CASE("E2E - Fibonacci (recursive)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "0\n1\n55\n610\n");
 }
@@ -71,7 +71,7 @@ TEST_CASE("E2E - GCD (Euclidean algorithm)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     // gcd(48,18)=6, gcd(100,35)=5, gcd(17,13)=1, gcd(12,12)=12
     CHECK(result.stdout_output == "6\n5\n1\n12\n");
@@ -94,7 +94,7 @@ TEST_CASE("E2E - Power function (recursive)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     // 2^0=1, 2^10=1024, 3^5=243
     CHECK(result.stdout_output == "1\n1024\n243\n");
@@ -116,7 +116,7 @@ TEST_CASE("E2E - Simple function call") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "25\n");
 }
@@ -138,7 +138,7 @@ TEST_CASE("E2E - Multiple functions calling each other") {
     )";
 
     // 3^2 + 4^2 = 9 + 16 = 25
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "25\n");
 }
@@ -168,7 +168,7 @@ TEST_CASE("E2E - Mutual recursion") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     // is_even(0)=1, is_even(4)=1, is_even(7)=0, is_odd(5)=1
     CHECK(result.stdout_output == "1\n1\n0\n1\n");

@@ -12,13 +12,13 @@ using namespace rx;
 // Helper to create a simple IR function that returns a constant
 IRFunction* create_return_const_func(BumpAllocator& alloc, const char* name, i64 value, TypeCache& types) {
     IRFunction* func = alloc.emplace<IRFunction>();
-    func->name = StringView(name);
+    func->name = name;
     func->return_type = types.i64_type();
 
     // Create entry block
     IRBlock* entry = alloc.emplace<IRBlock>();
     entry->id = BlockId{0};
-    entry->name = StringView("entry");
+    entry->name = "entry";
 
     // Create constant instruction
     IRInst* const_inst = alloc.emplace<IRInst>();
@@ -39,26 +39,26 @@ IRFunction* create_return_const_func(BumpAllocator& alloc, const char* name, i64
 // Helper to create an IR function that adds two parameters
 IRFunction* create_add_func(BumpAllocator& alloc, const char* name, TypeCache& types) {
     IRFunction* func = alloc.emplace<IRFunction>();
-    func->name = StringView(name);
+    func->name = name;
     func->return_type = types.i64_type();
 
     // Add parameters
     BlockParam param0;
     param0.value = func->new_value();
     param0.type = types.i64_type();
-    param0.name = StringView("a");
+    param0.name = "a";
     func->params.push_back(param0);
 
     BlockParam param1;
     param1.value = func->new_value();
     param1.type = types.i64_type();
-    param1.name = StringView("b");
+    param1.name = "b";
     func->params.push_back(param1);
 
     // Create entry block
     IRBlock* entry = alloc.emplace<IRBlock>();
     entry->id = BlockId{0};
-    entry->name = StringView("entry");
+    entry->name = "entry";
 
     // Create add instruction: result = a + b
     IRInst* add_inst = alloc.emplace<IRInst>();
@@ -82,7 +82,7 @@ TEST_CASE("Lower simple return constant") {
     TypeCache types(alloc);
 
     IRModule* ir_module = alloc.emplace<IRModule>();
-    ir_module->name = StringView("test");
+    ir_module->name = "test";
     ir_module->functions.push_back(create_return_const_func(alloc, "main", 42, types));
 
     BytecodeBuilder builder;
@@ -101,7 +101,7 @@ TEST_CASE("Lower simple return constant") {
     vm_init(&vm);
     vm_load_module(&vm, bc_module);
 
-    CHECK(vm_call(&vm, StringView("main"), {}));
+    CHECK(vm_call(&vm, "main", {}));
     Value result = vm_get_result(&vm);
     CHECK(result.is_int());
     CHECK(result.as_int == 42);
@@ -115,7 +115,7 @@ TEST_CASE("Lower add function") {
     TypeCache types(alloc);
 
     IRModule* ir_module = alloc.emplace<IRModule>();
-    ir_module->name = StringView("test");
+    ir_module->name = "test";
     ir_module->functions.push_back(create_add_func(alloc, "add", types));
 
     BytecodeBuilder builder;
@@ -134,7 +134,7 @@ TEST_CASE("Lower add function") {
     vm_load_module(&vm, bc_module);
 
     Value args[2] = {Value::make_int(10), Value::make_int(32)};
-    CHECK(vm_call(&vm, StringView("add"), Span<Value>(args, 2)));
+    CHECK(vm_call(&vm, "add", Span<Value>(args, 2)));
     Value result = vm_get_result(&vm);
     CHECK(result.is_int());
     CHECK(result.as_int == 42);
@@ -149,7 +149,7 @@ TEST_CASE("Lower arithmetic operations") {
 
     SUBCASE("Subtraction") {
         IRFunction* func = alloc.emplace<IRFunction>();
-            func->name = StringView("sub");
+            func->name = "sub";
         func->return_type = types.i64_type();
 
         // Parameters
@@ -179,7 +179,7 @@ TEST_CASE("Lower arithmetic operations") {
         func->blocks.push_back(entry);
 
         IRModule* ir_module = alloc.emplace<IRModule>();
-            ir_module->name = StringView("test");
+            ir_module->name = "test";
         ir_module->functions.push_back(func);
 
         BytecodeBuilder builder;
@@ -190,7 +190,7 @@ TEST_CASE("Lower arithmetic operations") {
         vm_load_module(&vm, bc_module);
 
         Value args[2] = {Value::make_int(50), Value::make_int(8)};
-        CHECK(vm_call(&vm, StringView("sub"), Span<Value>(args, 2)));
+        CHECK(vm_call(&vm, "sub", Span<Value>(args, 2)));
         Value result = vm_get_result(&vm);
         CHECK(result.as_int == 42);
 
@@ -200,7 +200,7 @@ TEST_CASE("Lower arithmetic operations") {
 
     SUBCASE("Multiplication") {
         IRFunction* func = alloc.emplace<IRFunction>();
-            func->name = StringView("mul");
+            func->name = "mul";
         func->return_type = types.i64_type();
 
         BlockParam param0, param1;
@@ -227,7 +227,7 @@ TEST_CASE("Lower arithmetic operations") {
         func->blocks.push_back(entry);
 
         IRModule* ir_module = alloc.emplace<IRModule>();
-            ir_module->name = StringView("test");
+            ir_module->name = "test";
         ir_module->functions.push_back(func);
 
         BytecodeBuilder builder;
@@ -238,7 +238,7 @@ TEST_CASE("Lower arithmetic operations") {
         vm_load_module(&vm, bc_module);
 
         Value args[2] = {Value::make_int(6), Value::make_int(7)};
-        CHECK(vm_call(&vm, StringView("mul"), Span<Value>(args, 2)));
+        CHECK(vm_call(&vm, "mul", Span<Value>(args, 2)));
         Value result = vm_get_result(&vm);
         CHECK(result.as_int == 42);
 
@@ -253,7 +253,7 @@ TEST_CASE("Lower constant pool usage") {
 
     // Test large integer that doesn't fit in 16-bit immediate
     IRFunction* func = alloc.emplace<IRFunction>();
-    func->name = StringView("main");
+    func->name = "main";
     func->return_type = types.i64_type();
 
     IRBlock* entry = alloc.emplace<IRBlock>();
@@ -271,7 +271,7 @@ TEST_CASE("Lower constant pool usage") {
     func->blocks.push_back(entry);
 
     IRModule* ir_module = alloc.emplace<IRModule>();
-    ir_module->name = StringView("test");
+    ir_module->name = "test";
     ir_module->functions.push_back(func);
 
     BytecodeBuilder builder;
@@ -284,7 +284,7 @@ TEST_CASE("Lower constant pool usage") {
     vm_init(&vm);
     vm_load_module(&vm, bc_module);
 
-    CHECK(vm_call(&vm, StringView("main"), {}));
+    CHECK(vm_call(&vm, "main", {}));
     Value result = vm_get_result(&vm);
     CHECK(result.as_int == 1000000);
 
@@ -297,7 +297,7 @@ TEST_CASE("Lower float constant") {
     TypeCache types(alloc);
 
     IRFunction* func = alloc.emplace<IRFunction>();
-    func->name = StringView("main");
+    func->name = "main";
     func->return_type = types.f64_type();
 
     IRBlock* entry = alloc.emplace<IRBlock>();
@@ -315,7 +315,7 @@ TEST_CASE("Lower float constant") {
     func->blocks.push_back(entry);
 
     IRModule* ir_module = alloc.emplace<IRModule>();
-    ir_module->name = StringView("test");
+    ir_module->name = "test";
     ir_module->functions.push_back(func);
 
     BytecodeBuilder builder;
@@ -327,7 +327,7 @@ TEST_CASE("Lower float constant") {
     vm_init(&vm);
     vm_load_module(&vm, bc_module);
 
-    CHECK(vm_call(&vm, StringView("main"), {}));
+    CHECK(vm_call(&vm, "main", {}));
     Value result = vm_get_result(&vm);
     // With untyped u64 registers, type info is not preserved - use float_from_u64
     Value float_result = Value::float_from_u64(result.as_u64());
@@ -342,7 +342,7 @@ TEST_CASE("Lower comparison operations") {
     TypeCache types(alloc);
 
     IRFunction* func = alloc.emplace<IRFunction>();
-    func->name = StringView("lt");
+    func->name = "lt";
     func->return_type = types.bool_type();
 
     BlockParam param0, param1;
@@ -369,7 +369,7 @@ TEST_CASE("Lower comparison operations") {
     func->blocks.push_back(entry);
 
     IRModule* ir_module = alloc.emplace<IRModule>();
-    ir_module->name = StringView("test");
+    ir_module->name = "test";
     ir_module->functions.push_back(func);
 
     BytecodeBuilder builder;
@@ -380,11 +380,11 @@ TEST_CASE("Lower comparison operations") {
     vm_load_module(&vm, bc_module);
 
     Value args_true[2] = {Value::make_int(5), Value::make_int(10)};
-    CHECK(vm_call(&vm, StringView("lt"), Span<Value>(args_true, 2)));
+    CHECK(vm_call(&vm, "lt", Span<Value>(args_true, 2)));
     CHECK(vm_get_result(&vm).as_bool == true);
 
     Value args_false[2] = {Value::make_int(10), Value::make_int(5)};
-    CHECK(vm_call(&vm, StringView("lt"), Span<Value>(args_false, 2)));
+    CHECK(vm_call(&vm, "lt", Span<Value>(args_false, 2)));
     CHECK(vm_get_result(&vm).as_bool == false);
 
     vm_destroy(&vm);
@@ -396,7 +396,7 @@ TEST_CASE("Disassemble lowered bytecode") {
     TypeCache types(alloc);
 
     IRModule* ir_module = alloc.emplace<IRModule>();
-    ir_module->name = StringView("test");
+    ir_module->name = "test";
     ir_module->functions.push_back(create_add_func(alloc, "add", types));
 
     BytecodeBuilder builder;

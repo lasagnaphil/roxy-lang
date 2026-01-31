@@ -74,12 +74,12 @@ TEST_CASE("Types: Primitive type lookup by name") {
     BumpAllocator allocator{1024};
     TypeCache types(allocator);
 
-    CHECK(types.primitive_by_name(StringView("void")) == types.void_type());
-    CHECK(types.primitive_by_name(StringView("bool")) == types.bool_type());
-    CHECK(types.primitive_by_name(StringView("i32")) == types.i32_type());
-    CHECK(types.primitive_by_name(StringView("f64")) == types.f64_type());
-    CHECK(types.primitive_by_name(StringView("string")) == types.string_type());
-    CHECK(types.primitive_by_name(StringView("unknown")) == nullptr);
+    CHECK(types.primitive_by_name("void") == types.void_type());
+    CHECK(types.primitive_by_name("bool") == types.bool_type());
+    CHECK(types.primitive_by_name("i32") == types.i32_type());
+    CHECK(types.primitive_by_name("f64") == types.f64_type());
+    CHECK(types.primitive_by_name("string") == types.string_type());
+    CHECK(types.primitive_by_name("unknown") == nullptr);
 }
 
 TEST_CASE("Types: Array type interning") {
@@ -140,25 +140,25 @@ TEST_CASE("SymbolTable: Basic scope management") {
     SourceLocation loc = {0, 1, 1};
 
     // Define in global scope
-    Symbol* x = symbols.define(SymbolKind::Variable, StringView("x"), types.i32_type(), loc);
+    Symbol* x = symbols.define(SymbolKind::Variable, "x", types.i32_type(), loc);
     CHECK(x != nullptr);
-    CHECK(symbols.lookup(StringView("x")) == x);
+    CHECK(symbols.lookup("x") == x);
 
     // Push a new scope
     symbols.push_scope(ScopeKind::Block);
 
     // Still visible
-    CHECK(symbols.lookup(StringView("x")) == x);
+    CHECK(symbols.lookup("x") == x);
 
     // Define in inner scope (shadows outer)
-    Symbol* x2 = symbols.define(SymbolKind::Variable, StringView("x"), types.f64_type(), loc);
-    CHECK(symbols.lookup(StringView("x")) == x2);
+    Symbol* x2 = symbols.define(SymbolKind::Variable, "x", types.f64_type(), loc);
+    CHECK(symbols.lookup("x") == x2);
     CHECK(x2->type == types.f64_type());
 
     // Pop scope, original visible again
     symbols.pop_scope();
-    CHECK(symbols.lookup(StringView("x")) == x);
-    CHECK(symbols.lookup(StringView("x"))->type == types.i32_type());
+    CHECK(symbols.lookup("x") == x);
+    CHECK(symbols.lookup("x")->type == types.i32_type());
 }
 
 TEST_CASE("SymbolTable: Function scope") {

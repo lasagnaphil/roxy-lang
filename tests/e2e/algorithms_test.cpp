@@ -19,7 +19,7 @@ TEST_CASE("E2E - Float arithmetic") {
         }
     )";
 
-    Value result = compile_and_run(source, StringView("calc"));
+    Value result = compile_and_run(source, "calc");
     // With untyped registers, we need to interpret the raw bits as float
     Value float_result = Value::float_from_u64(result.as_u64());
     CHECK(float_result.as_float == doctest::Approx(6.0));
@@ -44,7 +44,7 @@ TEST_CASE("E2E - Float comparison") {
     vm_load_module(&vm, module);
 
     Value args[2] = {Value::make_float(3.14), Value::make_float(2.71)};
-    CHECK(vm_call(&vm, StringView("max_float"), Span<Value>(args, 2)));
+    CHECK(vm_call(&vm, "max_float", Span<Value>(args, 2)));
     // With untyped registers, interpret result bits as float
     Value float_result = Value::float_from_u64(vm_get_result(&vm).as_u64());
     CHECK(float_result.as_float == doctest::Approx(3.14));
@@ -89,7 +89,7 @@ TEST_CASE("E2E - Ackermann function (deeply recursive)") {
     vm_init(&vm, config);
     vm_load_module(&vm, module);
 
-    CHECK(vm_call(&vm, StringView("main"), {}));
+    CHECK(vm_call(&vm, "main", {}));
     CHECK(vm_get_result(&vm).as_int == 0);
 
     vm_destroy(&vm);
@@ -119,7 +119,7 @@ TEST_CASE("E2E - Collatz conjecture steps") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     // collatz_steps(1)=0, collatz_steps(6)=8, collatz_steps(27)=111
     CHECK(result.stdout_output == "0\n8\n111\n");
@@ -166,7 +166,7 @@ TEST_CASE("E2E - Prime checking") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     // primes return 1, non-primes return 0
     CHECK(result.stdout_output == "1\n1\n1\n1\n1\n1\n0\n0\n0\n0\n0\n0\n");
@@ -186,7 +186,7 @@ TEST_CASE("E2E - Print function") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "42\n123\n0\n");
 }

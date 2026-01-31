@@ -131,8 +131,7 @@ static Value compile_and_run_with_builtins(const char* source, StringView func_n
 
     // Create module registry and register builtin module for prelude auto-import
     ModuleRegistry modules(allocator);
-    StringView builtin_name(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME));
-    modules.register_native_module(builtin_name, &registry, types);
+    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, types);
 
     SemanticAnalyzer analyzer(allocator, types);
     analyzer.set_module_registry(&modules);
@@ -266,20 +265,20 @@ TEST_CASE("Interop - Registry basic") {
         registry.bind<my_multiply>("multiply");
 
         CHECK(registry.size() == 2);
-        CHECK(registry.is_native(StringView("add", 3)));
-        CHECK(registry.is_native(StringView("multiply", 8)));
-        CHECK(!registry.is_native(StringView("unknown", 7)));
+        CHECK(registry.is_native("add"));
+        CHECK(registry.is_native("multiply"));
+        CHECK(!registry.is_native("unknown"));
 
-        CHECK(registry.get_index(StringView("add", 3)) == 0);
-        CHECK(registry.get_index(StringView("multiply", 8)) == 1);
-        CHECK(registry.get_index(StringView("unknown", 7)) == -1);
+        CHECK(registry.get_index("add") == 0);
+        CHECK(registry.get_index("multiply") == 1);
+        CHECK(registry.get_index("unknown") == -1);
     }
 
     SUBCASE("Entry info") {
         registry.bind<my_add>("add");
 
         const auto& entry = registry.get_entry(0);
-        CHECK(entry.name == StringView("add", 3));
+        CHECK(entry.name == "add");
         CHECK(entry.param_count == 2);
         CHECK(entry.is_manual == false);
         CHECK(entry.return_type_kind == NativeTypeKind::I32);
@@ -311,7 +310,7 @@ TEST_CASE("Interop - Bound integer functions") {
                 return add(10, 20);
             }
         )";
-        Value result = compile_and_run_with_registry(source, StringView("test", 4), alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
         CHECK(result.is_int());
         CHECK(result.as_int == 30);
     }
@@ -322,7 +321,7 @@ TEST_CASE("Interop - Bound integer functions") {
                 return mul(6, 7);
             }
         )";
-        Value result = compile_and_run_with_registry(source, StringView("test", 4), alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
         CHECK(result.is_int());
         CHECK(result.as_int == 42);
     }
@@ -333,7 +332,7 @@ TEST_CASE("Interop - Bound integer functions") {
                 return abs(-42);
             }
         )";
-        Value result = compile_and_run_with_registry(source, StringView("test", 4), alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
         CHECK(result.is_int());
         CHECK(result.as_int == 42);
     }
@@ -344,7 +343,7 @@ TEST_CASE("Interop - Bound integer functions") {
                 return neg(42);
             }
         )";
-        Value result = compile_and_run_with_registry(source, StringView("test", 4), alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
         CHECK(result.is_int());
         CHECK(result.as_int == -42);
     }
@@ -355,7 +354,7 @@ TEST_CASE("Interop - Bound integer functions") {
                 return square(7);
             }
         )";
-        Value result = compile_and_run_with_registry(source, StringView("test", 4), alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
         CHECK(result.is_int());
         CHECK(result.as_int == 49);
     }
@@ -366,7 +365,7 @@ TEST_CASE("Interop - Bound integer functions") {
                 return square(add(3, 4));
             }
         )";
-        Value result = compile_and_run_with_registry(source, StringView("test", 4), alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
         CHECK(result.is_int());
         CHECK(result.as_int == 49);
     }
@@ -386,7 +385,7 @@ TEST_CASE("Interop - Bound boolean functions") {
                 return is_positive(5);
             }
         )";
-        Value result = compile_and_run_with_registry(source, StringView("test", 4), alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
         // With untyped registers, bools are 0 or 1
         CHECK(result.as_u64() == 1);  // true
     }
@@ -397,7 +396,7 @@ TEST_CASE("Interop - Bound boolean functions") {
                 return is_positive(-5);
             }
         )";
-        Value result = compile_and_run_with_registry(source, StringView("test", 4), alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
         // With untyped registers, bools are 0 or 1
         CHECK(result.as_u64() == 0);  // false
     }
@@ -408,7 +407,7 @@ TEST_CASE("Interop - Bound boolean functions") {
                 return is_even(4);
             }
         )";
-        Value result = compile_and_run_with_registry(source, StringView("test", 4), alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
         // With untyped registers, bools are 0 or 1
         CHECK(result.as_u64() == 1);  // true
     }
@@ -428,7 +427,7 @@ TEST_CASE("Interop - Bound float functions") {
                 return sqrt(4.0);
             }
         )";
-        Value result = compile_and_run_with_registry(source, StringView("test", 4), alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
         // With untyped registers, interpret result bits as float
         Value float_result = Value::float_from_u64(result.as_u64());
         CHECK(float_result.as_float == doctest::Approx(2.0));
@@ -440,7 +439,7 @@ TEST_CASE("Interop - Bound float functions") {
                 return sqrt(2.0);
             }
         )";
-        Value result = compile_and_run_with_registry(source, StringView("test", 4), alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
         // With untyped registers, interpret result bits as float
         Value float_result = Value::float_from_u64(result.as_u64());
         CHECK(float_result.as_float == doctest::Approx(1.41421356));
@@ -452,7 +451,7 @@ TEST_CASE("Interop - Bound float functions") {
                 return add_f(1.5, 2.5);
             }
         )";
-        Value result = compile_and_run_with_registry(source, StringView("test", 4), alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
         // With untyped registers, interpret result bits as float
         Value float_result = Value::float_from_u64(result.as_u64());
         CHECK(float_result.as_float == doctest::Approx(4.0));
@@ -472,7 +471,7 @@ TEST_CASE("Interop - Void return function") {
             return 1;
         }
     )";
-    Value result = compile_and_run_with_registry(source, StringView("test", 4), alloc, types, registry);
+    Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
     CHECK(result.is_int());
     CHECK(result.as_int == 1);
 }
@@ -489,7 +488,7 @@ TEST_CASE("Interop - Built-in natives via registry") {
                 return 0;
             }
         )";
-        Value result = compile_and_run_with_builtins(source, StringView("test", 4));
+        Value result = compile_and_run_with_builtins(source, "test");
         CHECK(result.is_int());
         CHECK(result.as_int == 0);
     }
@@ -501,7 +500,7 @@ TEST_CASE("Interop - Built-in natives via registry") {
                 return array_len(arr);
             }
         )";
-        Value result = compile_and_run_with_builtins(source, StringView("test", 4));
+        Value result = compile_and_run_with_builtins(source, "test");
         CHECK(result.is_int());
         CHECK(result.as_int == 5);
     }
@@ -516,7 +515,7 @@ TEST_CASE("Interop - Built-in natives via registry") {
                 return arr[0] + arr[1] + arr[2];
             }
         )";
-        Value result = compile_and_run_with_builtins(source, StringView("test", 4));
+        Value result = compile_and_run_with_builtins(source, "test");
         CHECK(result.is_int());
         CHECK(result.as_int == 60);
     }
@@ -552,8 +551,7 @@ static Value compile_and_run_mixed(const char* source, StringView func_name, Bin
 
     // Create module registry and register builtin module for prelude auto-import
     ModuleRegistry modules(allocator);
-    StringView builtin_name(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME));
-    modules.register_native_module(builtin_name, &registry, types);
+    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, types);
 
     SemanticAnalyzer analyzer(allocator, types);
     analyzer.set_module_registry(&modules);
@@ -605,7 +603,7 @@ TEST_CASE("Interop - Mixed bound and built-in functions") {
         }
     )";
 
-    Value result = compile_and_run_mixed(source, StringView("test", 4),
+    Value result = compile_and_run_mixed(source, "test",
         [](NativeRegistry& reg) {
             reg.bind<my_square>("square");
             reg.bind<my_abs>("abs");

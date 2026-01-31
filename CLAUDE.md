@@ -500,8 +500,8 @@ from utils import clamp as c;   // Import with alias
 **Multi-Module Compilation:**
 ```cpp
 Compiler compiler(allocator);
-compiler.add_source(StringView("utils", 5), utils_source, utils_len);
-compiler.add_source(StringView("main", 4), main_source, main_len);
+compiler.add_source("utils", utils_source, utils_len);
+compiler.add_source("main", main_source, main_len);
 BCModule* module = compiler.compile();  // Links all modules together
 ```
 
@@ -580,7 +580,7 @@ TEST_CASE("E2E - Example test") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "42\nhello\n");
 }

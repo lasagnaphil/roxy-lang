@@ -151,11 +151,11 @@ The `Compiler` class handles multi-file compilation:
 Compiler compiler(allocator);
 
 // Add native modules (optional)
-compiler.add_native_registry(StringView("math", 4), &math_registry);
+compiler.add_native_registry("math", &math_registry);
 
 // Add source modules
-compiler.add_source(StringView("utils", 5), utils_source, utils_len);
-compiler.add_source(StringView("main", 4), main_source, main_len);
+compiler.add_source("utils", utils_source, utils_len);
+compiler.add_source("main", main_source, main_len);
 
 // Compile and link
 BCModule* module = compiler.compile();
@@ -271,7 +271,7 @@ math_registry.bind<math_cos>("cos");
 
 // Register as a module
 ModuleRegistry modules(allocator);
-modules.register_native_module(StringView("math", 4), &math_registry, types);
+modules.register_native_module("math", &math_registry, types);
 ```
 
 The `register_native_module` function:

@@ -14,7 +14,7 @@ TEST_CASE("E2E - Return constant") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.value == 42);
 }
@@ -27,7 +27,7 @@ TEST_CASE("E2E - Arithmetic expressions") {
                 return 0;
             }
         )";
-        TestResult result = run_and_capture(source, StringView("main"));
+        TestResult result = run_and_capture(source, "main");
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n");
     }
@@ -40,7 +40,7 @@ TEST_CASE("E2E - Arithmetic expressions") {
             }
         )";
         // 1 + 6 + 20 = 27
-        TestResult result = run_and_capture(source, StringView("main"));
+        TestResult result = run_and_capture(source, "main");
         CHECK(result.success);
         CHECK(result.stdout_output == "27\n");
     }
@@ -53,7 +53,7 @@ TEST_CASE("E2E - Arithmetic expressions") {
             }
         )";
         // 3 * 7 = 21
-        TestResult result = run_and_capture(source, StringView("main"));
+        TestResult result = run_and_capture(source, "main");
         CHECK(result.success);
         CHECK(result.stdout_output == "21\n");
     }
@@ -66,7 +66,7 @@ TEST_CASE("E2E - Arithmetic expressions") {
                 return 0;
             }
         )";
-        TestResult result = run_and_capture(source, StringView("main"));
+        TestResult result = run_and_capture(source, "main");
         CHECK(result.success);
         CHECK(result.stdout_output == "33\n1\n");
     }
@@ -79,7 +79,7 @@ TEST_CASE("E2E - Arithmetic expressions") {
                 return 0;
             }
         )";
-        TestResult result = run_and_capture(source, StringView("main"));
+        TestResult result = run_and_capture(source, "main");
         CHECK(result.success);
         CHECK(result.stdout_output == "-42\n42\n");
     }
@@ -98,7 +98,7 @@ TEST_CASE("E2E - Local variables") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n20\n30\n");
 }
@@ -116,7 +116,7 @@ TEST_CASE("E2E - Function calls") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "42\n300\n");
 }
@@ -142,7 +142,7 @@ TEST_CASE("E2E - If statement") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "42\n42\n0\n");
 }
@@ -165,7 +165,7 @@ TEST_CASE("E2E - If-else statement") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n7\n5\n");
 }
@@ -189,7 +189,7 @@ TEST_CASE("E2E - While loop") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "55\n5050\n");
 }
@@ -207,7 +207,7 @@ TEST_CASE("E2E - For loop") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n55\n");
 }
@@ -224,7 +224,7 @@ TEST_CASE("E2E - Nested loops") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "11\n12\n13\n21\n22\n23\n31\n32\n33\n");
 }
@@ -247,7 +247,7 @@ TEST_CASE("E2E - Boolean expressions") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     // AND: (5>3)&&(3>0)=1, (5>3)&&(3<0)=0, (5<3)&&(3>0)=0, (5<3)&&(3<0)=0
     CHECK(result.stdout_output == "1\n0\n0\n0\n");
@@ -275,7 +275,7 @@ TEST_CASE("E2E - Comparison operators") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     // ==: 1,0; !=: 1,0; <: 1,0; <=: 1; >: 0,1; >=: 1
     CHECK(result.stdout_output == "1\n0\n1\n0\n1\n0\n1\n0\n1\n1\n");

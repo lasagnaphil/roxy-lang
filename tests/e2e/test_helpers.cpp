@@ -48,8 +48,7 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
 
     // Create module registry and register builtin module for prelude auto-import
     ModuleRegistry modules(allocator);
-    StringView builtin_name(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME));
-    modules.register_native_module(builtin_name, &registry, types);
+    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, types);
 
     Lexer lexer(source, len);
     Parser parser(lexer, allocator);

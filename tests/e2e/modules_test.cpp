@@ -40,8 +40,8 @@ struct ModuleTestContext {
 
         // Use Compiler class - it handles builtin prelude automatically
         Compiler compiler(allocator);
-        compiler.add_native_registry(StringView("math", 4), &math_natives);
-        compiler.add_source(StringView("main", 4), source, len);
+        compiler.add_native_registry("math", &math_natives);
+        compiler.add_source("main", source, len);
 
         BCModule* module = compiler.compile();
         if (!module) {
@@ -58,7 +58,7 @@ struct ModuleTestContext {
         vm_init(&vm);
         vm_load_module(&vm, module);
 
-        if (!vm_call(&vm, StringView("main", 4), {})) {
+        if (!vm_call(&vm, "main", {})) {
             vm_destroy(&vm);
             delete module;
             return -995;
@@ -74,8 +74,8 @@ struct ModuleTestContext {
         u32 len = static_cast<u32>(strlen(source));
 
         Compiler compiler(allocator);
-        compiler.add_native_registry(StringView("math", 4), &math_natives);
-        compiler.add_source(StringView("main", 4), source, len);
+        compiler.add_native_registry("math", &math_natives);
+        compiler.add_source("main", source, len);
 
         BCModule* module = compiler.compile();
         if (module) {
@@ -253,7 +253,7 @@ TEST_CASE("E2E - Compiler: single module compilation") {
     )";
 
     Compiler compiler(allocator);
-    compiler.add_source(StringView("main", 4), main_source, static_cast<u32>(strlen(main_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
     BCModule* module = compiler.compile();
     REQUIRE(module != nullptr);
@@ -263,7 +263,7 @@ TEST_CASE("E2E - Compiler: single module compilation") {
     vm_init(&vm);
     vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, StringView("main", 4), {});
+    bool success = vm_call(&vm, "main", {});
     REQUIRE(success);
 
     Value result = vm_get_result(&vm);
@@ -295,8 +295,8 @@ TEST_CASE("E2E - Compiler: two module compilation with import") {
     )";
 
     Compiler compiler(allocator);
-    compiler.add_source(StringView("utils", 5), utils_source, static_cast<u32>(strlen(utils_source)));
-    compiler.add_source(StringView("main", 4), main_source, static_cast<u32>(strlen(main_source)));
+    compiler.add_source("utils", utils_source, static_cast<u32>(strlen(utils_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
     BCModule* module = compiler.compile();
     REQUIRE(module != nullptr);
@@ -306,7 +306,7 @@ TEST_CASE("E2E - Compiler: two module compilation with import") {
     vm_init(&vm);
     vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, StringView("main", 4), {});
+    bool success = vm_call(&vm, "main", {});
     REQUIRE(success);
 
     Value result = vm_get_result(&vm);
@@ -330,8 +330,8 @@ TEST_CASE("E2E - Compiler: circular import detection") {
     )";
 
     Compiler compiler(allocator);
-    compiler.add_source(StringView("a", 1), module_a, static_cast<u32>(strlen(module_a)));
-    compiler.add_source(StringView("b", 1), module_b, static_cast<u32>(strlen(module_b)));
+    compiler.add_source("a", module_a, static_cast<u32>(strlen(module_a)));
+    compiler.add_source("b", module_b, static_cast<u32>(strlen(module_b)));
 
     BCModule* module = compiler.compile();
     CHECK(module == nullptr);
@@ -370,8 +370,8 @@ TEST_CASE("E2E - Compiler: from import with script module") {
     )";
 
     Compiler compiler(allocator);
-    compiler.add_source(StringView("mymath", 6), math_source, static_cast<u32>(strlen(math_source)));
-    compiler.add_source(StringView("main", 4), main_source, static_cast<u32>(strlen(main_source)));
+    compiler.add_source("mymath", math_source, static_cast<u32>(strlen(math_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
     BCModule* module = compiler.compile();
     REQUIRE(module != nullptr);
@@ -381,7 +381,7 @@ TEST_CASE("E2E - Compiler: from import with script module") {
     vm_init(&vm);
     vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, StringView("main", 4), {});
+    bool success = vm_call(&vm, "main", {});
     REQUIRE(success);
 
     Value result = vm_get_result(&vm);

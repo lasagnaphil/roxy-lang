@@ -27,7 +27,7 @@ TEST_CASE("E2E - Basic struct field access") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n20\n");
 }
@@ -49,7 +49,7 @@ TEST_CASE("E2E - Struct with 64-bit field") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n100000000000\n");
 }
@@ -76,7 +76,7 @@ TEST_CASE("E2E - Multiple struct variables") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "1\n2\n3\n4\n");
 }
@@ -98,7 +98,7 @@ TEST_CASE("E2E - Struct field assignment from expression") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "12\n17\n");
 }
@@ -118,7 +118,7 @@ TEST_CASE("E2E - Struct with float fields") {
         }
     )";
 
-    Value result = compile_and_run(source, StringView("main"));
+    Value result = compile_and_run(source, "main");
     Value float_result = Value::float_from_u64(result.as_u64());
     CHECK(float_result.as_float == doctest::Approx(4.0));  // 1.5 + 2.5
 }
@@ -143,7 +143,7 @@ TEST_CASE("E2E - Struct in conditional") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n");
 }
@@ -165,7 +165,7 @@ TEST_CASE("E2E - Struct in loop") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "0\n1\n3\n6\n10\n");  // cumulative: 0, 0+1, 1+2, 3+3, 6+4
 }
@@ -196,7 +196,7 @@ TEST_CASE("E2E - Nested structs") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n20\n100\n200\n");
 }
@@ -229,7 +229,7 @@ TEST_CASE("E2E - Deeply nested structs (3 levels)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "1\n10\n100\n");
 }
@@ -266,7 +266,7 @@ TEST_CASE("E2E - Multiple nested struct variables") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n5\n");
 }
@@ -290,7 +290,7 @@ TEST_CASE("E2E - Struct literal") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n20\n");
 }
@@ -312,7 +312,7 @@ TEST_CASE("E2E - Struct literal with default values") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "1920\n600\n0\n");
 }
@@ -332,7 +332,7 @@ TEST_CASE("E2E - Struct literal field order") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n20\n");
 }
@@ -354,7 +354,7 @@ TEST_CASE("E2E - Empty struct literal (all defaults)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "1\n2\n3\n");
 }
@@ -375,7 +375,7 @@ TEST_CASE("E2E - Struct literal with expressions") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n15\n");  // 5*2=10, 5+10=15
 }
@@ -395,7 +395,7 @@ TEST_CASE("E2E - Struct literal with 64-bit field") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n100000000000\n");
 }
@@ -422,7 +422,7 @@ TEST_CASE("E2E - Small struct parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "25\n");  // 3^2 + 4^2 = 9 + 16
 }
@@ -447,7 +447,7 @@ TEST_CASE("E2E - Struct parameter value semantics") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "100\n5\n");  // modify returns 100, but pt.x is still 5 (value semantics)
 }
@@ -475,7 +475,7 @@ TEST_CASE("E2E - Multiple struct parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "1\n2\n10\n20\n");
 }
@@ -501,7 +501,7 @@ TEST_CASE("E2E - Mixed struct and primitive parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "3\n7\n5\n50\n");  // p.x, p.y, factor, result
 }
@@ -530,7 +530,7 @@ TEST_CASE("E2E - Return small struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n20\n");
 }
@@ -556,7 +556,7 @@ TEST_CASE("E2E - Return struct with modification") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n20\n");  // 5*2, 10*2
 }
@@ -584,7 +584,7 @@ TEST_CASE("E2E - Chain struct returns") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "5\n10\n");
 }
@@ -607,7 +607,7 @@ TEST_CASE("E2E - Struct return used in expression") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "7\n4\n");
 }
@@ -641,7 +641,7 @@ TEST_CASE("E2E - Large struct return (>16 bytes)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n11\n12\n13\n14\n");
 }
@@ -667,7 +667,7 @@ TEST_CASE("E2E - Large struct return value semantics") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "999\n1\n");  // modify_big returns 999, but data.a is still 1
 }
@@ -690,7 +690,7 @@ TEST_CASE("E2E - Large struct chained returns") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "25\n");  // 5 * 5
 }
@@ -718,7 +718,7 @@ TEST_CASE("E2E - Large struct return with 64-bit field") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "1\n2\n100000000000\n4\n");
 }
@@ -738,7 +738,7 @@ TEST_CASE("E2E - Large struct return used in expression") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "6\n12\n");  // 2*3=6, 3*4=12
 }
@@ -772,7 +772,7 @@ TEST_CASE("E2E - Large struct return chained function calls") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "15\n15\n15\n15\n15\n");  // 10+5 for each field
 }

@@ -94,7 +94,7 @@ TEST_CASE("BCConstant creation") {
 
 TEST_CASE("BCFunction structure") {
     BCFunction func;
-    func.name = StringView("test_func");
+    func.name = "test_func";
     func.param_count = 2;
     func.register_count = 5;
 
@@ -116,11 +116,11 @@ TEST_CASE("BCFunction structure") {
 
 TEST_CASE("BCModule structure") {
     BCModule module;
-    module.name = StringView("test_module");
+    module.name = "test_module";
 
     // Create a function
     BCFunction* func = new BCFunction();
-    func->name = StringView("main");
+    func->name = "main";
     func->param_count = 0;
     func->register_count = 1;
     func->code.push_back(encode_abi(Opcode::LOAD_INT, 0, 42));
@@ -130,8 +130,8 @@ TEST_CASE("BCModule structure") {
 
     CHECK(module.name == "test_module");
     CHECK(module.functions.size() == 1);
-    CHECK(module.find_function(StringView("main")) == 0);
-    CHECK(module.find_function(StringView("not_found")) == -1);
+    CHECK(module.find_function("main") == 0);
+    CHECK(module.find_function("not_found") == -1);
 }
 
 TEST_CASE("Disassemble instruction") {
@@ -170,7 +170,7 @@ TEST_CASE("Disassemble instruction") {
 
 TEST_CASE("Disassemble function") {
     BCFunction func;
-    func.name = StringView("add_two");
+    func.name = "add_two";
     func.param_count = 2;
     func.register_count = 3;
 

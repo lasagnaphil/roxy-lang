@@ -116,13 +116,13 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
         BlockParam hidden_param;
         hidden_param.value = m_current_func->new_value();
         hidden_param.type = m_current_func->return_type;  // Pointer to struct
-        hidden_param.name = StringView("__ret_ptr", 9);
+        hidden_param.name = "__ret_ptr";
         m_current_func->params.push_back(hidden_param);
         m_current_func->param_is_ptr.push_back(true);
     }
 
     // Create entry block
-    IRBlock* entry = create_block(StringView("entry", 5));
+    IRBlock* entry = create_block("entry");
     set_current_block(entry);
 
     // Initialize local variable scopes
@@ -556,9 +556,9 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     }
 
     // Create blocks
-    IRBlock* then_block = create_block(StringView("then", 4));
-    IRBlock* else_block = is.else_branch ? create_block(StringView("else", 4)) : nullptr;
-    IRBlock* merge_block = create_block(StringView("endif", 5));
+    IRBlock* then_block = create_block("then");
+    IRBlock* else_block = is.else_branch ? create_block("else") : nullptr;
+    IRBlock* merge_block = create_block("endif");
 
     // Create block params on merge block for phi variables
     struct PhiInfo {
@@ -646,9 +646,9 @@ void IRBuilder::gen_while_stmt(Stmt* stmt) {
     collect_assigned_vars(ws.body, modified_vars);
 
     // 2. Create blocks
-    IRBlock* header_block = create_block(StringView("while", 5));
-    IRBlock* body_block = create_block(StringView("body", 4));
-    IRBlock* exit_block = create_block(StringView("endwhile", 8));
+    IRBlock* header_block = create_block("while");
+    IRBlock* body_block = create_block("body");
+    IRBlock* exit_block = create_block("endwhile");
 
     // 3. Create block params for modified vars that exist before the loop
     Vector<LoopVarInfo> loop_vars;
@@ -717,10 +717,10 @@ void IRBuilder::gen_for_stmt(Stmt* stmt) {
     collect_assigned_vars_expr(fs.increment, modified_vars);
 
     // 3. Create blocks
-    IRBlock* header_block = create_block(StringView("for", 3));
-    IRBlock* body_block = create_block(StringView("forbody", 7));
-    IRBlock* incr_block = create_block(StringView("forinc", 6));
-    IRBlock* exit_block = create_block(StringView("endfor", 6));
+    IRBlock* header_block = create_block("for");
+    IRBlock* body_block = create_block("forbody");
+    IRBlock* incr_block = create_block("forinc");
+    IRBlock* exit_block = create_block("endfor");
 
     // 4. Create block params on header for modified vars that exist before the loop
     Vector<LoopVarInfo> loop_vars;
@@ -947,17 +947,17 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
 
         switch (be.op) {
             case BinaryOp::Add:
-                func_name = StringView("str_concat", 10);
+                func_name = "str_concat";
                 result_type = m_types.string_type();
                 native_idx = m_registry.get_index(func_name);
                 break;
             case BinaryOp::Equal:
-                func_name = StringView("str_eq", 6);
+                func_name = "str_eq";
                 result_type = m_types.bool_type();
                 native_idx = m_registry.get_index(func_name);
                 break;
             case BinaryOp::NotEqual:
-                func_name = StringView("str_ne", 6);
+                func_name = "str_ne";
                 result_type = m_types.bool_type();
                 native_idx = m_registry.get_index(func_name);
                 break;
@@ -979,8 +979,8 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
     if (be.op == BinaryOp::And) {
         ValueId left = gen_expr(be.left);
 
-        IRBlock* right_block = create_block(StringView("and.rhs", 7));
-        IRBlock* merge_block = create_block(StringView("and.end", 7));
+        IRBlock* right_block = create_block("and.rhs");
+        IRBlock* merge_block = create_block("and.end");
 
         // If left is false, result is false; otherwise evaluate right
         finish_block_branch(left, right_block->id, merge_block->id);
@@ -1001,8 +1001,8 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
     else if (be.op == BinaryOp::Or) {
         ValueId left = gen_expr(be.left);
 
-        IRBlock* right_block = create_block(StringView("or.rhs", 6));
-        IRBlock* merge_block = create_block(StringView("or.end", 6));
+        IRBlock* right_block = create_block("or.rhs");
+        IRBlock* merge_block = create_block("or.end");
 
         // If left is true, result is true; otherwise evaluate right
         finish_block_branch(left, merge_block->id, right_block->id);
@@ -1045,9 +1045,9 @@ ValueId IRBuilder::gen_ternary_expr(Expr* expr) {
 
     ValueId cond = gen_expr(te.condition);
 
-    IRBlock* then_block = create_block(StringView("tern.then", 9));
-    IRBlock* else_block = create_block(StringView("tern.else", 9));
-    IRBlock* merge_block = create_block(StringView("tern.end", 8));
+    IRBlock* then_block = create_block("tern.then");
+    IRBlock* else_block = create_block("tern.else");
+    IRBlock* merge_block = create_block("tern.end");
 
     finish_block_branch(cond, then_block->id, else_block->id);
 
@@ -1367,7 +1367,7 @@ ValueId IRBuilder::gen_grouping_expr(Expr* expr) {
 
 ValueId IRBuilder::gen_this_expr(Expr* expr) {
     // 'this' is the first parameter in methods
-    return lookup_local(StringView("this", 4));
+    return lookup_local("this");
 }
 
 ValueId IRBuilder::gen_new_expr(Expr* expr) {

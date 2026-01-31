@@ -21,7 +21,7 @@ TEST_CASE("E2E - Array basic operations") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n20\n30\n");
 }
@@ -35,7 +35,7 @@ TEST_CASE("E2E - Array length") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "7\n");
 }
@@ -60,7 +60,7 @@ TEST_CASE("E2E - Array with loop") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "1\n2\n3\n4\n5\n15\n");
 }
@@ -86,7 +86,7 @@ TEST_CASE("E2E - Array swap") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "30\n20\n10\n");
 }
@@ -137,7 +137,7 @@ TEST_CASE("E2E - Quicksort") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "1\n2\n5\n8\n9\n");
 }

@@ -27,7 +27,7 @@ TEST_CASE("E2E - Heap allocation basic") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.value == 30);
 }
@@ -50,7 +50,7 @@ TEST_CASE("E2E - Heap allocation with print") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "42\n58\n");
 }
@@ -77,7 +77,7 @@ TEST_CASE("E2E - Multiple heap allocations") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "1\n10\n");
 }
@@ -106,7 +106,7 @@ TEST_CASE("E2E - Heap allocation larger struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "1\n2\n3\n100000000000\n");
 }
@@ -131,7 +131,7 @@ TEST_CASE("E2E - Heap allocation with computation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "12\n35\n");
 }
@@ -155,7 +155,7 @@ TEST_CASE("E2E - Heap allocation in loop") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "30\n");  // 0 + 10 + 20
 }
@@ -186,7 +186,7 @@ TEST_CASE("E2E - Uniq passed to function") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "30\n");
 }
@@ -216,7 +216,7 @@ TEST_CASE("E2E - Heap allocation nested struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "0\n10\n");
 }
@@ -248,7 +248,7 @@ TEST_CASE("E2E - Constraint reference borrow check success") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "50\n");
 }
@@ -280,7 +280,7 @@ TEST_CASE("E2E - Ref parameter borrow tracking") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "35\n");
 }
@@ -314,7 +314,7 @@ TEST_CASE("E2E - Multiple ref borrows in sequence") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "100\n200\n");
 }
@@ -345,7 +345,7 @@ TEST_CASE("E2E - Ref parameter with multiple returns") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "50\n");
 }
@@ -365,7 +365,7 @@ TEST_CASE("E2E - Delete null pointer is safe") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "42\n");
 }
@@ -422,7 +422,7 @@ TEST_CASE("E2E - Runtime error: delete with active borrow") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success == false);  // Should fail - can't delete with active borrow
 }
 
@@ -520,7 +520,7 @@ TEST_CASE("E2E - Valid: uniq to ref conversion") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "30\n");
 }
@@ -538,7 +538,7 @@ TEST_CASE("E2E - Valid: nil to uniq assignment") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "42\n");
 }

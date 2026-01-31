@@ -16,8 +16,8 @@ public:
     StringView() = default;
     StringView(const char* data, u32 size) : m_data(data), m_size(size) {}
 
-    // Construct from null-terminated string
-    explicit StringView(const char* str) : m_data(str), m_size(str ? (u32)strlen(str) : 0) {}
+    // Construct from null-terminated string (implicit for convenience with string literals)
+    StringView(const char* str) : m_data(str), m_size(str ? (u32)strlen(str) : 0) {}
 
     const char* data() const { return m_data; }
     u32 size() const { return m_size; }

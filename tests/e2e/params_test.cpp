@@ -21,7 +21,7 @@ TEST_CASE("E2E - Basic inout parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "42\n");
 }
@@ -40,7 +40,7 @@ TEST_CASE("E2E - Basic out parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "42\n");
 }
@@ -62,7 +62,7 @@ TEST_CASE("E2E - Multiple out parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "10\n20\n");
 }
@@ -85,7 +85,7 @@ TEST_CASE("E2E - Swap with inout") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "20\n10\n");  // swapped
 }
@@ -104,7 +104,7 @@ TEST_CASE("E2E - Inout with computation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "42\n");  // 21 * 2
 }
@@ -127,7 +127,7 @@ TEST_CASE("E2E - Multiple inout calls") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "1\n2\n3\n");
 }
@@ -146,7 +146,7 @@ TEST_CASE("E2E - Mixed regular and inout parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "42\n");  // 10 + 32
 }
@@ -172,7 +172,7 @@ TEST_CASE("E2E - Inout with struct parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "20\n40\n");  // 10*2, 20*2
 }
@@ -198,7 +198,7 @@ TEST_CASE("E2E - Out with struct parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "15\n27\n");
 }
@@ -225,7 +225,7 @@ TEST_CASE("E2E - Inout struct field modification") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "20\n10\n");  // swapped
 }
@@ -263,7 +263,7 @@ TEST_CASE("E2E - Inout with nested struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, StringView("main"));
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "3\n6\n30\n60\n");  // 1*3, 2*3, 10*3, 20*3
 }

@@ -10,7 +10,7 @@ using namespace rx;
 // Helper to create a simple function that returns a constant integer
 BCFunction* create_return_int_func(const char* name, i64 value) {
     BCFunction* func = new BCFunction();
-    func->name = StringView(name);
+    func->name = name;
     func->param_count = 0;
     func->register_count = 1;
 
@@ -28,7 +28,7 @@ BCFunction* create_return_int_func(const char* name, i64 value) {
 // Helper to create a function that adds two parameters
 BCFunction* create_add_func(const char* name) {
     BCFunction* func = new BCFunction();
-    func->name = StringView(name);
+    func->name = name;
     func->param_count = 2;
     func->register_count = 3;
 
@@ -107,13 +107,13 @@ TEST_CASE("Execute return literal") {
     vm_init(&vm);
 
     BCModule* module = new BCModule();
-    module->name = StringView("test");
+    module->name = "test";
     module->functions.push_back(create_return_int_func("main", 42));
 
     vm_load_module(&vm, module);
 
     SUBCASE("Return small integer") {
-        CHECK(vm_call(&vm, StringView("main"), {}));
+        CHECK(vm_call(&vm, "main", {}));
         Value result = vm_get_result(&vm);
         CHECK(result.is_int());
         CHECK(result.as_int == 42);
@@ -128,12 +128,12 @@ TEST_CASE("Execute return large integer from constant pool") {
     vm_init(&vm);
 
     BCModule* module = new BCModule();
-    module->name = StringView("test");
+    module->name = "test";
     module->functions.push_back(create_return_int_func("main", 1000000));
 
     vm_load_module(&vm, module);
 
-    CHECK(vm_call(&vm, StringView("main"), {}));
+    CHECK(vm_call(&vm, "main", {}));
     Value result = vm_get_result(&vm);
     CHECK(result.is_int());
     CHECK(result.as_int == 1000000);
@@ -147,21 +147,21 @@ TEST_CASE("Execute arithmetic operations") {
     vm_init(&vm);
 
     BCModule* module = new BCModule();
-    module->name = StringView("test");
+    module->name = "test";
 
     SUBCASE("Addition") {
         module->functions.push_back(create_add_func("add"));
         vm_load_module(&vm, module);
 
         Value args[2] = {Value::make_int(10), Value::make_int(32)};
-        CHECK(vm_call(&vm, StringView("add"), Span<Value>(args, 2)));
+        CHECK(vm_call(&vm, "add", Span<Value>(args, 2)));
         Value result = vm_get_result(&vm);
         CHECK(result.as_int == 42);
     }
 
     SUBCASE("Subtraction") {
         BCFunction* func = new BCFunction();
-        func->name = StringView("sub");
+        func->name = "sub";
         func->param_count = 2;
         func->register_count = 3;
         func->code.push_back(encode_abc(Opcode::SUB_I, 2, 0, 1));
@@ -171,14 +171,14 @@ TEST_CASE("Execute arithmetic operations") {
         vm_load_module(&vm, module);
 
         Value args[2] = {Value::make_int(50), Value::make_int(8)};
-        CHECK(vm_call(&vm, StringView("sub"), Span<Value>(args, 2)));
+        CHECK(vm_call(&vm, "sub", Span<Value>(args, 2)));
         Value result = vm_get_result(&vm);
         CHECK(result.as_int == 42);
     }
 
     SUBCASE("Multiplication") {
         BCFunction* func = new BCFunction();
-        func->name = StringView("mul");
+        func->name = "mul";
         func->param_count = 2;
         func->register_count = 3;
         func->code.push_back(encode_abc(Opcode::MUL_I, 2, 0, 1));
@@ -188,14 +188,14 @@ TEST_CASE("Execute arithmetic operations") {
         vm_load_module(&vm, module);
 
         Value args[2] = {Value::make_int(6), Value::make_int(7)};
-        CHECK(vm_call(&vm, StringView("mul"), Span<Value>(args, 2)));
+        CHECK(vm_call(&vm, "mul", Span<Value>(args, 2)));
         Value result = vm_get_result(&vm);
         CHECK(result.as_int == 42);
     }
 
     SUBCASE("Division") {
         BCFunction* func = new BCFunction();
-        func->name = StringView("div");
+        func->name = "div";
         func->param_count = 2;
         func->register_count = 3;
         func->code.push_back(encode_abc(Opcode::DIV_I, 2, 0, 1));
@@ -205,7 +205,7 @@ TEST_CASE("Execute arithmetic operations") {
         vm_load_module(&vm, module);
 
         Value args[2] = {Value::make_int(84), Value::make_int(2)};
-        CHECK(vm_call(&vm, StringView("div"), Span<Value>(args, 2)));
+        CHECK(vm_call(&vm, "div", Span<Value>(args, 2)));
         Value result = vm_get_result(&vm);
         CHECK(result.as_int == 42);
     }
@@ -219,10 +219,10 @@ TEST_CASE("Execute float arithmetic") {
     vm_init(&vm);
 
     BCModule* module = new BCModule();
-    module->name = StringView("test");
+    module->name = "test";
 
     BCFunction* func = new BCFunction();
-    func->name = StringView("addf");
+    func->name = "addf";
     func->param_count = 2;
     func->register_count = 3;
     func->code.push_back(encode_abc(Opcode::ADD_F, 2, 0, 1));
@@ -232,7 +232,7 @@ TEST_CASE("Execute float arithmetic") {
     vm_load_module(&vm, module);
 
     Value args[2] = {Value::make_float(3.14), Value::make_float(2.86)};
-    CHECK(vm_call(&vm, StringView("addf"), Span<Value>(args, 2)));
+    CHECK(vm_call(&vm, "addf", Span<Value>(args, 2)));
     Value result = vm_get_result(&vm);
     // With untyped registers, interpret result bits as float
     Value float_result = Value::float_from_u64(result.as_u64());
@@ -247,11 +247,11 @@ TEST_CASE("Execute comparison operations") {
     vm_init(&vm);
 
     BCModule* module = new BCModule();
-    module->name = StringView("test");
+    module->name = "test";
 
     SUBCASE("Less than (true)") {
         BCFunction* func = new BCFunction();
-        func->name = StringView("lt");
+        func->name = "lt";
         func->param_count = 2;
         func->register_count = 3;
         func->code.push_back(encode_abc(Opcode::LT_I, 2, 0, 1));
@@ -261,7 +261,7 @@ TEST_CASE("Execute comparison operations") {
         vm_load_module(&vm, module);
 
         Value args[2] = {Value::make_int(5), Value::make_int(10)};
-        CHECK(vm_call(&vm, StringView("lt"), Span<Value>(args, 2)));
+        CHECK(vm_call(&vm, "lt", Span<Value>(args, 2)));
         Value result = vm_get_result(&vm);
         // With untyped registers, bools are 0 or 1
         CHECK(result.as_u64() == 1);  // true
@@ -270,7 +270,7 @@ TEST_CASE("Execute comparison operations") {
     SUBCASE("Less than (false)") {
         module->functions.clear();
         BCFunction* func = new BCFunction();
-        func->name = StringView("lt");
+        func->name = "lt";
         func->param_count = 2;
         func->register_count = 3;
         func->code.push_back(encode_abc(Opcode::LT_I, 2, 0, 1));
@@ -280,7 +280,7 @@ TEST_CASE("Execute comparison operations") {
         vm_load_module(&vm, module);
 
         Value args[2] = {Value::make_int(10), Value::make_int(5)};
-        CHECK(vm_call(&vm, StringView("lt"), Span<Value>(args, 2)));
+        CHECK(vm_call(&vm, "lt", Span<Value>(args, 2)));
         Value result = vm_get_result(&vm);
         // With untyped registers, bools are 0 or 1
         CHECK(result.as_u64() == 0);  // false
@@ -295,12 +295,12 @@ TEST_CASE("Execute control flow") {
     vm_init(&vm);
 
     BCModule* module = new BCModule();
-    module->name = StringView("test");
+    module->name = "test";
 
     SUBCASE("Conditional jump (condition true)") {
         // if (R0) return 1 else return 0
         BCFunction* func = new BCFunction();
-        func->name = StringView("cond");
+        func->name = "cond";
         func->param_count = 1;
         func->register_count = 2;
 
@@ -320,7 +320,7 @@ TEST_CASE("Execute control flow") {
         vm_load_module(&vm, module);
 
         Value args[1] = {Value::make_bool(true)};
-        CHECK(vm_call(&vm, StringView("cond"), Span<Value>(args, 1)));
+        CHECK(vm_call(&vm, "cond", Span<Value>(args, 1)));
         Value result = vm_get_result(&vm);
         CHECK(result.as_int == 1);
     }
@@ -329,7 +329,7 @@ TEST_CASE("Execute control flow") {
         module->functions.clear();
         // Same function as above
         BCFunction* func = new BCFunction();
-        func->name = StringView("cond");
+        func->name = "cond";
         func->param_count = 1;
         func->register_count = 2;
 
@@ -344,7 +344,7 @@ TEST_CASE("Execute control flow") {
         vm_load_module(&vm, module);
 
         Value args[1] = {Value::make_bool(false)};
-        CHECK(vm_call(&vm, StringView("cond"), Span<Value>(args, 1)));
+        CHECK(vm_call(&vm, "cond", Span<Value>(args, 1)));
         Value result = vm_get_result(&vm);
         CHECK(result.as_int == 0);
     }
@@ -358,11 +358,11 @@ TEST_CASE("Execute type conversions") {
     vm_init(&vm);
 
     BCModule* module = new BCModule();
-    module->name = StringView("test");
+    module->name = "test";
 
     SUBCASE("Int to float") {
         BCFunction* func = new BCFunction();
-        func->name = StringView("i2f");
+        func->name = "i2f";
         func->param_count = 1;
         func->register_count = 2;
         func->code.push_back(encode_abc(Opcode::I2F, 1, 0, 0));
@@ -372,7 +372,7 @@ TEST_CASE("Execute type conversions") {
         vm_load_module(&vm, module);
 
         Value args[1] = {Value::make_int(42)};
-        CHECK(vm_call(&vm, StringView("i2f"), Span<Value>(args, 1)));
+        CHECK(vm_call(&vm, "i2f", Span<Value>(args, 1)));
         Value result = vm_get_result(&vm);
         // With untyped registers, interpret result bits as float
         Value float_result = Value::float_from_u64(result.as_u64());
@@ -382,7 +382,7 @@ TEST_CASE("Execute type conversions") {
     SUBCASE("Float to int") {
         module->functions.clear();
         BCFunction* func = new BCFunction();
-        func->name = StringView("f2i");
+        func->name = "f2i";
         func->param_count = 1;
         func->register_count = 2;
         func->code.push_back(encode_abc(Opcode::F2I, 1, 0, 0));
@@ -392,7 +392,7 @@ TEST_CASE("Execute type conversions") {
         vm_load_module(&vm, module);
 
         Value args[1] = {Value::make_float(42.9)};
-        CHECK(vm_call(&vm, StringView("f2i"), Span<Value>(args, 1)));
+        CHECK(vm_call(&vm, "f2i", Span<Value>(args, 1)));
         Value result = vm_get_result(&vm);
         CHECK(result.is_int());
         CHECK(result.as_int == 42);
@@ -407,17 +407,17 @@ TEST_CASE("Error handling") {
     vm_init(&vm);
 
     SUBCASE("Call without module") {
-        CHECK(!vm_call(&vm, StringView("main"), {}));
+        CHECK(!vm_call(&vm, "main", {}));
         CHECK(vm_get_error(&vm) != nullptr);
     }
 
     SUBCASE("Call non-existent function") {
         BCModule* module = new BCModule();
-        module->name = StringView("test");
+        module->name = "test";
         module->functions.push_back(create_return_int_func("main", 42));
         vm_load_module(&vm, module);
 
-        CHECK(!vm_call(&vm, StringView("not_found"), {}));
+        CHECK(!vm_call(&vm, "not_found", {}));
         CHECK(vm_get_error(&vm) != nullptr);
 
         delete module;
@@ -425,10 +425,10 @@ TEST_CASE("Error handling") {
 
     SUBCASE("Division by zero") {
         BCModule* module = new BCModule();
-        module->name = StringView("test");
+        module->name = "test";
 
         BCFunction* func = new BCFunction();
-        func->name = StringView("div_zero");
+        func->name = "div_zero";
         func->param_count = 0;
         func->register_count = 3;
         func->code.push_back(encode_abi(Opcode::LOAD_INT, 0, 10));
@@ -439,7 +439,7 @@ TEST_CASE("Error handling") {
 
         vm_load_module(&vm, module);
 
-        CHECK(!vm_call(&vm, StringView("div_zero"), {}));
+        CHECK(!vm_call(&vm, "div_zero", {}));
         CHECK(vm_get_error(&vm) != nullptr);
         CHECK(strstr(vm_get_error(&vm), "zero") != nullptr);
 

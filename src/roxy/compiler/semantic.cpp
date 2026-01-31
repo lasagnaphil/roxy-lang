@@ -57,7 +57,7 @@ void SemanticAnalyzer::import_builtin_prelude() {
     if (!m_module_registry) return;
 
     ModuleInfo* builtin_module = m_module_registry->find_module(
-        StringView(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME)));
+        BUILTIN_MODULE_NAME);
     if (!builtin_module) return;
 
     // Import all exports from the builtin module into global scope
@@ -69,7 +69,7 @@ void SemanticAnalyzer::import_builtin_prelude() {
         if (exp.kind == ExportKind::Function) {
             m_symbols.define_imported_function(
                 exp.name, exp.type, SourceLocation{0, 0},
-                StringView(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME)),
+                BUILTIN_MODULE_NAME,
                 exp.name, exp.index, exp.is_native);
         } else {
             // For structs/enums, define as regular types
