@@ -361,7 +361,7 @@ bool interpret(RoxyVM* vm) {
                     return false;
                 }
 
-                const BCFunction* callee = vm->module->functions[func_idx];
+                const BCFunction* callee = vm->module->functions[func_idx].get();
 
                 // Check argument count
                 if (arg_count != callee->param_count) {
@@ -461,7 +461,7 @@ bool interpret(RoxyVM* vm) {
                     return false;
                 }
 
-                const BCFunction* callee = vm->module->functions[resolved_func_idx];
+                const BCFunction* callee = vm->module->functions[resolved_func_idx].get();
 
                 // Check argument count
                 if (arg_count != callee->param_count) {
@@ -517,7 +517,7 @@ bool interpret(RoxyVM* vm) {
                 // Format: STACK_ADDR dst, slot_offset
                 // dst = pointer to local_stack[local_stack_base + slot_offset]
                 u16 slot_offset = imm;
-                u32* addr = vm->local_stack + frame->local_stack_base + slot_offset;
+                u32* addr = vm->local_stack.get() + frame->local_stack_base + slot_offset;
                 regs[a] = reg_from_ptr(addr);
                 break;
             }

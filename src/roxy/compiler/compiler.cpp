@@ -1,4 +1,5 @@
 #include "roxy/compiler/compiler.hpp"
+#include "roxy/core/unique_ptr.hpp"
 #include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/parser.hpp"
 #include "roxy/compiler/semantic.hpp"
@@ -43,7 +44,7 @@ void Compiler::add_source(StringView module_name, const char* source, u32 length
 
 BCModule* Compiler::compile() {
     // Build combined registry with all native functions from all registries
-    m_combined_registry = UniquePtr<NativeRegistry>(new NativeRegistry(m_allocator, m_types));
+    m_combined_registry = make_unique<NativeRegistry>(m_allocator, m_types);
     for (const auto& [name, registry] : m_native_registries) {
         registry->copy_entries_to(*m_combined_registry);
     }

@@ -3,6 +3,7 @@
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/core/string_view.hpp"
+#include "roxy/core/unique_ptr.hpp"
 
 namespace rx {
 
@@ -266,18 +267,14 @@ struct BCExternalFunction {
 // Bytecode module - collection of functions
 struct BCModule {
     StringView name;                        // Module name
-    Vector<BCFunction*> functions;          // User-defined functions
+    Vector<UniquePtr<BCFunction>> functions; // User-defined functions
     Vector<BCNativeFunction> native_functions; // Native functions
     Vector<BCExternalFunction> external_functions; // Cross-module function references
     Vector<BCTypeInfo> types;               // Type table for heap allocation
     Vector<u32> type_ids;                   // Global type IDs after registration
 
     BCModule() = default;
-    ~BCModule() {
-        for (auto* func : functions) {
-            delete func;
-        }
-    }
+    ~BCModule() = default;
 
     // Find function by name, returns index or -1 if not found
     i32 find_function(StringView name) const {

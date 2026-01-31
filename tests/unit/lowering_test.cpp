@@ -91,7 +91,7 @@ TEST_CASE("Lower simple return constant") {
     REQUIRE(bc_module != nullptr);
     CHECK(bc_module->functions.size() == 1);
 
-    BCFunction* func = bc_module->functions[0];
+    BCFunction* func = bc_module->functions[0].get();
     CHECK(func->name == "main");
     CHECK(func->param_count == 0);
     CHECK(func->code.size() >= 2);  // At least LOAD_INT and RET
@@ -124,7 +124,7 @@ TEST_CASE("Lower add function") {
     REQUIRE(bc_module != nullptr);
     CHECK(bc_module->functions.size() == 1);
 
-    BCFunction* func = bc_module->functions[0];
+    BCFunction* func = bc_module->functions[0].get();
     CHECK(func->name == "add");
     CHECK(func->param_count == 2);
 

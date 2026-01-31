@@ -2,6 +2,7 @@
 
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
+#include "roxy/core/unique_ptr.hpp"
 #include "roxy/vm/bytecode.hpp"
 #include "roxy/vm/value.hpp"
 
@@ -41,32 +42,24 @@ struct VMConfig {
 // Roxy Virtual Machine
 struct RoxyVM {
     BCModule* module;               // Loaded module
-    u64* register_file;             // Register file (untyped 8-byte slots)
+    UniquePtr<u64[]> register_file; // Register file (untyped 8-byte slots)
     u32 register_file_size;         // Total register capacity
     u32 register_top;               // Current top of register allocation
 
-    u32* local_stack;               // Local stack for struct data (4-byte slots)
+    UniquePtr<u32[]> local_stack;   // Local stack for struct data (4-byte slots)
     u32 local_stack_size;           // Total local stack capacity in slots
     u32 local_stack_top;            // Current top of local stack allocation
 
-    SlabAllocator* allocator;       // Slab allocator for heap objects
+    UniquePtr<SlabAllocator> allocator;  // Slab allocator for heap objects
 
     Vector<CallFrame> call_stack;   // Call stack
     bool running;                   // Execution state
     const char* error;              // Error message (null if no error)
 
-    RoxyVM()
-        : module(nullptr)
-        , register_file(nullptr)
-        , register_file_size(0)
-        , register_top(0)
-        , local_stack(nullptr)
-        , local_stack_size(0)
-        , local_stack_top(0)
-        , allocator(nullptr)
-        , running(false)
-        , error(nullptr)
-    {}
+    // Constructor and destructor declared here, defined in vm.cpp
+    // (destructor must be out-of-line for UniquePtr<SlabAllocator> with forward-declared type)
+    RoxyVM();
+    ~RoxyVM();
 };
 
 // Initialize VM with configuration

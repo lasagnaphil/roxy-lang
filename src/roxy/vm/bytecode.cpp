@@ -346,7 +346,7 @@ void disassemble_module(const BCModule* module, Vector<char>& out) {
     for (u32 i = 0; i < module->functions.size(); i++) {
         snprintf(buf, sizeof(buf), "[%u] ", i);
         append(buf);
-        disassemble_function(module->functions[i], out);
+        disassemble_function(module->functions[i].get(), out);
         append("\n");
     }
 

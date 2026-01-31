@@ -3,6 +3,7 @@
 
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/file.hpp"
+#include "roxy/core/unique_ptr.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/parser.hpp"
@@ -145,7 +146,7 @@ int main(int argc, char** argv) {
     register_builtin_natives(registry);
 
     // Compile
-    BCModule* module = compile(allocator, source, len, types, registry, opts.print_ir);
+    UniquePtr<BCModule> module(compile(allocator, source, len, types, registry, opts.print_ir));
     if (!module) {
         return 1;
     }
@@ -153,42 +154,38 @@ int main(int argc, char** argv) {
     // Find main() function
     StringView main_name("main", 4);
     BCFunction* main_func = nullptr;
-    for (auto* fn : module->functions) {
+    for (auto& fn : module->functions) {
         if (fn->name == main_name) {
-            main_func = fn;
+            main_func = fn.get();
             break;
         }
     }
 
     if (!main_func) {
         fprintf(stderr, "Error: No main() function found\n");
-        delete module;
         return 1;
     }
 
     if (main_func->param_count > 0) {
         fprintf(stderr, "Error: main() must take no arguments (found %u parameters)\n",
                 main_func->param_count);
-        delete module;
         return 1;
     }
 
     // Initialize VM and run
     RoxyVM vm;
     vm_init(&vm);
-    vm_load_module(&vm, module);
+    vm_load_module(&vm, module.get());
 
     if (!vm_call(&vm, main_name, {})) {
         fprintf(stderr, "Runtime error: %s\n", vm.error ? vm.error : "unknown error");
         vm_destroy(&vm);
-        delete module;
         return 1;
     }
 
     Value result = vm_get_result(&vm);
 
     vm_destroy(&vm);
-    delete module;
 
     // Use integer return value as exit code
     if (result.is_int()) {

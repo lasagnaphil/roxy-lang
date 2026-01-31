@@ -2,6 +2,7 @@
 
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
+#include "roxy/core/unique_ptr.hpp"
 #include "roxy/core/tsl/robin_map.h"
 
 namespace rx {
@@ -62,7 +63,7 @@ struct SlabAllocator {
     };
 
     // Slabs for each size class
-    Vector<Slab*> size_classes[NUM_SIZE_CLASSES];
+    Vector<UniquePtr<Slab>> size_classes[NUM_SIZE_CLASSES];
 
     // Large object tracking (> 4KB)
     // Maps pointer to page count for deallocation
@@ -124,7 +125,8 @@ private:
     void free_large(void* ptr);
 
     // Find which slab contains a pointer, returns nullptr if not found
-    Slab* find_slab_containing(void* ptr) const;
+    Slab* find_slab_containing(void* ptr);
+    const Slab* find_slab_containing(void* ptr) const;
 };
 
 }

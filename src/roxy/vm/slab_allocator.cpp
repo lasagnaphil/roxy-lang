@@ -94,12 +94,12 @@ bool SlabAllocator::init() {
 void SlabAllocator::shutdown() {
     // Free all slabs
     for (u32 i = 0; i < NUM_SIZE_CLASSES; i++) {
-        for (Slab* slab : size_classes[i]) {
+        for (auto& slab : size_classes[i]) {
             if (slab->base_addr) {
                 VirtualMemoryOps::release(slab->base_addr,
                     static_cast<u64>(slab->page_count) * m_page_size);
             }
-            delete slab;
+            // UniquePtr automatically deletes the Slab
         }
         size_classes[i].clear();
     }
@@ -127,9 +127,9 @@ Slab* SlabAllocator::find_or_create_slab(u32 class_idx) {
     assert(class_idx < NUM_SIZE_CLASSES);
 
     // Try to find an existing slab with free slots
-    for (Slab* slab : size_classes[class_idx]) {
+    for (auto& slab : size_classes[class_idx]) {
         if (slab->free_head != 0xFFFFFFFF) {
-            return slab;
+            return slab.get();
         }
     }
 
@@ -155,7 +155,7 @@ Slab* SlabAllocator::find_or_create_slab(u32 class_idx) {
     }
 
     // Create slab structure
-    Slab* slab = new Slab();
+    auto slab = make_unique<Slab>();
     slab->base_addr = mem;
     slab->page_count = page_count;
     slab->slot_size = slot_size;
@@ -173,8 +173,9 @@ Slab* SlabAllocator::find_or_create_slab(u32 class_idx) {
         *slot = (i + 1 < slab->slot_count) ? (i + 1) : 0xFFFFFFFF;
     }
 
-    size_classes[class_idx].push_back(slab);
-    return slab;
+    Slab* result = slab.get();
+    size_classes[class_idx].push_back(std::move(slab));
+    return result;
 }
 
 void* SlabAllocator::alloc_from_slab(Slab* slab, u64* out_generation) {
@@ -242,15 +243,30 @@ void* SlabAllocator::alloc(u32 size, u64* out_generation) {
     }
 }
 
-Slab* SlabAllocator::find_slab_containing(void* ptr) const {
+Slab* SlabAllocator::find_slab_containing(void* ptr) {
     for (u32 i = 0; i < NUM_SIZE_CLASSES; i++) {
-        for (Slab* slab : size_classes[i]) {
+        for (auto& slab : size_classes[i]) {
             u8* base = reinterpret_cast<u8*>(slab->base_addr);
             u8* end = base + static_cast<u64>(slab->page_count) * m_page_size;
             u8* p = reinterpret_cast<u8*>(ptr);
 
             if (p >= base && p < end) {
-                return slab;
+                return slab.get();
+            }
+        }
+    }
+    return nullptr;
+}
+
+const Slab* SlabAllocator::find_slab_containing(void* ptr) const {
+    for (u32 i = 0; i < NUM_SIZE_CLASSES; i++) {
+        for (const auto& slab : size_classes[i]) {
+            const u8* base = reinterpret_cast<const u8*>(slab->base_addr);
+            const u8* end = base + static_cast<u64>(slab->page_count) * m_page_size;
+            const u8* p = reinterpret_cast<const u8*>(ptr);
+
+            if (p >= base && p < end) {
+                return slab.get();
             }
         }
     }
@@ -337,7 +353,7 @@ u32 SlabAllocator::reclaim_tombstoned() {
     u32 total_reclaimed = 0;
 
     for (u32 i = 0; i < NUM_SIZE_CLASSES; i++) {
-        for (Slab* slab : size_classes[i]) {
+        for (auto& slab : size_classes[i]) {
             // Skip already reclaimed slabs
             if (slab->remapped) {
                 continue;

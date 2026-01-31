@@ -29,7 +29,10 @@ BCModule* BytecodeBuilder::build(IRModule* ir_module) {
     m_error = nullptr;
 
     m_ir_module = ir_module;
-    m_module = new BCModule();
+
+    // Use UniquePtr for automatic cleanup on error
+    auto module = make_unique<BCModule>();
+    m_module = module.get();
     m_module->name = ir_module->name;
 
     // Build function name index map
@@ -41,15 +44,16 @@ BCModule* BytecodeBuilder::build(IRModule* ir_module) {
     // Build each function
     for (IRFunction* ir_func : ir_module->functions) {
         BCFunction* bc_func = build_function(ir_func);
-        m_module->functions.push_back(bc_func);
+        m_module->functions.push_back(UniquePtr<BCFunction>(bc_func));
 
         if (m_has_error) {
-            delete m_module;
-            return nullptr;
+            m_module = nullptr;
+            return nullptr;  // UniquePtr automatically cleans up
         }
     }
 
-    return m_module;
+    m_module = nullptr;
+    return module.release();  // Transfer ownership to caller
 }
 
 BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {

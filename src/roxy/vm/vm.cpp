@@ -5,15 +5,40 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <new>
 
 namespace rx {
 
+// RoxyVM constructor/destructor defined here where SlabAllocator is complete
+RoxyVM::RoxyVM()
+    : module(nullptr)
+    , register_file_size(0)
+    , register_top(0)
+    , local_stack_size(0)
+    , local_stack_top(0)
+    , running(false)
+    , error(nullptr)
+{}
+
+RoxyVM::~RoxyVM() {
+    // UniquePtr members are automatically cleaned up
+    // But we need to call shutdown() on allocator first if it exists
+    if (allocator) {
+        allocator->shutdown();
+    }
+}
+
 bool vm_init(RoxyVM* vm, const VMConfig& config) {
     vm->module = nullptr;
+    vm->running = false;
+    vm->error = nullptr;
 
     // Initialize register file (untyped 8-byte slots)
     vm->register_file_size = config.register_file_size;
-    vm->register_file = new u64[config.register_file_size];
+    vm->register_file = UniquePtr<u64[]>(new (std::nothrow) u64[config.register_file_size]);
+    if (!vm->register_file) {
+        return false;
+    }
     vm->register_top = 0;
 
     // Initialize all registers to zero
@@ -23,48 +48,45 @@ bool vm_init(RoxyVM* vm, const VMConfig& config) {
 
     // Initialize local stack (4-byte slots for struct data)
     vm->local_stack_size = config.local_stack_size;
-    vm->local_stack = new u32[config.local_stack_size];
+    vm->local_stack = UniquePtr<u32[]>(new (std::nothrow) u32[config.local_stack_size]);
+    if (!vm->local_stack) {
+        vm->register_file.reset();
+        return false;
+    }
     vm->local_stack_top = 0;
 
     // Initialize slab allocator for heap objects
-    vm->allocator = new SlabAllocator();
+    vm->allocator = UniquePtr<SlabAllocator>(new (std::nothrow) SlabAllocator());
+    if (!vm->allocator) {
+        vm->register_file.reset();
+        vm->local_stack.reset();
+        return false;
+    }
     if (!vm->allocator->init()) {
-        delete vm->allocator;
-        vm->allocator = nullptr;
-        delete[] vm->register_file;
-        delete[] vm->local_stack;
-        vm->register_file = nullptr;
-        vm->local_stack = nullptr;
+        vm->allocator.reset();
+        vm->register_file.reset();
+        vm->local_stack.reset();
         return false;
     }
 
     vm->call_stack.reserve(config.max_call_depth);
-    vm->running = false;
-    vm->error = nullptr;
 
     return true;
 }
 
 void vm_destroy(RoxyVM* vm) {
-    if (vm->register_file) {
-        delete[] vm->register_file;
-        vm->register_file = nullptr;
-    }
+    vm->register_file.reset();
     vm->register_file_size = 0;
     vm->register_top = 0;
 
-    if (vm->local_stack) {
-        delete[] vm->local_stack;
-        vm->local_stack = nullptr;
-    }
+    vm->local_stack.reset();
     vm->local_stack_size = 0;
     vm->local_stack_top = 0;
 
     // Destroy slab allocator
     if (vm->allocator) {
         vm->allocator->shutdown();
-        delete vm->allocator;
-        vm->allocator = nullptr;
+        vm->allocator.reset();
     }
 
     vm->call_stack.clear();
@@ -113,7 +135,7 @@ bool vm_call_index(RoxyVM* vm, u32 func_index, Span<Value> args) {
         return false;
     }
 
-    const BCFunction* func = vm->module->functions[func_index];
+    const BCFunction* func = vm->module->functions[func_index].get();
 
     // Check argument count
     if (args.size() != func->param_count) {
