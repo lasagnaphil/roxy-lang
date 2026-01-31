@@ -2,7 +2,7 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-01-31
+Last updated: 2026-02-01
 
 ---
 
@@ -49,11 +49,6 @@ Last updated: 2026-01-31
 
 ## Medium Priority
 
-- [ ] **Multi-register struct argument tracking**
-  - File: `src/roxy/compiler/lowering.cpp:413`
-  - Issue: TODO comment - struct arguments spanning multiple registers not fully tracked
-  - Fix: Complete register tracking for multi-register struct params
-
 - [ ] **Magic numbers for 16-bit range**
   - Files: `src/roxy/compiler/lowering.cpp:235,287`
   - Fix: Extract `-32768`/`32767` to `constexpr i64 IMM16_MIN/MAX`
@@ -96,7 +91,6 @@ Last updated: 2026-01-31
 ## Planned Features
 
 - [ ] When/case statements for enum pattern matching
-- [ ] Struct inheritance with `super` keyword
 - [ ] Function overloading
 - [ ] Operator overloading
 - [ ] Exception handling
@@ -131,11 +125,28 @@ Last updated: 2026-01-31
 - [ ] Test error recovery in semantic analysis
 - [ ] Add fuzzing for parser/lexer
 - [ ] Test cross-module imports with complex dependency graphs
-- [ ] Test struct inheritance when implemented
 
 ---
 
 ## Recently Completed
+
+- [x] **Multi-register struct argument tracking** (2026-02-01)
+  - Fixed bug where structs with 3-4 slots (12-16 bytes) passed as parameters weren't correctly tracked
+  - Added `param_register_count` field to `BCFunction` for total registers needed by parameters
+  - Fixed caller-side argument placement to use cumulative register offsets
+  - Fixed callee-side parameter allocation and prologue unpacking
+  - Fixed interpreter CALL/CALL_EXTERNAL to copy correct number of registers
+  - 8 new E2E tests in `params_test.cpp` covering various multi-register scenarios
+
+- [x] **Struct inheritance with `super` keyword** (2026-01-31)
+  - Single inheritance for structs with static dispatch (no vtables)
+  - Field inheritance: child inherits all parent fields, laid out parent-first
+  - Method inheritance: child can call inherited methods, override with same name
+  - `super.method()` calls parent's version of a method
+  - `super()` / `super(args)` calls parent constructor
+  - Constructor/destructor chaining: parent runs before child (constructors), child before parent (destructors)
+  - Value slicing and covariant references supported
+  - E2E tests in `inheritance_test.cpp`
 
 - [x] **Method calls for structs** (2026-01-31)
   - Syntax: `fun StructName.method_name(params): RetType { body }`

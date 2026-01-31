@@ -72,13 +72,35 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_next_reg = 0;
     m_next_stack_slot = 0;
 
-    // Allocate registers for function parameters and record types
-    for (const auto& param : ir_func->params) {
-        allocate_register(param.value);
+    // Allocate registers for function parameters with proper multi-register handling
+    // Track cumulative register offset for parameters that span multiple registers
+    u8 param_reg_offset = 0;
+    for (u32 i = 0; i < ir_func->params.size(); i++) {
+        const auto& param = ir_func->params[i];
+
+        // Map this parameter value to its starting register
+        m_value_to_reg[param.value.id] = param_reg_offset;
         if (param.type) {
             m_value_types[param.value.id] = param.type;
         }
+
+        // Check if this parameter is a pointer (out/inout)
+        bool is_ptr_param = (i < ir_func->param_is_ptr.size() && ir_func->param_is_ptr[i]);
+
+        // Calculate how many registers this parameter uses
+        u8 reg_count = 1;
+        if (!is_ptr_param) {
+            u32 slot_count = get_struct_slot_count(param.type);
+            if (slot_count > 0 && slot_count <= 4) {
+                // Small struct: uses (slot_count + 1) / 2 registers
+                reg_count = static_cast<u8>((slot_count + 1) / 2);
+            }
+            // Large structs (>4 slots) are passed by pointer, so 1 register
+        }
+        param_reg_offset += reg_count;
     }
+    m_next_reg = param_reg_offset;
+    m_current_func->param_register_count = param_reg_offset;
 
     // First pass: allocate registers for all values and record block offsets
     for (IRBlock* block : ir_func->blocks) {
@@ -121,27 +143,37 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     }
 
     // Emit function prologue: unpack struct parameters from registers to local stack
+    // Track cumulative register offset to match the parameter allocation above
+    u8 prologue_param_reg_offset = 0;
     for (u32 i = 0; i < ir_func->params.size(); i++) {
         const auto& param = ir_func->params[i];
 
         // Check if this parameter is a pointer (out/inout parameter)
         bool is_ptr_param = (i < ir_func->param_is_ptr.size() && ir_func->param_is_ptr[i]);
 
+        u32 slot_count = get_struct_slot_count(param.type);
+
+        // Calculate how many registers this parameter uses
+        u8 reg_count = 1;
+        if (!is_ptr_param && slot_count > 0 && slot_count <= 4) {
+            reg_count = static_cast<u8>((slot_count + 1) / 2);
+        }
+
         // Skip unpacking for pointer parameters - they already contain a pointer
         if (is_ptr_param) {
+            prologue_param_reg_offset += reg_count;
             continue;
         }
 
-        u32 slot_count = get_struct_slot_count(param.type);
-
         if (slot_count > 0 && slot_count <= 4) {
-            // Small struct: param register holds packed data
+            // Small struct: param registers hold packed data
             // Allocate local stack space and unpack
             u32 stack_offset = m_next_stack_slot;
             m_next_stack_slot += slot_count;
             m_value_to_stack_slot[param.value.id] = stack_offset;
 
-            u8 param_reg = get_register(param.value);
+            // Use the tracked register offset, not get_register() since we'll remap it
+            u8 param_reg = prologue_param_reg_offset;
 
             // Get stack address into a new register
             u8 stack_ptr_reg = m_next_reg++;
@@ -161,7 +193,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             m_next_stack_slot += slot_count;
             m_value_to_stack_slot[param.value.id] = stack_offset;
 
-            u8 param_reg = get_register(param.value);  // Source pointer (caller's data)
+            u8 param_reg = prologue_param_reg_offset;  // Source pointer (caller's data)
 
             // Get local stack address into a new register
             u8 stack_ptr_reg = m_next_reg++;
@@ -173,6 +205,8 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             // Remap the parameter value to the local stack pointer register
             m_value_to_reg[param.value.id] = stack_ptr_reg;
         }
+
+        prologue_param_reg_offset += reg_count;
     }
 
     // Second pass: emit bytecode
@@ -386,7 +420,9 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
 
             // Copy arguments to consecutive registers starting from dst+ret_reg_count
             // (calling convention: arguments follow the destination/return registers)
+            // Track cumulative register offset for multi-register struct arguments
             u8 first_arg_reg = dst + ret_reg_count;
+            u8 arg_reg_offset = 0;
             for (u32 i = 0; i < inst->call.args.size(); i++) {
                 ValueId arg_val = inst->call.args[i];
                 u8 arg_src = get_register(arg_val);
@@ -396,9 +432,10 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
 
                 if (param_is_ptr) {
                     // Pointer parameter: pass the pointer directly (already computed by gen_lvalue_addr)
-                    if (arg_src != first_arg_reg + i) {
-                        emit_abc(Opcode::MOV, first_arg_reg + static_cast<u8>(i), arg_src, 0);
+                    if (arg_src != first_arg_reg + arg_reg_offset) {
+                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
                     }
+                    arg_reg_offset += 1;
                 } else {
                     // Check if argument is a struct
                     auto type_it = m_value_types.find(arg_val.id);
@@ -408,19 +445,21 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                     if (arg_slot_count > 0 && arg_slot_count <= 4) {
                         // Small struct: load struct data from memory to consecutive registers
                         u8 arg_reg_count = static_cast<u8>((arg_slot_count + 1) / 2);
-                        emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + static_cast<u8>(i), arg_src, static_cast<u8>(arg_slot_count));
+                        emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + arg_reg_offset, arg_src, static_cast<u8>(arg_slot_count));
                         emit(0);  // Padding word
-                        // TODO: Track that this argument uses multiple registers
+                        arg_reg_offset += arg_reg_count;
                     } else if (arg_slot_count > 4) {
                         // Large struct: pass pointer
-                        if (arg_src != first_arg_reg + i) {
-                            emit_abc(Opcode::MOV, first_arg_reg + static_cast<u8>(i), arg_src, 0);
+                        if (arg_src != first_arg_reg + arg_reg_offset) {
+                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
                         }
+                        arg_reg_offset += 1;
                     } else {
                         // Regular value
-                        if (arg_src != first_arg_reg + i) {
-                            emit_abc(Opcode::MOV, first_arg_reg + static_cast<u8>(i), arg_src, 0);
+                        if (arg_src != first_arg_reg + arg_reg_offset) {
+                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
                         }
+                        arg_reg_offset += 1;
                     }
                 }
             }
@@ -503,11 +542,36 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             }
 
             // Copy arguments to consecutive registers starting from dst+1
+            // Track cumulative register offset for multi-register struct arguments
             u8 first_arg_reg = dst + 1;
+            u8 arg_reg_offset = 0;
             for (u32 i = 0; i < inst->call_external.args.size(); i++) {
-                u8 arg_src = get_register(inst->call_external.args[i]);
-                if (arg_src != first_arg_reg + i) {
-                    emit_abc(Opcode::MOV, first_arg_reg + static_cast<u8>(i), arg_src, 0);
+                ValueId arg_val = inst->call_external.args[i];
+                u8 arg_src = get_register(arg_val);
+
+                // Check if argument is a struct
+                auto type_it = m_value_types.find(arg_val.id);
+                Type* arg_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+                u32 arg_slot_count = get_struct_slot_count(arg_type);
+
+                if (arg_slot_count > 0 && arg_slot_count <= 4) {
+                    // Small struct: load struct data from memory to consecutive registers
+                    u8 arg_reg_count = static_cast<u8>((arg_slot_count + 1) / 2);
+                    emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + arg_reg_offset, arg_src, static_cast<u8>(arg_slot_count));
+                    emit(0);  // Padding word
+                    arg_reg_offset += arg_reg_count;
+                } else if (arg_slot_count > 4) {
+                    // Large struct: pass pointer
+                    if (arg_src != first_arg_reg + arg_reg_offset) {
+                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                    }
+                    arg_reg_offset += 1;
+                } else {
+                    // Regular value
+                    if (arg_src != first_arg_reg + arg_reg_offset) {
+                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                    }
+                    arg_reg_offset += 1;
                 }
             }
 

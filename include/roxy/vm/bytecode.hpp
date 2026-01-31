@@ -234,12 +234,13 @@ struct BCTypeInfo {
 struct BCFunction {
     StringView name;            // Function name
     u32 param_count;            // Number of parameters
+    u32 param_register_count;   // Total registers needed for parameters (may exceed param_count for multi-register structs)
     u32 register_count;         // Total registers needed
     u32 local_stack_slots;      // Local stack slots needed for struct data
     Vector<u32> code;           // Bytecode instructions
     Vector<BCConstant> constants; // Constant pool
 
-    BCFunction() : param_count(0), register_count(0), local_stack_slots(0) {}
+    BCFunction() : param_count(0), param_register_count(0), register_count(0), local_stack_slots(0) {}
 };
 
 // Native function signature

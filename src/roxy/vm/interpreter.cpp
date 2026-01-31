@@ -387,8 +387,9 @@ bool interpret(RoxyVM* vm) {
                     callee_regs[i] = 0;
                 }
 
-                // Copy arguments
-                for (u8 i = 0; i < arg_count; i++) {
+                // Copy arguments - use param_register_count to handle multi-register struct params
+                u32 reg_count = callee->param_register_count;
+                for (u32 i = 0; i < reg_count; i++) {
                     callee_regs[i] = regs[first_arg + i];
                 }
 
@@ -487,8 +488,9 @@ bool interpret(RoxyVM* vm) {
                     callee_regs[i] = 0;
                 }
 
-                // Copy arguments
-                for (u8 i = 0; i < arg_count; i++) {
+                // Copy arguments - use param_register_count to handle multi-register struct params
+                u32 reg_count = callee->param_register_count;
+                for (u32 i = 0; i < reg_count; i++) {
                     callee_regs[i] = regs[first_arg + i];
                 }
 
