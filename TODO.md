@@ -8,13 +8,6 @@ Last updated: 2026-01-31
 
 ## Critical (Blocking Features)
 
-- [ ] **Method calls not implemented**
-  - File: `src/roxy/compiler/semantic.cpp:1635`
-  - Issue: `analyze_super_expr()` errors with "Method calls are not yet implemented"
-  - Impact: Blocks inheritance-based programming (`super.method()` calls)
-  - Scope: AST supports `SuperExpr` and `StructDecl.methods` but semantic analysis lacks method lookup
-  - Related: Struct inheritance is parsed but methods cannot be called
-
 - [ ] **When/case statements not implemented**
   - Files: Parser, Semantic, IR Builder
   - Issue: `KwWhen` and `KwCase` tokens are lexed but no AST nodes or parsing exist
@@ -102,8 +95,8 @@ Last updated: 2026-01-31
 
 ## Planned Features
 
-- [ ] Method calls and inheritance (requires type system extension for method lookup)
 - [ ] When/case statements for enum pattern matching
+- [ ] Struct inheritance with `super` keyword
 - [ ] Function overloading
 - [ ] Operator overloading
 - [ ] Exception handling
@@ -143,6 +136,14 @@ Last updated: 2026-01-31
 ---
 
 ## Recently Completed
+
+- [x] **Method calls for structs** (2026-01-31)
+  - Syntax: `fun StructName.method_name(params): RetType { body }`
+  - Implicit `self` parameter (type `ref<StructType>`)
+  - Name mangling: `StructName$method_name`
+  - Methods can read/modify `self`, take parameters, return any type
+  - Works with stack and heap-allocated structs
+  - 8 E2E test cases in `methods_test.cpp`
 
 - [x] Remove `new` keyword from constructor calls (2026-01-31)
   - Constructor calls now use `Type()` instead of `new Type()`

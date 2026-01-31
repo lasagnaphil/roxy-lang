@@ -35,6 +35,9 @@ public:
     // Build IR for a destructor
     IRFunction* build_destructor(DestructorDecl* decl, Type* struct_type);
 
+    // Build IR for a method
+    IRFunction* build_method(MethodDecl* decl, Type* struct_type);
+
     // Build synthesized default constructor for a struct type
     IRFunction* build_synthesized_default_constructor(Type* struct_type);
 

@@ -256,9 +256,10 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             }
             type->struct_info.fields = Span<FieldInfo>(field_data, fields.size());
 
-            // Initialize empty constructor/destructor lists
+            // Initialize empty constructor/destructor/method lists
             type->struct_info.constructors = Span<ConstructorInfo>(nullptr, 0);
             type->struct_info.destructors = Span<DestructorInfo>(nullptr, 0);
+            type->struct_info.methods = Span<MethodInfo>(nullptr, 0);
         }
         else if (decl->kind == AstKind::DeclEnum) {
             EnumDecl& ed = decl->enum_decl;
@@ -351,6 +352,9 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
         else if (decl->kind == AstKind::DeclDestructor) {
             analyze_destructor_decl(decl);
         }
+        else if (decl->kind == AstKind::DeclMethod) {
+            analyze_method_decl(decl);
+        }
     }
 }
 
@@ -405,6 +409,13 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
             auto it = m_named_types.find(dd.struct_name);
             if (it != m_named_types.end()) {
                 analyze_destructor_body(decl, it->second);
+            }
+        }
+        else if (decl->kind == AstKind::DeclMethod) {
+            MethodDecl& md = decl->method_decl;
+            auto it = m_named_types.find(md.struct_name);
+            if (it != m_named_types.end()) {
+                analyze_method_body(decl, it->second);
             }
         }
     }
@@ -755,6 +766,76 @@ void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
     struct_type->struct_info.destructors = Span<DestructorInfo>(dtor_data, dtors.size());
 }
 
+void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
+    MethodDecl& md = decl->method_decl;
+
+    // Look up the struct type
+    auto it = m_named_types.find(md.struct_name);
+    if (it == m_named_types.end()) {
+        error_fmt(decl->loc, "method for unknown struct '%.*s'",
+                 md.struct_name.size(), md.struct_name.data());
+        return;
+    }
+
+    Type* struct_type = it->second;
+    if (struct_type->kind != TypeKind::Struct) {
+        error_fmt(decl->loc, "'%.*s' is not a struct type",
+                 md.struct_name.size(), md.struct_name.data());
+        return;
+    }
+
+    // Check for duplicate method names
+    for (u32 i = 0; i < struct_type->struct_info.methods.size(); i++) {
+        if (struct_type->struct_info.methods[i].name == md.name) {
+            error_fmt(decl->loc, "duplicate method '%.*s' for struct '%.*s'",
+                     md.name.size(), md.name.data(),
+                     md.struct_name.size(), md.struct_name.data());
+            return;
+        }
+    }
+
+    // Resolve parameter types
+    Vector<Type*> param_types;
+    for (u32 i = 0; i < md.params.size(); i++) {
+        Type* ptype = resolve_type_expr(md.params[i].type);
+        if (!ptype) ptype = m_types.error_type();
+        param_types.push_back(ptype);
+    }
+
+    // Resolve return type
+    Type* return_type = md.return_type ? resolve_type_expr(md.return_type) : m_types.void_type();
+    if (!return_type) return_type = m_types.error_type();
+
+    // Allocate param_types in bump allocator
+    Type** ptypes = reinterpret_cast<Type**>(
+        m_allocator.alloc_bytes(sizeof(Type*) * param_types.size(), alignof(Type*)));
+    for (u32 i = 0; i < param_types.size(); i++) {
+        ptypes[i] = param_types[i];
+    }
+
+    // Create method info
+    MethodInfo method_info;
+    method_info.name = md.name;
+    method_info.param_types = Span<Type*>(ptypes, param_types.size());
+    method_info.return_type = return_type;
+    method_info.decl = decl;
+
+    // Add to struct's method list
+    Vector<MethodInfo> methods;
+    for (u32 i = 0; i < struct_type->struct_info.methods.size(); i++) {
+        methods.push_back(struct_type->struct_info.methods[i]);
+    }
+    methods.push_back(method_info);
+
+    // Allocate and update
+    MethodInfo* method_data = reinterpret_cast<MethodInfo*>(
+        m_allocator.alloc_bytes(sizeof(MethodInfo) * methods.size(), alignof(MethodInfo)));
+    for (u32 i = 0; i < methods.size(); i++) {
+        method_data[i] = methods[i];
+    }
+    struct_type->struct_info.methods = Span<MethodInfo>(method_data, methods.size());
+}
+
 void SemanticAnalyzer::analyze_constructor_body(Decl* decl, Type* struct_type) {
     ConstructorDecl& cd = decl->constructor_decl;
 
@@ -824,6 +905,47 @@ void SemanticAnalyzer::analyze_destructor_body(Decl* decl, Type* struct_type) {
 
     // Analyze body
     analyze_stmt(dd.body);
+
+    m_symbols.pop_scope();  // function scope
+    m_symbols.pop_scope();  // struct scope
+}
+
+void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
+    MethodDecl& md = decl->method_decl;
+
+    if (!md.body) return;
+
+    // Push struct scope so 'self' and fields are accessible
+    m_symbols.push_struct_scope(struct_type);
+
+    // Define fields in scope
+    for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
+        FieldInfo& fi = struct_type->struct_info.fields[i];
+        m_symbols.define_field(fi.name, fi.type, decl->loc, fi.index, fi.is_pub);
+    }
+
+    // Resolve return type
+    Type* return_type = md.return_type ? resolve_type_expr(md.return_type) : m_types.void_type();
+    if (!return_type) return_type = m_types.error_type();
+
+    // Push function scope with return type
+    m_symbols.push_function_scope(return_type);
+
+    // Define parameters
+    for (u32 i = 0; i < md.params.size(); i++) {
+        Param& p = md.params[i];
+        Type* ptype = resolve_type_expr(p.type);
+        if (!ptype) ptype = m_types.error_type();
+
+        if (m_symbols.lookup_local(p.name)) {
+            error_fmt(p.loc, "duplicate parameter name '%.*s'", p.name.size(), p.name.data());
+        } else {
+            m_symbols.define_parameter(p.name, ptype, p.loc, i);
+        }
+    }
+
+    // Analyze body
+    analyze_stmt(md.body);
 
     m_symbols.pop_scope();  // function scope
     m_symbols.pop_scope();  // struct scope
@@ -1274,6 +1396,93 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         }
     }
 
+    // Check if this is a method call: obj.method(args)
+    // We need to detect this BEFORE calling analyze_expr(ce.callee) because
+    // that would return a function type with 'self' as the first parameter.
+    if (ce.callee->kind == AstKind::ExprGet) {
+        GetExpr& ge = ce.callee->get;
+
+        // First, analyze the object to get its type
+        Type* obj_type = analyze_expr(ge.object);
+        if (obj_type && !obj_type->is_error()) {
+            Type* base_type = obj_type->base_type();
+            if (base_type && base_type->is_struct()) {
+                StructTypeInfo& sti = base_type->struct_info;
+
+                // Look for a method with this name
+                for (u32 i = 0; i < sti.methods.size(); i++) {
+                    if (sti.methods[i].name == ge.name) {
+                        // This is a method call!
+                        MethodInfo& mi = sti.methods[i];
+
+                        // Check argument count (NOT including implicit self)
+                        if (ce.arguments.size() != mi.param_types.size()) {
+                            error_fmt(expr->loc, "method expects %u arguments but got %u",
+                                     mi.param_types.size(), ce.arguments.size());
+                            return mi.return_type;
+                        }
+
+                        // Get MethodDecl for parameter modifiers
+                        MethodDecl* method_decl = mi.decl ? &mi.decl->method_decl : nullptr;
+
+                        // Check argument types and modifiers
+                        for (u32 j = 0; j < ce.arguments.size(); j++) {
+                            CallArg& arg = ce.arguments[j];
+
+                            // Get expected modifier from MethodDecl
+                            ParamModifier expected_mod = ParamModifier::None;
+                            if (method_decl && j < method_decl->params.size()) {
+                                expected_mod = method_decl->params[j].modifier;
+                            }
+
+                            // Check modifier matches
+                            if (expected_mod != arg.modifier) {
+                                if (expected_mod == ParamModifier::Out) {
+                                    error(arg.expr->loc, "argument requires 'out' modifier");
+                                } else if (expected_mod == ParamModifier::Inout) {
+                                    error(arg.expr->loc, "argument requires 'inout' modifier");
+                                } else if (arg.modifier != ParamModifier::None) {
+                                    error(arg.modifier_loc, "unexpected modifier for this parameter");
+                                }
+                            }
+
+                            // Check lvalue requirement for out/inout
+                            if (arg.modifier == ParamModifier::Out || arg.modifier == ParamModifier::Inout) {
+                                if (!is_lvalue(arg.expr)) {
+                                    error(arg.expr->loc, "'out'/'inout' argument must be a variable");
+                                }
+                            }
+
+                            // Analyze argument expression
+                            Type* arg_type = analyze_expr(arg.expr);
+
+                            // Type check (skip for 'out' since it's write-only)
+                            if (arg.modifier != ParamModifier::Out) {
+                                if (!check_assignable(mi.param_types[j], arg_type, arg.expr->loc)) {
+                                    // Error already reported
+                                }
+                            }
+                        }
+
+                        // Set callee's resolved_type to a function type for IR builder
+                        // The function type includes 'self' as the first parameter
+                        u32 total_params = 1 + mi.param_types.size();
+                        Type** ptypes = reinterpret_cast<Type**>(
+                            m_allocator.alloc_bytes(sizeof(Type*) * total_params, alignof(Type*)));
+                        ptypes[0] = m_types.ref_type(base_type);
+                        for (u32 j = 0; j < mi.param_types.size(); j++) {
+                            ptypes[j + 1] = mi.param_types[j];
+                        }
+                        ce.callee->resolved_type = m_types.function_type(
+                            Span<Type*>(ptypes, total_params), mi.return_type);
+
+                        return mi.return_type;
+                    }
+                }
+            }
+        }
+    }
+
     // Regular function call
     Type* callee_type = analyze_expr(ce.callee);
     if (callee_type->is_error()) return m_types.error_type();
@@ -1526,6 +1735,26 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
                 return m_types.error_type();
             }
             return sti.fields[i].type;
+        }
+    }
+
+    // Look up method
+    for (u32 i = 0; i < sti.methods.size(); i++) {
+        if (sti.methods[i].name == ge.name) {
+            // Build function type with implicit self parameter
+            // Method type: (ref<StructType>, param_types...) -> return_type
+            MethodInfo& mi = sti.methods[i];
+
+            // Build parameter types: ref<StructType> + method params
+            u32 total_params = 1 + mi.param_types.size();
+            Type** ptypes = reinterpret_cast<Type**>(
+                m_allocator.alloc_bytes(sizeof(Type*) * total_params, alignof(Type*)));
+            ptypes[0] = m_types.ref_type(base_type);  // self parameter
+            for (u32 j = 0; j < mi.param_types.size(); j++) {
+                ptypes[j + 1] = mi.param_types[j];
+            }
+
+            return m_types.function_type(Span<Type*>(ptypes, total_params), mi.return_type);
         }
     }
 

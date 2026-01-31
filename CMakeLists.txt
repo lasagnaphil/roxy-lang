@@ -119,6 +119,7 @@ add_executable(roxy_tests
     tests/e2e/heap_test.cpp
     tests/e2e/modules_test.cpp
     tests/e2e/constructors_test.cpp
+    tests/e2e/methods_test.cpp
 )
 target_link_libraries(roxy_tests roxy_vm)
 

@@ -152,7 +152,7 @@ roxy-v2/
 │   │   ├── vm_test.cpp          # VM execution and runtime
 │   │   ├── lowering_test.cpp    # SSA to bytecode lowering
 │   │   └── slab_allocator_test.cpp # Slab allocator and weak refs
-│   └── e2e/                     # End-to-end tests (10 files)
+│   └── e2e/                     # End-to-end tests (12 files)
 │       ├── test_helpers.hpp     # Shared compile/run helpers
 │       ├── test_helpers.cpp
 │       ├── basics_test.cpp      # Variables, arithmetic, control flow
@@ -163,7 +163,9 @@ roxy-v2/
 │       ├── params_test.cpp      # Out/inout parameter tests
 │       ├── interop_test.cpp     # C++ interop tests
 │       ├── strings_test.cpp     # String operations, concatenation
-│       └── modules_test.cpp     # Module imports, multi-file compilation
+│       ├── modules_test.cpp     # Module imports, multi-file compilation
+│       ├── constructors_test.cpp # Named constructors/destructors
+│       └── methods_test.cpp     # Struct method calls
 │
 ├── docs/
 │   ├── overview.md              # Language features and design
@@ -231,7 +233,7 @@ Recursive descent parser with Pratt parsing for expressions:
 Complete AST node definitions:
 - 14 expression types (literals, identifiers, binary/unary ops, calls, indexing, field access, assignments, ternary, struct literals)
 - 9 statement types (expr, block, if, while, for, return, break, continue, delete)
-- 6 declaration types (variable, function, struct, enum, field, import)
+- 7 declaration types (variable, function, struct, enum, field, import, method)
 - ParamModifier enum (None, Out, Inout) for function parameters
 
 ### Type System (`include/roxy/compiler/types.hpp`, `src/roxy/compiler/types.cpp`)
@@ -436,6 +438,80 @@ Key types:
 - `VarDecl.resolved_type` - Type resolved by semantic analysis
 - `FieldInit` / `StructLiteralExpr` - AST nodes for struct literals
 
+### Methods (`types.hpp`, `ast.hpp`, `parser.cpp`, `semantic.cpp`, `ir_builder.cpp`)
+
+External method declarations for structs using `fun StructName.method()` syntax:
+
+**Declaration syntax:**
+```roxy
+struct Point {
+    x: i32;
+    y: i32;
+}
+
+fun Point.sum(): i32 {
+    return self.x + self.y;
+}
+
+fun Point.add(dx: i32, dy: i32): i32 {
+    return self.x + dx + self.y + dy;
+}
+```
+
+**Method calls:**
+```roxy
+fun main(): i32 {
+    var p: Point = Point { x = 10, y = 20 };
+    print(p.sum());       // Prints 30
+    print(p.add(5, 15));  // Prints 50
+    return 0;
+}
+```
+
+**Key Implementation Details:**
+
+- **Name mangling**: Methods are compiled as regular functions with mangled names: `StructName$method_name`
+- **Implicit `self`**: First parameter is always `self` (type `ref<StructType>`), automatically passed
+- **Storage**: `StructTypeInfo.methods` stores `Span<MethodInfo>` with method metadata
+- **AST**: `DeclMethod` kind with `MethodDecl` struct containing struct_name, name, params, return_type, body
+- **Semantic**: Multi-pass analysis - register methods in type resolution, analyze bodies later
+- **IR**: `build_method()` generates IR with `self` as first parameter
+
+**Method Features:**
+- Methods can read and modify `self` fields
+- Methods can take additional parameters
+- Methods can return any type including structs
+- Works with both stack-allocated and heap-allocated (`uniq`) structs
+- Multiple methods can be defined on the same struct
+
+**MethodInfo struct:**
+```cpp
+struct MethodInfo {
+    StringView name;
+    Span<Type*> param_types;  // NOT including implicit self
+    Type* return_type;
+    Decl* decl;               // Points to MethodDecl AST node
+};
+```
+
+Example with mutation:
+```roxy
+struct Counter {
+    value: i32;
+}
+
+fun Counter.increment() {
+    self.value = self.value + 1;
+}
+
+fun main(): i32 {
+    var c: Counter = Counter { value = 0 };
+    c.increment();
+    print(c.value);  // Prints 1
+    return 0;
+}
+```
+
 ### Slab Allocator (`include/roxy/vm/slab_allocator.hpp`, `src/roxy/vm/slab_allocator.cpp`)
 
 Custom slab allocator for heap objects with Vale-style random generational references:
@@ -527,10 +603,6 @@ Key files:
 - `include/roxy/compiler/compiler.hpp` - Compiler class for multi-module compilation
 - `src/roxy/compiler/compiler.cpp` - Topological sort, linking, cycle detection
 - `include/roxy/vm/natives.hpp` - BUILTIN_MODULE_NAME constant
-
-## Partially Implemented (TODOs in code)
-
-- **Method Lookup** - Semantic analysis has placeholder for proper method resolution
 
 ## Planned Components (Not Yet Implemented)
 
@@ -627,3 +699,4 @@ On Windows, use `.exe` extension.
   - `frontend.md` - Lexer, parser, semantic analysis
   - `modules.md` - Module system, imports, multi-file compilation
   - `constructors.md` - Named constructors/destructors, `self` keyword, synthesized defaults
+  - `methods.md` - Struct methods, `self` parameter, name mangling

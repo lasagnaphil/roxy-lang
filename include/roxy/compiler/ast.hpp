@@ -52,6 +52,7 @@ enum class AstKind : u8 {
     DeclImport,
     DeclConstructor,
     DeclDestructor,
+    DeclMethod,
 };
 
 enum class LiteralKind : u8 {
@@ -426,6 +427,16 @@ struct DestructorDecl {
     bool is_pub;
 };
 
+// Method declaration: fun StructName.method_name(params): RetType { body }
+struct MethodDecl {
+    StringView struct_name;
+    StringView name;
+    Span<Param> params;        // Does NOT include implicit self
+    TypeExpr* return_type;     // nullptr if void
+    Stmt* body;
+    bool is_pub;
+};
+
 // Declaration node
 struct Decl {
     AstKind kind;
@@ -439,6 +450,7 @@ struct Decl {
         ImportDecl import_decl;
         ConstructorDecl constructor_decl;
         DestructorDecl destructor_decl;
+        MethodDecl method_decl;
         Stmt stmt;  // For statement declarations (like expression statements)
     };
 

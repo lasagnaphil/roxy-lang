@@ -68,6 +68,15 @@ IRModule* IRBuilder::build(Program* program) {
                 module->functions.push_back(func);
             }
         }
+        else if (decl->kind == AstKind::DeclMethod) {
+            // Build method
+            MethodDecl& md = decl->method_decl;
+            Type* struct_type = m_types.named_type_by_name(md.struct_name);
+            if (struct_type && md.body) {
+                IRFunction* func = build_method(&md, struct_type);
+                module->functions.push_back(func);
+            }
+        }
     }
 
     // Generate synthesized default constructors for structs without user-defined ones
@@ -410,6 +419,135 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
     // If current block doesn't have a terminator, add implicit void return
     if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
         finish_block_return(ValueId::invalid());
+    }
+
+    pop_scope();
+
+    IRFunction* result = m_current_func;
+    m_current_func = nullptr;
+    m_current_block = nullptr;
+    return result;
+}
+
+IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
+    m_current_func = m_allocator.emplace<IRFunction>();
+
+    // Mangle method name: StructName$$method_name
+    char name_buf[256];
+    snprintf(name_buf, sizeof(name_buf), "%.*s$$%.*s",
+             static_cast<int>(decl->struct_name.size()), decl->struct_name.data(),
+             static_cast<int>(decl->name.size()), decl->name.data());
+    u32 len = static_cast<u32>(strlen(name_buf));
+    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
+    memcpy(name_ptr, name_buf, len + 1);
+    m_current_func->name = StringView(name_ptr, len);
+
+    // Clear parameter tracking
+    m_param_is_ptr.clear();
+    m_ref_params.clear();
+
+    // First parameter is 'self' pointer
+    BlockParam self_param;
+    self_param.value = m_current_func->new_value();
+    self_param.type = m_types.ref_type(struct_type);
+    self_param.name = "self";
+    m_current_func->params.push_back(self_param);
+    m_current_func->param_is_ptr.push_back(true);
+    m_param_is_ptr["self"] = true;
+
+    // Set up other parameters
+    for (u32 i = 0; i < decl->params.size(); i++) {
+        Param& param = decl->params[i];
+        Type* param_type = nullptr;
+        if (param.type) {
+            param_type = m_types.type_by_name(param.type->name);
+            if (!param_type) {
+                param_type = m_types.error_type();
+            }
+            switch (param.type->ref_kind) {
+                case RefKind::Uniq: param_type = m_types.uniq_type(param_type); break;
+                case RefKind::Ref:  param_type = m_types.ref_type(param_type); break;
+                case RefKind::Weak: param_type = m_types.weak_type(param_type); break;
+                case RefKind::None: break;
+            }
+        }
+
+        bool is_ptr = (param.modifier != ParamModifier::None);
+        if (is_ptr) {
+            m_param_is_ptr[param.name] = true;
+        }
+
+        BlockParam bp;
+        bp.value = m_current_func->new_value();
+        bp.type = param_type;
+        bp.name = param.name;
+        m_current_func->params.push_back(bp);
+        m_current_func->param_is_ptr.push_back(is_ptr);
+    }
+
+    // Resolve return type
+    if (decl->return_type) {
+        m_current_func->return_type = m_types.type_by_name(decl->return_type->name);
+        if (!m_current_func->return_type) {
+            m_current_func->return_type = m_types.void_type();
+        }
+        switch (decl->return_type->ref_kind) {
+            case RefKind::Uniq: m_current_func->return_type = m_types.uniq_type(m_current_func->return_type); break;
+            case RefKind::Ref:  m_current_func->return_type = m_types.ref_type(m_current_func->return_type); break;
+            case RefKind::Weak: m_current_func->return_type = m_types.weak_type(m_current_func->return_type); break;
+            case RefKind::None: break;
+        }
+    } else {
+        m_current_func->return_type = m_types.void_type();
+    }
+
+    // Check for large struct return - add hidden output pointer as last parameter
+    if (m_current_func->returns_large_struct()) {
+        BlockParam hidden_param;
+        hidden_param.value = m_current_func->new_value();
+        hidden_param.type = m_current_func->return_type;
+        hidden_param.name = "__ret_ptr";
+        m_current_func->params.push_back(hidden_param);
+        m_current_func->param_is_ptr.push_back(true);
+    }
+
+    // Create entry block
+    IRBlock* entry = create_block("entry");
+    set_current_block(entry);
+
+    // Initialize local variable scopes
+    m_local_scopes.clear();
+    push_scope();
+
+    // Add 'self' to local scope
+    define_local("self", self_param.value, self_param.type);
+
+    // Add other parameters to local scope (skip hidden return pointer)
+    u32 param_count = m_current_func->returns_large_struct()
+        ? m_current_func->params.size() - 1
+        : m_current_func->params.size();
+    for (u32 i = 1; i < param_count; i++) {
+        BlockParam& bp = m_current_func->params[i];
+        define_local(bp.name, bp.value, bp.type);
+    }
+
+    // Generate body
+    if (decl->body && decl->body->kind == AstKind::StmtBlock) {
+        BlockStmt& block = decl->body->block;
+        for (u32 i = 0; i < block.declarations.size(); i++) {
+            gen_decl(block.declarations[i]);
+        }
+    }
+
+    // If current block doesn't have a terminator, add implicit return
+    if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+        if (m_current_func->return_type->is_void()) {
+            finish_block_return(ValueId::invalid());
+        } else {
+            // This shouldn't happen if semantic analysis passed
+            ValueId default_val = emit_const_null();
+            finish_block_return(default_val);
+        }
     }
 
     pop_scope();
@@ -1511,12 +1649,20 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     }
 
     // Check if this is a named constructor call: Type.ctor_name(...)
-    // The callee is a GetExpr where the object has a struct type (set by semantic analysis)
+    // The callee is a GetExpr where the object is a type name (not a variable)
+    // For named constructors: ge.object is an identifier that resolves to a STRUCT TYPE (not a variable of struct type)
+    // This is detected by checking if the identifier matches a type name
     if (ce.callee->kind == AstKind::ExprGet) {
         GetExpr& ge = ce.callee->get;
-        if (ge.object->kind == AstKind::ExprIdentifier &&
-            ge.object->resolved_type && ge.object->resolved_type->is_struct()) {
-            return gen_constructor_call(expr);
+        if (ge.object->kind == AstKind::ExprIdentifier) {
+            // Check if this is a type name (constructor) or a variable (method call)
+            StringView name = ge.object->identifier.name;
+            Type* named_type = m_types.named_type_by_name(name);
+            if (named_type && named_type->is_struct()) {
+                // This is a named constructor call: Type.ctor_name(...)
+                return gen_constructor_call(expr);
+            }
+            // Otherwise, it's a method call on a variable - fall through
         }
     }
 
@@ -1640,6 +1786,24 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             // Method call: obj.method(args)
             ValueId obj = gen_expr(ge.object);
 
+            // Get the struct type from the object to build mangled name
+            Type* obj_type = ge.object->resolved_type;
+            Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
+
+            // Build mangled method name: StructName$$method_name
+            StringView method_name = ge.name;
+            if (struct_type && struct_type->is_struct()) {
+                StructTypeInfo& sti = struct_type->struct_info;
+                char name_buf[256];
+                snprintf(name_buf, sizeof(name_buf), "%.*s$$%.*s",
+                         static_cast<int>(sti.name.size()), sti.name.data(),
+                         static_cast<int>(ge.name.size()), ge.name.data());
+                u32 len = static_cast<u32>(strlen(name_buf));
+                char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
+                memcpy(name_ptr, name_buf, len + 1);
+                method_name = StringView(name_ptr, len);
+            }
+
             // Prepend object to arguments, append output pointer if large struct return
             Span<ValueId> method_args;
             if (callee_returns_large_struct) {
@@ -1658,7 +1822,7 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
                 }
             }
 
-            result = emit_call(ge.name, method_args, expr->resolved_type);
+            result = emit_call(method_name, method_args, expr->resolved_type);
 
             // For large struct returns, the result is the output pointer
             if (callee_returns_large_struct) {

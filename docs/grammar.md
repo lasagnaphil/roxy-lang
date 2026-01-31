@@ -9,17 +9,32 @@ program         -> declaration* EOF
 ```
 declaration     -> struct_decl
                  | fun_decl
+                 | method_decl
+                 | constructor_decl
+                 | destructor_decl
                  | var_decl
                  | import_decl
                  | statement ;
 
 struct_decl     -> "struct" Identifier ( ":" Identifier )?
                    "{" field_decl* "}" ;
-field_decl      -> Identifier ":" Identifier ;
+field_decl      -> ( "pub" )? Identifier ":" type_expr ( "=" expression )? ";" ;
 
 fun_decl        -> ( "pub" )? ( "native" )? "fun" Identifier
-                   "(" parameters? ")" ( ":" Identifier )?
+                   "(" parameters? ")" ( ":" type_expr )?
                    ( block | ";" ) ;
+
+method_decl     -> ( "pub" )? "fun" Identifier "." Identifier
+                   "(" parameters? ")" ( ":" type_expr )?
+                   block ;
+
+constructor_decl -> ( "pub" )? "fun" "new" Identifier ( "." Identifier )?
+                    "(" parameters? ")"
+                    block ;
+
+destructor_decl  -> "fun" "delete" Identifier
+                    "(" ")"
+                    block ;
 
 var_decl        -> "var" typed_identifier ( "=" expression )? ";" ;
 
@@ -94,6 +109,7 @@ field_init      -> Identifier "=" expression ;
 ## Utility rules
 
 ```
+typed_identifier -> Identifier ":" type_expr ;
 parameters       -> parameter ( "," parameter )* ;
 parameter        -> Identifier ":" ( "out" | "inout" )? type_expr ;
 type_expr        -> ( "uniq" | "ref" | "weak" )? Identifier ( "[" "]" )? ;

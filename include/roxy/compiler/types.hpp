@@ -60,6 +60,14 @@ struct DestructorInfo {
     Decl* decl;                    // Points to the DestructorDecl AST node
 };
 
+// Method information for struct types
+struct MethodInfo {
+    StringView name;
+    Span<Type*> param_types;       // NOT including implicit self
+    Type* return_type;
+    Decl* decl;                    // Points to the MethodDecl AST node
+};
+
 // Type info for struct types
 struct StructTypeInfo {
     StringView name;
@@ -69,6 +77,7 @@ struct StructTypeInfo {
     Span<struct FieldInfo> fields; // All fields including inherited
     Span<ConstructorInfo> constructors;  // Constructors for this struct
     Span<DestructorInfo> destructors;    // Destructors for this struct
+    Span<MethodInfo> methods;            // Methods for this struct
     u32 slot_count;                // Total u32 slots needed for this struct
 };
 

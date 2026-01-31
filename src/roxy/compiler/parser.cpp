@@ -990,6 +990,15 @@ Decl* Parser::fun_declaration(bool is_pub, bool is_native) {
     Token name_token = consume(TokenKind::Identifier, "Expected function name");
     if (m_has_error) return nullptr;
 
+    // Check for method syntax: fun StructName.method_name(...)
+    if (match(TokenKind::Dot)) {
+        if (is_native) {
+            report_error("methods cannot be 'native'");
+            return nullptr;
+        }
+        return method_declaration(is_pub, name_token);
+    }
+
     consume(TokenKind::LeftParen, "Expected '(' after function name");
     if (m_has_error) return nullptr;
 
@@ -1026,6 +1035,46 @@ Decl* Parser::fun_declaration(bool is_pub, bool is_native) {
     decl->fun_decl.body = body;
     decl->fun_decl.is_pub = is_pub;
     decl->fun_decl.is_native = is_native;
+    return decl;
+}
+
+Decl* Parser::method_declaration(bool is_pub, Token struct_token) {
+    SourceLocation loc = struct_token.loc;
+
+    // Parse method name (after the dot)
+    Token method_token = consume(TokenKind::Identifier, "Expected method name after '.'");
+    if (m_has_error) return nullptr;
+
+    consume(TokenKind::LeftParen, "Expected '(' after method name");
+    if (m_has_error) return nullptr;
+
+    Vector<Param> params = parse_parameters();
+    if (m_has_error) return nullptr;
+
+    consume(TokenKind::RightParen, "Expected ')' after parameters");
+    if (m_has_error) return nullptr;
+
+    TypeExpr* return_type = nullptr;
+    if (match(TokenKind::Colon)) {
+        return_type = type_expression();
+        if (m_has_error) return nullptr;
+    }
+
+    consume(TokenKind::LeftBrace, "Expected '{' before method body");
+    if (m_has_error) return nullptr;
+
+    Stmt* body = block_statement();
+    if (m_has_error) return nullptr;
+
+    Decl* decl = alloc<Decl>();
+    decl->kind = AstKind::DeclMethod;
+    decl->loc = loc;
+    decl->method_decl.struct_name = struct_token.text();
+    decl->method_decl.name = method_token.text();
+    decl->method_decl.params = alloc_span(params);
+    decl->method_decl.return_type = return_type;
+    decl->method_decl.body = body;
+    decl->method_decl.is_pub = is_pub;
     return decl;
 }
 
