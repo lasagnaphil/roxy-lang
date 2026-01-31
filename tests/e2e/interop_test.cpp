@@ -65,10 +65,9 @@ static Value compile_and_run_with_registry(const char* source, StringView func_n
         return Value::make_null();
     }
 
-    // Create SemanticAnalyzer with shared TypeCache
+    // Create module registry and SemanticAnalyzer with shared TypeCache
     ModuleRegistry modules(allocator);
-    SemanticAnalyzer analyzer(allocator, types);
-    analyzer.set_module_registry(&modules);
+    SemanticAnalyzer analyzer(allocator, types, modules);
 
     // Apply registry functions directly to symbol table (no imports needed)
     registry.apply_to_symbols(analyzer.symbols());
@@ -133,8 +132,7 @@ static Value compile_and_run_with_builtins(const char* source, StringView func_n
     ModuleRegistry modules(allocator);
     modules.register_native_module(BUILTIN_MODULE_NAME, &registry, types);
 
-    SemanticAnalyzer analyzer(allocator, types);
-    analyzer.set_module_registry(&modules);
+    SemanticAnalyzer analyzer(allocator, types, modules);
     if (!analyzer.analyze(program)) {
         return Value::make_null();
     }
@@ -553,8 +551,7 @@ static Value compile_and_run_mixed(const char* source, StringView func_name, Bin
     ModuleRegistry modules(allocator);
     modules.register_native_module(BUILTIN_MODULE_NAME, &registry, types);
 
-    SemanticAnalyzer analyzer(allocator, types);
-    analyzer.set_module_registry(&modules);
+    SemanticAnalyzer analyzer(allocator, types, modules);
     if (!analyzer.analyze(program)) {
         return Value::make_null();
     }

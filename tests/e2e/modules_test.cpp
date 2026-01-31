@@ -391,4 +391,79 @@ TEST_CASE("E2E - Compiler: from import with script module") {
     delete module;
 }
 
+// Note: Cross-module struct visibility tests require struct exports to be implemented.
+// For now, we test same-module visibility which is the most common case.
+
+TEST_CASE("E2E - Compiler: struct field visibility - same module private access allowed") {
+    BumpAllocator allocator(16384);
+
+    // Private fields should be accessible within the same module
+    const char* main_source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var p: Point = Point { x = 10, y = 20 };
+            return p.x + p.y;
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    bool success = vm_call(&vm, "main", {});
+    REQUIRE(success);
+
+    Value result = vm_get_result(&vm);
+    CHECK(result.as_int == 30);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+TEST_CASE("E2E - Compiler: struct field visibility - same module public fields work") {
+    BumpAllocator allocator(16384);
+
+    // Public fields should also work
+    const char* main_source = R"(
+        struct Point {
+            pub x: i32;
+            pub y: i32;
+        }
+
+        fun main(): i32 {
+            var p: Point = Point { x = 5, y = 15 };
+            return p.x + p.y;
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    bool success = vm_call(&vm, "main", {});
+    REQUIRE(success);
+
+    Value result = vm_get_result(&vm);
+    CHECK(result.as_int == 20);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
 } // namespace rx

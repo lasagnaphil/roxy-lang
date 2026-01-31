@@ -29,12 +29,9 @@ constexpr u32 MAX_SEMANTIC_ERRORS = 20;
 // SemanticAnalyzer performs type checking and symbol resolution
 class SemanticAnalyzer {
 public:
-    // Constructor with external TypeCache (required for type consistency with module system)
-    // The TypeCache must outlive the SemanticAnalyzer
-    SemanticAnalyzer(BumpAllocator& allocator, TypeCache& types);
-
-    // Set module registry for import resolution
-    void set_module_registry(ModuleRegistry* registry) { m_module_registry = registry; }
+    // Constructor with external TypeCache and ModuleRegistry
+    // Both must outlive the SemanticAnalyzer
+    SemanticAnalyzer(BumpAllocator& allocator, TypeCache& types, ModuleRegistry& modules);
 
     // Analyze a program - returns true if no errors
     bool analyze(Program* program);
@@ -120,9 +117,10 @@ private:
 
     BumpAllocator& m_allocator;
     TypeCache& m_types;
+    ModuleRegistry& m_modules;
     SymbolTable m_symbols;
     Vector<SemanticError> m_errors;
-    ModuleRegistry* m_module_registry;    // Optional registry for module imports
+    Program* m_program;                   // Current program being analyzed
 
     // Named type lookup (structs/enums by name)
     tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_named_types;

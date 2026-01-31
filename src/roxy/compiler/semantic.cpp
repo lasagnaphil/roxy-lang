@@ -44,20 +44,18 @@ static u32 get_type_slot_count(Type* type) {
     }
 }
 
-SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeCache& types)
+SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeCache& types, ModuleRegistry& modules)
     : m_allocator(allocator)
     , m_types(types)
+    , m_modules(modules)
     , m_symbols(allocator)
-    , m_module_registry(nullptr)
+    , m_program(nullptr)
 {
 }
 
 void SemanticAnalyzer::import_builtin_prelude() {
     // Auto-import all exports from the "builtin" module if available
-    if (!m_module_registry) return;
-
-    ModuleInfo* builtin_module = m_module_registry->find_module(
-        BUILTIN_MODULE_NAME);
+    ModuleInfo* builtin_module = m_modules.find_module(BUILTIN_MODULE_NAME);
     if (!builtin_module) return;
 
     // Import all exports from the builtin module into global scope
@@ -81,6 +79,8 @@ void SemanticAnalyzer::import_builtin_prelude() {
 }
 
 bool SemanticAnalyzer::analyze(Program* program) {
+    m_program = program;
+
     // Pass 0a: Auto-import builtin module as prelude
     import_builtin_prelude();
     if (too_many_errors()) return false;
@@ -151,7 +151,7 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
             }
 
             // Create the struct type
-            Type* type = m_types.struct_type(name, decl);
+            Type* type = m_types.struct_type(name, decl, m_program->module_name);
             m_named_types[name] = type;
             m_types.register_named_type(name, type);  // Register with TypeCache for IR builder access
 
@@ -532,14 +532,8 @@ void SemanticAnalyzer::analyze_enum_decl(Decl* decl) {
 void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
     ImportDecl& imp = decl->import_decl;
 
-    // Check if module registry is available
-    if (!m_module_registry) {
-        error(decl->loc, "module imports not supported (no module registry configured)");
-        return;
-    }
-
     // Look up the module
-    ModuleInfo* module = m_module_registry->find_module(imp.module_path);
+    ModuleInfo* module = m_modules.find_module(imp.module_path);
     if (!module) {
         error_fmt(decl->loc, "unknown module '%.*s'",
                  imp.module_path.size(), imp.module_path.data());
@@ -552,7 +546,7 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
             ImportName& name = imp.names[i];
 
             // Find the export in the module
-            const ModuleExport* exp = m_module_registry->find_export(module, name.name);
+            const ModuleExport* exp = m_modules.find_export(module, name.name);
             if (!exp) {
                 error_fmt(name.loc, "module '%.*s' has no export '%.*s'",
                          imp.module_path.size(), imp.module_path.data(),
@@ -1059,7 +1053,16 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
     StructTypeInfo& sti = base_type->struct_info;
     for (u32 i = 0; i < sti.fields.size(); i++) {
         if (sti.fields[i].name == ge.name) {
-            // TODO: Check visibility (is_pub)
+            // Check visibility: non-public fields can only be accessed from the same module
+            // If either module name is empty, we're in single-file mode where all access is allowed
+            bool same_module = sti.module_name.empty() || m_program->module_name.empty() ||
+                               sti.module_name == m_program->module_name;
+            if (!sti.fields[i].is_pub && !same_module) {
+                error_fmt(expr->loc, "field '%.*s' is private in struct '%.*s'",
+                         ge.name.size(), ge.name.data(),
+                         sti.name.size(), sti.name.data());
+                return m_types.error_type();
+            }
             return sti.fields[i].type;
         }
     }

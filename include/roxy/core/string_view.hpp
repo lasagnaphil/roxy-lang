@@ -50,6 +50,7 @@ public:
 
     bool equals(const StringView& other) const {
         if (m_size != other.m_size) return false;
+        if (m_size == 0) return true;  // Both empty
         return memcmp(m_data, other.m_data, m_size) == 0;
     }
 

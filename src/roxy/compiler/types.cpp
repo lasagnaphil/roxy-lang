@@ -161,13 +161,16 @@ Type* TypeCache::weak_type(Type* inner_type) {
     return intern_type(type);
 }
 
-Type* TypeCache::struct_type(StringView name, Decl* decl) {
+Type* TypeCache::struct_type(StringView name, Decl* decl, StringView module_name) {
     Type* type = m_allocator.emplace<Type>();
     type->kind = TypeKind::Struct;
     type->struct_info.name = name;
+    // Use empty string "" if module_name is empty to ensure valid StringView
+    type->struct_info.module_name = module_name.empty() ? StringView("", 0) : module_name;
     type->struct_info.decl = decl;
     type->struct_info.parent = nullptr;
     type->struct_info.fields = Span<FieldInfo>();
+    type->struct_info.slot_count = 0;
     // Named types are not interned - each declaration creates a unique type
     return type;
 }

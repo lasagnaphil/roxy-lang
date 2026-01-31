@@ -14,15 +14,15 @@ Last updated: 2025-01-31
 
 ## High Priority
 
-- [ ] **No null check after memory allocation**
+- [x] **No null check after memory allocation** *(Fixed)*
   - File: `src/roxy/vm/vm.cpp:14,24`
   - Issue: `new u64[]` and `new u32[]` allocations not checked for failure
-  - Fix: Check for nullptr and return false from `vm_init()`
+  - Fix: Used UniquePtr with `new (std::nothrow)` and proper null checks
 
-- [ ] **Visibility checking not enforced**
-  - File: `src/roxy/compiler/semantic.cpp:979`
+- [x] **Visibility checking not enforced** *(Fixed)*
+  - File: `src/roxy/compiler/semantic.cpp`
   - Issue: Field access ignores `is_pub` visibility modifiers
-  - Fix: Validate `is_pub` flag during field access analysis
+  - Fix: Added module-based visibility checking - private fields only accessible from same module
 
 - [ ] **Constructor argument validation skipped**
   - File: `src/roxy/compiler/semantic.cpp:1104`

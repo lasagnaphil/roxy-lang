@@ -84,8 +84,7 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len,
     ModuleRegistry modules(allocator);
     modules.register_native_module(BUILTIN_MODULE_NAME, &registry, types);
 
-    SemanticAnalyzer analyzer(allocator, types);
-    analyzer.set_module_registry(&modules);
+    SemanticAnalyzer analyzer(allocator, types, modules);
     if (!analyzer.analyze(program)) {
         fprintf(stderr, "Semantic errors:\n");
         for (const auto& err : analyzer.errors()) {

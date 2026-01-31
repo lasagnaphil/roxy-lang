@@ -4,6 +4,9 @@
 #include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/parser.hpp"
 #include "roxy/compiler/semantic.hpp"
+#include "roxy/compiler/module_registry.hpp"
+#include "roxy/vm/natives.hpp"
+#include "roxy/vm/binding/registry.hpp"
 
 #include <cstring>
 
@@ -13,6 +16,8 @@ using namespace rx;
 struct SemanticTestHelper {
     BumpAllocator allocator{4096};
     TypeCache* types = nullptr;
+    ModuleRegistry* modules = nullptr;
+    NativeRegistry* natives = nullptr;
     SemanticAnalyzer* analyzer = nullptr;
     Program* program = nullptr;
     bool parse_ok = false;
@@ -30,7 +35,12 @@ struct SemanticTestHelper {
         }
 
         types = allocator.emplace<TypeCache>(allocator);
-        analyzer = allocator.emplace<SemanticAnalyzer>(allocator, *types);
+        modules = allocator.emplace<ModuleRegistry>(allocator);
+        natives = allocator.emplace<NativeRegistry>(allocator, *types);
+        register_builtin_natives(*natives);
+        modules->register_native_module(BUILTIN_MODULE_NAME, natives, *types);
+
+        analyzer = allocator.emplace<SemanticAnalyzer>(allocator, *types, *modules);
         analyze_ok = analyzer->analyze(program);
         return analyze_ok;
     }

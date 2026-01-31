@@ -428,6 +428,7 @@ struct Decl {
 
 // Program - the root AST node
 struct Program {
+    StringView module_name;       // Module name for visibility checking
     Span<Decl*> declarations;
 };
 

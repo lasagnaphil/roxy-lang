@@ -177,9 +177,11 @@ bool Compiler::analyze_all() {
         const SourceModule& src = m_sources[idx];
         Program* program = m_module_states[idx].program;
 
+        // Set module name on program for visibility checking
+        program->module_name = src.name;
+
         // Use the shared TypeCache for type consistency
-        SemanticAnalyzer analyzer(m_allocator, m_types);
-        analyzer.set_module_registry(&m_module_registry);
+        SemanticAnalyzer analyzer(m_allocator, m_types, m_module_registry);
 
         if (!analyzer.analyze(program)) {
             for (const auto& err : analyzer.errors()) {
@@ -227,8 +229,8 @@ bool Compiler::build_ir_all() {
 
         // We need a symbol table for IR building
         // For now, create a fresh semantic analyzer to get the symbols
-        SemanticAnalyzer analyzer(m_allocator, m_types);
-        analyzer.set_module_registry(&m_module_registry);
+        // Note: program->module_name was already set during semantic analysis pass
+        SemanticAnalyzer analyzer(m_allocator, m_types, m_module_registry);
         analyzer.analyze(program); // Re-analyze to populate symbols
 
         // Use combined registry with all native functions

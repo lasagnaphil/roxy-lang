@@ -47,6 +47,7 @@ enum class TypeKind : u8 {
 // Type info for struct types
 struct StructTypeInfo {
     StringView name;
+    StringView module_name;        // Module that defined this struct (for visibility checking)
     Decl* decl;                    // Points to the StructDecl AST node
     Type* parent;                  // Parent struct type, nullptr if no inheritance
     Span<struct FieldInfo> fields; // All fields including inherited
@@ -224,7 +225,7 @@ public:
     Type* weak_type(Type* inner_type);
 
     // Factory methods for named types (not interned - unique per declaration)
-    Type* struct_type(StringView name, Decl* decl);
+    Type* struct_type(StringView name, Decl* decl, StringView module_name = StringView(nullptr, 0));
     Type* enum_type(StringView name, Decl* decl, Type* underlying = nullptr);
 
     // Lookup primitive type by name
