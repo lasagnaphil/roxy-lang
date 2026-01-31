@@ -78,7 +78,8 @@ comparison      -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
 term            -> factor ( ( "-" | "+" ) factor )* ;
 factor          -> unary ( ( "/" | "*" | "%" ) unary )* ;
 
-unary           -> ( "!" | "-" | "~" ) unary | call ;
+unary           -> ( "!" | "-" | "~" ) unary | alloc_expr ;
+alloc_expr      -> "uniq" ( struct_literal | call ) | call ;
 call            -> primary ( "(" arguments? ")" | "." Identifier | "::" Identifier )* ;
 primary         -> "true" | "false" | "nil" | "self"
                  | Number | String | "(" expression ")"

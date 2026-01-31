@@ -20,7 +20,7 @@
 - SSA IR with block arguments and bytecode lowering
 - Register-based VM with interpreter
 - Named constructors and destructors with `self` keyword
-- Stack allocation with `new Type()`, heap allocation with `uniq new Type()`
+- Stack allocation with `Type()`, heap allocation with `uniq Type()`
 - Synthesized default constructors with zero-initialization
 
 **Planned:**
@@ -145,7 +145,7 @@ fun play_turn(player: ref Player, monster: ref Monster, usedskill: Skill) {
 }
 
 fun main(args: List<string>) {
-    var player = uniq new Player.default_character();
+    var player = uniq Player.default_character();
     var special_skill = Skill {
         str = "Regular Attack", hit_chance = 0.90,
         type = SkillType.Attack {
@@ -155,7 +155,7 @@ fun main(args: List<string>) {
     
     player.add_skill(special_skill);
 
-    var monster = uniq new Monster.dummy();
+    var monster = uniq Monster.dummy();
     while true {
         var input = stdio.input();
         if input == "quit" {
@@ -311,14 +311,14 @@ fun main(args: List<string>) {
 
 - **Allocation modes**:
 
-    - Stack allocation: `var p: Point = new Point(1, 2);` — returns value type
-    - Heap allocation: `var p: uniq Point = uniq new Point(1, 2);` — returns `uniq<Point>`
+    - Stack allocation: `var p: Point = Point(1, 2);` — returns value type
+    - Heap allocation: `var p: uniq Point = uniq Point(1, 2);` — returns `uniq<Point>`
 
-- **Struct literals**: Use `new Type { field = value }` syntax:
+- **Struct literals**: Use `Type { field = value }` syntax:
 
     ```roxy
-    var p: Point = new Point { x = 10, y = 20 };
-    var q: uniq Point = uniq new Point { x = 5, y = 15 };
+    var p: Point = Point { x = 10, y = 20 };
+    var q: uniq Point = uniq Point { x = 5, y = 15 };
     ```
 
 - **Synthesized default constructors**: If no constructor is defined, a default constructor is synthesized that:

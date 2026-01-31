@@ -580,39 +580,39 @@ TEST_CASE("Semantic Error: Variable without type or initializer") {
 // Reference Type Tests
 // ============================================================================
 
-TEST_CASE("Semantic: Uniq type creation with uniq new") {
+TEST_CASE("Semantic: Uniq type creation with uniq") {
     SemanticTestHelper t;
     CHECK(t.run(R"(
         struct Point { x: f32; y: f32; }
         fun test() {
-            var p: uniq Point = uniq new Point();
+            var p: uniq Point = uniq Point();
             delete p;
         }
     )"));
     CHECK(t.error_count() == 0);
 }
 
-TEST_CASE("Semantic: Stack type creation with new") {
+TEST_CASE("Semantic: Stack type creation") {
     SemanticTestHelper t;
     CHECK(t.run(R"(
         struct Point { x: f32; y: f32; }
         fun test() {
-            var p: Point = new Point();
+            var p: Point = Point();
         }
     )"));
     CHECK(t.error_count() == 0);
 }
 
-TEST_CASE("Semantic: new with args but no constructor") {
+TEST_CASE("Semantic: Constructor call with args but no constructor") {
     SemanticTestHelper t;
     CHECK(!t.run(R"(
         struct Point { x: f32; y: f32; }
         fun test() {
-            var p: uniq Point = new Point(1.0, 2.0);
+            var p: uniq Point = uniq Point(1.0, 2.0);
         }
     )"));
     CHECK(t.error_count() == 1);
-    CHECK(t.has_error_containing("has no constructor to call"));
+    CHECK(t.has_error_containing("has no constructor"));
 }
 
 TEST_CASE("Semantic: Struct inheritance") {

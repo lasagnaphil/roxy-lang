@@ -41,16 +41,16 @@ fun delete StructName.save_to(path: string) {
 
 ```roxy
 // Stack allocation (returns value type)
-var p: Point = new Point(1, 2);
-var q: Point = new Point.from_coords(3, 4);
+var p: Point = Point(1, 2);
+var q: Point = Point.from_coords(3, 4);
 
 // Heap allocation (returns uniq<Type>)
-var hp: uniq Point = uniq new Point(1, 2);
-var hq: uniq Point = uniq new Point.from_coords(3, 4);
+var hp: uniq Point = uniq Point(1, 2);
+var hq: uniq Point = uniq Point.from_coords(3, 4);
 
-// Struct literals (also use new keyword)
-var lit: Point = new Point { x = 10, y = 20 };
-var hlit: uniq Point = uniq new Point { x = 5, y = 15 };
+// Struct literals
+var lit: Point = Point { x = 10, y = 20 };
+var hlit: uniq Point = uniq Point { x = 5, y = 15 };
 
 // Default destructor call
 delete hp;
@@ -102,7 +102,7 @@ struct Config {
 
 // Synthesized default constructor initializes:
 // width = 800, height = 600, debug = false
-var c: Config = new Config();
+var c: Config = Config();
 ```
 
 ## Implementation Details
@@ -128,11 +128,12 @@ struct DestructorDecl {
     bool is_pub;
 };
 
-struct NewExpr {
-    TypeExpr* type;
-    StringView constructor_name;  // empty for default
+// Constructor calls are parsed as CallExpr with is_heap flag
+struct CallExpr {
+    Expr* callee;
     Span<CallArg> arguments;
-    bool is_heap;                 // true for "uniq new", false for "new"
+    StringView constructor_name;  // For named constructors: Point.from_coords() -> "from_coords"
+    bool is_heap;                 // true for "uniq Type(...)" constructor calls
 };
 
 struct DeleteStmt {
@@ -175,10 +176,11 @@ void IRBuilder::build_constructor(Decl* decl, Type* struct_type) {
 }
 ```
 
-### `new` Expression Compilation
+### Constructor Call Compilation
 
 ```
-new Point(args)
+Point(args)        // stack allocation
+uniq Point(args)   // heap allocation
     ↓
 1. StackAlloc (for stack) or emit_new (for heap)
 2. Call constructor: Point$$new(self_ptr, args...)
@@ -250,7 +252,7 @@ fun delete Counter() {
 }
 
 fun main(): i32 {
-    var c: uniq Counter = uniq new Counter(42);
+    var c: uniq Counter = uniq Counter(42);
     delete c;  // Prints "42"
     return 0;
 }
@@ -280,9 +282,9 @@ fun new Point.from_value(val: i32) {
 }
 
 fun main(): i32 {
-    var p1: Point = new Point();              // (0, 0)
-    var p2: Point = new Point.from_coords(3, 4);  // (3, 4)
-    var p3: Point = new Point.from_value(5);      // (5, 5)
+    var p1: Point = Point();                  // (0, 0)
+    var p2: Point = Point.from_coords(3, 4);  // (3, 4)
+    var p3: Point = Point.from_value(5);      // (5, 5)
     return 0;
 }
 ```
@@ -308,8 +310,8 @@ fun delete Resource.with_message(msg: i32) {
 }
 
 fun main(): i32 {
-    var r1: uniq Resource = uniq new Resource(1);
-    var r2: uniq Resource = uniq new Resource(2);
+    var r1: uniq Resource = uniq Resource(1);
+    var r2: uniq Resource = uniq Resource(2);
 
     delete r2.with_message(999);  // Prints "999" then "2"
     delete r1;                     // Prints "1"

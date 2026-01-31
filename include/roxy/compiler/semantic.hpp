@@ -95,6 +95,7 @@ private:
     Type* analyze_binary_expr(Expr* expr);
     Type* analyze_ternary_expr(Expr* expr);
     Type* analyze_call_expr(Expr* expr);
+    Type* analyze_constructor_call(Expr* expr, Type* struct_type, StringView ctor_name, bool is_heap);
     Type* analyze_index_expr(Expr* expr);
     Type* analyze_get_expr(Expr* expr);
     Type* analyze_static_get_expr(Expr* expr);
@@ -102,7 +103,6 @@ private:
     Type* analyze_grouping_expr(Expr* expr);
     Type* analyze_this_expr(Expr* expr);
     Type* analyze_super_expr(Expr* expr);
-    Type* analyze_new_expr(Expr* expr);
     Type* analyze_struct_literal_expr(Expr* expr);
 
     // Type checking helpers

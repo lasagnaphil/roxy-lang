@@ -1306,8 +1306,6 @@ ValueId IRBuilder::gen_expr(Expr* expr) {
             return gen_grouping_expr(expr);
         case AstKind::ExprThis:
             return gen_this_expr(expr);
-        case AstKind::ExprNew:
-            return gen_new_expr(expr);
         case AstKind::ExprStructLiteral:
             return gen_struct_literal_expr(expr);
         default:
@@ -1505,6 +1503,22 @@ ValueId IRBuilder::gen_ternary_expr(Expr* expr) {
 
 ValueId IRBuilder::gen_call_expr(Expr* expr) {
     CallExpr& ce = expr->call;
+
+    // Check if this is a constructor call - callee has a struct type (set by semantic analysis)
+    if (ce.callee->kind == AstKind::ExprIdentifier &&
+        ce.callee->resolved_type && ce.callee->resolved_type->is_struct()) {
+        return gen_constructor_call(expr);
+    }
+
+    // Check if this is a named constructor call: Type.ctor_name(...)
+    // The callee is a GetExpr where the object has a struct type (set by semantic analysis)
+    if (ce.callee->kind == AstKind::ExprGet) {
+        GetExpr& ge = ce.callee->get;
+        if (ge.object->kind == AstKind::ExprIdentifier &&
+            ge.object->resolved_type && ge.object->resolved_type->is_struct()) {
+            return gen_constructor_call(expr);
+        }
+    }
 
     // Track which arguments are inout and their addresses, so we can reload after
     struct InoutArg {
@@ -1807,63 +1821,67 @@ ValueId IRBuilder::gen_this_expr(Expr* expr) {
     return lookup_local("self");
 }
 
-ValueId IRBuilder::gen_new_expr(Expr* expr) {
-    NewExpr& ne = expr->new_expr;
+ValueId IRBuilder::gen_constructor_call(Expr* expr) {
+    CallExpr& ce = expr->call;
     Type* result_type = expr->resolved_type;
 
-    // Determine struct type and allocation mode
-    Type* struct_type;
-    ValueId obj;
+    // Get struct type from callee (set by semantic analysis)
+    // For Type(), callee is an identifier with struct type
+    // For Type.ctor_name(), callee is a GetExpr with object having struct type
+    Type* struct_type = nullptr;
+    if (ce.callee->kind == AstKind::ExprIdentifier) {
+        struct_type = ce.callee->resolved_type;
+    } else if (ce.callee->kind == AstKind::ExprGet) {
+        struct_type = ce.callee->get.object->resolved_type;
+    }
 
-    if (ne.is_heap) {
-        // uniq new Type() - heap allocation
+    // Determine allocation mode and final struct type
+    ValueId obj;
+    if (ce.is_heap) {
+        // uniq Type() - heap allocation
         // result_type is uniq<StructType>
-        struct_type = result_type->ref_info.inner_type;
         Span<ValueId> empty_args = {};
-        obj = emit_new(ne.type->name, empty_args, result_type);
+        obj = emit_new(struct_type->struct_info.name, empty_args, result_type);
     } else {
-        // new Type() - stack allocation
+        // Type() - stack allocation
         // result_type is StructType (value type)
-        struct_type = result_type;
         u32 slot_count = struct_type->struct_info.slot_count;
         obj = emit_stack_alloc(slot_count, struct_type);
     }
 
     // Call constructor (user-defined or synthesized)
-    if (struct_type && struct_type->is_struct()) {
-        StructTypeInfo& sti = struct_type->struct_info;
+    StructTypeInfo& sti = struct_type->struct_info;
 
-        // Build mangled name: StructName$$new or StructName$$new$$ctor_name
-        char name_buf[256];
-        if (ne.constructor_name.empty()) {
-            snprintf(name_buf, sizeof(name_buf), "%.*s$$new",
-                     static_cast<int>(sti.name.size()), sti.name.data());
-        } else {
-            snprintf(name_buf, sizeof(name_buf), "%.*s$$new$$%.*s",
-                     static_cast<int>(sti.name.size()), sti.name.data(),
-                     static_cast<int>(ne.constructor_name.size()), ne.constructor_name.data());
-        }
-        u32 len = static_cast<u32>(strlen(name_buf));
-        char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-        memcpy(name_ptr, name_buf, len + 1);
-        StringView ctor_name(name_ptr, len);
-
-        // Build arguments: 'self' pointer + constructor arguments
-        Vector<ValueId> call_args;
-        call_args.push_back(obj);  // 'self' pointer
-
-        for (u32 i = 0; i < ne.arguments.size(); i++) {
-            CallArg& arg = ne.arguments[i];
-            if (arg.modifier != ParamModifier::None) {
-                // Pass address of lvalue for out/inout args
-                call_args.push_back(gen_lvalue_addr(arg.expr));
-            } else {
-                call_args.push_back(gen_expr(arg.expr));
-            }
-        }
-
-        emit_call(ctor_name, alloc_span(call_args), m_types.void_type());
+    // Build mangled name: StructName$$new or StructName$$new$$ctor_name
+    char name_buf[256];
+    if (ce.constructor_name.empty()) {
+        snprintf(name_buf, sizeof(name_buf), "%.*s$$new",
+                 static_cast<int>(sti.name.size()), sti.name.data());
+    } else {
+        snprintf(name_buf, sizeof(name_buf), "%.*s$$new$$%.*s",
+                 static_cast<int>(sti.name.size()), sti.name.data(),
+                 static_cast<int>(ce.constructor_name.size()), ce.constructor_name.data());
     }
+    u32 len = static_cast<u32>(strlen(name_buf));
+    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
+    memcpy(name_ptr, name_buf, len + 1);
+    StringView ctor_name(name_ptr, len);
+
+    // Build arguments: 'self' pointer + constructor arguments
+    Vector<ValueId> call_args;
+    call_args.push_back(obj);  // 'self' pointer
+
+    for (u32 i = 0; i < ce.arguments.size(); i++) {
+        CallArg& arg = ce.arguments[i];
+        if (arg.modifier != ParamModifier::None) {
+            // Pass address of lvalue for out/inout args
+            call_args.push_back(gen_lvalue_addr(arg.expr));
+        } else {
+            call_args.push_back(gen_expr(arg.expr));
+        }
+    }
+
+    emit_call(ctor_name, alloc_span(call_args), m_types.void_type());
 
     return obj;
 }
@@ -1877,12 +1895,12 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
     ValueId struct_ptr;
 
     if (sl.is_heap) {
-        // uniq new Type { ... } - heap allocation
+        // uniq Type { ... } - heap allocation
         struct_type = result_type->ref_info.inner_type;
         Span<ValueId> empty_args = {};
         struct_ptr = emit_new(sl.type_name, empty_args, result_type);
     } else {
-        // new Type { ... } - stack allocation
+        // Type { ... } - stack allocation
         struct_type = result_type;
         u32 slot_count = struct_type->struct_info.slot_count;
         struct_ptr = emit_stack_alloc(slot_count, struct_type);

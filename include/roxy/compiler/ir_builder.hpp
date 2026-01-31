@@ -102,12 +102,12 @@ private:
     ValueId gen_binary_expr(Expr* expr);
     ValueId gen_ternary_expr(Expr* expr);
     ValueId gen_call_expr(Expr* expr);
+    ValueId gen_constructor_call(Expr* expr);
     ValueId gen_index_expr(Expr* expr);
     ValueId gen_get_expr(Expr* expr);
     ValueId gen_assign_expr(Expr* expr);
     ValueId gen_grouping_expr(Expr* expr);
     ValueId gen_this_expr(Expr* expr);
-    ValueId gen_new_expr(Expr* expr);
     ValueId gen_struct_literal_expr(Expr* expr);
 
     // Declaration generation

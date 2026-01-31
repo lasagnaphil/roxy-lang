@@ -1138,9 +1138,6 @@ Type* SemanticAnalyzer::analyze_expr(Expr* expr) {
         case AstKind::ExprSuper:
             result = analyze_super_expr(expr);
             break;
-        case AstKind::ExprNew:
-            result = analyze_new_expr(expr);
-            break;
         case AstKind::ExprStructLiteral:
             result = analyze_struct_literal_expr(expr);
             break;
@@ -1241,6 +1238,43 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
 Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
     CallExpr& ce = expr->call;
 
+    // Check if this is a constructor call: callee is an identifier that resolves to a struct type
+    if (ce.callee->kind == AstKind::ExprIdentifier) {
+        StringView type_name = ce.callee->identifier.name;
+
+        // Look up as a type first
+        auto it = m_named_types.find(type_name);
+        if (it != m_named_types.end() && it->second->is_struct()) {
+            // This is a constructor call: Type()
+            Type* struct_type = it->second;
+            // Store the struct type in callee for IR builder
+            ce.callee->resolved_type = struct_type;
+            return analyze_constructor_call(expr, struct_type, ce.constructor_name, ce.is_heap);
+        }
+    }
+
+    // Check if this is a named constructor call: Type.ctor_name(...)
+    // The callee is a GetExpr where the object is a struct type identifier
+    if (ce.callee->kind == AstKind::ExprGet) {
+        GetExpr& ge = ce.callee->get;
+        if (ge.object->kind == AstKind::ExprIdentifier) {
+            StringView type_name = ge.object->identifier.name;
+
+            // Check if it's a struct type
+            auto it = m_named_types.find(type_name);
+            if (it != m_named_types.end() && it->second->is_struct()) {
+                // This is a named constructor call: Type.ctor_name(...)
+                Type* struct_type = it->second;
+                // Store the struct type in callee's object for IR builder
+                ge.object->resolved_type = struct_type;
+                // Set constructor_name in CallExpr for later use
+                ce.constructor_name = ge.name;
+                return analyze_constructor_call(expr, struct_type, ge.name, ce.is_heap);
+            }
+        }
+    }
+
+    // Regular function call
     Type* callee_type = analyze_expr(ce.callee);
     if (callee_type->is_error()) return m_types.error_type();
 
@@ -1307,6 +1341,104 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
     }
 
     return fti.return_type;
+}
+
+Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, StringView ctor_name, bool is_heap) {
+    CallExpr& ce = expr->call;
+    StructTypeInfo& sti = struct_type->struct_info;
+
+    // Look up constructor by name
+    const ConstructorInfo* ctor = nullptr;
+    for (u32 i = 0; i < sti.constructors.size(); i++) {
+        if (sti.constructors[i].name == ctor_name) {
+            ctor = &sti.constructors[i];
+            break;
+        }
+    }
+
+    // If a constructor name was specified but not found
+    if (!ctor_name.empty() && !ctor) {
+        error_fmt(expr->loc, "struct '%.*s' has no constructor '%.*s'",
+                 sti.name.size(), sti.name.data(),
+                 ctor_name.size(), ctor_name.data());
+        return m_types.error_type();
+    }
+
+    // Determine result type based on is_heap flag
+    // uniq Type() -> uniq<Type>
+    // Type() -> Type (value type, stack-allocated)
+    auto result_type = [&]() -> Type* {
+        return is_heap ? m_types.uniq_type(struct_type) : struct_type;
+    };
+
+    // If we have a constructor, type-check the arguments
+    if (ctor) {
+        // Check argument count
+        if (ce.arguments.size() != ctor->param_types.size()) {
+            error_fmt(expr->loc, "constructor expects %u arguments but got %u",
+                     ctor->param_types.size(), ce.arguments.size());
+            return result_type();
+        }
+
+        // Get constructor's parameter info
+        ConstructorDecl* ctor_decl = &ctor->decl->constructor_decl;
+
+        // Check argument types and modifiers
+        for (u32 i = 0; i < ce.arguments.size(); i++) {
+            CallArg& arg = ce.arguments[i];
+
+            // Get expected modifier from ConstructorDecl
+            ParamModifier expected_mod = ParamModifier::None;
+            if (i < ctor_decl->params.size()) {
+                expected_mod = ctor_decl->params[i].modifier;
+            }
+
+            // Check modifier matches
+            if (expected_mod != arg.modifier) {
+                if (expected_mod == ParamModifier::Out) {
+                    error(arg.expr->loc, "argument requires 'out' modifier");
+                } else if (expected_mod == ParamModifier::Inout) {
+                    error(arg.expr->loc, "argument requires 'inout' modifier");
+                } else if (arg.modifier != ParamModifier::None) {
+                    error(arg.modifier_loc, "unexpected modifier for this parameter");
+                }
+            }
+
+            // Check lvalue requirement for out/inout
+            if (arg.modifier == ParamModifier::Out || arg.modifier == ParamModifier::Inout) {
+                if (!is_lvalue(arg.expr)) {
+                    error(arg.expr->loc, "'out'/'inout' argument must be a variable");
+                }
+            }
+
+            // Analyze argument expression
+            Type* arg_type = analyze_expr(arg.expr);
+
+            // Type check (skip for 'out' since it's write-only)
+            if (arg.modifier != ParamModifier::Out) {
+                check_assignable(ctor->param_types[i], arg_type, arg.expr->loc);
+            }
+        }
+    } else {
+        // No constructor defined - either using default construction or error
+        if (!ctor_name.empty()) {
+            // Named constructor was requested but struct has no constructors
+            error_fmt(expr->loc, "struct '%.*s' has no constructor '%.*s'",
+                     sti.name.size(), sti.name.data(),
+                     ctor_name.size(), ctor_name.data());
+            return m_types.error_type();
+        }
+
+        // Default construction (no constructor, no arguments) - allowed
+        // Arguments without a constructor is an error
+        if (ce.arguments.size() > 0) {
+            error_fmt(expr->loc, "struct '%.*s' has no constructor to call",
+                     sti.name.size(), sti.name.data());
+            return m_types.error_type();
+        }
+    }
+
+    return result_type();
 }
 
 Type* SemanticAnalyzer::analyze_index_expr(Expr* expr) {
@@ -1502,115 +1634,6 @@ Type* SemanticAnalyzer::analyze_super_expr(Expr* expr) {
 
     error(expr->loc, "Method calls are not yet implemented");
     return m_types.error_type();
-}
-
-Type* SemanticAnalyzer::analyze_new_expr(Expr* expr) {
-    NewExpr& ne = expr->new_expr;
-
-    Type* type = resolve_type_expr(ne.type);
-    if (!type || type->is_error()) return m_types.error_type();
-
-    // Resolve base type
-    Type* base = type->base_type();
-    if (!base->is_struct()) {
-        error(expr->loc, "'new' can only create struct instances");
-        return m_types.error_type();
-    }
-
-    StructTypeInfo& sti = base->struct_info;
-
-    // Look up constructor by name
-    const ConstructorInfo* ctor = nullptr;
-    for (u32 i = 0; i < sti.constructors.size(); i++) {
-        if (sti.constructors[i].name == ne.constructor_name) {
-            ctor = &sti.constructors[i];
-            break;
-        }
-    }
-
-    // If a constructor name was specified but not found
-    if (!ne.constructor_name.empty() && !ctor) {
-        error_fmt(expr->loc, "struct '%.*s' has no constructor '%.*s'",
-                 sti.name.size(), sti.name.data(),
-                 ne.constructor_name.size(), ne.constructor_name.data());
-        return m_types.error_type();
-    }
-
-    // Determine result type based on is_heap flag
-    // uniq new Type() -> uniq<Type>
-    // new Type() -> Type (value type, stack-allocated)
-    auto result_type = [&]() -> Type* {
-        return ne.is_heap ? m_types.uniq_type(base) : base;
-    };
-
-    // If we have a constructor, type-check the arguments
-    if (ctor) {
-        // Check argument count
-        if (ne.arguments.size() != ctor->param_types.size()) {
-            error_fmt(expr->loc, "constructor expects %u arguments but got %u",
-                     ctor->param_types.size(), ne.arguments.size());
-            return result_type();
-        }
-
-        // Get constructor's parameter info
-        ConstructorDecl* ctor_decl = &ctor->decl->constructor_decl;
-
-        // Check argument types and modifiers
-        for (u32 i = 0; i < ne.arguments.size(); i++) {
-            CallArg& arg = ne.arguments[i];
-
-            // Get expected modifier from ConstructorDecl
-            ParamModifier expected_mod = ParamModifier::None;
-            if (i < ctor_decl->params.size()) {
-                expected_mod = ctor_decl->params[i].modifier;
-            }
-
-            // Check modifier matches
-            if (expected_mod != arg.modifier) {
-                if (expected_mod == ParamModifier::Out) {
-                    error(arg.expr->loc, "argument requires 'out' modifier");
-                } else if (expected_mod == ParamModifier::Inout) {
-                    error(arg.expr->loc, "argument requires 'inout' modifier");
-                } else if (arg.modifier != ParamModifier::None) {
-                    error(arg.modifier_loc, "unexpected modifier for this parameter");
-                }
-            }
-
-            // Check lvalue requirement for out/inout
-            if (arg.modifier == ParamModifier::Out || arg.modifier == ParamModifier::Inout) {
-                if (!is_lvalue(arg.expr)) {
-                    error(arg.expr->loc, "'out'/'inout' argument must be a variable");
-                }
-            }
-
-            // Analyze argument expression
-            Type* arg_type = analyze_expr(arg.expr);
-
-            // Type check (skip for 'out' since it's write-only)
-            if (arg.modifier != ParamModifier::Out) {
-                check_assignable(ctor->param_types[i], arg_type, arg.expr->loc);
-            }
-        }
-    } else {
-        // No constructor defined - either using default construction or error
-        if (!ne.constructor_name.empty()) {
-            // Named constructor was requested but struct has no constructors
-            error_fmt(expr->loc, "struct '%.*s' has no constructor '%.*s'",
-                     sti.name.size(), sti.name.data(),
-                     ne.constructor_name.size(), ne.constructor_name.data());
-            return m_types.error_type();
-        }
-
-        // Default construction (no constructor, no arguments) - allowed
-        // Arguments without a constructor is an error
-        if (ne.arguments.size() > 0) {
-            error_fmt(expr->loc, "struct '%.*s' has no constructor to call",
-                     sti.name.size(), sti.name.data());
-            return m_types.error_type();
-        }
-    }
-
-    return result_type();
 }
 
 Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {

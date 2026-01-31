@@ -164,7 +164,7 @@ TEST_CASE("E2E - Inout with struct parameter") {
         }
 
         fun main(): i32 {
-            var pt = new Point { x = 10, y = 20 };
+            var pt = Point { x = 10, y = 20 };
             double_point(inout pt);
             print(pt.x);
             print(pt.y);
@@ -217,7 +217,7 @@ TEST_CASE("E2E - Inout struct field modification") {
         }
 
         fun main(): i32 {
-            var pt = new Point { x = 10, y = 20 };
+            var pt = Point { x = 10, y = 20 };
             swap_coords(inout pt);
             print(pt.x);
             print(pt.y);
@@ -250,9 +250,9 @@ TEST_CASE("E2E - Inout with nested struct") {
         }
 
         fun main(): i32 {
-            var rect = new Rect {
-                origin = new Point { x = 1, y = 2 },
-                size = new Point { x = 10, y = 20 }
+            var rect = Rect {
+                origin = Point { x = 1, y = 2 },
+                size = Point { x = 10, y = 20 }
             };
             scale_rect(inout rect, 3);
             print(rect.origin.x);

@@ -7,7 +7,7 @@
 using namespace rx;
 
 // ============================================================================
-// Stack-Allocated Constructor Tests (new Type())
+// Stack-Allocated Constructor Tests (Type())
 // ============================================================================
 
 TEST_CASE("E2E - Constructor: stack-allocated default constructor") {
@@ -23,7 +23,7 @@ TEST_CASE("E2E - Constructor: stack-allocated default constructor") {
         }
 
         fun main(): i32 {
-            var p: Point = new Point();
+            var p: Point = Point();
             print(p.x);
             print(p.y);
             return 0;
@@ -48,7 +48,7 @@ TEST_CASE("E2E - Constructor: stack-allocated with params") {
         }
 
         fun main(): i32 {
-            var p: Point = new Point(5, 15);
+            var p: Point = Point(5, 15);
             print(p.x);
             print(p.y);
             return 0;
@@ -73,7 +73,7 @@ TEST_CASE("E2E - Constructor: stack-allocated named constructor") {
         }
 
         fun main(): i32 {
-            var p: Point = new Point.from_coords(7, 14);
+            var p: Point = Point.from_coords(7, 14);
             print(p.x);
             print(p.y);
             return 0;
@@ -86,7 +86,7 @@ TEST_CASE("E2E - Constructor: stack-allocated named constructor") {
 }
 
 // ============================================================================
-// Heap-Allocated Constructor Tests (uniq new Type())
+// Heap-Allocated Constructor Tests (uniq Type())
 // ============================================================================
 
 TEST_CASE("E2E - Constructor: heap-allocated default constructor") {
@@ -102,7 +102,7 @@ TEST_CASE("E2E - Constructor: heap-allocated default constructor") {
         }
 
         fun main(): i32 {
-            var p: uniq Point = uniq new Point();
+            var p: uniq Point = uniq Point();
             print(p.x);
             print(p.y);
             delete p;
@@ -128,7 +128,7 @@ TEST_CASE("E2E - Constructor: heap-allocated with params") {
         }
 
         fun main(): i32 {
-            var p: uniq Point = uniq new Point(5, 15);
+            var p: uniq Point = uniq Point(5, 15);
             print(p.x);
             print(p.y);
             delete p;
@@ -154,7 +154,7 @@ TEST_CASE("E2E - Constructor: heap-allocated named constructor") {
         }
 
         fun main(): i32 {
-            var p: uniq Point = uniq new Point.from_coords(7, 14);
+            var p: uniq Point = uniq Point.from_coords(7, 14);
             print(p.x);
             print(p.y);
             delete p;
@@ -190,9 +190,9 @@ TEST_CASE("E2E - Constructor: multiple constructors") {
         }
 
         fun main(): i32 {
-            var p1: uniq Point = uniq new Point();
-            var p2: uniq Point = uniq new Point.from_coords(3, 6);
-            var p3: uniq Point = uniq new Point.from_value(9);
+            var p1: uniq Point = uniq Point();
+            var p2: uniq Point = uniq Point.from_coords(3, 6);
+            var p3: uniq Point = uniq Point.from_value(9);
 
             print(p1.x);
             print(p1.y);
@@ -232,7 +232,7 @@ TEST_CASE("E2E - Destructor: default destructor") {
         }
 
         fun main(): i32 {
-            var c: uniq Counter = uniq new Counter(42);
+            var c: uniq Counter = uniq Counter(42);
             print(c.value);
             delete c;
             return 0;
@@ -259,7 +259,7 @@ TEST_CASE("E2E - Destructor: named destructor with args") {
         }
 
         fun main(): i32 {
-            var d: uniq Data = uniq new Data(10);
+            var d: uniq Data = uniq Data(10);
             delete d.save(5);
             return 0;
         }
@@ -290,8 +290,8 @@ TEST_CASE("E2E - Destructor: multiple destructors") {
         }
 
         fun main(): i32 {
-            var r1: uniq Resource = uniq new Resource(1);
-            var r2: uniq Resource = uniq new Resource(2);
+            var r1: uniq Resource = uniq Resource(1);
+            var r2: uniq Resource = uniq Resource(2);
 
             delete r2.with_message(999);
             delete r1;
@@ -325,7 +325,7 @@ TEST_CASE("E2E - Constructor + Destructor lifecycle") {
 
         fun main(): i32 {
             print(0);
-            var obj: uniq Object = uniq new Object(42);
+            var obj: uniq Object = uniq Object(42);
             print(obj.id);
             delete obj;
             print(3);
@@ -349,7 +349,7 @@ TEST_CASE("E2E - Constructor: no constructor defined (zero-init heap)") {
         }
 
         fun main(): i32 {
-            var s: uniq Simple = uniq new Simple();
+            var s: uniq Simple = uniq Simple();
             print(s.value);
             delete s;
             return 0;
@@ -368,7 +368,7 @@ TEST_CASE("E2E - Constructor: no constructor defined (zero-init stack)") {
         }
 
         fun main(): i32 {
-            var s: Simple = new Simple();
+            var s: Simple = Simple();
             print(s.value);
             return 0;
         }
@@ -394,7 +394,7 @@ TEST_CASE("E2E - Constructor: pub constructor") {
         }
 
         fun main(): i32 {
-            var w: uniq Widget = uniq new Widget(123);
+            var w: uniq Widget = uniq Widget(123);
             print(w.id);
             delete w;
             return 0;
@@ -407,10 +407,10 @@ TEST_CASE("E2E - Constructor: pub constructor") {
 }
 
 // ============================================================================
-// Struct literal with new
+// Struct literal syntax
 // ============================================================================
 
-TEST_CASE("E2E - Struct literal with new (stack)") {
+TEST_CASE("E2E - Struct literal (stack)") {
     const char* source = R"(
         struct Point {
             x: i32;
@@ -418,7 +418,7 @@ TEST_CASE("E2E - Struct literal with new (stack)") {
         }
 
         fun main(): i32 {
-            var p: Point = new Point { x = 42, y = 99 };
+            var p: Point = Point { x = 42, y = 99 };
             print(p.x);
             print(p.y);
             return 0;
@@ -430,7 +430,7 @@ TEST_CASE("E2E - Struct literal with new (stack)") {
     CHECK(result.stdout_output == "42\n99\n");
 }
 
-TEST_CASE("E2E - Struct literal with uniq new (heap)") {
+TEST_CASE("E2E - Struct literal (heap)") {
     const char* source = R"(
         struct Point {
             x: i32;
@@ -438,7 +438,7 @@ TEST_CASE("E2E - Struct literal with uniq new (heap)") {
         }
 
         fun main(): i32 {
-            var p: uniq Point = uniq new Point { x = 42, y = 99 };
+            var p: uniq Point = uniq Point { x = 42, y = 99 };
             print(p.x);
             print(p.y);
             delete p;

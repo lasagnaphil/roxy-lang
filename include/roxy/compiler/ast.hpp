@@ -30,7 +30,6 @@ enum class AstKind : u8 {
     ExprGrouping,
     ExprThis,
     ExprSuper,
-    ExprNew,
     ExprStructLiteral,
 
     // Statements
@@ -163,9 +162,12 @@ struct CallArg {
 };
 
 // Call expression: foo(a, b, c) or foo(inout x, out y)
+// Also used for constructor calls: Point(1, 2) or uniq Point(1, 2)
 struct CallExpr {
     Expr* callee;
     Span<CallArg> arguments;
+    StringView constructor_name;  // For named constructors: Point.from_coords() -> "from_coords"
+    bool is_heap;                 // true for "uniq Type(...)" constructor calls
 };
 
 // Index expression: arr[i]
@@ -208,16 +210,6 @@ struct SuperExpr {
     StringView method_name;
 };
 
-// New expression: new Type(args) or uniq new Type(args)
-// Stack allocation: new Type(args) -> returns value type T
-// Heap allocation: uniq new Type(args) -> returns uniq<T>
-struct NewExpr {
-    TypeExpr* type;
-    StringView constructor_name;  // Empty for default constructor
-    Span<CallArg> arguments;      // Constructor arguments with modifiers
-    bool is_heap;                 // true for "uniq new", false for just "new"
-};
-
 // Field initializer for struct literals
 struct FieldInit {
     StringView name;
@@ -225,11 +217,11 @@ struct FieldInit {
     SourceLocation loc;
 };
 
-// Struct literal expression: new Point { x = 1, y = 2 } or uniq new Point { x = 1, y = 2 }
+// Struct literal expression: Point { x = 1, y = 2 } or uniq Point { x = 1, y = 2 }
 struct StructLiteralExpr {
     StringView type_name;
     Span<FieldInit> fields;
-    bool is_heap;                 // true for "uniq new", false for just "new"
+    bool is_heap;                 // true for "uniq Type {...}", false for "Type {...}"
 };
 
 // Forward declaration
@@ -254,7 +246,6 @@ struct Expr {
         GroupingExpr grouping;
         ThisExpr this_expr;
         SuperExpr super_expr;
-        NewExpr new_expr;
         StructLiteralExpr struct_literal;
     };
 

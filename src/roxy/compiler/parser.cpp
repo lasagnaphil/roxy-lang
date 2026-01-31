@@ -322,6 +322,8 @@ Expr* Parser::finish_call(Expr* callee) {
     call_expr->loc = loc;
     call_expr->call.callee = callee;
     call_expr->call.arguments = alloc_span(arguments);
+    call_expr->call.constructor_name = StringView(nullptr, 0);
+    call_expr->call.is_heap = false;
     return call_expr;
 }
 
@@ -398,7 +400,95 @@ Expr* Parser::primary() {
         return expr;
     }
 
-    // Identifier or static get (Type::member) or struct literal
+    // uniq Type(...) or uniq Type { ... } - heap allocation with constructor/literal
+    // Must be parsed before regular identifiers
+    if (match(TokenKind::KwUniq)) {
+        SourceLocation loc = m_previous.loc;
+
+        // uniq Type(...) or uniq Type { ... }
+        Token type_token = consume(TokenKind::Identifier, "Expected type name after 'uniq'");
+        if (m_has_error) return nullptr;
+
+        // Check for struct literal: uniq Type { ... }
+        if (match(TokenKind::LeftBrace)) {
+            Vector<FieldInit> fields;
+            if (!check(TokenKind::RightBrace)) {
+                do {
+                    Token name_token = consume(TokenKind::Identifier, "Expected field name");
+                    if (m_has_error) return nullptr;
+                    consume(TokenKind::Equal, "Expected '=' after field name");
+                    if (m_has_error) return nullptr;
+                    Expr* value = expression();
+                    if (m_has_error) return nullptr;
+                    FieldInit fi;
+                    fi.name = name_token.text();
+                    fi.value = value;
+                    fi.loc = name_token.loc;
+                    fields.push_back(fi);
+                } while (match(TokenKind::Comma));
+            }
+            consume(TokenKind::RightBrace, "Expected '}' after struct literal fields");
+            if (m_has_error) return nullptr;
+
+            Expr* expr = alloc<Expr>();
+            expr->kind = AstKind::ExprStructLiteral;
+            expr->loc = loc;
+            expr->struct_literal.type_name = type_token.text();
+            expr->struct_literal.fields = alloc_span(fields);
+            expr->struct_literal.is_heap = true;
+            return expr;
+        }
+
+        // Constructor call: uniq Type() or uniq Type.ctor_name()
+        StringView ctor_name(nullptr, 0);
+        if (match(TokenKind::Dot)) {
+            Token name_token = consume(TokenKind::Identifier, "Expected constructor name after '.'");
+            if (m_has_error) return nullptr;
+            ctor_name = name_token.text();
+        }
+
+        consume(TokenKind::LeftParen, "Expected '(' or '{' after type");
+        if (m_has_error) return nullptr;
+
+        Vector<CallArg> arguments;
+        if (!check(TokenKind::RightParen)) {
+            do {
+                CallArg arg;
+                arg.modifier = ParamModifier::None;
+                arg.modifier_loc = {};
+                if (match(TokenKind::KwOut)) {
+                    arg.modifier = ParamModifier::Out;
+                    arg.modifier_loc = m_previous.loc;
+                } else if (match(TokenKind::KwInout)) {
+                    arg.modifier = ParamModifier::Inout;
+                    arg.modifier_loc = m_previous.loc;
+                }
+                arg.expr = expression();
+                if (m_has_error) return nullptr;
+                arguments.push_back(arg);
+            } while (match(TokenKind::Comma));
+        }
+        consume(TokenKind::RightParen, "Expected ')' after arguments");
+        if (m_has_error) return nullptr;
+
+        // Create callee as identifier
+        Expr* callee = alloc<Expr>();
+        callee->kind = AstKind::ExprIdentifier;
+        callee->loc = type_token.loc;
+        callee->identifier.name = type_token.text();
+
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprCall;
+        expr->loc = loc;
+        expr->call.callee = callee;
+        expr->call.arguments = alloc_span(arguments);
+        expr->call.constructor_name = ctor_name;
+        expr->call.is_heap = true;
+        return expr;
+    }
+
+    // Identifier, or struct literal (Type { ... }), or constructor call (Type())
+    // Also handles Type::member (static get)
     if (match(TokenKind::Identifier)) {
         Token name_token = m_previous;
 
@@ -415,6 +505,38 @@ Expr* Parser::primary() {
             return expr;
         }
 
+        // Check for struct literal: Type { ... }
+        if (match(TokenKind::LeftBrace)) {
+            SourceLocation loc = name_token.loc;
+            Vector<FieldInit> fields;
+            if (!check(TokenKind::RightBrace)) {
+                do {
+                    Token field_token = consume(TokenKind::Identifier, "Expected field name");
+                    if (m_has_error) return nullptr;
+                    consume(TokenKind::Equal, "Expected '=' after field name");
+                    if (m_has_error) return nullptr;
+                    Expr* value = expression();
+                    if (m_has_error) return nullptr;
+                    FieldInit fi;
+                    fi.name = field_token.text();
+                    fi.value = value;
+                    fi.loc = field_token.loc;
+                    fields.push_back(fi);
+                } while (match(TokenKind::Comma));
+            }
+            consume(TokenKind::RightBrace, "Expected '}' after struct literal fields");
+            if (m_has_error) return nullptr;
+
+            Expr* expr = alloc<Expr>();
+            expr->kind = AstKind::ExprStructLiteral;
+            expr->loc = loc;
+            expr->struct_literal.type_name = name_token.text();
+            expr->struct_literal.fields = alloc_span(fields);
+            expr->struct_literal.is_heap = false;
+            return expr;
+        }
+
+        // Regular identifier - let postfix() handle any following . or ( or [
         Expr* expr = alloc<Expr>();
         expr->kind = AstKind::ExprIdentifier;
         expr->loc = name_token.loc;
@@ -443,116 +565,6 @@ Expr* Parser::primary() {
         expr->kind = AstKind::ExprSuper;
         expr->loc = loc;
         expr->super_expr.method_name = method_token.text();
-        return expr;
-    }
-
-    // uniq new Type(args) - heap allocation
-    // new Type(args) - stack allocation
-    bool is_heap = false;
-    if (match(TokenKind::KwUniq)) {
-        if (!check(TokenKind::KwNew)) {
-            report_error("Expected 'new' after 'uniq'");
-            return nullptr;
-        }
-        is_heap = true;
-    }
-
-    if (match(TokenKind::KwNew)) {
-        SourceLocation loc = m_previous.loc;
-
-        // For struct literals, we need the type name directly
-        // type_expression() returns a TypeExpr which has the name
-        Token type_token = consume(TokenKind::Identifier, "Expected type name after 'new'");
-        if (m_has_error) return nullptr;
-
-        // Check for struct literal: new Type { ... }
-        if (match(TokenKind::LeftBrace)) {
-            // Parse as struct literal
-            Vector<FieldInit> fields;
-
-            if (!check(TokenKind::RightBrace)) {
-                do {
-                    Token name_token = consume(TokenKind::Identifier, "Expected field name");
-                    if (m_has_error) return nullptr;
-
-                    consume(TokenKind::Equal, "Expected '=' after field name");
-                    if (m_has_error) return nullptr;
-
-                    Expr* value = expression();
-                    if (m_has_error) return nullptr;
-
-                    FieldInit fi;
-                    fi.name = name_token.text();
-                    fi.value = value;
-                    fi.loc = name_token.loc;
-                    fields.push_back(fi);
-                } while (match(TokenKind::Comma));
-            }
-
-            consume(TokenKind::RightBrace, "Expected '}' after struct literal fields");
-            if (m_has_error) return nullptr;
-
-            Expr* expr = alloc<Expr>();
-            expr->kind = AstKind::ExprStructLiteral;
-            expr->loc = loc;
-            expr->struct_literal.type_name = type_token.text();
-            expr->struct_literal.fields = alloc_span(fields);
-            expr->struct_literal.is_heap = is_heap;
-            return expr;
-        }
-
-        // Otherwise parse as constructor call: new Type() or new Type.ctor_name()
-        StringView ctor_name(nullptr, 0);  // Empty for default constructor
-
-        // Check for named constructor: Type.ctor_name
-        if (match(TokenKind::Dot)) {
-            Token name_token = consume(TokenKind::Identifier, "Expected constructor name after '.'");
-            if (m_has_error) return nullptr;
-            ctor_name = name_token.text();
-        }
-
-        consume(TokenKind::LeftParen, "Expected '(' or '{' after type in 'new' expression");
-        if (m_has_error) return nullptr;
-
-        Vector<CallArg> arguments;
-        if (!check(TokenKind::RightParen)) {
-            do {
-                CallArg arg;
-                arg.modifier = ParamModifier::None;
-                arg.modifier_loc = {};
-
-                // Check for out/inout modifier
-                if (match(TokenKind::KwOut)) {
-                    arg.modifier = ParamModifier::Out;
-                    arg.modifier_loc = m_previous.loc;
-                } else if (match(TokenKind::KwInout)) {
-                    arg.modifier = ParamModifier::Inout;
-                    arg.modifier_loc = m_previous.loc;
-                }
-
-                arg.expr = expression();
-                if (m_has_error) return nullptr;
-                arguments.push_back(arg);
-            } while (match(TokenKind::Comma));
-        }
-
-        consume(TokenKind::RightParen, "Expected ')' after arguments");
-        if (m_has_error) return nullptr;
-
-        // Build TypeExpr for the new expression
-        TypeExpr* type = alloc<TypeExpr>();
-        type->name = type_token.text();
-        type->ref_kind = RefKind::None;
-        type->element_type = nullptr;
-        type->loc = type_token.loc;
-
-        Expr* expr = alloc<Expr>();
-        expr->kind = AstKind::ExprNew;
-        expr->loc = loc;
-        expr->new_expr.type = type;
-        expr->new_expr.constructor_name = ctor_name;
-        expr->new_expr.arguments = alloc_span(arguments);
-        expr->new_expr.is_heap = is_heap;
         return expr;
     }
 

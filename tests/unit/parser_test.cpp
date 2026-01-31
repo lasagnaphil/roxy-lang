@@ -351,15 +351,17 @@ TEST_CASE("Parser: Self and Super") {
     }
 }
 
-TEST_CASE("Parser: New Expression") {
+TEST_CASE("Parser: Constructor Call Expression") {
     BumpAllocator allocator(4096);
 
-    Program* program = parse_source("new Point(1, 2);", allocator);
+    // Constructor calls use the same syntax as function calls: Type(args)
+    Program* program = parse_source("Point(1, 2);", allocator);
     REQUIRE(program != nullptr);
     auto& expr = program->declarations[0]->stmt.expr_stmt.expr;
-    CHECK(expr->kind == AstKind::ExprNew);
-    CHECK(check_identifier(expr->new_expr.type->name, "Point"));
-    CHECK(expr->new_expr.arguments.size() == 2);
+    CHECK(expr->kind == AstKind::ExprCall);
+    CHECK(expr->call.callee->kind == AstKind::ExprIdentifier);
+    CHECK(check_identifier(expr->call.callee->identifier.name, "Point"));
+    CHECK(expr->call.arguments.size() == 2);
 }
 
 TEST_CASE("Parser: Block Statement") {
