@@ -107,6 +107,23 @@ Symbol* SymbolTable::define_enum_variant(StringView name, Type* type, SourceLoca
     return sym;
 }
 
+Symbol* SymbolTable::define_module(StringView name, void* module_info, SourceLocation loc) {
+    Symbol* sym = define(SymbolKind::Module, name, nullptr, loc, nullptr);
+    sym->module.module_info = module_info;
+    return sym;
+}
+
+Symbol* SymbolTable::define_imported_function(StringView name, Type* type, SourceLocation loc,
+                                              StringView module_name, StringView original_name,
+                                              u32 native_index, bool is_native) {
+    Symbol* sym = define(SymbolKind::ImportedFunction, name, type, loc, nullptr);
+    sym->imported_func.module_name = module_name;
+    sym->imported_func.original_name = original_name;
+    sym->imported_func.native_index = native_index;
+    sym->imported_func.is_native = is_native;
+    return sym;
+}
+
 Symbol* SymbolTable::lookup(StringView name) const {
     auto it = m_lookup_cache.find(name);
     if (it != m_lookup_cache.end()) {

@@ -87,6 +87,7 @@ enum class Opcode : u8 {
     // 0xA0-0xAF: Function Calls
     CALL        = 0xA0,     // dst = call func_idx(args...)
     CALL_NATIVE = 0xA1,     // dst = call_native func_idx(args...)
+    CALL_EXTERNAL = 0xA2,   // dst = call_external ext_func_idx(args...) - cross-module call
 
     // 0xB0-0xBF: Field and Stack Access
     GET_FIELD       = 0xB0, // dst = src1.field[slot_offset] (two-word: ABC + offset)
@@ -252,11 +253,22 @@ struct BCNativeFunction {
     BCNativeFunction() : func(nullptr), param_count(0) {}
 };
 
+// External function reference for cross-module calls
+struct BCExternalFunction {
+    StringView module_name;     // Name of the module containing the function
+    StringView func_name;       // Name of the function
+    u32 resolved_module_idx;    // Resolved at link time: index into VM's module list
+    u32 resolved_func_idx;      // Resolved at link time: function index in that module
+
+    BCExternalFunction() : resolved_module_idx(0), resolved_func_idx(0) {}
+};
+
 // Bytecode module - collection of functions
 struct BCModule {
     StringView name;                        // Module name
     Vector<BCFunction*> functions;          // User-defined functions
     Vector<BCNativeFunction> native_functions; // Native functions
+    Vector<BCExternalFunction> external_functions; // Cross-module function references
     Vector<BCTypeInfo> types;               // Type table for heap allocation
     Vector<u32> type_ids;                   // Global type IDs after registration
 

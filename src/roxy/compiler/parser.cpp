@@ -936,7 +936,7 @@ Decl* Parser::struct_declaration(bool is_pub) {
     Token name_token = consume(TokenKind::Identifier, "Expected struct name");
     if (m_has_error) return nullptr;
 
-    StringView parent_name;
+    StringView parent_name(nullptr, 0);
     if (match(TokenKind::Colon)) {
         Token parent_token = consume(TokenKind::Identifier, "Expected parent struct name");
         if (m_has_error) return nullptr;
@@ -1068,6 +1068,7 @@ Decl* Parser::import_declaration() {
 
             ImportName import_name;
             import_name.name = name_token.text();
+            import_name.alias = StringView(nullptr, 0);  // Initialize alias to empty
             import_name.loc = name_token.loc;
 
             // Check for alias: "as alias_name"

@@ -10,8 +10,9 @@
 
 namespace rx {
 
-// Forward declaration
+// Forward declarations
 class NativeRegistry;
+class ModuleRegistry;
 
 // Semantic error with location information
 struct SemanticError {
@@ -38,6 +39,9 @@ public:
     // The TypeCache must outlive the SemanticAnalyzer
     SemanticAnalyzer(BumpAllocator& allocator, NativeRegistry* registry, TypeCache& types);
 
+    // Set module registry for import resolution
+    void set_module_registry(ModuleRegistry* registry) { m_module_registry = registry; }
+
     // Analyze a program - returns true if no errors
     bool analyze(Program* program);
 
@@ -48,14 +52,20 @@ public:
     // Access type cache for external use
     TypeCache& types() { return m_types; }
 
+    // Access symbol table for external use (e.g., IR builder needs it for imported functions)
+    SymbolTable& symbols() { return m_symbols; }
+
 private:
     // Error reporting
     void error(SourceLocation loc, const char* message);
     void error_fmt(SourceLocation loc, const char* fmt, ...);
     bool too_many_errors() const { return m_errors.size() >= MAX_SEMANTIC_ERRORS; }
 
-    // Built-in function registration
+    // Built-in function registration (fallback if no module registry)
     void register_builtins();
+
+    // Auto-import builtin module exports as prelude
+    void import_builtin_prelude();
 
     // Multi-pass analysis
     void collect_type_declarations(Program* program);
@@ -71,6 +81,7 @@ private:
     void analyze_fun_decl(Decl* decl);
     void analyze_struct_decl(Decl* decl);
     void analyze_enum_decl(Decl* decl);
+    void analyze_import_decl(Decl* decl);
 
     // Statement analysis
     void analyze_stmt(Stmt* stmt);
@@ -120,7 +131,8 @@ private:
     TypeCache m_types;
     SymbolTable m_symbols;
     Vector<SemanticError> m_errors;
-    NativeRegistry* m_registry;  // Optional registry for native functions
+    NativeRegistry* m_registry;           // Optional registry for native functions
+    ModuleRegistry* m_module_registry;    // Optional registry for module imports
 
     // Named type lookup (structs/enums by name)
     tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_named_types;

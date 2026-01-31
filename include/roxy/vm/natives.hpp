@@ -61,4 +61,7 @@ bool is_builtin_native(const char* name, u32 len);
 // Get the native function index for a built-in (-1 if not found)
 i32 get_builtin_native_index(const char* name, u32 len);
 
+// The name of the builtin module (auto-imported as prelude)
+constexpr const char* BUILTIN_MODULE_NAME = "builtin";
+
 }

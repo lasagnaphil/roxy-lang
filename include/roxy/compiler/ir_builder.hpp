@@ -12,14 +12,16 @@
 
 namespace rx {
 
-// Forward declaration
+// Forward declarations
 class NativeRegistry;
+class ModuleRegistry;
 
 // IRBuilder generates SSA IR from a type-checked AST
 // Assumes semantic analysis has already been performed and expr->resolved_type is set
 class IRBuilder {
 public:
-    IRBuilder(BumpAllocator& allocator, TypeCache& types, NativeRegistry& registry);
+    IRBuilder(BumpAllocator& allocator, TypeCache& types, NativeRegistry& registry,
+              SymbolTable& symbols, ModuleRegistry& module_registry);
 
     // Build IR module from a program
     IRModule* build(Program* program);
@@ -50,6 +52,7 @@ private:
 
     ValueId emit_call(StringView func_name, Span<ValueId> args, Type* result_type);
     ValueId emit_call_native(StringView func_name, Span<ValueId> args, Type* result_type, u8 native_index);
+    ValueId emit_call_external(StringView module_name, StringView func_name, Span<ValueId> args, Type* result_type);
     ValueId emit_new(StringView type_name, Span<ValueId> args, Type* result_type);
     ValueId emit_stack_alloc(u32 slot_count, Type* result_type);
     ValueId emit_get_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, Type* result_type);
@@ -110,6 +113,8 @@ private:
     BumpAllocator& m_allocator;
     TypeCache& m_types;
     NativeRegistry& m_registry;
+    SymbolTable& m_symbols;
+    ModuleRegistry& m_module_registry;
 
     // Current function being built
     IRFunction* m_current_func;

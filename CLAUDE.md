@@ -90,7 +90,9 @@ roxy-v2/
 │   │   ├── semantic.hpp         # Semantic analysis / type checking
 │   │   ├── ssa_ir.hpp           # SSA IR with block arguments (276 lines)
 │   │   ├── ir_builder.hpp       # AST to SSA IR conversion
-│   │   └── lowering.hpp         # SSA to bytecode lowering
+│   │   ├── lowering.hpp         # SSA to bytecode lowering
+│   │   ├── module_registry.hpp  # Module registration and import resolution
+│   │   └── compiler.hpp         # Multi-module compiler
 │   │
 │   └── vm/                      # Virtual machine
 │       ├── bytecode.hpp         # Opcode definitions (284 lines)
@@ -123,7 +125,9 @@ roxy-v2/
 │   │   ├── semantic.cpp         # Semantic analysis (1,152 lines)
 │   │   ├── ssa_ir.cpp           # SSA IR implementation (390 lines)
 │   │   ├── ir_builder.cpp       # IR builder implementation
-│   │   └── lowering.cpp         # Lowering implementation (536 lines)
+│   │   ├── lowering.cpp         # Lowering implementation (536 lines)
+│   │   ├── module_registry.cpp  # Module registry implementation
+│   │   └── compiler.cpp         # Multi-module compiler implementation
 │   └── vm/
 │       ├── bytecode.cpp         # Bytecode encoding/decoding
 │       ├── value.cpp            # Value operations
@@ -148,7 +152,7 @@ roxy-v2/
 │   │   ├── vm_test.cpp          # VM execution and runtime
 │   │   ├── lowering_test.cpp    # SSA to bytecode lowering
 │   │   └── slab_allocator_test.cpp # Slab allocator and weak refs
-│   └── e2e/                     # End-to-end tests (9 files)
+│   └── e2e/                     # End-to-end tests (10 files)
 │       ├── test_helpers.hpp     # Shared compile/run helpers
 │       ├── test_helpers.cpp
 │       ├── basics_test.cpp      # Variables, arithmetic, control flow
@@ -158,7 +162,8 @@ roxy-v2/
 │       ├── structs_test.cpp     # Struct fields, literals, params
 │       ├── params_test.cpp      # Out/inout parameter tests
 │       ├── interop_test.cpp     # C++ interop tests
-│       └── strings_test.cpp     # String operations, concatenation
+│       ├── strings_test.cpp     # String operations, concatenation
+│       └── modules_test.cpp     # Module imports, multi-file compilation
 │
 ├── docs/
 │   ├── overview.md              # Language features and design
@@ -172,7 +177,8 @@ roxy-v2/
 │       ├── structs.md           # Stack-allocated structs
 │       ├── arrays.md            # Dynamic arrays
 │       ├── interop.md           # C++ function binding
-│       └── frontend.md          # Lexer, parser, semantic analysis
+│       ├── frontend.md          # Lexer, parser, semantic analysis
+│       └── modules.md           # Module system, imports, multi-file
 └── CMakeLists.txt
 ```
 
@@ -247,14 +253,14 @@ Multi-pass semantic analyzer:
 ### SSA IR (`include/roxy/compiler/ssa_ir.hpp`, `src/roxy/compiler/ssa_ir.cpp`)
 
 SSA IR with block arguments (not phi nodes):
-- 42 IR operations covering all basic operations:
+- 43 IR operations covering all basic operations:
   - Constants: ConstNull, ConstBool, ConstInt, ConstFloat, ConstString
   - Arithmetic: AddI/F, SubI/F, MulI/F, DivI/F, ModI, NegI/F
   - Comparisons: EqI/F, NeI/F, LtI/F, LeI/F, GtI/F, GeI/F
   - Logical: Not, And, Or; Bitwise: BitAnd, BitOr, BitNot
   - Memory: StackAlloc, GetField, GetFieldAddr, SetField, GetIndex, SetIndex
   - Structs: StructCopy, LoadPtr, StorePtr, VarAddr
-  - Calls: Call, CallNative
+  - Calls: Call, CallNative, CallExternal (cross-module)
 - ValueId and BlockId for unique identification
 - Block parameters for control flow merging
 - Clean dataflow representation
@@ -270,13 +276,13 @@ Converts type-checked AST to SSA IR:
 
 32-bit fixed-width register-based bytecode:
 - Three instruction formats: ABC (3-operand), ABI (immediate), AOFF (offset)
-- 58 opcodes organized by category:
+- 59 opcodes organized by category:
   - Constants/Moves: LOAD_NULL, LOAD_TRUE, LOAD_FALSE, LOAD_INT, LOAD_CONST, MOV
   - Arithmetic: ADD_I/F, SUB_I/F, MUL_I/F, DIV_I/F, MOD_I, NEG_I/F
   - Bitwise: BIT_AND, BIT_OR, BIT_XOR, BIT_NOT, SHL, SHR, USHR
   - Comparisons: EQ_I/F, NE_I/F, LT_I/F, LE_I/F, GT_I/F, GE_I/F (+ unsigned)
   - Control flow: JMP, JMP_IF, JMP_IF_NOT, RET, RET_VOID, RET_STRUCT_SMALL
-  - Calls: CALL, CALL_NATIVE
+  - Calls: CALL, CALL_NATIVE, CALL_EXTERNAL (cross-module)
   - Structs: GET_FIELD, SET_FIELD, STACK_ADDR, GET_FIELD_ADDR, STRUCT_LOAD_REGS, STRUCT_STORE_REGS, STRUCT_COPY
   - Arrays: GET_INDEX, SET_INDEX
 - Constant pool for large values
@@ -465,6 +471,63 @@ Key files:
 - `src/roxy/vm/vmem_win32.cpp` - Windows implementation (VirtualAlloc)
 - `src/roxy/vm/vmem_unix.cpp` - Unix implementation (mmap)
 
+### Module System (`include/roxy/compiler/module_registry.hpp`, `include/roxy/compiler/compiler.hpp`)
+
+Multi-file compilation with import/export support:
+
+**Import Syntax:**
+```roxy
+import math;                    // Import module, access as math.sin()
+from math import sin, cos;      // Import specific symbols directly
+from utils import clamp as c;   // Import with alias
+```
+
+**Key Components:**
+
+| Component | Description |
+|-----------|-------------|
+| `ModuleRegistry` | Tracks all modules (native and script) and their exports |
+| `ModuleInfo` | Module metadata: name, exports list, native registry pointer |
+| `ModuleExport` | Export entry: name, kind (Function/Struct/Enum), type, visibility |
+| `NativeRegistry` | C++ function binding (separate from ModuleRegistry) |
+| `Compiler` | Multi-module compiler with topological sorting |
+
+**Builtin Prelude:**
+- Built-in functions (`print`, `str_concat`, `array_new_int`, etc.) are registered as a `"builtin"` module
+- The builtin module is **auto-imported** as a prelude during semantic analysis
+- No explicit import needed for built-in functions
+
+**Multi-Module Compilation:**
+```cpp
+Compiler compiler(allocator);
+compiler.add_source(StringView("utils", 5), utils_source, utils_len);
+compiler.add_source(StringView("main", 4), main_source, main_len);
+BCModule* module = compiler.compile();  // Links all modules together
+```
+
+**Compilation Pipeline:**
+1. Parse all modules
+2. Topologically sort by import dependencies (detect cycles)
+3. Semantic analysis in dependency order
+4. Build IR for all modules
+5. Link into single BCModule
+
+**Cross-Module Calls:**
+- `IROp::CallExternal` - IR instruction for cross-module function calls
+- `CALL_EXTERNAL` opcode (0xA2) - Bytecode for external function calls
+- External functions resolved during linking phase
+
+**Visibility:**
+- Functions marked `pub` are exported and can be imported by other modules
+- Non-public functions are module-private
+
+Key files:
+- `include/roxy/compiler/module_registry.hpp` - ModuleInfo, ModuleExport, ModuleRegistry
+- `src/roxy/compiler/module_registry.cpp` - Module registration implementation
+- `include/roxy/compiler/compiler.hpp` - Compiler class for multi-module compilation
+- `src/roxy/compiler/compiler.cpp` - Topological sort, linking, cycle detection
+- `include/roxy/vm/natives.hpp` - BUILTIN_MODULE_NAME constant
+
 ## Partially Implemented (TODOs in code)
 
 - **Method Lookup** - Semantic analysis has placeholder for proper method resolution
@@ -562,3 +625,4 @@ On Windows, use `.exe` extension.
   - `ssa-ir.md` - Block arguments, lowering to bytecode
   - `interop.md` - Native functions, automatic C++ binding
   - `frontend.md` - Lexer, parser, semantic analysis
+  - `modules.md` - Module system, imports, multi-file compilation

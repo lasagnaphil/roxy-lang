@@ -7,6 +7,7 @@
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
 #include "roxy/compiler/lowering.hpp"
+#include "roxy/compiler/module_registry.hpp"
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/natives.hpp"
@@ -69,7 +70,8 @@ static Value compile_and_run_with_registry(const char* source, StringView func_n
         return Value::make_null();
     }
 
-    IRBuilder ir_builder(allocator, analyzer.types(), registry);
+    ModuleRegistry modules(allocator);
+    IRBuilder ir_builder(allocator, analyzer.types(), registry, analyzer.symbols(), modules);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         return Value::make_null();
@@ -126,7 +128,8 @@ static Value compile_and_run_with_builtins(const char* source, StringView func_n
         return Value::make_null();
     }
 
-    IRBuilder ir_builder(allocator, analyzer.types(), registry);
+    ModuleRegistry modules(allocator);
+    IRBuilder ir_builder(allocator, analyzer.types(), registry, analyzer.symbols(), modules);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         return Value::make_null();
@@ -541,7 +544,8 @@ static Value compile_and_run_mixed(const char* source, StringView func_name, Bin
         return Value::make_null();
     }
 
-    IRBuilder ir_builder(allocator, analyzer.types(), registry);
+    ModuleRegistry modules(allocator);
+    IRBuilder ir_builder(allocator, analyzer.types(), registry, analyzer.symbols(), modules);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         return Value::make_null();

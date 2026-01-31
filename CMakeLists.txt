@@ -63,6 +63,8 @@ add_library(roxy_compiler
     src/roxy/compiler/semantic.cpp
     src/roxy/compiler/ssa_ir.cpp
     src/roxy/compiler/ir_builder.cpp
+    src/roxy/compiler/module_registry.cpp
+    src/roxy/compiler/compiler.cpp
 )
 target_link_libraries(roxy_compiler roxy_shared)
 
@@ -115,6 +117,7 @@ add_executable(roxy_tests
     tests/e2e/interop_test.cpp
     tests/e2e/strings_test.cpp
     tests/e2e/heap_test.cpp
+    tests/e2e/modules_test.cpp
 )
 target_link_libraries(roxy_tests roxy_vm)
 

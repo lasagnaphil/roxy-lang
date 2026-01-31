@@ -6,6 +6,7 @@
 #include "roxy/compiler/semantic.hpp"
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
+#include "roxy/compiler/module_registry.hpp"
 #include "roxy/vm/natives.hpp"
 #include "roxy/vm/binding/registry.hpp"
 
@@ -33,7 +34,8 @@ static IRModule* build_ir(BumpAllocator& allocator, const char* source) {
         return nullptr;
     }
 
-    IRBuilder builder(allocator, analyzer.types(), registry);
+    ModuleRegistry modules(allocator);
+    IRBuilder builder(allocator, analyzer.types(), registry, analyzer.symbols(), modules);
     return builder.build(program);
 }
 

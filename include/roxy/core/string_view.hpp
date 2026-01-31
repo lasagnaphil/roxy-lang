@@ -8,10 +8,11 @@
 namespace rx {
 
 class StringView {
-    const char* m_data = nullptr;
-    u32 m_size = 0;
+    const char* m_data;
+    u32 m_size;
 
 public:
+    // Trivial default constructor - leaves members uninitialized (required for union usage)
     StringView() = default;
     StringView(const char* data, u32 size) : m_data(data), m_size(size) {}
 

@@ -10,6 +10,7 @@
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
 #include "roxy/compiler/lowering.hpp"
+#include "roxy/compiler/module_registry.hpp"
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/natives.hpp"
@@ -88,7 +89,8 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len,
         return nullptr;
     }
 
-    IRBuilder ir_builder(allocator, analyzer.types(), registry);
+    ModuleRegistry modules(allocator);
+    IRBuilder ir_builder(allocator, analyzer.types(), registry, analyzer.symbols(), modules);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         fprintf(stderr, "IR generation failed\n");

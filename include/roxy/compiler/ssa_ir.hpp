@@ -114,6 +114,7 @@ enum class IROp : u8 {
     // Function call
     Call,           // call function
     CallNative,     // call native function
+    CallExternal,   // call function in another module
 
     // Block argument (phi-like)
     BlockArg,       // Block parameter - receives value from predecessor
@@ -147,6 +148,13 @@ struct CallData {
     StringView func_name;
     Span<ValueId> args;
     u8 native_index;  // For CallNative: index into module's native_functions
+};
+
+// External call instruction data (for cross-module calls)
+struct CallExternalData {
+    StringView module_name;
+    StringView func_name;
+    Span<ValueId> args;
 };
 
 // Field access data
@@ -214,6 +222,7 @@ struct IRInst {
         } binary;                       // For binary ops
         ValueId unary;                  // For unary ops
         CallData call;                  // For Call/CallNative
+        CallExternalData call_external; // For CallExternal
         FieldData field;                // For GetField/SetField
         IndexData index;                // For GetIndex/SetIndex
         NewData new_data;               // For New

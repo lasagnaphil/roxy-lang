@@ -473,6 +473,45 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             break;
         }
 
+        case IROp::CallExternal: {
+            // Cross-module function call
+            StringView module_name = inst->call_external.module_name;
+            StringView func_name = inst->call_external.func_name;
+            u8 arg_count = static_cast<u8>(inst->call_external.args.size());
+
+            // Find or add external function reference
+            u8 ext_func_idx = 0;
+            bool found = false;
+            for (u32 i = 0; i < m_module->external_functions.size(); i++) {
+                if (m_module->external_functions[i].module_name == module_name &&
+                    m_module->external_functions[i].func_name == func_name) {
+                    ext_func_idx = static_cast<u8>(i);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                ext_func_idx = static_cast<u8>(m_module->external_functions.size());
+                BCExternalFunction ext_func;
+                ext_func.module_name = module_name;
+                ext_func.func_name = func_name;
+                m_module->external_functions.push_back(ext_func);
+            }
+
+            // Copy arguments to consecutive registers starting from dst+1
+            u8 first_arg_reg = dst + 1;
+            for (u32 i = 0; i < inst->call_external.args.size(); i++) {
+                u8 arg_src = get_register(inst->call_external.args[i]);
+                if (arg_src != first_arg_reg + i) {
+                    emit_abc(Opcode::MOV, first_arg_reg + static_cast<u8>(i), arg_src, 0);
+                }
+            }
+
+            // Emit call: dst = call_external ext_func_idx(args...)
+            emit_abc(Opcode::CALL_EXTERNAL, dst, ext_func_idx, arg_count);
+            break;
+        }
+
         case IROp::GetField: {
             // Format: [GET_FIELD dst obj slot_count] + [slot_offset:16 padding:16]
             u8 obj = get_register(inst->field.object);

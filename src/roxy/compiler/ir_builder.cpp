@@ -1,4 +1,5 @@
 #include "roxy/compiler/ir_builder.hpp"
+#include "roxy/compiler/module_registry.hpp"
 #include "roxy/vm/binding/registry.hpp"
 
 #include <cassert>
@@ -6,10 +7,13 @@
 
 namespace rx {
 
-IRBuilder::IRBuilder(BumpAllocator& allocator, TypeCache& types, NativeRegistry& registry)
+IRBuilder::IRBuilder(BumpAllocator& allocator, TypeCache& types, NativeRegistry& registry,
+                     SymbolTable& symbols, ModuleRegistry& module_registry)
     : m_allocator(allocator)
     , m_types(types)
     , m_registry(registry)
+    , m_symbols(symbols)
+    , m_module_registry(module_registry)
     , m_current_func(nullptr)
     , m_current_block(nullptr)
 {
@@ -312,6 +316,17 @@ ValueId IRBuilder::emit_call_native(StringView func_name, Span<ValueId> args, Ty
         inst->call.func_name = func_name;
         inst->call.args = args;
         inst->call.native_index = native_index;
+        return inst->result;
+    }
+    return ValueId::invalid();
+}
+
+ValueId IRBuilder::emit_call_external(StringView module_name, StringView func_name, Span<ValueId> args, Type* result_type) {
+    IRInst* inst = emit_inst(IROp::CallExternal, result_type);
+    if (inst) {
+        inst->call_external.module_name = module_name;
+        inst->call_external.func_name = func_name;
+        inst->call_external.args = args;
         return inst->result;
     }
     return ValueId::invalid();
@@ -1123,12 +1138,20 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     // Get function name from callee
     if (ce.callee->kind == AstKind::ExprIdentifier) {
         StringView func_name = ce.callee->identifier.name;
+        StringView lookup_name = func_name;
+
+        // Check if this is an imported function (may have alias)
+        Symbol* sym = m_symbols.lookup(func_name);
+        if (sym && sym->kind == SymbolKind::ImportedFunction) {
+            // Use the original function name for native registry lookup
+            lookup_name = sym->imported_func.original_name;
+        }
 
         // Check if this is a native function
-        i32 native_idx = m_registry.get_index(func_name);
+        i32 native_idx = m_registry.get_index(lookup_name);
 
         if (native_idx >= 0) {
-            result = emit_call_native(func_name, final_args, expr->resolved_type, static_cast<u8>(native_idx));
+            result = emit_call_native(lookup_name, final_args, expr->resolved_type, static_cast<u8>(native_idx));
         } else {
             result = emit_call(func_name, final_args, expr->resolved_type);
         }
@@ -1139,33 +1162,57 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         }
     }
     else if (ce.callee->kind == AstKind::ExprGet) {
-        // Method call: obj.method(args)
         GetExpr& ge = ce.callee->get;
-        ValueId obj = gen_expr(ge.object);
 
-        // Prepend object to arguments, append output pointer if large struct return
-        Span<ValueId> method_args;
-        if (callee_returns_large_struct) {
-            // obj + args + output_ptr
-            method_args = alloc_span<ValueId>(args.size() + 2);
-            method_args[0] = obj;
-            for (u32 i = 0; i < args.size(); i++) {
-                method_args[i + 1] = args[i];
+        // Check for module-qualified call: module.function()
+        // The object's resolved_type is nullptr for module references
+        if (ge.object->kind == AstKind::ExprIdentifier && ge.object->resolved_type == nullptr) {
+            // This is a module-qualified call
+            StringView module_name = ge.object->identifier.name;
+            StringView func_name = ge.name;
+
+            // Look up in native registry - the function name is just the member name
+            i32 native_idx = m_registry.get_index(func_name);
+
+            if (native_idx >= 0) {
+                result = emit_call_native(func_name, final_args, expr->resolved_type, static_cast<u8>(native_idx));
+            } else {
+                // Script module call - emit CallExternal
+                result = emit_call_external(module_name, func_name, final_args, expr->resolved_type);
             }
-            method_args[args.size() + 1] = output_ptr;
+
+            // For large struct returns, the result is the output pointer
+            if (callee_returns_large_struct) {
+                result = output_ptr;
+            }
         } else {
-            method_args = alloc_span<ValueId>(args.size() + 1);
-            method_args[0] = obj;
-            for (u32 i = 0; i < args.size(); i++) {
-                method_args[i + 1] = args[i];
+            // Method call: obj.method(args)
+            ValueId obj = gen_expr(ge.object);
+
+            // Prepend object to arguments, append output pointer if large struct return
+            Span<ValueId> method_args;
+            if (callee_returns_large_struct) {
+                // obj + args + output_ptr
+                method_args = alloc_span<ValueId>(args.size() + 2);
+                method_args[0] = obj;
+                for (u32 i = 0; i < args.size(); i++) {
+                    method_args[i + 1] = args[i];
+                }
+                method_args[args.size() + 1] = output_ptr;
+            } else {
+                method_args = alloc_span<ValueId>(args.size() + 1);
+                method_args[0] = obj;
+                for (u32 i = 0; i < args.size(); i++) {
+                    method_args[i + 1] = args[i];
+                }
             }
-        }
 
-        result = emit_call(ge.name, method_args, expr->resolved_type);
+            result = emit_call(ge.name, method_args, expr->resolved_type);
 
-        // For large struct returns, the result is the output pointer
-        if (callee_returns_large_struct) {
-            result = output_ptr;
+            // For large struct returns, the result is the output pointer
+            if (callee_returns_large_struct) {
+                result = output_ptr;
+            }
         }
     }
     else {

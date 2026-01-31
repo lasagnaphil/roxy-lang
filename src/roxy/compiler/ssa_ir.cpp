@@ -66,8 +66,9 @@ const char* ir_op_to_string(IROp op) {
         case IROp::New:    return "new";
         case IROp::Delete: return "delete";
 
-        case IROp::Call:       return "call";
-        case IROp::CallNative: return "call_native";
+        case IROp::Call:         return "call";
+        case IROp::CallNative:   return "call_native";
+        case IROp::CallExternal: return "call_external";
 
         case IROp::BlockArg: return "block_arg";
         case IROp::Copy:     return "copy";
@@ -273,6 +274,19 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
             for (u32 i = 0; i < inst->call.args.size(); i++) {
                 if (i > 0) append_str(out, ", ");
                 append_value_id(out, inst->call.args[i]);
+            }
+            append_str(out, ")");
+            break;
+
+        case IROp::CallExternal:
+            append_str(out, " ");
+            append_string_view(out, inst->call_external.module_name);
+            append_str(out, ".");
+            append_string_view(out, inst->call_external.func_name);
+            append_str(out, "(");
+            for (u32 i = 0; i < inst->call_external.args.size(); i++) {
+                if (i > 0) append_str(out, ", ");
+                append_value_id(out, inst->call_external.args[i]);
             }
             append_str(out, ")");
             break;

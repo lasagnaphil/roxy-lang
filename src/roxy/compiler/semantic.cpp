@@ -1,5 +1,7 @@
 #include "roxy/compiler/semantic.hpp"
+#include "roxy/compiler/module_registry.hpp"
 #include "roxy/vm/binding/registry.hpp"
+#include "roxy/vm/natives.hpp"
 
 #include <cstdarg>
 #include <cstdio>
@@ -48,6 +50,7 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator)
     , m_types(allocator)
     , m_symbols(allocator)
     , m_registry(nullptr)
+    , m_module_registry(nullptr)
 {
     // Register built-in native functions (hardcoded fallback)
     register_builtins();
@@ -58,13 +61,25 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, NativeRegistry* reg
     , m_types(allocator)
     , m_symbols(allocator)
     , m_registry(registry)
+    , m_module_registry(nullptr)
 {
     // Register native functions from registry
     register_builtins();
 }
 
 void SemanticAnalyzer::register_builtins() {
-    // If registry is provided, use it for native function registration
+    // If we have a module registry with a builtin module, we don't need to
+    // register builtins here - they'll be imported via import_builtin_prelude()
+    if (m_module_registry) {
+        ModuleInfo* builtin_module = m_module_registry->find_module(
+            StringView(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME)));
+        if (builtin_module) {
+            // Builtins will be auto-imported as prelude
+            return;
+        }
+    }
+
+    // If registry is provided (but no module registry), use it for native function registration
     // Use the SemanticAnalyzer's own TypeCache so types match during type checking
     if (m_registry) {
         m_registry->apply_to_symbols(m_symbols, m_types, m_allocator);
@@ -110,7 +125,48 @@ void SemanticAnalyzer::register_builtins() {
                      print_type, SourceLocation{0, 0}, nullptr);
 }
 
+void SemanticAnalyzer::import_builtin_prelude() {
+    // Auto-import all exports from the "builtin" module if available
+    if (!m_module_registry) return;
+
+    ModuleInfo* builtin_module = m_module_registry->find_module(
+        StringView(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME)));
+    if (!builtin_module) return;
+
+    // Import all exports from the builtin module into global scope
+    for (const ModuleExport& exp : builtin_module->exports) {
+        // Skip if already defined (shouldn't happen, but be safe)
+        if (m_symbols.lookup_local(exp.name)) continue;
+
+        // Register the imported symbol based on its kind
+        if (exp.kind == ExportKind::Function) {
+            m_symbols.define_imported_function(
+                exp.name, exp.type, SourceLocation{0, 0},
+                StringView(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME)),
+                exp.name, exp.index, exp.is_native);
+        } else {
+            // For structs/enums, define as regular types
+            m_symbols.define(static_cast<SymbolKind>(
+                exp.kind == ExportKind::Struct ? SymbolKind::Struct : SymbolKind::Enum),
+                exp.name, exp.type, SourceLocation{0, 0}, exp.decl);
+        }
+    }
+}
+
 bool SemanticAnalyzer::analyze(Program* program) {
+    // Pass 0a: Auto-import builtin module as prelude
+    import_builtin_prelude();
+    if (too_many_errors()) return false;
+
+    // Pass 0b: Process user imports
+    for (u32 i = 0; i < program->declarations.size(); i++) {
+        Decl* decl = program->declarations[i];
+        if (decl && decl->kind == AstKind::DeclImport) {
+            analyze_import_decl(decl);
+        }
+    }
+    if (too_many_errors()) return false;
+
     // Pass 1: Collect type declarations (struct/enum names)
     collect_type_declarations(program);
     if (too_many_errors()) return false;
@@ -546,6 +602,74 @@ void SemanticAnalyzer::analyze_enum_decl(Decl* decl) {
     // Enum declarations are handled in earlier passes
 }
 
+void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
+    ImportDecl& imp = decl->import_decl;
+
+    // Check if module registry is available
+    if (!m_module_registry) {
+        error(decl->loc, "module imports not supported (no module registry configured)");
+        return;
+    }
+
+    // Look up the module
+    ModuleInfo* module = m_module_registry->find_module(imp.module_path);
+    if (!module) {
+        error_fmt(decl->loc, "unknown module '%.*s'",
+                 imp.module_path.size(), imp.module_path.data());
+        return;
+    }
+
+    if (imp.is_from_import) {
+        // from math import sin, cos;
+        for (u32 i = 0; i < imp.names.size(); i++) {
+            ImportName& name = imp.names[i];
+
+            // Find the export in the module
+            const ModuleExport* exp = m_module_registry->find_export(module, name.name);
+            if (!exp) {
+                error_fmt(name.loc, "module '%.*s' has no export '%.*s'",
+                         imp.module_path.size(), imp.module_path.data(),
+                         name.name.size(), name.name.data());
+                continue;
+            }
+
+            // Check visibility
+            if (!exp->is_pub) {
+                error_fmt(name.loc, "'%.*s' is not public in module '%.*s'",
+                         name.name.size(), name.name.data(),
+                         imp.module_path.size(), imp.module_path.data());
+                continue;
+            }
+
+            // Determine local name (use alias if present)
+            StringView local_name = name.alias.empty() ? name.name : name.alias;
+
+            // Check for duplicate symbol
+            if (m_symbols.lookup_local(local_name)) {
+                error_fmt(name.loc, "redefinition of '%.*s'",
+                         local_name.size(), local_name.data());
+                continue;
+            }
+
+            // Register the imported symbol based on its kind
+            if (exp->kind == ExportKind::Function) {
+                m_symbols.define_imported_function(
+                    local_name, exp->type, name.loc,
+                    imp.module_path, exp->name, exp->index, exp->is_native);
+            } else {
+                // For structs/enums, define as regular types
+                m_symbols.define(static_cast<SymbolKind>(
+                    exp->kind == ExportKind::Struct ? SymbolKind::Struct : SymbolKind::Enum),
+                    local_name, exp->type, name.loc, exp->decl);
+            }
+        }
+    } else {
+        // import math;
+        // Register the module as a namespace symbol for qualified access
+        m_symbols.define_module(imp.module_path, module, decl->loc);
+    }
+}
+
 // Statement analysis
 
 void SemanticAnalyzer::analyze_stmt(Stmt* stmt) {
@@ -959,6 +1083,39 @@ Type* SemanticAnalyzer::analyze_index_expr(Expr* expr) {
 
 Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
     GetExpr& ge = expr->get;
+
+    // Check for module-qualified access: module.member
+    if (ge.object->kind == AstKind::ExprIdentifier) {
+        StringView name = ge.object->identifier.name;
+        Symbol* sym = m_symbols.lookup(name);
+
+        if (sym && sym->kind == SymbolKind::Module) {
+            // This is module-qualified access
+            ModuleInfo* module = static_cast<ModuleInfo*>(sym->module.module_info);
+            const ModuleExport* exp = module->find_export(ge.name);
+
+            if (!exp) {
+                error_fmt(expr->loc, "module '%.*s' has no export '%.*s'",
+                         name.size(), name.data(),
+                         ge.name.size(), ge.name.data());
+                return m_types.error_type();
+            }
+
+            // Check visibility
+            if (!exp->is_pub) {
+                error_fmt(expr->loc, "'%.*s' is not public in module '%.*s'",
+                         ge.name.size(), ge.name.data(),
+                         name.size(), name.data());
+                return m_types.error_type();
+            }
+
+            // Mark the expression with the module info for later use by IR builder
+            // We set resolved_type on the object to indicate it's a module reference
+            ge.object->resolved_type = nullptr;  // Modules don't have a type
+
+            return exp->type;
+        }
+    }
 
     Type* obj_type = analyze_expr(ge.object);
     if (obj_type->is_error()) return m_types.error_type();

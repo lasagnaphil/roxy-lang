@@ -6,6 +6,7 @@
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
 #include "roxy/compiler/lowering.hpp"
+#include "roxy/compiler/module_registry.hpp"
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/natives.hpp"
@@ -45,6 +46,11 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
     NativeRegistry registry(allocator, types);
     register_builtin_natives(registry);
 
+    // Create module registry and register builtin module for prelude auto-import
+    ModuleRegistry modules(allocator);
+    StringView builtin_name(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME));
+    modules.register_native_module(builtin_name, &registry, types);
+
     Lexer lexer(source, len);
     Parser parser(lexer, allocator);
     Program* program = parser.parse();
@@ -54,11 +60,12 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
     }
 
     SemanticAnalyzer analyzer(allocator, &registry);
+    analyzer.set_module_registry(&modules);
     if (!analyzer.analyze(program)) {
         return nullptr;
     }
 
-    IRBuilder ir_builder(allocator, analyzer.types(), registry);
+    IRBuilder ir_builder(allocator, analyzer.types(), registry, analyzer.symbols(), modules);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         return nullptr;

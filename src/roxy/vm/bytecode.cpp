@@ -78,6 +78,7 @@ const char* opcode_to_string(Opcode op) {
         // Function Calls
         case Opcode::CALL:          return "CALL";
         case Opcode::CALL_NATIVE:   return "CALL_NATIVE";
+        case Opcode::CALL_EXTERNAL: return "CALL_EXTERNAL";
 
         // Field Access
         case Opcode::GET_FIELD:     return "GET_FIELD";
@@ -217,6 +218,7 @@ void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out) {
         // Format: dst, func_idx, arg_count (args at dst+1, dst+2, ...)
         case Opcode::CALL:
         case Opcode::CALL_NATIVE:
+        case Opcode::CALL_EXTERNAL:
             snprintf(buf, sizeof(buf), "R%u, func[%u], %u args from R%u", a, b, c, a + 1);
             break;
 
