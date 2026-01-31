@@ -111,9 +111,12 @@ registry.bind<my_sqrt>("sqrt");
 // Register built-in natives (array_new_int, array_len, print)
 register_builtin_natives(registry);
 
-// Use in compilation
-SemanticAnalyzer analyzer(allocator, &registry);
-IRBuilder ir_builder(allocator, types, &registry);
+// Use in compilation - pass shared TypeCache for type consistency
+ModuleRegistry modules(allocator);
+modules.register_native_module("builtin", &registry, types);
+SemanticAnalyzer analyzer(allocator, types);
+analyzer.set_module_registry(&modules);
+IRBuilder ir_builder(allocator, types, registry, analyzer.symbols(), modules);
 
 // Apply to bytecode module for runtime
 registry.apply_to_module(module);

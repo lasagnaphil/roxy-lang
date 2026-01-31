@@ -10,6 +10,8 @@
 #include "roxy/vm/natives.hpp"
 #include "roxy/vm/binding/registry.hpp"
 
+#include <cstring>
+
 using namespace rx;
 
 // Helper to parse, analyze, and build IR
@@ -29,13 +31,18 @@ static IRModule* build_ir(BumpAllocator& allocator, const char* source) {
         return nullptr;
     }
 
-    SemanticAnalyzer analyzer(allocator, &registry);
+    // Create module registry and register builtin module for prelude auto-import
+    ModuleRegistry modules(allocator);
+    StringView builtin_name(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME));
+    modules.register_native_module(builtin_name, &registry, types);
+
+    SemanticAnalyzer analyzer(allocator, types);
+    analyzer.set_module_registry(&modules);
     if (!analyzer.analyze(program)) {
         return nullptr;
     }
 
-    ModuleRegistry modules(allocator);
-    IRBuilder builder(allocator, analyzer.types(), registry, analyzer.symbols(), modules);
+    IRBuilder builder(allocator, types, registry, analyzer.symbols(), modules);
     return builder.build(program);
 }
 

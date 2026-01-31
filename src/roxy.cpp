@@ -67,7 +67,7 @@ static bool parse_args(int argc, char** argv, Options& opts) {
 }
 
 static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len,
-                         NativeRegistry& registry, bool print_ir) {
+                         TypeCache& types, NativeRegistry& registry, bool print_ir) {
     Lexer lexer(source, len);
     Parser parser(lexer, allocator);
     Program* program = parser.parse();
@@ -79,7 +79,13 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len,
         return nullptr;
     }
 
-    SemanticAnalyzer analyzer(allocator, &registry);
+    // Create module registry and register builtin module for prelude auto-import
+    ModuleRegistry modules(allocator);
+    StringView builtin_name(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME));
+    modules.register_native_module(builtin_name, &registry, types);
+
+    SemanticAnalyzer analyzer(allocator, types);
+    analyzer.set_module_registry(&modules);
     if (!analyzer.analyze(program)) {
         fprintf(stderr, "Semantic errors:\n");
         for (const auto& err : analyzer.errors()) {
@@ -89,8 +95,7 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len,
         return nullptr;
     }
 
-    ModuleRegistry modules(allocator);
-    IRBuilder ir_builder(allocator, analyzer.types(), registry, analyzer.symbols(), modules);
+    IRBuilder ir_builder(allocator, types, registry, analyzer.symbols(), modules);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         fprintf(stderr, "IR generation failed\n");
@@ -141,7 +146,7 @@ int main(int argc, char** argv) {
     register_builtin_natives(registry);
 
     // Compile
-    BCModule* module = compile(allocator, source, len, registry, opts.print_ir);
+    BCModule* module = compile(allocator, source, len, types, registry, opts.print_ir);
     if (!module) {
         return 1;
     }

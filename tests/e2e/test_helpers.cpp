@@ -59,9 +59,15 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
         return nullptr;
     }
 
-    SemanticAnalyzer analyzer(allocator, &registry);
+    SemanticAnalyzer analyzer(allocator, types);
     analyzer.set_module_registry(&modules);
     if (!analyzer.analyze(program)) {
+        if (debug) {
+            printf("Semantic errors:\n");
+            for (const auto& err : analyzer.errors()) {
+                printf("  Line %u: %s\n", err.loc.line, err.message);
+            }
+        }
         return nullptr;
     }
 

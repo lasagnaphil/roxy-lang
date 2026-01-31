@@ -91,6 +91,9 @@ private:
     // Native registries by module name
     Vector<std::pair<StringView, NativeRegistry*>> m_native_registries;
 
+    // Combined registry with all native functions (built during compile())
+    UniquePtr<NativeRegistry> m_combined_registry;
+
     // Errors
     Vector<const char*> m_errors;
 };

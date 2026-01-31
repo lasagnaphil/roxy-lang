@@ -12,6 +12,7 @@ using namespace rx;
 // Helper to parse and analyze source code
 struct SemanticTestHelper {
     BumpAllocator allocator{4096};
+    TypeCache* types = nullptr;
     SemanticAnalyzer* analyzer = nullptr;
     Program* program = nullptr;
     bool parse_ok = false;
@@ -28,7 +29,8 @@ struct SemanticTestHelper {
             return false;
         }
 
-        analyzer = allocator.emplace<SemanticAnalyzer>(allocator);
+        types = allocator.emplace<TypeCache>(allocator);
+        analyzer = allocator.emplace<SemanticAnalyzer>(allocator, *types);
         analyze_ok = analyzer->analyze(program);
         return analyze_ok;
     }

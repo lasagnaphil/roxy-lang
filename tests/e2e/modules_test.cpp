@@ -1,18 +1,13 @@
 #include "roxy/core/doctest/doctest.h"
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/string_view.hpp"
-#include "roxy/shared/lexer.hpp"
-#include "roxy/compiler/parser.hpp"
-#include "roxy/compiler/semantic.hpp"
-#include "roxy/compiler/ssa_ir.hpp"
-#include "roxy/compiler/ir_builder.hpp"
-#include "roxy/compiler/lowering.hpp"
-#include "roxy/compiler/module_registry.hpp"
 #include "roxy/compiler/compiler.hpp"
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/natives.hpp"
 #include "roxy/vm/binding/registry.hpp"
+
+#include <cstring>
 
 namespace rx {
 
@@ -26,97 +21,38 @@ static i32 math_negate(i32 x) { return -x; }
 struct ModuleTestContext {
     BumpAllocator allocator;
     TypeCache types;
-    NativeRegistry builtin_natives;
     NativeRegistry math_natives;
-    ModuleRegistry modules;
-    SymbolTable* symbols;
 
     ModuleTestContext()
         : allocator(16384)
         , types(allocator)
-        , builtin_natives(allocator, types)
         , math_natives(allocator, types)
-        , modules(allocator)
-        , symbols(nullptr)
     {
-        // Register built-in natives (print, array functions, etc.)
-        register_builtin_natives(builtin_natives);
-
-        // Register builtin as a module (auto-imported as prelude)
-        StringView builtin_name(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME));
-        modules.register_native_module(builtin_name, &builtin_natives, types);
-
         // Register math module natives
         math_natives.bind<math_add>("add");
         math_natives.bind<math_mul>("mul");
         math_natives.bind<math_square>("square");
         math_natives.bind<math_negate>("negate");
-
-        // Register math as a module
-        modules.register_native_module(StringView("math", 4), &math_natives, types);
     }
 
     i64 compile_and_run(const char* source, bool debug = false) {
-        u32 len = 0;
-        while (source[len]) len++;
+        u32 len = static_cast<u32>(strlen(source));
 
-        Lexer lexer(source, len);
-        Parser parser(lexer, allocator);
-        Program* program = parser.parse();
+        // Use Compiler class - it handles builtin prelude automatically
+        Compiler compiler(allocator);
+        compiler.add_native_registry(StringView("math", 4), &math_natives);
+        compiler.add_source(StringView("main", 4), source, len);
 
-        if (!program || parser.has_error()) {
-            if (debug) printf("Parse error\n");
-            return -999;
-        }
-
-        // Create semantic analyzer with builtin registry
-        SemanticAnalyzer analyzer(allocator, &builtin_natives);
-        analyzer.set_module_registry(&modules);
-
-        if (!analyzer.analyze(program)) {
+        BCModule* module = compiler.compile();
+        if (!module) {
             if (debug) {
-                printf("Semantic errors:\n");
-                for (const auto& err : analyzer.errors()) {
-                    printf("  %s\n", err.message);
+                printf("Compilation errors:\n");
+                for (const char* err : compiler.errors()) {
+                    printf("  %s\n", err);
                 }
             }
-            return -998;
+            return -999;
         }
-
-        symbols = &analyzer.types() == &types ? nullptr : nullptr;  // Placeholder
-
-        // Merge native registries for IR builder
-        // The IR builder needs access to all native functions
-        NativeRegistry combined(allocator, analyzer.types());
-        register_builtin_natives(combined);
-        combined.bind<math_add>("add");
-        combined.bind<math_mul>("mul");
-        combined.bind<math_square>("square");
-        combined.bind<math_negate>("negate");
-
-        IRBuilder ir_builder(allocator, analyzer.types(), combined, analyzer.symbols(), modules);
-        IRModule* ir_module = ir_builder.build(program);
-        if (!ir_module) {
-            if (debug) printf("IR build error\n");
-            return -997;
-        }
-
-        if (debug) {
-            Vector<char> ir_str;
-            ir_module_to_string(ir_module, ir_str);
-            ir_str.push_back('\0');
-            printf("=== IR ===\n%s\n", ir_str.data());
-        }
-
-        BytecodeBuilder bc_builder;
-        BCModule* module = bc_builder.build(ir_module);
-        if (!module) {
-            if (debug) printf("Bytecode build error\n");
-            return -996;
-        }
-
-        // Register all native functions with the module
-        combined.apply_to_module(module);
 
         RoxyVM vm;
         vm_init(&vm);
@@ -134,28 +70,22 @@ struct ModuleTestContext {
         return result.as_int;
     }
 
-    bool has_semantic_error(const char* source, const char* expected_error_substr = nullptr) {
-        u32 len = 0;
-        while (source[len]) len++;
+    bool has_error(const char* source, const char* expected_error_substr = nullptr) {
+        u32 len = static_cast<u32>(strlen(source));
 
-        Lexer lexer(source, len);
-        Parser parser(lexer, allocator);
-        Program* program = parser.parse();
+        Compiler compiler(allocator);
+        compiler.add_native_registry(StringView("math", 4), &math_natives);
+        compiler.add_source(StringView("main", 4), source, len);
 
-        if (!program || parser.has_error()) {
-            return false;  // Parse error, not semantic
-        }
-
-        SemanticAnalyzer analyzer(allocator, &builtin_natives);
-        analyzer.set_module_registry(&modules);
-
-        if (analyzer.analyze(program)) {
+        BCModule* module = compiler.compile();
+        if (module) {
+            delete module;
             return false;  // No error
         }
 
         if (expected_error_substr) {
-            for (const auto& err : analyzer.errors()) {
-                if (strstr(err.message, expected_error_substr) != nullptr) {
+            for (const char* err : compiler.errors()) {
+                if (strstr(err, expected_error_substr) != nullptr) {
                     return true;
                 }
             }
@@ -273,7 +203,7 @@ TEST_CASE("E2E - Module: error on unknown module") {
         }
     )";
 
-    CHECK(ctx.has_semantic_error(source, "unknown module"));
+    CHECK(ctx.has_error(source, "unknown module"));
 }
 
 TEST_CASE("E2E - Module: error on unknown export") {
@@ -287,7 +217,7 @@ TEST_CASE("E2E - Module: error on unknown export") {
         }
     )";
 
-    CHECK(ctx.has_semantic_error(source, "no export"));
+    CHECK(ctx.has_error(source, "no export"));
 }
 
 TEST_CASE("E2E - Module: error on duplicate import") {
@@ -302,7 +232,7 @@ TEST_CASE("E2E - Module: error on duplicate import") {
         }
     )";
 
-    CHECK(ctx.has_semantic_error(source, "redefinition"));
+    CHECK(ctx.has_error(source, "redefinition"));
 }
 
 // =============================================================================

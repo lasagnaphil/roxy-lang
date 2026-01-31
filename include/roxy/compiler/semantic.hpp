@@ -29,15 +29,9 @@ constexpr u32 MAX_SEMANTIC_ERRORS = 20;
 // SemanticAnalyzer performs type checking and symbol resolution
 class SemanticAnalyzer {
 public:
-    // Constructor without registry - uses hardcoded builtins
-    explicit SemanticAnalyzer(BumpAllocator& allocator);
-
-    // Constructor with registry - uses registry for native functions
-    SemanticAnalyzer(BumpAllocator& allocator, NativeRegistry* registry);
-
-    // Constructor with registry and external TypeCache - for full type consistency
+    // Constructor with external TypeCache (required for type consistency with module system)
     // The TypeCache must outlive the SemanticAnalyzer
-    SemanticAnalyzer(BumpAllocator& allocator, NativeRegistry* registry, TypeCache& types);
+    SemanticAnalyzer(BumpAllocator& allocator, TypeCache& types);
 
     // Set module registry for import resolution
     void set_module_registry(ModuleRegistry* registry) { m_module_registry = registry; }
@@ -60,9 +54,6 @@ private:
     void error(SourceLocation loc, const char* message);
     void error_fmt(SourceLocation loc, const char* fmt, ...);
     bool too_many_errors() const { return m_errors.size() >= MAX_SEMANTIC_ERRORS; }
-
-    // Built-in function registration (fallback if no module registry)
-    void register_builtins();
 
     // Auto-import builtin module exports as prelude
     void import_builtin_prelude();
@@ -128,10 +119,9 @@ private:
     bool can_convert_ref(Type* from, Type* to) const;
 
     BumpAllocator& m_allocator;
-    TypeCache m_types;
+    TypeCache& m_types;
     SymbolTable m_symbols;
     Vector<SemanticError> m_errors;
-    NativeRegistry* m_registry;           // Optional registry for native functions
     ModuleRegistry* m_module_registry;    // Optional registry for module imports
 
     // Named type lookup (structs/enums by name)

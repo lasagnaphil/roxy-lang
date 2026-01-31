@@ -1,6 +1,5 @@
 #include "roxy/compiler/semantic.hpp"
 #include "roxy/compiler/module_registry.hpp"
-#include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/natives.hpp"
 
 #include <cstdarg>
@@ -45,84 +44,12 @@ static u32 get_type_slot_count(Type* type) {
     }
 }
 
-SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator)
+SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeCache& types)
     : m_allocator(allocator)
-    , m_types(allocator)
+    , m_types(types)
     , m_symbols(allocator)
-    , m_registry(nullptr)
     , m_module_registry(nullptr)
 {
-    // Register built-in native functions (hardcoded fallback)
-    register_builtins();
-}
-
-SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, NativeRegistry* registry)
-    : m_allocator(allocator)
-    , m_types(allocator)
-    , m_symbols(allocator)
-    , m_registry(registry)
-    , m_module_registry(nullptr)
-{
-    // Register native functions from registry
-    register_builtins();
-}
-
-void SemanticAnalyzer::register_builtins() {
-    // If we have a module registry with a builtin module, we don't need to
-    // register builtins here - they'll be imported via import_builtin_prelude()
-    if (m_module_registry) {
-        ModuleInfo* builtin_module = m_module_registry->find_module(
-            StringView(BUILTIN_MODULE_NAME, strlen(BUILTIN_MODULE_NAME)));
-        if (builtin_module) {
-            // Builtins will be auto-imported as prelude
-            return;
-        }
-    }
-
-    // If registry is provided (but no module registry), use it for native function registration
-    // Use the SemanticAnalyzer's own TypeCache so types match during type checking
-    if (m_registry) {
-        m_registry->apply_to_symbols(m_symbols, m_types, m_allocator);
-        return;
-    }
-
-    // Otherwise fall back to hardcoded registration for backwards compatibility
-    // array_new_int(size: i32) -> i32[]
-    // Creates function type: (i32) -> i32[]
-    Type* i32_type = m_types.i32_type();
-    Type* i32_array_type = m_types.array_type(i32_type);
-
-    Type** param_types_1 = reinterpret_cast<Type**>(
-        m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
-    param_types_1[0] = i32_type;
-    Type* array_new_int_type = m_types.function_type(
-        Span<Type*>(param_types_1, 1), i32_array_type);
-
-    m_symbols.define(SymbolKind::Function, StringView("array_new_int", 13),
-                     array_new_int_type, SourceLocation{0, 0}, nullptr);
-
-    // array_len(arr: i32[]) -> i32
-    // Note: This works with any array type, but for simplicity we register
-    // it with i32[] as the parameter type. Semantic analysis will still work
-    // because array types are compatible.
-    Type** param_types_2 = reinterpret_cast<Type**>(
-        m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
-    param_types_2[0] = i32_array_type;
-    Type* array_len_type = m_types.function_type(
-        Span<Type*>(param_types_2, 1), i32_type);
-
-    m_symbols.define(SymbolKind::Function, StringView("array_len", 9),
-                     array_len_type, SourceLocation{0, 0}, nullptr);
-
-    // print(value: i32) -> void
-    Type** param_types_3 = reinterpret_cast<Type**>(
-        m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
-    param_types_3[0] = i32_type;
-    Type* print_type = m_types.function_type(
-        Span<Type*>(param_types_3, 1), m_types.void_type());
-
-    m_symbols.define(SymbolKind::Function, StringView("print", 5),
-                     print_type, SourceLocation{0, 0}, nullptr);
 }
 
 void SemanticAnalyzer::import_builtin_prelude() {

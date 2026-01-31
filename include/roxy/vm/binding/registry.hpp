@@ -191,6 +191,30 @@ public:
     // Access type cache
     TypeCache& types() { return m_types; }
 
+    // Copy all entries to another registry (for combining multiple registries)
+    void copy_entries_to(NativeRegistry& other) const {
+        for (const auto& entry : m_entries) {
+            // Copy the entry - use bind_native for type-kind based entries
+            if (!entry.is_manual && entry.param_type_kinds.size() > 0) {
+                // Use bind_native to register with type kinds
+                NativeEntry new_entry;
+                new_entry.name = entry.name;
+                new_entry.func = entry.func;
+                new_entry.return_type = nullptr;
+                new_entry.return_type_kind = entry.return_type_kind;
+                new_entry.param_count = entry.param_count;
+                new_entry.is_manual = false;
+                new_entry.param_type_kinds = entry.param_type_kinds;  // Copy vector
+                other.m_entries.push_back(new_entry);
+                other.m_name_to_index[new_entry.name] = static_cast<i32>(other.m_entries.size() - 1);
+            } else {
+                // Direct copy for manual entries or simple auto-bound entries
+                other.m_entries.push_back(entry);
+                other.m_name_to_index[entry.name] = static_cast<i32>(other.m_entries.size() - 1);
+            }
+        }
+    }
+
 private:
     StringView make_string_view(const char* str) {
         u32 len = static_cast<u32>(strlen(str));

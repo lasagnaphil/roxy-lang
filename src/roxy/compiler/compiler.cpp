@@ -43,6 +43,12 @@ void Compiler::add_source(StringView module_name, const char* source, u32 length
 }
 
 BCModule* Compiler::compile() {
+    // Build combined registry with all native functions from all registries
+    m_combined_registry = UniquePtr<NativeRegistry>(new NativeRegistry(m_allocator, m_types));
+    for (const auto& [name, registry] : m_native_registries) {
+        registry->copy_entries_to(*m_combined_registry);
+    }
+
     // Initialize per-module state
     m_module_states.resize(m_sources.size());
     for (auto& state : m_module_states) {
@@ -171,16 +177,8 @@ bool Compiler::analyze_all() {
         const SourceModule& src = m_sources[idx];
         Program* program = m_module_states[idx].program;
 
-        // Use the first native registry if available, or create an empty one
-        NativeRegistry* registry_ptr = nullptr;
-        NativeRegistry empty_registry(m_allocator, m_types);
-        if (!m_native_registries.empty()) {
-            registry_ptr = m_native_registries[0].second;
-        } else {
-            registry_ptr = &empty_registry;
-        }
-
-        SemanticAnalyzer analyzer(m_allocator, registry_ptr);
+        // Use the shared TypeCache for type consistency
+        SemanticAnalyzer analyzer(m_allocator, m_types);
         analyzer.set_module_registry(&m_module_registry);
 
         if (!analyzer.analyze(program)) {
@@ -227,22 +225,14 @@ bool Compiler::build_ir_all() {
         const SourceModule& src = m_sources[idx];
         Program* program = m_module_states[idx].program;
 
-        // Use the first native registry if available, or create an empty one
-        NativeRegistry* registry_ptr = nullptr;
-        NativeRegistry empty_registry(m_allocator, m_types);
-        if (!m_native_registries.empty()) {
-            registry_ptr = m_native_registries[0].second;
-        } else {
-            registry_ptr = &empty_registry;
-        }
-
         // We need a symbol table for IR building
         // For now, create a fresh semantic analyzer to get the symbols
-        SemanticAnalyzer analyzer(m_allocator, registry_ptr);
+        SemanticAnalyzer analyzer(m_allocator, m_types);
         analyzer.set_module_registry(&m_module_registry);
         analyzer.analyze(program); // Re-analyze to populate symbols
 
-        IRBuilder ir_builder(m_allocator, m_types, *registry_ptr, analyzer.symbols(), m_module_registry);
+        // Use combined registry with all native functions
+        IRBuilder ir_builder(m_allocator, m_types, *m_combined_registry, analyzer.symbols(), m_module_registry);
         IRModule* ir_module = ir_builder.build(program);
 
         if (!ir_module) {
@@ -302,10 +292,8 @@ BCModule* Compiler::link_modules() {
         // If not found, it might be in a not-yet-compiled module or an error
     }
 
-    // Apply native functions from all registries
-    for (const auto& [name, registry] : m_native_registries) {
-        registry->apply_to_module(module);
-    }
+    // Apply native functions from combined registry
+    m_combined_registry->apply_to_module(module);
 
     return module;
 }
