@@ -375,11 +375,6 @@ fun main(): i32 {
 }
 ```
 
-## Limitations (Future Work)
-
-- **Large struct returns**: Structs >16 bytes via hidden output pointer not yet implemented
-- **No heap allocation**: `new`/`uniq`/`ref`/`weak` for structs not implemented
-
 ## Files
 
 - `include/roxy/compiler/ast.hpp` - FieldInit, StructLiteralExpr AST nodes

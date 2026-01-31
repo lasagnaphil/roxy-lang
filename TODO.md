@@ -2,26 +2,13 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2025-01-26
+Last updated: 2025-01-31
 
 ---
 
 ## Critical (Blocking / Crash Risk)
 
-- [x] **Assert crash in function lookup**
-  - File: `src/roxy/compiler/lowering.cpp:352`
-  - Issue: `assert(false && "Function not found")` will crash in debug mode or cause undefined behavior in release (reads invalid iterator)
-  - Fix: Added error reporting mechanism to BytecodeBuilder with `has_error()` / `error()` methods
-
-- [x] **Placeholder type index for `new` expressions**
-  - File: `src/roxy/compiler/lowering.cpp:540-551`
-  - Issue: `u16 type_idx = 0; // Placeholder` - all `new` expressions use hardcoded type 0
-  - Fix: Implemented proper type registration via `BCTypeInfo` and `BCModule::types`
-
-- [x] **Method lookup not implemented**
-  - File: `src/roxy/compiler/semantic.cpp:1088`
-  - Issue: `analyze_method_call_expr()` returns error type with `// TODO: Implement proper method lookup`
-  - Fix: Now reports "Method calls are not yet implemented" error
+*None currently.*
 
 ---
 
@@ -34,12 +21,12 @@ Last updated: 2025-01-26
 
 - [ ] **Visibility checking not enforced**
   - File: `src/roxy/compiler/semantic.cpp:979`
-  - Issue: `// TODO: Check visibility (is_pub)` - field access ignores visibility modifiers
+  - Issue: Field access ignores `is_pub` visibility modifiers
   - Fix: Validate `is_pub` flag during field access analysis
 
 - [ ] **Constructor argument validation skipped**
   - File: `src/roxy/compiler/semantic.cpp:1104`
-  - Issue: `// TODO: Check constructor arguments` in `analyze_new_expr()`
+  - Issue: `analyze_new_expr()` doesn't validate constructor arguments
   - Fix: Validate constructor arguments match expected types
 
 ---
@@ -48,28 +35,28 @@ Last updated: 2025-01-26
 
 - [ ] **Register overflow assertion**
   - File: `src/roxy/compiler/lowering.cpp:186`
-  - Issue: `assert(m_next_reg < 255)` - functions with >255 SSA values will crash
-  - Fix: Return error code or implement register spilling
+  - Issue: Functions with >255 SSA values crash (`assert(m_next_reg < 255)`)
+  - Fix: Return error or implement register spilling
 
 - [ ] **Value allocation assertion**
   - File: `src/roxy/compiler/lowering.cpp:196`
-  - Issue: `assert(it != m_value_to_reg.end())` - unallocated values crash
-  - Fix: Should be caught in IR validation, not runtime assert
+  - Issue: Unallocated values crash with assert
+  - Fix: Should be caught in IR validation, not runtime
 
 - [ ] **Reference count assertion in release builds**
   - File: `src/roxy/vm/object.cpp:57`
-  - Issue: `assert(header->ref_count > 0)` in `ref_dec()` - release builds won't catch invalid decrement
+  - Issue: `ref_dec()` asserts `ref_count > 0` - release builds won't catch invalid decrement
   - Fix: Validate and return error instead of asserting
 
 - [ ] **Global static type IDs not thread-safe**
-  - Files: `src/roxy/vm/array.cpp:6-27`, `src/roxy/vm/string.cpp:8-26`
+  - Files: `src/roxy/vm/array.cpp`, `src/roxy/vm/string.cpp`
   - Issue: `g_array_type_id` and `g_string_type_id` use static globals
   - Fix: Move type registration to per-VM or use proper synchronization
 
 - [ ] **Multi-register struct argument tracking**
   - File: `src/roxy/compiler/lowering.cpp:391`
-  - Issue: `// TODO: Track that this argument uses multiple registers`
-  - Fix: Complete register tracking for struct arguments spanning multiple registers
+  - Issue: Struct arguments spanning multiple registers not fully tracked
+  - Fix: Complete register tracking for multi-register struct params
 
 ---
 
@@ -77,49 +64,29 @@ Last updated: 2025-01-26
 
 - [ ] **Magic numbers for 16-bit range**
   - File: `src/roxy/compiler/lowering.cpp:213,265`
-  - Issue: `-32768` and `32767` repeated without named constants
-  - Fix: Extract to `constexpr i64 IMM16_MIN/MAX`
+  - Fix: Extract `-32768`/`32767` to `constexpr i64 IMM16_MIN/MAX`
 
 - [ ] **Hardcoded array size limit**
   - File: `src/roxy/vm/natives.cpp:28`
   - Issue: `if (size > 1000000)` - arbitrary undocumented limit
   - Fix: Make configurable via VMConfig or define named constant
 
-- [ ] **Float division doesn't set error**
+- [ ] **Float division behavior inconsistency**
   - File: `src/roxy/vm/interpreter.cpp:145-147`
-  - Issue: Float division by zero produces infinity/NaN (IEEE 754 correct) but inconsistent with integer division error handling
+  - Issue: Float div-by-zero produces IEEE 754 infinity/NaN, but integer div-by-zero errors
   - Fix: Document behavior or add optional strict mode
 
 ---
 
-## Documentation Needed
+## Planned Features
 
-- [ ] Document error type propagation pattern in semantic analysis
-- [ ] Document thread-safety limitations (single VM assumption)
-- [ ] Document register limit (255 values per function)
-- [ ] Add inline comments explaining bytecode instruction formats
-
----
-
-## Planned Features (Not Implemented)
-
-These are documented in `docs/overview.md` as planned but not yet implemented:
-
-- [x] Heap allocation with `new`/`uniq`/`ref` (constraint reference model)
-  - `new`/`delete` for heap-allocated structs
-  - `uniq<T>` owning references (ref_count starts at 0)
-  - `ref<T>` borrow references with RefInc/RefDec at function boundaries
-  - Borrow violation detection (compile-time and runtime)
-  - Type checking for reference assignments (ref→uniq forbidden, etc.)
-  - [ ] `weak<T>` references (deferred - needs design for ptr+generation representation)
 - [ ] Named constructors/destructors
-- [ ] Method calls (requires type system extension for methods on structs)
+- [ ] Method calls (requires type system extension)
 - [ ] Function overloading
 - [ ] Operator overloading
-- [ ] Exception handling (depends on heap allocation)
+- [ ] Exception handling
 - [ ] LSP server for IDE support
 - [ ] AOT compilation to C
-- [ ] Large struct returns >16 bytes via hidden output pointer
 
 ---
 
@@ -129,6 +96,15 @@ These are documented in `docs/overview.md` as planned but not yet implemented:
 - [ ] Standardize error handling (Result type vs error_type vs nullptr)
 - [ ] Add IR validation pass before lowering
 - [ ] Consider extracting bytecode constants to header
+
+---
+
+## Documentation Needed
+
+- [ ] Document error type propagation pattern in semantic analysis
+- [ ] Document thread-safety limitations (single VM assumption)
+- [ ] Document register limit (255 values per function)
+- [ ] Add inline comments explaining bytecode instruction formats
 
 ---
 
