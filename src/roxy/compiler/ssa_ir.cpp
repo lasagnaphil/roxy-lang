@@ -1,6 +1,7 @@
 #include "roxy/compiler/ssa_ir.hpp"
 
 #include "roxy/core/fmt/format.h"
+#include <cstring>
 
 namespace rx {
 
@@ -9,7 +10,8 @@ const char* ir_op_to_string(IROp op) {
         case IROp::ConstNull:   return "const_null";
         case IROp::ConstBool:   return "const_bool";
         case IROp::ConstInt:    return "const_int";
-        case IROp::ConstFloat:  return "const_float";
+        case IROp::ConstF:      return "const_f";
+        case IROp::ConstD:      return "const_d";
         case IROp::ConstString: return "const_string";
 
         case IROp::AddI: return "add_i";
@@ -25,6 +27,12 @@ const char* ir_op_to_string(IROp op) {
         case IROp::DivF: return "div_f";
         case IROp::NegF: return "neg_f";
 
+        case IROp::AddD: return "add_d";
+        case IROp::SubD: return "sub_d";
+        case IROp::MulD: return "mul_d";
+        case IROp::DivD: return "div_d";
+        case IROp::NegD: return "neg_d";
+
         case IROp::EqI: return "eq_i";
         case IROp::NeI: return "ne_i";
         case IROp::LtI: return "lt_i";
@@ -38,6 +46,13 @@ const char* ir_op_to_string(IROp op) {
         case IROp::LeF: return "le_f";
         case IROp::GtF: return "gt_f";
         case IROp::GeF: return "ge_f";
+
+        case IROp::EqD: return "eq_d";
+        case IROp::NeD: return "ne_d";
+        case IROp::LtD: return "lt_d";
+        case IROp::LeD: return "le_d";
+        case IROp::GtD: return "gt_d";
+        case IROp::GeD: return "ge_d";
 
         case IROp::Not:    return "not";
         case IROp::And:    return "and";
@@ -139,8 +154,14 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
             break;
         }
 
-        case IROp::ConstFloat: {
-            auto s = fmt::format(" {}", inst->const_data.float_val);
+        case IROp::ConstF: {
+            auto s = fmt::format(" {}f", inst->const_data.f32_val);
+            for (char c : s) out.push_back(c);
+            break;
+        }
+
+        case IROp::ConstD: {
+            auto s = fmt::format(" {}", inst->const_data.f64_val);
             for (char c : s) out.push_back(c);
             break;
         }
@@ -162,6 +183,10 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
         case IROp::SubF:
         case IROp::MulF:
         case IROp::DivF:
+        case IROp::AddD:
+        case IROp::SubD:
+        case IROp::MulD:
+        case IROp::DivD:
         case IROp::EqI:
         case IROp::NeI:
         case IROp::LtI:
@@ -174,6 +199,12 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
         case IROp::LeF:
         case IROp::GtF:
         case IROp::GeF:
+        case IROp::EqD:
+        case IROp::NeD:
+        case IROp::LtD:
+        case IROp::LeD:
+        case IROp::GtD:
+        case IROp::GeD:
         case IROp::And:
         case IROp::Or:
         case IROp::BitAnd:
@@ -186,6 +217,7 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
 
         case IROp::NegI:
         case IROp::NegF:
+        case IROp::NegD:
         case IROp::Not:
         case IROp::BitNot:
         case IROp::I_TO_F64:

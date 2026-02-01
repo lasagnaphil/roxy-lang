@@ -406,14 +406,15 @@ TEST_CASE("SSA IR - Float operations") {
     IRFunction* func = module->functions[0];
     IRBlock* entry = func->blocks[0];
 
-    bool found_addf = false;
+    // f64 addition uses AddD (D = double)
+    bool found_addd = false;
     for (IRInst* inst : entry->instructions) {
-        if (inst->op == IROp::AddF) {
-            found_addf = true;
+        if (inst->op == IROp::AddD) {
+            found_addd = true;
             break;
         }
     }
-    CHECK(found_addf);
+    CHECK(found_addd);
 }
 
 TEST_CASE("SSA IR - Function call") {

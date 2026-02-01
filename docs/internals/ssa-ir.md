@@ -38,20 +38,26 @@ struct ValueId { u32 id; };
 struct BlockId { u32 id; };
 
 enum class IROp {
-    // Constants (5)
-    ConstNull, ConstBool, ConstInt, ConstFloat, ConstString,
+    // Constants (6)
+    ConstNull, ConstBool, ConstInt, ConstF, ConstD, ConstString,
 
     // Arithmetic - integer (6)
     AddI, SubI, MulI, DivI, ModI, NegI,
 
-    // Arithmetic - float (5)
+    // Arithmetic - f32 (5)
     AddF, SubF, MulF, DivF, NegF,
+
+    // Arithmetic - f64 (5)
+    AddD, SubD, MulD, DivD, NegD,
 
     // Comparisons - integer (6)
     EqI, NeI, LtI, LeI, GtI, GeI,
 
-    // Comparisons - float (6)
+    // Comparisons - f32 (6)
     EqF, NeF, LtF, LeF, GtF, GeF,
+
+    // Comparisons - f64 (6)
+    EqD, NeD, LtD, LeD, GtD, GeD,
 
     // Logical (3)
     Not, And, Or,
@@ -83,8 +89,11 @@ enum class IROp {
 
     // Meta (2)
     BlockArg, Copy,
+
+    // Casting (1)
+    Cast,
 };
-// Total: 42 IR operations
+// Total: 54 IR operations
 
 struct IRInst {
     IROp op;

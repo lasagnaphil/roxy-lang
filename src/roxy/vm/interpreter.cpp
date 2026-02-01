@@ -14,8 +14,21 @@ inline i64 reg_as_i64(u64 r) { return static_cast<i64>(r); }
 inline f64 reg_as_f64(u64 r) { f64 v; memcpy(&v, &r, sizeof(v)); return v; }
 inline void* reg_as_ptr(u64 r) { return reinterpret_cast<void*>(r); }
 
+// f32 helper functions - f32 values are stored as bit patterns in lower 32 bits
+inline f32 reg_as_f32(u64 r) {
+    u32 bits = static_cast<u32>(r);
+    f32 v;
+    memcpy(&v, &bits, sizeof(v));
+    return v;
+}
+
 inline u64 reg_from_i64(i64 v) { return static_cast<u64>(v); }
 inline u64 reg_from_f64(f64 v) { u64 r; memcpy(&r, &v, sizeof(r)); return r; }
+inline u64 reg_from_f32(f32 v) {
+    u32 bits;
+    memcpy(&bits, &v, sizeof(bits));
+    return static_cast<u64>(bits);
+}
 inline u64 reg_from_ptr(void* p) { return reinterpret_cast<u64>(p); }
 inline u64 reg_from_bool(bool b) { return b ? 1 : 0; }
 inline bool reg_is_truthy(u64 r) { return r != 0; }
@@ -129,24 +142,45 @@ bool interpret(RoxyVM* vm) {
                 regs[a] = reg_from_i64(-reg_as_i64(regs[b]));
                 break;
 
-            // Float Arithmetic
+            // f32 Arithmetic
             case Opcode::ADD_F:
-                regs[a] = reg_from_f64(reg_as_f64(regs[b]) + reg_as_f64(regs[c]));
+                regs[a] = reg_from_f32(reg_as_f32(regs[b]) + reg_as_f32(regs[c]));
                 break;
 
             case Opcode::SUB_F:
-                regs[a] = reg_from_f64(reg_as_f64(regs[b]) - reg_as_f64(regs[c]));
+                regs[a] = reg_from_f32(reg_as_f32(regs[b]) - reg_as_f32(regs[c]));
                 break;
 
             case Opcode::MUL_F:
-                regs[a] = reg_from_f64(reg_as_f64(regs[b]) * reg_as_f64(regs[c]));
+                regs[a] = reg_from_f32(reg_as_f32(regs[b]) * reg_as_f32(regs[c]));
                 break;
 
             case Opcode::DIV_F:
-                regs[a] = reg_from_f64(reg_as_f64(regs[b]) / reg_as_f64(regs[c]));
+                regs[a] = reg_from_f32(reg_as_f32(regs[b]) / reg_as_f32(regs[c]));
                 break;
 
             case Opcode::NEG_F:
+                regs[a] = reg_from_f32(-reg_as_f32(regs[b]));
+                break;
+
+            // f64 Arithmetic
+            case Opcode::ADD_D:
+                regs[a] = reg_from_f64(reg_as_f64(regs[b]) + reg_as_f64(regs[c]));
+                break;
+
+            case Opcode::SUB_D:
+                regs[a] = reg_from_f64(reg_as_f64(regs[b]) - reg_as_f64(regs[c]));
+                break;
+
+            case Opcode::MUL_D:
+                regs[a] = reg_from_f64(reg_as_f64(regs[b]) * reg_as_f64(regs[c]));
+                break;
+
+            case Opcode::DIV_D:
+                regs[a] = reg_from_f64(reg_as_f64(regs[b]) / reg_as_f64(regs[c]));
+                break;
+
+            case Opcode::NEG_D:
                 regs[a] = reg_from_f64(-reg_as_f64(regs[b]));
                 break;
 
@@ -220,28 +254,53 @@ bool interpret(RoxyVM* vm) {
                 regs[a] = reg_from_bool(regs[b] >= regs[c]);
                 break;
 
-            // Float Comparisons
+            // f32 Comparisons
             case Opcode::EQ_F:
-                regs[a] = reg_from_bool(reg_as_f64(regs[b]) == reg_as_f64(regs[c]));
+                regs[a] = reg_from_bool(reg_as_f32(regs[b]) == reg_as_f32(regs[c]));
                 break;
 
             case Opcode::NE_F:
-                regs[a] = reg_from_bool(reg_as_f64(regs[b]) != reg_as_f64(regs[c]));
+                regs[a] = reg_from_bool(reg_as_f32(regs[b]) != reg_as_f32(regs[c]));
                 break;
 
             case Opcode::LT_F:
-                regs[a] = reg_from_bool(reg_as_f64(regs[b]) < reg_as_f64(regs[c]));
+                regs[a] = reg_from_bool(reg_as_f32(regs[b]) < reg_as_f32(regs[c]));
                 break;
 
             case Opcode::LE_F:
-                regs[a] = reg_from_bool(reg_as_f64(regs[b]) <= reg_as_f64(regs[c]));
+                regs[a] = reg_from_bool(reg_as_f32(regs[b]) <= reg_as_f32(regs[c]));
                 break;
 
             case Opcode::GT_F:
-                regs[a] = reg_from_bool(reg_as_f64(regs[b]) > reg_as_f64(regs[c]));
+                regs[a] = reg_from_bool(reg_as_f32(regs[b]) > reg_as_f32(regs[c]));
                 break;
 
             case Opcode::GE_F:
+                regs[a] = reg_from_bool(reg_as_f32(regs[b]) >= reg_as_f32(regs[c]));
+                break;
+
+            // f64 Comparisons
+            case Opcode::EQ_D:
+                regs[a] = reg_from_bool(reg_as_f64(regs[b]) == reg_as_f64(regs[c]));
+                break;
+
+            case Opcode::NE_D:
+                regs[a] = reg_from_bool(reg_as_f64(regs[b]) != reg_as_f64(regs[c]));
+                break;
+
+            case Opcode::LT_D:
+                regs[a] = reg_from_bool(reg_as_f64(regs[b]) < reg_as_f64(regs[c]));
+                break;
+
+            case Opcode::LE_D:
+                regs[a] = reg_from_bool(reg_as_f64(regs[b]) <= reg_as_f64(regs[c]));
+                break;
+
+            case Opcode::GT_D:
+                regs[a] = reg_from_bool(reg_as_f64(regs[b]) > reg_as_f64(regs[c]));
+                break;
+
+            case Opcode::GE_D:
                 regs[a] = reg_from_bool(reg_as_f64(regs[b]) >= reg_as_f64(regs[c]));
                 break;
 

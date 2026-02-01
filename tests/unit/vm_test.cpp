@@ -222,17 +222,18 @@ TEST_CASE("Execute float arithmetic") {
     module->name = "test";
 
     BCFunction* func = new BCFunction();
-    func->name = "addf";
+    func->name = "addd";
     func->param_count = 2;
     func->register_count = 3;
-    func->code.push_back(encode_abc(Opcode::ADD_F, 2, 0, 1));
+    // Use ADD_D for f64 addition (D = double, F = float32)
+    func->code.push_back(encode_abc(Opcode::ADD_D, 2, 0, 1));
     func->code.push_back(encode_abc(Opcode::RET, 2, 0, 0));
     module->functions.push_back(func);
 
     vm_load_module(&vm, module);
 
     Value args[2] = {Value::make_float(3.14), Value::make_float(2.86)};
-    CHECK(vm_call(&vm, "addf", Span<Value>(args, 2)));
+    CHECK(vm_call(&vm, "addd", Span<Value>(args, 2)));
     Value result = vm_get_result(&vm);
     // With untyped registers, interpret result bits as float
     Value float_result = Value::float_from_u64(result.as_u64());

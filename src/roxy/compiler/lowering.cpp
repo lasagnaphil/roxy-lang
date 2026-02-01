@@ -327,8 +327,24 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             break;
         }
 
-        case IROp::ConstFloat: {
-            u16 const_idx = add_constant(BCConstant::make_float(inst->const_data.float_val));
+        case IROp::ConstF: {
+            // Get f32 bit pattern and emit as LOAD_INT
+            f32 fval = inst->const_data.f32_val;
+            u32 bits;
+            memcpy(&bits, &fval, sizeof(bits));
+            if (bits <= 0x7FFF) {
+                // Small positive value - use immediate
+                emit_abi(Opcode::LOAD_INT, dst, static_cast<u16>(bits));
+            } else {
+                // Use constant pool
+                u16 const_idx = add_constant(BCConstant::make_int(static_cast<i64>(bits)));
+                emit_abi(Opcode::LOAD_CONST, dst, const_idx);
+            }
+            break;
+        }
+
+        case IROp::ConstD: {
+            u16 const_idx = add_constant(BCConstant::make_float(inst->const_data.f64_val));
             emit_abi(Opcode::LOAD_CONST, dst, const_idx);
             break;
         }
@@ -350,6 +366,10 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::SubF:
         case IROp::MulF:
         case IROp::DivF:
+        case IROp::AddD:
+        case IROp::SubD:
+        case IROp::MulD:
+        case IROp::DivD:
         case IROp::BitAnd:
         case IROp::BitOr:
         case IROp::EqI:
@@ -364,6 +384,12 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::LeF:
         case IROp::GtF:
         case IROp::GeF:
+        case IROp::EqD:
+        case IROp::NeD:
+        case IROp::LtD:
+        case IROp::LeD:
+        case IROp::GtD:
+        case IROp::GeD:
         case IROp::And:
         case IROp::Or: {
             u8 left = get_register(inst->binary.left);
@@ -375,6 +401,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         // Unary operations
         case IROp::NegI:
         case IROp::NegF:
+        case IROp::NegD:
         case IROp::BitNot:
         case IROp::Not:
         case IROp::I_TO_F64:
@@ -587,6 +614,8 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             u16 slot_offset = static_cast<u16>(inst->field.slot_offset);
             emit_abc(Opcode::GET_FIELD, dst, obj, slot_count);
             emit(static_cast<u32>(slot_offset));  // Second instruction word with slot offset
+            // f32 fields are loaded as their 32-bit pattern and stay that way
+            // They'll be processed by f32-specific opcodes (ADD_F, etc.)
             break;
         }
 
@@ -894,12 +923,19 @@ Opcode BytecodeBuilder::get_opcode(IROp op) const {
         case IROp::ModI:    return Opcode::MOD_I;
         case IROp::NegI:    return Opcode::NEG_I;
 
-        // Float arithmetic
+        // f32 arithmetic
         case IROp::AddF:    return Opcode::ADD_F;
         case IROp::SubF:    return Opcode::SUB_F;
         case IROp::MulF:    return Opcode::MUL_F;
         case IROp::DivF:    return Opcode::DIV_F;
         case IROp::NegF:    return Opcode::NEG_F;
+
+        // f64 arithmetic
+        case IROp::AddD:    return Opcode::ADD_D;
+        case IROp::SubD:    return Opcode::SUB_D;
+        case IROp::MulD:    return Opcode::MUL_D;
+        case IROp::DivD:    return Opcode::DIV_D;
+        case IROp::NegD:    return Opcode::NEG_D;
 
         // Integer comparisons
         case IROp::EqI:     return Opcode::EQ_I;
@@ -909,13 +945,21 @@ Opcode BytecodeBuilder::get_opcode(IROp op) const {
         case IROp::GtI:     return Opcode::GT_I;
         case IROp::GeI:     return Opcode::GE_I;
 
-        // Float comparisons
+        // f32 comparisons
         case IROp::EqF:     return Opcode::EQ_F;
         case IROp::NeF:     return Opcode::NE_F;
         case IROp::LtF:     return Opcode::LT_F;
         case IROp::LeF:     return Opcode::LE_F;
         case IROp::GtF:     return Opcode::GT_F;
         case IROp::GeF:     return Opcode::GE_F;
+
+        // f64 comparisons
+        case IROp::EqD:     return Opcode::EQ_D;
+        case IROp::NeD:     return Opcode::NE_D;
+        case IROp::LtD:     return Opcode::LT_D;
+        case IROp::LeD:     return Opcode::LE_D;
+        case IROp::GtD:     return Opcode::GT_D;
+        case IROp::GeD:     return Opcode::GE_D;
 
         // Logical
         case IROp::Not:     return Opcode::NOT;

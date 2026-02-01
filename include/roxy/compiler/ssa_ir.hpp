@@ -44,7 +44,8 @@ enum class IROp : u8 {
     ConstNull,      // null constant
     ConstBool,      // boolean constant
     ConstInt,       // integer constant
-    ConstFloat,     // float constant
+    ConstF,         // f32 constant (stores f32 bits as u32)
+    ConstD,         // f64 constant (stores f64 bits)
     ConstString,    // string constant
 
     // Arithmetic (integer)
@@ -55,12 +56,19 @@ enum class IROp : u8 {
     ModI,
     NegI,
 
-    // Arithmetic (float)
+    // Arithmetic (f32)
     AddF,
     SubF,
     MulF,
     DivF,
     NegF,
+
+    // Arithmetic (f64)
+    AddD,
+    SubD,
+    MulD,
+    DivD,
+    NegD,
 
     // Comparison (integer)
     EqI,
@@ -70,13 +78,21 @@ enum class IROp : u8 {
     GtI,
     GeI,
 
-    // Comparison (float)
+    // Comparison (f32)
     EqF,
     NeF,
     LtF,
     LeF,
     GtF,
     GeF,
+
+    // Comparison (f64)
+    EqD,
+    NeD,
+    LtD,
+    LeD,
+    GtD,
+    GeD,
 
     // Logical
     Not,
@@ -139,7 +155,8 @@ struct ConstData {
     union {
         bool bool_val;
         i64 int_val;
-        f64 float_val;
+        f32 f32_val;       // For ConstF
+        f64 f64_val;       // For ConstD
         StringView string_val;
     };
 

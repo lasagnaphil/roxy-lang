@@ -776,3 +776,45 @@ TEST_CASE("E2E - Large struct return chained function calls") {
     CHECK(result.success);
     CHECK(result.stdout_output == "15\n15\n15\n15\n15\n");  // 10+5 for each field
 }
+
+// ============================================================================
+// Float Struct Field Tests
+// ============================================================================
+
+TEST_CASE("E2E - Struct with f32 fields") {
+    const char* source = R"(
+        struct Point {
+            x: f32;
+            y: f32;
+        }
+
+        fun main(): i32 {
+            var p: Point = Point { x = 1.5f, y = 2.5f };
+            var sum: f32 = p.x + p.y;
+            return i32(sum);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main", {}, true);
+    CHECK(result.success);
+    CHECK(result.value == 4);  // 1.5 + 2.5 = 4.0 -> 4
+}
+
+TEST_CASE("E2E - Struct with mixed i32 and f32 fields") {
+    const char* source = R"(
+        struct Data {
+            count: i32;
+            value: f32;
+        }
+
+        fun main(): i32 {
+            var d: Data = Data { count = 10, value = 2.5f };
+            var result: f32 = f32(d.count) * d.value;
+            return i32(result);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main", {}, true);
+    CHECK(result.success);
+    CHECK(result.value == 25);  // 10 * 2.5 = 25.0 -> 25
+}

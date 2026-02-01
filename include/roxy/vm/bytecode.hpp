@@ -31,12 +31,19 @@ enum class Opcode : u8 {
     MOD_I       = 0x14,     // dst = src1 % src2
     NEG_I       = 0x15,     // dst = -src1
 
-    // 0x20-0x2F: Float Arithmetic
-    ADD_F       = 0x20,     // dst = src1 + src2
-    SUB_F       = 0x21,     // dst = src1 - src2
-    MUL_F       = 0x22,     // dst = src1 * src2
-    DIV_F       = 0x23,     // dst = src1 / src2
-    NEG_F       = 0x24,     // dst = -src1
+    // 0x20-0x24: f32 Arithmetic (F = float)
+    ADD_F       = 0x20,     // dst = src1 + src2 (f32)
+    SUB_F       = 0x21,     // dst = src1 - src2 (f32)
+    MUL_F       = 0x22,     // dst = src1 * src2 (f32)
+    DIV_F       = 0x23,     // dst = src1 / src2 (f32)
+    NEG_F       = 0x24,     // dst = -src1 (f32)
+
+    // 0x25-0x29: f64 Arithmetic (D = double)
+    ADD_D       = 0x25,     // dst = src1 + src2 (f64)
+    SUB_D       = 0x26,     // dst = src1 - src2 (f64)
+    MUL_D       = 0x27,     // dst = src1 * src2 (f64)
+    DIV_D       = 0x28,     // dst = src1 / src2 (f64)
+    NEG_D       = 0x29,     // dst = -src1 (f64)
 
     // 0x30-0x3F: Bitwise Operations
     BIT_AND     = 0x30,     // dst = src1 & src2
@@ -52,20 +59,28 @@ enum class Opcode : u8 {
     NE_I        = 0x41,     // dst = src1 != src2
     LT_I        = 0x42,     // dst = src1 < src2 (signed)
     LE_I        = 0x43,     // dst = src1 <= src2 (signed)
-    GT_I        = 0x44,     // dst = src1 > src2 (signed)
+    GT_I        = 0x44,     // dst = src1 > src2 (signe )
     GE_I        = 0x45,     // dst = src1 >= src2 (signed)
     LT_U        = 0x46,     // dst = src1 < src2 (unsigned)
     LE_U        = 0x47,     // dst = src1 <= src2 (unsigned)
     GT_U        = 0x48,     // dst = src1 > src2 (unsigned)
     GE_U        = 0x49,     // dst = src1 >= src2 (unsigned)
 
-    // 0x50-0x5F: Float Comparisons
-    EQ_F        = 0x50,     // dst = src1 == src2
-    NE_F        = 0x51,     // dst = src1 != src2
-    LT_F        = 0x52,     // dst = src1 < src2
-    LE_F        = 0x53,     // dst = src1 <= src2
-    GT_F        = 0x54,     // dst = src1 > src2
-    GE_F        = 0x55,     // dst = src1 >= src2
+    // 0x50-0x55: f32 Comparisons (F = float)
+    EQ_F        = 0x50,     // dst = src1 == src2 (f32)
+    NE_F        = 0x51,     // dst = src1 != src2 (f32)
+    LT_F        = 0x52,     // dst = src1 < src2 (f32)
+    LE_F        = 0x53,     // dst = src1 <= src2 (f32)
+    GT_F        = 0x54,     // dst = src1 > src2 (f32)
+    GE_F        = 0x55,     // dst = src1 >= src2 (f32)
+
+    // 0x56-0x5B: f64 Comparisons (D = double)
+    EQ_D        = 0x56,     // dst = src1 == src2 (f64)
+    NE_D        = 0x57,     // dst = src1 != src2 (f64)
+    LT_D        = 0x58,     // dst = src1 < src2 (f64)
+    LE_D        = 0x59,     // dst = src1 <= src2 (f64)
+    GT_D        = 0x5A,     // dst = src1 > src2 (f64)
+    GE_D        = 0x5B,     // dst = src1 >= src2 (f64)
 
     // 0x60-0x6F: Logical Operations
     NOT         = 0x60,     // dst = !src1

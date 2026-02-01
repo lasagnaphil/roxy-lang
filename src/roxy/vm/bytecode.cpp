@@ -21,12 +21,19 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::MOD_I:         return "MOD_I";
         case Opcode::NEG_I:         return "NEG_I";
 
-        // Float Arithmetic
+        // f32 Arithmetic
         case Opcode::ADD_F:         return "ADD_F";
         case Opcode::SUB_F:         return "SUB_F";
         case Opcode::MUL_F:         return "MUL_F";
         case Opcode::DIV_F:         return "DIV_F";
         case Opcode::NEG_F:         return "NEG_F";
+
+        // f64 Arithmetic
+        case Opcode::ADD_D:         return "ADD_D";
+        case Opcode::SUB_D:         return "SUB_D";
+        case Opcode::MUL_D:         return "MUL_D";
+        case Opcode::DIV_D:         return "DIV_D";
+        case Opcode::NEG_D:         return "NEG_D";
 
         // Bitwise Operations
         case Opcode::BIT_AND:       return "BIT_AND";
@@ -49,13 +56,21 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::GT_U:          return "GT_U";
         case Opcode::GE_U:          return "GE_U";
 
-        // Float Comparisons
+        // f32 Comparisons
         case Opcode::EQ_F:          return "EQ_F";
         case Opcode::NE_F:          return "NE_F";
         case Opcode::LT_F:          return "LT_F";
         case Opcode::LE_F:          return "LE_F";
         case Opcode::GT_F:          return "GT_F";
         case Opcode::GE_F:          return "GE_F";
+
+        // f64 Comparisons
+        case Opcode::EQ_D:          return "EQ_D";
+        case Opcode::NE_D:          return "NE_D";
+        case Opcode::LT_D:          return "LT_D";
+        case Opcode::LE_D:          return "LE_D";
+        case Opcode::GT_D:          return "GT_D";
+        case Opcode::GE_D:          return "GE_D";
 
         // Logical Operations
         case Opcode::NOT:           return "NOT";
@@ -153,6 +168,7 @@ void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out) {
         // Format: dst, src
         case Opcode::MOV:
         case Opcode::NEG_I:
+        case Opcode::NEG_D:
         case Opcode::NEG_F:
         case Opcode::BIT_NOT:
         case Opcode::NOT:
@@ -183,6 +199,10 @@ void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out) {
         case Opcode::MUL_I:
         case Opcode::DIV_I:
         case Opcode::MOD_I:
+        case Opcode::ADD_D:
+        case Opcode::SUB_D:
+        case Opcode::MUL_D:
+        case Opcode::DIV_D:
         case Opcode::ADD_F:
         case Opcode::SUB_F:
         case Opcode::MUL_F:
@@ -203,6 +223,12 @@ void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out) {
         case Opcode::LE_U:
         case Opcode::GT_U:
         case Opcode::GE_U:
+        case Opcode::EQ_D:
+        case Opcode::NE_D:
+        case Opcode::LT_D:
+        case Opcode::LE_D:
+        case Opcode::GT_D:
+        case Opcode::GE_D:
         case Opcode::EQ_F:
         case Opcode::NE_F:
         case Opcode::LT_F:

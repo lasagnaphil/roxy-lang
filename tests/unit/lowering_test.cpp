@@ -304,10 +304,10 @@ TEST_CASE("Lower float constant") {
     entry->id = BlockId{0};
 
     IRInst* const_inst = alloc.emplace<IRInst>();
-    const_inst->op = IROp::ConstFloat;
+    const_inst->op = IROp::ConstD;
     const_inst->result = func->new_value();
     const_inst->type = types.f64_type();
-    const_inst->const_data.float_val = 3.14159;
+    const_inst->const_data.f64_val = 3.14159;
     entry->instructions.push_back(const_inst);
 
     entry->terminator.kind = TerminatorKind::Return;

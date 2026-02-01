@@ -494,9 +494,21 @@ ValueId IRBuilder::emit_const_int(i64 value, Type* type) {
 
 ValueId IRBuilder::emit_const_float(f64 value, Type* type) {
     if (!type) type = m_types.f64_type();
-    IRInst* inst = emit_inst(IROp::ConstFloat, type);
+
+    // Check if this is an f32 - if so, emit ConstF
+    if (type->kind == TypeKind::F32) {
+        IRInst* inst = emit_inst(IROp::ConstF, type);
+        if (inst) {
+            inst->const_data.f32_val = static_cast<f32>(value);
+            return inst->result;
+        }
+        return ValueId::invalid();
+    }
+
+    // f64 case
+    IRInst* inst = emit_inst(IROp::ConstD, type);
     if (inst) {
-        inst->const_data.float_val = value;
+        inst->const_data.f64_val = value;
         return inst->result;
     }
     return ValueId::invalid();
@@ -2557,17 +2569,18 @@ Span<BlockArgPair> IRBuilder::make_loop_args(const Vector<LoopVarInfo>& loop_var
 // Opcode selection
 
 IROp IRBuilder::get_binary_op(BinaryOp op, Type* type) {
-    bool is_float = type && type->is_float();
+    bool is_f32 = type && type->kind == TypeKind::F32;
+    bool is_f64 = type && type->kind == TypeKind::F64;
 
     switch (op) {
         case BinaryOp::Add:
-            return is_float ? IROp::AddF : IROp::AddI;
+            return is_f32 ? IROp::AddF : (is_f64 ? IROp::AddD : IROp::AddI);
         case BinaryOp::Sub:
-            return is_float ? IROp::SubF : IROp::SubI;
+            return is_f32 ? IROp::SubF : (is_f64 ? IROp::SubD : IROp::SubI);
         case BinaryOp::Mul:
-            return is_float ? IROp::MulF : IROp::MulI;
+            return is_f32 ? IROp::MulF : (is_f64 ? IROp::MulD : IROp::MulI);
         case BinaryOp::Div:
-            return is_float ? IROp::DivF : IROp::DivI;
+            return is_f32 ? IROp::DivF : (is_f64 ? IROp::DivD : IROp::DivI);
         case BinaryOp::Mod:
             return IROp::ModI;
         case BinaryOp::BitAnd:
@@ -2580,30 +2593,34 @@ IROp IRBuilder::get_binary_op(BinaryOp op, Type* type) {
 }
 
 IROp IRBuilder::get_comparison_op(BinaryOp op, Type* type) {
-    bool is_float = type && type->is_float();
+    bool is_f32 = type && type->kind == TypeKind::F32;
+    bool is_f64 = type && type->kind == TypeKind::F64;
 
     switch (op) {
         case BinaryOp::Equal:
-            return is_float ? IROp::EqF : IROp::EqI;
+            return is_f32 ? IROp::EqF : (is_f64 ? IROp::EqD : IROp::EqI);
         case BinaryOp::NotEqual:
-            return is_float ? IROp::NeF : IROp::NeI;
+            return is_f32 ? IROp::NeF : (is_f64 ? IROp::NeD : IROp::NeI);
         case BinaryOp::Less:
-            return is_float ? IROp::LtF : IROp::LtI;
+            return is_f32 ? IROp::LtF : (is_f64 ? IROp::LtD : IROp::LtI);
         case BinaryOp::LessEq:
-            return is_float ? IROp::LeF : IROp::LeI;
+            return is_f32 ? IROp::LeF : (is_f64 ? IROp::LeD : IROp::LeI);
         case BinaryOp::Greater:
-            return is_float ? IROp::GtF : IROp::GtI;
+            return is_f32 ? IROp::GtF : (is_f64 ? IROp::GtD : IROp::GtI);
         case BinaryOp::GreaterEq:
-            return is_float ? IROp::GeF : IROp::GeI;
+            return is_f32 ? IROp::GeF : (is_f64 ? IROp::GeD : IROp::GeI);
         default:
             return IROp::EqI;
     }
 }
 
 IROp IRBuilder::get_unary_op(UnaryOp op, Type* type) {
+    bool is_f32 = type && type->kind == TypeKind::F32;
+    bool is_f64 = type && type->kind == TypeKind::F64;
+
     switch (op) {
         case UnaryOp::Negate:
-            return (type && type->is_float()) ? IROp::NegF : IROp::NegI;
+            return is_f32 ? IROp::NegF : (is_f64 ? IROp::NegD : IROp::NegI);
         case UnaryOp::Not:
             return IROp::Not;
         case UnaryOp::BitNot:
