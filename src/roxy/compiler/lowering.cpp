@@ -139,6 +139,21 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                     m_next_reg++;
                 }
             }
+
+            // Same for CallExternal (cross-module calls)
+            if (inst->op == IROp::CallExternal && inst->result.is_valid()) {
+                u8 dst = get_register(inst->result);
+                u32 extra_regs_for_return = 0;
+                u32 ret_slot_count = get_struct_slot_count(inst->type);
+                if (ret_slot_count > 0 && ret_slot_count <= 4) {
+                    extra_regs_for_return = (ret_slot_count + 1) / 2;
+                }
+
+                u8 needed_regs = dst + static_cast<u8>(extra_regs_for_return) + 1 + static_cast<u8>(inst->call_external.args.size());
+                while (m_next_reg < needed_regs) {
+                    m_next_reg++;
+                }
+            }
         }
     }
 

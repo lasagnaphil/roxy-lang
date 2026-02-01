@@ -822,9 +822,18 @@ Multi-file compilation with import/export support:
 **Import Syntax:**
 ```roxy
 import math;                    // Import module, access as math.sin()
+import math.vec2;               // Nested path, access as vec2.add()
 from math import sin, cos;      // Import specific symbols directly
+from math.vec2 import add;      // From-import with nested path
 from utils import clamp as c;   // Import with alias
 ```
+
+**Nested Module Paths:**
+- Dotted paths like `math.vec2` are supported for organizing modules hierarchically
+- The **last component** of the path becomes the local name: `import math.vec2;` → access as `vec2.func()`
+- Module must be registered with the full path: `compiler.add_source("math.vec2", source, len)`
+- Works with both `import` and `from ... import` forms
+- No namespace hierarchy at runtime - just convenient naming
 
 **Key Components:**
 

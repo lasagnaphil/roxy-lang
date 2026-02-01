@@ -466,4 +466,294 @@ TEST_CASE("E2E - Compiler: struct field visibility - same module public fields w
     delete module;
 }
 
+// =============================================================================
+// Nested Module Path Tests
+// =============================================================================
+
+TEST_CASE("E2E - Module: nested module path import") {
+    BumpAllocator allocator(16384);
+
+    // Use exactly the same function structure as working test
+    const char* vec2_source = R"(
+        pub fun double(x: i32): i32 {
+            return x * 2;
+        }
+
+        pub fun triple(x: i32): i32 {
+            return x * 3;
+        }
+    )";
+
+    const char* main_source = R"(
+        import math.vec2;
+
+        fun main(): i32 {
+            return vec2.double(5) + vec2.triple(3);
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("math.vec2", vec2_source, static_cast<u32>(strlen(vec2_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    bool success = vm_call(&vm, "main", {});
+    REQUIRE(success);
+
+    Value result = vm_get_result(&vm);
+    CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+TEST_CASE("E2E - Module: nested module path with multiple calls") {
+    BumpAllocator allocator(16384);
+
+    const char* vec2_source = R"(
+        pub fun double(x: i32): i32 {
+            return x * 2;
+        }
+
+        pub fun triple(x: i32): i32 {
+            return x * 3;
+        }
+    )";
+
+    const char* main_source = R"(
+        import math.vec2;
+
+        fun main(): i32 {
+            var a: i32 = vec2.double(2) + vec2.triple(3);
+            return a;
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("math.vec2", vec2_source, static_cast<u32>(strlen(vec2_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    bool success = vm_call(&vm, "main", {});
+    REQUIRE(success);
+
+    Value result = vm_get_result(&vm);
+    CHECK(result.as_int == 13);  // double(2)=4 + triple(3)=9 = 13
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+TEST_CASE("E2E - Module: deeply nested path") {
+    BumpAllocator allocator(16384);
+
+    const char* collision_source = R"(
+        pub fun check(x: i32): i32 {
+            return x * 2;
+        }
+
+        pub fun verify(x: i32): i32 {
+            return x * 3;
+        }
+    )";
+
+    const char* main_source = R"(
+        import game.physics.collision;
+
+        fun main(): i32 {
+            return collision.check(5) + collision.verify(2);
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("game.physics.collision", collision_source, static_cast<u32>(strlen(collision_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    bool success = vm_call(&vm, "main", {});
+    REQUIRE(success);
+
+    Value result = vm_get_result(&vm);
+    CHECK(result.as_int == 16);  // check(5)=10 + verify(2)=6 = 16
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+TEST_CASE("E2E - Module: from import with nested path") {
+    BumpAllocator allocator(16384);
+
+    const char* vec2_source = R"(
+        pub fun double(x: i32): i32 {
+            return x * 2;
+        }
+
+        pub fun triple(x: i32): i32 {
+            return x * 3;
+        }
+    )";
+
+    const char* main_source = R"(
+        from math.vec2 import double, triple;
+
+        fun main(): i32 {
+            return double(5) + triple(3);
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("math.vec2", vec2_source, static_cast<u32>(strlen(vec2_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    bool success = vm_call(&vm, "main", {});
+    REQUIRE(success);
+
+    Value result = vm_get_result(&vm);
+    CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+TEST_CASE("E2E - Module: single-level import unchanged") {
+    BumpAllocator allocator(16384);
+
+    // Exactly match working test structure
+    const char* utils_source = R"(
+        pub fun double(x: i32): i32 {
+            return x * 2;
+        }
+
+        pub fun triple(x: i32): i32 {
+            return x * 3;
+        }
+    )";
+
+    const char* main_source = R"(
+        import utils;
+
+        fun main(): i32 {
+            return utils.double(5) + utils.triple(3);
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("utils", utils_source, static_cast<u32>(strlen(utils_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    bool success = vm_call(&vm, "main", {});
+    REQUIRE(success);
+
+    Value result = vm_get_result(&vm);
+    CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+TEST_CASE("E2E - Module: cross-module call result in variable") {
+    BumpAllocator allocator(16384);
+
+    const char* utils_source = R"(
+        pub fun double(x: i32): i32 {
+            return x * 2;
+        }
+
+        pub fun triple(x: i32): i32 {
+            return x * 3;
+        }
+    )";
+
+    const char* main_source = R"(
+        import utils;
+
+        fun main(): i32 {
+            var a: i32 = utils.double(2);
+            var b: i32 = utils.triple(a);
+            return b;
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("utils", utils_source, static_cast<u32>(strlen(utils_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    bool success = vm_call(&vm, "main", {});
+    REQUIRE(success);
+
+    Value result = vm_get_result(&vm);
+    CHECK(result.as_int == 12);  // triple(double(2)) = triple(4) = 12
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+TEST_CASE("E2E - Module: error on unknown nested module") {
+    BumpAllocator allocator(16384);
+
+    const char* main_source = R"(
+        import math.nonexistent;
+
+        fun main(): i32 {
+            return 0;
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    CHECK(module == nullptr);
+    CHECK(compiler.has_errors());
+
+    // Check that error mentions the unknown module
+    bool found_error = false;
+    for (const char* err : compiler.errors()) {
+        if (strstr(err, "unknown module") && strstr(err, "math.nonexistent")) {
+            found_error = true;
+            break;
+        }
+    }
+    CHECK(found_error);
+}
+
 } // namespace rx

@@ -1515,16 +1515,55 @@ Decl* Parser::enum_declaration(bool is_pub) {
     return decl;
 }
 
+StringView Parser::parse_module_path() {
+    Token first = consume(TokenKind::Identifier, "Expected module name");
+    if (m_has_error) return StringView();
+
+    // Check if this is a simple single-segment path
+    if (!check(TokenKind::Dot)) {
+        return first.text();
+    }
+
+    // Collect segments and join with dots
+    Vector<StringView> segments;
+    segments.push_back(first.text());
+
+    while (match(TokenKind::Dot)) {
+        Token seg = consume(TokenKind::Identifier, "Expected identifier after '.'");
+        if (m_has_error) return StringView();
+        segments.push_back(seg.text());
+    }
+
+    // Calculate total length needed for "a.b.c" string
+    u32 total_len = 0;
+    for (u32 i = 0; i < segments.size(); i++) {
+        total_len += segments[i].size();
+        if (i > 0) total_len += 1;  // dots between segments
+    }
+
+    // Allocate and build the joined path string
+    char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(total_len + 1, 1));
+    u32 pos = 0;
+    for (u32 i = 0; i < segments.size(); i++) {
+        if (i > 0) buf[pos++] = '.';
+        memcpy(buf + pos, segments[i].data(), segments[i].size());
+        pos += segments[i].size();
+    }
+    buf[pos] = '\0';
+
+    return StringView(buf, total_len);
+}
+
 Decl* Parser::import_declaration() {
     SourceLocation loc = m_previous.loc;
     bool is_from_import = m_previous.kind == TokenKind::KwFrom;
 
     if (is_from_import) {
-        // from pkg import name1, name2;
-        Token module_token = consume(TokenKind::Identifier, "Expected module name after 'from'");
+        // from pkg.subpkg import name1, name2;
+        StringView module_path = parse_module_path();
         if (m_has_error) return nullptr;
 
-        consume(TokenKind::KwImport, "Expected 'import' after module name");
+        consume(TokenKind::KwImport, "Expected 'import' after module path");
         if (m_has_error) return nullptr;
 
         Vector<ImportName> names;
@@ -1555,13 +1594,13 @@ Decl* Parser::import_declaration() {
         Decl* decl = alloc<Decl>();
         decl->kind = AstKind::DeclImport;
         decl->loc = loc;
-        decl->import_decl.module_path = module_token.text();
+        decl->import_decl.module_path = module_path;
         decl->import_decl.names = alloc_span(names);
         decl->import_decl.is_from_import = true;
         return decl;
     } else {
-        // import pkg;
-        Token module_token = consume(TokenKind::Identifier, "Expected module name after 'import'");
+        // import pkg.subpkg;
+        StringView module_path = parse_module_path();
         if (m_has_error) return nullptr;
 
         consume(TokenKind::Semicolon, "Expected ';' after import");
@@ -1570,7 +1609,7 @@ Decl* Parser::import_declaration() {
         Decl* decl = alloc<Decl>();
         decl->kind = AstKind::DeclImport;
         decl->loc = loc;
-        decl->import_decl.module_path = module_token.text();
+        decl->import_decl.module_path = module_path;
         decl->import_decl.names = Span<ImportName>(nullptr, 0);
         decl->import_decl.is_from_import = false;
         return decl;

@@ -686,10 +686,26 @@ void SemanticAnalyzer::analyze_enum_decl(Decl* decl) {
     // Enum declarations are handled in earlier passes
 }
 
+// Helper to extract the last component of a dotted module path
+// e.g., "math.vec2" -> "vec2", "math" -> "math"
+static StringView get_last_path_component(StringView path) {
+    const char* last_dot = nullptr;
+    for (u32 i = 0; i < path.size(); i++) {
+        if (path.data()[i] == '.') {
+            last_dot = path.data() + i;
+        }
+    }
+    if (last_dot) {
+        return StringView(last_dot + 1,
+            static_cast<u32>(path.data() + path.size() - last_dot - 1));
+    }
+    return path;  // No dot - return whole path
+}
+
 void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
     ImportDecl& imp = decl->import_decl;
 
-    // Look up the module
+    // Look up the module by the full path
     ModuleInfo* module = m_modules.find_module(imp.module_path);
     if (!module) {
         error_fmt(decl->loc, "unknown module '%.*s'",
@@ -698,7 +714,7 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
     }
 
     if (imp.is_from_import) {
-        // from math import sin, cos;
+        // from math.vec2 import sin, cos;
         for (u32 i = 0; i < imp.names.size(); i++) {
             ImportName& name = imp.names[i];
 
@@ -742,9 +758,11 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
             }
         }
     } else {
-        // import math;
-        // Register the module as a namespace symbol for qualified access
-        m_symbols.define_module(imp.module_path, module, decl->loc);
+        // import math.vec2;
+        // Register the module under the LAST component of the path for qualified access
+        // e.g., "math.vec2" registers as "vec2", so you can use vec2.add()
+        StringView local_name = get_last_path_component(imp.module_path);
+        m_symbols.define_module(local_name, module, decl->loc);
     }
 }
 

@@ -108,6 +108,9 @@ private:
 
     // Helper to process string literal (strip quotes, handle escapes)
     StringView process_string_literal(const Token& token);
+
+    // Helper to parse dotted module path (e.g., "math.vec2")
+    StringView parse_module_path();
 };
 
 }
