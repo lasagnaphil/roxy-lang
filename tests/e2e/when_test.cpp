@@ -154,24 +154,25 @@ TEST_CASE("E2E - When with local variables in case") {
 }
 
 TEST_CASE("E2E - When with multiple statements per case") {
-    // Note: This test uses return in each case because when doesn't yet
-    // support phi nodes for variable modifications across cases
+    // This test verifies that variable modifications inside case bodies
+    // persist after the when statement (phi node support)
     const char* source = R"(
         enum Level { Debug, Info, Error }
 
         fun log_level(l: Level): i32 {
+            var code: i32 = 0;
             when l {
                 case Debug:
                     print(1);
-                    return 10;
+                    code = 10;
                 case Info:
                     print(2);
-                    return 20;
+                    code = 20;
                 case Error:
                     print(3);
-                    return 30;
+                    code = 30;
             }
-            return 0;
+            return code;
         }
 
         fun main(): i32 {
@@ -244,4 +245,128 @@ TEST_CASE("E2E - When with variable discriminant") {
     TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "1\n2\n3\n");
+}
+
+TEST_CASE("E2E - When phi without else") {
+    const char* source = R"(
+        enum Op { Add, Sub }
+
+        fun calc(op: Op, a: i32, b: i32): i32 {
+            var result: i32 = a;
+            when op {
+                case Add:
+                    result = a + b;
+                case Sub:
+                    result = a - b;
+            }
+            return result;
+        }
+
+        fun main(): i32 {
+            print(calc(Op::Add, 10, 5));
+            print(calc(Op::Sub, 10, 5));
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "15\n5\n");
+}
+
+TEST_CASE("E2E - When phi with else") {
+    const char* source = R"(
+        enum Status { Ok, Warning, Error, Unknown }
+
+        fun status_value(s: Status): i32 {
+            var value: i32 = -1;
+            when s {
+                case Ok:
+                    value = 0;
+                case Warning:
+                    value = 1;
+                case Error:
+                    value = 2;
+                else:
+                    value = 99;
+            }
+            return value;
+        }
+
+        fun main(): i32 {
+            print(status_value(Status::Ok));
+            print(status_value(Status::Warning));
+            print(status_value(Status::Error));
+            print(status_value(Status::Unknown));
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "0\n1\n2\n99\n");
+}
+
+TEST_CASE("E2E - When phi multiple variables") {
+    const char* source = R"(
+        enum Action { Move, Jump, Attack }
+
+        fun process_action(a: Action): i32 {
+            var x: i32 = 0;
+            var y: i32 = 0;
+            when a {
+                case Move:
+                    x = 10;
+                    y = 5;
+                case Jump:
+                    x = 0;
+                    y = 20;
+                case Attack:
+                    x = 5;
+                    y = 0;
+            }
+            return x + y;
+        }
+
+        fun main(): i32 {
+            print(process_action(Action::Move));
+            print(process_action(Action::Jump));
+            print(process_action(Action::Attack));
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "15\n20\n5\n");
+}
+
+TEST_CASE("E2E - When phi partial coverage") {
+    // Some cases modify the variable, some don't - should use original value
+    const char* source = R"(
+        enum Priority { Low, Medium, High }
+
+        fun get_score(p: Priority, base: i32): i32 {
+            var score: i32 = base;
+            when p {
+                case High:
+                    score = base * 3;
+                case Medium:
+                    score = base * 2;
+            }
+            return score;
+        }
+
+        fun main(): i32 {
+            print(get_score(Priority::Low, 10));
+            print(get_score(Priority::Medium, 10));
+            print(get_score(Priority::High, 10));
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    // Low falls through to merge with original value (10)
+    CHECK(result.stdout_output == "10\n20\n30\n");
 }

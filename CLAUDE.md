@@ -371,16 +371,30 @@ fun describe(c: Color): i32 {
 - Multiple variants per case: `case A, B:`
 - Optional `else:` clause for unhandled cases
 - Duplicate case detection
+- **Phi node support**: Variable modifications in case bodies persist after the `when` statement
 
 **Implementation:**
 - Generates comparison chain: `if (x == A) goto case_A else check_next`
 - Each case body is a separate IR block
 - Enum variant values looked up from symbol table
-- Branches to merge block after each case
+- Uses block parameters (phi nodes) to merge variable values from different branches
+- Each case passes its current variable values as block arguments when jumping to merge block
 
-**Current Limitations:**
-- Variable modifications in case bodies don't persist after the `when` statement (no phi nodes yet)
-- Use `return` in each case to avoid this limitation
+**Example with variable modification:**
+```roxy
+enum Op { Add, Sub }
+
+fun calc(op: Op, a: i32, b: i32): i32 {
+    var result: i32 = a;
+    when op {
+        case Add:
+            result = a + b;
+        case Sub:
+            result = a - b;
+    }
+    return result;  // Correctly returns modified value
+}
+```
 
 **Files:** `ast.hpp`, `parser.cpp`, `semantic.cpp`, `ir_builder.cpp`
 **Tests:** `tests/e2e/when_test.cpp`
@@ -404,8 +418,9 @@ SSA IR with block arguments (not phi nodes):
 
 Converts type-checked AST to SSA IR:
 - Generates SSA form directly
-- Handles control flow (if/else, while, for)
-- Proper block argument insertion for loops
+- Handles control flow (if/else, while, for, when)
+- Proper block argument insertion for loops and conditional branches
+- Phi node support for variable modifications across branches (if/else, when)
 
 ### Bytecode (`include/roxy/vm/bytecode.hpp`, `src/roxy/vm/bytecode.cpp`)
 

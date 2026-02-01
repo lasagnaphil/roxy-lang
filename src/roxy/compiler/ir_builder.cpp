@@ -1128,15 +1128,65 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
 void IRBuilder::gen_when_stmt(Stmt* stmt) {
     WhenStmt& ws = stmt->when_stmt;
 
-    // Evaluate discriminant once
+    // 1. Collect variables assigned in any case or else body
+    Vector<StringView> modified_in_cases;
+    for (u32 i = 0; i < ws.cases.size(); i++) {
+        for (u32 j = 0; j < ws.cases[i].body.size(); j++) {
+            Decl* d = ws.cases[i].body[j];
+            if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtWhen) {
+                collect_assigned_vars(&d->stmt, modified_in_cases);
+            }
+        }
+    }
+    for (u32 i = 0; i < ws.else_body.size(); i++) {
+        Decl* d = ws.else_body[i];
+        if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtWhen) {
+            collect_assigned_vars(&d->stmt, modified_in_cases);
+        }
+    }
+
+    // 2. Find phi vars: modified vars that exist before the when
+    Vector<StringView> phi_vars;
+    for (u32 i = 0; i < modified_in_cases.size(); i++) {
+        LocalVar* lv = find_local(modified_in_cases[i]);
+        if (lv && lv->value.is_valid()) {
+            bool found = false;
+            for (u32 j = 0; j < phi_vars.size(); j++) {
+                if (phi_vars[j] == modified_in_cases[i]) { found = true; break; }
+            }
+            if (!found) phi_vars.push_back(modified_in_cases[i]);
+        }
+    }
+
+    // 3. Evaluate discriminant
     ValueId discrim = gen_expr(ws.discriminant);
     Type* discrim_type = ws.discriminant->resolved_type;
 
-    // Create merge block (where all cases jump to)
+    // 4. Create merge block with parameters for phi vars
     IRBlock* merge_block = create_block("endwhen");
 
-    // For each case, we create a block for its body
-    // We chain comparisons: check first case, if false check next, etc.
+    struct PhiInfo {
+        StringView name;
+        Type* type;
+        ValueId merge_param;
+        ValueId original_value;
+    };
+    Vector<PhiInfo> phi_info;
+    for (u32 i = 0; i < phi_vars.size(); i++) {
+        LocalVar* lv = find_local(phi_vars[i]);
+        if (lv) {
+            ValueId param = m_current_func->new_value();
+            merge_block->params.push_back({param, lv->type, phi_vars[i]});
+            phi_info.push_back({phi_vars[i], lv->type, param, lv->value});
+        }
+    }
+
+    // 5. Save variable state before any case (so all cases see original values)
+    Vector<tsl::robin_map<StringView, LocalVar, StringViewHash, StringViewEqual>> saved_scopes;
+    saved_scopes.reserve(m_local_scopes.size());
+    for (auto& scope : m_local_scopes) {
+        saved_scopes.push_back(scope);
+    }
 
     // Track case blocks and their corresponding case names for code gen
     struct CaseInfo {
@@ -1157,7 +1207,7 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         else_block = create_block("when_else");
     }
 
-    // Generate the comparison chain
+    // 6. Generate the comparison chain
     for (u32 i = 0; i < ws.cases.size(); i++) {
         WhenCase& wc = ws.cases[i];
         CaseInfo& ci = case_infos[i];
@@ -1200,7 +1250,17 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         }
 
         // Branch: if condition matches, go to case body, else check next
-        finish_block_branch(case_cond, ci.body_block->id, fallthrough_block->id);
+        // When falling through to merge, pass original phi values
+        if (fallthrough_block == merge_block) {
+            Vector<BlockArgPair> fallthrough_args;
+            for (u32 k = 0; k < phi_info.size(); k++) {
+                fallthrough_args.push_back({phi_info[k].original_value});
+            }
+            finish_block_branch(case_cond, ci.body_block->id, fallthrough_block->id,
+                                {}, alloc_span(fallthrough_args));
+        } else {
+            finish_block_branch(case_cond, ci.body_block->id, fallthrough_block->id);
+        }
 
         // Set next block as current if there are more cases
         if (i + 1 < ws.cases.size()) {
@@ -1208,10 +1268,16 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         }
     }
 
-    // Generate case bodies
+    // 7. Generate case bodies
     for (u32 i = 0; i < ws.cases.size(); i++) {
         WhenCase& wc = ws.cases[i];
         CaseInfo& ci = case_infos[i];
+
+        // Restore scope so this case sees original values
+        m_local_scopes.clear();
+        for (auto& scope : saved_scopes) {
+            m_local_scopes.push_back(scope);
+        }
 
         set_current_block(ci.body_block);
         push_scope();
@@ -1223,14 +1289,25 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
 
         pop_scope();
 
-        // Jump to merge block if not terminated
+        // Jump to merge block with phi args if not terminated
         if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-            finish_block_goto(merge_block->id);
+            Vector<BlockArgPair> args;
+            for (u32 k = 0; k < phi_info.size(); k++) {
+                ValueId val = lookup_local(phi_info[k].name);
+                args.push_back({val});
+            }
+            finish_block_goto(merge_block->id, alloc_span(args));
         }
     }
 
-    // Generate else body if present
+    // 8. Generate else body if present
     if (else_block) {
+        // Restore scope
+        m_local_scopes.clear();
+        for (auto& scope : saved_scopes) {
+            m_local_scopes.push_back(scope);
+        }
+
         set_current_block(else_block);
         push_scope();
 
@@ -1240,14 +1317,22 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
 
         pop_scope();
 
-        // Jump to merge block if not terminated
+        // Jump to merge block with phi args if not terminated
         if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-            finish_block_goto(merge_block->id);
+            Vector<BlockArgPair> args;
+            for (u32 k = 0; k < phi_info.size(); k++) {
+                ValueId val = lookup_local(phi_info[k].name);
+                args.push_back({val});
+            }
+            finish_block_goto(merge_block->id, alloc_span(args));
         }
     }
 
-    // Continue from merge block
+    // 9. Continue from merge block, bind phi results
     set_current_block(merge_block);
+    for (u32 i = 0; i < phi_info.size(); i++) {
+        define_local(phi_info[i].name, phi_info[i].merge_param, phi_info[i].type);
+    }
 }
 
 // Expression generation
@@ -2246,6 +2331,24 @@ void IRBuilder::collect_assigned_vars(Stmt* stmt, Vector<StringView>& out) {
             collect_assigned_vars(stmt->for_stmt.body, out);
             collect_assigned_vars_expr(stmt->for_stmt.increment, out);
             break;
+        case AstKind::StmtWhen: {
+            WhenStmt& ws = stmt->when_stmt;
+            for (u32 i = 0; i < ws.cases.size(); i++) {
+                for (u32 j = 0; j < ws.cases[i].body.size(); j++) {
+                    Decl* d = ws.cases[i].body[j];
+                    if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtWhen) {
+                        collect_assigned_vars(&d->stmt, out);
+                    }
+                }
+            }
+            for (u32 i = 0; i < ws.else_body.size(); i++) {
+                Decl* d = ws.else_body[i];
+                if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtWhen) {
+                    collect_assigned_vars(&d->stmt, out);
+                }
+            }
+            break;
+        }
         default:
             break;
     }
