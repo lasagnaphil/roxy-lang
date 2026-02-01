@@ -4,6 +4,8 @@
 
 > **Implementation Priority:** Generics are a **lower priority** than traits. Roxy prioritizes fast compile times, and full monomorphization can significantly impact compilation speed. Consider implementing traits first (which solve most polymorphism needs like `print()`) and adding generics later if needed. See the "Compile Time Considerations" section below.
 
+> **Design Decision:** Common container types (`Array`, `Dict`, `Option`, etc.) are **built-in compiler types** that don't require monomorphization. User-defined generics are available for custom containers but are rarely needed. See "Built-in vs User-Defined Generics" section below.
+
 Generics enable writing code that works with multiple types while maintaining static type safety.
 
 ## Syntax Overview
@@ -328,23 +330,24 @@ For a `List<T>` used with 20 different types, that's 20× the compilation work f
 | Type erasure (Java/Go) | Fast | Slower (boxing) | Lost |
 | Interpreter-level | Fastest | Slowest | Preserved |
 
-### Recommendation: Traits First
+### Recommendation: Traits First, Built-in Containers
 
-For Roxy's use case (scripting language, game engines, fast iteration), consider:
+For Roxy's use case (scripting language, game engines, fast iteration):
 
-1. **Implement traits WITHOUT full generics first**
+1. **Implement traits first**
    - Trait method implementations monomorphize once at definition time
    - Solves `print()`, `==`, `<` and most polymorphism needs
    - No instantiation explosion at call sites
 
-2. **Add generics later if needed**
-   - Simple generics (identity, swap): Full monomorphization is acceptable
-   - Complex generic containers: Consider type erasure or interpreter-level handling
+2. **Provide built-in parameterized containers**
+   - `T[]`, `Dict<K,V>`, `Option<T>`, `Pair<T,U>`, etc.
+   - Uniform runtime representation (no monomorphization)
+   - Covers 90%+ of generic use cases
 
-3. **Alternative: No generics at all**
-   - Many successful scripting languages (Lua, early Python) had no generics
-   - Use named functions: `list_i32_push()`, `list_string_push()`
-   - Less elegant but compiles fast
+3. **Add user-defined generics last (if ever)**
+   - Only needed for custom container types
+   - Uses monomorphization but rarely triggered
+   - Many projects won't need this at all
 
 ### If Generics Are Implemented
 
@@ -352,6 +355,94 @@ Use aggressive caching to minimize redundant work:
 - Cache instantiations across modules
 - Share identical instantiations (e.g., `List<i32>` compiled once, reused everywhere)
 - Consider lazy instantiation (only compile what's actually called)
+
+## Built-in vs User-Defined Generics
+
+Roxy uses a **hybrid approach** to minimize monomorphization cost while still supporting user-defined generics.
+
+### Built-in Parameterized Types
+
+Common container types are **compiler built-ins** with uniform runtime representations. They don't go through monomorphization.
+
+| Type | Syntax | Purpose |
+|------|--------|---------|
+| Array | `T[]` | Dynamic array |
+| Dict | `Dict<K, V>` | Hash map |
+| Set | `Set<T>` | Unique elements |
+| Pair | `Pair<T, U>` | Two-element tuple |
+| Triple | `Triple<T, U, V>` | Three-element tuple |
+| Option | `Option<T>` | Nullable value wrapper |
+| Result | `Result<T, E>` | Success/error value |
+| Stack | `Stack<T>` | LIFO collection |
+| Queue | `Queue<T>` | FIFO collection |
+
+**Implementation:**
+- Compiler has special knowledge of these types
+- Runtime uses type-erased representations with stored element sizes
+- Type safety enforced at compile time, uniform operations at runtime
+- No code duplication per element type
+
+```roxy
+// All built-in - no monomorphization cost
+var items: i32[] = array_new(10);
+var scores: Dict<string, i32> = dict_new();
+var point: Pair<i32, i32> = Pair(10, 20);
+var maybe: Option<string> = Option.some("hello");
+var result: Result<i32, string> = Result.ok(42);
+```
+
+### User-Defined Generics
+
+Users can still define their own generic types when needed. These use monomorphization:
+
+```roxy
+// User-defined - monomorphized per instantiation
+struct Graph<T> {
+    nodes: T[];
+    edges: Pair<i32, i32>[];  // Uses built-in Pair
+}
+
+fun Graph.add_node<T>(value: T) {
+    // ...
+}
+
+var g: Graph<string> = ...;  // Generates Graph$string
+```
+
+### Why This Hybrid Approach?
+
+| Aspect | Built-in Types | User Generics |
+|--------|----------------|---------------|
+| Compile cost | None (uniform runtime) | Per-instantiation |
+| Code size | Fixed | Grows with usage |
+| Usage frequency | Very common | Rare |
+| Flexibility | Fixed set | Unlimited |
+
+Since built-in types cover 90%+ of generic usage, most Roxy code compiles fast. User-defined generics are available for custom data structures but incur compile-time cost only when used.
+
+### Runtime Representation
+
+Built-in containers use a uniform layout that works for any element type:
+
+```cpp
+// Array header - same struct for i32[], string[], Point[], etc.
+struct ArrayHeader {
+    u32 length;
+    u32 capacity;
+    u32 element_size;   // Bytes per element
+    u32 element_slots;  // Slots per element (for GC/copying)
+};
+// Element data follows header
+```
+
+Operations use `element_size` to compute offsets at runtime:
+```cpp
+void* get_element(ArrayHeader* arr, u32 index) {
+    return (char*)(arr + 1) + index * arr->element_size;
+}
+```
+
+This is slightly slower than monomorphized code but avoids compile-time explosion.
 
 ## Implementation Strategy
 

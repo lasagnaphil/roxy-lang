@@ -170,6 +170,174 @@ registry.bind_native("array_new_int", native_array_new_int,
 
 Built-in functions are registered during semantic analysis initialization. The IR builder detects calls to these functions and emits `CallNative` IR instead of regular `Call` IR.
 
+## Roxy-Native C++ Containers
+
+> **Note:** This feature is planned but not yet implemented.
+
+Roxy provides its own C++ container library designed for zero-cost interop with the VM. These containers share the exact same memory layout as Roxy's runtime representations, eliminating conversion overhead.
+
+### Design Philosophy
+
+Roxy provides native C++ containers that:
+
+- Have identical memory layout to Roxy runtime containers
+- Can be passed to/from Roxy without conversion
+- Use the Roxy VM allocator for memory management
+- Provide C++ compile-time type safety
+
+### Container Types
+
+```cpp
+namespace rx {
+
+template<typename T>
+class Array {
+    ArrayHeader* m_header;
+public:
+    // Element access
+    T& operator[](u32 i) { return data()[i]; }
+    const T& operator[](u32 i) const { return data()[i]; }
+    T* data() { return reinterpret_cast<T*>(m_header + 1); }
+
+    // Size
+    u32 length() const { return m_header->length; }
+    u32 capacity() const { return m_header->capacity; }
+    bool empty() const { return length() == 0; }
+
+    // Iteration (range-for compatible)
+    T* begin() { return data(); }
+    T* end() { return data() + length(); }
+    const T* begin() const { return data(); }
+    const T* end() const { return data() + length(); }
+
+    // Modification (requires VM for allocation)
+    void push(VM* vm, T value);
+    T pop();
+    void clear();
+};
+
+template<typename K, typename V>
+class Dict {
+    DictHeader* m_header;
+public:
+    V* get(const K& key);
+    const V* get(const K& key) const;
+    void set(VM* vm, K key, V value);
+    bool contains(const K& key) const;
+    void remove(const K& key);
+    u32 size() const;
+
+    // Iteration
+    struct Iterator { /* ... */ };
+    Iterator begin();
+    Iterator end();
+};
+
+template<typename T>
+class Option {
+    bool m_has_value;
+    T m_value;
+public:
+    bool has_value() const { return m_has_value; }
+    T& value() { return m_value; }
+    const T& value() const { return m_value; }
+    T value_or(T default_val) const;
+
+    static Option some(T v) { return Option{true, v}; }
+    static Option none() { return Option{false, T{}}; }
+};
+
+template<typename T, typename E>
+class Result {
+    bool m_is_ok;
+    union { T m_value; E m_error; };
+public:
+    bool is_ok() const { return m_is_ok; }
+    bool is_err() const { return !m_is_ok; }
+    T& value() { return m_value; }
+    E& error() { return m_error; }
+
+    static Result ok(T v);
+    static Result err(E e);
+};
+
+template<typename T, typename U>
+class Pair {
+public:
+    T first;
+    U second;
+
+    Pair(T f, U s) : first(f), second(s) {}
+};
+
+} // namespace rx
+```
+
+### Zero-Cost Interop
+
+Since Roxy containers have the same layout on both sides, no conversion is needed:
+
+```cpp
+// C++ function operating directly on Roxy array
+void damage_all_enemies(rx::Array<Enemy>& enemies, i32 damage) {
+    for (Enemy& e : enemies) {
+        e.hp -= damage;
+    }
+}
+
+// Lookup in Roxy dict
+rx::Option<Item> find_in_inventory(rx::Dict<rx::String, Item>& inv, rx::String name) {
+    if (Item* item = inv.get(name)) {
+        return rx::Option<Item>::some(*item);
+    }
+    return rx::Option<Item>::none();
+}
+
+// Bind directly - array/dict pass through unchanged
+registry.bind<damage_all_enemies>("damage_all_enemies");
+registry.bind<find_in_inventory>("find_in_inventory");
+```
+
+### RoxyType Specializations
+
+The binding system recognizes Roxy containers automatically:
+
+```cpp
+template<typename T>
+struct RoxyType<rx::Array<T>> {
+    static Type* get(TypeCache& tc) {
+        return tc.array_type(RoxyType<T>::get(tc));
+    }
+    static rx::Array<T> from_reg(u64 reg) {
+        return rx::Array<T>::from_ptr(reinterpret_cast<void*>(reg));
+    }
+    static u64 to_reg(rx::Array<T> arr) {
+        return reinterpret_cast<u64>(arr.header());
+    }
+};
+
+template<typename T>
+struct RoxyType<rx::Option<T>> {
+    static Type* get(TypeCache& tc) {
+        return tc.option_type(RoxyType<T>::get(tc));
+    }
+    // ...
+};
+```
+
+### File Structure (Planned)
+
+```
+include/roxy/
+├── containers/
+│   ├── array.hpp       # rx::Array<T>
+│   ├── dict.hpp        # rx::Dict<K,V>
+│   ├── option.hpp      # rx::Option<T>
+│   ├── result.hpp      # rx::Result<T,E>
+│   ├── pair.hpp        # rx::Pair<T,U>
+│   └── containers.hpp  # Convenience include-all
+```
+
 ## Files
 
 - `include/roxy/vm/binding/type_traits.hpp` - RoxyType mappings
@@ -179,3 +347,4 @@ Built-in functions are registered during semantic analysis initialization. The I
 - `include/roxy/vm/binding/interop.hpp` - Convenience header
 - `include/roxy/vm/natives.hpp` - Built-in native functions
 - `src/roxy/vm/natives.cpp` - Native function implementations
+- `include/roxy/containers/` - Roxy-native C++ containers (planned)

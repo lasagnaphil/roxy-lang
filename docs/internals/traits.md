@@ -212,6 +212,35 @@ fun main(): i32 {
 }
 ```
 
+## Traits on Built-in Containers
+
+Built-in parameterized types (see `generics.md`) can also implement traits:
+
+```roxy
+// Built-in array implements Printable if element type does
+fun T[].print() for Printable where T: Printable {
+    print_str("[");
+    for (var i: i32 = 0; i < array_len(self); i = i + 1) {
+        if (i > 0) { print_str(", "); }
+        self[i].print();
+    }
+    print_str("]");
+}
+
+// Option<T> implements Printable if T does
+fun Option.print<T>() for Printable where T: Printable {
+    if (self.has_value()) {
+        print_str("Some(");
+        self.unwrap().print();
+        print_str(")");
+    } else {
+        print_str("None");
+    }
+}
+```
+
+These implementations are provided by the compiler/standard library, not monomorphized per element type.
+
 ## Complete Example
 
 ```roxy
