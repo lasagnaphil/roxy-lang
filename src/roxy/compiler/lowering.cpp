@@ -544,66 +544,86 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         }
 
         case IROp::CallExternal: {
-            // Cross-module function call
-            StringView module_name = inst->call_external.module_name;
+            // Cross-module function call - resolved at link time via static linking
+            // After linking, all functions are in the same module, so we emit a regular CALL
             StringView func_name = inst->call_external.func_name;
             u8 arg_count = static_cast<u8>(inst->call_external.args.size());
 
-            // Find or add external function reference
-            u8 ext_func_idx = 0;
-            bool found = false;
-            for (u32 i = 0; i < m_module->external_functions.size(); i++) {
-                if (m_module->external_functions[i].module_name == module_name &&
-                    m_module->external_functions[i].func_name == func_name) {
-                    ext_func_idx = static_cast<u8>(i);
-                    found = true;
-                    break;
-                }
+            // Look up function in the merged module's function table
+            auto it = m_func_indices.find(func_name);
+            if (it == m_func_indices.end()) {
+                report_error("Internal error: external function not found during linking");
+                break;
             }
-            if (!found) {
-                ext_func_idx = static_cast<u8>(m_module->external_functions.size());
-                BCExternalFunction ext_func;
-                ext_func.module_name = module_name;
-                ext_func.func_name = func_name;
-                m_module->external_functions.push_back(ext_func);
-            }
+            u8 func_idx = static_cast<u8>(it->second);
 
-            // Copy arguments to consecutive registers starting from dst+1
-            // Track cumulative register offset for multi-register struct arguments
-            u8 first_arg_reg = dst + 1;
+            // Get callee function to check for pointer parameters
+            IRFunction* callee_func = m_ir_module->functions[func_idx];
+
+            // Check if return type is a struct
+            u32 ret_slot_count = get_struct_slot_count(inst->type);
+            bool returns_small_struct = (ret_slot_count > 0 && ret_slot_count <= 4);
+            u8 ret_reg_count = returns_small_struct ? static_cast<u8>((ret_slot_count + 1) / 2) : 1;
+
+            // Copy arguments to consecutive registers starting from dst+ret_reg_count
+            u8 first_arg_reg = dst + ret_reg_count;
             u8 arg_reg_offset = 0;
             for (u32 i = 0; i < inst->call_external.args.size(); i++) {
                 ValueId arg_val = inst->call_external.args[i];
                 u8 arg_src = get_register(arg_val);
 
-                // Check if argument is a struct
-                auto type_it = m_value_types.find(arg_val.id);
-                Type* arg_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
-                u32 arg_slot_count = get_struct_slot_count(arg_type);
+                // Check if this parameter is a pointer (out/inout)
+                bool param_is_ptr = (i < callee_func->param_is_ptr.size() && callee_func->param_is_ptr[i]);
 
-                if (arg_slot_count > 0 && arg_slot_count <= 4) {
-                    // Small struct: load struct data from memory to consecutive registers
-                    u8 arg_reg_count = static_cast<u8>((arg_slot_count + 1) / 2);
-                    emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + arg_reg_offset, arg_src, static_cast<u8>(arg_slot_count));
-                    emit(0);  // Padding word
-                    arg_reg_offset += arg_reg_count;
-                } else if (arg_slot_count > 4) {
-                    // Large struct: pass pointer
+                if (param_is_ptr) {
+                    // Pointer parameter: pass the pointer directly
                     if (arg_src != first_arg_reg + arg_reg_offset) {
                         emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
                     }
                     arg_reg_offset += 1;
                 } else {
-                    // Regular value
-                    if (arg_src != first_arg_reg + arg_reg_offset) {
-                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                    // Check if argument is a struct
+                    auto type_it = m_value_types.find(arg_val.id);
+                    Type* arg_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+                    u32 arg_slot_count = get_struct_slot_count(arg_type);
+
+                    if (arg_slot_count > 0 && arg_slot_count <= 4) {
+                        // Small struct: load struct data from memory to consecutive registers
+                        u8 arg_reg_count = static_cast<u8>((arg_slot_count + 1) / 2);
+                        emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + arg_reg_offset, arg_src, static_cast<u8>(arg_slot_count));
+                        emit(0);  // Padding word
+                        arg_reg_offset += arg_reg_count;
+                    } else if (arg_slot_count > 4) {
+                        // Large struct: pass pointer
+                        if (arg_src != first_arg_reg + arg_reg_offset) {
+                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                        }
+                        arg_reg_offset += 1;
+                    } else {
+                        // Regular value
+                        if (arg_src != first_arg_reg + arg_reg_offset) {
+                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                        }
+                        arg_reg_offset += 1;
                     }
-                    arg_reg_offset += 1;
                 }
             }
 
-            // Emit call: dst = call_external ext_func_idx(args...)
-            emit_abc(Opcode::CALL_EXTERNAL, dst, ext_func_idx, arg_count);
+            // Emit regular CALL instruction (statically linked)
+            emit_abc(Opcode::CALL, dst, func_idx, arg_count);
+
+            // For small struct returns, handle unpacking
+            if (returns_small_struct) {
+                u32 stack_offset = m_next_stack_slot;
+                m_next_stack_slot += ret_slot_count;
+                m_value_to_stack_slot[inst->result.id] = stack_offset;
+
+                u8 temp_reg = m_next_reg++;
+                emit_abi(Opcode::STACK_ADDR, temp_reg, static_cast<u16>(stack_offset));
+                emit_abc(Opcode::STRUCT_STORE_REGS, temp_reg, dst, static_cast<u8>(ret_slot_count));
+                emit(0);  // Padding word
+                emit_abc(Opcode::MOV, dst, temp_reg, 0);
+            }
             break;
         }
 

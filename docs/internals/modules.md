@@ -205,28 +205,27 @@ struct CallExternalData {
 };
 ```
 
-### Bytecode
+### Bytecode (Static Linking)
 
-The `CALL_EXTERNAL` opcode (0xA2) handles cross-module calls:
+Cross-module calls are resolved at compile-time through static linking:
 
-```cpp
-// Opcode format: CALL_EXTERNAL dst, ext_func_idx, arg_count
-// ext_func_idx indexes into BCModule::external_functions
+1. All IR modules are merged into a single `IRModule` by `Compiler::link_modules()`
+2. The merged IR contains all functions from all script modules
+3. During lowering, `IROp::CallExternal` instructions look up the target function
+   in `m_func_indices` (which contains all merged functions)
+4. A regular `CALL` instruction is emitted with the resolved function index
 
-struct BCExternalFunction {
-    StringView module_name;
-    StringView func_name;
-    u32 resolved_module_idx;  // Resolved during linking
-    u32 resolved_func_idx;    // Resolved during linking
-};
-```
+This approach means:
+- No runtime resolution overhead for cross-module calls
+- All function indices are known at compile time
+- The bytecode module contains only `CALL` and `CALL_NATIVE` opcodes
 
 ### Linking
 
-During the link phase:
-1. All functions from all modules are merged into a single BCModule
-2. External function references are resolved to their global indices
-3. The `CALL_EXTERNAL` opcode is executed by looking up the resolved function
+During the link phase in `Compiler::link_modules()`:
+1. All IR functions from all modules are collected into a merged `IRModule`
+2. A function name → index map is built during bytecode lowering
+3. `IROp::CallExternal` instructions are lowered to regular `CALL` bytecode
 
 ## Semantic Analysis Integration
 
@@ -290,7 +289,6 @@ The `register_native_module` function:
 | `src/roxy/compiler/compiler.cpp` | Multi-module compilation, topological sort, linking |
 | `include/roxy/vm/natives.hpp` | BUILTIN_MODULE_NAME constant |
 | `src/roxy/compiler/semantic.cpp` | Import analysis, prelude auto-import |
-| `src/roxy/compiler/ir_builder.cpp` | CallExternal emission |
-| `src/roxy/compiler/lowering.cpp` | CALL_EXTERNAL bytecode generation |
-| `src/roxy/vm/interpreter.cpp` | CALL_EXTERNAL execution |
+| `src/roxy/compiler/ir_builder.cpp` | CallExternal IR emission |
+| `src/roxy/compiler/lowering.cpp` | Static linking (CallExternal → CALL) |
 | `tests/e2e/modules_test.cpp` | Module system E2E tests |

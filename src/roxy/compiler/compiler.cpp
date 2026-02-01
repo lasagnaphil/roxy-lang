@@ -275,23 +275,14 @@ BCModule* Compiler::link_modules() {
     }
 
     // Build bytecode from merged IR
+    // Static linking: all cross-module calls are resolved in the lowering phase
+    // since m_func_indices contains all functions from all modules
     BytecodeBuilder bc_builder;
     BCModule* module = bc_builder.build(&merged_ir);
 
     if (!module) {
         add_error("Bytecode generation failed during linking");
         return nullptr;
-    }
-
-    // Resolve external function references
-    for (auto& ext_func : module->external_functions) {
-        // Look up the function in the merged module
-        auto it = func_name_to_global_idx.find(ext_func.func_name);
-        if (it != func_name_to_global_idx.end()) {
-            ext_func.resolved_func_idx = it->second;
-            ext_func.resolved_module_idx = 0; // All in same module after linking
-        }
-        // If not found, it might be in a not-yet-compiled module or an error
     }
 
     // Apply native functions from combined registry

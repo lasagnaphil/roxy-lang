@@ -488,7 +488,7 @@ Converts type-checked AST to SSA IR:
   - Comparisons: EQ_I/F, NE_I/F, LT_I/F, LE_I/F, GT_I/F, GE_I/F (+ unsigned)
   - Type conversions: I_TO_F64, F64_TO_I, I_TO_B, B_TO_I, TRUNC_S, TRUNC_U, F32_TO_F64, F64_TO_F32, I_TO_F32, F32_TO_I
   - Control flow: JMP, JMP_IF, JMP_IF_NOT, RET, RET_VOID, RET_STRUCT_SMALL
-  - Calls: CALL, CALL_NATIVE, CALL_EXTERNAL (cross-module)
+  - Calls: CALL, CALL_NATIVE
   - Structs: GET_FIELD, SET_FIELD, STACK_ADDR, GET_FIELD_ADDR, STRUCT_LOAD_REGS, STRUCT_STORE_REGS, STRUCT_COPY
   - Arrays: GET_INDEX, SET_INDEX
 - Constant pool for large values
@@ -856,10 +856,10 @@ BCModule* module = compiler.compile();  // Links all modules together
 4. Build IR for all modules
 5. Link into single BCModule
 
-**Cross-Module Calls:**
+**Cross-Module Calls (Static Linking):**
 - `IROp::CallExternal` - IR instruction for cross-module function calls
-- `CALL_EXTERNAL` opcode (0xA2) - Bytecode for external function calls
-- External functions resolved during linking phase
+- At link time, all modules are merged into a single IR module
+- Cross-module calls are resolved to regular `CALL` instructions (no runtime resolution)
 
 **Visibility:**
 - Functions marked `pub` are exported and can be imported by other modules
