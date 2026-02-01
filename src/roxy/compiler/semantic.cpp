@@ -987,6 +987,9 @@ void SemanticAnalyzer::analyze_stmt(Stmt* stmt) {
         case AstKind::StmtDelete:
             analyze_delete_stmt(stmt);
             break;
+        case AstKind::StmtWhen:
+            analyze_when_stmt(stmt);
+            break;
         default:
             break;
     }
@@ -1214,6 +1217,89 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
                      sti.name.size(), sti.name.data());
             return;
         }
+    }
+}
+
+void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
+    WhenStmt& ws = stmt->when_stmt;
+
+    // Analyze the discriminant expression
+    Type* discrim_type = analyze_expr(ws.discriminant);
+    if (!discrim_type || discrim_type->is_error()) return;
+
+    // Check that discriminant is an enum type
+    if (discrim_type->kind != TypeKind::Enum) {
+        error(ws.discriminant->loc, "'when' discriminant must be an enum type");
+        return;
+    }
+
+    EnumTypeInfo& eti = discrim_type->enum_info;
+    EnumDecl& ed = eti.decl->enum_decl;
+
+    // Track which enum variants have been covered (for duplicate detection)
+    tsl::robin_map<StringView, bool, StringViewHash, StringViewEqual> covered_variants;
+
+    // Analyze each case
+    for (u32 i = 0; i < ws.cases.size(); i++) {
+        WhenCase& wc = ws.cases[i];
+
+        // Validate case names are valid enum variants
+        for (u32 j = 0; j < wc.case_names.size(); j++) {
+            StringView case_name = wc.case_names[j];
+
+            // Look up the variant in the enum
+            bool found = false;
+            for (u32 k = 0; k < ed.variants.size(); k++) {
+                if (ed.variants[k].name == case_name) {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) {
+                error_fmt(wc.loc, "'%.*s' is not a variant of enum '%.*s'",
+                         case_name.size(), case_name.data(),
+                         eti.name.size(), eti.name.data());
+                continue;
+            }
+
+            // Check for duplicate case
+            if (covered_variants.find(case_name) != covered_variants.end()) {
+                error_fmt(wc.loc, "duplicate case '%.*s' in when statement",
+                         case_name.size(), case_name.data());
+                continue;
+            }
+
+            covered_variants[case_name] = true;
+        }
+
+        // Analyze case body in a new scope
+        m_symbols.push_scope(ScopeKind::Block);
+        for (u32 j = 0; j < wc.body.size(); j++) {
+            Decl* decl = wc.body[j];
+            if (!decl) continue;
+            if (decl->kind == AstKind::DeclVar) {
+                analyze_var_decl(decl);
+            } else {
+                analyze_stmt(&decl->stmt);
+            }
+        }
+        m_symbols.pop_scope();
+    }
+
+    // Analyze else body if present
+    if (ws.else_body.size() > 0) {
+        m_symbols.push_scope(ScopeKind::Block);
+        for (u32 i = 0; i < ws.else_body.size(); i++) {
+            Decl* decl = ws.else_body[i];
+            if (!decl) continue;
+            if (decl->kind == AstKind::DeclVar) {
+                analyze_var_decl(decl);
+            } else {
+                analyze_stmt(&decl->stmt);
+            }
+        }
+        m_symbols.pop_scope();
     }
 }
 

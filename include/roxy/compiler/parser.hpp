@@ -74,6 +74,7 @@ private:
     Stmt* break_statement();
     Stmt* continue_statement();
     Stmt* delete_statement();
+    Stmt* when_statement();
     Stmt* expression_statement();
 
     // Declaration parsing

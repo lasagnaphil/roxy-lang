@@ -96,6 +96,7 @@ private:
     void gen_break_stmt(Stmt* stmt);
     void gen_continue_stmt(Stmt* stmt);
     void gen_delete_stmt(Stmt* stmt);
+    void gen_when_stmt(Stmt* stmt);
 
     // Expression generation - returns the value ID of the result
     ValueId gen_expr(Expr* expr);

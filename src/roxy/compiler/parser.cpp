@@ -664,6 +664,9 @@ Stmt* Parser::statement() {
     if (match(TokenKind::KwDelete)) {
         return delete_statement();
     }
+    if (match(TokenKind::KwWhen)) {
+        return when_statement();
+    }
 
     return expression_statement();
 }
@@ -881,6 +884,104 @@ Stmt* Parser::delete_statement() {
     stmt->delete_stmt.expr = expr;
     stmt->delete_stmt.destructor_name = dtor_name;
     stmt->delete_stmt.arguments = alloc_span(arguments);
+    return stmt;
+}
+
+Stmt* Parser::when_statement() {
+    SourceLocation loc = m_previous.loc;
+
+    // Parse discriminant expression
+    // We use a simpler parsing approach: identifier with optional member access
+    // This avoids the ambiguity where "when c { ... }" could be parsed as struct literal
+    Token name_token = consume(TokenKind::Identifier, "Expected discriminant after 'when'");
+    if (m_has_error) return nullptr;
+
+    Expr* discriminant = alloc<Expr>();
+    discriminant->kind = AstKind::ExprIdentifier;
+    discriminant->loc = name_token.loc;
+    discriminant->identifier.name = name_token.text();
+
+    // Handle member access (e.g., obj.field)
+    while (match(TokenKind::Dot)) {
+        Token member_token = consume(TokenKind::Identifier, "Expected member name after '.'");
+        if (m_has_error) return nullptr;
+
+        Expr* get_expr = alloc<Expr>();
+        get_expr->kind = AstKind::ExprGet;
+        get_expr->loc = member_token.loc;
+        get_expr->get.object = discriminant;
+        get_expr->get.name = member_token.text();
+        discriminant = get_expr;
+    }
+
+    consume(TokenKind::LeftBrace, "Expected '{' after 'when' discriminant");
+    if (m_has_error) return nullptr;
+
+    Vector<WhenCase> cases;
+    Span<Decl*> else_body(nullptr, 0);
+    SourceLocation else_loc{};
+
+    // Parse cases: case A, B: { ... } or case A, B: stmt; stmt; ...
+    while (!check(TokenKind::RightBrace) && !is_at_end()) {
+        if (match(TokenKind::KwCase)) {
+            WhenCase wc;
+            wc.loc = m_previous.loc;
+
+            // Parse case names (comma-separated)
+            Vector<StringView> case_names;
+            do {
+                Token name_token = consume(TokenKind::Identifier, "Expected case name");
+                if (m_has_error) return nullptr;
+                case_names.push_back(name_token.text());
+            } while (match(TokenKind::Comma));
+
+            consume(TokenKind::Colon, "Expected ':' after case name(s)");
+            if (m_has_error) return nullptr;
+
+            // Parse case body - multiple statements until next case, else, or }
+            Vector<Decl*> body_decls;
+            while (!check(TokenKind::KwCase) && !check(TokenKind::KwElse) &&
+                   !check(TokenKind::RightBrace) && !is_at_end()) {
+                Decl* decl = declaration();
+                if (m_has_error) return nullptr;
+                if (decl) body_decls.push_back(decl);
+            }
+
+            wc.case_names = alloc_span(case_names);
+            wc.body = alloc_span(body_decls);
+            cases.push_back(wc);
+        }
+        else if (match(TokenKind::KwElse)) {
+            else_loc = m_previous.loc;
+            consume(TokenKind::Colon, "Expected ':' after 'else'");
+            if (m_has_error) return nullptr;
+
+            // Parse else body - multiple statements until }
+            Vector<Decl*> else_decls;
+            while (!check(TokenKind::RightBrace) && !is_at_end()) {
+                Decl* decl = declaration();
+                if (m_has_error) return nullptr;
+                if (decl) else_decls.push_back(decl);
+            }
+            else_body = alloc_span(else_decls);
+            break;  // else must be last
+        }
+        else {
+            report_error("Expected 'case' or 'else' in when statement");
+            return nullptr;
+        }
+    }
+
+    consume(TokenKind::RightBrace, "Expected '}' after when statement");
+    if (m_has_error) return nullptr;
+
+    Stmt* stmt = alloc<Stmt>();
+    stmt->kind = AstKind::StmtWhen;
+    stmt->loc = loc;
+    stmt->when_stmt.discriminant = discriminant;
+    stmt->when_stmt.cases = alloc_span(cases);
+    stmt->when_stmt.else_body = else_body;
+    stmt->when_stmt.else_loc = else_loc;
     return stmt;
 }
 

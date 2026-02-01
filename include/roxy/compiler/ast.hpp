@@ -42,6 +42,7 @@ enum class AstKind : u8 {
     StmtBreak,
     StmtContinue,
     StmtDelete,
+    StmtWhen,
 
     // Declarations
     DeclVar,
@@ -313,6 +314,21 @@ struct DeleteStmt {
     Span<CallArg> arguments;     // Destructor arguments (named destructors can have args)
 };
 
+// When case: case A, B: { body }
+struct WhenCase {
+    Span<StringView> case_names;  // "case A, B:" - can have multiple names
+    Span<Decl*> body;             // Statements in the case body
+    SourceLocation loc;
+};
+
+// When statement: when expr { case A: { ... } case B: { ... } else: { ... } }
+struct WhenStmt {
+    Expr* discriminant;           // The expression being matched
+    Span<WhenCase> cases;         // List of cases
+    Span<Decl*> else_body;        // Optional else body (empty if no else)
+    SourceLocation else_loc;      // Location of else keyword
+};
+
 // Statement node
 struct Stmt {
     AstKind kind;
@@ -327,6 +343,7 @@ struct Stmt {
         BreakStmt break_stmt;
         ContinueStmt continue_stmt;
         DeleteStmt delete_stmt;
+        WhenStmt when_stmt;
     };
 
     Stmt() : kind(AstKind::StmtExpr), loc{0, 0, 0} {

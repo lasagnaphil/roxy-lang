@@ -724,6 +724,9 @@ void IRBuilder::gen_stmt(Stmt* stmt) {
         case AstKind::StmtDelete:
             gen_delete_stmt(stmt);
             break;
+        case AstKind::StmtWhen:
+            gen_when_stmt(stmt);
+            break;
         default:
             break;
     }
@@ -1120,6 +1123,131 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
     if (inst) {
         inst->unary = val;
     }
+}
+
+void IRBuilder::gen_when_stmt(Stmt* stmt) {
+    WhenStmt& ws = stmt->when_stmt;
+
+    // Evaluate discriminant once
+    ValueId discrim = gen_expr(ws.discriminant);
+    Type* discrim_type = ws.discriminant->resolved_type;
+
+    // Create merge block (where all cases jump to)
+    IRBlock* merge_block = create_block("endwhen");
+
+    // For each case, we create a block for its body
+    // We chain comparisons: check first case, if false check next, etc.
+
+    // Track case blocks and their corresponding case names for code gen
+    struct CaseInfo {
+        IRBlock* body_block;
+        WhenCase* wc;
+    };
+    Vector<CaseInfo> case_infos;
+
+    // Create body blocks for each case
+    for (u32 i = 0; i < ws.cases.size(); i++) {
+        IRBlock* body_block = create_block("when_case");
+        case_infos.push_back({body_block, &ws.cases[i]});
+    }
+
+    // Create else block if there's an else clause
+    IRBlock* else_block = nullptr;
+    if (ws.else_body.size() > 0) {
+        else_block = create_block("when_else");
+    }
+
+    // Generate the comparison chain
+    for (u32 i = 0; i < ws.cases.size(); i++) {
+        WhenCase& wc = ws.cases[i];
+        CaseInfo& ci = case_infos[i];
+
+        // Build condition: discriminant == case_name1 || discriminant == case_name2 || ...
+        ValueId case_cond = ValueId::invalid();
+        for (u32 j = 0; j < wc.case_names.size(); j++) {
+            StringView case_name = wc.case_names[j];
+
+            // Look up the enum variant value from symbol table
+            i64 variant_value = 0;
+            Symbol* sym = m_symbols.lookup(case_name);
+            if (sym && sym->kind == SymbolKind::EnumVariant) {
+                variant_value = sym->enum_variant.value;
+            }
+
+            // Generate comparison: discriminant == variant_value
+            ValueId variant_val = emit_const_int(variant_value, discrim_type);
+            ValueId cmp = emit_binary(IROp::EqI, discrim, variant_val, m_types.bool_type());
+
+            // OR with previous conditions
+            if (!case_cond.is_valid()) {
+                case_cond = cmp;
+            } else {
+                case_cond = emit_binary(IROp::Or, case_cond, cmp, m_types.bool_type());
+            }
+        }
+
+        // Determine the fallthrough target
+        IRBlock* fallthrough_block = nullptr;
+        if (i + 1 < ws.cases.size()) {
+            // More cases to check
+            fallthrough_block = create_block("when_next");
+        } else if (else_block) {
+            // No more cases, go to else
+            fallthrough_block = else_block;
+        } else {
+            // No more cases and no else, go to merge
+            fallthrough_block = merge_block;
+        }
+
+        // Branch: if condition matches, go to case body, else check next
+        finish_block_branch(case_cond, ci.body_block->id, fallthrough_block->id);
+
+        // Set next block as current if there are more cases
+        if (i + 1 < ws.cases.size()) {
+            set_current_block(fallthrough_block);
+        }
+    }
+
+    // Generate case bodies
+    for (u32 i = 0; i < ws.cases.size(); i++) {
+        WhenCase& wc = ws.cases[i];
+        CaseInfo& ci = case_infos[i];
+
+        set_current_block(ci.body_block);
+        push_scope();
+
+        // Generate body statements
+        for (u32 j = 0; j < wc.body.size(); j++) {
+            gen_decl(wc.body[j]);
+        }
+
+        pop_scope();
+
+        // Jump to merge block if not terminated
+        if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+            finish_block_goto(merge_block->id);
+        }
+    }
+
+    // Generate else body if present
+    if (else_block) {
+        set_current_block(else_block);
+        push_scope();
+
+        for (u32 i = 0; i < ws.else_body.size(); i++) {
+            gen_decl(ws.else_body[i]);
+        }
+
+        pop_scope();
+
+        // Jump to merge block if not terminated
+        if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+            finish_block_goto(merge_block->id);
+        }
+    }
+
+    // Continue from merge block
+    set_current_block(merge_block);
 }
 
 // Expression generation
@@ -1990,7 +2118,7 @@ void IRBuilder::gen_decl(Decl* decl) {
             break;
         default:
             // Statement wrapped in declaration
-            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtDelete) {
+            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtWhen) {
                 gen_stmt(&decl->stmt);
             }
             break;

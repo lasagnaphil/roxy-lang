@@ -166,7 +166,8 @@ roxy-v2/
 │       ├── modules_test.cpp     # Module imports, multi-file compilation
 │       ├── constructors_test.cpp # Named constructors/destructors
 │       ├── methods_test.cpp     # Struct method calls
-│       └── inheritance_test.cpp # Struct inheritance, super calls
+│       ├── inheritance_test.cpp # Struct inheritance, super calls
+│       └── when_test.cpp        # When statement pattern matching
 │
 ├── docs/
 │   ├── overview.md              # Language features and design
@@ -330,6 +331,59 @@ if (c == Color::Green) { ... }
 
 **Files:** `types.hpp`, `ast.hpp`, `parser.cpp`, `semantic.cpp`, `ir_builder.cpp`
 **Tests:** `tests/e2e/enums_test.cpp`
+
+### When Statement (Pattern Matching)
+
+The `when` statement provides pattern matching on enum values:
+
+**Syntax:**
+```roxy
+when discriminant {
+    case Variant1:
+        // statements
+    case Variant2, Variant3:
+        // multiple variants
+    else:
+        // optional fallback
+}
+```
+
+**Example:**
+```roxy
+enum Color { Red, Green, Blue }
+
+fun describe(c: Color): i32 {
+    when c {
+        case Red:
+            print_str("Red");
+            return 1;
+        case Green, Blue:
+            print_str("Not red");
+            return 2;
+    }
+    return 0;
+}
+```
+
+**Features:**
+- Discriminant must be an enum type
+- Case names must be valid variants of the enum
+- Multiple variants per case: `case A, B:`
+- Optional `else:` clause for unhandled cases
+- Duplicate case detection
+
+**Implementation:**
+- Generates comparison chain: `if (x == A) goto case_A else check_next`
+- Each case body is a separate IR block
+- Enum variant values looked up from symbol table
+- Branches to merge block after each case
+
+**Current Limitations:**
+- Variable modifications in case bodies don't persist after the `when` statement (no phi nodes yet)
+- Use `return` in each case to avoid this limitation
+
+**Files:** `ast.hpp`, `parser.cpp`, `semantic.cpp`, `ir_builder.cpp`
+**Tests:** `tests/e2e/when_test.cpp`
 
 ### SSA IR (`include/roxy/compiler/ssa_ir.hpp`, `src/roxy/compiler/ssa_ir.cpp`)
 
