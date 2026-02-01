@@ -2,17 +2,7 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-02-01
-
----
-
-## Critical (Blocking Features)
-
-- [ ] **Cross-module function execution incomplete**
-  - File: `src/roxy/vm/interpreter.cpp:460`
-  - Issue: `CALL_EXTERNAL` opcode raises "External function not resolved - multi-module support not yet implemented"
-  - Status: ModuleRegistry and import/export work, but VM can't execute cross-module calls
-  - Impact: Multi-file programs with function calls between modules won't run
+Last updated: 2026-02-02
 
 ---
 
@@ -83,6 +73,8 @@ Last updated: 2026-02-01
 
 ## Planned Features
 
+- [ ] Generics (functions and structs)
+- [ ] Traits and trait bounds
 - [ ] Flow-sensitive typing for tagged union variant fields
 - [ ] Exhaustiveness checking for when statements
 - [ ] Variant constructors (`Type.Variant { ... }` syntax)
@@ -108,7 +100,6 @@ Last updated: 2026-02-01
 - [ ] Document error type propagation pattern in semantic analysis
 - [ ] Document thread-safety limitations (single VM per thread assumed)
 - [ ] Document register limit (255 values per function)
-- [ ] Document when/case syntax once implemented
 - [ ] Add bytecode instruction format reference
 
 ---
@@ -120,61 +111,3 @@ Last updated: 2026-02-01
 - [ ] Test error recovery in semantic analysis
 - [ ] Add fuzzing for parser/lexer
 - [ ] Test cross-module imports with complex dependency graphs
-
----
-
-## Recently Completed
-
-- [x] **Tagged unions (discriminated unions)** (2026-02-01)
-  - `when` clause in struct definitions for variant-specific fields
-  - `when` statement for pattern matching on enum discriminants
-  - Memory-efficient union layout (all variants share same storage)
-  - Struct literals with explicit discriminant and variant fields
-  - Phi node support for variable modifications across case branches
-  - 8 E2E test cases in `tagged_unions_test.cpp`
-  - Note: Flow-sensitive typing and exhaustiveness checking not yet implemented
-
-- [x] **When statement for enums** (2026-02-01)
-  - Syntax: `when expr { case A: ... case B: ... else: ... }`
-  - Validates discriminant is enum type
-  - Validates case names are valid enum variants
-  - Detects duplicate cases
-  - Compiles to comparison chain (not SWITCH opcode)
-  - 12 E2E test cases in `when_test.cpp`
-
-- [x] **Multi-register struct argument tracking** (2026-02-01)
-  - Fixed bug where structs with 3-4 slots (12-16 bytes) passed as parameters weren't correctly tracked
-  - Added `param_register_count` field to `BCFunction` for total registers needed by parameters
-  - Fixed caller-side argument placement to use cumulative register offsets
-  - Fixed callee-side parameter allocation and prologue unpacking
-  - Fixed interpreter CALL/CALL_EXTERNAL to copy correct number of registers
-  - 8 new E2E tests in `params_test.cpp` covering various multi-register scenarios
-
-- [x] **Struct inheritance with `super` keyword** (2026-01-31)
-  - Single inheritance for structs with static dispatch (no vtables)
-  - Field inheritance: child inherits all parent fields, laid out parent-first
-  - Method inheritance: child can call inherited methods, override with same name
-  - `super.method()` calls parent's version of a method
-  - `super()` / `super(args)` calls parent constructor
-  - Constructor/destructor chaining: parent runs before child (constructors), child before parent (destructors)
-  - Value slicing and covariant references supported
-  - E2E tests in `inheritance_test.cpp`
-
-- [x] **Method calls for structs** (2026-01-31)
-  - Syntax: `fun StructName.method_name(params): RetType { body }`
-  - Implicit `self` parameter (type `ref<StructType>`)
-  - Name mangling: `StructName$method_name`
-  - Methods can read/modify `self`, take parameters, return any type
-  - Works with stack and heap-allocated structs
-  - 8 E2E test cases in `methods_test.cpp`
-
-- [x] Remove `new` keyword from constructor calls (2026-01-31)
-  - Constructor calls now use `Type()` instead of `new Type()`
-  - Heap allocation uses `uniq Type()` instead of `uniq new Type()`
-  - `new` keyword kept for constructor declarations (`fun new Type()`)
-
-- [x] Named constructors/destructors with `self` keyword (2026-01-31)
-
-- [x] Module system with import/export (compile-time, runtime pending)
-
-- [x] Struct field visibility checking
