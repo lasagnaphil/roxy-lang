@@ -1152,6 +1152,8 @@ ValueId IRBuilder::gen_expr(Expr* expr) {
             return gen_this_expr(expr);
         case AstKind::ExprStructLiteral:
             return gen_struct_literal_expr(expr);
+        case AstKind::ExprStaticGet:
+            return gen_static_get_expr(expr);
         default:
             return ValueId::invalid();
     }
@@ -1893,6 +1895,21 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
     }
 
     return struct_ptr;
+}
+
+ValueId IRBuilder::gen_static_get_expr(Expr* expr) {
+    StaticGetExpr& sge = expr->static_get;
+
+    // Currently only enum variants use static get (Type::Variant)
+    // Look up the enum variant symbol to get its value
+    Symbol* sym = m_symbols.lookup(sge.member_name);
+    if (sym && sym->kind == SymbolKind::EnumVariant) {
+        // Emit the enum variant's integer value
+        return emit_const_int(sym->enum_variant.value, expr->resolved_type);
+    }
+
+    // Should not reach here if semantic analysis passed
+    return ValueId::invalid();
 }
 
 ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {

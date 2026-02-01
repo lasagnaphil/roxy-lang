@@ -305,6 +305,32 @@ Multi-pass semantic analyzer:
 - Function signature validation
 - Error reporting with source locations
 
+### Enums
+
+C-style enumerations with integer underlying type:
+
+**Syntax:**
+```roxy
+enum Color { Red, Green, Blue }           // Auto-numbered: 0, 1, 2
+enum Status { Pending = 0, Active = 10 }  // Explicit values
+enum Code { A = 5, B, C }                 // B=6, C=7 (auto-increment)
+```
+
+**Usage:**
+```roxy
+var c: Color = Color::Red;
+if (c == Color::Green) { ... }
+```
+
+**Implementation:**
+- Enums compile to their underlying integer values (i32 by default)
+- Variant access (`Type::Variant`) resolved via `ExprStaticGet` → `ConstInt`
+- Enum variant symbols stored in global scope with their integer values
+- Comparison uses standard integer comparison opcodes
+
+**Files:** `types.hpp`, `ast.hpp`, `parser.cpp`, `semantic.cpp`, `ir_builder.cpp`
+**Tests:** `tests/e2e/enums_test.cpp`
+
 ### SSA IR (`include/roxy/compiler/ssa_ir.hpp`, `src/roxy/compiler/ssa_ir.cpp`)
 
 SSA IR with block arguments (not phi nodes):
