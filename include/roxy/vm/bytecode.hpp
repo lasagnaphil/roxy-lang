@@ -121,6 +121,9 @@ enum class Opcode : u8 {
     REF_DEC     = 0xE1,     // ref_dec(reg)
     WEAK_CHECK  = 0xE2,     // dst = weak_valid(src1)
 
+    // 0xF0-0xFD: Debug/Error
+    TRAP        = 0xF0,     // runtime error trap (for variant field access checks)
+
     // 0xFF: Invalid/Debug
     NOP         = 0xFE,     // no operation
     HALT        = 0xFF,     // halt execution

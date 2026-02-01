@@ -399,6 +399,61 @@ fun calc(op: Op, a: i32, b: i32): i32 {
 **Files:** `ast.hpp`, `parser.cpp`, `semantic.cpp`, `ir_builder.cpp`
 **Tests:** `tests/e2e/when_test.cpp`
 
+### Tagged Unions (Discriminated Unions)
+
+Tagged unions allow structs to contain variant-specific fields that share memory:
+
+**Syntax:**
+```roxy
+enum Kind { A, B }
+
+struct Data {
+    common_field: i32;
+    when kind: Kind {
+        case A:
+            val_a: i32;
+        case B:
+            val_b: f32;
+    }
+}
+```
+
+**Struct Literal with Variant:**
+```roxy
+var d: Data = Data { common_field = 1, kind = Kind::A, val_a = 42 };
+```
+
+**Pattern Matching on Tagged Unions:**
+```roxy
+fun process(d: ref Data) {
+    when d.kind {
+        case A:
+            print(d.val_a);  // Variant field accessible in case
+        case B:
+            print_f32(d.val_b);
+    }
+}
+```
+
+**Memory Layout:**
+- Fixed fields come first
+- Discriminant field (enum value)
+- Union storage (size = max of all variant sizes)
+- All variants share the same memory region
+
+**Type System:**
+- `WhenClauseInfo`: Discriminant name, type, offsets, variants
+- `VariantInfo`: Case name, discriminant value, variant fields
+- `VariantFieldInfo`: Field info relative to union base offset
+
+**Limitations (not yet implemented):**
+- Flow-sensitive typing: Variant fields are accessible without being in a `when` case
+- Exhaustiveness checking: No error if cases don't cover all variants
+- Variant constructors: `Type.Variant { ... }` syntax not available
+
+**Files:** `ast.hpp`, `types.hpp`, `parser.cpp`, `semantic.cpp`, `ir_builder.cpp`
+**Tests:** `tests/e2e/tagged_unions_test.cpp`
+
 ### SSA IR (`include/roxy/compiler/ssa_ir.hpp`, `src/roxy/compiler/ssa_ir.cpp`)
 
 SSA IR with block arguments (not phi nodes):
@@ -914,6 +969,7 @@ On Windows, use `.exe` extension.
   - `constructors.md` - Named constructors/destructors, `self` keyword, synthesized defaults
   - `methods.md` - Struct methods, `self` parameter, name mangling
   - `inheritance.md` - Struct inheritance, subtyping, `super` keyword, constructor/destructor chaining
+  - `tagged-unions.md` - Discriminated unions with `when` clause, variant fields, union layout
   - `generics.md` - Generic functions and structs (NOT YET IMPLEMENTED - design document)
   - `traits.md` - Traits and trait bounds (NOT YET IMPLEMENTED - design document)
   - `operator-overloading.md` - Operator traits for custom operators (NOT YET IMPLEMENTED - design document)

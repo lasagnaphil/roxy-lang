@@ -49,6 +49,7 @@ private:
     void finish_block_branch(ValueId cond, BlockId then_block, BlockId else_block,
                              Span<BlockArgPair> then_args = {}, Span<BlockArgPair> else_args = {});
     void finish_block_return(ValueId value);
+    void finish_block_unreachable();
 
     // Instruction emission
     IRInst* emit_inst(IROp op, Type* result_type);

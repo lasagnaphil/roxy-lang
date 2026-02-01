@@ -849,7 +849,7 @@ void BytecodeBuilder::lower_terminator(IRBlock* block) {
         }
 
         case TerminatorKind::Unreachable:
-            emit_abc(Opcode::HALT, 0, 0, 0);
+            emit_abc(Opcode::TRAP, 0, 0, 0);
             break;
     }
 }

@@ -843,6 +843,10 @@ bool interpret(RoxyVM* vm) {
             case Opcode::NOP:
                 break;
 
+            case Opcode::TRAP:
+                vm->error = "Runtime error: variant field access with wrong discriminant";
+                return false;
+
             case Opcode::HALT:
                 vm->running = false;
                 return true;

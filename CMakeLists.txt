@@ -125,6 +125,7 @@ add_executable(roxy_tests
     tests/e2e/casts_test.cpp
     tests/e2e/enums_test.cpp
     tests/e2e/when_test.cpp
+    tests/e2e/tagged_unions_test.cpp
 )
 target_link_libraries(roxy_tests roxy_vm)
 

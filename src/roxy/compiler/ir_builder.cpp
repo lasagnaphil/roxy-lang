@@ -329,65 +329,74 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
     StructDecl& sd = sti.decl->struct_decl;
     ValueId self_ptr = self_param.value;
 
-    for (u32 i = inherited_field_count; i < sti.fields.size(); i++) {
-        FieldInfo& fi = sti.fields[i];
-        // Adjust index for the StructDecl (which doesn't include inherited fields)
-        u32 sd_index = i - inherited_field_count;
-        ValueId value;
-
-        // Use default value if defined, otherwise zero-init
-        if (sd.fields[sd_index].default_value) {
-            value = gen_expr(sd.fields[sd_index].default_value);
+    // Helper lambda to zero-initialize a field
+    auto zero_init_field = [&](const FieldInfo& fi) -> ValueId {
+        if (fi.type->is_bool()) {
+            return emit_const_bool(false);
+        } else if (fi.type->is_integer() || fi.type->is_enum()) {
+            return emit_const_int(0, fi.type);
+        } else if (fi.type->is_float()) {
+            return emit_const_float(0.0, fi.type);
+        } else if (fi.type->kind == TypeKind::String) {
+            return emit_const_string("");
         } else {
-            // Generate zero value based on field type
-            if (fi.type->is_bool()) {
-                value = emit_const_bool(false);
-            } else if (fi.type->is_integer()) {
-                value = emit_const_int(0, fi.type);
-            } else if (fi.type->is_float()) {
-                value = emit_const_float(0.0, fi.type);
-            } else if (fi.type->kind == TypeKind::String) {
-                value = emit_const_string("");
-            } else if (fi.type->is_struct()) {
-                // For nested structs, recursively zero-init
-                u32 nested_slots = fi.type->struct_info.slot_count;
-                ValueId nested_ptr = emit_stack_alloc(nested_slots, fi.type);
-                // Zero the nested struct fields
-                StructTypeInfo& nested_sti = fi.type->struct_info;
-                StructDecl& nested_sd = nested_sti.decl->struct_decl;
-                for (u32 j = 0; j < nested_sti.fields.size(); j++) {
-                    FieldInfo& nfi = nested_sti.fields[j];
-                    ValueId nval;
-                    if (nested_sd.fields[j].default_value) {
-                        nval = gen_expr(nested_sd.fields[j].default_value);
-                    } else if (nfi.type->is_bool()) {
-                        nval = emit_const_bool(false);
-                    } else if (nfi.type->is_integer()) {
-                        nval = emit_const_int(0, nfi.type);
-                    } else if (nfi.type->is_float()) {
-                        nval = emit_const_float(0.0, nfi.type);
-                    } else {
-                        nval = emit_const_null();
-                    }
-                    emit_set_field(nested_ptr, nfi.name, nfi.slot_offset, nfi.slot_count, nval, nfi.type);
+            return emit_const_null();
+        }
+    };
+
+    // Initialize regular fields from sd.fields
+    for (u32 i = 0; i < sd.fields.size(); i++) {
+        // Find the corresponding FieldInfo in sti.fields
+        const FieldInfo* fi = sti.find_field(sd.fields[i].name);
+        if (!fi) continue;
+
+        ValueId value;
+        if (sd.fields[i].default_value) {
+            value = gen_expr(sd.fields[i].default_value);
+        } else if (fi->type && fi->type->is_struct()) {
+            // For nested structs, recursively zero-init
+            u32 nested_slots = fi->type->struct_info.slot_count;
+            ValueId nested_ptr = emit_stack_alloc(nested_slots, fi->type);
+            // Zero the nested struct fields
+            StructTypeInfo& nested_sti = fi->type->struct_info;
+            StructDecl& nested_sd = nested_sti.decl->struct_decl;
+            for (u32 j = 0; j < nested_sd.fields.size(); j++) {
+                const FieldInfo* nfi = nested_sti.find_field(nested_sd.fields[j].name);
+                if (!nfi) continue;
+                ValueId nval;
+                if (nested_sd.fields[j].default_value) {
+                    nval = gen_expr(nested_sd.fields[j].default_value);
+                } else {
+                    nval = zero_init_field(*nfi);
                 }
-                // Copy nested struct to field
-                ValueId field_addr = emit_get_field_addr(self_ptr, fi.name, fi.slot_offset, fi.type);
-                emit_struct_copy(field_addr, nested_ptr, nested_slots);
-                continue;
-            } else {
-                // Pointers, references, etc. - null
-                value = emit_const_null();
+                emit_set_field(nested_ptr, nfi->name, nfi->slot_offset, nfi->slot_count, nval, nfi->type);
             }
+            // Copy nested struct to field
+            ValueId field_addr = emit_get_field_addr(self_ptr, fi->name, fi->slot_offset, fi->type);
+            emit_struct_copy(field_addr, nested_ptr, nested_slots);
+            continue;
+        } else {
+            value = zero_init_field(*fi);
         }
 
         // For struct-typed fields with default values, use StructCopy
-        if (fi.type && fi.type->is_struct() && sd.fields[sd_index].default_value) {
-            ValueId field_addr = emit_get_field_addr(self_ptr, fi.name, fi.slot_offset, fi.type);
-            emit_struct_copy(field_addr, value, fi.slot_count);
+        if (fi->type && fi->type->is_struct() && sd.fields[i].default_value) {
+            ValueId field_addr = emit_get_field_addr(self_ptr, fi->name, fi->slot_offset, fi->type);
+            emit_struct_copy(field_addr, value, fi->slot_count);
         } else {
-            emit_set_field(self_ptr, fi.name, fi.slot_offset, fi.slot_count, value, fi.type);
+            emit_set_field(self_ptr, fi->name, fi->slot_offset, fi->slot_count, value, fi->type);
         }
+    }
+
+    // Initialize discriminant fields from when clauses (zero-init them)
+    for (u32 i = 0; i < sd.when_clauses.size(); i++) {
+        const WhenFieldDecl& wfd = sd.when_clauses[i];
+        const FieldInfo* fi = sti.find_field(wfd.discriminant_name);
+        if (!fi) continue;
+
+        // Discriminants are zero-initialized (first enum variant)
+        ValueId value = zero_init_field(*fi);
+        emit_set_field(self_ptr, fi->name, fi->slot_offset, fi->slot_count, value, fi->type);
     }
 
     // End function body (will add implicit return)
@@ -439,6 +448,11 @@ void IRBuilder::finish_block_return(ValueId value) {
 
     m_current_block->terminator.kind = TerminatorKind::Return;
     m_current_block->terminator.return_value = value;
+}
+
+void IRBuilder::finish_block_unreachable() {
+    if (!m_current_block) return;
+    m_current_block->terminator.kind = TerminatorKind::Unreachable;
 }
 
 // Instruction emission
@@ -1797,13 +1811,57 @@ ValueId IRBuilder::gen_get_expr(Expr* expr) {
     u32 slot_offset = 0;
     u32 slot_count = 1;
     Type* field_type = nullptr;
+    bool is_variant_field = false;
+    const WhenClauseInfo* when_clause = nullptr;
+    const VariantInfo* variant = nullptr;
+
     if (struct_type && struct_type->is_struct()) {
         const FieldInfo* fi = struct_type->struct_info.find_field(ge.name);
         if (fi) {
             slot_offset = fi->slot_offset;
             slot_count = fi->slot_count;
             field_type = fi->type;
+        } else {
+            // Check for variant field in when clauses
+            const VariantFieldInfo* vfi = struct_type->struct_info.find_variant_field(
+                ge.name, &when_clause, &variant);
+            if (vfi) {
+                is_variant_field = true;
+                // Compute the actual offset: union_slot_offset + variant field's offset within the union
+                slot_offset = when_clause->union_slot_offset + vfi->slot_offset;
+                slot_count = vfi->slot_count;
+                field_type = vfi->type;
+            }
         }
+    }
+
+    // If this is a variant field, emit runtime discriminant check
+    if (is_variant_field && when_clause && variant) {
+        // Load the discriminant
+        ValueId disc = emit_get_field(obj, when_clause->discriminant_name,
+                                      when_clause->discriminant_slot_offset, 1,
+                                      when_clause->discriminant_type);
+
+        // Create the expected discriminant value constant
+        ValueId expected = emit_const_int(variant->discriminant_value,
+                                          when_clause->discriminant_type);
+
+        // Compare discriminant with expected value
+        ValueId matches = emit_binary(IROp::EqI, disc, expected, m_types.bool_type());
+
+        // Create pass and fail blocks
+        IRBlock* pass_block = create_block("variant_check_pass");
+        IRBlock* fail_block = create_block("variant_check_fail");
+
+        // Branch based on discriminant check
+        finish_block_branch(matches, pass_block->id, fail_block->id);
+
+        // In fail block: emit unreachable (will lower to TRAP)
+        set_current_block(fail_block);
+        finish_block_unreachable();
+
+        // Continue in pass block
+        set_current_block(pass_block);
     }
 
     // If the field is a struct type, we need to compute its address (pointer)
@@ -1884,12 +1942,54 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
 
         u32 slot_offset = 0;
         u32 slot_count = 1;
+        bool is_variant_field = false;
+        const WhenClauseInfo* when_clause = nullptr;
+        const VariantInfo* variant = nullptr;
+
         if (struct_type && struct_type->is_struct()) {
             const FieldInfo* fi = struct_type->struct_info.find_field(ge.name);
             if (fi) {
                 slot_offset = fi->slot_offset;
                 slot_count = fi->slot_count;
+            } else {
+                // Check for variant field in when clauses
+                const VariantFieldInfo* vfi = struct_type->struct_info.find_variant_field(
+                    ge.name, &when_clause, &variant);
+                if (vfi) {
+                    is_variant_field = true;
+                    slot_offset = when_clause->union_slot_offset + vfi->slot_offset;
+                    slot_count = vfi->slot_count;
+                }
             }
+        }
+
+        // If this is a variant field, emit runtime discriminant check
+        if (is_variant_field && when_clause && variant) {
+            // Load the discriminant
+            ValueId disc = emit_get_field(obj, when_clause->discriminant_name,
+                                          when_clause->discriminant_slot_offset, 1,
+                                          when_clause->discriminant_type);
+
+            // Create the expected discriminant value constant
+            ValueId expected = emit_const_int(variant->discriminant_value,
+                                              when_clause->discriminant_type);
+
+            // Compare discriminant with expected value
+            ValueId matches = emit_binary(IROp::EqI, disc, expected, m_types.bool_type());
+
+            // Create pass and fail blocks
+            IRBlock* pass_block = create_block("variant_set_pass");
+            IRBlock* fail_block = create_block("variant_set_fail");
+
+            // Branch based on discriminant check
+            finish_block_branch(matches, pass_block->id, fail_block->id);
+
+            // In fail block: emit unreachable (will lower to TRAP)
+            set_current_block(fail_block);
+            finish_block_unreachable();
+
+            // Continue in pass block
+            set_current_block(pass_block);
         }
 
         return emit_set_field(obj, ge.name, slot_offset, slot_count, value, expr->resolved_type);
@@ -2081,7 +2181,7 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         return nullptr;
     };
 
-    // Initialize ALL fields (provided or default)
+    // Initialize regular fields (including discriminants which are in struct_info.fields)
     for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
         FieldInfo& fi = struct_type->struct_info.fields[i];
         Expr* value_expr = nullptr;
@@ -2104,6 +2204,37 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
             emit_struct_copy(field_addr, value, fi.slot_count);
         } else {
             emit_set_field(struct_ptr, fi.name, fi.slot_offset, fi.slot_count, value, fi.type);
+        }
+    }
+
+    // Initialize variant fields from when clauses
+    for (u32 i = 0; i < struct_type->struct_info.when_clauses.size(); i++) {
+        const WhenClauseInfo& clause = struct_type->struct_info.when_clauses[i];
+
+        // For each variant in the clause
+        for (u32 j = 0; j < clause.variants.size(); j++) {
+            const VariantInfo& variant = clause.variants[j];
+
+            // Initialize variant fields if they're provided
+            for (u32 k = 0; k < variant.fields.size(); k++) {
+                const VariantFieldInfo& vfi = variant.fields[k];
+
+                auto it = provided_fields.find(vfi.name);
+                if (it != provided_fields.end()) {
+                    ValueId value = gen_expr(it->second);
+
+                    // Compute the actual offset: union_slot_offset + variant field's offset
+                    u32 actual_slot_offset = clause.union_slot_offset + vfi.slot_offset;
+
+                    // For struct-typed variant fields, use StructCopy
+                    if (vfi.type && vfi.type->is_struct()) {
+                        ValueId field_addr = emit_get_field_addr(struct_ptr, vfi.name, actual_slot_offset, vfi.type);
+                        emit_struct_copy(field_addr, value, vfi.slot_count);
+                    } else {
+                        emit_set_field(struct_ptr, vfi.name, actual_slot_offset, vfi.slot_count, value, vfi.type);
+                    }
+                }
+            }
         }
     }
 

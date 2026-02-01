@@ -68,22 +68,6 @@ struct MethodInfo {
     Decl* decl;                    // Points to the MethodDecl AST node
 };
 
-// Type info for struct types
-struct StructTypeInfo {
-    StringView name;
-    StringView module_name;        // Module that defined this struct (for visibility checking)
-    Decl* decl;                    // Points to the StructDecl AST node
-    Type* parent;                  // Parent struct type, nullptr if no inheritance
-    Span<struct FieldInfo> fields; // All fields including inherited
-    Span<ConstructorInfo> constructors;  // Constructors for this struct
-    Span<DestructorInfo> destructors;    // Destructors for this struct
-    Span<MethodInfo> methods;            // Methods for this struct
-    u32 slot_count;                // Total u32 slots needed for this struct
-
-    // Find a field by name, returns nullptr if not found
-    const struct FieldInfo* find_field(StringView field_name) const;
-};
-
 // Field information for struct types
 struct FieldInfo {
     StringView name;
@@ -92,6 +76,55 @@ struct FieldInfo {
     u32 index;       // Field index in declaration order
     u32 slot_offset; // Offset in u32 slots from struct start
     u32 slot_count;  // Number of u32 slots this field occupies (1 for 32-bit, 2 for 64-bit)
+};
+
+// Variant field info for tagged unions (field within a specific variant)
+struct VariantFieldInfo {
+    StringView name;
+    Type* type;
+    u32 slot_offset;    // Offset WITHIN the union (from union start)
+    u32 slot_count;
+};
+
+// Variant info for tagged unions (one case in the when clause)
+struct VariantInfo {
+    StringView case_name;           // e.g., "Attack"
+    i64 discriminant_value;         // Enum value for this variant
+    Span<VariantFieldInfo> fields;  // Fields for this variant
+    u32 variant_slot_count;         // Total size of this variant in slots
+};
+
+// When clause info for tagged unions
+struct WhenClauseInfo {
+    StringView discriminant_name;   // e.g., "type"
+    Type* discriminant_type;        // Enum type
+    u32 discriminant_slot_offset;   // Where discriminant is in struct
+    u32 union_slot_offset;          // Where union data starts
+    u32 union_slot_count;           // Max of all variant sizes
+    Span<VariantInfo> variants;
+};
+
+// Type info for struct types
+struct StructTypeInfo {
+    StringView name;
+    StringView module_name;        // Module that defined this struct (for visibility checking)
+    Decl* decl;                    // Points to the StructDecl AST node
+    Type* parent;                  // Parent struct type, nullptr if no inheritance
+    Span<FieldInfo> fields;        // All fields including inherited
+    Span<ConstructorInfo> constructors;  // Constructors for this struct
+    Span<DestructorInfo> destructors;    // Destructors for this struct
+    Span<MethodInfo> methods;            // Methods for this struct
+    Span<WhenClauseInfo> when_clauses;   // Tagged union discriminants
+    u32 slot_count;                // Total u32 slots needed for this struct
+
+    // Find a field by name, returns nullptr if not found
+    const FieldInfo* find_field(StringView field_name) const;
+
+    // Find a variant field by name in any when clause
+    // Returns nullptr if not found, sets out_clause and out_variant if found
+    const VariantFieldInfo* find_variant_field(StringView field_name,
+                                                const WhenClauseInfo** out_clause = nullptr,
+                                                const VariantInfo** out_variant = nullptr) const;
 };
 
 // Type info for enum types

@@ -21,6 +21,7 @@ static u32 get_type_slot_count(Type* type) {
         case TypeKind::I16: case TypeKind::U16:
         case TypeKind::I32: case TypeKind::U32:
         case TypeKind::F32:
+        case TypeKind::Enum:  // Enums are stored as i32
             return 1;
         
         // 2 slots (8 bytes)
@@ -238,7 +239,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                 fields.push_back(info);
             }
 
-            // Compute field slot offsets
+            // Compute field slot offsets for regular fields
             u32 current_slot = 0;
             for (u32 j = 0; j < fields.size(); j++) {
                 FieldInfo& fi = fields[j];
@@ -246,6 +247,116 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                 fi.slot_offset = current_slot;
                 current_slot += fi.slot_count;
             }
+
+            // Process when clauses (tagged unions)
+            Vector<WhenClauseInfo> when_clauses;
+            for (u32 j = 0; j < sd.when_clauses.size(); j++) {
+                WhenFieldDecl& wfd = sd.when_clauses[j];
+
+                // Resolve discriminant type - must be enum
+                Type* disc_type = resolve_type_expr(wfd.discriminant_type);
+                if (!disc_type || disc_type->is_error()) {
+                    disc_type = m_types.error_type();
+                } else if (!disc_type->is_enum()) {
+                    error_fmt(wfd.loc, "when discriminant must be an enum type");
+                    disc_type = m_types.error_type();
+                }
+
+                // Add discriminant as a regular field
+                FieldInfo disc_field;
+                disc_field.name = wfd.discriminant_name;
+                disc_field.type = disc_type;
+                disc_field.is_pub = true;  // Discriminant is accessible
+                disc_field.index = static_cast<u32>(fields.size());
+                disc_field.slot_offset = current_slot;
+                disc_field.slot_count = get_type_slot_count(disc_type);
+                fields.push_back(disc_field);
+
+                u32 disc_slot_offset = current_slot;
+                current_slot += disc_field.slot_count;
+                u32 union_slot_offset = current_slot;
+
+                // Process each case
+                u32 max_variant_slots = 0;
+                Vector<VariantInfo> variants;
+
+                for (u32 k = 0; k < wfd.cases.size(); k++) {
+                    WhenCaseFieldDecl& case_decl = wfd.cases[k];
+
+                    // Validate case names are enum variants
+                    i64 discriminant_value = 0;
+                    for (u32 m = 0; m < case_decl.case_names.size(); m++) {
+                        StringView case_name = case_decl.case_names[m];
+                        Symbol* sym = m_symbols.lookup(case_name);
+                        if (!sym || sym->kind != SymbolKind::EnumVariant) {
+                            error_fmt(case_decl.loc, "'%.*s' is not a known enum variant",
+                                     case_name.size(), case_name.data());
+                        } else {
+                            discriminant_value = sym->enum_variant.value;
+                        }
+                    }
+
+                    // Process variant fields
+                    Vector<VariantFieldInfo> var_fields;
+                    u32 var_slot = 0;
+                    for (u32 m = 0; m < case_decl.fields.size(); m++) {
+                        FieldDecl& fd = case_decl.fields[m];
+                        Type* field_type = resolve_type_expr(fd.type);
+                        if (!field_type) field_type = m_types.error_type();
+
+                        u32 slot_count = get_type_slot_count(field_type);
+                        VariantFieldInfo vfi;
+                        vfi.name = fd.name;
+                        vfi.type = field_type;
+                        vfi.slot_offset = var_slot;
+                        vfi.slot_count = slot_count;
+                        var_fields.push_back(vfi);
+                        var_slot += slot_count;
+                    }
+
+                    // Create VariantInfo for each case name
+                    for (u32 m = 0; m < case_decl.case_names.size(); m++) {
+                        StringView case_name = case_decl.case_names[m];
+                        Symbol* sym = m_symbols.lookup(case_name);
+                        i64 value = sym ? sym->enum_variant.value : 0;
+
+                        VariantFieldInfo* vf_data = reinterpret_cast<VariantFieldInfo*>(
+                            m_allocator.alloc_bytes(sizeof(VariantFieldInfo) * var_fields.size(), alignof(VariantFieldInfo)));
+                        for (u32 n = 0; n < var_fields.size(); n++) {
+                            vf_data[n] = var_fields[n];
+                        }
+
+                        VariantInfo vi;
+                        vi.case_name = case_name;
+                        vi.discriminant_value = value;
+                        vi.fields = Span<VariantFieldInfo>(vf_data, var_fields.size());
+                        vi.variant_slot_count = var_slot;
+                        variants.push_back(vi);
+                    }
+
+                    max_variant_slots = var_slot > max_variant_slots ? var_slot : max_variant_slots;
+                }
+
+                // Allocate variants
+                VariantInfo* var_data = reinterpret_cast<VariantInfo*>(
+                    m_allocator.alloc_bytes(sizeof(VariantInfo) * variants.size(), alignof(VariantInfo)));
+                for (u32 k = 0; k < variants.size(); k++) {
+                    var_data[k] = variants[k];
+                }
+
+                // Create WhenClauseInfo
+                WhenClauseInfo clause;
+                clause.discriminant_name = wfd.discriminant_name;
+                clause.discriminant_type = disc_type;
+                clause.discriminant_slot_offset = disc_slot_offset;
+                clause.union_slot_offset = union_slot_offset;
+                clause.union_slot_count = max_variant_slots;
+                clause.variants = Span<VariantInfo>(var_data, variants.size());
+                when_clauses.push_back(clause);
+
+                current_slot += max_variant_slots;
+            }
+
             type->struct_info.slot_count = current_slot;
 
             // Allocate fields in bump allocator
@@ -255,6 +366,14 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                 field_data[j] = fields[j];
             }
             type->struct_info.fields = Span<FieldInfo>(field_data, fields.size());
+
+            // Allocate when clauses
+            WhenClauseInfo* when_data = reinterpret_cast<WhenClauseInfo*>(
+                m_allocator.alloc_bytes(sizeof(WhenClauseInfo) * when_clauses.size(), alignof(WhenClauseInfo)));
+            for (u32 j = 0; j < when_clauses.size(); j++) {
+                when_data[j] = when_clauses[j];
+            }
+            type->struct_info.when_clauses = Span<WhenClauseInfo>(when_data, when_clauses.size());
 
             // Initialize empty constructor/destructor/method lists
             type->struct_info.constructors = Span<ConstructorInfo>(nullptr, 0);
@@ -2030,6 +2149,15 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
         }
     }
 
+    // Look up variant field in when clauses (tagged union)
+    const WhenClauseInfo* found_clause = nullptr;
+    const VariantInfo* found_variant = nullptr;
+    const VariantFieldInfo* vfi = sti.find_variant_field(ge.name, &found_clause, &found_variant);
+    if (vfi) {
+        // Variant field access - semantic analysis allows it, runtime will check discriminant
+        return vfi->type;
+    }
+
     // Look up method (walks inheritance hierarchy)
     Type* found_in_type = nullptr;
     const MethodInfo* mi = lookup_method_in_hierarchy(base_type, ge.name, &found_in_type);
@@ -2210,6 +2338,10 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
     // Track which fields have been initialized
     Vector<bool> field_initialized(type->struct_info.fields.size(), false);
 
+    // Track initialized variant fields by name
+    tsl::robin_map<StringView, bool, StringViewHash, StringViewEqual> variant_field_initialized;
+    i64 discriminant_value = -1;  // Track which variant is selected
+
     // Validate each field initializer
     for (u32 i = 0; i < sl.fields.size(); i++) {
         FieldInit& fi = sl.fields[i];
@@ -2223,25 +2355,60 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
             }
         }
 
-        if (field_idx < 0) {
-            error_fmt(fi.loc, "struct '%.*s' has no field '%.*s'",
-                     sl.type_name.size(), sl.type_name.data(),
-                     fi.name.size(), fi.name.data());
+        if (field_idx >= 0) {
+            // Regular field
+            if (field_initialized[field_idx]) {
+                error_fmt(fi.loc, "duplicate field '%.*s'",
+                         fi.name.size(), fi.name.data());
+                continue;
+            }
+
+            field_initialized[field_idx] = true;
+
+            // Type-check field value
+            Type* value_type = analyze_expr(fi.value);
+            Type* field_type = type->struct_info.fields[field_idx].type;
+            check_assignable(field_type, value_type, fi.loc);
+
+            // Track discriminant value if this is a discriminant field
+            for (u32 j = 0; j < type->struct_info.when_clauses.size(); j++) {
+                const WhenClauseInfo& clause = type->struct_info.when_clauses[j];
+                if (clause.discriminant_name == fi.name) {
+                    // Check if value is a static get (e.g., Attack from enum)
+                    if (fi.value->kind == AstKind::ExprIdentifier) {
+                        Symbol* sym = m_symbols.lookup(fi.value->identifier.name);
+                        if (sym && sym->kind == SymbolKind::EnumVariant) {
+                            discriminant_value = sym->enum_variant.value;
+                        }
+                    }
+                }
+            }
             continue;
         }
 
-        if (field_initialized[field_idx]) {
-            error_fmt(fi.loc, "duplicate field '%.*s'",
-                     fi.name.size(), fi.name.data());
+        // Check if it's a variant field
+        const WhenClauseInfo* found_clause = nullptr;
+        const VariantInfo* found_variant = nullptr;
+        const VariantFieldInfo* vfi = type->struct_info.find_variant_field(fi.name, &found_clause, &found_variant);
+
+        if (vfi) {
+            // Variant field
+            if (variant_field_initialized.find(fi.name) != variant_field_initialized.end()) {
+                error_fmt(fi.loc, "duplicate field '%.*s'",
+                         fi.name.size(), fi.name.data());
+                continue;
+            }
+            variant_field_initialized[fi.name] = true;
+
+            // Type-check field value
+            Type* value_type = analyze_expr(fi.value);
+            check_assignable(vfi->type, value_type, fi.loc);
             continue;
         }
 
-        field_initialized[field_idx] = true;
-
-        // Type-check field value
-        Type* value_type = analyze_expr(fi.value);
-        Type* field_type = type->struct_info.fields[field_idx].type;
-        check_assignable(field_type, value_type, fi.loc);
+        error_fmt(fi.loc, "struct '%.*s' has no field '%.*s'",
+                 sl.type_name.size(), sl.type_name.data(),
+                 fi.name.size(), fi.name.data());
     }
 
     // Check all fields without defaults are initialized

@@ -388,11 +388,27 @@ struct FieldDecl {
     SourceLocation loc;
 };
 
-// Struct declaration: struct Name : Parent { fields, methods }
+// Case in a when clause (field declarations for one variant)
+struct WhenCaseFieldDecl {
+    Span<StringView> case_names;  // "case A, B:" - can have multiple
+    Span<FieldDecl> fields;       // Field declarations for this variant
+    SourceLocation loc;
+};
+
+// When clause in struct definition (tagged union discriminant)
+struct WhenFieldDecl {
+    StringView discriminant_name;    // e.g., "type"
+    TypeExpr* discriminant_type;     // e.g., SkillType (must be enum)
+    Span<WhenCaseFieldDecl> cases;   // Variant cases
+    SourceLocation loc;
+};
+
+// Struct declaration: struct Name : Parent { fields, when clauses, methods }
 struct StructDecl {
     StringView name;
-    StringView parent_name;  // empty if no parent
-    Span<FieldDecl> fields;
+    StringView parent_name;         // empty if no parent
+    Span<FieldDecl> fields;         // Regular fields
+    Span<WhenFieldDecl> when_clauses;  // Tagged union discriminants
     Span<FunDecl*> methods;
     bool is_pub;
 };

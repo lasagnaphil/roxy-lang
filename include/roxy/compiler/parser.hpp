@@ -103,6 +103,9 @@ private:
     // Helper to parse parameter list
     Vector<Param> parse_parameters();
 
+    // Helper to parse when field declaration (tagged union)
+    WhenFieldDecl parse_when_field_decl();
+
     // Helper to process string literal (strip quotes, handle escapes)
     StringView process_string_literal(const Token& token);
 };

@@ -1,6 +1,6 @@
 # Tagged Unions (Discriminated Unions)
 
-> **Note:** This feature has not been implemented yet. This document describes the planned design.
+> **Status:** Core implementation complete (2026-02-01). Flow-sensitive typing and exhaustiveness checking are not yet implemented.
 
 Tagged unions allow structs to contain variant-specific fields that depend on a discriminant value. This provides memory-efficient sum types with compile-time safety.
 
@@ -25,10 +25,10 @@ struct Skill {
     hit_chance: f32;
 
     when type: SkillType {
-        case Attack:
-            attack: AttackData;
-        case Defend:
-            defend: DefendData;
+    case Attack:
+        attack: AttackData;
+    case Defend:
+        defend: DefendData;
     }
 }
 ```
@@ -720,37 +720,37 @@ For small enums (2-4 variants), the comparison chain is likely faster. For large
 ## Implementation Order
 
 ### Phase 1: Parser Changes
-- [ ] Parse `when` clause in struct definitions
-- [ ] Parse `when` statement for pattern matching
-- [ ] New AST nodes: `WhenFieldDecl`, `CaseFieldDecl`, `StmtWhen`, `WhenCase`
+- [x] Parse `when` clause in struct definitions
+- [x] Parse `when` statement for pattern matching
+- [x] New AST nodes: `WhenFieldDecl`, `WhenCaseFieldDecl`, `WhenStmt`, `WhenCase`
 - [ ] Parse variant constructor syntax: `Type.Variant { ... }`
 
 ### Phase 2: Type System Changes
-- [ ] Add `WhenClause`, `VariantInfo` to type system
-- [ ] Extend `StructTypeInfo` with `when_clauses`
-- [ ] Calculate union layout (max of variant sizes)
-- [ ] Variant field offset calculation
+- [x] Add `WhenClauseInfo`, `VariantInfo`, `VariantFieldInfo` to type system
+- [x] Extend `StructTypeInfo` with `when_clauses`
+- [x] Calculate union layout (max of variant sizes)
+- [x] Variant field offset calculation
 
 ### Phase 3: Semantic Analysis
-- [ ] Validate `when` clauses (enum discriminant, valid cases)
+- [x] Validate `when` clauses (enum discriminant, valid cases)
 - [ ] Check case exhaustiveness
 - [ ] Implement flow-sensitive typing for variant field access
-- [ ] Validate struct literals with variants
-- [ ] Constructor variant field access rules
+- [x] Validate struct literals with variants
+- [x] Constructor variant field access rules
 
 ### Phase 4: IR Builder
-- [ ] Generate IR for `when` statements (Switch or comparison chain)
-- [ ] Handle variant field access with correct offsets
+- [x] Generate IR for `when` statements (comparison chain)
+- [x] Handle variant field access with correct offsets
+- [x] Phi node support for variable modifications across case branches
 - [ ] Variant constructor code generation
 
 ### Phase 5: Bytecode & VM
-- [ ] Implement SWITCH opcode (or use comparison chain)
-- [ ] Test union memory access
+- [x] Uses comparison chain (SWITCH opcode not needed for small enums)
+- [x] Union memory access working
 
 ### Phase 6: Testing
-- [ ] Parser tests for new syntax
-- [ ] Semantic tests for type checking rules
-- [ ] E2E tests for runtime behavior
+- [x] Parser tests for new syntax
+- [x] E2E tests for runtime behavior (8 test cases in `tagged_unions_test.cpp`)
 - [ ] Edge cases: nested when, multiple when clauses, inheritance
 
 ## Examples

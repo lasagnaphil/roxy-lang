@@ -109,7 +109,8 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::REF_DEC:       return "REF_DEC";
         case Opcode::WEAK_CHECK:    return "WEAK_CHECK";
 
-        // Debug
+        // Debug/Error
+        case Opcode::TRAP:          return "TRAP";
         case Opcode::NOP:           return "NOP";
         case Opcode::HALT:          return "HALT";
 

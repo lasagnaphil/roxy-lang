@@ -8,13 +8,6 @@ Last updated: 2026-02-01
 
 ## Critical (Blocking Features)
 
-- [ ] **When/case statements not implemented**
-  - Files: Parser, Semantic, IR Builder
-  - Issue: `KwWhen` and `KwCase` tokens are lexed but no AST nodes or parsing exist
-  - Missing: `StmtWhen`, `StmtCase` in AstKind, no `when_statement()` in parser
-  - Impact: Blocks enum pattern matching shown in `docs/overview.md`
-  - Example: `when skill.type { case Attack: ... }` won't parse
-
 - [ ] **Cross-module function execution incomplete**
   - File: `src/roxy/vm/interpreter.cpp:460`
   - Issue: `CALL_EXTERNAL` opcode raises "External function not resolved - multi-module support not yet implemented"
@@ -90,7 +83,9 @@ Last updated: 2026-02-01
 
 ## Planned Features
 
-- [ ] When/case statements for enum pattern matching
+- [ ] Flow-sensitive typing for tagged union variant fields
+- [ ] Exhaustiveness checking for when statements
+- [ ] Variant constructors (`Type.Variant { ... }` syntax)
 - [ ] Function overloading
 - [ ] Operator overloading
 - [ ] Exception handling
@@ -129,6 +124,23 @@ Last updated: 2026-02-01
 ---
 
 ## Recently Completed
+
+- [x] **Tagged unions (discriminated unions)** (2026-02-01)
+  - `when` clause in struct definitions for variant-specific fields
+  - `when` statement for pattern matching on enum discriminants
+  - Memory-efficient union layout (all variants share same storage)
+  - Struct literals with explicit discriminant and variant fields
+  - Phi node support for variable modifications across case branches
+  - 8 E2E test cases in `tagged_unions_test.cpp`
+  - Note: Flow-sensitive typing and exhaustiveness checking not yet implemented
+
+- [x] **When statement for enums** (2026-02-01)
+  - Syntax: `when expr { case A: ... case B: ... else: ... }`
+  - Validates discriminant is enum type
+  - Validates case names are valid enum variants
+  - Detects duplicate cases
+  - Compiles to comparison chain (not SWITCH opcode)
+  - 12 E2E test cases in `when_test.cpp`
 
 - [x] **Multi-register struct argument tracking** (2026-02-01)
   - Fixed bug where structs with 3-4 slots (12-16 bytes) passed as parameters weren't correctly tracked

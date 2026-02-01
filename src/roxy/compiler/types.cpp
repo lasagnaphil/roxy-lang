@@ -231,6 +231,25 @@ const FieldInfo* StructTypeInfo::find_field(StringView field_name) const {
     return nullptr;
 }
 
+const VariantFieldInfo* StructTypeInfo::find_variant_field(StringView field_name,
+                                                            const WhenClauseInfo** out_clause,
+                                                            const VariantInfo** out_variant) const {
+    for (u32 i = 0; i < when_clauses.size(); i++) {
+        const WhenClauseInfo& clause = when_clauses[i];
+        for (u32 j = 0; j < clause.variants.size(); j++) {
+            const VariantInfo& variant = clause.variants[j];
+            for (u32 k = 0; k < variant.fields.size(); k++) {
+                if (variant.fields[k].name == field_name) {
+                    if (out_clause) *out_clause = &clause;
+                    if (out_variant) *out_variant = &variant;
+                    return &variant.fields[k];
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
 const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name, Type** found_in_type) {
     Type* current = struct_type;
     while (current && current->is_struct()) {

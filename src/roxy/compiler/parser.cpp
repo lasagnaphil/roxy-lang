@@ -1316,6 +1316,7 @@ Decl* Parser::struct_declaration(bool is_pub) {
     if (m_has_error) return nullptr;
 
     Vector<FieldDecl> fields;
+    Vector<WhenFieldDecl> when_clauses;
     Vector<FunDecl*> methods;
 
     while (!check(TokenKind::RightBrace) && !is_at_end()) {
@@ -1327,6 +1328,15 @@ Decl* Parser::struct_declaration(bool is_pub) {
             Decl* method_decl = fun_declaration(member_is_pub, member_is_native);
             if (m_has_error) return nullptr;
             methods.push_back(&method_decl->fun_decl);
+        } else if (match(TokenKind::KwWhen)) {
+            // When clause (tagged union discriminant)
+            if (member_is_native || member_is_pub) {
+                report_error("'when' cannot have 'pub' or 'native' modifiers");
+                return nullptr;
+            }
+            WhenFieldDecl when_decl = parse_when_field_decl();
+            if (m_has_error) return nullptr;
+            when_clauses.push_back(when_decl);
         } else {
             if (member_is_native) {
                 report_error("'native' can only precede 'fun'");
@@ -1371,9 +1381,96 @@ Decl* Parser::struct_declaration(bool is_pub) {
     decl->struct_decl.name = name_token.text();
     decl->struct_decl.parent_name = parent_name;
     decl->struct_decl.fields = alloc_span(fields);
+    decl->struct_decl.when_clauses = alloc_span(when_clauses);
     decl->struct_decl.methods = alloc_span(methods);
     decl->struct_decl.is_pub = is_pub;
     return decl;
+}
+
+WhenFieldDecl Parser::parse_when_field_decl() {
+    // 'when' has already been consumed
+    SourceLocation loc = m_previous.loc;
+
+    // Parse discriminant: name: EnumType
+    Token discrim_token = consume(TokenKind::Identifier, "Expected discriminant name after 'when'");
+    if (m_has_error) return WhenFieldDecl{};
+
+    consume(TokenKind::Colon, "Expected ':' after discriminant name");
+    if (m_has_error) return WhenFieldDecl{};
+
+    TypeExpr* discrim_type = type_expression();
+    if (m_has_error) return WhenFieldDecl{};
+
+    consume(TokenKind::LeftBrace, "Expected '{' after discriminant type");
+    if (m_has_error) return WhenFieldDecl{};
+
+    Vector<WhenCaseFieldDecl> cases;
+
+    // Parse cases: case A, B: field: Type; ...
+    while (!check(TokenKind::RightBrace) && !is_at_end()) {
+        if (!match(TokenKind::KwCase)) {
+            report_error("Expected 'case' in when clause");
+            return WhenFieldDecl{};
+        }
+
+        WhenCaseFieldDecl case_decl;
+        case_decl.loc = m_previous.loc;
+
+        // Parse case names (comma-separated)
+        Vector<StringView> case_names;
+        do {
+            Token name_token = consume(TokenKind::Identifier, "Expected case name");
+            if (m_has_error) return WhenFieldDecl{};
+            case_names.push_back(name_token.text());
+        } while (match(TokenKind::Comma));
+
+        consume(TokenKind::Colon, "Expected ':' after case name(s)");
+        if (m_has_error) return WhenFieldDecl{};
+
+        // Parse fields until next case or end of when clause
+        Vector<FieldDecl> fields;
+        while (!check(TokenKind::KwCase) && !check(TokenKind::RightBrace) && !is_at_end()) {
+            Token field_name = consume(TokenKind::Identifier, "Expected field name");
+            if (m_has_error) return WhenFieldDecl{};
+
+            consume(TokenKind::Colon, "Expected ':' after field name");
+            if (m_has_error) return WhenFieldDecl{};
+
+            TypeExpr* field_type = type_expression();
+            if (m_has_error) return WhenFieldDecl{};
+
+            Expr* default_value = nullptr;
+            if (match(TokenKind::Equal)) {
+                default_value = expression();
+                if (m_has_error) return WhenFieldDecl{};
+            }
+
+            consume(TokenKind::Semicolon, "Expected ';' after field declaration");
+            if (m_has_error) return WhenFieldDecl{};
+
+            FieldDecl field;
+            field.name = field_name.text();
+            field.type = field_type;
+            field.default_value = default_value;
+            field.is_pub = false;  // variant fields are not individually public
+            field.loc = field_name.loc;
+            fields.push_back(field);
+        }
+
+        case_decl.case_names = alloc_span(case_names);
+        case_decl.fields = alloc_span(fields);
+        cases.push_back(case_decl);
+    }
+
+    consume(TokenKind::RightBrace, "Expected '}' after when clause");
+    if (m_has_error) return WhenFieldDecl{};
+
+    WhenFieldDecl when_decl;
+    when_decl.discriminant_name = discrim_token.text();
+    when_decl.discriminant_type = discrim_type;
+    when_decl.cases = alloc_span(cases);
+    when_decl.loc = loc;
+    return when_decl;
 }
 
 Decl* Parser::enum_declaration(bool is_pub) {
