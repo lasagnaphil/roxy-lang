@@ -112,7 +112,7 @@ field_init      -> Identifier "=" expression ;
 typed_identifier -> Identifier ":" type_expr ;
 parameters       -> parameter ( "," parameter )* ;
 parameter        -> Identifier ":" ( "out" | "inout" )? type_expr ;
-type_expr        -> ( "uniq" | "ref" | "weak" )? Identifier ( "[" "]" )? ;
+type_expr        -> ( "uniq" | "ref" | "weak" )? Identifier ( "<" type_expr ( "," type_expr )* ">" )? ;
 arguments        -> argument ( "," argument )* ;
 argument         -> ( "out" | "inout" )? expression ;
 ```

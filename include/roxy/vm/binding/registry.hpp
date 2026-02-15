@@ -26,8 +26,6 @@ enum class NativeTypeKind : u8 {
     U8, U16, U32, U64,
     F32, F64,
     String,    // string
-    // Array types (element type follows in the element_type_kind field)
-    ArrayI32,  // i32[]
 };
 
 // Entry for a registered native function
@@ -100,7 +98,7 @@ public:
 
     // Register a native function with type kinds (for functions needing VM access)
     // This allows the types to be recreated in any TypeCache
-    // Usage: registry.bind_native("native_fn", native_fn_wrapper, {NativeTypeKind::I32}, NativeTypeKind::ArrayI32)
+    // Usage: registry.bind_native("native_fn", native_fn_wrapper, {NativeTypeKind::I32}, NativeTypeKind::I32)
     void bind_native(const char* name, NativeFunction func,
                      std::initializer_list<NativeTypeKind> param_type_kinds,
                      NativeTypeKind return_type_kind) {
@@ -247,7 +245,6 @@ private:
             case NativeTypeKind::F32: return types.f32_type();
             case NativeTypeKind::F64: return types.f64_type();
             case NativeTypeKind::String: return types.string_type();
-            case NativeTypeKind::ArrayI32: return types.array_type(types.i32_type());
             default: return types.error_type();
         }
     }

@@ -189,7 +189,7 @@ struct_decl     -> "struct" Identifier generic_params?
                    ( ":" Identifier generic_args? )?
                    "{" field_decl* "}" ;
 
-type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ( "[" "]" )? ;
+type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ;
 ```
 
 ## Files

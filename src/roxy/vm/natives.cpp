@@ -1,6 +1,6 @@
 #include "roxy/vm/natives.hpp"
 #include "roxy/vm/vm.hpp"
-#include "roxy/vm/array.hpp"
+#include "roxy/vm/list.hpp"
 #include "roxy/vm/string.hpp"
 #include "roxy/vm/value.hpp"
 #include "roxy/vm/binding/registry.hpp"
@@ -10,58 +10,108 @@
 
 namespace rx {
 
-// Native function: array_new_int(size: i32) -> i32[]
-void native_array_new_int(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    if (argc < 1) {
-        vm->error = "array_new_int requires 1 argument";
-        return;
-    }
-
+// Native function: list_new(cap?: i32) -> List<T>
+void native_list_new(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack.back().registers;
-    i64 size = static_cast<i64>(regs[first_arg]);
 
-    if (size < 0) {
-        vm->error = "array size cannot be negative";
+    u32 capacity = 0;
+    if (argc >= 1) {
+        i64 cap = static_cast<i64>(regs[first_arg]);
+        if (cap < 0) {
+            vm->error = "list capacity cannot be negative";
+            return;
+        }
+        if (cap > 1000000) {
+            vm->error = "list capacity too large";
+            return;
+        }
+        capacity = static_cast<u32>(cap);
+    }
+
+    void* lst = list_alloc(vm, capacity);
+    if (!lst) {
+        vm->error = "failed to allocate list";
         return;
     }
 
-    if (size > 1000000) {
-        vm->error = "array size too large";
-        return;
-    }
-
-    void* arr = array_alloc(vm, static_cast<u32>(size));
-    if (!arr) {
-        vm->error = "failed to allocate array";
-        return;
-    }
-
-    // Initialize all elements to 0 (they're already null, set them to int 0)
-    Value* elements = array_elements(arr);
-    for (u32 i = 0; i < static_cast<u32>(size); i++) {
-        elements[i] = Value::make_int(0);
-    }
-
-    regs[dst] = reinterpret_cast<u64>(arr);
+    regs[dst] = reinterpret_cast<u64>(lst);
 }
 
-// Native function: array_len(arr: T[]) -> i32
-void native_array_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+// Native function: list_len(lst: List<T>) -> i32
+void native_list_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 1) {
-        vm->error = "array_len requires 1 argument";
+        vm->error = "list_len requires 1 argument";
         return;
     }
 
     u64* regs = vm->call_stack.back().registers;
-    void* arr_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]);
 
-    if (arr_ptr == nullptr) {
-        vm->error = "array_len: null array reference";
+    if (lst_ptr == nullptr) {
+        vm->error = "list_len: null list reference";
         return;
     }
 
-    u32 len = array_length(arr_ptr);
+    u32 len = list_length(lst_ptr);
     regs[dst] = static_cast<u64>(len);
+}
+
+// Native function: list_cap(lst: List<T>) -> i32
+void native_list_cap(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    if (argc < 1) {
+        vm->error = "list_cap requires 1 argument";
+        return;
+    }
+
+    u64* regs = vm->call_stack.back().registers;
+    void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]);
+
+    if (lst_ptr == nullptr) {
+        vm->error = "list_cap: null list reference";
+        return;
+    }
+
+    u32 cap = list_capacity(lst_ptr);
+    regs[dst] = static_cast<u64>(cap);
+}
+
+// Native function: list_push(lst: List<T>, val: T) -> void
+void native_list_push(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    if (argc < 2) {
+        vm->error = "list_push requires 2 arguments";
+        return;
+    }
+
+    u64* regs = vm->call_stack.back().registers;
+    void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]);
+
+    if (lst_ptr == nullptr) {
+        vm->error = "list_push: null list reference";
+        return;
+    }
+
+    Value val = Value::from_u64(regs[first_arg + 1]);
+    list_push(lst_ptr, val);
+    regs[dst] = 0;
+}
+
+// Native function: list_pop(lst: List<T>) -> T
+void native_list_pop(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    if (argc < 1) {
+        vm->error = "list_pop requires 1 argument";
+        return;
+    }
+
+    u64* regs = vm->call_stack.back().registers;
+    void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]);
+
+    if (lst_ptr == nullptr) {
+        vm->error = "list_pop: null list reference";
+        return;
+    }
+
+    Value result = list_pop(lst_ptr);
+    regs[dst] = result.as_u64();
 }
 
 // Native function: print(value: i32)
@@ -189,14 +239,22 @@ void native_print_str(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 void register_builtin_natives(NativeRegistry& registry) {
     using TK = NativeTypeKind;
 
-    // Register array_new_int(size: i32) -> i32[]
-    // Use bind_native with type kinds for TypeCache-independent registration
-    registry.bind_native(NATIVE_ARRAY_NEW_INT, native_array_new_int,
-                         {TK::I32}, TK::ArrayI32);
+    // List natives - registered with I64 type kinds since list pointers and values
+    // are 64-bit values. The semantic analyzer handles actual type checking.
+    registry.bind_native(NATIVE_LIST_NEW, native_list_new,
+                         {TK::I32}, TK::I64);
 
-    // Register array_len(arr: i32[]) -> i32
-    registry.bind_native(NATIVE_ARRAY_LEN, native_array_len,
-                         {TK::ArrayI32}, TK::I32);
+    registry.bind_native(NATIVE_LIST_LEN, native_list_len,
+                         {TK::I64}, TK::I32);
+
+    registry.bind_native(NATIVE_LIST_CAP, native_list_cap,
+                         {TK::I64}, TK::I32);
+
+    registry.bind_native(NATIVE_LIST_PUSH, native_list_push,
+                         {TK::I64, TK::I64}, TK::Void);
+
+    registry.bind_native(NATIVE_LIST_POP, native_list_pop,
+                         {TK::I64}, TK::I64);
 
     // Register print(value: i32) -> void
     registry.bind_native(NATIVE_PRINT, native_print,
@@ -207,34 +265,41 @@ void register_builtin_natives(NativeRegistry& registry) {
                          {TK::I64}, TK::Void);
 
     // String functions
-    // Register str_concat(a: string, b: string) -> string
     registry.bind_native(NATIVE_STR_CONCAT, native_str_concat,
                          {TK::String, TK::String}, TK::String);
 
-    // Register str_eq(a: string, b: string) -> bool
     registry.bind_native(NATIVE_STR_EQ, native_str_eq,
                          {TK::String, TK::String}, TK::Bool);
 
-    // Register str_ne(a: string, b: string) -> bool
     registry.bind_native(NATIVE_STR_NE, native_str_ne,
                          {TK::String, TK::String}, TK::Bool);
 
-    // Register str_len(s: string) -> i32
     registry.bind_native(NATIVE_STR_LEN, native_str_len,
                          {TK::String}, TK::I32);
 
-    // Register print_str(s: string) -> void
     registry.bind_native(NATIVE_PRINT_STR, native_print_str,
                          {TK::String}, TK::Void);
 }
 
 bool is_builtin_native(const char* name, u32 len) {
-    if (len == strlen(NATIVE_ARRAY_NEW_INT) &&
-        strncmp(name, NATIVE_ARRAY_NEW_INT, len) == 0) {
+    if (len == strlen(NATIVE_LIST_NEW) &&
+        strncmp(name, NATIVE_LIST_NEW, len) == 0) {
         return true;
     }
-    if (len == strlen(NATIVE_ARRAY_LEN) &&
-        strncmp(name, NATIVE_ARRAY_LEN, len) == 0) {
+    if (len == strlen(NATIVE_LIST_LEN) &&
+        strncmp(name, NATIVE_LIST_LEN, len) == 0) {
+        return true;
+    }
+    if (len == strlen(NATIVE_LIST_CAP) &&
+        strncmp(name, NATIVE_LIST_CAP, len) == 0) {
+        return true;
+    }
+    if (len == strlen(NATIVE_LIST_PUSH) &&
+        strncmp(name, NATIVE_LIST_PUSH, len) == 0) {
+        return true;
+    }
+    if (len == strlen(NATIVE_LIST_POP) &&
+        strncmp(name, NATIVE_LIST_POP, len) == 0) {
         return true;
     }
     if (len == strlen(NATIVE_PRINT) &&
@@ -270,43 +335,56 @@ bool is_builtin_native(const char* name, u32 len) {
 
 i32 get_builtin_native_index(const char* name, u32 len) {
     // Native functions are registered in this order:
-    // array_new_int (0), array_len (1), print (2), print_i64 (3),
-    // str_concat (4), str_eq (5), str_ne (6), str_len (7), print_str (8)
-    if (len == strlen(NATIVE_ARRAY_NEW_INT) &&
-        strncmp(name, NATIVE_ARRAY_NEW_INT, len) == 0) {
+    // list_new (0), list_len (1), list_cap (2), list_push (3), list_pop (4),
+    // print (5), print_i64 (6),
+    // str_concat (7), str_eq (8), str_ne (9), str_len (10), print_str (11)
+    if (len == strlen(NATIVE_LIST_NEW) &&
+        strncmp(name, NATIVE_LIST_NEW, len) == 0) {
         return 0;
     }
-    if (len == strlen(NATIVE_ARRAY_LEN) &&
-        strncmp(name, NATIVE_ARRAY_LEN, len) == 0) {
+    if (len == strlen(NATIVE_LIST_LEN) &&
+        strncmp(name, NATIVE_LIST_LEN, len) == 0) {
         return 1;
+    }
+    if (len == strlen(NATIVE_LIST_CAP) &&
+        strncmp(name, NATIVE_LIST_CAP, len) == 0) {
+        return 2;
+    }
+    if (len == strlen(NATIVE_LIST_PUSH) &&
+        strncmp(name, NATIVE_LIST_PUSH, len) == 0) {
+        return 3;
+    }
+    if (len == strlen(NATIVE_LIST_POP) &&
+        strncmp(name, NATIVE_LIST_POP, len) == 0) {
+        return 4;
     }
     if (len == strlen(NATIVE_PRINT) &&
         strncmp(name, NATIVE_PRINT, len) == 0) {
-        return 2;
+        return 5;
     }
     if (len == strlen(NATIVE_PRINT_I64) &&
         strncmp(name, NATIVE_PRINT_I64, len) == 0) {
-        return 3;
+        return 6;
     }
     if (len == strlen(NATIVE_STR_CONCAT) &&
         strncmp(name, NATIVE_STR_CONCAT, len) == 0) {
-        return 4;
+        return 7;
     }
     if (len == strlen(NATIVE_STR_EQ) &&
         strncmp(name, NATIVE_STR_EQ, len) == 0) {
-        return 5;
+        return 8;
     }
     if (len == strlen(NATIVE_STR_NE) &&
         strncmp(name, NATIVE_STR_NE, len) == 0) {
-        return 6;
+        return 9;
     }
     if (len == strlen(NATIVE_STR_LEN) &&
         strncmp(name, NATIVE_STR_LEN, len) == 0) {
-        return 7;
+        return 10;
     }
     if (len == strlen(NATIVE_PRINT_STR) &&
         strncmp(name, NATIVE_PRINT_STR, len) == 0) {
-        return 8;
+        return 11;
     }
     return -1;
 }

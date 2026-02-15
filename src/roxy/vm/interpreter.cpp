@@ -1,6 +1,6 @@
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/object.hpp"
-#include "roxy/vm/array.hpp"
+#include "roxy/vm/list.hpp"
 #include "roxy/vm/string.hpp"
 
 #include <cmath>
@@ -722,12 +722,12 @@ bool interpret(RoxyVM* vm) {
 
             // Index Access
             case Opcode::GET_INDEX: {
-                // Format: GET_INDEX dst, arr, idx
-                // dst = arr[idx]
-                void* arr = reg_as_ptr(regs[b]);
+                // Format: GET_INDEX dst, lst, idx
+                // dst = lst[idx]
+                void* lst = reg_as_ptr(regs[b]);
                 i64 index = reg_as_i64(regs[c]);
                 Value result;
-                if (!array_get(arr, index, result, &vm->error)) {
+                if (!list_get(lst, index, result, &vm->error)) {
                     return false;
                 }
                 regs[a] = result.as_u64();
@@ -735,12 +735,12 @@ bool interpret(RoxyVM* vm) {
             }
 
             case Opcode::SET_INDEX: {
-                // Format: SET_INDEX arr, idx, val
-                // arr[idx] = val
-                void* arr = reg_as_ptr(regs[a]);
+                // Format: SET_INDEX lst, idx, val
+                // lst[idx] = val
+                void* lst = reg_as_ptr(regs[a]);
                 i64 index = reg_as_i64(regs[b]);
                 Value value = Value::from_u64(regs[c]);
-                if (!array_set(arr, index, value, &vm->error)) {
+                if (!list_set(lst, index, value, &vm->error)) {
                     return false;
                 }
                 break;

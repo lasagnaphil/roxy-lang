@@ -10,13 +10,25 @@ struct RoxyVM;
 class TypeCache;
 class NativeRegistry;
 
-// Native function: array_new_int(size: i32) -> i32[]
-// Creates a new integer array initialized to 0
-void native_array_new_int(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
+// Native function: list_new(cap?: i32) -> List<T>
+// Creates a new empty list with optional initial capacity
+void native_list_new(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
 
-// Native function: array_len(arr: T[]) -> i32
-// Returns the length of an array
-void native_array_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
+// Native function: list_len(lst: List<T>) -> i32
+// Returns the length of a list
+void native_list_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
+
+// Native function: list_cap(lst: List<T>) -> i32
+// Returns the capacity of a list
+void native_list_cap(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
+
+// Native function: list_push(lst: List<T>, val: T) -> void
+// Pushes an element to the end of the list
+void native_list_push(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
+
+// Native function: list_pop(lst: List<T>) -> T
+// Pops and returns the last element of the list
+void native_list_pop(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
 
 // Native function: print(value: i32)
 // Prints an integer value followed by newline
@@ -50,8 +62,11 @@ void native_print_str(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
 void register_builtin_natives(NativeRegistry& registry);
 
 // Built-in native function names (for lookup during compilation)
-constexpr const char* NATIVE_ARRAY_NEW_INT = "array_new_int";
-constexpr const char* NATIVE_ARRAY_LEN = "array_len";
+constexpr const char* NATIVE_LIST_NEW = "list_new";
+constexpr const char* NATIVE_LIST_LEN = "list_len";
+constexpr const char* NATIVE_LIST_CAP = "list_cap";
+constexpr const char* NATIVE_LIST_PUSH = "list_push";
+constexpr const char* NATIVE_LIST_POP = "list_pop";
 constexpr const char* NATIVE_PRINT = "print";
 constexpr const char* NATIVE_PRINT_I64 = "print_i64";
 constexpr const char* NATIVE_STR_CONCAT = "str_concat";

@@ -31,7 +31,7 @@ enum class TypeKind : u8 {
     String,
 
     // Compound types
-    Array,
+    List,
     Function,
     Struct,
     Enum,
@@ -156,8 +156,8 @@ struct EnumTypeInfo {
     Type* underlying;     // Underlying integer type (defaults to i32)
 };
 
-// Type info for array types
-struct ArrayTypeInfo {
+// Type info for list types
+struct ListTypeInfo {
     Type* element_type;
 };
 
@@ -186,7 +186,7 @@ struct Type {
         StructTypeInfo struct_info;
         EnumTypeInfo enum_info;
         TraitTypeInfo trait_info;
-        ArrayTypeInfo array_info;
+        ListTypeInfo list_info;
         FunctionTypeInfo func_info;
         RefTypeInfo ref_info;
         TypeParamInfo type_param_info;
@@ -251,8 +251,8 @@ struct Type {
         return kind == TypeKind::Trait;
     }
 
-    bool is_array() const {
-        return kind == TypeKind::Array;
+    bool is_list() const {
+        return kind == TypeKind::List;
     }
 
     bool is_function() const {
@@ -319,7 +319,7 @@ public:
     Type* error_type() { return m_error; }
 
     // Factory methods for compound types (with interning)
-    Type* array_type(Type* element_type);
+    Type* list_type(Type* element_type);
     Type* function_type(Span<Type*> param_types, Type* return_type);
     Type* uniq_type(Type* inner_type);
     Type* ref_type(Type* inner_type);

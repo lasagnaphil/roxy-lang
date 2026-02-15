@@ -128,8 +128,7 @@ struct TypeExpr {
     StringView name;
     SourceLocation loc;
     RefKind ref_kind;
-    TypeExpr* element_type;      // For array types: element_type[]
-    Span<TypeExpr*> type_args;   // Generic type args: Box<i32>, Pair<i32, string>
+    Span<TypeExpr*> type_args;   // Generic type args: Box<i32>, Pair<i32, string>, List<i32>
 };
 
 // Literal expression: nil, true, false, 42, 3.14, "hello"

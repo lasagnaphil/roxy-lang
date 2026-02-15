@@ -217,10 +217,10 @@ fun main(): i32 {
 Built-in parameterized types (see `generics.md`) can also implement traits:
 
 ```roxy
-// Built-in array implements Printable if element type does
-fun T[].print() for Printable where T: Printable {
+// Built-in list implements Printable if element type does
+fun List<T>.print() for Printable where T: Printable {
     print_str("[");
-    for (var i: i32 = 0; i < array_len(self); i = i + 1) {
+    for (var i: i32 = 0; i < self.len(); i = i + 1) {
         if (i > 0) { print_str(", "); }
         self[i].print();
     }

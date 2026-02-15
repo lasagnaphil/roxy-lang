@@ -24,8 +24,8 @@ Last updated: 2026-02-02
   - Fix: Validate and return error instead of asserting
 
 - [ ] **Global static type IDs not thread-safe**
-  - Files: `src/roxy/vm/array.cpp:7`, `src/roxy/vm/string.cpp:9`
-  - Issue: `g_array_type_id` and `g_string_type_id` use static globals with lazy initialization
+  - Files: `src/roxy/vm/list.cpp:7`, `src/roxy/vm/string.cpp:9`
+  - Issue: `g_list_type_id` and `g_string_type_id` use static globals with lazy initialization
   - Fix: Move type registration to per-VM or use proper synchronization
 
 ---

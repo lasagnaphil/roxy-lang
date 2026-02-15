@@ -63,8 +63,6 @@ Built-in functions are automatically available without explicit imports. They ar
 **Built-in functions:**
 - `print(value: i32)` - Print integer to stdout
 - `print_str(s: string)` - Print string to stdout
-- `array_new_int(size: i32): i32[]` - Create integer array
-- `array_len(arr: i32[]): i32` - Get array length
 - `str_concat(a: string, b: string): string` - Concatenate strings
 - `str_eq(a: string, b: string): bool` - String equality
 - `str_ne(a: string, b: string): bool` - String inequality

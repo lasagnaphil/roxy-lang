@@ -244,7 +244,7 @@ TypeExpr* GenericInstantiator::substitute_type_expr(TypeExpr* type_expr, const T
     *result = *type_expr;
 
     // Check if this type name is a type parameter that needs substitution
-    if (!type_expr->element_type && type_expr->type_args.size() == 0) {
+    if (type_expr->type_args.size() == 0) {
         Type* concrete = subst.lookup(type_expr->name);
         if (concrete) {
             // Replace the type name with the concrete type's name
@@ -253,12 +253,7 @@ TypeExpr* GenericInstantiator::substitute_type_expr(TypeExpr* type_expr, const T
         }
     }
 
-    // Handle array element type
-    if (type_expr->element_type) {
-        result->element_type = substitute_type_expr(type_expr->element_type, subst);
-    }
-
-    // Handle generic type args (e.g., Box<T> -> Box<i32>)
+    // Handle generic type args (e.g., Box<T> -> Box<i32>, List<T> -> List<i32>)
     if (type_expr->type_args.size() > 0) {
         TypeExpr** args = reinterpret_cast<TypeExpr**>(
             m_allocator.alloc_bytes(sizeof(TypeExpr*) * type_expr->type_args.size(), alignof(TypeExpr*)));

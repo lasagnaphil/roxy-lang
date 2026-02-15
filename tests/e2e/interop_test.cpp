@@ -491,11 +491,16 @@ TEST_CASE("Interop - Built-in natives via registry") {
         CHECK(result.as_int == 0);
     }
 
-    SUBCASE("array_new_int and array_len work") {
+    SUBCASE("List construction and len work") {
         const char* source = R"(
             fun test(): i32 {
-                var arr: i32[] = array_new_int(5);
-                return array_len(arr);
+                var lst: List<i32> = List<i32>();
+                lst.push(1);
+                lst.push(2);
+                lst.push(3);
+                lst.push(4);
+                lst.push(5);
+                return lst.len();
             }
         )";
         Value result = compile_and_run_with_builtins(source, "test");
@@ -503,14 +508,14 @@ TEST_CASE("Interop - Built-in natives via registry") {
         CHECK(result.as_int == 5);
     }
 
-    SUBCASE("Array operations work") {
+    SUBCASE("List operations work") {
         const char* source = R"(
             fun test(): i32 {
-                var arr: i32[] = array_new_int(3);
-                arr[0] = 10;
-                arr[1] = 20;
-                arr[2] = 30;
-                return arr[0] + arr[1] + arr[2];
+                var lst: List<i32> = List<i32>();
+                lst.push(10);
+                lst.push(20);
+                lst.push(30);
+                return lst[0] + lst[1] + lst[2];
             }
         )";
         Value result = compile_and_run_with_builtins(source, "test");
@@ -589,14 +594,14 @@ static Value compile_and_run_mixed(const char* source, StringView func_name, Bin
 TEST_CASE("Interop - Mixed bound and built-in functions") {
     const char* source = R"(
         fun test(): i32 {
-            var arr: i32[] = array_new_int(3);
-            arr[0] = abs(-5);
-            arr[1] = square(4);
-            arr[2] = array_len(arr);
-            print(arr[0]);
-            print(arr[1]);
-            print(arr[2]);
-            return arr[0] + arr[1] + arr[2];
+            var lst: List<i32> = List<i32>();
+            lst.push(abs(-5));
+            lst.push(square(4));
+            lst.push(lst.len());
+            print(lst[0]);
+            print(lst[1]);
+            print(lst[2]);
+            return lst[0] + lst[1] + lst[2];
         }
     )";
 
@@ -606,5 +611,5 @@ TEST_CASE("Interop - Mixed bound and built-in functions") {
             reg.bind<my_abs>("abs");
         });
     CHECK(result.is_int());
-    CHECK(result.as_int == 5 + 16 + 3);  // abs(-5) + square(4) + len
+    CHECK(result.as_int == 5 + 16 + 2);  // abs(-5) + square(4) + len(at time of push)
 }

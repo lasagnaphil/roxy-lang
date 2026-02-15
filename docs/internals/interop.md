@@ -75,7 +75,7 @@ public:
     template<auto FnPtr>
     void bind(const char* name);
 
-    // Manual binding - for functions needing VM access (arrays, etc.)
+    // Manual binding - for functions needing VM access (lists, etc.)
     void bind_native(const char* name, NativeFunction func,
                      std::initializer_list<NativeTypeKind> params,
                      NativeTypeKind return_type);
@@ -108,7 +108,7 @@ NativeRegistry registry(allocator, types);
 registry.bind<my_add>("add");
 registry.bind<my_sqrt>("sqrt");
 
-// Register built-in natives (array_new_int, array_len, print)
+// Register built-in natives (list_new, list_len, list_push, list_pop, print, etc.)
 register_builtin_natives(registry);
 
 // Use in compilation - pass shared TypeCache for type consistency
@@ -124,7 +124,7 @@ registry.apply_to_module(module);
 
 ## NativeTypeKind
 
-For functions needing VM access (like array operations), use `bind_native` with type kinds:
+For functions needing VM access (like list operations), use `bind_native` with type kinds:
 
 ```cpp
 enum class NativeTypeKind : u8 {
@@ -133,22 +133,24 @@ enum class NativeTypeKind : u8 {
     U8, U16, U32, U64,
     F32, F64,
     String,    // string
-    ArrayI32,  // i32[]
 };
 
-// Example: array_new_int(size: i32) -> i32[]
-registry.bind_native("array_new_int", native_array_new_int,
-                     {NativeTypeKind::I32}, NativeTypeKind::ArrayI32);
+// Example: list_new(cap?: i64) -> List<T>
+registry.bind_native("list_new", native_list_new,
+                     {NativeTypeKind::I64}, NativeTypeKind::I64);
 ```
 
 ## Built-in Native Functions
 
-### Array Functions
+### List Functions
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `array_new_int` | `(size: i32) -> i32[]` | Allocate int array initialized to 0 |
-| `array_len` | `(arr: i32[]) -> i32` | Return array length |
+| `list_new` | `(cap?: i32) -> List<T>` | Allocate list with optional capacity |
+| `list_len` | `(lst: List<T>) -> i32` | Return list length |
+| `list_cap` | `(lst: List<T>) -> i32` | Return list capacity |
+| `list_push` | `(lst: List<T>, val: T) -> void` | Append element |
+| `list_pop` | `(lst: List<T>) -> T` | Remove and return last element |
 
 ### String Functions
 
@@ -192,7 +194,7 @@ namespace rx {
 
 template<typename T>
 class Array {
-    ArrayHeader* m_header;
+    ListHeader* m_header;
 public:
     // Element access
     T& operator[](u32 i) { return data()[i]; }
@@ -306,7 +308,7 @@ The binding system recognizes Roxy containers automatically:
 template<typename T>
 struct RoxyType<rx::Array<T>> {
     static Type* get(TypeCache& tc) {
-        return tc.array_type(RoxyType<T>::get(tc));
+        return tc.list_type(RoxyType<T>::get(tc));
     }
     static rx::Array<T> from_reg(u64 reg) {
         return rx::Array<T>::from_ptr(reinterpret_cast<void*>(reg));
@@ -330,7 +332,7 @@ struct RoxyType<rx::Option<T>> {
 ```
 include/roxy/
 ├── containers/
-│   ├── array.hpp       # rx::Array<T>
+│   ├── list.hpp        # rx::List<T>
 │   ├── dict.hpp        # rx::Dict<K,V>
 │   ├── option.hpp      # rx::Option<T>
 │   ├── result.hpp      # rx::Result<T,E>

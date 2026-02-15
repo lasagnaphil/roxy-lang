@@ -694,12 +694,13 @@ TEST_CASE("Parser: Type Expressions") {
         CHECK(prog3->declarations[0]->var_decl.type->ref_kind == RefKind::Weak);
     }
 
-    SUBCASE("Array type") {
-        Program* program = parse_source("var arr: i32[];", allocator);
+    SUBCASE("List type") {
+        Program* program = parse_source("var lst: List<i32>;", allocator);
         REQUIRE(program != nullptr);
         auto type = program->declarations[0]->var_decl.type;
-        CHECK(type->element_type != nullptr);
-        CHECK(check_identifier(type->element_type->name, "i32"));
+        CHECK(check_identifier(type->name, "List"));
+        REQUIRE(type->type_args.size() == 1);
+        CHECK(check_identifier(type->type_args[0]->name, "i32"));
     }
 }
 

@@ -92,18 +92,18 @@ TEST_CASE("Types: Primitive type lookup by name") {
     CHECK(types.primitive_by_name("unknown") == nullptr);
 }
 
-TEST_CASE("Types: Array type interning") {
+TEST_CASE("Types: List type interning") {
     BumpAllocator allocator{1024};
     TypeCache types(allocator);
 
-    Type* arr1 = types.array_type(types.i32_type());
-    Type* arr2 = types.array_type(types.i32_type());
-    Type* arr3 = types.array_type(types.f64_type());
+    Type* lst1 = types.list_type(types.i32_type());
+    Type* lst2 = types.list_type(types.i32_type());
+    Type* lst3 = types.list_type(types.f64_type());
 
-    CHECK(arr1 == arr2);  // Same element type -> same interned type
-    CHECK(arr1 != arr3);  // Different element type -> different type
-    CHECK(arr1->kind == TypeKind::Array);
-    CHECK(arr1->array_info.element_type == types.i32_type());
+    CHECK(lst1 == lst2);  // Same element type -> same interned type
+    CHECK(lst1 != lst3);  // Different element type -> different type
+    CHECK(lst1->kind == TypeKind::List);
+    CHECK(lst1->list_info.element_type == types.i32_type());
 }
 
 TEST_CASE("Types: Reference type interning") {
@@ -315,11 +315,11 @@ TEST_CASE("Semantic: Break and continue in loops") {
     CHECK(t.error_count() == 0);
 }
 
-TEST_CASE("Semantic: Array indexing") {
+TEST_CASE("Semantic: List indexing") {
     SemanticTestHelper t;
     CHECK(t.run(R"(
-        fun test(arr: i32[]): i32 {
-            return arr[0];
+        fun test(lst: List<i32>): i32 {
+            return lst[0];
         }
     )"));
     CHECK(t.error_count() == 0);
@@ -502,7 +502,7 @@ TEST_CASE("Semantic Error: Delete on non-uniq") {
     CHECK(t.has_error_containing("uniq"));
 }
 
-TEST_CASE("Semantic Error: Indexing non-array") {
+TEST_CASE("Semantic Error: Indexing non-list") {
     SemanticTestHelper t;
     CHECK(!t.run(R"(
         fun test() {
@@ -510,7 +510,7 @@ TEST_CASE("Semantic Error: Indexing non-array") {
             var y = x[0];
         }
     )"));
-    CHECK(t.has_error_containing("non-array"));
+    CHECK(t.has_error_containing("non-list"));
 }
 
 TEST_CASE("Semantic Error: Member access on non-struct") {
@@ -643,12 +643,12 @@ TEST_CASE("Types: type_to_string") {
         CHECK(strcmp(out.data(), "i32") == 0);
     }
 
-    SUBCASE("Array types") {
+    SUBCASE("List types") {
         Vector<char> out;
-        Type* arr = types.array_type(types.f64_type());
-        type_to_string(arr, out);
+        Type* lst = types.list_type(types.f64_type());
+        type_to_string(lst, out);
         out.push_back('\0');
-        CHECK(strcmp(out.data(), "f64[]") == 0);
+        CHECK(strcmp(out.data(), "List<f64>") == 0);
     }
 
     SUBCASE("Reference types") {

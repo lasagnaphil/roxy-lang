@@ -1868,7 +1868,6 @@ Span<TypeExpr*> Parser::try_parse_generic_args() {
 TypeExpr* Parser::type_expression() {
     TypeExpr* type = alloc<TypeExpr>();
     type->ref_kind = RefKind::None;
-    type->element_type = nullptr;
     type->type_args = Span<TypeExpr*>();
 
     // Check for reference modifiers
@@ -1891,20 +1890,6 @@ TypeExpr* Parser::type_expression() {
     if (check(TokenKind::Less)) {
         type->type_args = parse_type_args();
         if (m_has_error) return nullptr;
-    }
-
-    // Check for array type: Type[] or Type<T>[]
-    if (match(TokenKind::LeftBracket)) {
-        consume(TokenKind::RightBracket, "Expected ']' for array type");
-        if (m_has_error) return nullptr;
-
-        TypeExpr* array_type = alloc<TypeExpr>();
-        array_type->name = StringView();  // Array types don't have a direct name
-        array_type->loc = type->loc;
-        array_type->ref_kind = RefKind::None;
-        array_type->element_type = type;
-        array_type->type_args = Span<TypeExpr*>();
-        return array_type;
     }
 
     return type;

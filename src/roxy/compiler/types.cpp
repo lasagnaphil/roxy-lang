@@ -11,9 +11,9 @@ u64 TypeHash::operator()(const Type* t) const {
     u64 hash = static_cast<u64>(t->kind);
 
     switch (t->kind) {
-        case TypeKind::Array:
+        case TypeKind::List:
             // Hash based on element type pointer
-            hash ^= reinterpret_cast<u64>(t->array_info.element_type) * 31;
+            hash ^= reinterpret_cast<u64>(t->list_info.element_type) * 31;
             break;
 
         case TypeKind::Function: {
@@ -59,8 +59,8 @@ bool TypeEqual::operator()(const Type* a, const Type* b) const {
     if (a->kind != b->kind) return false;
 
     switch (a->kind) {
-        case TypeKind::Array:
-            return a->array_info.element_type == b->array_info.element_type;
+        case TypeKind::List:
+            return a->list_info.element_type == b->list_info.element_type;
 
         case TypeKind::Function: {
             if (a->func_info.return_type != b->func_info.return_type) return false;
@@ -128,10 +128,10 @@ Type* TypeCache::intern_type(Type* type) {
     return type;
 }
 
-Type* TypeCache::array_type(Type* element_type) {
+Type* TypeCache::list_type(Type* element_type) {
     Type* type = m_allocator.emplace<Type>();
-    type->kind = TypeKind::Array;
-    type->array_info.element_type = element_type;
+    type->kind = TypeKind::List;
+    type->list_info.element_type = element_type;
     return intern_type(type);
 }
 
@@ -323,7 +323,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TypeKind::F32: return "f32";
         case TypeKind::F64: return "f64";
         case TypeKind::String: return "string";
-        case TypeKind::Array: return "array";
+        case TypeKind::List: return "list";
         case TypeKind::Function: return "function";
         case TypeKind::Struct: return "struct";
         case TypeKind::Enum: return "enum";
@@ -375,9 +375,10 @@ void type_to_string(const Type* type, Vector<char>& out) {
             append_string(out, type_kind_to_string(type->kind));
             break;
 
-        case TypeKind::Array:
-            type_to_string(type->array_info.element_type, out);
-            append_string(out, "[]");
+        case TypeKind::List:
+            append_string(out, "List<");
+            type_to_string(type->list_info.element_type, out);
+            append_string(out, ">");
             break;
 
         case TypeKind::Function: {

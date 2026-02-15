@@ -95,7 +95,6 @@ Type* type_from_kind(NativeTypeKind kind, TypeCache& types) {
         case NativeTypeKind::F32: return types.f32_type();
         case NativeTypeKind::F64: return types.f64_type();
         case NativeTypeKind::String: return types.string_type();
-        case NativeTypeKind::ArrayI32: return types.array_type(types.i32_type());
         default: return types.error_type();
     }
 }

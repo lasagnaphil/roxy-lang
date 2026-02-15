@@ -452,11 +452,11 @@ fun upgrade_attack(skill: inout Skill) {
 ### Arrays of Tagged Unions
 
 ```roxy
-var skills: Skill[] = array_new(10);
-skills[0] = Skill.Attack { name = "Slash", attack = AttackData { damage = 20 } };
-skills[1] = Skill.Defend { name = "Block", defend = DefendData { damage_reduce = 0.3 } };
+var skills: List<Skill> = List<Skill>();
+skills.push(Skill.Attack { name = "Slash", attack = AttackData { damage = 20 } });
+skills.push(Skill.Defend { name = "Block", defend = DefendData { damage_reduce = 0.3 } });
 
-for (var i: i32 = 0; i < array_len(skills); i = i + 1) {
+for (var i: i32 = 0; i < skills.len(); i = i + 1) {
     when skills[i].type {
         case Attack:
             print(skills[i].attack.damage);

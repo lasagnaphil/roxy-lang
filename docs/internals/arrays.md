@@ -1,72 +1,102 @@
-# Arrays
+# Lists
 
-Roxy supports dynamically-sized arrays with bounds checking.
+Roxy supports dynamically-sized lists with bounds checking, using generic syntax `List<T>`.
 
-## Array Layout
+## List Layout
 
-Arrays are stored as objects with an ArrayHeader followed by Value elements:
+Lists are stored as objects with a ListHeader. Elements are in a separate malloc'd buffer:
 
 ```cpp
-struct ArrayHeader {
+struct ListHeader {
     u32 length;    // Number of elements
-    u32 capacity;  // Allocated capacity (for future growth)
+    u32 capacity;  // Allocated capacity
+    Value* elements; // Separate malloc'd buffer (nullptr if capacity == 0)
 };
 
-// Memory layout: [ObjectHeader][ArrayHeader][Value * length]
+// Memory layout: [ObjectHeader][ListHeader]
+// Elements buffer: [Value * capacity] (separate allocation)
 ```
 
-## Array Operations
+The key design choice: elements are stored in a **separate buffer** rather than inline after the header. This allows `push` to realloc the elements buffer without moving the ObjectHeader (which would invalidate all pointers to the list).
 
-```cpp
-// Allocate an array with given length (capacity = length)
-void* array_alloc(RoxyVM* vm, u32 length);
+## Construction
 
-// Get array length
-u32 array_length(void* data);
+```roxy
+// Empty list (capacity 0)
+var lst: List<i32> = List<i32>();
 
-// Bounds-checked element access
-bool array_get(void* data, i64 index, Value& out, const char** error);
-bool array_set(void* data, i64 index, Value value, const char** error);
+// List with pre-allocated capacity
+var lst: List<i32> = List<i32>(10);
 ```
 
-## Array Opcodes
+`List<T>` is a **built-in type**, not a generic struct that goes through monomorphization. Since all Roxy Values are 64-bit, a single runtime implementation handles all element types uniformly. The compiler recognizes "List" as a special name (like "string") and constructs the appropriate type from the type argument.
+
+## Methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `len()` | `() -> i32` | Return number of elements |
+| `cap()` | `() -> i32` | Return allocated capacity |
+| `push(val)` | `(T) -> void` | Append element (grows if needed) |
+| `pop()` | `() -> T` | Remove and return last element |
+
+## Indexing Opcodes
 
 | Opcode | Format | Description |
 |--------|--------|-------------|
-| `GET_INDEX` (0xC0) | ABC | `dst = src1[src2]` - Load array element |
-| `SET_INDEX` (0xC1) | ABC | `dst[src1] = src2` - Store array element |
+| `GET_INDEX` (0xC0) | ABC | `dst = src1[src2]` - Load list element |
+| `SET_INDEX` (0xC1) | ABC | `dst[src1] = src2` - Store list element |
 
 Both opcodes perform null checks and bounds checking, setting `vm->error` on failure.
 
-## Built-in Array Functions
+## Growth Strategy
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `array_new_int` | `(size: i32) -> i32[]` | Allocate int array initialized to 0 |
-| `array_len` | `(arr: i32[]) -> i32` | Return array length |
+When pushing beyond capacity, the list doubles its capacity (minimum 8 elements).
 
 ## Usage Example
 
 ```roxy
-fun sum_array(): i32 {
-    var arr: i32[] = array_new_int(5);
-    arr[0] = 1;
-    arr[1] = 2;
-    arr[2] = 3;
-    arr[3] = 4;
-    arr[4] = 5;
-
-    var sum: i32 = 0;
-    for (var i: i32 = 0; i < array_len(arr); i = i + 1) {
-        sum = sum + arr[i];
+fun quicksort(lst: List<i32>, low: i32, high: i32) {
+    if (low < high) {
+        var pivot: i32 = lst[high];
+        var i: i32 = low - 1;
+        for (var j: i32 = low; j < high; j = j + 1) {
+            if (lst[j] <= pivot) {
+                i = i + 1;
+                var temp: i32 = lst[i];
+                lst[i] = lst[j];
+                lst[j] = temp;
+            }
+        }
+        var temp: i32 = lst[i + 1];
+        lst[i + 1] = lst[high];
+        lst[high] = temp;
+        var pi: i32 = i + 1;
+        quicksort(lst, low, pi - 1);
+        quicksort(lst, pi + 1, high);
     }
-    return sum;  // Returns 15
+}
+
+fun main(): i32 {
+    var lst: List<i32> = List<i32>();
+    lst.push(5);
+    lst.push(2);
+    lst.push(8);
+    lst.push(1);
+    lst.push(9);
+
+    quicksort(lst, 0, lst.len() - 1);
+
+    for (var i: i32 = 0; i < lst.len(); i = i + 1) {
+        print(lst[i]);
+    }
+    return 0;
 }
 ```
 
 ## Files
 
-- `include/roxy/vm/array.hpp` - ArrayHeader and array operations
-- `src/roxy/vm/array.cpp` - Array allocation and access implementation
-- `include/roxy/vm/natives.hpp` - Native array functions
+- `include/roxy/vm/list.hpp` - ListHeader and list operations
+- `src/roxy/vm/list.cpp` - List allocation and access implementation
+- `include/roxy/vm/natives.hpp` - Native list functions
 - `src/roxy/vm/natives.cpp` - Native function implementations

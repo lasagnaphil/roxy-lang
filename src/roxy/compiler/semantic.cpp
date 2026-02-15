@@ -36,8 +36,8 @@ static u32 get_type_slot_count(Type* type) {
         case TypeKind::Struct:
             return type->struct_info.slot_count;
         
-        // Arrays are pointers (2 slots)
-        case TypeKind::Array:
+        // Lists are pointers (2 slots)
+        case TypeKind::List:
             return 2;
         
         default:
@@ -676,7 +676,7 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                     if (field_type->is_struct()) sc = field_type->struct_info.slot_count;
                     else if (field_type->kind == TypeKind::I64 || field_type->kind == TypeKind::U64 ||
                              field_type->kind == TypeKind::F64 || field_type->is_reference() ||
-                             field_type->is_array() || field_type->kind == TypeKind::String) sc = 2;
+                             field_type->is_list() || field_type->kind == TypeKind::String) sc = 2;
                     else sc = 1;
 
                     FieldInfo fi;
@@ -723,13 +723,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
 
     Type* base_type = nullptr;
 
-    // Check for array type first
-    if (type_expr->element_type) {
-        Type* elem = resolve_type_expr(type_expr->element_type);
-        if (!elem) return nullptr;
-        base_type = m_types.array_type(elem);
-    }
-    else {
+    {
         // Check for Self type (used in trait method signatures)
         if (type_expr->name == "Self") {
             Type* struct_type = m_symbols.current_struct_type();
@@ -739,6 +733,17 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
                 error(type_expr->loc, "'Self' can only be used in struct/trait method context");
                 return m_types.error_type();
             }
+        }
+
+        // Check for built-in List<T> type
+        if (!base_type && type_expr->name == "List") {
+            if (type_expr->type_args.size() != 1) {
+                error(type_expr->loc, "List requires exactly 1 type argument");
+                return m_types.error_type();
+            }
+            Type* elem = resolve_type_expr(type_expr->type_args[0]);
+            if (!elem || elem->is_error()) return m_types.error_type();
+            base_type = m_types.list_type(elem);
         }
 
         // Check for generic struct instantiation: Box<i32>
@@ -797,7 +802,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
                     if (field_type->is_struct()) sc = field_type->struct_info.slot_count;
                     else if (field_type->kind == TypeKind::I64 || field_type->kind == TypeKind::U64 ||
                              field_type->kind == TypeKind::F64 || field_type->is_reference() ||
-                             field_type->is_array() || field_type->kind == TypeKind::String) sc = 2;
+                             field_type->is_list() || field_type->kind == TypeKind::String) sc = 2;
                     else sc = 1;
 
                     FieldInfo info;
@@ -2437,6 +2442,38 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
             return return_type;
         }
 
+        // Check if this is a List constructor call: List<i32>() or List<i32>(cap)
+        if (func_name == "List") {
+            if (ce.type_args.size() != 1) {
+                error(expr->loc, "List requires exactly 1 type argument");
+                return m_types.error_type();
+            }
+            Type* elem_type = resolve_type_expr(ce.type_args[0]);
+            if (!elem_type || elem_type->is_error()) return m_types.error_type();
+
+            Type* list_type = m_types.list_type(elem_type);
+
+            if (ce.arguments.size() == 0) {
+                // List<i32>() - empty list
+                ce.mangled_name = StringView(NATIVE_LIST_NEW, 8);
+                ce.callee->resolved_type = list_type;
+                return list_type;
+            } else if (ce.arguments.size() == 1) {
+                // List<i32>(cap) - list with capacity
+                Type* arg_type = analyze_expr(ce.arguments[0].expr);
+                if (arg_type && !arg_type->is_error()) {
+                    check_assignable(m_types.i32_type(), arg_type, ce.arguments[0].expr->loc);
+                }
+                ce.mangled_name = StringView(NATIVE_LIST_NEW, 8);
+                ce.callee->resolved_type = list_type;
+                return list_type;
+            } else {
+                error_fmt(expr->loc, "List constructor takes 0 or 1 arguments but got %u",
+                         ce.arguments.size());
+                return m_types.error_type();
+            }
+        }
+
         // Check if this is a generic struct constructor call: Box<i32>(args)
         if (m_generics.is_generic_struct(func_name)) {
             // Resolve type args
@@ -2634,6 +2671,55 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         Type* obj_type = analyze_expr(ge.object);
         if (obj_type && !obj_type->is_error()) {
             Type* base_type = obj_type->base_type();
+
+            // Check for List method call
+            if (base_type && base_type->is_list()) {
+                Type* elem_type = base_type->list_info.element_type;
+                StringView method = ge.name;
+
+                if (method == "len") {
+                    if (ce.arguments.size() != 0) {
+                        error_fmt(expr->loc, "len() takes no arguments but got %u", ce.arguments.size());
+                        return m_types.error_type();
+                    }
+                    ce.mangled_name = StringView(NATIVE_LIST_LEN, 8);
+                    ge.object->resolved_type = obj_type;
+                    return m_types.i32_type();
+                } else if (method == "cap") {
+                    if (ce.arguments.size() != 0) {
+                        error_fmt(expr->loc, "cap() takes no arguments but got %u", ce.arguments.size());
+                        return m_types.error_type();
+                    }
+                    ce.mangled_name = StringView(NATIVE_LIST_CAP, 8);
+                    ge.object->resolved_type = obj_type;
+                    return m_types.i32_type();
+                } else if (method == "push") {
+                    if (ce.arguments.size() != 1) {
+                        error_fmt(expr->loc, "push() takes 1 argument but got %u", ce.arguments.size());
+                        return m_types.error_type();
+                    }
+                    Type* arg_type = analyze_expr(ce.arguments[0].expr);
+                    if (arg_type && !arg_type->is_error()) {
+                        check_assignable(elem_type, arg_type, ce.arguments[0].expr->loc);
+                    }
+                    ce.mangled_name = StringView(NATIVE_LIST_PUSH, 9);
+                    ge.object->resolved_type = obj_type;
+                    return m_types.void_type();
+                } else if (method == "pop") {
+                    if (ce.arguments.size() != 0) {
+                        error_fmt(expr->loc, "pop() takes no arguments but got %u", ce.arguments.size());
+                        return m_types.error_type();
+                    }
+                    ce.mangled_name = StringView(NATIVE_LIST_POP, 8);
+                    ge.object->resolved_type = obj_type;
+                    return elem_type;
+                } else {
+                    error_fmt(expr->loc, "List has no method '%.*s'",
+                             static_cast<int>(method.size()), method.data());
+                    return m_types.error_type();
+                }
+            }
+
             if (base_type && base_type->is_struct()) {
                 // Look for a method with this name (walks inheritance hierarchy)
                 Type* found_in_type = nullptr;
@@ -2952,8 +3038,8 @@ Type* SemanticAnalyzer::analyze_index_expr(Expr* expr) {
     // Unwrap reference types
     Type* base_type = obj_type->base_type();
 
-    if (!base_type->is_array()) {
-        error(ie.object->loc, "cannot index non-array type");
+    if (!base_type->is_list()) {
+        error(ie.object->loc, "cannot index non-list type");
         return m_types.error_type();
     }
 
@@ -2961,7 +3047,7 @@ Type* SemanticAnalyzer::analyze_index_expr(Expr* expr) {
         check_integer(idx_type, ie.index->loc);
     }
 
-    return base_type->array_info.element_type;
+    return base_type->list_info.element_type;
 }
 
 Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
@@ -3005,6 +3091,11 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
 
     // Unwrap reference types
     Type* base_type = obj_type->base_type();
+
+    if (base_type->is_list()) {
+        error(ge.object->loc, "cannot access fields of List type; use methods like .len(), .push(), .pop()");
+        return m_types.error_type();
+    }
 
     if (!base_type->is_struct()) {
         error(ge.object->loc, "cannot access member of non-struct type");

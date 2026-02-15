@@ -2,6 +2,7 @@
 #include "roxy/compiler/generics.hpp"
 #include "roxy/compiler/module_registry.hpp"
 #include "roxy/vm/binding/registry.hpp"
+#include "roxy/vm/natives.hpp"
 
 #include <cassert>
 #include <cstring>
@@ -1686,6 +1687,24 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         return gen_constructor_call(expr);
     }
 
+    // Check if this is a List constructor call: List<i32>() or List<i32>(cap)
+    if (ce.callee->kind == AstKind::ExprIdentifier &&
+        ce.callee->resolved_type && ce.callee->resolved_type->is_list()) {
+        StringView native_name = ce.mangled_name;  // "list_new"
+        i32 native_idx = m_registry.get_index(native_name);
+
+        // Generate arguments (0 or 1)
+        Span<ValueId> args;
+        if (ce.arguments.size() == 1) {
+            ValueId cap_arg = gen_expr(ce.arguments[0].expr);
+            args = alloc_span<ValueId>(1);
+            args[0] = cap_arg;
+        } else {
+            args = alloc_span<ValueId>(0);
+        }
+        return emit_call_native(native_name, args, expr->resolved_type, static_cast<u8>(native_idx));
+    }
+
     // Check if this is a named constructor call: Type.ctor_name(...)
     // The callee is a GetExpr where the object is a type name (not a variable)
     // For named constructors: ge.object is an identifier that resolves to a STRUCT TYPE (not a variable of struct type)
@@ -1834,6 +1853,26 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             Type* obj_type = ge.object->resolved_type;
             Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
 
+            // Check for List method call
+            if (struct_type && struct_type->is_list()) {
+                StringView native_name = ce.mangled_name;  // "list_len", "list_push", etc.
+                i32 native_idx = m_registry.get_index(native_name);
+
+                Span<ValueId> method_args;
+                if (native_name == StringView(NATIVE_LIST_PUSH, 9)) {
+                    // push: args = [obj, value]
+                    method_args = alloc_span<ValueId>(2);
+                    method_args[0] = obj;
+                    method_args[1] = args[0];
+                } else {
+                    // len, cap, pop: args = [obj]
+                    method_args = alloc_span<ValueId>(1);
+                    method_args[0] = obj;
+                }
+
+                result = emit_call_native(native_name, method_args, expr->resolved_type, static_cast<u8>(native_idx));
+            } else {
+
             // Look up method in the type hierarchy to find where it's defined
             // This ensures we use the correct struct name for mangling (important for inheritance)
             Type* method_owner = nullptr;
@@ -1868,7 +1907,8 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             if (callee_returns_large_struct) {
                 result = output_ptr;
             }
-        }
+            } // end else (struct method)
+        } // end outer else (method call)
     }
     else {
         return ValueId::invalid();

@@ -68,7 +68,7 @@ roxy-v2/
 ├── tests/
 │   ├── test_main.cpp   # Single doctest entry point
 │   ├── unit/           # Unit tests (lexer, parser, semantic, IR, bytecode, VM)
-│   └── e2e/            # End-to-end tests (basics, structs, arrays, strings, modules, etc.)
+│   └── e2e/            # End-to-end tests (basics, structs, lists, strings, modules, etc.)
 ├── docs/
 │   ├── overview.md     # Language features and design
 │   ├── grammar.md      # Grammar specification, numeric literals, type casting
@@ -144,8 +144,8 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **VM** - Shared register file with windowing, call frame stack, module loading.
 **Details:** `docs/internals/vm.md` | **Files:** `vm/vm.hpp`, `vm/interpreter.hpp`
 
-**Arrays** - Dynamic arrays with bounds checking.
-**Details:** `docs/internals/arrays.md` | **Files:** `vm/array.hpp`
+**Lists** - Dynamic lists (`List<T>`) with bounds checking, push/pop/len/cap methods.
+**Details:** `docs/internals/arrays.md` | **Files:** `vm/list.hpp`
 
 **Strings** - Heap-allocated string objects. Operations via native functions (`str_concat`, `str_eq`, `str_len`).
 **Details:** `docs/internals/strings.md` | **Files:** `vm/string.hpp`
@@ -210,7 +210,7 @@ On Windows, use `.exe` extension.
   - `ssa-ir.md` - Block arguments, lowering to bytecode
   - `memory.md` - Reference types, object header, slab allocator
   - `structs.md` - Stack-allocated structs, slot-based layout, struct parameters/returns
-  - `arrays.md` - Dynamic arrays, bounds checking
+  - `arrays.md` - Dynamic lists (`List<T>`), bounds checking
   - `strings.md` - String objects, concatenation, comparison
   - `interop.md` - Native functions, automatic C++ binding
   - `frontend.md` - Lexer, parser, semantic analysis
