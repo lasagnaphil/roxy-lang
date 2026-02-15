@@ -57,6 +57,7 @@ const char* token_kind_to_string(TokenKind kind) {
         case TokenKind::KwFun:          return "fun";
         case TokenKind::KwStruct:       return "struct";
         case TokenKind::KwEnum:         return "enum";
+        case TokenKind::KwTrait:        return "trait";
         case TokenKind::KwPub:          return "pub";
         case TokenKind::KwNative:       return "native";
 

@@ -56,6 +56,7 @@ enum class TokenKind {
     KwFun,
     KwStruct,
     KwEnum,
+    KwTrait,
     KwPub,
     KwNative,
 

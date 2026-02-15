@@ -233,9 +233,21 @@ bool Compiler::build_ir_all() {
         SemanticAnalyzer analyzer(m_allocator, m_types, m_module_registry);
         analyzer.analyze(program); // Re-analyze to populate symbols
 
+        // Capture synthetic declarations (e.g., injected default trait methods)
+        const auto& syn_vec = analyzer.synthetic_decls();
+        Span<Decl*> synthetic_decls;
+        if (!syn_vec.empty()) {
+            Decl** data = reinterpret_cast<Decl**>(m_allocator.alloc_bytes(
+                sizeof(Decl*) * syn_vec.size(), alignof(Decl*)));
+            for (u32 j = 0; j < syn_vec.size(); j++) {
+                data[j] = syn_vec[j];
+            }
+            synthetic_decls = Span<Decl*>(data, static_cast<u32>(syn_vec.size()));
+        }
+
         // Use combined registry with all native functions
         IRBuilder ir_builder(m_allocator, m_types, *m_combined_registry, analyzer.symbols(), m_module_registry);
-        IRModule* ir_module = ir_builder.build(program);
+        IRModule* ir_module = ir_builder.build(program, synthetic_decls);
 
         if (!ir_module) {
             add_error_fmt("IR generation failed for module '%.*s'",

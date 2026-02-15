@@ -1,10 +1,10 @@
 # Traits
 
-> **Note:** This feature has not been implemented yet. This document describes the planned design.
-
-> **Implementation Priority:** Traits should be implemented **before generics**. Most polymorphism needs (like a universal `print()` function) can be solved with traits alone, without the compile-time cost of full generic monomorphization. See "Traits Without Full Generics" section below.
-
 Traits provide a way to define shared behavior across types. They enable polymorphism without function overloading.
+
+**Implemented features:** Trait declarations, required/default methods, trait implementations (`for Trait`), trait inheritance, `Self` type, and operator dispatch for comparison operators (`==`, `!=`, `<`, `<=`, `>`, `>=`).
+
+**Not yet implemented:** Generic functions with trait bounds (`<T: Trait>`), arithmetic/bitwise operator traits (require generics), traits on primitive types, standard library traits.
 
 ## Syntax Overview
 
@@ -338,34 +338,33 @@ For operator traits (`Eq`, `Ord`, `Add`, `Sub`, etc.), see `operator-overloading
 
 ## Implementation Strategy
 
-### Monomorphization
-
-Generic functions are specialized at compile time for each concrete type:
-
-```roxy
-print(42);      // Generates: print$i32(42)
-print("hello"); // Generates: print$string("hello")
-```
-
-This provides zero runtime overhead but increases code size.
-
 ### Method Resolution
 
 1. Check if type has direct implementation (`fun Type.method() for Trait`)
-2. Fall back to trait's default implementation
+2. Fall back to trait's default implementation (deep-cloned and injected per struct)
 3. Error if required method is missing
 
 ### Name Mangling
 
-Trait method implementations use the pattern:
+Trait methods are stored on the struct and use standard method mangling:
 
 ```
-Type$$Trait$$method
+Type$$method
 ```
 
 Examples:
-- `Point$$Printable$$print`
-- `Score$$Comparable$$compare`
+- `Point$$eq`
+- `Score$$compare`
+
+This works because each struct has at most one implementation of each method name. If two traits define the same method name, the compiler reports an error.
+
+### Default Method Injection
+
+Default methods (trait methods with bodies) are deep-cloned for each implementing struct that doesn't override them. The AST is cloned so that `resolved_type` annotations are independent per concrete `Self` type. These are added as synthetic declarations processed alongside regular methods.
+
+### Operator Dispatch
+
+For comparison operators on struct types, the compiler checks if the struct has the corresponding method (e.g., `eq` for `==`, `lt` for `<`) and rewrites the operator into a method call. This happens in both semantic analysis (type checking) and IR generation (code emission).
 
 ## Comparison with Alternatives
 
@@ -390,12 +389,13 @@ Implementing traits requires:
 
 See `generics.md` for discussion of compile-time trade-offs and the recommendation to implement traits before full generics.
 
-## Files (Planned)
+## Files
 
 | File | Purpose |
 |------|---------|
-| `include/roxy/compiler/traits.hpp` | Trait and impl data structures |
-| `src/roxy/compiler/traits.cpp` | Trait resolution and validation |
-| `src/roxy/compiler/semantic.cpp` | Trait bound checking |
-| `src/roxy/compiler/ir_builder.cpp` | Monomorphization |
+| `include/roxy/compiler/types.hpp` | `TraitMethodInfo`, `TraitTypeInfo`, trait type kind |
+| `include/roxy/compiler/ast.hpp` | `DeclTrait` AST node, `trait_name` on `MethodDecl` |
+| `src/roxy/compiler/parser.cpp` | `trait_declaration()`, `for Trait` parsing |
+| `src/roxy/compiler/semantic.cpp` | Trait analysis, validation, default method injection |
+| `src/roxy/compiler/ir_builder.cpp` | Operator dispatch, synthetic decl processing |
 | `tests/e2e/traits_test.cpp` | E2E tests |

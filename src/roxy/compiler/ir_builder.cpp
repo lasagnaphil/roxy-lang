@@ -19,7 +19,7 @@ IRBuilder::IRBuilder(BumpAllocator& allocator, TypeCache& types, NativeRegistry&
 {
 }
 
-IRModule* IRBuilder::build(Program* program) {
+IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
     IRModule* module = m_allocator.emplace<IRModule>();
 
     // Track which struct types have user-defined default constructors
@@ -69,10 +69,23 @@ IRModule* IRBuilder::build(Program* program) {
             }
         }
         else if (decl->kind == AstKind::DeclMethod) {
-            // Build method
+            // Build method - skip trait method declarations (struct_name is a trait, not a struct)
             MethodDecl& md = decl->method_decl;
             Type* struct_type = m_types.named_type_by_name(md.struct_name);
-            if (struct_type && md.body) {
+            if (struct_type && struct_type->is_struct() && md.body) {
+                IRFunction* func = build_method(&md, struct_type);
+                module->functions.push_back(func);
+            }
+        }
+    }
+
+    // Process synthetic (injected default method) declarations
+    for (u32 si = 0; si < synthetic_decls.size(); si++) {
+        Decl* decl = synthetic_decls[si];
+        if (decl && decl->kind == AstKind::DeclMethod) {
+            MethodDecl& md = decl->method_decl;
+            Type* struct_type = m_types.named_type_by_name(md.struct_name);
+            if (struct_type && struct_type->is_struct() && md.body) {
                 IRFunction* func = build_method(&md, struct_type);
                 module->functions.push_back(func);
             }
@@ -1496,6 +1509,42 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
             args[0] = left;
             args[1] = right;
             return emit_call_native(func_name, args, result_type, static_cast<u8>(native_idx));
+        }
+    }
+
+    // Check for struct operator trait dispatch (comparison operators on structs)
+    if (left_type && left_type->is_struct()) {
+        const char* method_name_str = nullptr;
+        switch (be.op) {
+            case BinaryOp::Equal:    method_name_str = "eq"; break;
+            case BinaryOp::NotEqual: method_name_str = "ne"; break;
+            case BinaryOp::Less:     method_name_str = "lt"; break;
+            case BinaryOp::LessEq:  method_name_str = "le"; break;
+            case BinaryOp::Greater:  method_name_str = "gt"; break;
+            case BinaryOp::GreaterEq: method_name_str = "ge"; break;
+            default: break;
+        }
+
+        if (method_name_str) {
+            StringView method_name(method_name_str, static_cast<u32>(strlen(method_name_str)));
+            Type* found_in = nullptr;
+            const MethodInfo* mi = lookup_method_in_hierarchy(left_type, method_name, &found_in);
+            if (mi && found_in) {
+                // Generate a method call: left.method(right)
+                // Build self pointer (address of left operand)
+                ValueId self_ptr = gen_lvalue_addr(be.left);
+                ValueId right_val = gen_expr(be.right);
+
+                // Create mangled call name
+                StringView mangled = mangle_method(found_in->struct_info.name, method_name);
+
+                // Build args: [self_ptr, right_val]
+                Span<ValueId> args = alloc_span<ValueId>(2);
+                args[0] = self_ptr;
+                args[1] = right_val;
+
+                return emit_call(mangled, args, m_types.bool_type());
+            }
         }
     }
 

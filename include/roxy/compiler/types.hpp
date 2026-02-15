@@ -35,6 +35,7 @@ enum class TypeKind : u8 {
     Function,
     Struct,
     Enum,
+    Trait,
 
     // Reference wrappers
     Uniq,
@@ -104,6 +105,23 @@ struct WhenClauseInfo {
     Span<VariantInfo> variants;
 };
 
+// Trait method information
+struct TraitMethodInfo {
+    StringView name;
+    Span<Type*> param_types;   // nullptr entries = Self type
+    Type* return_type;         // nullptr = Self type
+    Decl* decl;                // Points to the DeclMethod AST node
+    bool has_default;          // true if method has a body (default implementation)
+};
+
+// Type info for trait types
+struct TraitTypeInfo {
+    StringView name;
+    Decl* decl;                        // Points to the DeclTrait AST node
+    Type* parent;                      // Parent trait type, nullptr if no inheritance
+    Span<TraitMethodInfo> methods;     // Trait methods (required and default)
+};
+
 // Type info for struct types
 struct StructTypeInfo {
     StringView name;
@@ -115,6 +133,7 @@ struct StructTypeInfo {
     Span<DestructorInfo> destructors;    // Destructors for this struct
     Span<MethodInfo> methods;            // Methods for this struct
     Span<WhenClauseInfo> when_clauses;   // Tagged union discriminants
+    Span<Type*> implemented_traits;      // Trait types this struct implements
     u32 slot_count;                // Total u32 slots needed for this struct
 
     // Find a field by name, returns nullptr if not found
@@ -157,6 +176,7 @@ struct Type {
     union {
         StructTypeInfo struct_info;
         EnumTypeInfo enum_info;
+        TraitTypeInfo trait_info;
         ArrayTypeInfo array_info;
         FunctionTypeInfo func_info;
         RefTypeInfo ref_info;
@@ -215,6 +235,10 @@ struct Type {
 
     bool is_enum() const {
         return kind == TypeKind::Enum;
+    }
+
+    bool is_trait() const {
+        return kind == TypeKind::Trait;
     }
 
     bool is_array() const {
@@ -290,6 +314,7 @@ public:
     // Factory methods for named types (not interned - unique per declaration)
     Type* struct_type(StringView name, Decl* decl, StringView module_name = StringView(nullptr, 0));
     Type* enum_type(StringView name, Decl* decl, Type* underlying = nullptr);
+    Type* trait_type(StringView name, Decl* decl);
 
     // Lookup primitive type by name
     Type* primitive_by_name(StringView name);

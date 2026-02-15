@@ -23,6 +23,7 @@ enum class SymbolKind : u8 {
     Enum,
     Field,
     EnumVariant,
+    Trait,
     Module,              // Imported module namespace
     ImportedFunction,    // Function imported from another module
 };

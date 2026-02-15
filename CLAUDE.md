@@ -164,12 +164,17 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **When Statement** - Pattern matching on enum values with phi node support for variable modifications.
 **Tests:** `tests/e2e/when_test.cpp`
 
+### Traits
+**Traits** - Ad-hoc polymorphism with trait declarations, required/default methods, `for Trait` implementations, trait inheritance, `Self` type, comparison operator dispatch.
+**Details:** `docs/internals/traits.md`, `docs/internals/operator-overloading.md` | **Tests:** `tests/e2e/traits_test.cpp`
+
 ## Planned Components (Not Yet Implemented)
 
 - LSP parser (error recovery, lossless CST)
 - LSP server features (completion, hover, go-to-definition)
 - Optimizations
-- Generics and traits (see `docs/internals/generics.md`, `docs/internals/traits.md`)
+- Generics (see `docs/internals/generics.md`)
+- Arithmetic/bitwise operator traits (require generics, see `docs/internals/operator-overloading.md`)
 
 ## Testing
 
@@ -211,6 +216,6 @@ On Windows, use `.exe` extension.
   - `methods.md` - Struct methods, `self` parameter, name mangling
   - `inheritance.md` - Struct inheritance, subtyping, `super` keyword
   - `tagged-unions.md` - Discriminated unions with `when` clause
+  - `traits.md` - Traits: declarations, required/default methods, trait inheritance, operator dispatch
+  - `operator-overloading.md` - Operator traits (comparison implemented; arithmetic/bitwise NOT YET IMPLEMENTED)
   - `generics.md` - Generic functions and structs (NOT YET IMPLEMENTED)
-  - `traits.md` - Traits and trait bounds (NOT YET IMPLEMENTED)
-  - `operator-overloading.md` - Operator traits (NOT YET IMPLEMENTED)

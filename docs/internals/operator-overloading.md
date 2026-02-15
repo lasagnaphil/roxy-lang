@@ -1,8 +1,10 @@
 # Operator Overloading
 
-> **Note:** This feature has not been implemented yet. This document describes the planned design.
-
 Operators in Roxy are implemented via traits. The compiler rewrites operators into trait method calls, enabling user-defined types to support standard operators.
+
+**Implemented:** Comparison operator dispatch (`==`, `!=`, `<`, `<=`, `>`, `>=`) for struct types with `eq`/`ne`/`lt`/`le`/`gt`/`ge` methods.
+
+**Not yet implemented:** Arithmetic, bitwise, compound assignment, and indexing operator traits (require generics for mixed-type `Rhs`).
 
 See `traits.md` for the general trait system design.
 

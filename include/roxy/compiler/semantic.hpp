@@ -141,6 +141,26 @@ private:
 
     // Named type lookup (structs/enums by name)
     tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_named_types;
+
+    // Trait support
+    tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_trait_types;
+    Vector<Decl*> m_synthetic_decls;  // Injected default method declarations
+
+    // Trait analysis helpers
+    void analyze_trait_method_decl(Decl* decl, Type* trait_type);
+    void validate_trait_implementations();
+    void inject_default_method(Type* struct_type, Type* trait_type, TraitMethodInfo& tmi);
+
+    // Pending trait implementations (struct_name resolved to struct type + trait decl)
+    struct PendingTraitImpl {
+        Decl* decl;
+        Type* struct_type;
+        Type* trait_type;
+    };
+    Vector<PendingTraitImpl> m_pending_trait_impls;
+
+public:
+    const Vector<Decl*>& synthetic_decls() const { return m_synthetic_decls; }
 };
 
 }

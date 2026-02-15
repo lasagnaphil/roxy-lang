@@ -69,8 +69,20 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
         return nullptr;
     }
 
+    // Capture synthetic declarations (e.g., injected default trait methods)
+    const auto& syn_vec = analyzer.synthetic_decls();
+    Span<Decl*> synthetic_decls;
+    if (!syn_vec.empty()) {
+        Decl** data = reinterpret_cast<Decl**>(allocator.alloc_bytes(
+            sizeof(Decl*) * syn_vec.size(), alignof(Decl*)));
+        for (u32 j = 0; j < syn_vec.size(); j++) {
+            data[j] = syn_vec[j];
+        }
+        synthetic_decls = Span<Decl*>(data, static_cast<u32>(syn_vec.size()));
+    }
+
     IRBuilder ir_builder(allocator, analyzer.types(), registry, analyzer.symbols(), modules);
-    IRModule* ir_module = ir_builder.build(program);
+    IRModule* ir_module = ir_builder.build(program, synthetic_decls);
     if (!ir_module) {
         return nullptr;
     }

@@ -34,6 +34,7 @@ u64 TypeHash::operator()(const Type* t) const {
 
         case TypeKind::Struct:
         case TypeKind::Enum:
+        case TypeKind::Trait:
             // Named types use identity - hash by declaration pointer
             hash ^= reinterpret_cast<u64>(t->struct_info.decl) * 31;
             break;
@@ -72,6 +73,7 @@ bool TypeEqual::operator()(const Type* a, const Type* b) const {
 
         case TypeKind::Struct:
         case TypeKind::Enum:
+        case TypeKind::Trait:
             // Named types are equal only if they're the same declaration
             return a->struct_info.decl == b->struct_info.decl;
 
@@ -170,6 +172,7 @@ Type* TypeCache::struct_type(StringView name, Decl* decl, StringView module_name
     type->struct_info.decl = decl;
     type->struct_info.parent = nullptr;
     type->struct_info.fields = Span<FieldInfo>();
+    type->struct_info.implemented_traits = Span<Type*>();
     type->struct_info.slot_count = 0;
     // Named types are not interned - each declaration creates a unique type
     return type;
@@ -181,6 +184,16 @@ Type* TypeCache::enum_type(StringView name, Decl* decl, Type* underlying) {
     type->enum_info.name = name;
     type->enum_info.decl = decl;
     type->enum_info.underlying = underlying ? underlying : m_i32;
+    return type;
+}
+
+Type* TypeCache::trait_type(StringView name, Decl* decl) {
+    Type* type = m_allocator.emplace<Type>();
+    type->kind = TypeKind::Trait;
+    type->trait_info.name = name;
+    type->trait_info.decl = decl;
+    type->trait_info.parent = nullptr;
+    type->trait_info.methods = Span<TraitMethodInfo>();
     return type;
 }
 
@@ -297,6 +310,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TypeKind::Function: return "function";
         case TypeKind::Struct: return "struct";
         case TypeKind::Enum: return "enum";
+        case TypeKind::Trait: return "trait";
         case TypeKind::Uniq: return "uniq";
         case TypeKind::Ref: return "ref";
         case TypeKind::Weak: return "weak";
@@ -365,6 +379,11 @@ void type_to_string(const Type* type, Vector<char>& out) {
 
         case TypeKind::Enum:
             append_string(out, type->enum_info.name);
+            break;
+
+        case TypeKind::Trait:
+            append_string(out, "trait ");
+            append_string(out, type->trait_info.name);
             break;
 
         case TypeKind::Uniq:

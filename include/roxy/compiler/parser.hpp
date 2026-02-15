@@ -86,6 +86,7 @@ private:
     Decl* destructor_declaration(bool is_pub);
     Decl* struct_declaration(bool is_pub);
     Decl* enum_declaration(bool is_pub);
+    Decl* trait_declaration(bool is_pub);
     Decl* import_declaration();
 
     // Helper for parsing constructor/destructor (they share the same structure)

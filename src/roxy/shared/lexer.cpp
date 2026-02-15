@@ -237,7 +237,14 @@ TokenKind Lexer::identifier_type() {
         case 't':
             if (m_current - m_start > 1) {
                 switch (m_source[m_start + 1]) {
-                    case 'r': return check_keyword(2, 2, "ue", TokenKind::KwTrue);
+                    case 'r':
+                        if (m_current - m_start > 2) {
+                            switch (m_source[m_start + 2]) {
+                                case 'u': return check_keyword(3, 1, "e", TokenKind::KwTrue);
+                                case 'a': return check_keyword(3, 2, "it", TokenKind::KwTrait);
+                            }
+                        }
+                        break;
                 }
             }
             break;

@@ -176,6 +176,24 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
             // Define in global scope
             m_symbols.define(SymbolKind::Enum, name, type, decl->loc, decl);
         }
+        else if (decl->kind == AstKind::DeclTrait) {
+            StringView name = decl->trait_decl.name;
+
+            // Check for duplicate type/trait names
+            if (m_named_types.find(name) != m_named_types.end() ||
+                m_trait_types.find(name) != m_trait_types.end()) {
+                error_fmt(decl->loc, "duplicate type declaration '%.*s'",
+                         name.size(), name.data());
+                continue;
+            }
+
+            // Create the trait type
+            Type* type = m_types.trait_type(name, decl);
+            m_trait_types[name] = type;
+
+            // Define in global scope
+            m_symbols.define(SymbolKind::Trait, name, type, decl->loc, decl);
+        }
     }
 }
 
@@ -475,9 +493,60 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             analyze_destructor_decl(decl);
         }
         else if (decl->kind == AstKind::DeclMethod) {
-            analyze_method_decl(decl);
+            MethodDecl& md = decl->method_decl;
+
+            // Check if struct_name is actually a trait name
+            auto trait_it = m_trait_types.find(md.struct_name);
+            if (trait_it != m_trait_types.end() && md.trait_name.empty()) {
+                // This is a trait method declaration (fun TraitName.method(...))
+                analyze_trait_method_decl(decl, trait_it->second);
+            }
+            else if (!md.trait_name.empty()) {
+                // This is a trait implementation (fun Type.method(...) for Trait)
+                auto struct_it = m_named_types.find(md.struct_name);
+                if (struct_it == m_named_types.end()) {
+                    error_fmt(decl->loc, "method for unknown type '%.*s'",
+                             md.struct_name.size(), md.struct_name.data());
+                } else if (struct_it->second->kind != TypeKind::Struct) {
+                    error_fmt(decl->loc, "'%.*s' is not a struct type",
+                             md.struct_name.size(), md.struct_name.data());
+                } else {
+                    auto impl_trait_it = m_trait_types.find(md.trait_name);
+                    if (impl_trait_it == m_trait_types.end()) {
+                        error_fmt(decl->loc, "unknown trait '%.*s'",
+                                 md.trait_name.size(), md.trait_name.data());
+                    } else {
+                        m_pending_trait_impls.push_back({decl, struct_it->second, impl_trait_it->second});
+                    }
+                }
+            }
+            else {
+                // Regular method (no trait involvement)
+                analyze_method_decl(decl);
+            }
+        }
+        else if (decl->kind == AstKind::DeclTrait) {
+            TraitDecl& td = decl->trait_decl;
+            Type* trait_type = m_trait_types[td.name];
+
+            // Resolve parent trait
+            if (!td.parent_name.empty()) {
+                auto pit = m_trait_types.find(td.parent_name);
+                if (pit == m_trait_types.end()) {
+                    error_fmt(decl->loc, "unknown parent trait '%.*s'",
+                             td.parent_name.size(), td.parent_name.data());
+                } else if (pit->second == trait_type) {
+                    error_fmt(decl->loc, "trait '%.*s' cannot inherit from itself",
+                             td.name.size(), td.name.data());
+                } else {
+                    trait_type->trait_info.parent = pit->second;
+                }
+            }
         }
     }
+
+    // Now validate all trait implementations
+    validate_trait_implementations();
 }
 
 // Pass 3: Analyze function bodies
@@ -535,6 +604,21 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
         }
         else if (decl->kind == AstKind::DeclMethod) {
             MethodDecl& md = decl->method_decl;
+            // Skip trait method declarations (struct_name is a trait)
+            if (m_trait_types.find(md.struct_name) != m_trait_types.end() && md.trait_name.empty()) {
+                continue;
+            }
+            auto it = m_named_types.find(md.struct_name);
+            if (it != m_named_types.end()) {
+                analyze_method_body(decl, it->second);
+            }
+        }
+    }
+
+    // Also analyze synthetic (injected default method) bodies
+    for (Decl* decl : m_synthetic_decls) {
+        if (decl && decl->kind == AstKind::DeclMethod) {
+            MethodDecl& md = decl->method_decl;
             auto it = m_named_types.find(md.struct_name);
             if (it != m_named_types.end()) {
                 analyze_method_body(decl, it->second);
@@ -557,8 +641,21 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
         base_type = m_types.array_type(elem);
     }
     else {
-        // Look up by name
-        base_type = m_types.primitive_by_name(type_expr->name);
+        // Check for Self type (used in trait method signatures)
+        if (type_expr->name == "Self") {
+            Type* struct_type = m_symbols.current_struct_type();
+            if (struct_type) {
+                base_type = struct_type;
+            } else {
+                error(type_expr->loc, "'Self' can only be used in struct/trait method context");
+                return m_types.error_type();
+            }
+        }
+
+        if (!base_type) {
+            // Look up by name
+            base_type = m_types.primitive_by_name(type_expr->name);
+        }
 
         if (!base_type) {
             auto it = m_named_types.find(type_expr->name);
@@ -1089,6 +1186,499 @@ void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
 
     m_symbols.pop_scope();  // function scope
     m_symbols.pop_scope();  // struct scope
+}
+
+// Trait analysis
+
+void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
+    MethodDecl& md = decl->method_decl;
+
+    // Check for duplicate method names in this trait
+    TraitTypeInfo& tti = trait_type->trait_info;
+    for (u32 i = 0; i < tti.methods.size(); i++) {
+        if (tti.methods[i].name == md.name) {
+            error_fmt(decl->loc, "duplicate trait method '%.*s' in trait '%.*s'",
+                     md.name.size(), md.name.data(),
+                     tti.name.size(), tti.name.data());
+            return;
+        }
+    }
+
+    // We need a struct scope to resolve 'Self' in parameter types.
+    // For trait method declarations, we don't have a concrete struct,
+    // so we use nullptr sentinels for Self type.
+    // Resolve parameter types - use nullptr for Self
+    Vector<Type*> param_types;
+    for (u32 i = 0; i < md.params.size(); i++) {
+        TypeExpr* type_expr = md.params[i].type;
+        if (type_expr && type_expr->name == "Self") {
+            param_types.push_back(nullptr);  // nullptr sentinel for Self
+        } else {
+            Type* ptype = resolve_type_expr(type_expr);
+            if (!ptype) ptype = m_types.error_type();
+            param_types.push_back(ptype);
+        }
+    }
+
+    // Resolve return type (nullptr for Self)
+    Type* return_type = nullptr;
+    if (md.return_type) {
+        if (md.return_type->name == "Self") {
+            return_type = nullptr;  // sentinel for Self
+        } else {
+            return_type = resolve_type_expr(md.return_type);
+            if (!return_type) return_type = m_types.error_type();
+        }
+    } else {
+        return_type = m_types.void_type();
+    }
+
+    // Allocate param_types in bump allocator
+    Type** ptypes = reinterpret_cast<Type**>(
+        m_allocator.alloc_bytes(sizeof(Type*) * param_types.size(), alignof(Type*)));
+    for (u32 i = 0; i < param_types.size(); i++) {
+        ptypes[i] = param_types[i];
+    }
+
+    // Create trait method info
+    TraitMethodInfo tmi;
+    tmi.name = md.name;
+    tmi.param_types = Span<Type*>(ptypes, param_types.size());
+    tmi.return_type = return_type;
+    tmi.decl = decl;
+    tmi.has_default = (md.body != nullptr);
+
+    // Add to trait's method list
+    Vector<TraitMethodInfo> methods;
+    for (u32 i = 0; i < tti.methods.size(); i++) {
+        methods.push_back(tti.methods[i]);
+    }
+    methods.push_back(tmi);
+
+    // Allocate and update
+    TraitMethodInfo* method_data = reinterpret_cast<TraitMethodInfo*>(
+        m_allocator.alloc_bytes(sizeof(TraitMethodInfo) * methods.size(), alignof(TraitMethodInfo)));
+    for (u32 i = 0; i < methods.size(); i++) {
+        method_data[i] = methods[i];
+    }
+    tti.methods = Span<TraitMethodInfo>(method_data, methods.size());
+}
+
+// Helper to deep-clone an Expr tree
+static Expr* clone_expr(BumpAllocator& alloc, Expr* expr);
+static Stmt* clone_stmt(BumpAllocator& alloc, Stmt* stmt);
+
+static Span<CallArg> clone_call_args(BumpAllocator& alloc, Span<CallArg> args) {
+    if (args.size() == 0) return {};
+    CallArg* data = reinterpret_cast<CallArg*>(alloc.alloc_bytes(sizeof(CallArg) * args.size(), alignof(CallArg)));
+    for (u32 i = 0; i < args.size(); i++) {
+        data[i] = args[i];
+        data[i].expr = clone_expr(alloc, args[i].expr);
+    }
+    return Span<CallArg>(data, args.size());
+}
+
+static Span<FieldInit> clone_field_inits(BumpAllocator& alloc, Span<FieldInit> fields) {
+    if (fields.size() == 0) return {};
+    FieldInit* data = reinterpret_cast<FieldInit*>(alloc.alloc_bytes(sizeof(FieldInit) * fields.size(), alignof(FieldInit)));
+    for (u32 i = 0; i < fields.size(); i++) {
+        data[i] = fields[i];
+        data[i].value = clone_expr(alloc, fields[i].value);
+    }
+    return Span<FieldInit>(data, fields.size());
+}
+
+static Expr* clone_expr(BumpAllocator& alloc, Expr* expr) {
+    if (!expr) return nullptr;
+    Expr* e = alloc.emplace<Expr>();
+    *e = *expr;
+    e->resolved_type = nullptr;  // Will be set by re-analysis
+
+    switch (expr->kind) {
+        case AstKind::ExprLiteral:
+        case AstKind::ExprIdentifier:
+        case AstKind::ExprThis:
+            break;  // No child nodes to clone
+        case AstKind::ExprUnary:
+            e->unary.operand = clone_expr(alloc, expr->unary.operand);
+            break;
+        case AstKind::ExprBinary:
+            e->binary.left = clone_expr(alloc, expr->binary.left);
+            e->binary.right = clone_expr(alloc, expr->binary.right);
+            break;
+        case AstKind::ExprTernary:
+            e->ternary.condition = clone_expr(alloc, expr->ternary.condition);
+            e->ternary.then_expr = clone_expr(alloc, expr->ternary.then_expr);
+            e->ternary.else_expr = clone_expr(alloc, expr->ternary.else_expr);
+            break;
+        case AstKind::ExprCall:
+            e->call.callee = clone_expr(alloc, expr->call.callee);
+            e->call.arguments = clone_call_args(alloc, expr->call.arguments);
+            break;
+        case AstKind::ExprIndex:
+            e->index.object = clone_expr(alloc, expr->index.object);
+            e->index.index = clone_expr(alloc, expr->index.index);
+            break;
+        case AstKind::ExprGet:
+            e->get.object = clone_expr(alloc, expr->get.object);
+            break;
+        case AstKind::ExprStaticGet:
+            break;  // No child nodes
+        case AstKind::ExprAssign:
+            e->assign.target = clone_expr(alloc, expr->assign.target);
+            e->assign.value = clone_expr(alloc, expr->assign.value);
+            break;
+        case AstKind::ExprGrouping:
+            e->grouping.expr = clone_expr(alloc, expr->grouping.expr);
+            break;
+        case AstKind::ExprSuper:
+            break;  // No child nodes
+        case AstKind::ExprStructLiteral:
+            e->struct_literal.fields = clone_field_inits(alloc, expr->struct_literal.fields);
+            break;
+        default:
+            break;
+    }
+    return e;
+}
+
+static Span<Decl*> clone_decl_list(BumpAllocator& alloc, Span<Decl*> decls);
+
+static Stmt* clone_stmt(BumpAllocator& alloc, Stmt* stmt) {
+    if (!stmt) return nullptr;
+    Stmt* s = alloc.emplace<Stmt>();
+    *s = *stmt;
+
+    switch (stmt->kind) {
+        case AstKind::StmtExpr:
+            s->expr_stmt.expr = clone_expr(alloc, stmt->expr_stmt.expr);
+            break;
+        case AstKind::StmtBlock:
+            s->block.declarations = clone_decl_list(alloc, stmt->block.declarations);
+            break;
+        case AstKind::StmtIf:
+            s->if_stmt.condition = clone_expr(alloc, stmt->if_stmt.condition);
+            s->if_stmt.then_branch = clone_stmt(alloc, stmt->if_stmt.then_branch);
+            s->if_stmt.else_branch = clone_stmt(alloc, stmt->if_stmt.else_branch);
+            break;
+        case AstKind::StmtWhile:
+            s->while_stmt.condition = clone_expr(alloc, stmt->while_stmt.condition);
+            s->while_stmt.body = clone_stmt(alloc, stmt->while_stmt.body);
+            break;
+        case AstKind::StmtFor:
+            // initializer is a Decl*
+            s->for_stmt.condition = clone_expr(alloc, stmt->for_stmt.condition);
+            s->for_stmt.increment = clone_expr(alloc, stmt->for_stmt.increment);
+            s->for_stmt.body = clone_stmt(alloc, stmt->for_stmt.body);
+            break;
+        case AstKind::StmtReturn:
+            s->return_stmt.value = clone_expr(alloc, stmt->return_stmt.value);
+            break;
+        case AstKind::StmtBreak:
+        case AstKind::StmtContinue:
+            break;
+        case AstKind::StmtDelete:
+            s->delete_stmt.expr = clone_expr(alloc, stmt->delete_stmt.expr);
+            s->delete_stmt.arguments = clone_call_args(alloc, stmt->delete_stmt.arguments);
+            break;
+        case AstKind::StmtWhen:
+            s->when_stmt.discriminant = clone_expr(alloc, stmt->when_stmt.discriminant);
+            // Clone when cases
+            if (stmt->when_stmt.cases.size() > 0) {
+                WhenCase* cases = reinterpret_cast<WhenCase*>(
+                    alloc.alloc_bytes(sizeof(WhenCase) * stmt->when_stmt.cases.size(), alignof(WhenCase)));
+                for (u32 i = 0; i < stmt->when_stmt.cases.size(); i++) {
+                    cases[i] = stmt->when_stmt.cases[i];
+                    cases[i].body = clone_decl_list(alloc, stmt->when_stmt.cases[i].body);
+                }
+                s->when_stmt.cases = Span<WhenCase>(cases, stmt->when_stmt.cases.size());
+            }
+            s->when_stmt.else_body = clone_decl_list(alloc, stmt->when_stmt.else_body);
+            break;
+        default:
+            break;
+    }
+    return s;
+}
+
+static Decl* clone_decl(BumpAllocator& alloc, Decl* decl) {
+    if (!decl) return nullptr;
+    Decl* d = alloc.emplace<Decl>();
+    *d = *decl;
+
+    switch (decl->kind) {
+        case AstKind::DeclVar:
+            d->var_decl.initializer = clone_expr(alloc, decl->var_decl.initializer);
+            break;
+        case AstKind::StmtExpr:
+            d->stmt.expr_stmt.expr = clone_expr(alloc, decl->stmt.expr_stmt.expr);
+            break;
+        default:
+            // For statement declarations embedded in Decl, clone the statement
+            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtWhen) {
+                Stmt* cloned = clone_stmt(alloc, &decl->stmt);
+                if (cloned) d->stmt = *cloned;
+            }
+            break;
+    }
+    return d;
+}
+
+static Span<Decl*> clone_decl_list(BumpAllocator& alloc, Span<Decl*> decls) {
+    if (decls.size() == 0) return {};
+    Decl** data = reinterpret_cast<Decl**>(alloc.alloc_bytes(sizeof(Decl*) * decls.size(), alignof(Decl*)));
+    for (u32 i = 0; i < decls.size(); i++) {
+        data[i] = clone_decl(alloc, decls[i]);
+    }
+    return Span<Decl*>(data, decls.size());
+}
+
+void SemanticAnalyzer::validate_trait_implementations() {
+    // Group pending impls by (struct, trait)
+    struct TraitImplGroup {
+        Type* struct_type;
+        Type* trait_type;
+        Vector<Decl*> impl_decls;
+    };
+
+    // Use a simple list of groups since we don't expect many
+    Vector<TraitImplGroup> groups;
+
+    for (auto& pending : m_pending_trait_impls) {
+        // Find or create group
+        TraitImplGroup* group = nullptr;
+        for (auto& g : groups) {
+            if (g.struct_type == pending.struct_type && g.trait_type == pending.trait_type) {
+                group = &g;
+                break;
+            }
+        }
+        if (!group) {
+            groups.push_back({pending.struct_type, pending.trait_type, {}});
+            group = &groups.back();
+        }
+        group->impl_decls.push_back(pending.decl);
+    }
+
+    // Process each group
+    for (auto& group : groups) {
+        Type* struct_type = group.struct_type;
+        Type* trait_type = group.trait_type;
+        TraitTypeInfo& tti = trait_type->trait_info;
+        StructTypeInfo& sti = struct_type->struct_info;
+
+        // Check parent trait requirement
+        if (tti.parent) {
+            // Check that struct also implements parent trait
+            bool has_parent = false;
+            for (u32 i = 0; i < sti.implemented_traits.size(); i++) {
+                if (sti.implemented_traits[i] == tti.parent) {
+                    has_parent = true;
+                    break;
+                }
+            }
+            // Also check if we're implementing it in this batch
+            if (!has_parent) {
+                for (auto& other_group : groups) {
+                    if (other_group.struct_type == struct_type && other_group.trait_type == tti.parent) {
+                        has_parent = true;
+                        break;
+                    }
+                }
+            }
+            if (!has_parent) {
+                error_fmt(group.impl_decls[0]->loc,
+                         "trait '%.*s' requires parent trait '%.*s' to be implemented for '%.*s'",
+                         tti.name.size(), tti.name.data(),
+                         tti.parent->trait_info.name.size(), tti.parent->trait_info.name.data(),
+                         sti.name.size(), sti.name.data());
+                continue;
+            }
+        }
+
+        // Track which trait methods are implemented
+        Vector<bool> implemented(tti.methods.size(), false);
+
+        for (Decl* decl : group.impl_decls) {
+            MethodDecl& md = decl->method_decl;
+
+            // Find the trait method this implements
+            bool found = false;
+            for (u32 i = 0; i < tti.methods.size(); i++) {
+                if (tti.methods[i].name == md.name) {
+                    found = true;
+                    implemented[i] = true;
+
+                    // Validate parameter count matches
+                    if (md.params.size() != tti.methods[i].param_types.size()) {
+                        error_fmt(decl->loc, "method '%.*s' parameter count mismatch with trait '%.*s'",
+                                 md.name.size(), md.name.data(),
+                                 tti.name.size(), tti.name.data());
+                    }
+
+                    // Register as a regular method on the struct
+                    // (reuse analyze_method_decl but with trait_name cleared for registration)
+                    // Resolve param types with Self -> struct_type
+                    Vector<Type*> param_types;
+                    for (u32 j = 0; j < md.params.size(); j++) {
+                        Type* ptype = resolve_type_expr(md.params[j].type);
+                        if (!ptype) ptype = m_types.error_type();
+                        param_types.push_back(ptype);
+                    }
+
+                    Type* return_type = md.return_type ? resolve_type_expr(md.return_type) : m_types.void_type();
+                    if (!return_type) return_type = m_types.error_type();
+
+                    // Check for duplicate method name on struct
+                    bool is_duplicate = false;
+                    for (u32 j = 0; j < sti.methods.size(); j++) {
+                        if (sti.methods[j].name == md.name) {
+                            is_duplicate = true;
+                            break;
+                        }
+                    }
+
+                    if (!is_duplicate) {
+                        // Allocate param_types
+                        Type** ptypes = reinterpret_cast<Type**>(
+                            m_allocator.alloc_bytes(sizeof(Type*) * param_types.size(), alignof(Type*)));
+                        for (u32 j = 0; j < param_types.size(); j++) {
+                            ptypes[j] = param_types[j];
+                        }
+
+                        MethodInfo mi;
+                        mi.name = md.name;
+                        mi.param_types = Span<Type*>(ptypes, param_types.size());
+                        mi.return_type = return_type;
+                        mi.decl = decl;
+
+                        // Add to struct's method list
+                        Vector<MethodInfo> methods;
+                        for (u32 j = 0; j < sti.methods.size(); j++) {
+                            methods.push_back(sti.methods[j]);
+                        }
+                        methods.push_back(mi);
+
+                        MethodInfo* method_data = reinterpret_cast<MethodInfo*>(
+                            m_allocator.alloc_bytes(sizeof(MethodInfo) * methods.size(), alignof(MethodInfo)));
+                        for (u32 j = 0; j < methods.size(); j++) {
+                            method_data[j] = methods[j];
+                        }
+                        sti.methods = Span<MethodInfo>(method_data, methods.size());
+                    }
+                    break;
+                }
+            }
+
+            if (!found) {
+                error_fmt(decl->loc, "method '%.*s' is not defined in trait '%.*s'",
+                         md.name.size(), md.name.data(),
+                         tti.name.size(), tti.name.data());
+            }
+        }
+
+        // Check for missing required methods; inject defaults for unimplemented default methods
+        for (u32 i = 0; i < tti.methods.size(); i++) {
+            if (!implemented[i]) {
+                if (tti.methods[i].has_default) {
+                    // Inject default implementation
+                    inject_default_method(struct_type, trait_type, tti.methods[i]);
+                } else {
+                    error_fmt(group.impl_decls[0]->loc,
+                             "trait '%.*s' requires method '%.*s' which is not implemented for '%.*s'",
+                             tti.name.size(), tti.name.data(),
+                             tti.methods[i].name.size(), tti.methods[i].name.data(),
+                             sti.name.size(), sti.name.data());
+                }
+            }
+        }
+
+        // Update struct's implemented_traits list
+        Vector<Type*> traits;
+        for (u32 i = 0; i < sti.implemented_traits.size(); i++) {
+            traits.push_back(sti.implemented_traits[i]);
+        }
+        traits.push_back(trait_type);
+
+        Type** trait_data = reinterpret_cast<Type**>(
+            m_allocator.alloc_bytes(sizeof(Type*) * traits.size(), alignof(Type*)));
+        for (u32 i = 0; i < traits.size(); i++) {
+            trait_data[i] = traits[i];
+        }
+        sti.implemented_traits = Span<Type*>(trait_data, traits.size());
+    }
+}
+
+void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type, TraitMethodInfo& tmi) {
+    // Create a synthetic DeclMethod that targets the implementing struct
+    // with a cloned body from the trait's default method
+    Decl* trait_decl = tmi.decl;
+    MethodDecl& trait_md = trait_decl->method_decl;
+
+    Decl* synth = m_allocator.emplace<Decl>();
+    synth->kind = AstKind::DeclMethod;
+    synth->loc = trait_decl->loc;
+    synth->method_decl.struct_name = struct_type->struct_info.name;
+    synth->method_decl.name = tmi.name;
+    synth->method_decl.params = trait_md.params;  // Params are shared (they're just names + type exprs)
+    synth->method_decl.return_type = trait_md.return_type;
+    synth->method_decl.body = clone_stmt(m_allocator, trait_md.body);  // Clone the body
+    synth->method_decl.is_pub = trait_md.is_pub;
+    synth->method_decl.trait_name = trait_type->trait_info.name;
+
+    // Resolve concrete param types (Self -> struct_type)
+    StructTypeInfo& sti = struct_type->struct_info;
+    Vector<Type*> param_types;
+    for (u32 i = 0; i < tmi.param_types.size(); i++) {
+        Type* pt = tmi.param_types[i];
+        param_types.push_back(pt ? pt : struct_type);  // nullptr sentinel -> concrete type
+    }
+
+    Type* return_type = tmi.return_type ? tmi.return_type : struct_type;
+
+    // Allocate param_types
+    Type** ptypes = reinterpret_cast<Type**>(
+        m_allocator.alloc_bytes(sizeof(Type*) * param_types.size(), alignof(Type*)));
+    for (u32 i = 0; i < param_types.size(); i++) {
+        ptypes[i] = param_types[i];
+    }
+
+    // Add MethodInfo to struct's method list
+    MethodInfo mi;
+    mi.name = tmi.name;
+    mi.param_types = Span<Type*>(ptypes, param_types.size());
+    mi.return_type = return_type;
+    mi.decl = synth;
+
+    Vector<MethodInfo> methods;
+    for (u32 i = 0; i < sti.methods.size(); i++) {
+        methods.push_back(sti.methods[i]);
+    }
+    methods.push_back(mi);
+
+    MethodInfo* method_data = reinterpret_cast<MethodInfo*>(
+        m_allocator.alloc_bytes(sizeof(MethodInfo) * methods.size(), alignof(MethodInfo)));
+    for (u32 i = 0; i < methods.size(); i++) {
+        method_data[i] = methods[i];
+    }
+    sti.methods = Span<MethodInfo>(method_data, methods.size());
+
+    // Add to synthetic decls list for IR builder
+    m_synthetic_decls.push_back(synth);
+}
+
+// Operator trait dispatch in get_binary_result_type
+// Maps binary operators to trait method names
+static const char* binary_op_to_trait_method(BinaryOp op) {
+    switch (op) {
+        case BinaryOp::Equal:    return "eq";
+        case BinaryOp::NotEqual: return "ne";
+        case BinaryOp::Less:     return "lt";
+        case BinaryOp::LessEq:  return "le";
+        case BinaryOp::Greater:  return "gt";
+        case BinaryOp::GreaterEq: return "ge";
+        default: return nullptr;
+    }
 }
 
 // Statement analysis
@@ -2600,7 +3190,32 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
                 return m_types.bool_type();
             }
             if (left == right) {
+                // Check for struct operator trait dispatch
+                if (left->is_struct()) {
+                    const char* method_name = binary_op_to_trait_method(op);
+                    if (method_name) {
+                        StringView name(method_name, static_cast<u32>(strlen(method_name)));
+                        const MethodInfo* mi = lookup_method_in_hierarchy(left, name);
+                        if (mi) {
+                            // Verify the method takes one parameter of the same struct type
+                            // and returns bool
+                            if (mi->param_types.size() == 1 && mi->param_types[0] == left &&
+                                mi->return_type && mi->return_type->is_bool()) {
+                                return m_types.bool_type();
+                            }
+                        }
+                    }
+                }
                 return m_types.bool_type();  // Same type comparison
+            }
+            // Check for struct operator trait dispatch (different types shouldn't happen but be safe)
+            if (left->is_struct() && left == right) {
+                const char* method_name = binary_op_to_trait_method(op);
+                if (method_name) {
+                    StringView name(method_name, static_cast<u32>(strlen(method_name)));
+                    const MethodInfo* mi = lookup_method_in_hierarchy(left, name);
+                    if (mi) return m_types.bool_type();
+                }
             }
             error(loc, "invalid operands for comparison operator");
             return m_types.error_type();

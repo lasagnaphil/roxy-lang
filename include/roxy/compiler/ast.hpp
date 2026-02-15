@@ -54,6 +54,7 @@ enum class AstKind : u8 {
     DeclConstructor,
     DeclDestructor,
     DeclMethod,
+    DeclTrait,
 };
 
 enum class LiteralKind : u8 {
@@ -465,12 +466,22 @@ struct DestructorDecl {
 };
 
 // Method declaration: fun StructName.method_name(params): RetType { body }
+// Also used for trait methods:  fun TraitName.method(params): RetType;    (body = nullptr)
+// And trait implementations:    fun Type.method(params): RetType for Trait { body }
 struct MethodDecl {
     StringView struct_name;
     StringView name;
     Span<Param> params;        // Does NOT include implicit self
     TypeExpr* return_type;     // nullptr if void
-    Stmt* body;
+    Stmt* body;                // nullptr for required trait methods (no body)
+    bool is_pub;
+    StringView trait_name;     // Non-empty for "fun Type.method() for Trait"
+};
+
+// Trait declaration: trait Name; or trait Name : Parent;
+struct TraitDecl {
+    StringView name;
+    StringView parent_name;    // empty if no parent trait
     bool is_pub;
 };
 
@@ -488,6 +499,7 @@ struct Decl {
         ConstructorDecl constructor_decl;
         DestructorDecl destructor_decl;
         MethodDecl method_decl;
+        TraitDecl trait_decl;
         Stmt stmt;  // For statement declarations (like expression statements)
     };
 

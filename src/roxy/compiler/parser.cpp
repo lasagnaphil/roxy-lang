@@ -1044,6 +1044,10 @@ Decl* Parser::declaration() {
         return enum_declaration(is_pub);
     }
 
+    if (match(TokenKind::KwTrait)) {
+        return trait_declaration(is_pub);
+    }
+
     if (is_pub) {
         report_error("'pub' can only precede declarations");
         return nullptr;
@@ -1210,11 +1214,25 @@ Decl* Parser::method_declaration(bool is_pub, Token struct_token) {
         if (m_has_error) return nullptr;
     }
 
-    consume(TokenKind::LeftBrace, "Expected '{' before method body");
-    if (m_has_error) return nullptr;
+    // Check for "for Trait" clause
+    StringView trait_name(nullptr, 0);
+    if (match(TokenKind::KwFor)) {
+        Token trait_token = consume(TokenKind::Identifier, "Expected trait name after 'for'");
+        if (m_has_error) return nullptr;
+        trait_name = trait_token.text();
+    }
 
-    Stmt* body = block_statement();
-    if (m_has_error) return nullptr;
+    // Allow body-less methods (for required trait methods): ends with ';'
+    Stmt* body = nullptr;
+    if (match(TokenKind::Semicolon)) {
+        // No body - required trait method declaration
+    } else {
+        consume(TokenKind::LeftBrace, "Expected '{' before method body");
+        if (m_has_error) return nullptr;
+
+        body = block_statement();
+        if (m_has_error) return nullptr;
+    }
 
     Decl* decl = alloc<Decl>();
     decl->kind = AstKind::DeclMethod;
@@ -1225,6 +1243,7 @@ Decl* Parser::method_declaration(bool is_pub, Token struct_token) {
     decl->method_decl.return_type = return_type;
     decl->method_decl.body = body;
     decl->method_decl.is_pub = is_pub;
+    decl->method_decl.trait_name = trait_name;
     return decl;
 }
 
@@ -1512,6 +1531,31 @@ Decl* Parser::enum_declaration(bool is_pub) {
     decl->enum_decl.name = name_token.text();
     decl->enum_decl.variants = alloc_span(variants);
     decl->enum_decl.is_pub = is_pub;
+    return decl;
+}
+
+Decl* Parser::trait_declaration(bool is_pub) {
+    SourceLocation loc = m_previous.loc;
+
+    Token name_token = consume(TokenKind::Identifier, "Expected trait name");
+    if (m_has_error) return nullptr;
+
+    StringView parent_name(nullptr, 0);
+    if (match(TokenKind::Colon)) {
+        Token parent_token = consume(TokenKind::Identifier, "Expected parent trait name");
+        if (m_has_error) return nullptr;
+        parent_name = parent_token.text();
+    }
+
+    consume(TokenKind::Semicolon, "Expected ';' after trait declaration");
+    if (m_has_error) return nullptr;
+
+    Decl* decl = alloc<Decl>();
+    decl->kind = AstKind::DeclTrait;
+    decl->loc = loc;
+    decl->trait_decl.name = name_token.text();
+    decl->trait_decl.parent_name = parent_name;
+    decl->trait_decl.is_pub = is_pub;
     return decl;
 }
 
