@@ -42,6 +42,8 @@ void init_type_registry() {
 void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size) {
     if (vm == nullptr || vm->allocator == nullptr) {
         // Fallback to malloc if no allocator available
+        static u64 s_malloc_generation = 1;
+
         u32 total_size = sizeof(ObjectHeader) + data_size;
         void* mem = std::malloc(total_size);
         if (mem == nullptr) {
@@ -49,11 +51,10 @@ void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size) {
         }
 
         ObjectHeader* header = static_cast<ObjectHeader*>(mem);
-        header->weak_generation = 0;
+        header->weak_generation = s_malloc_generation++;
+        if (s_malloc_generation == 0) s_malloc_generation = 1;  // skip zero
         header->ref_count = 0;
         header->type_id = type_id;
-        header->size = total_size;
-        header->flags = ObjectHeader::FLAG_ALIVE;
 
         void* data = header->data();
         std::memset(data, 0, data_size);
@@ -74,8 +75,6 @@ void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size) {
     header->weak_generation = generation;
     header->ref_count = 0;
     header->type_id = type_id;
-    header->size = total_size;
-    header->flags = ObjectHeader::FLAG_ALIVE;
 
     // Object data is already zeroed by the allocator
 
@@ -112,13 +111,6 @@ bool weak_ref_valid(void* data, u64 generation) {
     return header->is_alive() && (header->weak_generation == generation);
 }
 
-void weak_ref_invalidate(void* data, u64 new_generation) {
-    if (data == nullptr) return;
-    ObjectHeader* header = get_header_from_data(data);
-    header->weak_generation = new_generation;
-    header->flags = ObjectHeader::FLAG_TOMBSTONE;
-}
-
 void object_free(RoxyVM* vm, void* data) {
     if (data == nullptr) return;
 
@@ -132,22 +124,17 @@ void object_free(RoxyVM* vm, void* data) {
 
     if (vm == nullptr || vm->allocator == nullptr) {
         // Fallback: direct free if no allocator
-        header->flags = ObjectHeader::FLAG_TOMBSTONE;
+        header->weak_generation = 0;
         std::free(header);
         return;
     }
 
-    // Mark as tombstone - weak_ref_valid() checks is_alive() which returns false
-    // when FLAG_ALIVE is not set. FLAG_TOMBSTONE (0x02) doesn't include FLAG_ALIVE (0x01).
-    header->flags = ObjectHeader::FLAG_TOMBSTONE;
+    // Mark as dead — weak_ref_valid() checks is_alive() which returns false
+    // when weak_generation == 0.
+    header->weak_generation = 0;
 
-    // Zero the object data (not the header - keep flags/generation intact)
-    u32 data_size = header->size - sizeof(ObjectHeader);
-    std::memset(data, 0, data_size);
-
-    // Free via slab allocator - updates bookkeeping, memory stays mapped
-    // Note: Tombstoned slots are never reused, so generation doesn't need to change.
-    // If slot recycling is added later, allocator should set new random generation.
+    // Free via slab allocator — zeroes the entire slot (header + data),
+    // then updates bookkeeping. Memory stays mapped for safe weak ref reads.
     vm->allocator->free(header);
 }
 

@@ -191,8 +191,9 @@ void* SlabAllocator::alloc_from_slab(Slab* slab, u64* out_generation) {
     slab->live_count++;
     total_allocated++;
 
-    // Generate random generation
+    // Generate random generation (must be non-zero; 0 means dead)
     *out_generation = rng.next();
+    if (*out_generation == 0) *out_generation = rng.next();
 
     // Zero the slot
     std::memset(slot, 0, slab->slot_size);
@@ -220,8 +221,9 @@ void* SlabAllocator::alloc_large(u32 size, u64* out_generation) {
     large_objects[mem] = page_count;
     total_allocated++;
 
-    // Generate random generation
+    // Generate random generation (must be non-zero; 0 means dead)
     *out_generation = rng.next();
+    if (*out_generation == 0) *out_generation = rng.next();
 
     // Zero the memory
     std::memset(mem, 0, size);
@@ -277,6 +279,9 @@ void SlabAllocator::free_in_slab(Slab* slab, u32 slot_idx) {
     assert(slot_idx < slab->slot_count);
     assert(slab->states[slot_idx] == SlotState::ALIVE);
 
+    // Zero the entire slot (header becomes all zeros = dead state)
+    std::memset(slab->slot_ptr(slot_idx), 0, slab->slot_size);
+
     // Mark as tombstone (not reusable - weak refs might still point here)
     slab->states[slot_idx] = SlotState::TOMBSTONE;
     slab->live_count--;
@@ -284,11 +289,6 @@ void SlabAllocator::free_in_slab(Slab* slab, u32 slot_idx) {
 
     // Note: We do NOT add the slot back to the free list
     // This ensures weak references can safely read zeros from tombstoned memory
-
-    // If all slots are now tombstoned, we could remap the entire slab to zeros
-    // For now, we leave the memory as-is (zeroed during alloc)
-    // In a more advanced implementation, we'd track tombstoned slabs
-    // and periodically remap them when memory pressure is high
 }
 
 void SlabAllocator::free_large(void* ptr) {

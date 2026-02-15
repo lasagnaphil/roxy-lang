@@ -177,7 +177,7 @@ TEST_CASE("Unit - Weak reference invalidation after free") {
     vm_destroy(&vm);
 }
 
-TEST_CASE("Unit - ObjectHeader flags") {
+TEST_CASE("Unit - ObjectHeader alive state") {
     RoxyVM vm;
     CHECK(vm_init(&vm, VMConfig()));
 
@@ -189,13 +189,12 @@ TEST_CASE("Unit - ObjectHeader flags") {
 
     // Object should be alive after allocation
     CHECK(header->is_alive());
-    CHECK((header->flags & ObjectHeader::FLAG_ALIVE) != 0);
 
     // Free the object
     object_free(&vm, data);
 
     // Note: After free, the header memory is zeroed by tombstoning,
-    // so is_alive() should return false (flags == 0)
+    // so is_alive() should return false (weak_generation == 0)
     // We can't check the header directly after free as it's been tombstoned
 
     vm_destroy(&vm);
@@ -698,7 +697,6 @@ TEST_CASE("Stress - ObjectHeader integrity under allocation pressure") {
         CHECK(header->is_alive());
         CHECK(header->ref_count == 0);
         CHECK(header->type_id == type_id);
-        CHECK(header->size == sizeof(ObjectHeader) + 128);
     }
 
     // Verify all headers still intact
