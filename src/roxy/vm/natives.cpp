@@ -6,6 +6,7 @@
 #include "roxy/vm/binding/registry.hpp"
 
 #include <cstdio>
+#include <cstring>
 
 namespace rx {
 
@@ -235,6 +236,64 @@ static void native_print_str(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = 0;
 }
 
+// Native function: bool$$to_string(val: bool) -> string
+static void native_bool_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    bool val = regs[first_arg] != 0;
+    const char* s = val ? "true" : "false";
+    u32 len = val ? 4 : 5;
+    void* result = string_alloc(vm, s, len);
+    regs[dst] = reinterpret_cast<u64>(result);
+}
+
+// Native function: i32$$to_string(val: i32) -> string
+static void native_i32_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    i32 val = static_cast<i32>(regs[first_arg]);
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%d", val);
+    void* result = string_alloc(vm, buf, static_cast<u32>(len));
+    regs[dst] = reinterpret_cast<u64>(result);
+}
+
+// Native function: i64$$to_string(val: i64) -> string
+static void native_i64_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    i64 val = static_cast<i64>(regs[first_arg]);
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%lld", (long long)val);
+    void* result = string_alloc(vm, buf, static_cast<u32>(len));
+    regs[dst] = reinterpret_cast<u64>(result);
+}
+
+// Native function: f32$$to_string(val: f32) -> string
+static void native_f32_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    f32 val;
+    memcpy(&val, &regs[first_arg], sizeof(f32));
+    char buf[64];
+    int len = snprintf(buf, sizeof(buf), "%g", (double)val);
+    void* result = string_alloc(vm, buf, static_cast<u32>(len));
+    regs[dst] = reinterpret_cast<u64>(result);
+}
+
+// Native function: f64$$to_string(val: f64) -> string
+static void native_f64_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    f64 val;
+    memcpy(&val, &regs[first_arg], sizeof(f64));
+    char buf[64];
+    int len = snprintf(buf, sizeof(buf), "%g", val);
+    void* result = string_alloc(vm, buf, static_cast<u32>(len));
+    regs[dst] = reinterpret_cast<u64>(result);
+}
+
+// Native function: string$$to_string(val: string) -> string (identity)
+static void native_string_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    regs[dst] = regs[first_arg];
+}
+
 void register_builtin_natives(NativeRegistry& registry) {
     using TK = NativeTypeKind;
 
@@ -278,6 +337,20 @@ void register_builtin_natives(NativeRegistry& registry) {
 
     registry.bind_native(NATIVE_PRINT_STR, native_print_str,
                          {TK::String}, TK::Void);
+
+    // to_string natives for primitive types
+    registry.bind_native(NATIVE_BOOL_TO_STRING, native_bool_to_string,
+                         {TK::Bool}, TK::String);
+    registry.bind_native(NATIVE_I32_TO_STRING, native_i32_to_string,
+                         {TK::I32}, TK::String);
+    registry.bind_native(NATIVE_I64_TO_STRING, native_i64_to_string,
+                         {TK::I64}, TK::String);
+    registry.bind_native(NATIVE_F32_TO_STRING, native_f32_to_string,
+                         {TK::F32}, TK::String);
+    registry.bind_native(NATIVE_F64_TO_STRING, native_f64_to_string,
+                         {TK::F64}, TK::String);
+    registry.bind_native(NATIVE_STRING_TO_STRING, native_string_to_string,
+                         {TK::String}, TK::String);
 }
 
 }

@@ -47,7 +47,7 @@ Lexer::Lexer(const char* source, u32 length)
 {}
 
 Lexer::SavedPosition Lexer::save_position() const {
-    return {m_start, m_current, m_line, m_line_start};
+    return {m_start, m_current, m_line, m_line_start, m_fstring_brace_depth};
 }
 
 void Lexer::restore_position(const SavedPosition& pos) {
@@ -55,6 +55,7 @@ void Lexer::restore_position(const SavedPosition& pos) {
     m_current = pos.current;
     m_line = pos.line;
     m_line_start = pos.line_start;
+    m_fstring_brace_depth = pos.fstring_brace_depth;
 }
 
 bool Lexer::is_at_end() const {
@@ -411,6 +412,63 @@ Token Lexer::scan_string() {
     return make_token(TokenKind::StringLiteral);
 }
 
+Token Lexer::scan_fstring_text(bool is_begin) {
+    // m_start was set before advance() was called on the 'f' or '}'
+    // For begin: we consumed 'f' and '"', now scan text until '{' or '"'
+    // For mid/end: we consumed '}', now scan text until '{' or '"'
+
+    // Record start of the text content for the token
+    m_start = is_begin ? m_current - 2 : m_current - 1;  // include f" or }
+
+    while (!is_at_end()) {
+        char c = peek();
+
+        if (c == '\\' && !is_at_end()) {
+            // Skip escape sequence (including \{ and \})
+            advance();
+            if (!is_at_end()) advance();
+            continue;
+        }
+
+        if (c == '{') {
+            // Start of interpolation
+            m_fstring_brace_depth = 1;
+            advance();  // consume '{'
+            TokenKind kind = is_begin ? TokenKind::FStringBegin : TokenKind::FStringMid;
+            return make_token(kind);
+        }
+
+        if (c == '"') {
+            advance();  // consume closing quote
+            if (is_begin) {
+                // f"plain text" with no interpolation — degenerate to StringLiteral
+                // Token text is f"...text..." including the f prefix
+                // We need to return this as a StringLiteral with just the "...text..." part
+                // Adjust m_start to skip the 'f' prefix
+                Token token;
+                token.kind = TokenKind::StringLiteral;
+                token.loc.offset = m_start + 1;  // skip 'f'
+                token.loc.line = m_line;
+                token.loc.column = m_start + 1 - m_line_start + 1;
+                token.start = m_source + m_start + 1;  // skip 'f'
+                token.length = m_current - m_start - 1;  // exclude 'f'
+                token.int_value = 0;
+                return token;
+            }
+            return make_token(TokenKind::FStringEnd);
+        }
+
+        if (c == '\n') {
+            m_line++;
+            m_line_start = m_current + 1;
+        }
+
+        advance();
+    }
+
+    return error_token("Unterminated f-string.");
+}
+
 Token Lexer::next_token() {
     skip_whitespace();
 
@@ -421,6 +479,27 @@ Token Lexer::next_token() {
     }
 
     char c = advance();
+
+    // F-string: f"..."
+    if (c == 'f' && peek() == '"') {
+        advance();  // consume opening quote
+        return scan_fstring_text(true);
+    }
+
+    // Track braces inside f-string expressions
+    if (m_fstring_brace_depth > 0) {
+        if (c == '{') {
+            m_fstring_brace_depth++;
+            return make_token(TokenKind::LeftBrace);
+        }
+        if (c == '}') {
+            m_fstring_brace_depth--;
+            if (m_fstring_brace_depth == 0) {
+                return scan_fstring_text(false);  // scan next text segment
+            }
+            return make_token(TokenKind::RightBrace);
+        }
+    }
 
     if (is_alpha(c)) return scan_identifier();
     if (is_digit(c)) return scan_number();

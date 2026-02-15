@@ -1438,6 +1438,8 @@ ValueId IRBuilder::gen_expr(Expr* expr) {
             return gen_struct_literal_expr(expr);
         case AstKind::ExprStaticGet:
             return gen_static_get_expr(expr);
+        case AstKind::ExprStringInterp:
+            return gen_string_interp_expr(expr);
         default:
             return ValueId::invalid();
     }
@@ -2408,6 +2410,95 @@ ValueId IRBuilder::gen_static_get_expr(Expr* expr) {
     return ValueId::invalid();
 }
 
+ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
+    auto& si = expr->string_interp;
+    Type* string_type = m_types.string_type();
+
+    // Build a flat list of string-valued ValueIds
+    Vector<ValueId> string_parts;
+
+    for (u32 i = 0; i < si.parts.size(); i++) {
+        // Add text part if non-empty
+        if (si.parts[i].size() > 0) {
+            string_parts.push_back(emit_const_string(si.parts[i]));
+        }
+
+        // Add expression part (if there is one — there are N expressions for N+1 parts)
+        if (i < si.expressions.size()) {
+            Expr* sub = si.expressions[i];
+            Type* etype = sub->resolved_type;
+            ValueId val = gen_expr(sub);
+
+            if (etype->kind == TypeKind::String) {
+                // String expression — use directly, no conversion needed
+                string_parts.push_back(val);
+            } else {
+                // Need to call to_string native for this type
+                const char* native_name = nullptr;
+                switch (etype->kind) {
+                    case TypeKind::Bool:   native_name = "bool$$to_string"; break;
+                    case TypeKind::I32:    native_name = "i32$$to_string"; break;
+                    case TypeKind::I64:    native_name = "i64$$to_string"; break;
+                    case TypeKind::F32:    native_name = "f32$$to_string"; break;
+                    case TypeKind::F64:    native_name = "f64$$to_string"; break;
+                    default: break;
+                }
+
+                if (etype->is_enum()) {
+                    // Enums use i32$$to_string on their underlying value
+                    native_name = "i32$$to_string";
+                }
+
+                if (native_name) {
+                    StringView name(native_name, static_cast<u32>(strlen(native_name)));
+                    i32 native_idx = m_registry.get_index(name);
+                    if (native_idx >= 0) {
+                        Span<ValueId> args = alloc_span<ValueId>(1);
+                        args[0] = val;
+                        string_parts.push_back(
+                            emit_call_native(name, args, string_type, static_cast<u8>(native_idx)));
+                    }
+                } else if (etype->is_struct()) {
+                    // Struct with to_string method: call the mangled method
+                    StringView mangled = mangle_method(etype->struct_info.name,
+                                                       StringView("to_string", 9));
+                    ValueId self_ptr = gen_lvalue_addr(sub);
+                    Span<ValueId> args = alloc_span<ValueId>(1);
+                    args[0] = self_ptr;
+
+                    i32 native_idx = m_registry.get_index(mangled);
+                    if (native_idx >= 0) {
+                        string_parts.push_back(
+                            emit_call_native(mangled, args, string_type, static_cast<u8>(native_idx)));
+                    } else {
+                        string_parts.push_back(
+                            emit_call(mangled, args, string_type));
+                    }
+                }
+            }
+        }
+    }
+
+    // Edge case: empty f-string or no parts
+    if (string_parts.empty()) {
+        return emit_const_string(StringView("", 0));
+    }
+
+    // Left-fold concatenation with str_concat
+    ValueId result = string_parts[0];
+    StringView concat_name(NATIVE_STR_CONCAT, static_cast<u32>(strlen(NATIVE_STR_CONCAT)));
+    i32 concat_idx = m_registry.get_index(concat_name);
+
+    for (u32 i = 1; i < string_parts.size(); i++) {
+        Span<ValueId> args = alloc_span<ValueId>(2);
+        args[0] = result;
+        args[1] = string_parts[i];
+        result = emit_call_native(concat_name, args, string_type, static_cast<u8>(concat_idx));
+    }
+
+    return result;
+}
+
 ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {
     if (!expr) return ValueId::invalid();
 
@@ -2688,6 +2779,11 @@ void IRBuilder::collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out) 
             break;
         case AstKind::ExprGrouping:
             collect_assigned_vars_expr(expr->grouping.expr, out);
+            break;
+        case AstKind::ExprStringInterp:
+            for (u32 i = 0; i < expr->string_interp.expressions.size(); i++) {
+                collect_assigned_vars_expr(expr->string_interp.expressions[i], out);
+            }
             break;
         default:
             break;

@@ -31,6 +31,7 @@ enum class AstKind : u8 {
     ExprThis,
     ExprSuper,
     ExprStructLiteral,
+    ExprStringInterp,
 
     // Statements
     StmtExpr,
@@ -241,6 +242,12 @@ struct StructLiteralExpr {
     bool is_heap;                 // true for "uniq Type {...}", false for "Type {...}"
 };
 
+// String interpolation expression: f"text {expr} text"
+struct StringInterpExpr {
+    Span<StringView> parts;       // N+1 text segments (between expressions)
+    Span<Expr*> expressions;      // N interpolated expressions
+};
+
 // Forward declaration
 struct Type;
 
@@ -264,6 +271,7 @@ struct Expr {
         ThisExpr this_expr;
         SuperExpr super_expr;
         StructLiteralExpr struct_literal;
+        StringInterpExpr string_interp;
     };
 
     Expr() : kind(AstKind::ExprLiteral), loc{0, 0, 0}, resolved_type(nullptr) {

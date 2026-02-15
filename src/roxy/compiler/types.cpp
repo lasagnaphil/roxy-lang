@@ -280,6 +280,60 @@ const VariantFieldInfo* StructTypeInfo::find_variant_field(StringView field_name
     return nullptr;
 }
 
+void TypeCache::register_primitive_method(TypeKind kind, const MethodInfo& method) {
+    m_primitive_methods[static_cast<u8>(kind)].push_back(method);
+}
+
+void TypeCache::register_primitive_trait(TypeKind kind, Type* trait) {
+    m_primitive_traits[static_cast<u8>(kind)].push_back(trait);
+}
+
+const MethodInfo* TypeCache::lookup_primitive_method(TypeKind kind, StringView name) const {
+    auto it = m_primitive_methods.find(static_cast<u8>(kind));
+    if (it == m_primitive_methods.end()) return nullptr;
+    for (u32 i = 0; i < it->second.size(); i++) {
+        if (it->second[i].name == name) return &it->second[i];
+    }
+    return nullptr;
+}
+
+bool TypeCache::primitive_implements_trait(TypeKind kind, Type* trait) const {
+    auto it = m_primitive_traits.find(static_cast<u8>(kind));
+    if (it == m_primitive_traits.end()) return false;
+    for (u32 i = 0; i < it->second.size(); i++) {
+        if (it->second[i] == trait) return true;
+    }
+    return false;
+}
+
+const MethodInfo* TypeCache::lookup_method(Type* type, StringView name, Type** found_in) const {
+    if (type->is_struct()) {
+        return lookup_method_in_hierarchy(type, name, found_in);
+    }
+    if (type->is_primitive()) {
+        return lookup_primitive_method(type->kind, name);
+    }
+    return nullptr;
+}
+
+bool TypeCache::implements_trait(Type* type, Type* trait) const {
+    if (type->is_struct()) {
+        StructTypeInfo& sti = type->struct_info;
+        for (u32 i = 0; i < sti.implemented_traits.size(); i++) {
+            if (sti.implemented_traits[i] == trait) return true;
+        }
+        return false;
+    }
+    if (type->is_primitive()) {
+        return primitive_implements_trait(type->kind, trait);
+    }
+    if (type->is_enum()) {
+        // Enums can implement traits through their underlying type (i32)
+        return primitive_implements_trait(TypeKind::I32, trait);
+    }
+    return false;
+}
+
 const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name, Type** found_in_type) {
     Type* current = struct_type;
     while (current && current->is_struct()) {

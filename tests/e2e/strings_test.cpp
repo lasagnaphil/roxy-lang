@@ -298,3 +298,223 @@ TEST_CASE("E2E - String in loop") {
     CHECK(result.success);
     CHECK(result.stdout_output == "iteration\n0\niteration\n1\niteration\n2\n");
 }
+
+// ============================================================================
+// F-String Interpolation Tests
+// ============================================================================
+
+TEST_CASE("E2E - F-string basic interpolation") {
+    const char* source = R"(
+        fun main(): i32 {
+            var name: string = "World";
+            print_str(f"Hello, {name}!");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "Hello, World!\n");
+}
+
+TEST_CASE("E2E - F-string integer interpolation") {
+    const char* source = R"(
+        fun main(): i32 {
+            var x: i32 = 42;
+            print_str(f"x = {x}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "x = 42\n");
+}
+
+TEST_CASE("E2E - F-string expression in braces") {
+    const char* source = R"(
+        fun main(): i32 {
+            var a: i32 = 3;
+            var b: i32 = 4;
+            print_str(f"{a} + {b} = {a + b}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "3 + 4 = 7\n");
+}
+
+TEST_CASE("E2E - F-string function call in braces") {
+    const char* source = R"(
+        fun double_it(x: i32): i32 {
+            return x * 2;
+        }
+
+        fun main(): i32 {
+            print_str(f"double: {double_it(5)}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "double: 10\n");
+}
+
+TEST_CASE("E2E - F-string bool interpolation") {
+    const char* source = R"(
+        fun main(): i32 {
+            print_str(f"val: {true}");
+            print_str(f"val: {false}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "val: true\nval: false\n");
+}
+
+TEST_CASE("E2E - F-string float interpolation") {
+    const char* source = R"(
+        fun main(): i32 {
+            var pi: f64 = 3.14;
+            print_str(f"pi: {pi}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "pi: 3.14\n");
+}
+
+TEST_CASE("E2E - F-string no interpolation") {
+    const char* source = R"(
+        fun main(): i32 {
+            print_str(f"plain text");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "plain text\n");
+}
+
+TEST_CASE("E2E - F-string empty parts") {
+    const char* source = R"(
+        fun main(): i32 {
+            var x: i32 = 42;
+            print_str(f"{x}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "42\n");
+}
+
+TEST_CASE("E2E - F-string escaped braces") {
+    const char* source = R"(
+        fun main(): i32 {
+            print_str(f"use \{ and \}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "use { and }\n");
+}
+
+TEST_CASE("E2E - F-string multiple types") {
+    const char* source = R"(
+        fun main(): i32 {
+            var name: string = "app";
+            var ver: i32 = 2;
+            var score: f64 = 9.5;
+            print_str(f"{name} v{ver}: {score}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "app v2: 9.5\n");
+}
+
+TEST_CASE("E2E - F-string concatenation with +") {
+    const char* source = R"(
+        fun main(): i32 {
+            var name: string = "World";
+            print_str(f"hello" + f" {name}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "hello World\n");
+}
+
+TEST_CASE("E2E - F-string in variable") {
+    const char* source = R"(
+        fun main(): i32 {
+            var x: i32 = 10;
+            var s: string = f"value is {x}";
+            print_str(s);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "value is 10\n");
+}
+
+TEST_CASE("E2E - F-string i64 interpolation") {
+    const char* source = R"(
+        fun main(): i32 {
+            var big: i64 = 1000000l;
+            print_str(f"big = {big}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "big = 1000000\n");
+}
+
+TEST_CASE("E2E - F-string string expression") {
+    const char* source = R"(
+        fun main(): i32 {
+            var a: string = "hello";
+            var b: string = "world";
+            var space: string = " ";
+            print_str(f"{a + space + b}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "hello world\n");
+}
+
+TEST_CASE("E2E - F-string empty") {
+    const char* source = R"(
+        fun main(): i32 {
+            print_str(f"");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "\n");
+}

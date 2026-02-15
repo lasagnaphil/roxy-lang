@@ -428,6 +428,37 @@ Expr* Parser::primary() {
         return expr;
     }
 
+    // F-string interpolation: f"text {expr} text"
+    if (match(TokenKind::FStringBegin)) {
+        SourceLocation loc = m_previous.loc;
+        Vector<StringView> parts;
+        Vector<Expr*> expressions;
+        parts.push_back(process_fstring_part(m_previous));
+
+        while (true) {
+            Expr* e = expression();
+            if (m_has_error) return nullptr;
+            expressions.push_back(e);
+
+            if (match(TokenKind::FStringMid)) {
+                parts.push_back(process_fstring_part(m_previous));
+            } else if (match(TokenKind::FStringEnd)) {
+                parts.push_back(process_fstring_part(m_previous));
+                break;
+            } else {
+                report_error("Expected '}' in f-string interpolation.");
+                return nullptr;
+            }
+        }
+
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprStringInterp;
+        expr->loc = loc;
+        expr->string_interp.parts = alloc_span(parts);
+        expr->string_interp.expressions = alloc_span(expressions);
+        return expr;
+    }
+
     if (match(TokenKind::StringLiteral)) {
         Expr* expr = alloc<Expr>();
         expr->kind = AstKind::ExprLiteral;
@@ -1895,6 +1926,66 @@ TypeExpr* Parser::type_expression() {
     return type;
 }
 
+StringView Parser::process_fstring_part(const Token& token) {
+    // Token kinds and their raw text:
+    // FStringBegin: f"text{   — strip f" prefix and { suffix
+    // FStringMid:   }text{    — strip } prefix and { suffix
+    // FStringEnd:   }text"    — strip } prefix and " suffix
+    const char* src = token.start;
+    u32 src_len = token.length;
+
+    // Determine where the actual text content starts and ends
+    u32 content_start = 0;
+    u32 content_end = src_len;
+
+    if (token.kind == TokenKind::FStringBegin) {
+        // f"text{ — skip f" at start, { at end
+        content_start = 2;
+        content_end = src_len - 1;
+    } else if (token.kind == TokenKind::FStringMid) {
+        // }text{ — skip } at start, { at end
+        content_start = 1;
+        content_end = src_len - 1;
+    } else if (token.kind == TokenKind::FStringEnd) {
+        // }text" — skip } at start, " at end
+        content_start = 1;
+        content_end = src_len - 1;
+    }
+
+    if (content_start >= content_end) {
+        return StringView("", 0);
+    }
+
+    u32 max_len = content_end - content_start;
+    char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(max_len + 1, 1));
+    if (!buf) return StringView();
+
+    u32 out_idx = 0;
+    for (u32 i = content_start; i < content_end; i++) {
+        if (src[i] == '\\' && i + 1 < content_end) {
+            i++;
+            switch (src[i]) {
+                case 'n': buf[out_idx++] = '\n'; break;
+                case 't': buf[out_idx++] = '\t'; break;
+                case 'r': buf[out_idx++] = '\r'; break;
+                case '\\': buf[out_idx++] = '\\'; break;
+                case '"': buf[out_idx++] = '"'; break;
+                case '0': buf[out_idx++] = '\0'; break;
+                case '{': buf[out_idx++] = '{'; break;
+                case '}': buf[out_idx++] = '}'; break;
+                default:
+                    buf[out_idx++] = '\\';
+                    buf[out_idx++] = src[i];
+                    break;
+            }
+        } else {
+            buf[out_idx++] = src[i];
+        }
+    }
+
+    return StringView(buf, out_idx);
+}
+
 StringView Parser::process_string_literal(const Token& token) {
     // Token includes the quotes: "content"
     // We need to strip quotes and process escape sequences
@@ -1927,6 +2018,8 @@ StringView Parser::process_string_literal(const Token& token) {
                 case '\\': buf[out_idx++] = '\\'; break;
                 case '"': buf[out_idx++] = '"'; break;
                 case '0': buf[out_idx++] = '\0'; break;
+                case '{': buf[out_idx++] = '{'; break;
+                case '}': buf[out_idx++] = '}'; break;
                 default:
                     // Unknown escape - keep as-is
                     buf[out_idx++] = '\\';

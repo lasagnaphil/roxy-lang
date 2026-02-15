@@ -119,6 +119,7 @@ private:
     ValueId gen_this_expr(Expr* expr);
     ValueId gen_struct_literal_expr(Expr* expr);
     ValueId gen_static_get_expr(Expr* expr);
+    ValueId gen_string_interp_expr(Expr* expr);
 
     // Declaration generation
     void gen_decl(Decl* decl);

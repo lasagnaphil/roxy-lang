@@ -7,6 +7,9 @@ enum class TokenKind {
     IntLiteral,
     FloatLiteral,
     StringLiteral,
+    FStringBegin,   // f"text{      — text before first interpolation
+    FStringMid,     // }text{       — text between interpolations
+    FStringEnd,     // }text"       — text after last interpolation
     Identifier,
 
     // Single-character tokens

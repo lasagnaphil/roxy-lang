@@ -21,6 +21,7 @@ public:
         u32 current;
         u32 line;
         u32 line_start;
+        u32 fstring_brace_depth;
     };
     SavedPosition save_position() const;
     void restore_position(const SavedPosition& pos);
@@ -47,9 +48,12 @@ private:
     Token scan_identifier();
     Token scan_number();
     Token scan_string();
+    Token scan_fstring_text(bool is_begin);
 
     TokenKind check_keyword(u32 start, u32 len, const char* rest, TokenKind kind);
     TokenKind identifier_type();
+
+    u32 m_fstring_brace_depth = 0;
 };
 
 }

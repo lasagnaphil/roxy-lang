@@ -8,6 +8,9 @@ const char* token_kind_to_string(TokenKind kind) {
         case TokenKind::IntLiteral:     return "IntLiteral";
         case TokenKind::FloatLiteral:   return "FloatLiteral";
         case TokenKind::StringLiteral:  return "StringLiteral";
+        case TokenKind::FStringBegin:   return "FStringBegin";
+        case TokenKind::FStringMid:     return "FStringMid";
+        case TokenKind::FStringEnd:     return "FStringEnd";
         case TokenKind::Identifier:     return "Identifier";
 
         // Single-character tokens

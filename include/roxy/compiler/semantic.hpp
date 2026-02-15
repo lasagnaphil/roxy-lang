@@ -113,6 +113,7 @@ private:
     Type* analyze_this_expr(Expr* expr);
     Type* analyze_super_expr(Expr* expr);
     Type* analyze_struct_literal_expr(Expr* expr);
+    Type* analyze_string_interp_expr(Expr* expr);
 
     // Type checking helpers
     bool check_assignable(Type* target, Type* source, SourceLocation loc);
@@ -149,6 +150,7 @@ private:
     tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_named_types;
 
     // Trait support
+    Type* m_printable_type = nullptr;  // Builtin Printable trait for f-string interpolation
     tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_trait_types;
     Vector<Decl*> m_synthetic_decls;  // Injected default method declarations
 

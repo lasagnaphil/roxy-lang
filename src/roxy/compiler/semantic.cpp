@@ -125,6 +125,41 @@ bool SemanticAnalyzer::analyze(Program* program) {
         m_registry->apply_methods_to_types(m_types, m_allocator);
     }
 
+    // Pass 1.7: Register builtin Printable trait and primitive implementations
+    {
+        // Create the Printable trait type
+        m_printable_type = m_types.trait_type(StringView("Printable", 9), nullptr);
+        m_trait_types[StringView("Printable", 9)] = m_printable_type;
+
+        // Add to_string() as the required trait method
+        TraitMethodInfo tmi;
+        tmi.name = StringView("to_string", 9);
+        tmi.param_types = Span<Type*>(nullptr, 0);  // no params besides self
+        tmi.return_type = m_types.string_type();
+        tmi.decl = nullptr;
+        tmi.has_default = false;
+
+        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
+            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
+        tmi_data[0] = tmi;
+        m_printable_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
+
+        // Register to_string method and Printable trait for each primitive type
+        TypeKind prim_kinds[] = {
+            TypeKind::Bool, TypeKind::I32, TypeKind::I64,
+            TypeKind::F32, TypeKind::F64, TypeKind::String
+        };
+        for (TypeKind tk : prim_kinds) {
+            MethodInfo mi;
+            mi.name = StringView("to_string", 9);
+            mi.param_types = Span<Type*>(nullptr, 0);
+            mi.return_type = m_types.string_type();
+            mi.decl = nullptr;
+            m_types.register_primitive_method(tk, mi);
+            m_types.register_primitive_trait(tk, m_printable_type);
+        }
+    }
+
     // Pass 2: Resolve type members (fields, methods, inheritance)
     resolve_type_members(program);
     if (too_many_errors()) return false;
@@ -1538,6 +1573,18 @@ static Expr* clone_expr(BumpAllocator& alloc, Expr* expr) {
         case AstKind::ExprStructLiteral:
             e->struct_literal.fields = clone_field_inits(alloc, expr->struct_literal.fields);
             break;
+        case AstKind::ExprStringInterp: {
+            // Clone expression children; StringView parts are shared (immutable)
+            u32 n = expr->string_interp.expressions.size();
+            if (n > 0) {
+                Expr** exprs = reinterpret_cast<Expr**>(alloc.alloc_bytes(sizeof(Expr*) * n, alignof(Expr*)));
+                for (u32 i = 0; i < n; i++) {
+                    exprs[i] = clone_expr(alloc, expr->string_interp.expressions[i]);
+                }
+                e->string_interp.expressions = Span<Expr*>(exprs, n);
+            }
+            break;
+        }
         default:
             break;
     }
@@ -2281,6 +2328,9 @@ Type* SemanticAnalyzer::analyze_expr(Expr* expr) {
         case AstKind::ExprStructLiteral:
             result = analyze_struct_literal_expr(expr);
             break;
+        case AstKind::ExprStringInterp:
+            result = analyze_string_interp_expr(expr);
+            break;
         default:
             result = m_types.error_type();
             break;
@@ -2289,6 +2339,25 @@ Type* SemanticAnalyzer::analyze_expr(Expr* expr) {
     // Store the resolved type in the AST node for later use (e.g., IR generation)
     expr->resolved_type = result;
     return result;
+}
+
+Type* SemanticAnalyzer::analyze_string_interp_expr(Expr* expr) {
+    auto& si = expr->string_interp;
+    for (u32 i = 0; i < si.expressions.size(); i++) {
+        Type* etype = analyze_expr(si.expressions[i]);
+        if (!etype || etype->is_error()) continue;
+        if (etype->is_void()) {
+            error(si.expressions[i]->loc, "cannot interpolate void expression in f-string");
+            continue;
+        }
+        // Uniform trait check for ALL types (primitives and structs)
+        if (!m_types.implements_trait(etype, m_printable_type)) {
+            error_fmt(si.expressions[i]->loc,
+                     "type '%s' does not implement Printable (no to_string method)",
+                     type_kind_to_string(etype->kind));
+        }
+    }
+    return m_types.string_type();
 }
 
 Type* SemanticAnalyzer::analyze_literal_expr(Expr* expr) {

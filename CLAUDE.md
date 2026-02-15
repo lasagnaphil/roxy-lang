@@ -114,7 +114,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Parser** - Recursive descent with Pratt parsing for expressions. Fail-fast design.
 **Details:** `docs/internals/frontend.md` | **Files:** `compiler/parser.hpp`, `compiler/parser.cpp`
 
-**AST** - 14 expression types, 9 statement types, 7 declaration types.
+**AST** - 15 expression types, 9 statement types, 7 declaration types.
 **Files:** `compiler/ast.hpp`
 
 **Semantic Analysis** - Multi-pass analyzer with symbol resolution, type inference, type checking.
@@ -147,7 +147,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Lists** - Dynamic lists (`List<T>`) with bounds checking, push/pop/len/cap methods.
 **Details:** `docs/internals/arrays.md` | **Files:** `vm/list.hpp`
 
-**Strings** - Heap-allocated string objects. Operations via native functions (`str_concat`, `str_eq`, `str_len`).
+**Strings** - Heap-allocated string objects. Operations via native functions (`str_concat`, `str_eq`, `str_len`). F-string interpolation (`f"hello {expr}"`) with automatic `to_string` conversion via builtin `Printable` trait.
 **Details:** `docs/internals/strings.md` | **Files:** `vm/string.hpp`
 
 **Slab Allocator** - Custom allocator with Vale-style random generational references, tombstoning.

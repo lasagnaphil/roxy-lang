@@ -333,6 +333,16 @@ public:
     // Factory method for generic type parameters
     Type* type_param(StringView name, u32 index);
 
+    // Primitive trait/method support
+    void register_primitive_method(TypeKind kind, const MethodInfo& method);
+    void register_primitive_trait(TypeKind kind, Type* trait);
+    const MethodInfo* lookup_primitive_method(TypeKind kind, StringView name) const;
+    bool primitive_implements_trait(TypeKind kind, Type* trait) const;
+
+    // Unified lookup: works for structs (via hierarchy) AND primitives
+    const MethodInfo* lookup_method(Type* type, StringView name, Type** found_in = nullptr) const;
+    bool implements_trait(Type* type, Type* trait) const;
+
     // Lookup primitive type by name
     Type* primitive_by_name(StringView name);
 
@@ -371,6 +381,10 @@ private:
 
     // Named type registry (structs and enums)
     tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_named_types;
+
+    // Primitive method and trait tables (keyed by TypeKind)
+    tsl::robin_map<u8, Vector<MethodInfo>> m_primitive_methods;
+    tsl::robin_map<u8, Vector<Type*>> m_primitive_traits;
 };
 
 // String representation of types (for error messages)
