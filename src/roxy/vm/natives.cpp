@@ -6,12 +6,11 @@
 #include "roxy/vm/binding/registry.hpp"
 
 #include <cstdio>
-#include <cstring>
 
 namespace rx {
 
 // Native function: list_new(cap?: i32) -> List<T>
-void native_list_new(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+static void native_list_new(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack.back().registers;
 
     u32 capacity = 0;
@@ -38,7 +37,7 @@ void native_list_new(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 // Native function: list_len(lst: List<T>) -> i32
-void native_list_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+static void native_list_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 1) {
         vm->error = "list_len requires 1 argument";
         return;
@@ -57,7 +56,7 @@ void native_list_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 // Native function: list_cap(lst: List<T>) -> i32
-void native_list_cap(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+static void native_list_cap(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 1) {
         vm->error = "list_cap requires 1 argument";
         return;
@@ -76,7 +75,7 @@ void native_list_cap(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 // Native function: list_push(lst: List<T>, val: T) -> void
-void native_list_push(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+static void native_list_push(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 2) {
         vm->error = "list_push requires 2 arguments";
         return;
@@ -96,7 +95,7 @@ void native_list_push(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 // Native function: list_pop(lst: List<T>) -> T
-void native_list_pop(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+static void native_list_pop(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 1) {
         vm->error = "list_pop requires 1 argument";
         return;
@@ -116,7 +115,7 @@ void native_list_pop(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Native function: print(value: i32)
 // Note: With untyped registers, we interpret the value as i64 by default
-void native_print(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+static void native_print(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 1) {
         vm->error = "print requires 1 argument";
         return;
@@ -133,7 +132,7 @@ void native_print(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 // Native function: print_i64(value: i64)
-void native_print_i64(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+static void native_print_i64(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 1) {
         vm->error = "print_i64 requires 1 argument";
         return;
@@ -147,7 +146,7 @@ void native_print_i64(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 // Native function: str_concat(a: string, b: string) -> string
-void native_str_concat(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+static void native_str_concat(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 2) {
         vm->error = "str_concat requires 2 arguments";
         return;
@@ -172,7 +171,7 @@ void native_str_concat(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 // Native function: str_eq(a: string, b: string) -> bool
-void native_str_eq(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+static void native_str_eq(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 2) {
         vm->error = "str_eq requires 2 arguments";
         return;
@@ -186,7 +185,7 @@ void native_str_eq(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 // Native function: str_ne(a: string, b: string) -> bool
-void native_str_ne(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+static void native_str_ne(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 2) {
         vm->error = "str_ne requires 2 arguments";
         return;
@@ -200,7 +199,7 @@ void native_str_ne(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 // Native function: str_len(s: string) -> i32
-void native_str_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+static void native_str_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 1) {
         vm->error = "str_len requires 1 argument";
         return;
@@ -218,7 +217,7 @@ void native_str_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 // Native function: print_str(s: string)
-void native_print_str(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+static void native_print_str(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 1) {
         vm->error = "print_str requires 1 argument";
         return;
@@ -279,114 +278,6 @@ void register_builtin_natives(NativeRegistry& registry) {
 
     registry.bind_native(NATIVE_PRINT_STR, native_print_str,
                          {TK::String}, TK::Void);
-}
-
-bool is_builtin_native(const char* name, u32 len) {
-    if (len == strlen(NATIVE_LIST_NEW) &&
-        strncmp(name, NATIVE_LIST_NEW, len) == 0) {
-        return true;
-    }
-    if (len == strlen(NATIVE_LIST_LEN) &&
-        strncmp(name, NATIVE_LIST_LEN, len) == 0) {
-        return true;
-    }
-    if (len == strlen(NATIVE_LIST_CAP) &&
-        strncmp(name, NATIVE_LIST_CAP, len) == 0) {
-        return true;
-    }
-    if (len == strlen(NATIVE_LIST_PUSH) &&
-        strncmp(name, NATIVE_LIST_PUSH, len) == 0) {
-        return true;
-    }
-    if (len == strlen(NATIVE_LIST_POP) &&
-        strncmp(name, NATIVE_LIST_POP, len) == 0) {
-        return true;
-    }
-    if (len == strlen(NATIVE_PRINT) &&
-        strncmp(name, NATIVE_PRINT, len) == 0) {
-        return true;
-    }
-    if (len == strlen(NATIVE_PRINT_I64) &&
-        strncmp(name, NATIVE_PRINT_I64, len) == 0) {
-        return true;
-    }
-    if (len == strlen(NATIVE_STR_CONCAT) &&
-        strncmp(name, NATIVE_STR_CONCAT, len) == 0) {
-        return true;
-    }
-    if (len == strlen(NATIVE_STR_EQ) &&
-        strncmp(name, NATIVE_STR_EQ, len) == 0) {
-        return true;
-    }
-    if (len == strlen(NATIVE_STR_NE) &&
-        strncmp(name, NATIVE_STR_NE, len) == 0) {
-        return true;
-    }
-    if (len == strlen(NATIVE_STR_LEN) &&
-        strncmp(name, NATIVE_STR_LEN, len) == 0) {
-        return true;
-    }
-    if (len == strlen(NATIVE_PRINT_STR) &&
-        strncmp(name, NATIVE_PRINT_STR, len) == 0) {
-        return true;
-    }
-    return false;
-}
-
-i32 get_builtin_native_index(const char* name, u32 len) {
-    // Native functions are registered in this order:
-    // list_new (0), list_len (1), list_cap (2), list_push (3), list_pop (4),
-    // print (5), print_i64 (6),
-    // str_concat (7), str_eq (8), str_ne (9), str_len (10), print_str (11)
-    if (len == strlen(NATIVE_LIST_NEW) &&
-        strncmp(name, NATIVE_LIST_NEW, len) == 0) {
-        return 0;
-    }
-    if (len == strlen(NATIVE_LIST_LEN) &&
-        strncmp(name, NATIVE_LIST_LEN, len) == 0) {
-        return 1;
-    }
-    if (len == strlen(NATIVE_LIST_CAP) &&
-        strncmp(name, NATIVE_LIST_CAP, len) == 0) {
-        return 2;
-    }
-    if (len == strlen(NATIVE_LIST_PUSH) &&
-        strncmp(name, NATIVE_LIST_PUSH, len) == 0) {
-        return 3;
-    }
-    if (len == strlen(NATIVE_LIST_POP) &&
-        strncmp(name, NATIVE_LIST_POP, len) == 0) {
-        return 4;
-    }
-    if (len == strlen(NATIVE_PRINT) &&
-        strncmp(name, NATIVE_PRINT, len) == 0) {
-        return 5;
-    }
-    if (len == strlen(NATIVE_PRINT_I64) &&
-        strncmp(name, NATIVE_PRINT_I64, len) == 0) {
-        return 6;
-    }
-    if (len == strlen(NATIVE_STR_CONCAT) &&
-        strncmp(name, NATIVE_STR_CONCAT, len) == 0) {
-        return 7;
-    }
-    if (len == strlen(NATIVE_STR_EQ) &&
-        strncmp(name, NATIVE_STR_EQ, len) == 0) {
-        return 8;
-    }
-    if (len == strlen(NATIVE_STR_NE) &&
-        strncmp(name, NATIVE_STR_NE, len) == 0) {
-        return 9;
-    }
-    if (len == strlen(NATIVE_STR_LEN) &&
-        strncmp(name, NATIVE_STR_LEN, len) == 0) {
-        return 10;
-    }
-    if (len == strlen(NATIVE_PRINT_STR) &&
-        strncmp(name, NATIVE_PRINT_STR, len) == 0) {
-        return 11;
-    }
-    return -1;
 }
 
 }
