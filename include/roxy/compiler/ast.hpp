@@ -117,12 +117,19 @@ enum class RefKind : u8 {
     Weak,   // weak<T> - weak reference
 };
 
+// Type parameter for generic declarations: <T, U>
+struct TypeParam {
+    StringView name;
+    SourceLocation loc;
+};
+
 // Type expression for type annotations
 struct TypeExpr {
     StringView name;
     SourceLocation loc;
     RefKind ref_kind;
-    TypeExpr* element_type;  // For array types: element_type[]
+    TypeExpr* element_type;      // For array types: element_type[]
+    Span<TypeExpr*> type_args;   // Generic type args: Box<i32>, Pair<i32, string>
 };
 
 // Literal expression: nil, true, false, 42, 3.14, "hello"
@@ -173,7 +180,9 @@ struct CallArg {
 struct CallExpr {
     Expr* callee;
     Span<CallArg> arguments;
+    Span<TypeExpr*> type_args;    // Explicit type arguments: identity<i32>(42)
     StringView constructor_name;  // For named constructors: Point.from_coords() -> "from_coords"
+    StringView mangled_name;      // Set by semantic analysis for generic calls
     bool is_heap;                 // true for "uniq Type(...)" constructor calls
 };
 
@@ -228,6 +237,8 @@ struct FieldInit {
 struct StructLiteralExpr {
     StringView type_name;
     Span<FieldInit> fields;
+    Span<TypeExpr*> type_args;    // Generic type args: Box<i32> { value = 42 }
+    StringView mangled_name;      // Set by semantic analysis for generic structs
     bool is_heap;                 // true for "uniq Type {...}", false for "Type {...}"
 };
 
@@ -371,8 +382,10 @@ struct VarDecl {
 };
 
 // Function declaration: fun name(params): RetType { body }
+// or generic: fun name<T, U>(params): RetType { body }
 struct FunDecl {
     StringView name;
+    Span<TypeParam> type_params;  // Generic type params: <T, U>
     Span<Param> params;
     TypeExpr* return_type;  // nullptr if void
     Stmt* body;             // BlockStmt, nullptr if native
@@ -405,8 +418,10 @@ struct WhenFieldDecl {
 };
 
 // Struct declaration: struct Name : Parent { fields, when clauses, methods }
+// or generic: struct Name<T, U> { ... }
 struct StructDecl {
     StringView name;
+    Span<TypeParam> type_params;    // Generic type params: <T, U>
     StringView parent_name;         // empty if no parent
     Span<FieldDecl> fields;         // Regular fields
     Span<WhenFieldDecl> when_clauses;  // Tagged union discriminants

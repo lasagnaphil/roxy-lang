@@ -1,4 +1,5 @@
 #include "roxy/compiler/ir_builder.hpp"
+#include "roxy/compiler/generics.hpp"
 #include "roxy/compiler/module_registry.hpp"
 #include "roxy/vm/binding/registry.hpp"
 
@@ -19,7 +20,8 @@ IRBuilder::IRBuilder(BumpAllocator& allocator, TypeCache& types, NativeRegistry&
 {
 }
 
-IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
+IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
+                           GenericInstantiator* generics) {
     IRModule* module = m_allocator.emplace<IRModule>();
 
     // Track which struct types have user-defined default constructors
@@ -30,12 +32,16 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
         if (!decl) continue;
 
         if (decl->kind == AstKind::DeclFun) {
+            // Skip generic function templates (they are instantiated separately)
+            if (decl->fun_decl.type_params.size() > 0) continue;
             if (!decl->fun_decl.is_native && decl->fun_decl.body) {
                 IRFunction* func = build_function(&decl->fun_decl);
                 module->functions.push_back(func);
             }
         }
         else if (decl->kind == AstKind::DeclStruct) {
+            // Skip generic struct templates
+            if (decl->struct_decl.type_params.size() > 0) continue;
             // Build methods
             StructDecl& sd = decl->struct_decl;
             for (u32 j = 0; j < sd.methods.size(); j++) {
@@ -92,18 +98,43 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
         }
     }
 
+    // Process generic function instances
+    if (generics) {
+        for (auto* instance : generics->all_fun_instances()) {
+            if (instance->is_analyzed && instance->instantiated_decl) {
+                IRFunction* func = build_function(&instance->instantiated_decl->fun_decl);
+                module->functions.push_back(func);
+            }
+        }
+    }
+
     // Generate synthesized default constructors for structs without user-defined ones
     for (u32 i = 0; i < program->declarations.size(); i++) {
         Decl* decl = program->declarations[i];
         if (!decl) continue;
 
         if (decl->kind == AstKind::DeclStruct) {
+            // Skip generic struct templates
+            if (decl->struct_decl.type_params.size() > 0) continue;
             StructDecl& sd = decl->struct_decl;
             // Check if this struct already has a user-defined default constructor
             if (has_default_ctor.find(sd.name) == has_default_ctor.end()) {
                 Type* struct_type = m_types.named_type_by_name(sd.name);
                 if (struct_type) {
                     IRFunction* func = build_synthesized_default_constructor(struct_type);
+                    module->functions.push_back(func);
+                }
+            }
+        }
+    }
+
+    // Generate synthesized default constructors for generic struct instances
+    if (generics) {
+        for (auto* instance : generics->all_struct_instances()) {
+            if (instance->is_analyzed && instance->concrete_type) {
+                // Check if there's a user-defined default constructor for this instance
+                if (has_default_ctor.find(instance->mangled_name) == has_default_ctor.end()) {
+                    IRFunction* func = build_synthesized_default_constructor(instance->concrete_type);
                     module->functions.push_back(func);
                 }
             }
@@ -1746,7 +1777,8 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
 
     // Get function name from callee
     if (ce.callee->kind == AstKind::ExprIdentifier) {
-        StringView func_name = ce.callee->identifier.name;
+        // Use mangled name for generic function calls (e.g., "identity$i32")
+        StringView func_name = ce.mangled_name.size() > 0 ? ce.mangled_name : ce.callee->identifier.name;
         StringView lookup_name = func_name;
 
         // Check if this is an imported function (may have alias)
@@ -2213,7 +2245,9 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         // uniq Type { ... } - heap allocation
         struct_type = result_type->ref_info.inner_type;
         Span<ValueId> empty_args = {};
-        struct_ptr = emit_new(sl.type_name, empty_args, result_type);
+        // Use mangled name for generic struct instances (e.g., "Box$i32")
+        StringView type_name = sl.mangled_name.size() > 0 ? sl.mangled_name : sl.type_name;
+        struct_ptr = emit_new(type_name, empty_args, result_type);
     } else {
         // Type { ... } - stack allocation
         struct_type = result_type;

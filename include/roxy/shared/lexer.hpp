@@ -15,6 +15,16 @@ public:
     const char* source() const { return m_source; }
     u32 length() const { return m_length; }
 
+    // Save/restore for parser backtracking (trial parse)
+    struct SavedPosition {
+        u32 start;
+        u32 current;
+        u32 line;
+        u32 line_start;
+    };
+    SavedPosition save_position() const;
+    void restore_position(const SavedPosition& pos);
+
 private:
     const char* m_source;
     u32 m_length;

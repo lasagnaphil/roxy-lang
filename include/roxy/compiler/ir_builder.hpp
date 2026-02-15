@@ -15,6 +15,7 @@ namespace rx {
 // Forward declarations
 class NativeRegistry;
 class ModuleRegistry;
+class GenericInstantiator;
 
 // IRBuilder generates SSA IR from a type-checked AST
 // Assumes semantic analysis has already been performed and expr->resolved_type is set
@@ -24,7 +25,8 @@ public:
               SymbolTable& symbols, ModuleRegistry& module_registry);
 
     // Build IR module from a program
-    IRModule* build(Program* program, Span<Decl*> synthetic_decls = {});
+    IRModule* build(Program* program, Span<Decl*> synthetic_decls = {},
+                    GenericInstantiator* generics = nullptr);
 
     // Build IR for a single function
     IRFunction* build_function(FunDecl* decl);

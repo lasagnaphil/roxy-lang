@@ -39,6 +39,11 @@ u64 TypeHash::operator()(const Type* t) const {
             hash ^= reinterpret_cast<u64>(t->struct_info.decl) * 31;
             break;
 
+        case TypeKind::TypeParam:
+            // Hash by name and index
+            hash ^= static_cast<u64>(t->type_param_info.index) * 31;
+            break;
+
         default:
             // Primitives just use kind
             break;
@@ -76,6 +81,10 @@ bool TypeEqual::operator()(const Type* a, const Type* b) const {
         case TypeKind::Trait:
             // Named types are equal only if they're the same declaration
             return a->struct_info.decl == b->struct_info.decl;
+
+        case TypeKind::TypeParam:
+            return a->type_param_info.index == b->type_param_info.index &&
+                   a->type_param_info.name == b->type_param_info.name;
 
         default:
             // Primitives are equal if kinds match
@@ -197,6 +206,14 @@ Type* TypeCache::trait_type(StringView name, Decl* decl) {
     return type;
 }
 
+Type* TypeCache::type_param(StringView name, u32 index) {
+    Type* type = m_allocator.emplace<Type>();
+    type->kind = TypeKind::TypeParam;
+    type->type_param_info.name = name;
+    type->type_param_info.index = index;
+    return type;
+}
+
 Type* TypeCache::primitive_by_name(StringView name) {
     if (name == "void") return m_void;
     if (name == "bool") return m_bool;
@@ -314,6 +331,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TypeKind::Uniq: return "uniq";
         case TypeKind::Ref: return "ref";
         case TypeKind::Weak: return "weak";
+        case TypeKind::TypeParam: return "<type_param>";
         case TypeKind::Nil: return "nil";
         case TypeKind::Error: return "<error>";
     }
@@ -399,6 +417,10 @@ void type_to_string(const Type* type, Vector<char>& out) {
         case TypeKind::Weak:
             append_string(out, "weak ");
             type_to_string(type->ref_info.inner_type, out);
+            break;
+
+        case TypeKind::TypeParam:
+            append_string(out, type->type_param_info.name);
             break;
     }
 }

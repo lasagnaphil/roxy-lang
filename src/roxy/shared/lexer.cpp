@@ -46,6 +46,17 @@ Lexer::Lexer(const char* source, u32 length)
     , m_line_start(0)
 {}
 
+Lexer::SavedPosition Lexer::save_position() const {
+    return {m_start, m_current, m_line, m_line_start};
+}
+
+void Lexer::restore_position(const SavedPosition& pos) {
+    m_start = pos.start;
+    m_current = pos.current;
+    m_line = pos.line;
+    m_line_start = pos.line_start;
+}
+
 bool Lexer::is_at_end() const {
     return m_current >= m_length;
 }

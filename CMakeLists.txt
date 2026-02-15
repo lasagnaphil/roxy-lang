@@ -63,6 +63,7 @@ add_library(roxy_compiler
     src/roxy/compiler/semantic.cpp
     src/roxy/compiler/ssa_ir.cpp
     src/roxy/compiler/ir_builder.cpp
+    src/roxy/compiler/generics.cpp
     src/roxy/compiler/module_registry.cpp
     src/roxy/compiler/compiler.cpp
 )
@@ -127,6 +128,7 @@ add_executable(roxy_tests
     tests/e2e/when_test.cpp
     tests/e2e/tagged_unions_test.cpp
     tests/e2e/traits_test.cpp
+    tests/e2e/generics_test.cpp
 )
 target_link_libraries(roxy_tests roxy_vm)
 

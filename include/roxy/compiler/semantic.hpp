@@ -7,6 +7,7 @@
 #include "roxy/compiler/ast.hpp"
 #include "roxy/compiler/types.hpp"
 #include "roxy/compiler/symbol_table.hpp"
+#include "roxy/compiler/generics.hpp"
 
 namespace rx {
 
@@ -139,6 +140,9 @@ private:
     Vector<SemanticError> m_errors;
     Program* m_program;                   // Current program being analyzed
 
+    // Generics support
+    GenericInstantiator m_generics;
+
     // Named type lookup (structs/enums by name)
     tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_named_types;
 
@@ -161,6 +165,9 @@ private:
 
 public:
     const Vector<Decl*>& synthetic_decls() const { return m_synthetic_decls; }
+
+    // Access generics for IR builder
+    GenericInstantiator& generics() { return m_generics; }
 };
 
 }

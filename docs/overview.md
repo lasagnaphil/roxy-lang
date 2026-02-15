@@ -25,6 +25,7 @@
 - Struct inheritance with subtyping and method inheritance
 - `super` keyword for parent method/constructor calls
 - Constructor and destructor chaining
+- Generic functions and structs with monomorphization (explicit type args)
 
 **Planned:**
 - LSP server for IDE support

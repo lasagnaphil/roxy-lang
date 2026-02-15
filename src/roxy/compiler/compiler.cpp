@@ -247,7 +247,7 @@ bool Compiler::build_ir_all() {
 
         // Use combined registry with all native functions
         IRBuilder ir_builder(m_allocator, m_types, *m_combined_registry, analyzer.symbols(), m_module_registry);
-        IRModule* ir_module = ir_builder.build(program, synthetic_decls);
+        IRModule* ir_module = ir_builder.build(program, synthetic_decls, &analyzer.generics());
 
         if (!ir_module) {
             add_error_fmt("IR generation failed for module '%.*s'",

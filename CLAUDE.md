@@ -168,12 +168,15 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Traits** - Ad-hoc polymorphism with trait declarations, required/default methods, `for Trait` implementations, trait inheritance, `Self` type, comparison operator dispatch.
 **Details:** `docs/internals/traits.md`, `docs/internals/operator-overloading.md` | **Tests:** `tests/e2e/traits_test.cpp`
 
+### Generics
+**Generics** - Parametric polymorphism with monomorphization. Generic functions (`fun identity<T>(v: T): T`) and generic structs (`struct Box<T> { value: T; }`). Explicit type arguments required (no type inference). Angle bracket syntax with trial-parse disambiguation.
+**Details:** `docs/internals/generics.md` | **Tests:** `tests/e2e/generics_test.cpp`
+
 ## Planned Components (Not Yet Implemented)
 
 - LSP parser (error recovery, lossless CST)
 - LSP server features (completion, hover, go-to-definition)
 - Optimizations
-- Generics (see `docs/internals/generics.md`)
 - Arithmetic/bitwise operator traits (require generics, see `docs/internals/operator-overloading.md`)
 
 ## Testing
@@ -218,4 +221,4 @@ On Windows, use `.exe` extension.
   - `tagged-unions.md` - Discriminated unions with `when` clause
   - `traits.md` - Traits: declarations, required/default methods, trait inheritance, operator dispatch
   - `operator-overloading.md` - Operator traits (comparison implemented; arithmetic/bitwise NOT YET IMPLEMENTED)
-  - `generics.md` - Generic functions and structs (NOT YET IMPLEMENTED)
+  - `generics.md` - Generic functions and structs with monomorphization

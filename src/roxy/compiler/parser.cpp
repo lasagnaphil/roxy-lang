@@ -322,7 +322,9 @@ Expr* Parser::finish_call(Expr* callee) {
     call_expr->loc = loc;
     call_expr->call.callee = callee;
     call_expr->call.arguments = alloc_span(arguments);
+    call_expr->call.type_args = Span<TypeExpr*>();
     call_expr->call.constructor_name = StringView(nullptr, 0);
+    call_expr->call.mangled_name = StringView(nullptr, 0);
     call_expr->call.is_heap = false;
     return call_expr;
 }
@@ -471,6 +473,8 @@ Expr* Parser::primary() {
             expr->loc = loc;
             expr->struct_literal.type_name = type_token.text();
             expr->struct_literal.fields = alloc_span(fields);
+            expr->struct_literal.type_args = Span<TypeExpr*>();
+            expr->struct_literal.mangled_name = StringView(nullptr, 0);
             expr->struct_literal.is_heap = true;
             return expr;
         }
@@ -518,7 +522,9 @@ Expr* Parser::primary() {
         expr->loc = loc;
         expr->call.callee = callee;
         expr->call.arguments = alloc_span(arguments);
+        expr->call.type_args = Span<TypeExpr*>();
         expr->call.constructor_name = ctor_name;
+        expr->call.mangled_name = StringView(nullptr, 0);
         expr->call.is_heap = true;
         return expr;
     }
@@ -539,6 +545,88 @@ Expr* Parser::primary() {
             expr->static_get.type_name = name_token.text();
             expr->static_get.member_name = member_token.text();
             return expr;
+        }
+
+        // Check for generic args: identifier<types>( or identifier<types>{
+        // Uses trial parse to disambiguate from comparison operators
+        if (check(TokenKind::Less)) {
+            Span<TypeExpr*> type_args = try_parse_generic_args();
+            if (type_args.size() > 0) {
+                // Successfully parsed generic args, next is ( or {
+                if (match(TokenKind::LeftBrace)) {
+                    // Generic struct literal: Box<i32> { value = 42 }
+                    SourceLocation loc = name_token.loc;
+                    Vector<FieldInit> fields;
+                    if (!check(TokenKind::RightBrace)) {
+                        do {
+                            Token field_token = consume(TokenKind::Identifier, "Expected field name");
+                            if (m_has_error) return nullptr;
+                            consume(TokenKind::Equal, "Expected '=' after field name");
+                            if (m_has_error) return nullptr;
+                            Expr* value = expression();
+                            if (m_has_error) return nullptr;
+                            FieldInit fi;
+                            fi.name = field_token.text();
+                            fi.value = value;
+                            fi.loc = field_token.loc;
+                            fields.push_back(fi);
+                        } while (match(TokenKind::Comma));
+                    }
+                    consume(TokenKind::RightBrace, "Expected '}' after struct literal fields");
+                    if (m_has_error) return nullptr;
+
+                    Expr* expr = alloc<Expr>();
+                    expr->kind = AstKind::ExprStructLiteral;
+                    expr->loc = loc;
+                    expr->struct_literal.type_name = name_token.text();
+                    expr->struct_literal.fields = alloc_span(fields);
+                    expr->struct_literal.type_args = type_args;
+                    expr->struct_literal.mangled_name = StringView(nullptr, 0);
+                    expr->struct_literal.is_heap = false;
+                    return expr;
+                }
+
+                if (match(TokenKind::LeftParen)) {
+                    // Generic function/constructor call: identity<i32>(42)
+                    Vector<CallArg> arguments;
+                    if (!check(TokenKind::RightParen)) {
+                        do {
+                            CallArg arg;
+                            arg.modifier = ParamModifier::None;
+                            arg.modifier_loc = {};
+                            if (match(TokenKind::KwOut)) {
+                                arg.modifier = ParamModifier::Out;
+                                arg.modifier_loc = m_previous.loc;
+                            } else if (match(TokenKind::KwInout)) {
+                                arg.modifier = ParamModifier::Inout;
+                                arg.modifier_loc = m_previous.loc;
+                            }
+                            arg.expr = expression();
+                            if (m_has_error) return nullptr;
+                            arguments.push_back(arg);
+                        } while (match(TokenKind::Comma));
+                    }
+                    consume(TokenKind::RightParen, "Expected ')' after arguments");
+                    if (m_has_error) return nullptr;
+
+                    Expr* callee = alloc<Expr>();
+                    callee->kind = AstKind::ExprIdentifier;
+                    callee->loc = name_token.loc;
+                    callee->identifier.name = name_token.text();
+
+                    Expr* expr = alloc<Expr>();
+                    expr->kind = AstKind::ExprCall;
+                    expr->loc = name_token.loc;
+                    expr->call.callee = callee;
+                    expr->call.arguments = alloc_span(arguments);
+                    expr->call.type_args = type_args;
+                    expr->call.constructor_name = StringView(nullptr, 0);
+                    expr->call.mangled_name = StringView(nullptr, 0);
+                    expr->call.is_heap = false;
+                    return expr;
+                }
+            }
+            // Fall through to non-generic paths
         }
 
         // Check for struct literal: Type { ... }
@@ -568,6 +656,8 @@ Expr* Parser::primary() {
             expr->loc = loc;
             expr->struct_literal.type_name = name_token.text();
             expr->struct_literal.fields = alloc_span(fields);
+            expr->struct_literal.type_args = Span<TypeExpr*>();
+            expr->struct_literal.mangled_name = StringView(nullptr, 0);
             expr->struct_literal.is_heap = false;
             return expr;
         }
@@ -1153,6 +1243,13 @@ Decl* Parser::fun_declaration(bool is_pub, bool is_native) {
         return method_declaration(is_pub, name_token);
     }
 
+    // Check for generic type params: fun name<T, U>(...)
+    Span<TypeParam> type_params;
+    if (check(TokenKind::Less)) {
+        type_params = parse_type_params();
+        if (m_has_error) return nullptr;
+    }
+
     consume(TokenKind::LeftParen, "Expected '(' after function name");
     if (m_has_error) return nullptr;
 
@@ -1184,6 +1281,7 @@ Decl* Parser::fun_declaration(bool is_pub, bool is_native) {
     decl->kind = AstKind::DeclFun;
     decl->loc = loc;
     decl->fun_decl.name = name_token.text();
+    decl->fun_decl.type_params = type_params;
     decl->fun_decl.params = alloc_span(params);
     decl->fun_decl.return_type = return_type;
     decl->fun_decl.body = body;
@@ -1324,6 +1422,13 @@ Decl* Parser::struct_declaration(bool is_pub) {
     Token name_token = consume(TokenKind::Identifier, "Expected struct name");
     if (m_has_error) return nullptr;
 
+    // Check for generic type params: struct Name<T, U>
+    Span<TypeParam> type_params;
+    if (check(TokenKind::Less)) {
+        type_params = parse_type_params();
+        if (m_has_error) return nullptr;
+    }
+
     StringView parent_name(nullptr, 0);
     if (match(TokenKind::Colon)) {
         Token parent_token = consume(TokenKind::Identifier, "Expected parent struct name");
@@ -1398,6 +1503,7 @@ Decl* Parser::struct_declaration(bool is_pub) {
     decl->kind = AstKind::DeclStruct;
     decl->loc = loc;
     decl->struct_decl.name = name_token.text();
+    decl->struct_decl.type_params = type_params;
     decl->struct_decl.parent_name = parent_name;
     decl->struct_decl.fields = alloc_span(fields);
     decl->struct_decl.when_clauses = alloc_span(when_clauses);
@@ -1660,12 +1766,110 @@ Decl* Parser::import_declaration() {
     }
 }
 
+// Parser state save/restore for trial parsing
+
+Parser::SavedState Parser::save_state() {
+    SavedState state;
+    state.current = m_current;
+    state.previous = m_previous;
+    state.lexer_pos = m_lexer.save_position();
+    state.has_error = m_has_error;
+    return state;
+}
+
+void Parser::restore_state(const SavedState& state) {
+    m_current = state.current;
+    m_previous = state.previous;
+    m_lexer.restore_position(state.lexer_pos);
+    m_has_error = state.has_error;
+    m_error = {};
+}
+
+// Generic type parameter/argument parsing
+
+Span<TypeParam> Parser::parse_type_params() {
+    // Consume '<'
+    consume(TokenKind::Less, "Expected '<' for type parameters");
+    if (m_has_error) return {};
+
+    Vector<TypeParam> params;
+    do {
+        Token name_token = consume(TokenKind::Identifier, "Expected type parameter name");
+        if (m_has_error) return {};
+
+        TypeParam tp;
+        tp.name = name_token.text();
+        tp.loc = name_token.loc;
+        params.push_back(tp);
+    } while (match(TokenKind::Comma));
+
+    consume(TokenKind::Greater, "Expected '>' after type parameters");
+    if (m_has_error) return {};
+
+    return alloc_span(params);
+}
+
+Span<TypeExpr*> Parser::parse_type_args() {
+    // Consume '<'
+    consume(TokenKind::Less, "Expected '<' for type arguments");
+    if (m_has_error) return {};
+
+    Vector<TypeExpr*> args;
+    do {
+        TypeExpr* type = type_expression();
+        if (m_has_error) return {};
+        args.push_back(type);
+    } while (match(TokenKind::Comma));
+
+    consume(TokenKind::Greater, "Expected '>' after type arguments");
+    if (m_has_error) return {};
+
+    return alloc_span(args);
+}
+
+Span<TypeExpr*> Parser::try_parse_generic_args() {
+    // Trial parse: save state, try to parse <type_args>, check if followed by ( or {
+    SavedState saved = save_state();
+
+    // Consume '<'
+    advance(); // consume Less token
+
+    Vector<TypeExpr*> args;
+    // Try parsing comma-separated type expressions
+    do {
+        TypeExpr* type = type_expression();
+        if (m_has_error) {
+            // Parse failed - restore and return empty
+            restore_state(saved);
+            return {};
+        }
+        args.push_back(type);
+    } while (match(TokenKind::Comma));
+
+    // Check for '>'
+    if (!match(TokenKind::Greater)) {
+        restore_state(saved);
+        return {};
+    }
+
+    // Check if followed by '(' or '{' - confirms this is generic args, not comparison
+    if (check(TokenKind::LeftParen) || check(TokenKind::LeftBrace)) {
+        // Commit - return the parsed type args
+        return alloc_span(args);
+    }
+
+    // Not followed by ( or { - this was a comparison, backtrack
+    restore_state(saved);
+    return {};
+}
+
 // Type expression parsing
 
 TypeExpr* Parser::type_expression() {
     TypeExpr* type = alloc<TypeExpr>();
     type->ref_kind = RefKind::None;
     type->element_type = nullptr;
+    type->type_args = Span<TypeExpr*>();
 
     // Check for reference modifiers
     if (match(TokenKind::KwUniq)) {
@@ -1682,7 +1886,14 @@ TypeExpr* Parser::type_expression() {
     type->name = name_token.text();
     type->loc = name_token.loc;
 
-    // Check for array type: Type[]
+    // Check for generic type args: Type<i32, string>
+    // Unambiguous here since type_expression() is only called in type position
+    if (check(TokenKind::Less)) {
+        type->type_args = parse_type_args();
+        if (m_has_error) return nullptr;
+    }
+
+    // Check for array type: Type[] or Type<T>[]
     if (match(TokenKind::LeftBracket)) {
         consume(TokenKind::RightBracket, "Expected ']' for array type");
         if (m_has_error) return nullptr;
@@ -1692,6 +1903,7 @@ TypeExpr* Parser::type_expression() {
         array_type->loc = type->loc;
         array_type->ref_kind = RefKind::None;
         array_type->element_type = type;
+        array_type->type_args = Span<TypeExpr*>();
         return array_type;
     }
 

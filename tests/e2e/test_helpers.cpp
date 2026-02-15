@@ -82,7 +82,7 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
     }
 
     IRBuilder ir_builder(allocator, analyzer.types(), registry, analyzer.symbols(), modules);
-    IRModule* ir_module = ir_builder.build(program, synthetic_decls);
+    IRModule* ir_module = ir_builder.build(program, synthetic_decls, &analyzer.generics());
     if (!ir_module) {
         return nullptr;
     }

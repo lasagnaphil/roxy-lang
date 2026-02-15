@@ -42,6 +42,9 @@ enum class TypeKind : u8 {
     Ref,
     Weak,
 
+    // Generic type parameter
+    TypeParam,
+
     // Special types
     Nil,    // Type of nil literal, assignable to reference types
     Error,  // Sentinel for type errors, allows analysis to continue
@@ -169,6 +172,12 @@ struct RefTypeInfo {
     Type* inner_type;
 };
 
+// Type info for generic type parameters (T, U, etc.)
+struct TypeParamInfo {
+    StringView name;    // "T", "U", etc.
+    u32 index;          // Position in type param list
+};
+
 // The main Type structure - a tagged union
 struct Type {
     TypeKind kind;
@@ -180,6 +189,7 @@ struct Type {
         ArrayTypeInfo array_info;
         FunctionTypeInfo func_info;
         RefTypeInfo ref_info;
+        TypeParamInfo type_param_info;
     };
 
     // Default constructor - initializes to error type with zeroed union
@@ -253,6 +263,10 @@ struct Type {
         return kind == TypeKind::Nil;
     }
 
+    bool is_type_param() const {
+        return kind == TypeKind::TypeParam;
+    }
+
     // Get the inner type for reference types
     Type* inner_type() const {
         if (is_reference()) {
@@ -315,6 +329,9 @@ public:
     Type* struct_type(StringView name, Decl* decl, StringView module_name = StringView(nullptr, 0));
     Type* enum_type(StringView name, Decl* decl, Type* underlying = nullptr);
     Type* trait_type(StringView name, Decl* decl);
+
+    // Factory method for generic type parameters
+    Type* type_param(StringView name, u32 index);
 
     // Lookup primitive type by name
     Type* primitive_by_name(StringView name);

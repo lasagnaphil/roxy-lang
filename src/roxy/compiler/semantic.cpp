@@ -51,6 +51,7 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeCache& types, M
     , m_modules(modules)
     , m_symbols(allocator)
     , m_program(nullptr)
+    , m_generics(allocator, types)
 {
 }
 
@@ -141,8 +142,20 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
         Decl* decl = program->declarations[i];
         if (!decl) continue;
 
+        // Register generic functions as templates (not concrete functions)
+        if (decl->kind == AstKind::DeclFun && decl->fun_decl.type_params.size() > 0) {
+            m_generics.register_generic_fun(decl->fun_decl.name, decl);
+            continue;
+        }
+
         if (decl->kind == AstKind::DeclStruct) {
             StringView name = decl->struct_decl.name;
+
+            // Register generic structs as templates (not concrete types)
+            if (decl->struct_decl.type_params.size() > 0) {
+                m_generics.register_generic_struct(name, decl);
+                continue;
+            }
 
             // Check for duplicate type names
             if (m_named_types.find(name) != m_named_types.end()) {
@@ -206,6 +219,10 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
 
         if (decl->kind == AstKind::DeclStruct) {
             StructDecl& sd = decl->struct_decl;
+
+            // Skip generic struct templates - they have unresolved type params
+            if (sd.type_params.size() > 0) continue;
+
             Type* type = m_named_types[sd.name];
 
             // Resolve parent type
@@ -432,9 +449,11 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             }
         }
         else if (decl->kind == AstKind::DeclFun) {
-            // Register function in global scope (for forward references)
+            // Skip generic function templates - they have unresolved type params
             FunDecl& fd = decl->fun_decl;
+            if (fd.type_params.size() > 0) continue;
 
+            // Register function in global scope (for forward references)
             // Resolve parameter types
             Vector<Type*> param_types;
             for (u32 j = 0; j < fd.params.size(); j++) {
@@ -557,9 +576,14 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
         if (!decl) continue;
 
         if (decl->kind == AstKind::DeclFun) {
+            // Skip generic function templates - they're analyzed when instantiated
+            if (decl->fun_decl.type_params.size() > 0) continue;
             analyze_fun_decl(decl);
         }
         else if (decl->kind == AstKind::DeclStruct) {
+            // Skip generic struct templates
+            if (decl->struct_decl.type_params.size() > 0) continue;
+
             // Analyze struct methods
             StructDecl& sd = decl->struct_decl;
             Type* struct_type = m_named_types[sd.name];
@@ -625,6 +649,71 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
             }
         }
     }
+
+    // Process pending generic instances (worklist loop)
+    while (m_generics.has_pending_structs() || m_generics.has_pending_funs()) {
+        if (too_many_errors()) return;
+
+        // Process pending struct instances first (they create types that functions may use)
+        if (m_generics.has_pending_structs()) {
+            auto pending_structs = m_generics.take_pending_structs();
+            for (auto* inst : pending_structs) {
+                // Register the concrete struct type
+                m_named_types[inst->mangled_name] = inst->concrete_type;
+                m_types.register_named_type(inst->mangled_name, inst->concrete_type);
+
+                // Resolve members (fields, slot layout) — mirrors resolve_type_members logic
+                StructDecl& sd = inst->instantiated_decl->struct_decl;
+                StructTypeInfo& sti = inst->concrete_type->struct_info;
+
+                Vector<FieldInfo> fields;
+                u32 slot_offset = 0;
+                for (u32 j = 0; j < sd.fields.size(); j++) {
+                    Type* field_type = resolve_type_expr(sd.fields[j].type);
+                    if (!field_type) field_type = m_types.error_type();
+
+                    u32 sc = 0;
+                    if (field_type->is_struct()) sc = field_type->struct_info.slot_count;
+                    else if (field_type->kind == TypeKind::I64 || field_type->kind == TypeKind::U64 ||
+                             field_type->kind == TypeKind::F64 || field_type->is_reference() ||
+                             field_type->is_array() || field_type->kind == TypeKind::String) sc = 2;
+                    else sc = 1;
+
+                    FieldInfo fi;
+                    fi.name = sd.fields[j].name;
+                    fi.type = field_type;
+                    fi.is_pub = sd.fields[j].is_pub;
+                    fi.index = j;
+                    fi.slot_offset = slot_offset;
+                    fi.slot_count = sc;
+                    fields.push_back(fi);
+                    slot_offset += sc;
+                }
+
+                // Allocate field info in bump allocator
+                if (!fields.empty()) {
+                    FieldInfo* fdata = reinterpret_cast<FieldInfo*>(
+                        m_allocator.alloc_bytes(sizeof(FieldInfo) * fields.size(), alignof(FieldInfo)));
+                    for (u32 j = 0; j < fields.size(); j++) {
+                        fdata[j] = fields[j];
+                    }
+                    sti.fields = Span<FieldInfo>(fdata, fields.size());
+                }
+                sti.slot_count = slot_offset;
+
+                inst->is_analyzed = true;
+            }
+        }
+
+        // Process pending function instances
+        if (m_generics.has_pending_funs()) {
+            auto pending_funs = m_generics.take_pending_funs();
+            for (auto* inst : pending_funs) {
+                analyze_fun_decl(inst->instantiated_decl);
+                inst->is_analyzed = true;
+            }
+        }
+    }
 }
 
 // Type resolution
@@ -649,6 +738,89 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             } else {
                 error(type_expr->loc, "'Self' can only be used in struct/trait method context");
                 return m_types.error_type();
+            }
+        }
+
+        // Check for generic struct instantiation: Box<i32>
+        if (!base_type && type_expr->type_args.size() > 0 &&
+            m_generics.is_generic_struct(type_expr->name)) {
+            // Resolve type args to concrete types
+            Vector<Type*> type_arg_types;
+            for (u32 i = 0; i < type_expr->type_args.size(); i++) {
+                Type* arg_type = resolve_type_expr(type_expr->type_args[i]);
+                if (!arg_type || arg_type->is_error()) return m_types.error_type();
+                type_arg_types.push_back(arg_type);
+            }
+
+            // Validate arg count
+            Decl* template_decl = m_generics.get_generic_struct_decl(type_expr->name);
+            if (template_decl->struct_decl.type_params.size() != type_arg_types.size()) {
+                error_fmt(type_expr->loc, "generic struct '%.*s' expects %u type arguments but got %u",
+                         type_expr->name.size(), type_expr->name.data(),
+                         template_decl->struct_decl.type_params.size(),
+                         type_arg_types.size());
+                return m_types.error_type();
+            }
+
+            // Create Span for type args
+            Type** ta_data = reinterpret_cast<Type**>(
+                m_allocator.alloc_bytes(sizeof(Type*) * type_arg_types.size(), alignof(Type*)));
+            for (u32 i = 0; i < type_arg_types.size(); i++) {
+                ta_data[i] = type_arg_types[i];
+            }
+            Span<Type*> type_args(ta_data, type_arg_types.size());
+
+            // Instantiate the generic struct
+            StringView mangled = m_generics.instantiate_struct(type_expr->name, type_args);
+            GenericStructInstance* inst = m_generics.find_struct_instance(mangled);
+            base_type = inst->concrete_type;
+
+            // Update the TypeExpr to use the mangled name so the IR builder can find it
+            type_expr->name = mangled;
+            type_expr->type_args = Span<TypeExpr*>();
+
+            // Immediately resolve struct fields if not yet analyzed
+            if (!inst->is_analyzed) {
+                m_named_types[inst->mangled_name] = inst->concrete_type;
+                m_types.register_named_type(inst->mangled_name, inst->concrete_type);
+
+                StructDecl& sd = inst->instantiated_decl->struct_decl;
+                StructTypeInfo& sti = inst->concrete_type->struct_info;
+
+                Vector<FieldInfo> fields;
+                u32 slot_offset = 0;
+                for (u32 fi = 0; fi < sd.fields.size(); fi++) {
+                    Type* field_type = resolve_type_expr(sd.fields[fi].type);
+                    if (!field_type) field_type = m_types.error_type();
+
+                    u32 sc = 0;
+                    if (field_type->is_struct()) sc = field_type->struct_info.slot_count;
+                    else if (field_type->kind == TypeKind::I64 || field_type->kind == TypeKind::U64 ||
+                             field_type->kind == TypeKind::F64 || field_type->is_reference() ||
+                             field_type->is_array() || field_type->kind == TypeKind::String) sc = 2;
+                    else sc = 1;
+
+                    FieldInfo info;
+                    info.name = sd.fields[fi].name;
+                    info.type = field_type;
+                    info.is_pub = sd.fields[fi].is_pub;
+                    info.index = fi;
+                    info.slot_offset = slot_offset;
+                    info.slot_count = sc;
+                    fields.push_back(info);
+                    slot_offset += sc;
+                }
+
+                if (!fields.empty()) {
+                    FieldInfo* fdata = reinterpret_cast<FieldInfo*>(
+                        m_allocator.alloc_bytes(sizeof(FieldInfo) * fields.size(), alignof(FieldInfo)));
+                    for (u32 fi = 0; fi < fields.size(); fi++) {
+                        fdata[fi] = fields[fi];
+                    }
+                    sti.fields = Span<FieldInfo>(fdata, fields.size());
+                }
+                sti.slot_count = slot_offset;
+                inst->is_analyzed = true;
             }
         }
 
@@ -2193,6 +2365,106 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         }
     }
 
+    // Check for generic function call: name<i32>(args)
+    if (ce.type_args.size() > 0 && ce.callee->kind == AstKind::ExprIdentifier) {
+        StringView func_name = ce.callee->identifier.name;
+
+        // Check if this is a generic function
+        if (m_generics.is_generic_fun(func_name)) {
+            Decl* template_decl = m_generics.get_generic_fun_decl(func_name);
+            FunDecl& template_fd = template_decl->fun_decl;
+
+            // Validate type arg count
+            if (ce.type_args.size() != template_fd.type_params.size()) {
+                error_fmt(expr->loc, "generic function '%.*s' expects %u type arguments but got %u",
+                         func_name.size(), func_name.data(),
+                         template_fd.type_params.size(), ce.type_args.size());
+                return m_types.error_type();
+            }
+
+            // Resolve type args to concrete types
+            Vector<Type*> type_arg_types;
+            for (u32 i = 0; i < ce.type_args.size(); i++) {
+                Type* arg_type = resolve_type_expr(ce.type_args[i]);
+                if (!arg_type || arg_type->is_error()) return m_types.error_type();
+                type_arg_types.push_back(arg_type);
+            }
+
+            Type** ta_data = reinterpret_cast<Type**>(
+                m_allocator.alloc_bytes(sizeof(Type*) * type_arg_types.size(), alignof(Type*)));
+            for (u32 i = 0; i < type_arg_types.size(); i++) {
+                ta_data[i] = type_arg_types[i];
+            }
+            Span<Type*> type_args(ta_data, type_arg_types.size());
+
+            // Instantiate the generic function
+            StringView mangled = m_generics.instantiate_fun(func_name, type_args);
+            ce.mangled_name = mangled;
+
+            // Use the instantiated function's substituted types for type checking
+            GenericFunInstance* inst = m_generics.find_fun_instance(mangled);
+            FunDecl& inst_fd = inst->instantiated_decl->fun_decl;
+
+            // Resolve parameter types and type-check arguments
+            if (ce.arguments.size() != inst_fd.params.size()) {
+                error_fmt(expr->loc, "function '%.*s' expects %u arguments but got %u",
+                         func_name.size(), func_name.data(),
+                         inst_fd.params.size(), ce.arguments.size());
+                return m_types.error_type();
+            }
+
+            for (u32 i = 0; i < ce.arguments.size(); i++) {
+                CallArg& arg = ce.arguments[i];
+                Type* arg_type = analyze_expr(arg.expr);
+
+                // Resolve the parameter type from the instantiated function
+                Type* param_type = nullptr;
+                if (inst_fd.params[i].type) {
+                    param_type = resolve_type_expr(inst_fd.params[i].type);
+                }
+
+                if (param_type && !param_type->is_error() && arg_type && !arg_type->is_error()) {
+                    check_assignable(param_type, arg_type, arg.expr->loc);
+                }
+            }
+
+            // Resolve return type from the instantiated function
+            Type* return_type = m_types.void_type();
+            if (inst_fd.return_type) {
+                return_type = resolve_type_expr(inst_fd.return_type);
+            }
+
+            return return_type;
+        }
+
+        // Check if this is a generic struct constructor call: Box<i32>(args)
+        if (m_generics.is_generic_struct(func_name)) {
+            // Resolve type args
+            Vector<Type*> type_arg_types;
+            for (u32 i = 0; i < ce.type_args.size(); i++) {
+                Type* arg_type = resolve_type_expr(ce.type_args[i]);
+                if (!arg_type || arg_type->is_error()) return m_types.error_type();
+                type_arg_types.push_back(arg_type);
+            }
+
+            Type** ta_data = reinterpret_cast<Type**>(
+                m_allocator.alloc_bytes(sizeof(Type*) * type_arg_types.size(), alignof(Type*)));
+            for (u32 i = 0; i < type_arg_types.size(); i++) {
+                ta_data[i] = type_arg_types[i];
+            }
+            Span<Type*> type_args(ta_data, type_arg_types.size());
+
+            // Instantiate the struct
+            StringView mangled = m_generics.instantiate_struct(func_name, type_args);
+            GenericStructInstance* inst = m_generics.find_struct_instance(mangled);
+            Type* struct_type = inst->concrete_type;
+
+            ce.mangled_name = mangled;
+            ce.callee->resolved_type = struct_type;
+            return analyze_constructor_call(expr, struct_type, ce.constructor_name, ce.is_heap);
+        }
+    }
+
     // Check if this is a constructor call: callee is an identifier that resolves to a struct type
     if (ce.callee->kind == AstKind::ExprIdentifier) {
         StringView type_name = ce.callee->identifier.name;
@@ -2913,15 +3185,42 @@ Type* SemanticAnalyzer::analyze_super_expr(Expr* expr) {
 Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
     StructLiteralExpr& sl = expr->struct_literal;
 
-    // Look up struct type
-    auto it = m_named_types.find(sl.type_name);
-    if (it == m_named_types.end()) {
-        error_fmt(expr->loc, "unknown struct type '%.*s'",
-                 sl.type_name.size(), sl.type_name.data());
-        return m_types.error_type();
+    Type* type = nullptr;
+
+    // Check for generic struct literal: Box<i32> { value = 42 }
+    if (sl.type_args.size() > 0 && m_generics.is_generic_struct(sl.type_name)) {
+        // Resolve type args
+        Vector<Type*> type_arg_types;
+        for (u32 i = 0; i < sl.type_args.size(); i++) {
+            Type* arg_type = resolve_type_expr(sl.type_args[i]);
+            if (!arg_type || arg_type->is_error()) return m_types.error_type();
+            type_arg_types.push_back(arg_type);
+        }
+
+        Type** ta_data = reinterpret_cast<Type**>(
+            m_allocator.alloc_bytes(sizeof(Type*) * type_arg_types.size(), alignof(Type*)));
+        for (u32 i = 0; i < type_arg_types.size(); i++) {
+            ta_data[i] = type_arg_types[i];
+        }
+        Span<Type*> type_args(ta_data, type_arg_types.size());
+
+        StringView mangled = m_generics.instantiate_struct(sl.type_name, type_args);
+        GenericStructInstance* inst = m_generics.find_struct_instance(mangled);
+        type = inst->concrete_type;
+        sl.mangled_name = mangled;
+        sl.type_name = mangled;  // Update to mangled name for IR builder
     }
 
-    Type* type = it->second;
+    if (!type) {
+        // Look up struct type
+        auto it = m_named_types.find(sl.type_name);
+        if (it == m_named_types.end()) {
+            error_fmt(expr->loc, "unknown struct type '%.*s'",
+                     sl.type_name.size(), sl.type_name.data());
+            return m_types.error_type();
+        }
+        type = it->second;
+    }
     if (!type->is_struct()) {
         error_fmt(expr->loc, "'%.*s' is not a struct type",
                  sl.type_name.size(), sl.type_name.data());

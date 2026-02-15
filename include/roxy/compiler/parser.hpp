@@ -101,6 +101,21 @@ private:
     // Type parsing
     TypeExpr* type_expression();
 
+    // Generic type parameter/argument parsing
+    Span<TypeParam> parse_type_params();     // <T, U> in declarations
+    Span<TypeExpr*> parse_type_args();       // <i32, string> in type annotations
+    Span<TypeExpr*> try_parse_generic_args(); // Trial parse <types> in expression position
+
+    // Parser state save/restore for trial parsing
+    struct SavedState {
+        Token current;
+        Token previous;
+        Lexer::SavedPosition lexer_pos;
+        bool has_error;
+    };
+    SavedState save_state();
+    void restore_state(const SavedState& state);
+
     // Helper to parse parameter list
     Vector<Param> parse_parameters();
 
