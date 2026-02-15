@@ -21,11 +21,6 @@ u32 get_list_type_id() {
 }
 
 void* list_alloc(RoxyVM* vm, u32 capacity) {
-    // Ensure list type is registered
-    if (g_list_type_id == UINT32_MAX) {
-        register_list_type();
-    }
-
     // Data size is just the ListHeader (elements are in separate buffer)
     u32 data_size = sizeof(ListHeader);
 

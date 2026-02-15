@@ -69,8 +69,7 @@ inline void ref_inc(void* data) {
     header->ref_count++;
 }
 
-// Decrement reference count, deallocate if zero
-// Returns true if object was deallocated
+// Decrement reference count. Returns false on error (count was already zero).
 bool ref_dec(RoxyVM* vm, void* data);
 
 // Create a weak reference from a strong pointer
@@ -95,6 +94,13 @@ struct ObjectTypeInfo {
     const char* name;           // Type name for debugging
     void (*destructor)(RoxyVM* vm, void* data);  // Optional destructor
 };
+
+// NOTE: The type registry is global and NOT thread-safe.
+// All VM instances must be used from the same thread, or external
+// synchronization must be provided by the host application.
+
+// Initialize built-in types (list, string). Called automatically by vm_init().
+void init_type_registry();
 
 // Register a new object type
 u32 register_object_type(const char* name, u32 size, void (*destructor)(RoxyVM*, void*) = nullptr);

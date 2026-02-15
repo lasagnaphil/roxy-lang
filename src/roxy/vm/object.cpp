@@ -1,10 +1,11 @@
 #include "roxy/vm/object.hpp"
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/slab_allocator.hpp"
+#include "roxy/vm/list.hpp"
+#include "roxy/vm/string.hpp"
 #include "roxy/core/vector.hpp"
 
 #include <cstdlib>
-#include <cassert>
 #include <cstring>
 
 namespace rx {
@@ -28,6 +29,14 @@ const ObjectTypeInfo* get_object_type(u32 type_id) {
         return nullptr;
     }
     return &g_type_registry[type_id];
+}
+
+void init_type_registry() {
+    static bool initialized = false;
+    if (initialized) return;
+    register_list_type();
+    register_string_type();
+    initialized = true;
 }
 
 void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size) {
@@ -74,16 +83,18 @@ void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size) {
 }
 
 bool ref_dec(RoxyVM* vm, void* data) {
-    (void)vm;  // Not used in constraint reference model
     if (data == nullptr) return false;
 
     ObjectHeader* header = get_header_from_data(data);
-    assert(header->ref_count > 0);
+    if (header->ref_count == 0) {
+        if (vm) vm->error = "ref_dec: reference count already zero";
+        return false;  // error
+    }
 
     // In constraint reference model, ref_count tracks borrows, not ownership.
     // Decrement borrow count - deallocation is handled by owner via delete.
     header->ref_count--;
-    return false;  // Never deallocates - owner is responsible
+    return true;  // success
 }
 
 u64 weak_ref_create(void* data) {

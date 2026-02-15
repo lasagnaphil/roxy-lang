@@ -2,31 +2,13 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-02-02
+Last updated: 2026-02-16
 
 ---
 
 ## High Priority
 
-- [ ] **Register overflow assertion**
-  - File: `src/roxy/compiler/lowering.cpp:208`
-  - Issue: `assert(m_next_reg < 255)` - functions with >255 SSA values crash
-  - Fix: Return error or implement register spilling
-
-- [ ] **Value allocation assertion**
-  - File: `src/roxy/compiler/lowering.cpp:218`
-  - Issue: Unallocated values crash with assert
-  - Fix: Should be caught in IR validation pass, not at lowering time
-
-- [ ] **Reference count assertion in release builds**
-  - File: `src/roxy/vm/object.cpp:81`
-  - Issue: `ref_dec()` asserts `ref_count > 0` - release builds won't catch invalid decrement
-  - Fix: Validate and return error instead of asserting
-
-- [ ] **Global static type IDs not thread-safe**
-  - Files: `src/roxy/vm/list.cpp:7`, `src/roxy/vm/string.cpp:9`
-  - Issue: `g_list_type_id` and `g_string_type_id` use static globals with lazy initialization
-  - Fix: Move type registration to per-VM or use proper synchronization
+*(No items — all resolved)*
 
 ---
 
@@ -37,7 +19,7 @@ Last updated: 2026-02-02
   - Fix: Extract `-32768`/`32767` to `constexpr i64 IMM16_MIN/MAX`
 
 - [ ] **Hardcoded array size limit**
-  - File: `src/roxy/vm/natives.cpp:28`
+  - File: `src/roxy/vm/natives.cpp:23`
   - Issue: `if (size > 1000000)` - arbitrary undocumented limit
   - Fix: Make configurable via VMConfig or define named constant
 
@@ -73,8 +55,6 @@ Last updated: 2026-02-02
 
 ## Planned Features
 
-- [ ] Generics (functions and structs)
-- [ ] Traits and trait bounds
 - [ ] Flow-sensitive typing for tagged union variant fields
 - [ ] Exhaustiveness checking for when statements
 - [ ] Variant constructors (`Type.Variant { ... }` syntax)

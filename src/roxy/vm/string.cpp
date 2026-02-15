@@ -20,11 +20,6 @@ u32 get_string_type_id() {
 }
 
 void* string_alloc(RoxyVM* vm, const char* data, u32 length) {
-    // Ensure string type is registered
-    if (g_string_type_id == UINT32_MAX) {
-        register_string_type();
-    }
-
     // Calculate total data size: StringHeader + (chars + null terminator)
     u32 data_size = sizeof(StringHeader) + length + 1;
 

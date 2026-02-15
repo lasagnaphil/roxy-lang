@@ -29,6 +29,8 @@ RoxyVM::~RoxyVM() {
 }
 
 bool vm_init(RoxyVM* vm, const VMConfig& config) {
+    init_type_registry();
+
     vm->module = nullptr;
     vm->running = false;
     vm->error = nullptr;

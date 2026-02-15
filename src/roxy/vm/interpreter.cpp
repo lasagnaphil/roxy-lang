@@ -799,7 +799,7 @@ bool interpret(RoxyVM* vm) {
             case Opcode::REF_DEC: {
                 void* ptr = reg_as_ptr(regs[a]);
                 if (ptr != nullptr) {
-                    ref_dec(vm, ptr);
+                    if (!ref_dec(vm, ptr)) return false;
                 }
                 break;
             }

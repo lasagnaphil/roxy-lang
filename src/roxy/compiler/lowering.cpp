@@ -254,7 +254,10 @@ u8 BytecodeBuilder::allocate_register(ValueId value) {
         return it->second;
     }
 
-    assert(m_next_reg < 255 && "Register overflow");
+    if (m_next_reg >= 255) {
+        report_error("Register overflow: function uses too many values (max 255)");
+        return 0xFF;
+    }
     u8 reg = m_next_reg++;
     m_value_to_reg[value.id] = reg;
     return reg;
@@ -264,7 +267,10 @@ u8 BytecodeBuilder::get_register(ValueId value) {
     if (!value.is_valid()) return 0xFF;
 
     auto it = m_value_to_reg.find(value.id);
-    assert(it != m_value_to_reg.end() && "Value not allocated");
+    if (it == m_value_to_reg.end()) {
+        report_error("Internal error: SSA value used before allocation");
+        return 0xFF;
+    }
     return it->second;
 }
 
