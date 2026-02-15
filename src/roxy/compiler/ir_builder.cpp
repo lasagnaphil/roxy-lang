@@ -1901,7 +1901,14 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
                 }
             }
 
-            result = emit_call(method_name, method_args, expr->resolved_type);
+            // Check if method is a native function
+            i32 native_idx = m_registry.get_index(method_name);
+            if (native_idx >= 0) {
+                result = emit_call_native(method_name, method_args, expr->resolved_type,
+                                          static_cast<u8>(native_idx));
+            } else {
+                result = emit_call(method_name, method_args, expr->resolved_type);
+            }
 
             // For large struct returns, the result is the output pointer
             if (callee_returns_large_struct) {
@@ -2270,6 +2277,12 @@ ValueId IRBuilder::gen_super_call(Expr* expr) {
         call_args[i + 1] = args[i];
     }
 
+    // Check if the super method is a native function
+    i32 native_idx = m_registry.get_index(call_name);
+    if (native_idx >= 0) {
+        return emit_call_native(call_name, call_args, expr->resolved_type,
+                                static_cast<u8>(native_idx));
+    }
     return emit_call(call_name, call_args, expr->resolved_type);
 }
 
@@ -2305,6 +2318,10 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
     auto find_field_default = [](Type* type, StringView field_name) -> Expr* {
         Type* current = type;
         while (current && current->is_struct()) {
+            if (!current->struct_info.decl) {
+                current = current->struct_info.parent;
+                continue;
+            }
             StructDecl& sd = current->struct_info.decl->struct_decl;
             for (u32 j = 0; j < sd.fields.size(); j++) {
                 if (sd.fields[j].name == field_name) {

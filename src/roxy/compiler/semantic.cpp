@@ -1,6 +1,7 @@
 #include "roxy/compiler/semantic.hpp"
 #include "roxy/compiler/module_registry.hpp"
 #include "roxy/vm/natives.hpp"
+#include "roxy/vm/binding/registry.hpp"
 
 #include <cstdarg>
 #include <cstdio>
@@ -45,10 +46,12 @@ static u32 get_type_slot_count(Type* type) {
     }
 }
 
-SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeCache& types, ModuleRegistry& modules)
+SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeCache& types, ModuleRegistry& modules,
+                                   NativeRegistry* registry)
     : m_allocator(allocator)
     , m_types(types)
     , m_modules(modules)
+    , m_registry(registry)
     , m_symbols(allocator)
     , m_program(nullptr)
     , m_generics(allocator, types)
@@ -96,9 +99,31 @@ bool SemanticAnalyzer::analyze(Program* program) {
     }
     if (too_many_errors()) return false;
 
+    // Pass 0c: Apply native function symbols from registry (non-method entries)
+    if (m_registry) {
+        m_registry->apply_to_symbols(m_symbols, m_types, m_allocator);
+    }
+
     // Pass 1: Collect type declarations (struct/enum names)
     collect_type_declarations(program);
     if (too_many_errors()) return false;
+
+    // Pass 1.5: Create native struct types from registry
+    if (m_registry) {
+        m_registry->apply_structs_to_types(m_types, m_allocator, m_symbols);
+        // Also add native structs to m_named_types so they're visible for type lookup
+        for (const auto& se : m_registry->struct_entries()) {
+            Type* type = m_types.named_type_by_name(se.name);
+            if (type) {
+                m_named_types[se.name] = type;
+            }
+        }
+    }
+
+    // Pass 1.6: Apply native methods to struct types
+    if (m_registry) {
+        m_registry->apply_methods_to_types(m_types, m_allocator);
+    }
 
     // Pass 2: Resolve type members (fields, methods, inheritance)
     resolve_type_members(program);
@@ -3322,6 +3347,10 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
     auto find_field_default = [](Type* struct_type, StringView field_name) -> Expr* {
         Type* current = struct_type;
         while (current && current->is_struct()) {
+            if (!current->struct_info.decl) {
+                current = current->struct_info.parent;
+                continue;
+            }
             StructDecl& sd = current->struct_info.decl->struct_decl;
             for (u32 j = 0; j < sd.fields.size(); j++) {
                 if (sd.fields[j].name == field_name) {

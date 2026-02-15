@@ -67,10 +67,7 @@ static Value compile_and_run_with_registry(const char* source, StringView func_n
 
     // Create module registry and SemanticAnalyzer with shared TypeCache
     ModuleRegistry modules(allocator);
-    SemanticAnalyzer analyzer(allocator, types, modules);
-
-    // Apply registry functions directly to symbol table (no imports needed)
-    registry.apply_to_symbols(analyzer.symbols());
+    SemanticAnalyzer analyzer(allocator, types, modules, &registry);
 
     if (!analyzer.analyze(program)) {
         return Value::make_null();
@@ -612,4 +609,208 @@ TEST_CASE("Interop - Mixed bound and built-in functions") {
         });
     CHECK(result.is_int());
     CHECK(result.as_int == 5 + 16 + 2);  // abs(-5) + square(4) + len(at time of push)
+}
+
+// ============================================================================
+// Native Struct and Method Binding Tests
+// ============================================================================
+
+// C++ struct to bind as a native struct
+struct CppPoint { i32 x, y; };
+
+// Free functions acting as methods (first param is self pointer)
+i32 point_sum(CppPoint* self) { return self->x + self->y; }
+i32 point_diff(CppPoint* self) { return self->x - self->y; }
+bool point_is_origin(CppPoint* self) { return self->x == 0 && self->y == 0; }
+i32 point_scaled_sum(CppPoint* self, i32 scale) { return (self->x + self->y) * scale; }
+i32 point_weighted(CppPoint* self, i32 wx, i32 wy) { return self->x * wx + self->y * wy; }
+
+TEST_CASE("Interop - Native struct with auto-bound method") {
+    BumpAllocator alloc(8192);
+    TypeCache types(alloc);
+    NativeRegistry registry(alloc, types);
+
+    registry.register_struct("Point", {
+        {"x", NativeTypeKind::I32},
+        {"y", NativeTypeKind::I32}
+    });
+    registry.bind_method<point_sum>("Point", "sum");
+
+    const char* source = R"(
+        fun test(): i32 {
+            var p = Point { x = 3, y = 4 };
+            return p.sum();
+        }
+    )";
+    Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+    CHECK(result.is_int());
+    CHECK(result.as_int == 7);
+}
+
+TEST_CASE("Interop - Native struct with manual method") {
+    BumpAllocator alloc(8192);
+    TypeCache types(alloc);
+    NativeRegistry registry(alloc, types);
+
+    registry.register_struct("Point", {
+        {"x", NativeTypeKind::I32},
+        {"y", NativeTypeKind::I32}
+    });
+
+    // Manual native method: receives (self_ptr, ...) in registers
+    auto native_product = [](RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+        u64* regs = vm->call_stack.back().registers;
+        CppPoint* self = reinterpret_cast<CppPoint*>(regs[first_arg]);
+        i32 result = self->x * self->y;
+        regs[dst] = static_cast<u64>(static_cast<i64>(result));
+    };
+
+    registry.bind_method_native("Point", "product", native_product,
+                                {}, NativeTypeKind::I32);
+
+    const char* source = R"(
+        fun test(): i32 {
+            var p = Point { x = 5, y = 6 };
+            return p.product();
+        }
+    )";
+    Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+    CHECK(result.is_int());
+    CHECK(result.as_int == 30);
+}
+
+TEST_CASE("Interop - Native method with parameters") {
+    BumpAllocator alloc(8192);
+    TypeCache types(alloc);
+    NativeRegistry registry(alloc, types);
+
+    registry.register_struct("Point", {
+        {"x", NativeTypeKind::I32},
+        {"y", NativeTypeKind::I32}
+    });
+    registry.bind_method<point_scaled_sum>("Point", "scaled_sum");
+
+    const char* source = R"(
+        fun test(): i32 {
+            var p = Point { x = 3, y = 4 };
+            return p.scaled_sum(10);
+        }
+    )";
+    Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+    CHECK(result.is_int());
+    CHECK(result.as_int == 70);  // (3 + 4) * 10
+}
+
+TEST_CASE("Interop - Multiple methods on one struct") {
+    BumpAllocator alloc(8192);
+    TypeCache types(alloc);
+    NativeRegistry registry(alloc, types);
+
+    registry.register_struct("Point", {
+        {"x", NativeTypeKind::I32},
+        {"y", NativeTypeKind::I32}
+    });
+    registry.bind_method<point_sum>("Point", "sum");
+    registry.bind_method<point_diff>("Point", "diff");
+    registry.bind_method<point_is_origin>("Point", "is_origin");
+
+    SUBCASE("sum and diff") {
+        const char* source = R"(
+            fun test(): i32 {
+                var p = Point { x = 10, y = 3 };
+                return p.sum() + p.diff();
+            }
+        )";
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        CHECK(result.is_int());
+        CHECK(result.as_int == 13 + 7);  // sum=13, diff=7
+    }
+
+    SUBCASE("is_origin false") {
+        const char* source = R"(
+            fun test(): bool {
+                var p = Point { x = 1, y = 2 };
+                return p.is_origin();
+            }
+        )";
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        CHECK(result.as_u64() == 0);  // false
+    }
+
+    SUBCASE("is_origin true") {
+        const char* source = R"(
+            fun test(): bool {
+                var p = Point { x = 0, y = 0 };
+                return p.is_origin();
+            }
+        )";
+        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        CHECK(result.as_u64() == 1);  // true
+    }
+}
+
+TEST_CASE("Interop - Native method with multiple parameters") {
+    BumpAllocator alloc(8192);
+    TypeCache types(alloc);
+    NativeRegistry registry(alloc, types);
+
+    registry.register_struct("Point", {
+        {"x", NativeTypeKind::I32},
+        {"y", NativeTypeKind::I32}
+    });
+    registry.bind_method<point_weighted>("Point", "weighted");
+
+    const char* source = R"(
+        fun test(): i32 {
+            var p = Point { x = 3, y = 4 };
+            return p.weighted(2, 5);
+        }
+    )";
+    Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+    CHECK(result.is_int());
+    CHECK(result.as_int == 26);  // 3*2 + 4*5
+}
+
+TEST_CASE("Interop - Native struct field access") {
+    BumpAllocator alloc(8192);
+    TypeCache types(alloc);
+    NativeRegistry registry(alloc, types);
+
+    registry.register_struct("Point", {
+        {"x", NativeTypeKind::I32},
+        {"y", NativeTypeKind::I32}
+    });
+
+    const char* source = R"(
+        fun test(): i32 {
+            var p = Point { x = 10, y = 20 };
+            return p.x + p.y;
+        }
+    )";
+    Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+    CHECK(result.is_int());
+    CHECK(result.as_int == 30);
+}
+
+TEST_CASE("Interop - Native struct with free function") {
+    BumpAllocator alloc(8192);
+    TypeCache types(alloc);
+    NativeRegistry registry(alloc, types);
+
+    registry.register_struct("Point", {
+        {"x", NativeTypeKind::I32},
+        {"y", NativeTypeKind::I32}
+    });
+    registry.bind_method<point_sum>("Point", "sum");
+    registry.bind<my_square>("square");
+
+    const char* source = R"(
+        fun test(): i32 {
+            var p = Point { x = 3, y = 4 };
+            return square(p.sum());
+        }
+    )";
+    Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+    CHECK(result.is_int());
+    CHECK(result.as_int == 49);  // square(7) = 49
 }

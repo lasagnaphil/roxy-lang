@@ -32,7 +32,8 @@ class SemanticAnalyzer {
 public:
     // Constructor with external TypeCache and ModuleRegistry
     // Both must outlive the SemanticAnalyzer
-    SemanticAnalyzer(BumpAllocator& allocator, TypeCache& types, ModuleRegistry& modules);
+    SemanticAnalyzer(BumpAllocator& allocator, TypeCache& types, ModuleRegistry& modules,
+                     NativeRegistry* registry = nullptr);
 
     // Analyze a program - returns true if no errors
     bool analyze(Program* program);
@@ -136,6 +137,7 @@ private:
     BumpAllocator& m_allocator;
     TypeCache& m_types;
     ModuleRegistry& m_modules;
+    NativeRegistry* m_registry;
     SymbolTable m_symbols;
     Vector<SemanticError> m_errors;
     Program* m_program;                   // Current program being analyzed

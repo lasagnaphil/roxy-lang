@@ -147,4 +147,11 @@ struct RoxyType<f64> {
     }
 };
 
+// Pointer specialization - enables auto-binding of methods with self pointer parameter
+template<typename T>
+struct RoxyType<T*> {
+    static T* from_reg(u64 r) { return reinterpret_cast<T*>(r); }
+    static u64 to_reg(T* ptr) { return reinterpret_cast<u64>(ptr); }
+};
+
 }

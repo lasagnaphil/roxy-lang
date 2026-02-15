@@ -168,6 +168,158 @@ registry.bind_native("list_new", native_list_new,
 |----------|-----------|-------------|
 | `print` | `(value: i32) -> void` | Print integer to stdout |
 
+## Native Struct and Method Binding
+
+Game engine embedders can expose C++-defined structs and their methods to Roxy scripts.
+
+### Registering a Native Struct
+
+```cpp
+registry.register_struct("Point", {
+    {"x", NativeTypeKind::I32},
+    {"y", NativeTypeKind::I32}
+});
+```
+
+This creates a Roxy struct type with the given fields. Native structs behave like regular Roxy structs — they support field access and struct literal initialization:
+
+```roxy
+var p = Point { x = 3, y = 4 };
+var sum = p.x + p.y;  // field access works
+```
+
+Native structs have `decl = nullptr` (no AST node) since they are defined from C++, not parsed from source.
+
+### Auto-Binding Methods
+
+Write a free C++ function where the first parameter is a pointer to the struct:
+
+```cpp
+struct CppPoint { i32 x, y; };
+
+i32 point_sum(CppPoint* self) { return self->x + self->y; }
+i32 point_scaled(CppPoint* self, i32 scale) { return (self->x + self->y) * scale; }
+bool point_is_origin(CppPoint* self) { return self->x == 0 && self->y == 0; }
+```
+
+Then bind with `bind_method<FnPtr>`:
+
+```cpp
+registry.bind_method<point_sum>("Point", "sum");
+registry.bind_method<point_scaled>("Point", "scaled");
+registry.bind_method<point_is_origin>("Point", "is_origin");
+```
+
+The `RoxyType<T*>` specialization handles pointer extraction from registers automatically. The self parameter is excluded from the Roxy-visible parameter count — `point_scaled` appears as a 1-parameter method in Roxy:
+
+```roxy
+fun test(): i32 {
+    var p = Point { x = 3, y = 4 };
+    return p.scaled(10);  // calls point_scaled(&p, 10)
+}
+```
+
+### Manual Method Binding
+
+For methods that need direct VM access (e.g., for allocation or complex register manipulation):
+
+```cpp
+// With type kinds (portable across TypeCache instances)
+registry.bind_method_native("Point", "product", native_product_fn,
+                            {NativeTypeKind::I32},  // extra params after self
+                            NativeTypeKind::I32);   // return type
+
+// With Type* (must use same TypeCache as compilation)
+registry.bind_method_manual("Point", "distance", native_distance_fn,
+                            {types.f64_type()},     // extra params after self
+                            types.f64_type());      // return type
+```
+
+Manual method wrappers receive self as `regs[first_arg]` (a pointer to the struct on the stack), followed by any additional arguments.
+
+### Name Mangling
+
+Method entries are stored with mangled names using the `$$` separator: `Point$$sum`, `Point$$scaled`, etc. This is the same convention used by the IR builder for Roxy-defined methods. The mangled name is used as the registry key, so existing `get_index()`, `apply_to_module()`, and `is_native()` work without changes.
+
+### Compilation Pipeline Integration
+
+Native structs and methods are integrated into the semantic analysis passes:
+
+| Pass | Action |
+|------|--------|
+| 0c | `apply_to_symbols()` — registers non-method native functions in the symbol table |
+| 1 | Collect user-defined type declarations |
+| 1.5 | `apply_structs_to_types()` — creates struct types, registers in TypeCache and SymbolTable |
+| 1.6 | `apply_methods_to_types()` — looks up struct types, attaches `MethodInfo` entries |
+| 2 | Resolve type members (user-defined structs) |
+| 3 | Analyze function bodies (method calls resolved via normal type hierarchy lookup) |
+
+The `SemanticAnalyzer` accepts an optional `NativeRegistry*`:
+
+```cpp
+SemanticAnalyzer analyzer(allocator, types, modules, &registry);
+```
+
+During IR generation, the builder checks the native registry for mangled method names. If found, it emits `CallNative` instead of `Call`:
+
+```
+// IR for p.sum() where sum is a native method:
+v3 = call_native "Point$$sum" [v2]   // v2 = pointer to p
+```
+
+### Complete Example
+
+```cpp
+// C++ side
+struct CppPoint { i32 x, y; };
+i32 point_sum(CppPoint* self) { return self->x + self->y; }
+
+BumpAllocator allocator(8192);
+TypeCache types(allocator);
+NativeRegistry registry(allocator, types);
+
+// Register struct and method
+registry.register_struct("Point", {
+    {"x", NativeTypeKind::I32},
+    {"y", NativeTypeKind::I32}
+});
+registry.bind_method<point_sum>("Point", "sum");
+
+// Compile and run
+ModuleRegistry modules(allocator);
+SemanticAnalyzer analyzer(allocator, types, modules, &registry);
+analyzer.analyze(program);
+
+IRBuilder ir_builder(allocator, types, registry, analyzer.symbols(), modules);
+IRModule* ir_module = ir_builder.build(program);
+
+BytecodeBuilder bc_builder;
+BCModule* module = bc_builder.build(ir_module);
+registry.apply_to_module(module);
+
+// Execute
+RoxyVM vm;
+vm_init(&vm);
+vm_load_module(&vm, module);
+vm_call(&vm, "test", {});
+```
+
+```roxy
+// Roxy side
+fun test(): i32 {
+    var p = Point { x = 3, y = 4 };
+    return p.sum();  // returns 7
+}
+```
+
+### Memory Layout Compatibility
+
+The C++ struct and the Roxy native struct must have matching field layout. Roxy uses slot-based layout (1 slot = 4 bytes for 32-bit types, 2 slots for 64-bit types), and fields are laid out sequentially in declaration order with no padding. The C++ struct passed to method functions should match this layout.
+
+For the `Point` example above:
+- Roxy layout: `[x: i32 (slot 0), y: i32 (slot 1)]` = 8 bytes
+- C++ `struct CppPoint { i32 x, y; }` = 8 bytes (matching)
+
 ## Semantic Integration
 
 Built-in functions are registered during semantic analysis initialization. The IR builder detects calls to these functions and emits `CallNative` IR instead of regular `Call` IR.
