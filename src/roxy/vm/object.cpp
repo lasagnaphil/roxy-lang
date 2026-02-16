@@ -5,7 +5,7 @@
 #include "roxy/vm/string.hpp"
 #include "roxy/core/vector.hpp"
 
-#include <cstdlib>
+#include <cassert>
 #include <cstring>
 
 namespace rx {
@@ -40,26 +40,7 @@ void init_type_registry() {
 }
 
 void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size) {
-    if (vm == nullptr || vm->allocator == nullptr) {
-        // Fallback to malloc if no allocator available
-        static u64 s_malloc_generation = 1;
-
-        u32 total_size = sizeof(ObjectHeader) + data_size;
-        void* mem = std::malloc(total_size);
-        if (mem == nullptr) {
-            return nullptr;
-        }
-
-        ObjectHeader* header = static_cast<ObjectHeader*>(mem);
-        header->weak_generation = s_malloc_generation++;
-        if (s_malloc_generation == 0) s_malloc_generation = 1;  // skip zero
-        header->ref_count = 0;
-        header->type_id = type_id;
-
-        void* data = header->data();
-        std::memset(data, 0, data_size);
-        return data;
-    }
+    assert(vm != nullptr && vm->allocator != nullptr);
 
     u32 total_size = sizeof(ObjectHeader) + data_size;
     u64 generation;
@@ -113,6 +94,7 @@ bool weak_ref_valid(void* data, u64 generation) {
 
 void object_free(RoxyVM* vm, void* data) {
     if (data == nullptr) return;
+    assert(vm != nullptr && vm->allocator != nullptr);
 
     ObjectHeader* header = get_header_from_data(data);
 
@@ -120,13 +102,6 @@ void object_free(RoxyVM* vm, void* data) {
     const ObjectTypeInfo* type_info = get_object_type(header->type_id);
     if (type_info && type_info->destructor) {
         type_info->destructor(vm, data);
-    }
-
-    if (vm == nullptr || vm->allocator == nullptr) {
-        // Fallback: direct free if no allocator
-        header->weak_generation = 0;
-        std::free(header);
-        return;
     }
 
     // Mark as dead — weak_ref_valid() checks is_alive() which returns false
