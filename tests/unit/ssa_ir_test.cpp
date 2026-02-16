@@ -1,6 +1,7 @@
 #include "roxy/core/doctest/doctest.h"
 
 #include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/string.hpp"
 #include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/parser.hpp"
 #include "roxy/compiler/semantic.hpp"
@@ -45,10 +46,10 @@ static IRModule* build_ir(BumpAllocator& allocator, const char* source) {
 }
 
 // Helper to get IR as string
-static std::string ir_to_string(const IRModule* module) {
+static String ir_to_string(const IRModule* module) {
     Vector<char> out;
     ir_module_to_string(module, out);
-    return std::string(out.data(), out.size());
+    return String(out.data(), out.size());
 }
 
 TEST_CASE("SSA IR - Empty function") {
@@ -513,13 +514,13 @@ TEST_CASE("SSA IR - IR string output") {
     IRModule* module = build_ir(allocator, source);
     REQUIRE(module != nullptr);
 
-    std::string ir_str = ir_to_string(module);
+    String ir_str = ir_to_string(module);
 
     // Check that the string contains expected parts
-    CHECK(ir_str.find("fn simple") != std::string::npos);
-    CHECK(ir_str.find("const_int") != std::string::npos);
-    CHECK(ir_str.find("42") != std::string::npos);
-    CHECK(ir_str.find("return") != std::string::npos);
+    CHECK(ir_str.find("fn simple") != String::npos);
+    CHECK(ir_str.find("const_int") != String::npos);
+    CHECK(ir_str.find("42") != String::npos);
+    CHECK(ir_str.find("return") != String::npos);
 }
 
 TEST_CASE("SSA IR - Nested if statements") {
@@ -559,11 +560,11 @@ TEST_CASE("SSA IR - Nested if statements") {
 }
 
 TEST_CASE("SSA IR - Op to string") {
-    CHECK(std::string(ir_op_to_string(IROp::ConstNull)) == "const_null");
-    CHECK(std::string(ir_op_to_string(IROp::ConstInt)) == "const_int");
-    CHECK(std::string(ir_op_to_string(IROp::AddI)) == "add_i");
-    CHECK(std::string(ir_op_to_string(IROp::AddF)) == "add_f");
-    CHECK(std::string(ir_op_to_string(IROp::LtI)) == "lt_i");
-    CHECK(std::string(ir_op_to_string(IROp::Not)) == "not");
-    CHECK(std::string(ir_op_to_string(IROp::Call)) == "call");
+    CHECK(StringView(ir_op_to_string(IROp::ConstNull)) == "const_null");
+    CHECK(StringView(ir_op_to_string(IROp::ConstInt)) == "const_int");
+    CHECK(StringView(ir_op_to_string(IROp::AddI)) == "add_i");
+    CHECK(StringView(ir_op_to_string(IROp::AddF)) == "add_f");
+    CHECK(StringView(ir_op_to_string(IROp::LtI)) == "lt_i");
+    CHECK(StringView(ir_op_to_string(IROp::Not)) == "not");
+    CHECK(StringView(ir_op_to_string(IROp::Call)) == "call");
 }

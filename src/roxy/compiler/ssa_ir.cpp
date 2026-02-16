@@ -1,6 +1,6 @@
 #include "roxy/compiler/ssa_ir.hpp"
 
-#include "roxy/core/fmt/format.h"
+#include "roxy/core/format.hpp"
 #include <cstring>
 
 namespace rx {
@@ -116,10 +116,9 @@ static void append_value_id(Vector<char>& out, ValueId v) {
         append_str(out, "v?");
         return;
     }
-    auto s = fmt::format("v{}", v.id);
-    for (char c : s) {
-        out.push_back(c);
-    }
+    char tmp[32];
+    i32 n = format_to(tmp, sizeof(tmp), "v{}", v.id);
+    for (i32 i = 0; i < n; i++) out.push_back(tmp[i]);
 }
 
 static void append_block_id(Vector<char>& out, BlockId b) {
@@ -127,10 +126,9 @@ static void append_block_id(Vector<char>& out, BlockId b) {
         append_str(out, "b?");
         return;
     }
-    auto s = fmt::format("b{}", b.id);
-    for (char c : s) {
-        out.push_back(c);
-    }
+    char tmp[32];
+    i32 n = format_to(tmp, sizeof(tmp), "b{}", b.id);
+    for (i32 i = 0; i < n; i++) out.push_back(tmp[i]);
 }
 
 void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
@@ -149,20 +147,23 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
             break;
 
         case IROp::ConstInt: {
-            auto s = fmt::format(" {}", inst->const_data.int_val);
-            for (char c : s) out.push_back(c);
+            char tmp[32];
+            i32 n = format_to(tmp, sizeof(tmp), " {}", inst->const_data.int_val);
+            for (i32 i = 0; i < n; i++) out.push_back(tmp[i]);
             break;
         }
 
         case IROp::ConstF: {
-            auto s = fmt::format(" {}f", inst->const_data.f32_val);
-            for (char c : s) out.push_back(c);
+            char tmp[32];
+            i32 n = format_to(tmp, sizeof(tmp), " {}f", inst->const_data.f32_val);
+            for (i32 i = 0; i < n; i++) out.push_back(tmp[i]);
             break;
         }
 
         case IROp::ConstD: {
-            auto s = fmt::format(" {}", inst->const_data.f64_val);
-            for (char c : s) out.push_back(c);
+            char tmp[32];
+            i32 n = format_to(tmp, sizeof(tmp), " {}", inst->const_data.f64_val);
+            for (i32 i = 0; i < n; i++) out.push_back(tmp[i]);
             break;
         }
 
@@ -234,8 +235,9 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
             break;
 
         case IROp::StackAlloc: {
-            auto s = fmt::format(" {}", inst->stack_alloc.slot_count);
-            for (char c : s) out.push_back(c);
+            char tmp[32];
+            i32 n = format_to(tmp, sizeof(tmp), " {}", inst->stack_alloc.slot_count);
+            for (i32 i = 0; i < n; i++) out.push_back(tmp[i]);
             break;
         }
 
@@ -326,8 +328,9 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
             break;
 
         case IROp::BlockArg: {
-            auto s = fmt::format(" #{}", inst->block_arg_index);
-            for (char c : s) out.push_back(c);
+            char tmp[32];
+            i32 n = format_to(tmp, sizeof(tmp), " #{}", inst->block_arg_index);
+            for (i32 i = 0; i < n; i++) out.push_back(tmp[i]);
             break;
         }
 
@@ -336,16 +339,18 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
             append_value_id(out, inst->struct_copy.dest_ptr);
             append_str(out, " <- ");
             append_value_id(out, inst->struct_copy.source_ptr);
-            auto s = fmt::format(" ({})", inst->struct_copy.slot_count);
-            for (char c : s) out.push_back(c);
+            char tmp[32];
+            i32 n = format_to(tmp, sizeof(tmp), " ({})", inst->struct_copy.slot_count);
+            for (i32 i = 0; i < n; i++) out.push_back(tmp[i]);
             break;
         }
 
         case IROp::LoadPtr: {
             append_str(out, " *");
             append_value_id(out, inst->load_ptr.ptr);
-            auto s = fmt::format(" ({})", inst->load_ptr.slot_count);
-            for (char c : s) out.push_back(c);
+            char tmp[32];
+            i32 n = format_to(tmp, sizeof(tmp), " ({})", inst->load_ptr.slot_count);
+            for (i32 i = 0; i < n; i++) out.push_back(tmp[i]);
             break;
         }
 
@@ -354,8 +359,9 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
             append_value_id(out, inst->store_ptr.ptr);
             append_str(out, " = ");
             append_value_id(out, inst->store_ptr.value);
-            auto s = fmt::format(" ({})", inst->store_ptr.slot_count);
-            for (char c : s) out.push_back(c);
+            char tmp[32];
+            i32 n = format_to(tmp, sizeof(tmp), " ({})", inst->store_ptr.slot_count);
+            for (i32 i = 0; i < n; i++) out.push_back(tmp[i]);
             break;
         }
 

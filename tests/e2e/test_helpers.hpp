@@ -7,14 +7,14 @@
 #include "roxy/vm/value.hpp"
 #include "roxy/vm/bytecode.hpp"
 
-#include <string>
+#include "roxy/core/string.hpp"
 
 namespace rx {
 
 // Result of running a test, includes return value and captured output
 struct TestResult {
     i64 value;                    // Return value (always integer in Roxy)
-    std::string stdout_output;    // Captured stdout
+    String stdout_output;         // Captured stdout
     bool success;                 // true if compilation and execution succeeded
 };
 

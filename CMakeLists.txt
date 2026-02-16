@@ -35,6 +35,7 @@ include_directories(include)
 # Core library
 add_library(roxy_core
     src/roxy/core/file.cpp
+    src/roxy/core/string.cpp
     src/roxy/core/fmt/format.cc
     src/roxy/core/fmt/os.cc
 )
@@ -106,6 +107,8 @@ add_executable(roxy_tests
     tests/unit/vm_test.cpp
     tests/unit/lowering_test.cpp
     tests/unit/slab_allocator_test.cpp
+    tests/unit/format_test.cpp
+    tests/unit/string_test.cpp
 
     # E2E tests
     tests/e2e/test_helpers.cpp
