@@ -1,0 +1,232 @@
+// Sudoku Solver
+// Showcases Roxy's OOP with uniq/weak ownership:
+// - Sudoku owns all Cells and Groups via List<uniq>
+// - Groups hold weak references to their 9 Cells
+// - Cells hold weak references to their 3 Groups (row, col, box)
+// - Solving uses recursive backtracking
+
+struct Cell {
+    row: i32;
+    col: i32;
+    value: i32;
+    row_group: weak Group;
+    col_group: weak Group;
+    box_group: weak Group;
+}
+
+fun new Cell(row: i32, col: i32) {
+    self.row = row;
+    self.col = col;
+    self.value = 0;
+}
+
+fun Cell.can_place(num: i32): bool {
+    if (self.row_group.contains(num)) return false;
+    if (self.col_group.contains(num)) return false;
+    if (self.box_group.contains(num)) return false;
+    return true;
+}
+
+struct Group {
+    cells: List<weak Cell>;
+}
+
+fun new Group() {
+    self.cells = List<weak Cell>();
+}
+
+fun Group.contains(num: i32): bool {
+    for (var i: i32 = 0; i < self.cells.len(); i = i + 1) {
+        if (self.cells[i].value == num) return true;
+    }
+    return false;
+}
+
+struct Sudoku {
+    cells: List<uniq Cell>;
+    groups: List<uniq Group>;
+    seed: i64;
+}
+
+fun new Sudoku() {
+    self.cells = List<uniq Cell>();
+    self.groups = List<uniq Group>();
+
+    // Phase 1: Create 81 cells
+    for (var r: i32 = 0; r < 9; r = r + 1) {
+        for (var c: i32 = 0; c < 9; c = c + 1) {
+            self.cells.push(uniq Cell(r, c));
+        }
+    }
+
+    // Phase 2: Create 27 groups (rows 0-8, cols 9-17, boxes 18-26)
+    for (var i: i32 = 0; i < 27; i = i + 1) {
+        self.groups.push(uniq Group());
+    }
+
+    // Phase 3: Link cells to groups
+    for (var r: i32 = 0; r < 9; r = r + 1) {
+        for (var c: i32 = 0; c < 9; c = c + 1) {
+            var idx: i32 = r * 9 + c;
+            var box_idx: i32 = 18 + (r / 3) * 3 + c / 3;
+
+            // Add cell to its row, column, and box groups
+            self.groups[r].cells.push(self.cells[idx]);
+            self.groups[9 + c].cells.push(self.cells[idx]);
+            self.groups[box_idx].cells.push(self.cells[idx]);
+
+            // Set cell's back-references to its groups
+            self.cells[idx].row_group = self.groups[r];
+            self.cells[idx].col_group = self.groups[9 + c];
+            self.cells[idx].box_group = self.groups[box_idx];
+        }
+    }
+}
+
+fun Sudoku.next_rand(max: i32): i32 {
+    self.seed = (self.seed * 16807l) % 2147483647l;
+    return i32(self.seed % i64(max));
+}
+
+fun Sudoku.shuffle(arr: List<i32>) {
+    for (var i: i32 = arr.len() - 1; i > 0; i = i - 1) {
+        var j: i32 = self.next_rand(i + 1);
+        var temp: i32 = arr[i];
+        arr[i] = arr[j];
+        arr[j] = temp;
+    }
+}
+
+fun Sudoku.random_solve(): bool {
+    for (var i: i32 = 0; i < self.cells.len(); i = i + 1) {
+        if (self.cells[i].value == 0) {
+            var digits: List<i32> = List<i32>();
+            for (var d: i32 = 1; d <= 9; d = d + 1) {
+                digits.push(d);
+            }
+            self.shuffle(digits);
+            for (var j: i32 = 0; j < 9; j = j + 1) {
+                var num: i32 = digits[j];
+                if (self.cells[i].can_place(num)) {
+                    self.cells[i].value = num;
+                    if (self.random_solve()) return true;
+                    self.cells[i].value = 0;
+                }
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+fun Sudoku.new_board(seed: i32) {
+    self.seed = i64(seed);
+
+    // Clear board
+    for (var i: i32 = 0; i < 81; i = i + 1) {
+        self.cells[i].value = 0;
+    }
+
+    // Fill with random valid solution
+    self.random_solve();
+
+    // Remove 45 cells (leave 36 clues) at random positions
+    var positions: List<i32> = List<i32>();
+    for (var i: i32 = 0; i < 81; i = i + 1) {
+        positions.push(i);
+    }
+    self.shuffle(positions);
+    for (var i: i32 = 0; i < 45; i = i + 1) {
+        self.cells[positions[i]].value = 0;
+    }
+}
+
+fun Sudoku.set_row(row: i32, c0: i32, c1: i32, c2: i32, c3: i32, c4: i32, c5: i32, c6: i32, c7: i32, c8: i32) {
+    self.cells[row * 9 + 0].value = c0;
+    self.cells[row * 9 + 1].value = c1;
+    self.cells[row * 9 + 2].value = c2;
+    self.cells[row * 9 + 3].value = c3;
+    self.cells[row * 9 + 4].value = c4;
+    self.cells[row * 9 + 5].value = c5;
+    self.cells[row * 9 + 6].value = c6;
+    self.cells[row * 9 + 7].value = c7;
+    self.cells[row * 9 + 8].value = c8;
+}
+
+fun Sudoku.solve(): bool {
+    for (var i: i32 = 0; i < self.cells.len(); i = i + 1) {
+        if (self.cells[i].value == 0) {
+            for (var num: i32 = 1; num <= 9; num = num + 1) {
+                if (self.cells[i].can_place(num)) {
+                    self.cells[i].value = num;
+                    if (self.solve()) return true;
+                    self.cells[i].value = 0;
+                }
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+fun Sudoku.print_board() {
+    var sep: string = "+-------+-------+-------+";
+    print_str(sep);
+    for (var r: i32 = 0; r < 9; r = r + 1) {
+        var line: string = "|";
+        for (var c: i32 = 0; c < 9; c = c + 1) {
+            var val: i32 = self.cells[r * 9 + c].value;
+            if (val == 0) {
+                line = line + " .";
+            } else {
+                line = line + f" {val}";
+            }
+            if (c % 3 == 2) {
+                line = line + " |";
+            }
+        }
+        print_str(line);
+        if (r % 3 == 2) {
+            print_str(sep);
+        }
+    }
+}
+
+fun main(): i32 {
+    var sudoku: Sudoku = Sudoku();
+
+    sudoku.set_row(0, 5, 3, 0, 0, 7, 0, 0, 0, 0);
+    sudoku.set_row(1, 6, 0, 0, 1, 9, 5, 0, 0, 0);
+    sudoku.set_row(2, 0, 9, 8, 0, 0, 0, 0, 6, 0);
+    sudoku.set_row(3, 8, 0, 0, 0, 6, 0, 0, 0, 3);
+    sudoku.set_row(4, 4, 0, 0, 8, 0, 3, 0, 0, 1);
+    sudoku.set_row(5, 7, 0, 0, 0, 2, 0, 0, 0, 6);
+    sudoku.set_row(6, 0, 6, 0, 0, 0, 0, 2, 8, 0);
+    sudoku.set_row(7, 0, 0, 0, 4, 1, 9, 0, 0, 5);
+    sudoku.set_row(8, 0, 0, 0, 0, 8, 0, 0, 7, 9);
+
+    print_str("Puzzle:");
+    sudoku.print_board();
+
+    if (sudoku.solve()) {
+        print_str("\nSolution:");
+        sudoku.print_board();
+    } else {
+        print_str("No solution found.");
+    }
+
+    // Generate and solve a random board
+    sudoku.new_board(42);
+
+    print_str("\nGenerated Puzzle (seed=42):");
+    sudoku.print_board();
+
+    if (sudoku.solve()) {
+        print_str("\nSolution:");
+        sudoku.print_board();
+    } else {
+        print_str("No solution found.");
+    }
+
+    return 0;
+}
