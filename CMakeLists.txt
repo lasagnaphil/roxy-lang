@@ -70,6 +70,7 @@ add_library(roxy_vm
     src/roxy/vm/string.cpp
     src/roxy/vm/natives.cpp
     src/roxy/vm/slab_allocator.cpp
+    src/roxy/vm/binding/registry.cpp
     src/roxy/compiler/lowering.cpp
 )
 
