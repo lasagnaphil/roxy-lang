@@ -66,6 +66,22 @@ static void native_list_delete(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = 0;
 }
 
+// Native function: list_copy(src: List<T>) -> List<T> (deep copy)
+static void native_list_copy(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* src = reinterpret_cast<void*>(regs[first_arg]);
+    if (!src) {
+        vm->error = "list_copy: null source";
+        return;
+    }
+    void* copy = list_copy(vm, src);
+    if (!copy) {
+        vm->error = "list_copy: allocation failed";
+        return;
+    }
+    regs[dst] = reinterpret_cast<u64>(copy);
+}
+
 // Native function: list_len(lst: List<T>) -> i32
 static void native_list_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 1) {
@@ -331,6 +347,7 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_generic_constructor("List", native_list_init,
                                       0, {concrete_param(TK::I32)});
     registry.bind_generic_destructor("List", native_list_delete);
+    registry.bind_generic_copy_constructor("List", "list_copy", native_list_copy);
     registry.bind_generic_method("List", "len",  native_list_len,
                                  {}, concrete_param(TK::I32));
     registry.bind_generic_method("List", "cap",  native_list_cap,

@@ -1,4 +1,5 @@
 #include "roxy/compiler/lowering.hpp"
+#include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/natives.hpp"
 
 #include <cassert>
@@ -178,6 +179,27 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         if (is_ptr_param) {
             prologue_param_reg_offset += reg_count;
             continue;
+        }
+
+        // Check if this type has a copy constructor (e.g., List<T> value params)
+        if (m_registry && param.type && param.type->is_list()) {
+            StringView copy_name = param.type->list_info.copy_native_name;
+            if (!copy_name.empty()) {
+                i32 copy_fn_idx = m_registry->get_index(copy_name);
+                if (copy_fn_idx >= 0) {
+                    // Deep copy via native copy constructor call
+                    // CALL_NATIVE convention: args at dst+1, dst+2, ...
+                    u8 param_reg = prologue_param_reg_offset;
+                    u8 copy_dst = m_next_reg++;
+                    u8 copy_arg = m_next_reg++;  // = copy_dst + 1
+                    emit_abc(Opcode::MOV, copy_arg, param_reg, 0);
+                    emit_abc(Opcode::CALL_NATIVE, copy_dst, static_cast<u8>(copy_fn_idx), 1);
+                    // Remap parameter to the copied value
+                    m_value_to_reg[param.value.id] = copy_dst;
+                    prologue_param_reg_offset += reg_count;
+                    continue;
+                }
+            }
         }
 
         if (slot_count > 0 && slot_count <= 4) {

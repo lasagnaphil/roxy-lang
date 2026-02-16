@@ -46,6 +46,20 @@ void* list_alloc(RoxyVM* vm, u32 capacity) {
     return data;
 }
 
+void* list_copy(RoxyVM* vm, void* src) {
+    if (!src) return nullptr;
+    const ListHeader* src_header = get_list_header(src);
+    void* dst = list_alloc(vm, src_header->capacity);
+    if (!dst) return nullptr;
+    ListHeader* dst_header = get_list_header(dst);
+    dst_header->length = src_header->length;
+    if (src_header->length > 0) {
+        memcpy(dst_header->elements, src_header->elements,
+               sizeof(Value) * src_header->length);
+    }
+    return dst;
+}
+
 bool list_get(void* data, i64 index, Value& out, const char** error) {
     if (data == nullptr) {
         *error = "Null list reference";

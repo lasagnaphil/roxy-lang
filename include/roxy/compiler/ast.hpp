@@ -377,6 +377,7 @@ struct Param {
     TypeExpr* type;
     ParamModifier modifier;
     SourceLocation loc;
+    Type* resolved_type = nullptr;  // Set by semantic analysis
 };
 
 // Variable declaration: var name: Type = init;

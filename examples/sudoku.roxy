@@ -88,7 +88,7 @@ fun Sudoku.next_rand(max: i32): i32 {
     return i32(self.seed % i64(max));
 }
 
-fun Sudoku.shuffle(arr: List<i32>) {
+fun Sudoku.shuffle(arr: inout List<i32>) {
     for (var i: i32 = arr.len() - 1; i > 0; i = i - 1) {
         var j: i32 = self.next_rand(i + 1);
         var temp: i32 = arr[i];
@@ -104,7 +104,7 @@ fun Sudoku.random_solve(): bool {
             for (var d: i32 = 1; d <= 9; d = d + 1) {
                 digits.push(d);
             }
-            self.shuffle(digits);
+            self.shuffle(inout digits);
             for (var j: i32 = 0; j < 9; j = j + 1) {
                 var num: i32 = digits[j];
                 if (self.cells[i].can_place(num)) {
@@ -135,7 +135,7 @@ fun Sudoku.new_board(seed: i32) {
     for (var i: i32 = 0; i < 81; i = i + 1) {
         positions.push(i);
     }
-    self.shuffle(positions);
+    self.shuffle(inout positions);
     for (var i: i32 = 0; i < 45; i = i + 1) {
         self.cells[positions[i]].value = 0;
     }

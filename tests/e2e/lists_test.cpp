@@ -132,7 +132,7 @@ TEST_CASE("E2E - List with loop") {
 
 TEST_CASE("E2E - List swap") {
     const char* source = R"(
-        fun swap(lst: List<i32>, i: i32, j: i32) {
+        fun swap(lst: inout List<i32>, i: i32, j: i32) {
             var temp: i32 = lst[i];
             lst[i] = lst[j];
             lst[j] = temp;
@@ -143,7 +143,7 @@ TEST_CASE("E2E - List swap") {
             lst.push(10);
             lst.push(20);
             lst.push(30);
-            swap(lst, 0, 2);
+            swap(inout lst, 0, 2);
             print(lst[0]);
             print(lst[1]);
             print(lst[2]);
@@ -158,30 +158,30 @@ TEST_CASE("E2E - List swap") {
 
 TEST_CASE("E2E - List quicksort") {
     const char* source = R"(
-        fun swap(lst: List<i32>, i: i32, j: i32) {
+        fun swap(lst: inout List<i32>, i: i32, j: i32) {
             var temp: i32 = lst[i];
             lst[i] = lst[j];
             lst[j] = temp;
         }
 
-        fun partition(lst: List<i32>, low: i32, high: i32): i32 {
+        fun partition(lst: inout List<i32>, low: i32, high: i32): i32 {
             var pivot: i32 = lst[high];
             var i: i32 = low - 1;
             for (var j: i32 = low; j < high; j = j + 1) {
                 if (lst[j] <= pivot) {
                     i = i + 1;
-                    swap(lst, i, j);
+                    swap(inout lst, i, j);
                 }
             }
-            swap(lst, i + 1, high);
+            swap(inout lst, i + 1, high);
             return i + 1;
         }
 
-        fun quicksort(lst: List<i32>, low: i32, high: i32) {
+        fun quicksort(lst: inout List<i32>, low: i32, high: i32) {
             if (low < high) {
-                var pi: i32 = partition(lst, low, high);
-                quicksort(lst, low, pi - 1);
-                quicksort(lst, pi + 1, high);
+                var pi: i32 = partition(inout lst, low, high);
+                quicksort(inout lst, low, pi - 1);
+                quicksort(inout lst, pi + 1, high);
             }
         }
 
@@ -193,7 +193,7 @@ TEST_CASE("E2E - List quicksort") {
             lst.push(1);
             lst.push(9);
 
-            quicksort(lst, 0, lst.len() - 1);
+            quicksort(inout lst, 0, lst.len() - 1);
 
             for (var i: i32 = 0; i < lst.len(); i = i + 1) {
                 print(lst[i]);
@@ -250,4 +250,52 @@ TEST_CASE("E2E - List sum function") {
     TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.stdout_output == "60\n");
+}
+
+TEST_CASE("E2E - List value parameter isolation") {
+    const char* source = R"(
+        fun modify(lst: List<i32>) {
+            lst[0] = 999;
+            lst.push(40);
+        }
+
+        fun main(): i32 {
+            var lst: List<i32> = List<i32>();
+            lst.push(10);
+            lst.push(20);
+            lst.push(30);
+            modify(lst);
+            print(lst[0]);
+            print(lst.len());
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "10\n3\n");
+}
+
+TEST_CASE("E2E - List inout parameter mutation") {
+    const char* source = R"(
+        fun modify(lst: inout List<i32>) {
+            lst[0] = 999;
+            lst.push(40);
+        }
+
+        fun main(): i32 {
+            var lst: List<i32> = List<i32>();
+            lst.push(10);
+            lst.push(20);
+            lst.push(30);
+            modify(inout lst);
+            print(lst[0]);
+            print(lst.len());
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "999\n4\n");
 }

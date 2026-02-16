@@ -109,6 +109,7 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len,
     }
 
     BytecodeBuilder bc_builder;
+    bc_builder.set_registry(&registry);
     BCModule* module = bc_builder.build(ir_module);
     if (!module) {
         fprintf(stderr, "Bytecode generation failed\n");

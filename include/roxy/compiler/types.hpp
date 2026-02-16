@@ -162,6 +162,7 @@ struct ListTypeInfo {
     Type* element_type;
     Span<MethodInfo> methods;          // Builtin methods with concrete types
     StringView alloc_native_name;      // "list_alloc" — set by SemanticAnalyzer
+    StringView copy_native_name;       // "list_copy" — deep-copy for value parameter passing
 };
 
 // Type info for function types

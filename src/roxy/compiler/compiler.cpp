@@ -284,6 +284,7 @@ BCModule* Compiler::link_modules() {
     // Static linking: all cross-module calls are resolved in the lowering phase
     // since m_func_indices contains all functions from all modules
     BytecodeBuilder bc_builder;
+    bc_builder.set_registry(m_combined_registry.get());
     BCModule* module = bc_builder.build(&merged_ir);
 
     if (!module) {

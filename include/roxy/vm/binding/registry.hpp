@@ -90,6 +90,7 @@ struct NativeGenericTypeEntry {
     StringView name;                               // "List"
     u32 type_param_count;                          // 1
     StringView alloc_native_name;                  // "list_alloc" (non-method allocator)
+    StringView copy_native_name;                   // "list_copy" (copy constructor for value params)
 };
 
 // NativeRegistry provides unified registration for native functions
@@ -201,9 +202,15 @@ public:
     // Bind a destructor on a generic native type (receives self as first arg, no other params)
     void bind_generic_destructor(const char* type_name, NativeFunction func);
 
+    // Bind a copy constructor on a generic native type (for deep-copy on value parameter passing)
+    void bind_generic_copy_constructor(const char* type_name,
+                                       const char* copy_func_name,
+                                       NativeFunction func);
+
     bool has_generic_type(StringView name) const;
 
     StringView get_generic_alloc_name(StringView name) const;
+    StringView get_generic_copy_name(StringView name) const;
 
     // Returns only kind==Method entries as Span<MethodInfo>
     Span<MethodInfo> instantiate_generic_methods(StringView name, Span<Type*> type_args,

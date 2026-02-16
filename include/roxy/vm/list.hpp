@@ -55,6 +55,9 @@ void list_push(void* data, Value value);
 // Returns the popped element
 Value list_pop(void* data);
 
+// Deep-copy a list (allocates a new list with same elements)
+void* list_copy(RoxyVM* vm, void* src);
+
 // Register the list object type (call at initialization)
 u32 register_list_type();
 

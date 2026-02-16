@@ -1471,10 +1471,11 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
             return val;
         }
 
-        // For primitive types, dereference the pointer to get the value
+        // For primitive types and pointer-sized types, dereference the pointer to get the value
         u32 slot_count = 1;
         if (type && (type->kind == TypeKind::I64 || type->kind == TypeKind::U64 ||
-                    type->kind == TypeKind::F64)) {
+                    type->kind == TypeKind::F64 || type->kind == TypeKind::List ||
+                    type->kind == TypeKind::String)) {
             slot_count = 2;
         }
         return emit_load_ptr(val, slot_count, type);
@@ -1777,7 +1778,8 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
                     }
                     u32 slot_count = 1;
                     if (type && (type->kind == TypeKind::I64 || type->kind == TypeKind::U64 ||
-                                type->kind == TypeKind::F64)) {
+                                type->kind == TypeKind::F64 || type->kind == TypeKind::List ||
+                                type->kind == TypeKind::String)) {
                         slot_count = 2;
                     }
                     inout_args.push_back({arg.expr->identifier.name, args[i], type, slot_count});
@@ -2515,7 +2517,7 @@ ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {
                 return current_val;
             }
 
-            // For primitive types, we need to:
+            // For primitive types and list pointers, we need to:
             // 1. Allocate a stack slot
             // 2. Store the current value to the slot
             // 3. Return the address
@@ -2523,7 +2525,8 @@ ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {
             // Calculate slot count
             u32 slot_count = 1;
             if (type && (type->kind == TypeKind::I64 || type->kind == TypeKind::U64 ||
-                        type->kind == TypeKind::F64)) {
+                        type->kind == TypeKind::F64 || type->kind == TypeKind::List ||
+                        type->kind == TypeKind::String)) {
                 slot_count = 2;
             }
 
@@ -2952,7 +2955,10 @@ void IRBuilder::setup_parameters(Span<Param> params, Type* self_type) {
     // Set up other parameters
     for (auto& param : params) {
         Type* param_type = nullptr;
-        if (param.type) {
+        if (param.resolved_type) {
+            // Use type resolved by semantic analysis (handles generics like List<T>)
+            param_type = param.resolved_type;
+        } else if (param.type) {
             param_type = m_types.type_by_name(param.type->name);
             if (!param_type) {
                 param_type = m_types.error_type();

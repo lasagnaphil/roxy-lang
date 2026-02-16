@@ -235,6 +235,19 @@ void NativeRegistry::bind_generic_destructor(const char* type_name, NativeFuncti
     m_name_to_index[mangled] = static_cast<i32>(m_function_entries.size() - 1);
 }
 
+void NativeRegistry::bind_generic_copy_constructor(const char* type_name,
+                                                   const char* copy_func_name,
+                                                   NativeFunction func) {
+    auto it = m_generic_types.find(make_string_view(type_name));
+    if (it == m_generic_types.end()) return;
+
+    StringView copy_name = make_string_view(copy_func_name);
+    it.value().copy_native_name = copy_name;
+
+    // Register as a regular native function (takes 1 pointer arg, returns pointer)
+    bind_native(copy_func_name, func, {NativeTypeKind::I64}, NativeTypeKind::I64);
+}
+
 bool NativeRegistry::has_generic_type(StringView name) const {
     return m_generic_types.find(name) != m_generic_types.end();
 }
@@ -243,6 +256,14 @@ StringView NativeRegistry::get_generic_alloc_name(StringView name) const {
     auto it = m_generic_types.find(name);
     if (it != m_generic_types.end()) {
         return it->second.alloc_native_name;
+    }
+    return StringView(nullptr, 0);
+}
+
+StringView NativeRegistry::get_generic_copy_name(StringView name) const {
+    auto it = m_generic_types.find(name);
+    if (it != m_generic_types.end()) {
+        return it->second.copy_native_name;
     }
     return StringView(nullptr, 0);
 }

@@ -10,10 +10,15 @@
 
 namespace rx {
 
+class NativeRegistry;
+
 // BytecodeBuilder lowers SSA IR to bytecode
 class BytecodeBuilder {
 public:
     BytecodeBuilder();
+
+    // Set native registry (needed for copy constructor emission)
+    void set_registry(NativeRegistry* registry) { m_registry = registry; }
 
     // Build bytecode module from IR module
     // Returns nullptr if an internal error occurred
@@ -107,6 +112,9 @@ private:
 
     // Type name to index mapping (for heap allocation)
     tsl::robin_map<StringView, u16, StringViewHash, StringViewEqual> m_type_indices;
+
+    // Native registry for copy constructor lookup
+    NativeRegistry* m_registry = nullptr;
 
     // Error state
     bool m_has_error;

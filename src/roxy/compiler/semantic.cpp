@@ -900,6 +900,7 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
         Param& p = fd.params[i];
         Type* ptype = resolve_type_expr(p.type);
         if (!ptype) ptype = m_types.error_type();
+        p.resolved_type = ptype;
 
         // Check for duplicate parameter names
         if (m_symbols.lookup_local(p.name)) {
@@ -2372,6 +2373,7 @@ void SemanticAnalyzer::populate_list_methods(Type* type) {
     type->list_info.methods = registry->instantiate_generic_methods(
         "List", ta, m_allocator, m_types);
     type->list_info.alloc_native_name = registry->get_generic_alloc_name("List");
+    type->list_info.copy_native_name = registry->get_generic_copy_name("List");
 }
 
 Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) {
