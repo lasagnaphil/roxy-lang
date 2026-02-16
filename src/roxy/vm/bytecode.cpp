@@ -1,5 +1,6 @@
 #include "roxy/vm/bytecode.hpp"
-#include "roxy/core/fmt/format.h"
+
+#include <cstdio>
 
 namespace rx {
 

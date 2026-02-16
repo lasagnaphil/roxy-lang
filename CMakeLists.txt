@@ -36,18 +36,7 @@ include_directories(include)
 add_library(roxy_core
     src/roxy/core/file.cpp
     src/roxy/core/string.cpp
-    src/roxy/core/fmt/format.cc
-    src/roxy/core/fmt/os.cc
 )
-
-# Disable ASAN for fmt library files (known compatibility issue with clang-cl ASAN)
-if(ENABLE_ASAN)
-    set_source_files_properties(
-        src/roxy/core/fmt/format.cc
-        src/roxy/core/fmt/os.cc
-        PROPERTIES COMPILE_FLAGS "-fno-sanitize=address"
-    )
-endif()
 
 # Shared library (lexer, tokens)
 add_library(roxy_shared
