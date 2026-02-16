@@ -160,7 +160,8 @@ struct EnumTypeInfo {
 // Type info for list types
 struct ListTypeInfo {
     Type* element_type;
-    Span<MethodInfo> methods;      // Builtin methods with concrete types
+    Span<MethodInfo> methods;          // Builtin methods with concrete types
+    StringView alloc_native_name;      // "list_alloc" — set by SemanticAnalyzer
 };
 
 // Type info for function types

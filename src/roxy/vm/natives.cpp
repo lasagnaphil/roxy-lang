@@ -6,17 +6,33 @@
 #include "roxy/vm/binding/registry.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace rx {
 
-// Native function: list_new(cap?: i32) -> List<T>
-static void native_list_new(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+// Allocates an empty list (capacity 0). Non-method, no self.
+static void native_list_alloc(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack.back().registers;
+    void* lst = list_alloc(vm, 0);
+    if (!lst) {
+        vm->error = "failed to allocate list";
+        return;
+    }
+    regs[dst] = reinterpret_cast<u64>(lst);
+}
 
-    u32 capacity = 0;
-    if (argc >= 1) {
-        i64 cap = static_cast<i64>(regs[first_arg]);
+// Constructor method. Receives self + optional capacity.
+static void native_list_init(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]); // self
+    if (!lst_ptr) {
+        vm->error = "list init: null self";
+        return;
+    }
+
+    if (argc >= 2) { // self + capacity
+        i64 cap = static_cast<i64>(regs[first_arg + 1]);
         if (cap < 0) {
             vm->error = "list capacity cannot be negative";
             return;
@@ -25,16 +41,29 @@ static void native_list_new(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
             vm->error = "list capacity too large";
             return;
         }
-        capacity = static_cast<u32>(cap);
+        u32 capacity = static_cast<u32>(cap);
+        if (capacity > 0) {
+            ListHeader* header = get_list_header(lst_ptr);
+            header->capacity = capacity;
+            header->elements = static_cast<Value*>(malloc(sizeof(Value) * capacity));
+            memset(header->elements, 0, sizeof(Value) * capacity);
+        }
     }
+    regs[dst] = 0; // void
+}
 
-    void* lst = list_alloc(vm, capacity);
-    if (!lst) {
-        vm->error = "failed to allocate list";
-        return;
+// Destructor method. Receives self, frees element buffer.
+static void native_list_delete(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]); // self
+    if (lst_ptr) {
+        ListHeader* header = get_list_header(lst_ptr);
+        free(header->elements);
+        header->elements = nullptr;
+        header->length = 0;
+        header->capacity = 0;
     }
-
-    regs[dst] = reinterpret_cast<u64>(lst);
+    regs[dst] = 0;
 }
 
 // Native function: list_len(lst: List<T>) -> i32
@@ -297,22 +326,19 @@ static void native_string_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 void register_builtin_natives(NativeRegistry& registry) {
     using TK = NativeTypeKind;
 
-    // List natives - registered with I64 type kinds since list pointers and values
-    // are 64-bit values. The semantic analyzer handles actual type checking.
-    registry.bind_native(NATIVE_LIST_NEW, native_list_new,
-                         {TK::I32}, TK::I64);
-
-    registry.bind_native(NATIVE_LIST_LEN, native_list_len,
-                         {TK::I64}, TK::I32);
-
-    registry.bind_native(NATIVE_LIST_CAP, native_list_cap,
-                         {TK::I64}, TK::I32);
-
-    registry.bind_native(NATIVE_LIST_PUSH, native_list_push,
-                         {TK::I64, TK::I64}, TK::Void);
-
-    registry.bind_native(NATIVE_LIST_POP, native_list_pop,
-                         {TK::I64}, TK::I64);
+    // List<T> - registered as a generic native type
+    registry.register_generic_type("List", 1, "list_alloc", native_list_alloc);
+    registry.bind_generic_constructor("List", native_list_init,
+                                      0, {concrete_param(TK::I32)});
+    registry.bind_generic_destructor("List", native_list_delete);
+    registry.bind_generic_method("List", "len",  native_list_len,
+                                 {}, concrete_param(TK::I32));
+    registry.bind_generic_method("List", "cap",  native_list_cap,
+                                 {}, concrete_param(TK::I32));
+    registry.bind_generic_method("List", "push", native_list_push,
+                                 {type_param(0)}, concrete_param(TK::Void));
+    registry.bind_generic_method("List", "pop",  native_list_pop,
+                                 {}, type_param(0));
 
     // Register print(value: i32) -> void
     registry.bind_native(NATIVE_PRINT, native_print,

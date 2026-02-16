@@ -10,9 +10,11 @@ void ModuleRegistry::register_native_module(StringView name, NativeRegistry* nat
     module->natives = natives;
     module->is_native = true;
 
-    // Add all native functions as exports
+    // Add all non-method native functions as exports
+    // Methods (is_method=true) are accessed via method dispatch, not as module exports
     for (u32 i = 0; i < natives->size(); i++) {
         const NativeEntry& entry = natives->get_entry(i);
+        if (entry.is_method) continue;
 
         ModuleExport exp;
         exp.name = entry.name;

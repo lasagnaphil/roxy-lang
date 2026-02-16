@@ -728,6 +728,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             Type* elem = resolve_type_expr(type_expr->type_args[0]);
             if (!elem || elem->is_error()) return m_types.error_type();
             base_type = m_types.list_type(elem);
+            populate_list_methods(base_type);
         }
 
         // Check for generic struct instantiation: Box<i32>
@@ -2352,6 +2353,27 @@ Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, Strin
     return return_type;
 }
 
+NativeRegistry* SemanticAnalyzer::get_builtin_registry() {
+    ModuleInfo* builtin = m_modules.find_module(BUILTIN_MODULE_NAME);
+    NativeRegistry* registry = builtin ? builtin->natives : nullptr;
+    if (!registry) registry = m_registry;
+    return registry;
+}
+
+void SemanticAnalyzer::populate_list_methods(Type* type) {
+    assert(type && type->is_list());
+    if (type->list_info.methods.size() > 0) return;
+
+    NativeRegistry* registry = get_builtin_registry();
+    if (!registry) return;
+
+    Type* type_args[] = { type->list_info.element_type };
+    Span<Type*> ta(type_args, 1);
+    type->list_info.methods = registry->instantiate_generic_methods(
+        "List", ta, m_allocator, m_types);
+    type->list_info.alloc_native_name = registry->get_generic_alloc_name("List");
+}
+
 Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) {
     if (ce.type_args.size() != 1) {
         error(expr->loc, "List requires exactly 1 type argument");
@@ -2361,26 +2383,40 @@ Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) 
     if (!elem_type || elem_type->is_error()) return m_types.error_type();
 
     Type* list_type = m_types.list_type(elem_type);
+    populate_list_methods(list_type);
 
-    if (ce.arguments.size() == 0) {
-        // List<i32>() - empty list
-        ce.mangled_name = StringView(NATIVE_LIST_NEW, 8);
-        ce.callee->resolved_type = list_type;
-        return list_type;
-    } else if (ce.arguments.size() == 1) {
-        // List<i32>(cap) - list with capacity
-        Type* arg_type = analyze_expr(ce.arguments[0].expr);
-        if (arg_type && !arg_type->is_error()) {
-            check_assignable(m_types.i32_type(), arg_type, ce.arguments[0].expr->loc);
-        }
-        ce.mangled_name = StringView(NATIVE_LIST_NEW, 8);
-        ce.callee->resolved_type = list_type;
-        return list_type;
-    } else {
-        error_fmt(expr->loc, "List constructor takes 0 or 1 arguments but got {}",
-                 ce.arguments.size());
+    NativeRegistry* registry = get_builtin_registry();
+    if (!registry) {
+        error(expr->loc, "no native registry available for List constructor");
         return m_types.error_type();
     }
+
+    Type* type_args[] = { elem_type };
+    ResolvedConstructor ctor = registry->instantiate_generic_constructor(
+        "List", Span<Type*>(type_args, 1), m_allocator, m_types);
+
+    if (ctor.native_name.empty()) {
+        error(expr->loc, "List has no registered constructor");
+        return m_types.error_type();
+    }
+
+    if (ce.arguments.size() < ctor.min_args ||
+        ce.arguments.size() > ctor.param_types.size()) {
+        error_fmt(expr->loc, "List constructor takes {} to {} arguments but got {}",
+                  ctor.min_args, ctor.param_types.size(), ce.arguments.size());
+        return m_types.error_type();
+    }
+
+    for (u32 i = 0; i < ce.arguments.size(); i++) {
+        Type* arg_type = analyze_expr(ce.arguments[i].expr);
+        if (arg_type && !arg_type->is_error()) {
+            check_assignable(ctor.param_types[i], arg_type, ce.arguments[i].expr->loc);
+        }
+    }
+
+    ce.mangled_name = ctor.native_name;
+    ce.callee->resolved_type = list_type;
+    return list_type;
 }
 
 Type* SemanticAnalyzer::analyze_generic_struct_constructor_call(Expr* expr, CallExpr& ce, StringView func_name) {

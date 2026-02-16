@@ -184,6 +184,10 @@ private:
     tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_trait_types;
     Vector<Decl*> m_synthetic_decls;  // Injected default method declarations
 
+    // List method population from NativeRegistry
+    void populate_list_methods(Type* list_type);
+    NativeRegistry* get_builtin_registry();
+
     // Trait analysis helpers
     void analyze_trait_method_decl(Decl* decl, Type* trait_type);
     void validate_trait_implementations();

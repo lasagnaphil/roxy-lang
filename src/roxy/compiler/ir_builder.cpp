@@ -1680,21 +1680,37 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     }
 
     // Check if this is a List constructor call: List<i32>() or List<i32>(cap)
+    // Uses two-step allocate+init pattern matching struct constructors:
+    //   1. Call alloc native (no args) to get list pointer
+    //   2. Call constructor method with [self, user_args...]
     if (ce.callee->kind == AstKind::ExprIdentifier &&
         ce.callee->resolved_type && ce.callee->resolved_type->is_list()) {
-        StringView native_name = ce.mangled_name;  // "list_new"
-        i32 native_idx = m_registry.get_index(native_name);
-
-        // Generate arguments (0 or 1)
-        Span<ValueId> args;
-        if (ce.arguments.size() == 1) {
-            ValueId cap_arg = gen_expr(ce.arguments[0].expr);
-            args = alloc_span<ValueId>(1);
-            args[0] = cap_arg;
-        } else {
-            args = alloc_span<ValueId>(0);
+        // Generate user arguments first
+        u32 user_argc = static_cast<u32>(ce.arguments.size());
+        Span<ValueId> user_args = alloc_span<ValueId>(user_argc);
+        for (u32 i = 0; i < user_argc; i++) {
+            user_args[i] = gen_expr(ce.arguments[i].expr);
         }
-        return emit_call_native(native_name, args, expr->resolved_type, static_cast<u8>(native_idx));
+
+        // Step 1: Allocate empty list (non-method native, 0 args)
+        StringView alloc_name = ce.callee->resolved_type->list_info.alloc_native_name;
+        i32 alloc_idx = m_registry.get_index(alloc_name);
+        Span<ValueId> empty = alloc_span<ValueId>(0);
+        ValueId list_ptr = emit_call_native(alloc_name, empty, expr->resolved_type,
+                                             static_cast<u8>(alloc_idx));
+
+        // Step 2: Call constructor method with [self, user_args...]
+        StringView ctor_name = ce.mangled_name;  // "List$$new"
+        i32 ctor_idx = m_registry.get_index(ctor_name);
+        Span<ValueId> ctor_args = alloc_span<ValueId>(user_argc + 1);
+        ctor_args[0] = list_ptr;  // self
+        for (u32 i = 0; i < user_argc; i++) {
+            ctor_args[i + 1] = user_args[i];
+        }
+        emit_call_native(ctor_name, ctor_args, m_types.void_type(),
+                         static_cast<u8>(ctor_idx));
+
+        return list_ptr;
     }
 
     // Check if this is a named constructor call: Type.ctor_name(...)
