@@ -1,4 +1,5 @@
 #include "roxy/compiler/types.hpp"
+#include "roxy/vm/natives.hpp"
 
 #include <cstring>
 
@@ -132,6 +133,25 @@ Type* TypeCache::list_type(Type* element_type) {
     Type* type = m_allocator.emplace<Type>();
     type->kind = TypeKind::List;
     type->list_info.element_type = element_type;
+
+    // Populate builtin methods with concrete types for this List<T>
+    constexpr u32 NUM_METHODS = 4;
+    MethodInfo* methods = reinterpret_cast<MethodInfo*>(
+        m_allocator.alloc_bytes(sizeof(MethodInfo) * NUM_METHODS, alignof(MethodInfo)));
+
+    // len(): i32
+    methods[0] = { "len", Span<Type*>(), m_i32, nullptr, NATIVE_LIST_LEN };
+    // cap(): i32
+    methods[1] = { "cap", Span<Type*>(), m_i32, nullptr, NATIVE_LIST_CAP };
+    // push(val: T): void
+    Type** push_params = reinterpret_cast<Type**>(m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
+    push_params[0] = element_type;
+    methods[2] = { "push", Span<Type*>(push_params, 1), m_void, nullptr, NATIVE_LIST_PUSH };
+    // pop(): T
+    methods[3] = { "pop", Span<Type*>(), element_type, nullptr, NATIVE_LIST_POP };
+
+    type->list_info.methods = Span<MethodInfo>(methods, NUM_METHODS);
+
     return intern_type(type);
 }
 
@@ -343,6 +363,13 @@ const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name,
             }
         }
         current = sti.parent;
+    }
+    return nullptr;
+}
+
+const MethodInfo* lookup_list_method(const ListTypeInfo& info, StringView name) {
+    for (const auto& method : info.methods) {
+        if (method.name == name) return &method;
     }
     return nullptr;
 }

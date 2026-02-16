@@ -70,6 +70,7 @@ struct MethodInfo {
     Span<Type*> param_types;       // NOT including implicit self
     Type* return_type;
     Decl* decl;                    // Points to the MethodDecl AST node
+    StringView native_name;        // Non-empty for native/builtin methods
 };
 
 // Field information for struct types
@@ -159,6 +160,7 @@ struct EnumTypeInfo {
 // Type info for list types
 struct ListTypeInfo {
     Type* element_type;
+    Span<MethodInfo> methods;      // Builtin methods with concrete types
 };
 
 // Type info for function types
@@ -397,5 +399,8 @@ const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name,
 
 // Check if 'child' is a subtype of 'parent' (walks inheritance chain)
 bool is_subtype_of(Type* child, Type* parent);
+
+// Look up a method in a list type's builtin methods
+const MethodInfo* lookup_list_method(const ListTypeInfo& info, StringView name);
 
 }

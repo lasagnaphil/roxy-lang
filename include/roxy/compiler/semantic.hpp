@@ -125,7 +125,7 @@ private:
     Type* analyze_list_constructor_call(Expr* expr, CallExpr& ce);
     Type* analyze_generic_struct_constructor_call(Expr* expr, CallExpr& ce, StringView func_name);
     Type* analyze_super_call(Expr* expr, CallExpr& ce);
-    Type* analyze_list_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, Type* base_type);
+    Type* analyze_builtin_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, const MethodInfo* mi);
     Type* analyze_struct_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, Type* base_type);
     Type* analyze_regular_fun_call(Expr* expr, CallExpr& ce);
 

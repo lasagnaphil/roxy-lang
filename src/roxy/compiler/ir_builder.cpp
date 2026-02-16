@@ -1845,21 +1845,16 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             Type* obj_type = ge.object->resolved_type;
             Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
 
-            // Check for List method call
+            // Check for List method call (builtin native methods)
             if (struct_type && struct_type->is_list()) {
-                StringView native_name = ce.mangled_name;  // "list_len", "list_push", etc.
+                StringView native_name = ce.mangled_name;
                 i32 native_idx = m_registry.get_index(native_name);
 
-                Span<ValueId> method_args;
-                if (native_name == StringView(NATIVE_LIST_PUSH, 9)) {
-                    // push: args = [obj, value]
-                    method_args = alloc_span<ValueId>(2);
-                    method_args[0] = obj;
-                    method_args[1] = args[0];
-                } else {
-                    // len, cap, pop: args = [obj]
-                    method_args = alloc_span<ValueId>(1);
-                    method_args[0] = obj;
+                // Generic: [obj] + args
+                Span<ValueId> method_args = alloc_span<ValueId>(args.size() + 1);
+                method_args[0] = obj;
+                for (u32 i = 0; i < args.size(); i++) {
+                    method_args[i + 1] = args[i];
                 }
 
                 result = emit_call_native(native_name, method_args, expr->resolved_type, static_cast<u8>(native_idx));

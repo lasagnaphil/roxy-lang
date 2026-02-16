@@ -2523,51 +2523,19 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
     return m_types.error_type();
 }
 
-Type* SemanticAnalyzer::analyze_list_method_call(Expr* expr, CallExpr& ce, GetExpr& ge,
-                                                  Type* obj_type, Type* base_type) {
-    Type* elem_type = base_type->list_info.element_type;
-    StringView method = ge.name;
-
-    if (method == "len") {
-        if (ce.arguments.size() != 0) {
-            error_fmt(expr->loc, "len() takes no arguments but got {}", ce.arguments.size());
-            return m_types.error_type();
-        }
-        ce.mangled_name = StringView(NATIVE_LIST_LEN, 8);
-        ge.object->resolved_type = obj_type;
-        return m_types.i32_type();
-    } else if (method == "cap") {
-        if (ce.arguments.size() != 0) {
-            error_fmt(expr->loc, "cap() takes no arguments but got {}", ce.arguments.size());
-            return m_types.error_type();
-        }
-        ce.mangled_name = StringView(NATIVE_LIST_CAP, 8);
-        ge.object->resolved_type = obj_type;
-        return m_types.i32_type();
-    } else if (method == "push") {
-        if (ce.arguments.size() != 1) {
-            error_fmt(expr->loc, "push() takes 1 argument but got {}", ce.arguments.size());
-            return m_types.error_type();
-        }
-        Type* arg_type = analyze_expr(ce.arguments[0].expr);
-        if (arg_type && !arg_type->is_error()) {
-            check_assignable(elem_type, arg_type, ce.arguments[0].expr->loc);
-        }
-        ce.mangled_name = StringView(NATIVE_LIST_PUSH, 9);
-        ge.object->resolved_type = obj_type;
-        return m_types.void_type();
-    } else if (method == "pop") {
-        if (ce.arguments.size() != 0) {
-            error_fmt(expr->loc, "pop() takes no arguments but got {}", ce.arguments.size());
-            return m_types.error_type();
-        }
-        ce.mangled_name = StringView(NATIVE_LIST_POP, 8);
-        ge.object->resolved_type = obj_type;
-        return elem_type;
-    } else {
-        error_fmt(expr->loc, "List has no method '{}'", method);
-        return m_types.error_type();
+Type* SemanticAnalyzer::analyze_builtin_method_call(Expr* expr, CallExpr& ce, GetExpr& ge,
+                                                     Type* obj_type, const MethodInfo* mi) {
+    if (ce.arguments.size() != mi->param_types.size()) {
+        error_fmt(expr->loc, "{}() takes {} argument{} but got {}",
+                 mi->name, mi->param_types.size(),
+                 mi->param_types.size() == 1 ? "" : "s",
+                 ce.arguments.size());
+        return mi->return_type;
     }
+    check_call_args(ce.arguments, mi->param_types, Span<Param>(), expr->loc);
+    ce.mangled_name = mi->native_name;
+    ge.object->resolved_type = obj_type;
+    return mi->return_type;
 }
 
 Type* SemanticAnalyzer::analyze_struct_method_call(Expr* expr, CallExpr& ce, GetExpr& ge,
@@ -2706,7 +2674,10 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
             Type* base_type = obj_type->base_type();
 
             if (base_type && base_type->is_list()) {
-                return analyze_list_method_call(expr, ce, ge, obj_type, base_type);
+                const MethodInfo* mi = lookup_list_method(base_type->list_info, ge.name);
+                if (mi) return analyze_builtin_method_call(expr, ce, ge, obj_type, mi);
+                error_fmt(expr->loc, "List has no method '{}'", ge.name);
+                return m_types.error_type();
             }
             if (base_type && base_type->is_struct()) {
                 Type* result = analyze_struct_method_call(expr, ce, ge, obj_type, base_type);
