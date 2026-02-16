@@ -1,6 +1,8 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
+#include "roxy/core/span.hpp"
+#include "roxy/core/vector.hpp"
 
 #include <cassert>
 #include <cstdlib>
@@ -65,6 +67,16 @@ public:
 
         m_current->used += total_size;
         return aligned;
+    }
+
+    template <typename T>
+    Span<T> alloc_span(const Vector<T>& vec) {
+        if (vec.empty()) return Span<T>();
+        T* data = reinterpret_cast<T*>(alloc_bytes(sizeof(T) * vec.size(), alignof(T)));
+        for (u32 i = 0; i < vec.size(); i++) {
+            data[i] = vec[i];
+        }
+        return Span<T>(data, vec.size());
     }
 
     template <typename T, typename ... Args>

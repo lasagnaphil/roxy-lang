@@ -73,6 +73,10 @@ private:
     // Multi-pass analysis
     void collect_type_declarations(Program* program);
     void resolve_type_members(Program* program);
+    void resolve_when_clauses(Span<WhenFieldDecl> when_decls,
+                              Vector<FieldInfo>& fields,
+                              Vector<WhenClauseInfo>& when_clauses,
+                              u32& current_slot);
     void analyze_function_bodies(Program* program);
 
     // Type resolution from AST TypeExpr
@@ -115,6 +119,19 @@ private:
     Type* analyze_call_expr(Expr* expr);
     Type* analyze_primitive_cast(Expr* expr, Type* target_type);
     Type* analyze_constructor_call(Expr* expr, Type* struct_type, StringView ctor_name, bool is_heap);
+
+    // Call expression sub-helpers (extracted from analyze_call_expr)
+    Type* analyze_generic_fun_call(Expr* expr, CallExpr& ce, StringView func_name);
+    Type* analyze_list_constructor_call(Expr* expr, CallExpr& ce);
+    Type* analyze_generic_struct_constructor_call(Expr* expr, CallExpr& ce, StringView func_name);
+    Type* analyze_super_call(Expr* expr, CallExpr& ce);
+    Type* analyze_list_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, Type* base_type);
+    Type* analyze_struct_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, Type* base_type);
+    Type* analyze_regular_fun_call(Expr* expr, CallExpr& ce);
+
+    // Shared argument checking for method/function calls
+    void check_call_args(Span<CallArg> args, Span<Type*> param_types,
+                         Span<Param> params, SourceLocation loc);
 
     // Cast checking helper
     bool can_cast(Type* source, Type* target);

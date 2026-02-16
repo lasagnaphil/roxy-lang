@@ -44,6 +44,8 @@ static u32 get_type_slot_count(Type* type) {
     }
 }
 
+// ===== Initialization & Passes =====
+
 SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeCache& types, ModuleRegistry& modules,
                                    NativeRegistry* registry)
     : m_allocator(allocator)
@@ -315,124 +317,12 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
 
             // Process when clauses (tagged unions)
             Vector<WhenClauseInfo> when_clauses;
-            for (auto& wfd : sd.when_clauses) {
-
-                // Resolve discriminant type - must be enum
-                Type* disc_type = resolve_type_expr(wfd.discriminant_type);
-                if (!disc_type || disc_type->is_error()) {
-                    disc_type = m_types.error_type();
-                } else if (!disc_type->is_enum()) {
-                    error_fmt(wfd.loc, "when discriminant must be an enum type");
-                    disc_type = m_types.error_type();
-                }
-
-                // Add discriminant as a regular field
-                FieldInfo disc_field;
-                disc_field.name = wfd.discriminant_name;
-                disc_field.type = disc_type;
-                disc_field.is_pub = true;  // Discriminant is accessible
-                disc_field.index = static_cast<u32>(fields.size());
-                disc_field.slot_offset = current_slot;
-                disc_field.slot_count = get_type_slot_count(disc_type);
-                fields.push_back(disc_field);
-
-                u32 disc_slot_offset = current_slot;
-                current_slot += disc_field.slot_count;
-                u32 union_slot_offset = current_slot;
-
-                // Process each case
-                u32 max_variant_slots = 0;
-                Vector<VariantInfo> variants;
-
-                for (auto& case_decl : wfd.cases) {
-
-                    // Validate case names are enum variants
-                    i64 discriminant_value = 0;
-                    for (const auto& case_name : case_decl.case_names) {
-                        Symbol* sym = m_symbols.lookup(case_name);
-                        if (!sym || sym->kind != SymbolKind::EnumVariant) {
-                            error_fmt(case_decl.loc, "'{}' is not a known enum variant", case_name);
-                        } else {
-                            discriminant_value = sym->enum_variant.value;
-                        }
-                    }
-
-                    // Process variant fields
-                    Vector<VariantFieldInfo> var_fields;
-                    u32 var_slot = 0;
-                    for (auto& fd : case_decl.fields) {
-                        Type* field_type = resolve_type_expr(fd.type);
-                        if (!field_type) field_type = m_types.error_type();
-
-                        u32 slot_count = get_type_slot_count(field_type);
-                        VariantFieldInfo vfi;
-                        vfi.name = fd.name;
-                        vfi.type = field_type;
-                        vfi.slot_offset = var_slot;
-                        vfi.slot_count = slot_count;
-                        var_fields.push_back(vfi);
-                        var_slot += slot_count;
-                    }
-
-                    // Create VariantInfo for each case name
-                    for (const auto& case_name : case_decl.case_names) {
-                        Symbol* sym = m_symbols.lookup(case_name);
-                        i64 value = sym ? sym->enum_variant.value : 0;
-
-                        VariantFieldInfo* vf_data = reinterpret_cast<VariantFieldInfo*>(
-                            m_allocator.alloc_bytes(sizeof(VariantFieldInfo) * var_fields.size(), alignof(VariantFieldInfo)));
-                        for (u32 n = 0; n < var_fields.size(); n++) {
-                            vf_data[n] = var_fields[n];
-                        }
-
-                        VariantInfo vi;
-                        vi.case_name = case_name;
-                        vi.discriminant_value = value;
-                        vi.fields = Span<VariantFieldInfo>(vf_data, var_fields.size());
-                        vi.variant_slot_count = var_slot;
-                        variants.push_back(vi);
-                    }
-
-                    max_variant_slots = var_slot > max_variant_slots ? var_slot : max_variant_slots;
-                }
-
-                // Allocate variants
-                VariantInfo* var_data = reinterpret_cast<VariantInfo*>(
-                    m_allocator.alloc_bytes(sizeof(VariantInfo) * variants.size(), alignof(VariantInfo)));
-                for (u32 k = 0; k < variants.size(); k++) {
-                    var_data[k] = variants[k];
-                }
-
-                // Create WhenClauseInfo
-                WhenClauseInfo clause;
-                clause.discriminant_name = wfd.discriminant_name;
-                clause.discriminant_type = disc_type;
-                clause.discriminant_slot_offset = disc_slot_offset;
-                clause.union_slot_offset = union_slot_offset;
-                clause.union_slot_count = max_variant_slots;
-                clause.variants = Span<VariantInfo>(var_data, variants.size());
-                when_clauses.push_back(clause);
-
-                current_slot += max_variant_slots;
-            }
+            resolve_when_clauses(sd.when_clauses, fields, when_clauses, current_slot);
 
             type->struct_info.slot_count = current_slot;
 
-            // Allocate fields in bump allocator
-            FieldInfo* field_data = reinterpret_cast<FieldInfo*>(
-                m_allocator.alloc_bytes(sizeof(FieldInfo) * fields.size(), alignof(FieldInfo)));
-            for (u32 j = 0; j < fields.size(); j++) {
-                field_data[j] = fields[j];
-            }
-            type->struct_info.fields = Span<FieldInfo>(field_data, fields.size());
-
-            // Allocate when clauses
-            WhenClauseInfo* when_data = reinterpret_cast<WhenClauseInfo*>(
-                m_allocator.alloc_bytes(sizeof(WhenClauseInfo) * when_clauses.size(), alignof(WhenClauseInfo)));
-            for (u32 j = 0; j < when_clauses.size(); j++) {
-                when_data[j] = when_clauses[j];
-            }
-            type->struct_info.when_clauses = Span<WhenClauseInfo>(when_data, when_clauses.size());
+            type->struct_info.fields = m_allocator.alloc_span(fields);
+            type->struct_info.when_clauses = m_allocator.alloc_span(when_clauses);
 
             // Initialize empty constructor/destructor/method lists
             type->struct_info.constructors = Span<ConstructorInfo>(nullptr, 0);
@@ -490,13 +380,8 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             if (!return_type) return_type = m_types.error_type();
 
             // Create function type
-            Type** ptypes = reinterpret_cast<Type**>(
-                m_allocator.alloc_bytes(sizeof(Type*) * param_types.size(), alignof(Type*)));
-            for (u32 j = 0; j < param_types.size(); j++) {
-                ptypes[j] = param_types[j];
-            }
             Type* func_type = m_types.function_type(
-                Span<Type*>(ptypes, param_types.size()), return_type);
+                m_allocator.alloc_span(param_types), return_type);
 
             // Define function in global scope
             Symbol* sym = m_symbols.define(SymbolKind::Function, fd.name, func_type, decl->loc, decl);
@@ -584,6 +469,97 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
 
     // Now validate all trait implementations
     validate_trait_implementations();
+}
+
+void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
+                                            Vector<FieldInfo>& fields,
+                                            Vector<WhenClauseInfo>& when_clauses,
+                                            u32& current_slot) {
+    for (auto& wfd : when_decls) {
+        // Resolve discriminant type - must be enum
+        Type* disc_type = resolve_type_expr(wfd.discriminant_type);
+        if (!disc_type || disc_type->is_error()) {
+            disc_type = m_types.error_type();
+        } else if (!disc_type->is_enum()) {
+            error_fmt(wfd.loc, "when discriminant must be an enum type");
+            disc_type = m_types.error_type();
+        }
+
+        // Add discriminant as a regular field
+        FieldInfo disc_field;
+        disc_field.name = wfd.discriminant_name;
+        disc_field.type = disc_type;
+        disc_field.is_pub = true;  // Discriminant is accessible
+        disc_field.index = static_cast<u32>(fields.size());
+        disc_field.slot_offset = current_slot;
+        disc_field.slot_count = get_type_slot_count(disc_type);
+        fields.push_back(disc_field);
+
+        u32 disc_slot_offset = current_slot;
+        current_slot += disc_field.slot_count;
+        u32 union_slot_offset = current_slot;
+
+        // Process each case
+        u32 max_variant_slots = 0;
+        Vector<VariantInfo> variants;
+
+        for (auto& case_decl : wfd.cases) {
+            // Validate case names are enum variants
+            i64 discriminant_value = 0;
+            for (const auto& case_name : case_decl.case_names) {
+                Symbol* sym = m_symbols.lookup(case_name);
+                if (!sym || sym->kind != SymbolKind::EnumVariant) {
+                    error_fmt(case_decl.loc, "'{}' is not a known enum variant", case_name);
+                } else {
+                    discriminant_value = sym->enum_variant.value;
+                }
+            }
+
+            // Process variant fields
+            Vector<VariantFieldInfo> var_fields;
+            u32 var_slot = 0;
+            for (auto& fd : case_decl.fields) {
+                Type* field_type = resolve_type_expr(fd.type);
+                if (!field_type) field_type = m_types.error_type();
+
+                u32 slot_count = get_type_slot_count(field_type);
+                VariantFieldInfo vfi;
+                vfi.name = fd.name;
+                vfi.type = field_type;
+                vfi.slot_offset = var_slot;
+                vfi.slot_count = slot_count;
+                var_fields.push_back(vfi);
+                var_slot += slot_count;
+            }
+
+            // Create VariantInfo for each case name
+            for (const auto& case_name : case_decl.case_names) {
+                Symbol* sym = m_symbols.lookup(case_name);
+                i64 value = sym ? sym->enum_variant.value : 0;
+
+                VariantInfo vi;
+                vi.case_name = case_name;
+                vi.discriminant_value = value;
+                vi.fields = m_allocator.alloc_span(var_fields);
+                vi.variant_slot_count = var_slot;
+                variants.push_back(vi);
+            }
+
+            max_variant_slots = var_slot > max_variant_slots ? var_slot : max_variant_slots;
+        }
+
+        // Create WhenClauseInfo
+        WhenClauseInfo clause;
+        clause.discriminant_name = wfd.discriminant_name;
+        clause.discriminant_type = disc_type;
+        clause.discriminant_slot_offset = disc_slot_offset;
+        clause.union_slot_offset = union_slot_offset;
+        clause.union_slot_count = max_variant_slots;
+        clause.variants = m_allocator.alloc_span(variants);
+        when_clauses.push_back(clause);
+
+        current_slot += max_variant_slots;
+    }
 }
 
 // Pass 3: Analyze function bodies
@@ -706,14 +682,7 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                 }
 
                 // Allocate field info in bump allocator
-                if (!fields.empty()) {
-                    FieldInfo* fdata = reinterpret_cast<FieldInfo*>(
-                        m_allocator.alloc_bytes(sizeof(FieldInfo) * fields.size(), alignof(FieldInfo)));
-                    for (u32 j = 0; j < fields.size(); j++) {
-                        fdata[j] = fields[j];
-                    }
-                    sti.fields = Span<FieldInfo>(fdata, fields.size());
-                }
+                sti.fields = m_allocator.alloc_span(fields);
                 sti.slot_count = slot_offset;
 
                 inst->is_analyzed = true;
@@ -731,7 +700,7 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
     }
 }
 
-// Type resolution
+// ===== Type Expression Resolution =====
 
 Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
     if (!type_expr) return nullptr;
@@ -782,15 +751,8 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
                 return m_types.error_type();
             }
 
-            // Create Span for type args
-            Type** ta_data = reinterpret_cast<Type**>(
-                m_allocator.alloc_bytes(sizeof(Type*) * type_arg_types.size(), alignof(Type*)));
-            for (u32 i = 0; i < type_arg_types.size(); i++) {
-                ta_data[i] = type_arg_types[i];
-            }
-            Span<Type*> type_args(ta_data, type_arg_types.size());
-
             // Instantiate the generic struct
+            Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
             StringView mangled = m_generics.instantiate_struct(type_expr->name, type_args);
             GenericStructInstance* inst = m_generics.find_struct_instance(mangled);
             base_type = inst->concrete_type;
@@ -831,14 +793,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
                     slot_offset += sc;
                 }
 
-                if (!fields.empty()) {
-                    FieldInfo* fdata = reinterpret_cast<FieldInfo*>(
-                        m_allocator.alloc_bytes(sizeof(FieldInfo) * fields.size(), alignof(FieldInfo)));
-                    for (u32 fi = 0; fi < fields.size(); fi++) {
-                        fdata[fi] = fields[fi];
-                    }
-                    sti.fields = Span<FieldInfo>(fdata, fields.size());
-                }
+                sti.fields = m_allocator.alloc_span(fields);
                 sti.slot_count = slot_offset;
                 inst->is_analyzed = true;
             }
@@ -873,7 +828,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
     return base_type;
 }
 
-// Declaration analysis
+// ===== Declaration Analysis =====
 
 void SemanticAnalyzer::analyze_decl(Decl* decl) {
     if (!decl) return;
@@ -1090,17 +1045,10 @@ void SemanticAnalyzer::analyze_constructor_decl(Decl* decl) {
         param_types.push_back(ptype);
     }
 
-    // Allocate param_types in bump allocator
-    Type** ptypes = reinterpret_cast<Type**>(
-        m_allocator.alloc_bytes(sizeof(Type*) * param_types.size(), alignof(Type*)));
-    for (u32 i = 0; i < param_types.size(); i++) {
-        ptypes[i] = param_types[i];
-    }
-
     // Create constructor info
     ConstructorInfo ctor_info;
     ctor_info.name = cd.name;
-    ctor_info.param_types = Span<Type*>(ptypes, param_types.size());
+    ctor_info.param_types = m_allocator.alloc_span(param_types);
     ctor_info.decl = decl;
 
     // Add to struct's constructor list
@@ -1110,13 +1058,7 @@ void SemanticAnalyzer::analyze_constructor_decl(Decl* decl) {
     }
     ctors.push_back(ctor_info);
 
-    // Allocate and update
-    ConstructorInfo* ctor_data = reinterpret_cast<ConstructorInfo*>(
-        m_allocator.alloc_bytes(sizeof(ConstructorInfo) * ctors.size(), alignof(ConstructorInfo)));
-    for (u32 i = 0; i < ctors.size(); i++) {
-        ctor_data[i] = ctors[i];
-    }
-    struct_type->struct_info.constructors = Span<ConstructorInfo>(ctor_data, ctors.size());
+    struct_type->struct_info.constructors = m_allocator.alloc_span(ctors);
 }
 
 void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
@@ -1159,17 +1101,10 @@ void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
         param_types.push_back(ptype);
     }
 
-    // Allocate param_types in bump allocator
-    Type** ptypes = reinterpret_cast<Type**>(
-        m_allocator.alloc_bytes(sizeof(Type*) * param_types.size(), alignof(Type*)));
-    for (u32 i = 0; i < param_types.size(); i++) {
-        ptypes[i] = param_types[i];
-    }
-
     // Create destructor info
     DestructorInfo dtor_info;
     dtor_info.name = dd.name;
-    dtor_info.param_types = Span<Type*>(ptypes, param_types.size());
+    dtor_info.param_types = m_allocator.alloc_span(param_types);
     dtor_info.decl = decl;
 
     // Add to struct's destructor list
@@ -1179,13 +1114,7 @@ void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
     }
     dtors.push_back(dtor_info);
 
-    // Allocate and update
-    DestructorInfo* dtor_data = reinterpret_cast<DestructorInfo*>(
-        m_allocator.alloc_bytes(sizeof(DestructorInfo) * dtors.size(), alignof(DestructorInfo)));
-    for (u32 i = 0; i < dtors.size(); i++) {
-        dtor_data[i] = dtors[i];
-    }
-    struct_type->struct_info.destructors = Span<DestructorInfo>(dtor_data, dtors.size());
+    struct_type->struct_info.destructors = m_allocator.alloc_span(dtors);
 }
 
 void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
@@ -1227,17 +1156,10 @@ void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
     Type* return_type = md.return_type ? resolve_type_expr(md.return_type) : m_types.void_type();
     if (!return_type) return_type = m_types.error_type();
 
-    // Allocate param_types in bump allocator
-    Type** ptypes = reinterpret_cast<Type**>(
-        m_allocator.alloc_bytes(sizeof(Type*) * param_types.size(), alignof(Type*)));
-    for (u32 i = 0; i < param_types.size(); i++) {
-        ptypes[i] = param_types[i];
-    }
-
     // Create method info
     MethodInfo method_info;
     method_info.name = md.name;
-    method_info.param_types = Span<Type*>(ptypes, param_types.size());
+    method_info.param_types = m_allocator.alloc_span(param_types);
     method_info.return_type = return_type;
     method_info.decl = decl;
 
@@ -1248,13 +1170,7 @@ void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
     }
     methods.push_back(method_info);
 
-    // Allocate and update
-    MethodInfo* method_data = reinterpret_cast<MethodInfo*>(
-        m_allocator.alloc_bytes(sizeof(MethodInfo) * methods.size(), alignof(MethodInfo)));
-    for (u32 i = 0; i < methods.size(); i++) {
-        method_data[i] = methods[i];
-    }
-    struct_type->struct_info.methods = Span<MethodInfo>(method_data, methods.size());
+    struct_type->struct_info.methods = m_allocator.alloc_span(methods);
 }
 
 void SemanticAnalyzer::analyze_constructor_body(Decl* decl, Type* struct_type) {
@@ -1369,7 +1285,7 @@ void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
     m_symbols.pop_scope();  // struct scope
 }
 
-// Trait analysis
+// ===== Trait Validation =====
 
 void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
     MethodDecl& md = decl->method_decl;
@@ -1413,17 +1329,10 @@ void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
         return_type = m_types.void_type();
     }
 
-    // Allocate param_types in bump allocator
-    Type** ptypes = reinterpret_cast<Type**>(
-        m_allocator.alloc_bytes(sizeof(Type*) * param_types.size(), alignof(Type*)));
-    for (u32 i = 0; i < param_types.size(); i++) {
-        ptypes[i] = param_types[i];
-    }
-
     // Create trait method info
     TraitMethodInfo tmi;
     tmi.name = md.name;
-    tmi.param_types = Span<Type*>(ptypes, param_types.size());
+    tmi.param_types = m_allocator.alloc_span(param_types);
     tmi.return_type = return_type;
     tmi.decl = decl;
     tmi.has_default = (md.body != nullptr);
@@ -1435,13 +1344,7 @@ void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
     }
     methods.push_back(tmi);
 
-    // Allocate and update
-    TraitMethodInfo* method_data = reinterpret_cast<TraitMethodInfo*>(
-        m_allocator.alloc_bytes(sizeof(TraitMethodInfo) * methods.size(), alignof(TraitMethodInfo)));
-    for (u32 i = 0; i < methods.size(); i++) {
-        method_data[i] = methods[i];
-    }
-    tti.methods = Span<TraitMethodInfo>(method_data, methods.size());
+    tti.methods = m_allocator.alloc_span(methods);
 }
 
 // Helper to deep-clone an Expr tree
@@ -1728,16 +1631,9 @@ void SemanticAnalyzer::validate_trait_implementations() {
                     }
 
                     if (!is_duplicate) {
-                        // Allocate param_types
-                        Type** ptypes = reinterpret_cast<Type**>(
-                            m_allocator.alloc_bytes(sizeof(Type*) * param_types.size(), alignof(Type*)));
-                        for (u32 j = 0; j < param_types.size(); j++) {
-                            ptypes[j] = param_types[j];
-                        }
-
                         MethodInfo mi;
                         mi.name = md.name;
-                        mi.param_types = Span<Type*>(ptypes, param_types.size());
+                        mi.param_types = m_allocator.alloc_span(param_types);
                         mi.return_type = return_type;
                         mi.decl = decl;
 
@@ -1748,12 +1644,7 @@ void SemanticAnalyzer::validate_trait_implementations() {
                         }
                         methods.push_back(mi);
 
-                        MethodInfo* method_data = reinterpret_cast<MethodInfo*>(
-                            m_allocator.alloc_bytes(sizeof(MethodInfo) * methods.size(), alignof(MethodInfo)));
-                        for (u32 j = 0; j < methods.size(); j++) {
-                            method_data[j] = methods[j];
-                        }
-                        sti.methods = Span<MethodInfo>(method_data, methods.size());
+                        sti.methods = m_allocator.alloc_span(methods);
                     }
                     break;
                 }
@@ -1788,12 +1679,7 @@ void SemanticAnalyzer::validate_trait_implementations() {
         }
         traits.push_back(trait_type);
 
-        Type** trait_data = reinterpret_cast<Type**>(
-            m_allocator.alloc_bytes(sizeof(Type*) * traits.size(), alignof(Type*)));
-        for (u32 i = 0; i < traits.size(); i++) {
-            trait_data[i] = traits[i];
-        }
-        sti.implemented_traits = Span<Type*>(trait_data, traits.size());
+        sti.implemented_traits = m_allocator.alloc_span(traits);
     }
 }
 
@@ -1823,17 +1709,10 @@ void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type
 
     Type* return_type = tmi.return_type ? tmi.return_type : struct_type;
 
-    // Allocate param_types
-    Type** ptypes = reinterpret_cast<Type**>(
-        m_allocator.alloc_bytes(sizeof(Type*) * param_types.size(), alignof(Type*)));
-    for (u32 i = 0; i < param_types.size(); i++) {
-        ptypes[i] = param_types[i];
-    }
-
     // Add MethodInfo to struct's method list
     MethodInfo mi;
     mi.name = tmi.name;
-    mi.param_types = Span<Type*>(ptypes, param_types.size());
+    mi.param_types = m_allocator.alloc_span(param_types);
     mi.return_type = return_type;
     mi.decl = synth;
 
@@ -1843,12 +1722,7 @@ void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type
     }
     methods.push_back(mi);
 
-    MethodInfo* method_data = reinterpret_cast<MethodInfo*>(
-        m_allocator.alloc_bytes(sizeof(MethodInfo) * methods.size(), alignof(MethodInfo)));
-    for (u32 i = 0; i < methods.size(); i++) {
-        method_data[i] = methods[i];
-    }
-    sti.methods = Span<MethodInfo>(method_data, methods.size());
+    sti.methods = m_allocator.alloc_span(methods);
 
     // Add to synthetic decls list for IR builder
     m_synthetic_decls.push_back(synth);
@@ -1868,7 +1742,7 @@ static const char* binary_op_to_trait_method(BinaryOp op) {
     }
 }
 
-// Statement analysis
+// ===== Statement Analysis =====
 
 void SemanticAnalyzer::analyze_stmt(Stmt* stmt) {
     if (!stmt) return;
@@ -2207,7 +2081,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
     }
 }
 
-// Expression analysis
+// ===== Expression Analysis =====
 
 Type* SemanticAnalyzer::analyze_expr(Expr* expr) {
     if (!expr) return m_types.error_type();
@@ -2380,478 +2254,15 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
     return m_types.error_type();
 }
 
-Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
-    CallExpr& ce = expr->call;
-
-    // Check if this is a primitive type cast: i32(x), f64(x), bool(x)
-    if (ce.callee->kind == AstKind::ExprIdentifier) {
-        StringView type_name = ce.callee->identifier.name;
-        Type* target_type = m_types.primitive_by_name(type_name);
-        if (target_type != nullptr && !target_type->is_void() && !target_type->is_error()) {
-            return analyze_primitive_cast(expr, target_type);
-        }
-    }
-
-    // Check for generic function call: name<i32>(args)
-    if (ce.type_args.size() > 0 && ce.callee->kind == AstKind::ExprIdentifier) {
-        StringView func_name = ce.callee->identifier.name;
-
-        // Check if this is a generic function
-        if (m_generics.is_generic_fun(func_name)) {
-            Decl* template_decl = m_generics.get_generic_fun_decl(func_name);
-            FunDecl& template_fd = template_decl->fun_decl;
-
-            // Validate type arg count
-            if (ce.type_args.size() != template_fd.type_params.size()) {
-                error_fmt(expr->loc, "generic function '{}' expects {} type arguments but got {}",
-                         func_name, template_fd.type_params.size(), ce.type_args.size());
-                return m_types.error_type();
-            }
-
-            // Resolve type args to concrete types
-            Vector<Type*> type_arg_types;
-            for (auto& type_arg : ce.type_args) {
-                Type* arg_type = resolve_type_expr(type_arg);
-                if (!arg_type || arg_type->is_error()) return m_types.error_type();
-                type_arg_types.push_back(arg_type);
-            }
-
-            Type** ta_data = reinterpret_cast<Type**>(
-                m_allocator.alloc_bytes(sizeof(Type*) * type_arg_types.size(), alignof(Type*)));
-            for (u32 i = 0; i < type_arg_types.size(); i++) {
-                ta_data[i] = type_arg_types[i];
-            }
-            Span<Type*> type_args(ta_data, type_arg_types.size());
-
-            // Instantiate the generic function
-            StringView mangled = m_generics.instantiate_fun(func_name, type_args);
-            ce.mangled_name = mangled;
-
-            // Use the instantiated function's substituted types for type checking
-            GenericFunInstance* inst = m_generics.find_fun_instance(mangled);
-            FunDecl& inst_fd = inst->instantiated_decl->fun_decl;
-
-            // Resolve parameter types and type-check arguments
-            if (ce.arguments.size() != inst_fd.params.size()) {
-                error_fmt(expr->loc, "function '{}' expects {} arguments but got {}",
-                         func_name, inst_fd.params.size(), ce.arguments.size());
-                return m_types.error_type();
-            }
-
-            for (u32 i = 0; i < ce.arguments.size(); i++) {
-                CallArg& arg = ce.arguments[i];
-                Type* arg_type = analyze_expr(arg.expr);
-
-                // Resolve the parameter type from the instantiated function
-                Type* param_type = nullptr;
-                if (inst_fd.params[i].type) {
-                    param_type = resolve_type_expr(inst_fd.params[i].type);
-                }
-
-                if (param_type && !param_type->is_error() && arg_type && !arg_type->is_error()) {
-                    check_assignable(param_type, arg_type, arg.expr->loc);
-                }
-            }
-
-            // Resolve return type from the instantiated function
-            Type* return_type = m_types.void_type();
-            if (inst_fd.return_type) {
-                return_type = resolve_type_expr(inst_fd.return_type);
-            }
-
-            return return_type;
-        }
-
-        // Check if this is a List constructor call: List<i32>() or List<i32>(cap)
-        if (func_name == "List") {
-            if (ce.type_args.size() != 1) {
-                error(expr->loc, "List requires exactly 1 type argument");
-                return m_types.error_type();
-            }
-            Type* elem_type = resolve_type_expr(ce.type_args[0]);
-            if (!elem_type || elem_type->is_error()) return m_types.error_type();
-
-            Type* list_type = m_types.list_type(elem_type);
-
-            if (ce.arguments.size() == 0) {
-                // List<i32>() - empty list
-                ce.mangled_name = StringView(NATIVE_LIST_NEW, 8);
-                ce.callee->resolved_type = list_type;
-                return list_type;
-            } else if (ce.arguments.size() == 1) {
-                // List<i32>(cap) - list with capacity
-                Type* arg_type = analyze_expr(ce.arguments[0].expr);
-                if (arg_type && !arg_type->is_error()) {
-                    check_assignable(m_types.i32_type(), arg_type, ce.arguments[0].expr->loc);
-                }
-                ce.mangled_name = StringView(NATIVE_LIST_NEW, 8);
-                ce.callee->resolved_type = list_type;
-                return list_type;
-            } else {
-                error_fmt(expr->loc, "List constructor takes 0 or 1 arguments but got {}",
-                         ce.arguments.size());
-                return m_types.error_type();
-            }
-        }
-
-        // Check if this is a generic struct constructor call: Box<i32>(args)
-        if (m_generics.is_generic_struct(func_name)) {
-            // Resolve type args
-            Vector<Type*> type_arg_types;
-            for (auto& type_arg : ce.type_args) {
-                Type* arg_type = resolve_type_expr(type_arg);
-                if (!arg_type || arg_type->is_error()) return m_types.error_type();
-                type_arg_types.push_back(arg_type);
-            }
-
-            Type** ta_data = reinterpret_cast<Type**>(
-                m_allocator.alloc_bytes(sizeof(Type*) * type_arg_types.size(), alignof(Type*)));
-            for (u32 i = 0; i < type_arg_types.size(); i++) {
-                ta_data[i] = type_arg_types[i];
-            }
-            Span<Type*> type_args(ta_data, type_arg_types.size());
-
-            // Instantiate the struct
-            StringView mangled = m_generics.instantiate_struct(func_name, type_args);
-            GenericStructInstance* inst = m_generics.find_struct_instance(mangled);
-            Type* struct_type = inst->concrete_type;
-
-            ce.mangled_name = mangled;
-            ce.callee->resolved_type = struct_type;
-            return analyze_constructor_call(expr, struct_type, ce.constructor_name, ce.is_heap);
-        }
-    }
-
-    // Check if this is a constructor call: callee is an identifier that resolves to a struct type
-    if (ce.callee->kind == AstKind::ExprIdentifier) {
-        StringView type_name = ce.callee->identifier.name;
-
-        // Look up as a type first
-        auto it = m_named_types.find(type_name);
-        if (it != m_named_types.end() && it->second->is_struct()) {
-            // This is a constructor call: Type()
-            Type* struct_type = it->second;
-            // Store the struct type in callee for IR builder
-            ce.callee->resolved_type = struct_type;
-            return analyze_constructor_call(expr, struct_type, ce.constructor_name, ce.is_heap);
-        }
-    }
-
-    // Check if this is a named constructor call: Type.ctor_name(...)
-    // The callee is a GetExpr where the object is a struct type identifier
-    if (ce.callee->kind == AstKind::ExprGet) {
-        GetExpr& ge = ce.callee->get;
-        if (ge.object->kind == AstKind::ExprIdentifier) {
-            StringView type_name = ge.object->identifier.name;
-
-            // Check if it's a struct type
-            auto it = m_named_types.find(type_name);
-            if (it != m_named_types.end() && it->second->is_struct()) {
-                // This is a named constructor call: Type.ctor_name(...)
-                Type* struct_type = it->second;
-                // Store the struct type in callee's object for IR builder
-                ge.object->resolved_type = struct_type;
-                // Set constructor_name in CallExpr for later use
-                ce.constructor_name = ge.name;
-                return analyze_constructor_call(expr, struct_type, ge.name, ce.is_heap);
-            }
-        }
-    }
-
-    // Check if this is a super call: super() / super(args) / super.ctor_name() / super.method_name()
-    if (ce.callee->kind == AstKind::ExprSuper) {
-        SuperExpr& se = ce.callee->super_expr;
-
-        if (!m_symbols.is_in_struct()) {
-            error(expr->loc, "'super' used outside of struct context");
-            return m_types.error_type();
-        }
-
-        Type* struct_type = m_symbols.current_struct_type();
-        Type* parent_type = struct_type->struct_info.parent;
-
-        if (!parent_type) {
-            error(expr->loc, "'super' used in struct with no parent");
-            return m_types.error_type();
-        }
-
-        StructTypeInfo& parent_sti = parent_type->struct_info;
-
-        // If method_name is empty, this is super() or super(args) - constructor call
-        if (se.method_name.empty()) {
-            // Look for default constructor
-            const ConstructorInfo* ctor = nullptr;
-            for (const auto& constructor : parent_sti.constructors) {
-                if (constructor.name.empty()) {
-                    ctor = &constructor;
-                    break;
-                }
-            }
-
-            // If no default constructor but there are args, error
-            if (!ctor && ce.arguments.size() > 0) {
-                error_fmt(expr->loc, "parent struct '{}' has no constructor that takes arguments",
-                         parent_sti.name);
-                return m_types.void_type();
-            }
-
-            // Type-check arguments if constructor found
-            if (ctor) {
-                if (ce.arguments.size() != ctor->param_types.size()) {
-                    error_fmt(expr->loc, "parent constructor expects {} arguments but got {}",
-                             ctor->param_types.size(), ce.arguments.size());
-                    return m_types.void_type();
-                }
-
-                for (u32 i = 0; i < ce.arguments.size(); i++) {
-                    CallArg& arg = ce.arguments[i];
-                    Type* arg_type = analyze_expr(arg.expr);
-                    if (!check_assignable(ctor->param_types[i], arg_type, arg.expr->loc)) {
-                        // Error already reported
-                    }
-                }
-            }
-
-            // Store parent type in callee for IR builder
-            ce.callee->resolved_type = m_types.ref_type(parent_type);
-            return m_types.void_type();
-        }
-
-        // method_name is not empty - this is super.name()
-        // First try to find it as a constructor, then as a method
-        const ConstructorInfo* ctor = nullptr;
-        for (const auto& constructor : parent_sti.constructors) {
-            if (constructor.name == se.method_name) {
-                ctor = &constructor;
-                break;
-            }
-        }
-
-        if (ctor) {
-            // It's a named constructor call
-            if (ce.arguments.size() != ctor->param_types.size()) {
-                error_fmt(expr->loc, "parent constructor expects {} arguments but got {}",
-                         ctor->param_types.size(), ce.arguments.size());
-                return m_types.void_type();
-            }
-
-            for (u32 i = 0; i < ce.arguments.size(); i++) {
-                CallArg& arg = ce.arguments[i];
-                Type* arg_type = analyze_expr(arg.expr);
-                if (!check_assignable(ctor->param_types[i], arg_type, arg.expr->loc)) {
-                    // Error already reported
-                }
-            }
-
-            ce.callee->resolved_type = m_types.ref_type(parent_type);
-            return m_types.void_type();
-        }
-
-        // Not a constructor - try method
-        Type* found_in_type = nullptr;
-        const MethodInfo* mi = lookup_method_in_hierarchy(parent_type, se.method_name, &found_in_type);
-
-        if (mi) {
-            // It's a super method call
-            // Type-check arguments
-            if (ce.arguments.size() != mi->param_types.size()) {
-                error_fmt(expr->loc, "method '{}' expects {} arguments but got {}",
-                         se.method_name, mi->param_types.size(), ce.arguments.size());
-                return mi->return_type;
-            }
-
-            for (u32 i = 0; i < ce.arguments.size(); i++) {
-                CallArg& arg = ce.arguments[i];
-                Type* arg_type = analyze_expr(arg.expr);
-                if (!check_assignable(mi->param_types[i], arg_type, arg.expr->loc)) {
-                    // Error already reported
-                }
-            }
-
-            // Store found_in_type for IR builder to mangle correctly
-            ce.callee->resolved_type = m_types.ref_type(found_in_type);
-            return mi->return_type;
-        }
-
-        // Neither constructor nor method
-        error_fmt(expr->loc, "parent struct '{}' has no constructor or method '{}'",
-                 parent_sti.name, se.method_name);
-        return m_types.error_type();
-    }
-
-    // Check if this is a method call: obj.method(args)
-    // We need to detect this BEFORE calling analyze_expr(ce.callee) because
-    // that would return a function type with 'self' as the first parameter.
-    if (ce.callee->kind == AstKind::ExprGet) {
-        GetExpr& ge = ce.callee->get;
-
-        // First, analyze the object to get its type
-        Type* obj_type = analyze_expr(ge.object);
-        if (obj_type && !obj_type->is_error()) {
-            Type* base_type = obj_type->base_type();
-
-            // Check for List method call
-            if (base_type && base_type->is_list()) {
-                Type* elem_type = base_type->list_info.element_type;
-                StringView method = ge.name;
-
-                if (method == "len") {
-                    if (ce.arguments.size() != 0) {
-                        error_fmt(expr->loc, "len() takes no arguments but got {}", ce.arguments.size());
-                        return m_types.error_type();
-                    }
-                    ce.mangled_name = StringView(NATIVE_LIST_LEN, 8);
-                    ge.object->resolved_type = obj_type;
-                    return m_types.i32_type();
-                } else if (method == "cap") {
-                    if (ce.arguments.size() != 0) {
-                        error_fmt(expr->loc, "cap() takes no arguments but got {}", ce.arguments.size());
-                        return m_types.error_type();
-                    }
-                    ce.mangled_name = StringView(NATIVE_LIST_CAP, 8);
-                    ge.object->resolved_type = obj_type;
-                    return m_types.i32_type();
-                } else if (method == "push") {
-                    if (ce.arguments.size() != 1) {
-                        error_fmt(expr->loc, "push() takes 1 argument but got {}", ce.arguments.size());
-                        return m_types.error_type();
-                    }
-                    Type* arg_type = analyze_expr(ce.arguments[0].expr);
-                    if (arg_type && !arg_type->is_error()) {
-                        check_assignable(elem_type, arg_type, ce.arguments[0].expr->loc);
-                    }
-                    ce.mangled_name = StringView(NATIVE_LIST_PUSH, 9);
-                    ge.object->resolved_type = obj_type;
-                    return m_types.void_type();
-                } else if (method == "pop") {
-                    if (ce.arguments.size() != 0) {
-                        error_fmt(expr->loc, "pop() takes no arguments but got {}", ce.arguments.size());
-                        return m_types.error_type();
-                    }
-                    ce.mangled_name = StringView(NATIVE_LIST_POP, 8);
-                    ge.object->resolved_type = obj_type;
-                    return elem_type;
-                } else {
-                    error_fmt(expr->loc, "List has no method '{}'",
-                             method);
-                    return m_types.error_type();
-                }
-            }
-
-            if (base_type && base_type->is_struct()) {
-                // Look for a method with this name (walks inheritance hierarchy)
-                Type* found_in_type = nullptr;
-                const MethodInfo* mi = lookup_method_in_hierarchy(base_type, ge.name, &found_in_type);
-                if (mi) {
-                    // This is a method call!
-
-                    // Check argument count (NOT including implicit self)
-                    if (ce.arguments.size() != mi->param_types.size()) {
-                        error_fmt(expr->loc, "method expects {} arguments but got {}",
-                                 mi->param_types.size(), ce.arguments.size());
-                        return mi->return_type;
-                    }
-
-                    // Get MethodDecl for parameter modifiers
-                    MethodDecl* method_decl = mi->decl ? &mi->decl->method_decl : nullptr;
-
-                    // Check argument types and modifiers
-                    for (u32 j = 0; j < ce.arguments.size(); j++) {
-                        CallArg& arg = ce.arguments[j];
-
-                        // Get expected modifier from MethodDecl
-                        ParamModifier expected_mod = ParamModifier::None;
-                        if (method_decl && j < method_decl->params.size()) {
-                            expected_mod = method_decl->params[j].modifier;
-                        }
-
-                        // Check modifier matches
-                        if (expected_mod != arg.modifier) {
-                            if (expected_mod == ParamModifier::Out) {
-                                error(arg.expr->loc, "argument requires 'out' modifier");
-                            } else if (expected_mod == ParamModifier::Inout) {
-                                error(arg.expr->loc, "argument requires 'inout' modifier");
-                            } else if (arg.modifier != ParamModifier::None) {
-                                error(arg.modifier_loc, "unexpected modifier for this parameter");
-                            }
-                        }
-
-                        // Check lvalue requirement for out/inout
-                        if (arg.modifier == ParamModifier::Out || arg.modifier == ParamModifier::Inout) {
-                            if (!is_lvalue(arg.expr)) {
-                                error(arg.expr->loc, "'out'/'inout' argument must be a variable");
-                            }
-                        }
-
-                        // Analyze argument expression
-                        Type* arg_type = analyze_expr(arg.expr);
-
-                        // Type check (skip for 'out' since it's write-only)
-                        if (arg.modifier != ParamModifier::Out) {
-                            if (!check_assignable(mi->param_types[j], arg_type, arg.expr->loc)) {
-                                // Error already reported
-                            }
-                        }
-                    }
-
-                    // Set callee's resolved_type to a function type for IR builder
-                    // The function type includes 'self' as the first parameter
-                    // Use found_in_type for proper method resolution (inheritance)
-                    u32 total_params = 1 + mi->param_types.size();
-                    Type** ptypes = reinterpret_cast<Type**>(
-                        m_allocator.alloc_bytes(sizeof(Type*) * total_params, alignof(Type*)));
-                    ptypes[0] = m_types.ref_type(found_in_type);  // Use the type where method was found
-                    for (u32 j = 0; j < mi->param_types.size(); j++) {
-                        ptypes[j + 1] = mi->param_types[j];
-                    }
-                    ce.callee->resolved_type = m_types.function_type(
-                        Span<Type*>(ptypes, total_params), mi->return_type);
-
-                    // Store the struct type where method was found in the GetExpr
-                    // IR builder will use this for correct method name mangling
-                    ge.object->resolved_type = obj_type;  // Keep original object type
-
-                    return mi->return_type;
-                }
-            }
-        }
-    }
-
-    // Regular function call
-    Type* callee_type = analyze_expr(ce.callee);
-    if (callee_type->is_error()) return m_types.error_type();
-
-    if (!callee_type->is_function()) {
-        error(ce.callee->loc, "expression is not callable");
-        return m_types.error_type();
-    }
-
-    FunctionTypeInfo& fti = callee_type->func_info;
-
-    // Check argument count
-    if (ce.arguments.size() != fti.param_types.size()) {
-        error_fmt(expr->loc, "expected {} arguments but got {}",
-                 fti.param_types.size(), ce.arguments.size());
-        return fti.return_type;
-    }
-
-    // Try to get the FunDecl to access parameter modifiers
-    FunDecl* fun_decl = nullptr;
-    if (ce.callee->kind == AstKind::ExprIdentifier) {
-        Symbol* sym = m_symbols.lookup(ce.callee->identifier.name);
-        if (sym && sym->kind == SymbolKind::Function && sym->decl) {
-            fun_decl = &sym->decl->fun_decl;
-        }
-    }
-
-    // Check argument types and modifiers
-    for (u32 i = 0; i < ce.arguments.size(); i++) {
-        CallArg& arg = ce.arguments[i];
-
-        // Get expected modifier from FunDecl
+void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_types,
+                                       Span<Param> params, SourceLocation loc) {
+    for (u32 i = 0; i < args.size(); i++) {
+        CallArg& arg = args[i];
+
+        // Get expected modifier from params (if available)
         ParamModifier expected_mod = ParamModifier::None;
-        if (fun_decl && i < fun_decl->params.size()) {
-            expected_mod = fun_decl->params[i].modifier;
+        if (params.data() && i < params.size()) {
+            expected_mod = params[i].modifier;
         }
 
         // Check modifier matches
@@ -2875,15 +2286,437 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         // Analyze argument expression
         Type* arg_type = analyze_expr(arg.expr);
 
-        // Type check (skip for 'out' since it's write-only - callee doesn't read the value)
+        // Type check (skip for 'out' since it's write-only)
         if (arg.modifier != ParamModifier::Out) {
-            if (!check_assignable(fti.param_types[i], arg_type, arg.expr->loc)) {
+            check_assignable(param_types[i], arg_type, arg.expr->loc);
+        }
+    }
+}
+
+Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, StringView func_name) {
+    Decl* template_decl = m_generics.get_generic_fun_decl(func_name);
+    FunDecl& template_fd = template_decl->fun_decl;
+
+    // Validate type arg count
+    if (ce.type_args.size() != template_fd.type_params.size()) {
+        error_fmt(expr->loc, "generic function '{}' expects {} type arguments but got {}",
+                 func_name, template_fd.type_params.size(), ce.type_args.size());
+        return m_types.error_type();
+    }
+
+    // Resolve type args to concrete types
+    Vector<Type*> type_arg_types;
+    for (auto& type_arg : ce.type_args) {
+        Type* arg_type = resolve_type_expr(type_arg);
+        if (!arg_type || arg_type->is_error()) return m_types.error_type();
+        type_arg_types.push_back(arg_type);
+    }
+
+    // Instantiate the generic function
+    Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
+    StringView mangled = m_generics.instantiate_fun(func_name, type_args);
+    ce.mangled_name = mangled;
+
+    // Use the instantiated function's substituted types for type checking
+    GenericFunInstance* inst = m_generics.find_fun_instance(mangled);
+    FunDecl& inst_fd = inst->instantiated_decl->fun_decl;
+
+    // Resolve parameter types and type-check arguments
+    if (ce.arguments.size() != inst_fd.params.size()) {
+        error_fmt(expr->loc, "function '{}' expects {} arguments but got {}",
+                 func_name, inst_fd.params.size(), ce.arguments.size());
+        return m_types.error_type();
+    }
+
+    for (u32 i = 0; i < ce.arguments.size(); i++) {
+        CallArg& arg = ce.arguments[i];
+        Type* arg_type = analyze_expr(arg.expr);
+
+        // Resolve the parameter type from the instantiated function
+        Type* param_type = nullptr;
+        if (inst_fd.params[i].type) {
+            param_type = resolve_type_expr(inst_fd.params[i].type);
+        }
+
+        if (param_type && !param_type->is_error() && arg_type && !arg_type->is_error()) {
+            check_assignable(param_type, arg_type, arg.expr->loc);
+        }
+    }
+
+    // Resolve return type from the instantiated function
+    Type* return_type = m_types.void_type();
+    if (inst_fd.return_type) {
+        return_type = resolve_type_expr(inst_fd.return_type);
+    }
+
+    return return_type;
+}
+
+Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) {
+    if (ce.type_args.size() != 1) {
+        error(expr->loc, "List requires exactly 1 type argument");
+        return m_types.error_type();
+    }
+    Type* elem_type = resolve_type_expr(ce.type_args[0]);
+    if (!elem_type || elem_type->is_error()) return m_types.error_type();
+
+    Type* list_type = m_types.list_type(elem_type);
+
+    if (ce.arguments.size() == 0) {
+        // List<i32>() - empty list
+        ce.mangled_name = StringView(NATIVE_LIST_NEW, 8);
+        ce.callee->resolved_type = list_type;
+        return list_type;
+    } else if (ce.arguments.size() == 1) {
+        // List<i32>(cap) - list with capacity
+        Type* arg_type = analyze_expr(ce.arguments[0].expr);
+        if (arg_type && !arg_type->is_error()) {
+            check_assignable(m_types.i32_type(), arg_type, ce.arguments[0].expr->loc);
+        }
+        ce.mangled_name = StringView(NATIVE_LIST_NEW, 8);
+        ce.callee->resolved_type = list_type;
+        return list_type;
+    } else {
+        error_fmt(expr->loc, "List constructor takes 0 or 1 arguments but got {}",
+                 ce.arguments.size());
+        return m_types.error_type();
+    }
+}
+
+Type* SemanticAnalyzer::analyze_generic_struct_constructor_call(Expr* expr, CallExpr& ce, StringView func_name) {
+    // Resolve type args
+    Vector<Type*> type_arg_types;
+    for (auto& type_arg : ce.type_args) {
+        Type* arg_type = resolve_type_expr(type_arg);
+        if (!arg_type || arg_type->is_error()) return m_types.error_type();
+        type_arg_types.push_back(arg_type);
+    }
+
+    // Instantiate the struct
+    Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
+    StringView mangled = m_generics.instantiate_struct(func_name, type_args);
+    GenericStructInstance* inst = m_generics.find_struct_instance(mangled);
+    Type* struct_type = inst->concrete_type;
+
+    ce.mangled_name = mangled;
+    ce.callee->resolved_type = struct_type;
+    return analyze_constructor_call(expr, struct_type, ce.constructor_name, ce.is_heap);
+}
+
+Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
+    SuperExpr& se = ce.callee->super_expr;
+
+    if (!m_symbols.is_in_struct()) {
+        error(expr->loc, "'super' used outside of struct context");
+        return m_types.error_type();
+    }
+
+    Type* struct_type = m_symbols.current_struct_type();
+    Type* parent_type = struct_type->struct_info.parent;
+
+    if (!parent_type) {
+        error(expr->loc, "'super' used in struct with no parent");
+        return m_types.error_type();
+    }
+
+    StructTypeInfo& parent_sti = parent_type->struct_info;
+
+    // If method_name is empty, this is super() or super(args) - constructor call
+    if (se.method_name.empty()) {
+        // Look for default constructor
+        const ConstructorInfo* ctor = nullptr;
+        for (const auto& constructor : parent_sti.constructors) {
+            if (constructor.name.empty()) {
+                ctor = &constructor;
+                break;
+            }
+        }
+
+        // If no default constructor but there are args, error
+        if (!ctor && ce.arguments.size() > 0) {
+            error_fmt(expr->loc, "parent struct '{}' has no constructor that takes arguments",
+                     parent_sti.name);
+            return m_types.void_type();
+        }
+
+        // Type-check arguments if constructor found
+        if (ctor) {
+            if (ce.arguments.size() != ctor->param_types.size()) {
+                error_fmt(expr->loc, "parent constructor expects {} arguments but got {}",
+                         ctor->param_types.size(), ce.arguments.size());
+                return m_types.void_type();
+            }
+
+            for (u32 i = 0; i < ce.arguments.size(); i++) {
+                CallArg& arg = ce.arguments[i];
+                Type* arg_type = analyze_expr(arg.expr);
+                if (!check_assignable(ctor->param_types[i], arg_type, arg.expr->loc)) {
+                    // Error already reported
+                }
+            }
+        }
+
+        // Store parent type in callee for IR builder
+        ce.callee->resolved_type = m_types.ref_type(parent_type);
+        return m_types.void_type();
+    }
+
+    // method_name is not empty - this is super.name()
+    // First try to find it as a constructor, then as a method
+    const ConstructorInfo* ctor = nullptr;
+    for (const auto& constructor : parent_sti.constructors) {
+        if (constructor.name == se.method_name) {
+            ctor = &constructor;
+            break;
+        }
+    }
+
+    if (ctor) {
+        // It's a named constructor call
+        if (ce.arguments.size() != ctor->param_types.size()) {
+            error_fmt(expr->loc, "parent constructor expects {} arguments but got {}",
+                     ctor->param_types.size(), ce.arguments.size());
+            return m_types.void_type();
+        }
+
+        for (u32 i = 0; i < ce.arguments.size(); i++) {
+            CallArg& arg = ce.arguments[i];
+            Type* arg_type = analyze_expr(arg.expr);
+            if (!check_assignable(ctor->param_types[i], arg_type, arg.expr->loc)) {
                 // Error already reported
+            }
+        }
+
+        ce.callee->resolved_type = m_types.ref_type(parent_type);
+        return m_types.void_type();
+    }
+
+    // Not a constructor - try method
+    Type* found_in_type = nullptr;
+    const MethodInfo* mi = lookup_method_in_hierarchy(parent_type, se.method_name, &found_in_type);
+
+    if (mi) {
+        // It's a super method call
+        // Type-check arguments
+        if (ce.arguments.size() != mi->param_types.size()) {
+            error_fmt(expr->loc, "method '{}' expects {} arguments but got {}",
+                     se.method_name, mi->param_types.size(), ce.arguments.size());
+            return mi->return_type;
+        }
+
+        for (u32 i = 0; i < ce.arguments.size(); i++) {
+            CallArg& arg = ce.arguments[i];
+            Type* arg_type = analyze_expr(arg.expr);
+            if (!check_assignable(mi->param_types[i], arg_type, arg.expr->loc)) {
+                // Error already reported
+            }
+        }
+
+        // Store found_in_type for IR builder to mangle correctly
+        ce.callee->resolved_type = m_types.ref_type(found_in_type);
+        return mi->return_type;
+    }
+
+    // Neither constructor nor method
+    error_fmt(expr->loc, "parent struct '{}' has no constructor or method '{}'",
+             parent_sti.name, se.method_name);
+    return m_types.error_type();
+}
+
+Type* SemanticAnalyzer::analyze_list_method_call(Expr* expr, CallExpr& ce, GetExpr& ge,
+                                                  Type* obj_type, Type* base_type) {
+    Type* elem_type = base_type->list_info.element_type;
+    StringView method = ge.name;
+
+    if (method == "len") {
+        if (ce.arguments.size() != 0) {
+            error_fmt(expr->loc, "len() takes no arguments but got {}", ce.arguments.size());
+            return m_types.error_type();
+        }
+        ce.mangled_name = StringView(NATIVE_LIST_LEN, 8);
+        ge.object->resolved_type = obj_type;
+        return m_types.i32_type();
+    } else if (method == "cap") {
+        if (ce.arguments.size() != 0) {
+            error_fmt(expr->loc, "cap() takes no arguments but got {}", ce.arguments.size());
+            return m_types.error_type();
+        }
+        ce.mangled_name = StringView(NATIVE_LIST_CAP, 8);
+        ge.object->resolved_type = obj_type;
+        return m_types.i32_type();
+    } else if (method == "push") {
+        if (ce.arguments.size() != 1) {
+            error_fmt(expr->loc, "push() takes 1 argument but got {}", ce.arguments.size());
+            return m_types.error_type();
+        }
+        Type* arg_type = analyze_expr(ce.arguments[0].expr);
+        if (arg_type && !arg_type->is_error()) {
+            check_assignable(elem_type, arg_type, ce.arguments[0].expr->loc);
+        }
+        ce.mangled_name = StringView(NATIVE_LIST_PUSH, 9);
+        ge.object->resolved_type = obj_type;
+        return m_types.void_type();
+    } else if (method == "pop") {
+        if (ce.arguments.size() != 0) {
+            error_fmt(expr->loc, "pop() takes no arguments but got {}", ce.arguments.size());
+            return m_types.error_type();
+        }
+        ce.mangled_name = StringView(NATIVE_LIST_POP, 8);
+        ge.object->resolved_type = obj_type;
+        return elem_type;
+    } else {
+        error_fmt(expr->loc, "List has no method '{}'", method);
+        return m_types.error_type();
+    }
+}
+
+Type* SemanticAnalyzer::analyze_struct_method_call(Expr* expr, CallExpr& ce, GetExpr& ge,
+                                                    Type* obj_type, Type* base_type) {
+    // Look for a method with this name (walks inheritance hierarchy)
+    Type* found_in_type = nullptr;
+    const MethodInfo* mi = lookup_method_in_hierarchy(base_type, ge.name, &found_in_type);
+    if (!mi) return nullptr;  // Not a method - caller will fall through
+
+    // Check argument count (NOT including implicit self)
+    if (ce.arguments.size() != mi->param_types.size()) {
+        error_fmt(expr->loc, "method expects {} arguments but got {}",
+                 mi->param_types.size(), ce.arguments.size());
+        return mi->return_type;
+    }
+
+    // Get params for modifier info
+    MethodDecl* method_decl = mi->decl ? &mi->decl->method_decl : nullptr;
+    Span<Param> params = method_decl ? method_decl->params : Span<Param>();
+    check_call_args(ce.arguments, mi->param_types, params, expr->loc);
+
+    // Set callee's resolved_type to a function type for IR builder
+    // The function type includes 'self' as the first parameter
+    // Use found_in_type for proper method resolution (inheritance)
+    u32 total_params = 1 + mi->param_types.size();
+    Type** ptypes = reinterpret_cast<Type**>(
+        m_allocator.alloc_bytes(sizeof(Type*) * total_params, alignof(Type*)));
+    ptypes[0] = m_types.ref_type(found_in_type);  // Use the type where method was found
+    for (u32 j = 0; j < mi->param_types.size(); j++) {
+        ptypes[j + 1] = mi->param_types[j];
+    }
+    ce.callee->resolved_type = m_types.function_type(
+        Span<Type*>(ptypes, total_params), mi->return_type);
+
+    // Store the struct type where method was found in the GetExpr
+    // IR builder will use this for correct method name mangling
+    ge.object->resolved_type = obj_type;  // Keep original object type
+
+    return mi->return_type;
+}
+
+Type* SemanticAnalyzer::analyze_regular_fun_call(Expr* expr, CallExpr& ce) {
+    Type* callee_type = analyze_expr(ce.callee);
+    if (callee_type->is_error()) return m_types.error_type();
+
+    if (!callee_type->is_function()) {
+        error(ce.callee->loc, "expression is not callable");
+        return m_types.error_type();
+    }
+
+    FunctionTypeInfo& fti = callee_type->func_info;
+
+    // Check argument count
+    if (ce.arguments.size() != fti.param_types.size()) {
+        error_fmt(expr->loc, "expected {} arguments but got {}",
+                 fti.param_types.size(), ce.arguments.size());
+        return fti.return_type;
+    }
+
+    // Try to get the FunDecl to access parameter modifiers
+    Span<Param> params;
+    if (ce.callee->kind == AstKind::ExprIdentifier) {
+        Symbol* sym = m_symbols.lookup(ce.callee->identifier.name);
+        if (sym && sym->kind == SymbolKind::Function && sym->decl) {
+            params = sym->decl->fun_decl.params;
+        }
+    }
+
+    check_call_args(ce.arguments, fti.param_types, params, expr->loc);
+    return fti.return_type;
+}
+
+Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
+    CallExpr& ce = expr->call;
+
+    // Primitive type cast: i32(x), f64(x), bool(x)
+    if (ce.callee->kind == AstKind::ExprIdentifier) {
+        StringView type_name = ce.callee->identifier.name;
+        Type* target_type = m_types.primitive_by_name(type_name);
+        if (target_type != nullptr && !target_type->is_void() && !target_type->is_error()) {
+            return analyze_primitive_cast(expr, target_type);
+        }
+    }
+
+    // Generic call with type args: name<T>(args)
+    if (ce.type_args.size() > 0 && ce.callee->kind == AstKind::ExprIdentifier) {
+        StringView func_name = ce.callee->identifier.name;
+
+        if (m_generics.is_generic_fun(func_name)) {
+            return analyze_generic_fun_call(expr, ce, func_name);
+        }
+        if (func_name == "List") {
+            return analyze_list_constructor_call(expr, ce);
+        }
+        if (m_generics.is_generic_struct(func_name)) {
+            return analyze_generic_struct_constructor_call(expr, ce, func_name);
+        }
+    }
+
+    // Constructor call: Type(args)
+    if (ce.callee->kind == AstKind::ExprIdentifier) {
+        StringView type_name = ce.callee->identifier.name;
+        auto it = m_named_types.find(type_name);
+        if (it != m_named_types.end() && it->second->is_struct()) {
+            Type* struct_type = it->second;
+            ce.callee->resolved_type = struct_type;
+            return analyze_constructor_call(expr, struct_type, ce.constructor_name, ce.is_heap);
+        }
+    }
+
+    // Named constructor call: Type.ctor_name(args)
+    if (ce.callee->kind == AstKind::ExprGet) {
+        GetExpr& ge = ce.callee->get;
+        if (ge.object->kind == AstKind::ExprIdentifier) {
+            StringView type_name = ge.object->identifier.name;
+            auto it = m_named_types.find(type_name);
+            if (it != m_named_types.end() && it->second->is_struct()) {
+                Type* struct_type = it->second;
+                ge.object->resolved_type = struct_type;
+                ce.constructor_name = ge.name;
+                return analyze_constructor_call(expr, struct_type, ge.name, ce.is_heap);
             }
         }
     }
 
-    return fti.return_type;
+    // Super call: super() / super.name()
+    if (ce.callee->kind == AstKind::ExprSuper) {
+        return analyze_super_call(expr, ce);
+    }
+
+    // Method call: obj.method(args)
+    if (ce.callee->kind == AstKind::ExprGet) {
+        GetExpr& ge = ce.callee->get;
+        Type* obj_type = analyze_expr(ge.object);
+        if (obj_type && !obj_type->is_error()) {
+            Type* base_type = obj_type->base_type();
+
+            if (base_type && base_type->is_list()) {
+                return analyze_list_method_call(expr, ce, ge, obj_type, base_type);
+            }
+            if (base_type && base_type->is_struct()) {
+                Type* result = analyze_struct_method_call(expr, ce, ge, obj_type, base_type);
+                if (result) return result;
+            }
+        }
+    }
+
+    // Regular function call (fallback)
+    return analyze_regular_fun_call(expr, ce);
 }
 
 bool SemanticAnalyzer::can_cast(Type* source, Type* target) {
@@ -3289,13 +3122,7 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
             type_arg_types.push_back(arg_type);
         }
 
-        Type** ta_data = reinterpret_cast<Type**>(
-            m_allocator.alloc_bytes(sizeof(Type*) * type_arg_types.size(), alignof(Type*)));
-        for (u32 i = 0; i < type_arg_types.size(); i++) {
-            ta_data[i] = type_arg_types[i];
-        }
-        Span<Type*> type_args(ta_data, type_arg_types.size());
-
+        Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
         StringView mangled = m_generics.instantiate_struct(sl.type_name, type_args);
         GenericStructInstance* inst = m_generics.find_struct_instance(mangled);
         type = inst->concrete_type;
@@ -3421,7 +3248,7 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
     return sl.is_heap ? m_types.uniq_type(type) : type;
 }
 
-// Type checking helpers
+// ===== Type Checking Helpers =====
 
 bool SemanticAnalyzer::check_assignable(Type* target, Type* source, SourceLocation loc) {
     if (!target || !source) return false;
