@@ -1,6 +1,7 @@
 #include "roxy/compiler/ir_builder.hpp"
 #include "roxy/compiler/generics.hpp"
 #include "roxy/compiler/module_registry.hpp"
+#include "roxy/core/format.hpp"
 #include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/natives.hpp"
 
@@ -2850,29 +2851,23 @@ IROp IRBuilder::get_unary_op(UnaryOp op, Type* type) {
 
 StringView IRBuilder::mangle_method(StringView struct_name, StringView method_name) {
     char name_buf[256];
-    snprintf(name_buf, sizeof(name_buf), "%.*s$$%.*s",
-             static_cast<int>(struct_name.size()), struct_name.data(),
-             static_cast<int>(method_name.size()), method_name.data());
-    u32 len = static_cast<u32>(strlen(name_buf));
-    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-    memcpy(name_ptr, name_buf, len + 1);
-    return StringView(name_ptr, len);
+    i32 len = format_to(name_buf, sizeof(name_buf), "{}$${}", struct_name, method_name);
+    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(len) + 1, 1));
+    memcpy(name_ptr, name_buf, static_cast<u32>(len) + 1);
+    return StringView(name_ptr, static_cast<u32>(len));
 }
 
 StringView IRBuilder::mangle_constructor(StringView struct_name, StringView ctor_name) {
     char name_buf[256];
+    i32 len;
     if (ctor_name.empty()) {
-        snprintf(name_buf, sizeof(name_buf), "%.*s$$new",
-                 static_cast<int>(struct_name.size()), struct_name.data());
+        len = format_to(name_buf, sizeof(name_buf), "{}$$new", struct_name);
     } else {
-        snprintf(name_buf, sizeof(name_buf), "%.*s$$new$$%.*s",
-                 static_cast<int>(struct_name.size()), struct_name.data(),
-                 static_cast<int>(ctor_name.size()), ctor_name.data());
+        len = format_to(name_buf, sizeof(name_buf), "{}$$new$${}", struct_name, ctor_name);
     }
-    u32 len = static_cast<u32>(strlen(name_buf));
-    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-    memcpy(name_ptr, name_buf, len + 1);
-    return StringView(name_ptr, len);
+    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(len) + 1, 1));
+    memcpy(name_ptr, name_buf, static_cast<u32>(len) + 1);
+    return StringView(name_ptr, static_cast<u32>(len));
 }
 
 Type* IRBuilder::apply_ref_kind(Type* base_type, RefKind ref_kind) {
@@ -2975,18 +2970,15 @@ void IRBuilder::setup_parameters(Span<Param> params, Type* self_type) {
 
 StringView IRBuilder::mangle_destructor(StringView struct_name, StringView dtor_name) {
     char name_buf[256];
+    i32 len;
     if (dtor_name.empty()) {
-        snprintf(name_buf, sizeof(name_buf), "%.*s$$delete",
-                 static_cast<int>(struct_name.size()), struct_name.data());
+        len = format_to(name_buf, sizeof(name_buf), "{}$$delete", struct_name);
     } else {
-        snprintf(name_buf, sizeof(name_buf), "%.*s$$delete$$%.*s",
-                 static_cast<int>(struct_name.size()), struct_name.data(),
-                 static_cast<int>(dtor_name.size()), dtor_name.data());
+        len = format_to(name_buf, sizeof(name_buf), "{}$$delete$${}", struct_name, dtor_name);
     }
-    u32 len = static_cast<u32>(strlen(name_buf));
-    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-    memcpy(name_ptr, name_buf, len + 1);
-    return StringView(name_ptr, len);
+    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(len) + 1, 1));
+    memcpy(name_ptr, name_buf, static_cast<u32>(len) + 1);
+    return StringView(name_ptr, static_cast<u32>(len));
 }
 
 }

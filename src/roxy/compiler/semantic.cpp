@@ -3,8 +3,6 @@
 #include "roxy/vm/natives.hpp"
 #include "roxy/vm/binding/registry.hpp"
 
-#include <cstdarg>
-#include <cstdio>
 #include <cstring>
 
 namespace rx {
@@ -176,24 +174,6 @@ void SemanticAnalyzer::error(SourceLocation loc, const char* message) {
     m_errors.push_back({loc, message, false});
 }
 
-void SemanticAnalyzer::error_fmt(SourceLocation loc, const char* fmt, ...) {
-    if (too_many_errors()) return;
-
-    // Format the message
-    char buffer[512];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
-
-    // Allocate a copy in the bump allocator
-    u32 len = static_cast<u32>(strlen(buffer));
-    char* msg = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-    memcpy(msg, buffer, len + 1);
-
-    m_errors.push_back({loc, msg, true});
-}
-
 // Pass 1: Collect type declarations
 
 void SemanticAnalyzer::collect_type_declarations(Program* program) {
@@ -217,8 +197,7 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
 
             // Check for duplicate type names
             if (m_named_types.find(name) != m_named_types.end()) {
-                error_fmt(decl->loc, "duplicate type declaration '%.*s'",
-                         name.size(), name.data());
+                error_fmt(decl->loc, "duplicate type declaration '{}'", name);
                 continue;
             }
 
@@ -235,8 +214,7 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
 
             // Check for duplicate type names
             if (m_named_types.find(name) != m_named_types.end()) {
-                error_fmt(decl->loc, "duplicate type declaration '%.*s'",
-                         name.size(), name.data());
+                error_fmt(decl->loc, "duplicate type declaration '{}'", name);
                 continue;
             }
 
@@ -253,8 +231,7 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
             // Check for duplicate type/trait names
             if (m_named_types.find(name) != m_named_types.end() ||
                 m_trait_types.find(name) != m_trait_types.end()) {
-                error_fmt(decl->loc, "duplicate type declaration '%.*s'",
-                         name.size(), name.data());
+                error_fmt(decl->loc, "duplicate type declaration '{}'", name);
                 continue;
             }
 
@@ -286,11 +263,9 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             if (!sd.parent_name.empty()) {
                 auto it = m_named_types.find(sd.parent_name);
                 if (it == m_named_types.end()) {
-                    error_fmt(decl->loc, "unknown parent type '%.*s'",
-                             sd.parent_name.size(), sd.parent_name.data());
+                    error_fmt(decl->loc, "unknown parent type '{}'", sd.parent_name);
                 } else if (it->second->kind != TypeKind::Struct) {
-                    error_fmt(decl->loc, "parent type '%.*s' is not a struct",
-                             sd.parent_name.size(), sd.parent_name.data());
+                    error_fmt(decl->loc, "parent type '{}' is not a struct", sd.parent_name);
                 } else {
                     type->struct_info.parent = it->second;
                 }
@@ -376,8 +351,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                     for (const auto& case_name : case_decl.case_names) {
                         Symbol* sym = m_symbols.lookup(case_name);
                         if (!sym || sym->kind != SymbolKind::EnumVariant) {
-                            error_fmt(case_decl.loc, "'%.*s' is not a known enum variant",
-                                     case_name.size(), case_name.data());
+                            error_fmt(case_decl.loc, "'{}' is not a known enum variant", case_name);
                         } else {
                             discriminant_value = sym->enum_variant.value;
                         }
@@ -573,16 +547,13 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                 // This is a trait implementation (fun Type.method(...) for Trait)
                 auto struct_it = m_named_types.find(md.struct_name);
                 if (struct_it == m_named_types.end()) {
-                    error_fmt(decl->loc, "method for unknown type '%.*s'",
-                             md.struct_name.size(), md.struct_name.data());
+                    error_fmt(decl->loc, "method for unknown type '{}'", md.struct_name);
                 } else if (struct_it->second->kind != TypeKind::Struct) {
-                    error_fmt(decl->loc, "'%.*s' is not a struct type",
-                             md.struct_name.size(), md.struct_name.data());
+                    error_fmt(decl->loc, "'{}' is not a struct type", md.struct_name);
                 } else {
                     auto impl_trait_it = m_trait_types.find(md.trait_name);
                     if (impl_trait_it == m_trait_types.end()) {
-                        error_fmt(decl->loc, "unknown trait '%.*s'",
-                                 md.trait_name.size(), md.trait_name.data());
+                        error_fmt(decl->loc, "unknown trait '{}'", md.trait_name);
                     } else {
                         m_pending_trait_impls.push_back({decl, struct_it->second, impl_trait_it->second});
                     }
@@ -601,11 +572,9 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             if (!td.parent_name.empty()) {
                 auto pit = m_trait_types.find(td.parent_name);
                 if (pit == m_trait_types.end()) {
-                    error_fmt(decl->loc, "unknown parent trait '%.*s'",
-                             td.parent_name.size(), td.parent_name.data());
+                    error_fmt(decl->loc, "unknown parent trait '{}'", td.parent_name);
                 } else if (pit->second == trait_type) {
-                    error_fmt(decl->loc, "trait '%.*s' cannot inherit from itself",
-                             td.name.size(), td.name.data());
+                    error_fmt(decl->loc, "trait '{}' cannot inherit from itself", td.name);
                 } else {
                     trait_type->trait_info.parent = pit->second;
                 }
@@ -806,8 +775,8 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             // Validate arg count
             Decl* template_decl = m_generics.get_generic_struct_decl(type_expr->name);
             if (template_decl->struct_decl.type_params.size() != type_arg_types.size()) {
-                error_fmt(type_expr->loc, "generic struct '%.*s' expects %u type arguments but got %u",
-                         type_expr->name.size(), type_expr->name.data(),
+                error_fmt(type_expr->loc, "generic struct '{}' expects {} type arguments but got {}",
+                         type_expr->name,
                          template_decl->struct_decl.type_params.size(),
                          type_arg_types.size());
                 return m_types.error_type();
@@ -888,8 +857,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
         }
 
         if (!base_type) {
-            error_fmt(type_expr->loc, "unknown type '%.*s'",
-                     type_expr->name.size(), type_expr->name.data());
+            error_fmt(type_expr->loc, "unknown type '{}'", type_expr->name);
             return m_types.error_type();
         }
     }
@@ -928,7 +896,7 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
 
     // Check for duplicate in current scope
     if (m_symbols.lookup_local(vd.name)) {
-        error_fmt(decl->loc, "redefinition of '%.*s'", vd.name.size(), vd.name.data());
+        error_fmt(decl->loc, "redefinition of '{}'", vd.name);
         return;
     }
 
@@ -979,7 +947,7 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
 
         // Check for duplicate parameter names
         if (m_symbols.lookup_local(p.name)) {
-            error_fmt(p.loc, "duplicate parameter name '%.*s'", p.name.size(), p.name.data());
+            error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
         } else {
             m_symbols.define_parameter(p.name, ptype, p.loc, i);
         }
@@ -1028,8 +996,7 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
     // Look up the module by the full path
     ModuleInfo* module = m_modules.find_module(imp.module_path);
     if (!module) {
-        error_fmt(decl->loc, "unknown module '%.*s'",
-                 imp.module_path.size(), imp.module_path.data());
+        error_fmt(decl->loc, "unknown module '{}'", imp.module_path);
         return;
     }
 
@@ -1040,17 +1007,15 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
             // Find the export in the module
             const ModuleExport* exp = m_modules.find_export(module, name.name);
             if (!exp) {
-                error_fmt(name.loc, "module '%.*s' has no export '%.*s'",
-                         imp.module_path.size(), imp.module_path.data(),
-                         name.name.size(), name.name.data());
+                error_fmt(name.loc, "module '{}' has no export '{}'",
+                         imp.module_path, name.name);
                 continue;
             }
 
             // Check visibility
             if (!exp->is_pub) {
-                error_fmt(name.loc, "'%.*s' is not public in module '%.*s'",
-                         name.name.size(), name.name.data(),
-                         imp.module_path.size(), imp.module_path.data());
+                error_fmt(name.loc, "'{}' is not public in module '{}'",
+                         name.name, imp.module_path);
                 continue;
             }
 
@@ -1059,8 +1024,8 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
 
             // Check for duplicate symbol
             if (m_symbols.lookup_local(local_name)) {
-                error_fmt(name.loc, "redefinition of '%.*s'",
-                         local_name.size(), local_name.data());
+                error_fmt(name.loc, "redefinition of '{}'",
+                         local_name);
                 continue;
             }
 
@@ -1091,15 +1056,15 @@ void SemanticAnalyzer::analyze_constructor_decl(Decl* decl) {
     // Look up the struct type
     auto it = m_named_types.find(cd.struct_name);
     if (it == m_named_types.end()) {
-        error_fmt(decl->loc, "constructor for unknown struct '%.*s'",
-                 cd.struct_name.size(), cd.struct_name.data());
+        error_fmt(decl->loc, "constructor for unknown struct '{}'",
+                 cd.struct_name);
         return;
     }
 
     Type* struct_type = it->second;
     if (struct_type->kind != TypeKind::Struct) {
-        error_fmt(decl->loc, "'%.*s' is not a struct type",
-                 cd.struct_name.size(), cd.struct_name.data());
+        error_fmt(decl->loc, "'{}' is not a struct type",
+                 cd.struct_name);
         return;
     }
 
@@ -1107,12 +1072,11 @@ void SemanticAnalyzer::analyze_constructor_decl(Decl* decl) {
     for (const auto& ctor : struct_type->struct_info.constructors) {
         if (ctor.name == cd.name) {
             if (cd.name.empty()) {
-                error_fmt(decl->loc, "duplicate default constructor for struct '%.*s'",
-                         cd.struct_name.size(), cd.struct_name.data());
+                error_fmt(decl->loc, "duplicate default constructor for struct '{}'",
+                         cd.struct_name);
             } else {
-                error_fmt(decl->loc, "duplicate constructor '%.*s' for struct '%.*s'",
-                         cd.name.size(), cd.name.data(),
-                         cd.struct_name.size(), cd.struct_name.data());
+                error_fmt(decl->loc, "duplicate constructor '{}' for struct '{}'",
+                         cd.name, cd.struct_name);
             }
             return;
         }
@@ -1161,15 +1125,15 @@ void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
     // Look up the struct type
     auto it = m_named_types.find(dd.struct_name);
     if (it == m_named_types.end()) {
-        error_fmt(decl->loc, "destructor for unknown struct '%.*s'",
-                 dd.struct_name.size(), dd.struct_name.data());
+        error_fmt(decl->loc, "destructor for unknown struct '{}'",
+                 dd.struct_name);
         return;
     }
 
     Type* struct_type = it->second;
     if (struct_type->kind != TypeKind::Struct) {
-        error_fmt(decl->loc, "'%.*s' is not a struct type",
-                 dd.struct_name.size(), dd.struct_name.data());
+        error_fmt(decl->loc, "'{}' is not a struct type",
+                 dd.struct_name);
         return;
     }
 
@@ -1177,12 +1141,11 @@ void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
     for (const auto& dtor : struct_type->struct_info.destructors) {
         if (dtor.name == dd.name) {
             if (dd.name.empty()) {
-                error_fmt(decl->loc, "duplicate default destructor for struct '%.*s'",
-                         dd.struct_name.size(), dd.struct_name.data());
+                error_fmt(decl->loc, "duplicate default destructor for struct '{}'",
+                         dd.struct_name);
             } else {
-                error_fmt(decl->loc, "duplicate destructor '%.*s' for struct '%.*s'",
-                         dd.name.size(), dd.name.data(),
-                         dd.struct_name.size(), dd.struct_name.data());
+                error_fmt(decl->loc, "duplicate destructor '{}' for struct '{}'",
+                         dd.name, dd.struct_name);
             }
             return;
         }
@@ -1231,24 +1194,23 @@ void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
     // Look up the struct type
     auto it = m_named_types.find(md.struct_name);
     if (it == m_named_types.end()) {
-        error_fmt(decl->loc, "method for unknown struct '%.*s'",
-                 md.struct_name.size(), md.struct_name.data());
+        error_fmt(decl->loc, "method for unknown struct '{}'",
+                 md.struct_name);
         return;
     }
 
     Type* struct_type = it->second;
     if (struct_type->kind != TypeKind::Struct) {
-        error_fmt(decl->loc, "'%.*s' is not a struct type",
-                 md.struct_name.size(), md.struct_name.data());
+        error_fmt(decl->loc, "'{}' is not a struct type",
+                 md.struct_name);
         return;
     }
 
     // Check for duplicate method names
     for (const auto& method : struct_type->struct_info.methods) {
         if (method.name == md.name) {
-            error_fmt(decl->loc, "duplicate method '%.*s' for struct '%.*s'",
-                     md.name.size(), md.name.data(),
-                     md.struct_name.size(), md.struct_name.data());
+            error_fmt(decl->loc, "duplicate method '{}' for struct '{}'",
+                     md.name, md.struct_name);
             return;
         }
     }
@@ -1318,7 +1280,7 @@ void SemanticAnalyzer::analyze_constructor_body(Decl* decl, Type* struct_type) {
         if (!ptype) ptype = m_types.error_type();
 
         if (m_symbols.lookup_local(p.name)) {
-            error_fmt(p.loc, "duplicate parameter name '%.*s'", p.name.size(), p.name.data());
+            error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
         } else {
             m_symbols.define_parameter(p.name, ptype, p.loc, i);
         }
@@ -1354,7 +1316,7 @@ void SemanticAnalyzer::analyze_destructor_body(Decl* decl, Type* struct_type) {
         if (!ptype) ptype = m_types.error_type();
 
         if (m_symbols.lookup_local(p.name)) {
-            error_fmt(p.loc, "duplicate parameter name '%.*s'", p.name.size(), p.name.data());
+            error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
         } else {
             m_symbols.define_parameter(p.name, ptype, p.loc, i);
         }
@@ -1394,7 +1356,7 @@ void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
         if (!ptype) ptype = m_types.error_type();
 
         if (m_symbols.lookup_local(p.name)) {
-            error_fmt(p.loc, "duplicate parameter name '%.*s'", p.name.size(), p.name.data());
+            error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
         } else {
             m_symbols.define_parameter(p.name, ptype, p.loc, i);
         }
@@ -1416,9 +1378,8 @@ void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
     TraitTypeInfo& tti = trait_type->trait_info;
     for (const auto& trait_method : tti.methods) {
         if (trait_method.name == md.name) {
-            error_fmt(decl->loc, "duplicate trait method '%.*s' in trait '%.*s'",
-                     md.name.size(), md.name.data(),
-                     tti.name.size(), tti.name.data());
+            error_fmt(decl->loc, "duplicate trait method '{}' in trait '{}'",
+                     md.name, tti.name);
             return;
         }
     }
@@ -1719,10 +1680,8 @@ void SemanticAnalyzer::validate_trait_implementations() {
             }
             if (!has_parent) {
                 error_fmt(group.impl_decls[0]->loc,
-                         "trait '%.*s' requires parent trait '%.*s' to be implemented for '%.*s'",
-                         tti.name.size(), tti.name.data(),
-                         tti.parent->trait_info.name.size(), tti.parent->trait_info.name.data(),
-                         sti.name.size(), sti.name.data());
+                         "trait '{}' requires parent trait '{}' to be implemented for '{}'",
+                         tti.name, tti.parent->trait_info.name, sti.name);
                 continue;
             }
         }
@@ -1742,9 +1701,8 @@ void SemanticAnalyzer::validate_trait_implementations() {
 
                     // Validate parameter count matches
                     if (md.params.size() != tti.methods[i].param_types.size()) {
-                        error_fmt(decl->loc, "method '%.*s' parameter count mismatch with trait '%.*s'",
-                                 md.name.size(), md.name.data(),
-                                 tti.name.size(), tti.name.data());
+                        error_fmt(decl->loc, "method '{}' parameter count mismatch with trait '{}'",
+                                 md.name, tti.name);
                     }
 
                     // Register as a regular method on the struct
@@ -1802,9 +1760,8 @@ void SemanticAnalyzer::validate_trait_implementations() {
             }
 
             if (!found) {
-                error_fmt(decl->loc, "method '%.*s' is not defined in trait '%.*s'",
-                         md.name.size(), md.name.data(),
-                         tti.name.size(), tti.name.data());
+                error_fmt(decl->loc, "method '{}' is not defined in trait '{}'",
+                         md.name, tti.name);
             }
         }
 
@@ -2104,9 +2061,8 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
 
     // If a destructor name was specified but not found
     if (!ds.destructor_name.empty() && !dtor) {
-        error_fmt(stmt->loc, "struct '%.*s' has no destructor '%.*s'",
-                 sti.name.size(), sti.name.data(),
-                 ds.destructor_name.size(), ds.destructor_name.data());
+        error_fmt(stmt->loc, "struct '{}' has no destructor '{}'",
+                 sti.name, ds.destructor_name);
         return;
     }
 
@@ -2114,7 +2070,7 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
     if (dtor) {
         // Check argument count
         if (ds.arguments.size() != dtor->param_types.size()) {
-            error_fmt(stmt->loc, "destructor expects %u arguments but got %u",
+            error_fmt(stmt->loc, "destructor expects {} arguments but got {}",
                      dtor->param_types.size(), ds.arguments.size());
             return;
         }
@@ -2161,16 +2117,15 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
     } else {
         // No destructor defined with this name
         if (!ds.destructor_name.empty()) {
-            error_fmt(stmt->loc, "struct '%.*s' has no destructor '%.*s'",
-                     sti.name.size(), sti.name.data(),
-                     ds.destructor_name.size(), ds.destructor_name.data());
+            error_fmt(stmt->loc, "struct '{}' has no destructor '{}'",
+                     sti.name, ds.destructor_name);
             return;
         }
 
         // Named destructor arguments without a destructor is an error
         if (ds.arguments.size() > 0) {
-            error_fmt(stmt->loc, "struct '%.*s' has no destructor to call",
-                     sti.name.size(), sti.name.data());
+            error_fmt(stmt->loc, "struct '{}' has no destructor to call",
+                     sti.name);
             return;
         }
     }
@@ -2209,16 +2164,15 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
             }
 
             if (!found) {
-                error_fmt(wc.loc, "'%.*s' is not a variant of enum '%.*s'",
-                         case_name.size(), case_name.data(),
-                         eti.name.size(), eti.name.data());
+                error_fmt(wc.loc, "'{}' is not a variant of enum '{}'",
+                         case_name, eti.name);
                 continue;
             }
 
             // Check for duplicate case
             if (covered_variants.find(case_name) != covered_variants.end()) {
-                error_fmt(wc.loc, "duplicate case '%.*s' in when statement",
-                         case_name.size(), case_name.data());
+                error_fmt(wc.loc, "duplicate case '{}' in when statement",
+                         case_name);
                 continue;
             }
 
@@ -2366,7 +2320,7 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
 
     Symbol* sym = m_symbols.lookup(id.name);
     if (!sym) {
-        error_fmt(expr->loc, "undefined identifier '%.*s'", id.name.size(), id.name.data());
+        error_fmt(expr->loc, "undefined identifier '{}'", id.name);
         return m_types.error_type();
     }
 
@@ -2449,9 +2403,8 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
 
             // Validate type arg count
             if (ce.type_args.size() != template_fd.type_params.size()) {
-                error_fmt(expr->loc, "generic function '%.*s' expects %u type arguments but got %u",
-                         func_name.size(), func_name.data(),
-                         template_fd.type_params.size(), ce.type_args.size());
+                error_fmt(expr->loc, "generic function '{}' expects {} type arguments but got {}",
+                         func_name, template_fd.type_params.size(), ce.type_args.size());
                 return m_types.error_type();
             }
 
@@ -2480,9 +2433,8 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
 
             // Resolve parameter types and type-check arguments
             if (ce.arguments.size() != inst_fd.params.size()) {
-                error_fmt(expr->loc, "function '%.*s' expects %u arguments but got %u",
-                         func_name.size(), func_name.data(),
-                         inst_fd.params.size(), ce.arguments.size());
+                error_fmt(expr->loc, "function '{}' expects {} arguments but got {}",
+                         func_name, inst_fd.params.size(), ce.arguments.size());
                 return m_types.error_type();
             }
 
@@ -2536,7 +2488,7 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                 ce.callee->resolved_type = list_type;
                 return list_type;
             } else {
-                error_fmt(expr->loc, "List constructor takes 0 or 1 arguments but got %u",
+                error_fmt(expr->loc, "List constructor takes 0 or 1 arguments but got {}",
                          ce.arguments.size());
                 return m_types.error_type();
             }
@@ -2638,15 +2590,15 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
 
             // If no default constructor but there are args, error
             if (!ctor && ce.arguments.size() > 0) {
-                error_fmt(expr->loc, "parent struct '%.*s' has no constructor that takes arguments",
-                         static_cast<int>(parent_sti.name.size()), parent_sti.name.data());
+                error_fmt(expr->loc, "parent struct '{}' has no constructor that takes arguments",
+                         parent_sti.name);
                 return m_types.void_type();
             }
 
             // Type-check arguments if constructor found
             if (ctor) {
                 if (ce.arguments.size() != ctor->param_types.size()) {
-                    error_fmt(expr->loc, "parent constructor expects %u arguments but got %u",
+                    error_fmt(expr->loc, "parent constructor expects {} arguments but got {}",
                              ctor->param_types.size(), ce.arguments.size());
                     return m_types.void_type();
                 }
@@ -2678,7 +2630,7 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         if (ctor) {
             // It's a named constructor call
             if (ce.arguments.size() != ctor->param_types.size()) {
-                error_fmt(expr->loc, "parent constructor expects %u arguments but got %u",
+                error_fmt(expr->loc, "parent constructor expects {} arguments but got {}",
                          ctor->param_types.size(), ce.arguments.size());
                 return m_types.void_type();
             }
@@ -2703,9 +2655,8 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
             // It's a super method call
             // Type-check arguments
             if (ce.arguments.size() != mi->param_types.size()) {
-                error_fmt(expr->loc, "method '%.*s' expects %u arguments but got %u",
-                         static_cast<int>(se.method_name.size()), se.method_name.data(),
-                         mi->param_types.size(), ce.arguments.size());
+                error_fmt(expr->loc, "method '{}' expects {} arguments but got {}",
+                         se.method_name, mi->param_types.size(), ce.arguments.size());
                 return mi->return_type;
             }
 
@@ -2723,9 +2674,8 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         }
 
         // Neither constructor nor method
-        error_fmt(expr->loc, "parent struct '%.*s' has no constructor or method '%.*s'",
-                 static_cast<int>(parent_sti.name.size()), parent_sti.name.data(),
-                 static_cast<int>(se.method_name.size()), se.method_name.data());
+        error_fmt(expr->loc, "parent struct '{}' has no constructor or method '{}'",
+                 parent_sti.name, se.method_name);
         return m_types.error_type();
     }
 
@@ -2747,7 +2697,7 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
 
                 if (method == "len") {
                     if (ce.arguments.size() != 0) {
-                        error_fmt(expr->loc, "len() takes no arguments but got %u", ce.arguments.size());
+                        error_fmt(expr->loc, "len() takes no arguments but got {}", ce.arguments.size());
                         return m_types.error_type();
                     }
                     ce.mangled_name = StringView(NATIVE_LIST_LEN, 8);
@@ -2755,7 +2705,7 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                     return m_types.i32_type();
                 } else if (method == "cap") {
                     if (ce.arguments.size() != 0) {
-                        error_fmt(expr->loc, "cap() takes no arguments but got %u", ce.arguments.size());
+                        error_fmt(expr->loc, "cap() takes no arguments but got {}", ce.arguments.size());
                         return m_types.error_type();
                     }
                     ce.mangled_name = StringView(NATIVE_LIST_CAP, 8);
@@ -2763,7 +2713,7 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                     return m_types.i32_type();
                 } else if (method == "push") {
                     if (ce.arguments.size() != 1) {
-                        error_fmt(expr->loc, "push() takes 1 argument but got %u", ce.arguments.size());
+                        error_fmt(expr->loc, "push() takes 1 argument but got {}", ce.arguments.size());
                         return m_types.error_type();
                     }
                     Type* arg_type = analyze_expr(ce.arguments[0].expr);
@@ -2775,15 +2725,15 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                     return m_types.void_type();
                 } else if (method == "pop") {
                     if (ce.arguments.size() != 0) {
-                        error_fmt(expr->loc, "pop() takes no arguments but got %u", ce.arguments.size());
+                        error_fmt(expr->loc, "pop() takes no arguments but got {}", ce.arguments.size());
                         return m_types.error_type();
                     }
                     ce.mangled_name = StringView(NATIVE_LIST_POP, 8);
                     ge.object->resolved_type = obj_type;
                     return elem_type;
                 } else {
-                    error_fmt(expr->loc, "List has no method '%.*s'",
-                             static_cast<int>(method.size()), method.data());
+                    error_fmt(expr->loc, "List has no method '{}'",
+                             method);
                     return m_types.error_type();
                 }
             }
@@ -2797,7 +2747,7 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
 
                     // Check argument count (NOT including implicit self)
                     if (ce.arguments.size() != mi->param_types.size()) {
-                        error_fmt(expr->loc, "method expects %u arguments but got %u",
+                        error_fmt(expr->loc, "method expects {} arguments but got {}",
                                  mi->param_types.size(), ce.arguments.size());
                         return mi->return_type;
                     }
@@ -2880,7 +2830,7 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
 
     // Check argument count
     if (ce.arguments.size() != fti.param_types.size()) {
-        error_fmt(expr->loc, "expected %u arguments but got %u",
+        error_fmt(expr->loc, "expected {} arguments but got {}",
                  fti.param_types.size(), ce.arguments.size());
         return fti.return_type;
     }
@@ -2964,7 +2914,7 @@ Type* SemanticAnalyzer::analyze_primitive_cast(Expr* expr, Type* target_type) {
 
     // Must have exactly one argument
     if (ce.arguments.size() != 1) {
-        error_fmt(expr->loc, "type cast requires exactly 1 argument, got %u", ce.arguments.size());
+        error_fmt(expr->loc, "type cast requires exactly 1 argument, got {}", ce.arguments.size());
         return m_types.error_type();
     }
 
@@ -2987,7 +2937,7 @@ Type* SemanticAnalyzer::analyze_primitive_cast(Expr* expr, Type* target_type) {
         type_to_string(target_type, target_str);
         source_str.push_back('\0');
         target_str.push_back('\0');
-        error_fmt(expr->loc, "cannot cast '%s' to '%s'", source_str.data(), target_str.data());
+        error_fmt(expr->loc, "cannot cast '{}' to '{}'", source_str.data(), target_str.data());
         return m_types.error_type();
     }
 
@@ -3012,9 +2962,7 @@ Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, 
 
     // If a constructor name was specified but not found
     if (!ctor_name.empty() && !ctor) {
-        error_fmt(expr->loc, "struct '%.*s' has no constructor '%.*s'",
-                 sti.name.size(), sti.name.data(),
-                 ctor_name.size(), ctor_name.data());
+        error_fmt(expr->loc, "struct '{}' has no constructor '{}'", sti.name, ctor_name);
         return m_types.error_type();
     }
 
@@ -3029,7 +2977,7 @@ Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, 
     if (ctor) {
         // Check argument count
         if (ce.arguments.size() != ctor->param_types.size()) {
-            error_fmt(expr->loc, "constructor expects %u arguments but got %u",
+            error_fmt(expr->loc, "constructor expects {} arguments but got {}",
                      ctor->param_types.size(), ce.arguments.size());
             return result_type();
         }
@@ -3077,17 +3025,14 @@ Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, 
         // No constructor defined - either using default construction or error
         if (!ctor_name.empty()) {
             // Named constructor was requested but struct has no constructors
-            error_fmt(expr->loc, "struct '%.*s' has no constructor '%.*s'",
-                     sti.name.size(), sti.name.data(),
-                     ctor_name.size(), ctor_name.data());
+            error_fmt(expr->loc, "struct '{}' has no constructor '{}'", sti.name, ctor_name);
             return m_types.error_type();
         }
 
         // Default construction (no constructor, no arguments) - allowed
         // Arguments without a constructor is an error
         if (ce.arguments.size() > 0) {
-            error_fmt(expr->loc, "struct '%.*s' has no constructor to call",
-                     sti.name.size(), sti.name.data());
+            error_fmt(expr->loc, "struct '{}' has no constructor to call", sti.name);
             return m_types.error_type();
         }
     }
@@ -3132,17 +3077,13 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
             const ModuleExport* exp = module->find_export(ge.name);
 
             if (!exp) {
-                error_fmt(expr->loc, "module '%.*s' has no export '%.*s'",
-                         name.size(), name.data(),
-                         ge.name.size(), ge.name.data());
+                error_fmt(expr->loc, "module '{}' has no export '{}'", name, ge.name);
                 return m_types.error_type();
             }
 
             // Check visibility
             if (!exp->is_pub) {
-                error_fmt(expr->loc, "'%.*s' is not public in module '%.*s'",
-                         ge.name.size(), ge.name.data(),
-                         name.size(), name.data());
+                error_fmt(expr->loc, "'{}' is not public in module '{}'", ge.name, name);
                 return m_types.error_type();
             }
 
@@ -3179,9 +3120,7 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
             bool same_module = sti.module_name.empty() || m_program->module_name.empty() ||
                                sti.module_name == m_program->module_name;
             if (!field.is_pub && !same_module) {
-                error_fmt(expr->loc, "field '%.*s' is private in struct '%.*s'",
-                         ge.name.size(), ge.name.data(),
-                         sti.name.size(), sti.name.data());
+                error_fmt(expr->loc, "field '{}' is private in struct '{}'", ge.name, sti.name);
                 return m_types.error_type();
             }
             return field.type;
@@ -3217,9 +3156,7 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
         return m_types.function_type(Span<Type*>(ptypes, total_params), mi->return_type);
     }
 
-    error_fmt(expr->loc, "struct '%.*s' has no member '%.*s'",
-             sti.name.size(), sti.name.data(),
-             ge.name.size(), ge.name.data());
+    error_fmt(expr->loc, "struct '{}' has no member '{}'", sti.name, ge.name);
     return m_types.error_type();
 }
 
@@ -3229,8 +3166,7 @@ Type* SemanticAnalyzer::analyze_static_get_expr(Expr* expr) {
     // Look up the type
     auto it = m_named_types.find(sge.type_name);
     if (it == m_named_types.end()) {
-        error_fmt(expr->loc, "unknown type '%.*s'",
-                 sge.type_name.size(), sge.type_name.data());
+        error_fmt(expr->loc, "unknown type '{}'", sge.type_name);
         return m_types.error_type();
     }
 
@@ -3242,9 +3178,7 @@ Type* SemanticAnalyzer::analyze_static_get_expr(Expr* expr) {
         if (sym && sym->kind == SymbolKind::EnumVariant && sym->type == type) {
             return type;
         }
-        error_fmt(expr->loc, "enum '%.*s' has no variant '%.*s'",
-                 sge.type_name.size(), sge.type_name.data(),
-                 sge.member_name.size(), sge.member_name.data());
+        error_fmt(expr->loc, "enum '{}' has no variant '{}'", sge.type_name, sge.member_name);
         return m_types.error_type();
     }
 
@@ -3323,8 +3257,7 @@ Type* SemanticAnalyzer::analyze_super_expr(Expr* expr) {
     const MethodInfo* mi = lookup_method_in_hierarchy(parent_type, se.method_name, &found_in_type);
 
     if (!mi) {
-        error_fmt(expr->loc, "parent struct has no method '%.*s'",
-                 static_cast<int>(se.method_name.size()), se.method_name.data());
+        error_fmt(expr->loc, "parent struct has no method '{}'", se.method_name);
         return m_types.error_type();
     }
 
@@ -3374,15 +3307,13 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
         // Look up struct type
         auto it = m_named_types.find(sl.type_name);
         if (it == m_named_types.end()) {
-            error_fmt(expr->loc, "unknown struct type '%.*s'",
-                     sl.type_name.size(), sl.type_name.data());
+            error_fmt(expr->loc, "unknown struct type '{}'", sl.type_name);
             return m_types.error_type();
         }
         type = it->second;
     }
     if (!type->is_struct()) {
-        error_fmt(expr->loc, "'%.*s' is not a struct type",
-                 sl.type_name.size(), sl.type_name.data());
+        error_fmt(expr->loc, "'{}' is not a struct type", sl.type_name);
         return m_types.error_type();
     }
 
@@ -3427,8 +3358,7 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
         if (field_idx >= 0) {
             // Regular field
             if (field_initialized[field_idx]) {
-                error_fmt(fi.loc, "duplicate field '%.*s'",
-                         fi.name.size(), fi.name.data());
+                error_fmt(fi.loc, "duplicate field '{}'", fi.name);
                 continue;
             }
 
@@ -3462,8 +3392,7 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
         if (vfi) {
             // Variant field
             if (variant_field_initialized.find(fi.name) != variant_field_initialized.end()) {
-                error_fmt(fi.loc, "duplicate field '%.*s'",
-                         fi.name.size(), fi.name.data());
+                error_fmt(fi.loc, "duplicate field '{}'", fi.name);
                 continue;
             }
             variant_field_initialized[fi.name] = true;
@@ -3474,9 +3403,7 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
             continue;
         }
 
-        error_fmt(fi.loc, "struct '%.*s' has no field '%.*s'",
-                 sl.type_name.size(), sl.type_name.data(),
-                 fi.name.size(), fi.name.data());
+        error_fmt(fi.loc, "struct '{}' has no field '{}'", sl.type_name, fi.name);
     }
 
     // Check all fields without defaults are initialized
@@ -3485,8 +3412,7 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
             FieldInfo& fi = type->struct_info.fields[i];
             Expr* default_val = find_field_default(type, fi.name);
             if (default_val == nullptr) {
-                error_fmt(expr->loc, "missing field '%.*s' (no default value)",
-                         fi.name.size(), fi.name.data());
+                error_fmt(expr->loc, "missing field '{}' (no default value)", fi.name);
             }
         }
     }
@@ -3561,7 +3487,7 @@ bool SemanticAnalyzer::check_assignable(Type* target, Type* source, SourceLocati
     target_str.push_back('\0');
     source_str.push_back('\0');
 
-    error_fmt(loc, "cannot assign '%s' to '%s'", source_str.data(), target_str.data());
+    error_fmt(loc, "cannot assign '{}' to '{}'", source_str.data(), target_str.data());
     return false;
 }
 
@@ -3600,7 +3526,7 @@ bool SemanticAnalyzer::require_types_match(Type* left, Type* right, SourceLocati
     type_to_string(right, right_str);
     left_str.push_back('\0');
     right_str.push_back('\0');
-    error_fmt(loc, "%s requires matching types, got '%s' and '%s'",
+    error_fmt(loc, "{} requires matching types, got '{}' and '{}'",
               context, left_str.data(), right_str.data());
     return false;
 }
@@ -3611,7 +3537,7 @@ void SemanticAnalyzer::error_cannot_convert(Type* source, Type* target, SourceLo
     type_to_string(target, target_str);
     source_str.push_back('\0');
     target_str.push_back('\0');
-    error_fmt(loc, "cannot %s '%s' to '%s'",
+    error_fmt(loc, "cannot {} '{}' to '{}'",
               context, source_str.data(), target_str.data());
 }
 

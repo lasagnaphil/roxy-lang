@@ -3,6 +3,7 @@
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/format.hpp"
 #include "roxy/shared/token.hpp"
 #include "roxy/compiler/ast.hpp"
 #include "roxy/compiler/types.hpp"
@@ -51,7 +52,19 @@ public:
 private:
     // Error reporting
     void error(SourceLocation loc, const char* message);
-    void error_fmt(SourceLocation loc, const char* fmt, ...);
+    template<typename... Args>
+    void error_fmt(SourceLocation loc, const char* fmt, const Args&... args) {
+        if (too_many_errors()) return;
+
+        char buffer[512];
+        format_to(buffer, sizeof(buffer), fmt, args...);
+
+        u32 len = static_cast<u32>(strlen(buffer));
+        char* msg = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
+        memcpy(msg, buffer, len + 1);
+
+        m_errors.push_back({loc, msg, true});
+    }
     bool too_many_errors() const { return m_errors.size() >= MAX_SEMANTIC_ERRORS; }
 
     // Auto-import builtin module exports as prelude

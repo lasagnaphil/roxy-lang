@@ -9,7 +9,6 @@
 #include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/natives.hpp"
 
-#include <cstdarg>
 #include <cstring>
 
 namespace rx {
@@ -90,9 +89,8 @@ bool Compiler::parse_all() {
 
         if (!program || parser.has_error()) {
             const auto& err = parser.error();
-            add_error_fmt("Parse error in module '%.*s' at line %u: %s",
-                         src.name.size(), src.name.data(),
-                         err.loc.line, err.message);
+            add_error_fmt("Parse error in module '{}' at line {}: {}",
+                         src.name, err.loc.line, err.message);
             return false;
         }
 
@@ -152,9 +150,8 @@ bool Compiler::detect_cycle(u32 module_idx, Vector<u8>& state, Vector<u32>& orde
         u32 dep_idx = it->second;
         if (state[dep_idx] == 1) {
             // Cycle detected
-            add_error_fmt("Circular import detected: module '%.*s' imports '%.*s' which creates a cycle",
-                         m_sources[module_idx].name.size(), m_sources[module_idx].name.data(),
-                         import_name.size(), import_name.data());
+            add_error_fmt("Circular import detected: module '{}' imports '{}' which creates a cycle",
+                         m_sources[module_idx].name, import_name);
             return false;
         }
 
@@ -184,9 +181,8 @@ bool Compiler::analyze_all() {
 
         if (!analyzer.analyze(program)) {
             for (const auto& err : analyzer.errors()) {
-                add_error_fmt("Semantic error in module '%.*s' at line %u: %s",
-                             src.name.size(), src.name.data(),
-                             err.loc.line, err.message);
+                add_error_fmt("Semantic error in module '{}' at line {}: {}",
+                             src.name, err.loc.line, err.message);
             }
             return false;
         }
@@ -248,8 +244,8 @@ bool Compiler::build_ir_all() {
         IRModule* ir_module = ir_builder.build(program, synthetic_decls, &analyzer.generics());
 
         if (!ir_module) {
-            add_error_fmt("IR generation failed for module '%.*s'",
-                         src.name.size(), src.name.data());
+            add_error_fmt("IR generation failed for module '{}'",
+                         src.name);
             return false;
         }
 
@@ -309,13 +305,5 @@ void Compiler::add_error(const char* message) {
     m_errors.push_back(msg);
 }
 
-void Compiler::add_error_fmt(const char* fmt, ...) {
-    char buffer[512];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
-    add_error(buffer);
-}
 
 } // namespace rx

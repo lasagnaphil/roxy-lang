@@ -5,6 +5,7 @@
 #include "roxy/core/string_view.hpp"
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/unique_ptr.hpp"
+#include "roxy/core/format.hpp"
 #include "roxy/compiler/module_registry.hpp"
 #include "roxy/vm/bytecode.hpp"
 #include "roxy/vm/binding/registry.hpp"
@@ -65,7 +66,12 @@ private:
 
     // Error reporting
     void add_error(const char* message);
-    void add_error_fmt(const char* fmt, ...);
+    template<typename... Args>
+    void add_error_fmt(const char* fmt, const Args&... args) {
+        char buffer[512];
+        format_to(buffer, sizeof(buffer), fmt, args...);
+        add_error(buffer);
+    }
 
     BumpAllocator& m_allocator;
     TypeCache m_types;
