@@ -29,6 +29,24 @@ enum class NativeTypeKind : u8 {
     String,    // string
 };
 
+// Parameter descriptor for native type methods/constructors/destructors.
+// Also used as the unified parameter description in NativeFunctionEntry (concrete_param wraps NativeTypeKind).
+struct NativeParamDesc {
+    bool is_type_param;
+    NativeTypeKind kind;          // when !is_type_param
+    u32 type_param_index;         // when is_type_param (0=T, 1=U, ...)
+};
+
+inline NativeParamDesc concrete_param(NativeTypeKind k) { return {false, k, 0}; }
+inline NativeParamDesc type_param(u32 index) { return {true, NativeTypeKind::Void, index}; }
+
+// What kind of method entry this is
+enum class GenericMethodKind : u8 {
+    Method,
+    Constructor,
+    Destructor,
+};
+
 // Field descriptor for native struct registration
 struct NativeFieldEntry {
     const char* name;
@@ -41,46 +59,23 @@ struct NativeStructEntry {
     Vector<NativeFieldEntry> fields;
 };
 
-// Entry for a registered native function
-struct NativeEntry {
+// Entry for a registered native function (unified for both concrete and generic types)
+struct NativeFunctionEntry {
     StringView name;                           // Mangled name for methods (e.g., "Point$$sum")
     NativeFunction func;
-    Vector<NativeTypeKind> param_type_kinds;  // Used for automatic binding
-    Vector<Type*> param_types;                 // Used for manual binding
-    NativeTypeKind return_type_kind;
-    Type* return_type;                         // Used for manual binding
+    // Type info path 1 (is_manual=false): param_descs + return_desc
+    Vector<NativeParamDesc> param_descs;       // Replaces param_type_kinds; supports type params for generics
+    NativeParamDesc return_desc;               // Replaces return_type_kind
+    // Type info path 2 (is_manual=true): param_types + return_type
+    Vector<Type*> param_types;
+    Type* return_type;
     u32 param_count;
+    u32 min_args;                              // = param_count normally; < param_count for optional params
     bool is_manual;                            // True if registered with bind_manual
     bool is_method;                            // True if this is a struct method
+    GenericMethodKind method_kind;             // Method/Constructor/Destructor
     StringView struct_name;                    // Non-empty for methods
     StringView method_name;                    // Original unmangled method name
-};
-
-// Parameter descriptor for generic native type methods/constructors/destructors.
-struct NativeParamDesc {
-    bool is_type_param;
-    NativeTypeKind kind;          // when !is_type_param
-    u32 type_param_index;         // when is_type_param (0=T, 1=U, ...)
-};
-
-inline NativeParamDesc concrete_param(NativeTypeKind k) { return {false, k, 0}; }
-inline NativeParamDesc type_param(u32 index) { return {true, NativeTypeKind::Void, index}; }
-
-// What kind of template entry this is
-enum class GenericMethodKind : u8 {
-    Method,
-    Constructor,
-    Destructor,
-};
-
-// Unified template for methods, constructors, and destructors
-struct NativeMethodTemplate {
-    StringView method_name;        // "len", "new", "delete"
-    StringView native_name;        // "List$$len", "List$$new" (auto-mangled)
-    Vector<NativeParamDesc> params; // excluding self (all three kinds)
-    NativeParamDesc return_desc;
-    GenericMethodKind kind;
-    u32 min_args;                  // = params.size() for methods/destructors; caller-specified for constructors
 };
 
 // Resolved constructor info (returned by instantiate_generic_constructor)
@@ -95,7 +90,6 @@ struct NativeGenericTypeEntry {
     StringView name;                               // "List"
     u32 type_param_count;                          // 1
     StringView alloc_native_name;                  // "list_alloc" (non-method allocator)
-    Vector<NativeMethodTemplate> method_templates;  // methods + constructors + destructors
 };
 
 // NativeRegistry provides unified registration for native functions
@@ -113,25 +107,27 @@ public:
     void bind(const char* name) {
         using Traits = FunctionPointerTraits<FnPtr>;
 
-        NativeEntry entry;
+        NativeFunctionEntry entry;
         entry.name = make_string_view(name);
         entry.func = FunctionBinder<FnPtr>::get();
         entry.param_count = Traits::arity;
+        entry.min_args = Traits::arity;
         entry.is_manual = false;
         entry.is_method = false;
+        entry.method_kind = GenericMethodKind::Method;
 
-        // Extract return type kind
-        entry.return_type_kind = get_type_kind<typename Traits::return_type>();
+        // Extract return type desc
+        entry.return_desc = concrete_param(get_type_kind<typename Traits::return_type>());
         entry.return_type = nullptr;
 
-        // Extract parameter type kinds
-        entry.param_type_kinds = get_param_type_kinds<typename Traits::args_tuple>(
+        // Extract parameter descs
+        entry.param_descs = get_param_descs<typename Traits::args_tuple>(
             std::make_index_sequence<Traits::arity>{});
 
-        m_entries.push_back(entry);
+        m_function_entries.push_back(entry);
 
         // Update lookup map
-        m_name_to_index[entry.name] = static_cast<i32>(m_entries.size() - 1);
+        m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
     }
 
     // Register a native function with manual wrapper (for functions needing VM access)
@@ -139,21 +135,23 @@ public:
     // Usage: registry.bind_manual("native_fn", native_fn_wrapper, {param_types}, return_type)
     void bind_manual(const char* name, NativeFunction func,
                      std::initializer_list<Type*> param_types, Type* return_type) {
-        NativeEntry entry;
+        NativeFunctionEntry entry;
         entry.name = make_string_view(name);
         entry.func = func;
         entry.return_type = return_type;
-        entry.return_type_kind = NativeTypeKind::Void;  // Not used for manual
+        entry.return_desc = concrete_param(NativeTypeKind::Void);  // Not used for manual
         entry.param_count = static_cast<u32>(param_types.size());
+        entry.min_args = entry.param_count;
         entry.is_manual = true;
         entry.is_method = false;
+        entry.method_kind = GenericMethodKind::Method;
 
         for (Type* t : param_types) {
             entry.param_types.push_back(t);
         }
 
-        m_entries.push_back(entry);
-        m_name_to_index[entry.name] = static_cast<i32>(m_entries.size() - 1);
+        m_function_entries.push_back(entry);
+        m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
     }
 
     // Register a native function with type kinds (for functions needing VM access)
@@ -162,21 +160,23 @@ public:
     void bind_native(const char* name, NativeFunction func,
                      std::initializer_list<NativeTypeKind> param_type_kinds,
                      NativeTypeKind return_type_kind) {
-        NativeEntry entry;
+        NativeFunctionEntry entry;
         entry.name = make_string_view(name);
         entry.func = func;
         entry.return_type = nullptr;
-        entry.return_type_kind = return_type_kind;
+        entry.return_desc = concrete_param(return_type_kind);
         entry.param_count = static_cast<u32>(param_type_kinds.size());
+        entry.min_args = entry.param_count;
         entry.is_manual = false;  // Use type kinds, not stored Type*
         entry.is_method = false;
+        entry.method_kind = GenericMethodKind::Method;
 
         for (NativeTypeKind k : param_type_kinds) {
-            entry.param_type_kinds.push_back(k);
+            entry.param_descs.push_back(concrete_param(k));
         }
 
-        m_entries.push_back(entry);
-        m_name_to_index[entry.name] = static_cast<i32>(m_entries.size() - 1);
+        m_function_entries.push_back(entry);
+        m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
     }
 
     // Register a native struct type
@@ -196,25 +196,27 @@ public:
         using Traits = FunctionPointerTraits<FnPtr>;
         static_assert(Traits::arity >= 1, "Method must have at least one parameter (self)");
 
-        NativeEntry entry;
+        NativeFunctionEntry entry;
         entry.struct_name = make_string_view(struct_name);
         entry.method_name = make_string_view(method_name);
         entry.name = mangle_method_name(entry.struct_name, entry.method_name);
         entry.func = FunctionBinder<FnPtr>::get();
         entry.param_count = Traits::arity - 1;  // Exclude self from Roxy-visible param count
+        entry.min_args = entry.param_count;
         entry.is_manual = false;
         entry.is_method = true;
+        entry.method_kind = GenericMethodKind::Method;
 
-        // Extract return type kind
-        entry.return_type_kind = get_type_kind<typename Traits::return_type>();
+        // Extract return type desc
+        entry.return_desc = concrete_param(get_type_kind<typename Traits::return_type>());
         entry.return_type = nullptr;
 
-        // Extract parameter type kinds, skipping self (index 0)
-        entry.param_type_kinds = get_method_param_type_kinds<typename Traits::args_tuple>(
+        // Extract parameter descs, skipping self (index 0)
+        entry.param_descs = get_method_param_descs<typename Traits::args_tuple>(
             std::make_index_sequence<Traits::arity - 1>{});
 
-        m_entries.push_back(entry);
-        m_name_to_index[entry.name] = static_cast<i32>(m_entries.size() - 1);
+        m_function_entries.push_back(entry);
+        m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
     }
 
     // Manual-bind a method with type kinds (for methods needing VM access)
@@ -222,46 +224,50 @@ public:
                             NativeFunction func,
                             std::initializer_list<NativeTypeKind> param_type_kinds,
                             NativeTypeKind return_type_kind) {
-        NativeEntry entry;
+        NativeFunctionEntry entry;
         entry.struct_name = make_string_view(struct_name);
         entry.method_name = make_string_view(method_name);
         entry.name = mangle_method_name(entry.struct_name, entry.method_name);
         entry.func = func;
         entry.return_type = nullptr;
-        entry.return_type_kind = return_type_kind;
+        entry.return_desc = concrete_param(return_type_kind);
         entry.param_count = static_cast<u32>(param_type_kinds.size());
+        entry.min_args = entry.param_count;
         entry.is_manual = false;
         entry.is_method = true;
+        entry.method_kind = GenericMethodKind::Method;
 
         for (NativeTypeKind k : param_type_kinds) {
-            entry.param_type_kinds.push_back(k);
+            entry.param_descs.push_back(concrete_param(k));
         }
 
-        m_entries.push_back(entry);
-        m_name_to_index[entry.name] = static_cast<i32>(m_entries.size() - 1);
+        m_function_entries.push_back(entry);
+        m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
     }
 
     // Manual-bind a method with Type* (for methods needing VM access)
     void bind_method_manual(const char* struct_name, const char* method_name,
                             NativeFunction func,
                             std::initializer_list<Type*> param_types, Type* return_type) {
-        NativeEntry entry;
+        NativeFunctionEntry entry;
         entry.struct_name = make_string_view(struct_name);
         entry.method_name = make_string_view(method_name);
         entry.name = mangle_method_name(entry.struct_name, entry.method_name);
         entry.func = func;
         entry.return_type = return_type;
-        entry.return_type_kind = NativeTypeKind::Void;
+        entry.return_desc = concrete_param(NativeTypeKind::Void);
         entry.param_count = static_cast<u32>(param_types.size());
+        entry.min_args = entry.param_count;
         entry.is_manual = true;
         entry.is_method = true;
+        entry.method_kind = GenericMethodKind::Method;
 
         for (Type* t : param_types) {
             entry.param_types.push_back(t);
         }
 
-        m_entries.push_back(entry);
-        m_name_to_index[entry.name] = static_cast<i32>(m_entries.size() - 1);
+        m_function_entries.push_back(entry);
+        m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
     }
 
     // Register a generic native type with its allocation function.
@@ -288,32 +294,22 @@ public:
         StringView mn = make_string_view(method_name);
         StringView mangled = mangle_method_name(sn, mn);
 
-        // Register the NativeEntry (is_method=true, param_count=params.size())
-        NativeEntry ne;
+        NativeFunctionEntry ne;
         ne.name = mangled;
         ne.func = func;
         ne.param_count = static_cast<u32>(params.size());
+        ne.min_args = ne.param_count;
         ne.is_manual = false;
         ne.is_method = true;
+        ne.method_kind = GenericMethodKind::Method;
         ne.struct_name = sn;
         ne.method_name = mn;
-        ne.return_type_kind = NativeTypeKind::Void;
+        ne.return_desc = return_desc;
         ne.return_type = nullptr;
-        m_entries.push_back(ne);
-        m_name_to_index[mangled] = static_cast<i32>(m_entries.size() - 1);
+        for (auto& p : params) ne.param_descs.push_back(p);
 
-        // Store template
-        NativeMethodTemplate tmpl;
-        tmpl.method_name = mn;
-        tmpl.native_name = mangled;
-        tmpl.return_desc = return_desc;
-        tmpl.kind = GenericMethodKind::Method;
-        for (auto& p : params) tmpl.params.push_back(p);
-        tmpl.min_args = static_cast<u32>(params.size());
-
-        if (m_generic_types.find(sn) != m_generic_types.end()) {
-            m_generic_types[sn].method_templates.push_back(std::move(tmpl));
-        }
+        m_function_entries.push_back(ne);
+        m_name_to_index[mangled] = static_cast<i32>(m_function_entries.size() - 1);
     }
 
     // Bind a constructor on a generic native type (receives self as first arg)
@@ -324,30 +320,22 @@ public:
         StringView mn = make_string_view("new");
         StringView mangled = mangle_method_name(sn, mn);
 
-        NativeEntry ne;
+        NativeFunctionEntry ne;
         ne.name = mangled;
         ne.func = func;
         ne.param_count = static_cast<u32>(params.size());
+        ne.min_args = min_args;
         ne.is_manual = false;
         ne.is_method = true;
+        ne.method_kind = GenericMethodKind::Constructor;
         ne.struct_name = sn;
         ne.method_name = mn;
-        ne.return_type_kind = NativeTypeKind::Void;
+        ne.return_desc = concrete_param(NativeTypeKind::Void);
         ne.return_type = nullptr;
-        m_entries.push_back(ne);
-        m_name_to_index[mangled] = static_cast<i32>(m_entries.size() - 1);
+        for (auto& p : params) ne.param_descs.push_back(p);
 
-        NativeMethodTemplate tmpl;
-        tmpl.method_name = mn;
-        tmpl.native_name = mangled;
-        tmpl.return_desc = {false, NativeTypeKind::Void, 0};
-        tmpl.kind = GenericMethodKind::Constructor;
-        for (auto& p : params) tmpl.params.push_back(p);
-        tmpl.min_args = min_args;
-
-        if (m_generic_types.find(sn) != m_generic_types.end()) {
-            m_generic_types[sn].method_templates.push_back(std::move(tmpl));
-        }
+        m_function_entries.push_back(ne);
+        m_name_to_index[mangled] = static_cast<i32>(m_function_entries.size() - 1);
     }
 
     // Bind a destructor on a generic native type (receives self as first arg, no other params)
@@ -356,29 +344,21 @@ public:
         StringView mn = make_string_view("delete");
         StringView mangled = mangle_method_name(sn, mn);
 
-        NativeEntry ne;
+        NativeFunctionEntry ne;
         ne.name = mangled;
         ne.func = func;
         ne.param_count = 0;
+        ne.min_args = 0;
         ne.is_manual = false;
         ne.is_method = true;
+        ne.method_kind = GenericMethodKind::Destructor;
         ne.struct_name = sn;
         ne.method_name = mn;
-        ne.return_type_kind = NativeTypeKind::Void;
+        ne.return_desc = concrete_param(NativeTypeKind::Void);
         ne.return_type = nullptr;
-        m_entries.push_back(ne);
-        m_name_to_index[mangled] = static_cast<i32>(m_entries.size() - 1);
 
-        NativeMethodTemplate tmpl;
-        tmpl.method_name = mn;
-        tmpl.native_name = mangled;
-        tmpl.return_desc = {false, NativeTypeKind::Void, 0};
-        tmpl.kind = GenericMethodKind::Destructor;
-        tmpl.min_args = 0;
-
-        if (m_generic_types.find(sn) != m_generic_types.end()) {
-            m_generic_types[sn].method_templates.push_back(std::move(tmpl));
-        }
+        m_function_entries.push_back(ne);
+        m_name_to_index[mangled] = static_cast<i32>(m_function_entries.size() - 1);
     }
 
     bool has_generic_type(StringView name) const {
@@ -396,15 +376,13 @@ public:
     // Returns only kind==Method entries as Span<MethodInfo>
     Span<MethodInfo> instantiate_generic_methods(StringView name, Span<Type*> type_args,
                                                   BumpAllocator& allocator, TypeCache& types) const {
-        auto it = m_generic_types.find(name);
-        if (it == m_generic_types.end()) return Span<MethodInfo>();
-
-        const auto& entry = it->second;
-
-        // Count method templates
+        // Count method entries for this struct
         u32 count = 0;
-        for (const auto& tmpl : entry.method_templates) {
-            if (tmpl.kind == GenericMethodKind::Method) count++;
+        for (const auto& entry : m_function_entries) {
+            if (entry.is_method && entry.struct_name == name &&
+                entry.method_kind == GenericMethodKind::Method) {
+                count++;
+            }
         }
         if (count == 0) return Span<MethodInfo>();
 
@@ -412,25 +390,26 @@ public:
             allocator.alloc_bytes(sizeof(MethodInfo) * count, alignof(MethodInfo)));
 
         u32 idx = 0;
-        for (const auto& tmpl : entry.method_templates) {
-            if (tmpl.kind != GenericMethodKind::Method) continue;
+        for (const auto& entry : m_function_entries) {
+            if (!entry.is_method || entry.struct_name != name ||
+                entry.method_kind != GenericMethodKind::Method) continue;
 
             MethodInfo& mi = methods[idx++];
-            mi.name = tmpl.method_name;
-            mi.native_name = tmpl.native_name;
+            mi.name = entry.method_name;
+            mi.native_name = entry.name;
             mi.decl = nullptr;
 
-            u32 pc = static_cast<u32>(tmpl.params.size());
+            u32 pc = entry.param_count;
             Type** ptypes = nullptr;
             if (pc > 0) {
                 ptypes = reinterpret_cast<Type**>(
                     allocator.alloc_bytes(sizeof(Type*) * pc, alignof(Type*)));
                 for (u32 j = 0; j < pc; j++) {
-                    ptypes[j] = resolve_param_desc(tmpl.params[j], type_args, types);
+                    ptypes[j] = resolve_param_desc(entry.param_descs[j], type_args, types);
                 }
             }
             mi.param_types = Span<Type*>(ptypes, pc);
-            mi.return_type = resolve_param_desc(tmpl.return_desc, type_args, types);
+            mi.return_type = resolve_param_desc(entry.return_desc, type_args, types);
         }
 
         return Span<MethodInfo>(methods, count);
@@ -440,23 +419,20 @@ public:
     ResolvedConstructor instantiate_generic_constructor(StringView name, Span<Type*> type_args,
                                                          BumpAllocator& allocator,
                                                          TypeCache& types) const {
-        auto it = m_generic_types.find(name);
-        if (it == m_generic_types.end()) return {StringView(nullptr, 0), Span<Type*>(), 0};
+        for (const auto& entry : m_function_entries) {
+            if (!entry.is_method || entry.struct_name != name ||
+                entry.method_kind != GenericMethodKind::Constructor) continue;
 
-        const auto& entry = it->second;
-        for (const auto& tmpl : entry.method_templates) {
-            if (tmpl.kind != GenericMethodKind::Constructor) continue;
-
-            u32 pc = static_cast<u32>(tmpl.params.size());
+            u32 pc = entry.param_count;
             Type** ptypes = nullptr;
             if (pc > 0) {
                 ptypes = reinterpret_cast<Type**>(
                     allocator.alloc_bytes(sizeof(Type*) * pc, alignof(Type*)));
                 for (u32 j = 0; j < pc; j++) {
-                    ptypes[j] = resolve_param_desc(tmpl.params[j], type_args, types);
+                    ptypes[j] = resolve_param_desc(entry.param_descs[j], type_args, types);
                 }
             }
-            return {tmpl.native_name, Span<Type*>(ptypes, pc), tmpl.min_args};
+            return {entry.name, Span<Type*>(ptypes, pc), entry.min_args};
         }
 
         return {StringView(nullptr, 0), Span<Type*>(), 0};
@@ -503,8 +479,8 @@ public:
     // Add method entries to their struct types (call after apply_structs_to_types)
     void apply_methods_to_types(TypeCache& types, BumpAllocator& allocator) {
         // Group methods by struct name
-        tsl::robin_map<StringView, Vector<const NativeEntry*>, StringViewHash, StringViewEqual> methods_by_struct;
-        for (const auto& entry : m_entries) {
+        tsl::robin_map<StringView, Vector<const NativeFunctionEntry*>, StringViewHash, StringViewEqual> methods_by_struct;
+        for (const auto& entry : m_function_entries) {
             if (!entry.is_method) continue;
             methods_by_struct[entry.struct_name].push_back(&entry);
         }
@@ -525,7 +501,7 @@ public:
 
             // Add new native methods
             for (u32 i = 0; i < methods.size(); i++) {
-                const NativeEntry* e = methods[i];
+                const NativeFunctionEntry* e = methods[i];
                 MethodInfo& mi = mi_array[existing + i];
                 mi.name = e->method_name;
                 mi.decl = nullptr;  // Native methods have no AST
@@ -540,7 +516,7 @@ public:
                         if (e->is_manual) {
                             ptypes[j] = e->param_types[j];
                         } else {
-                            ptypes[j] = type_from_kind(e->param_type_kinds[j], types);
+                            ptypes[j] = type_from_kind(e->param_descs[j].kind, types);
                         }
                     }
                 }
@@ -549,7 +525,7 @@ public:
                 if (e->is_manual) {
                     mi.return_type = e->return_type;
                 } else {
-                    mi.return_type = type_from_kind(e->return_type_kind, types);
+                    mi.return_type = type_from_kind(e->return_desc.kind, types);
                 }
             }
 
@@ -560,13 +536,13 @@ public:
     // Apply registered functions to symbol table for semantic analysis
     // Uses the provided TypeCache and allocator to create types
     void apply_to_symbols(SymbolTable& symbols, TypeCache& types, BumpAllocator& allocator) {
-        for (const auto& entry : m_entries) {
+        for (const auto& entry : m_function_entries) {
             // Skip method entries - they are applied via apply_methods_to_types
             if (entry.is_method) continue;
 
             // Get or create return type
             Type* ret_type = entry.is_manual ? entry.return_type
-                                              : type_from_kind(entry.return_type_kind, types);
+                                              : type_from_kind(entry.return_desc.kind, types);
 
             // Allocate param types array
             Type** param_array = nullptr;
@@ -577,7 +553,7 @@ public:
                     if (entry.is_manual) {
                         param_array[i] = entry.param_types[i];
                     } else {
-                        param_array[i] = type_from_kind(entry.param_type_kinds[i], types);
+                        param_array[i] = type_from_kind(entry.param_descs[i].kind, types);
                     }
                 }
             }
@@ -599,7 +575,7 @@ public:
 
     // Apply registered functions to bytecode module for runtime
     void apply_to_module(BCModule* module) {
-        for (const auto& entry : m_entries) {
+        for (const auto& entry : m_function_entries) {
             BCNativeFunction bc_native;
             bc_native.name = entry.name;
             bc_native.func = entry.func;
@@ -624,10 +600,10 @@ public:
     }
 
     // Get the number of registered functions
-    u32 size() const { return static_cast<u32>(m_entries.size()); }
+    u32 size() const { return static_cast<u32>(m_function_entries.size()); }
 
     // Get entry by index
-    const NativeEntry& get_entry(u32 index) const { return m_entries[index]; }
+    const NativeFunctionEntry& get_entry(u32 index) const { return m_function_entries[index]; }
 
     // Access type cache
     TypeCache& types() { return m_types; }
@@ -637,28 +613,9 @@ public:
 
     // Copy all entries to another registry (for combining multiple registries)
     void copy_entries_to(NativeRegistry& other) const {
-        for (const auto& entry : m_entries) {
-            // Copy the entry - use bind_native for type-kind based entries
-            if (!entry.is_manual && entry.param_type_kinds.size() > 0) {
-                // Use bind_native to register with type kinds
-                NativeEntry new_entry;
-                new_entry.name = entry.name;
-                new_entry.func = entry.func;
-                new_entry.return_type = nullptr;
-                new_entry.return_type_kind = entry.return_type_kind;
-                new_entry.param_count = entry.param_count;
-                new_entry.is_manual = false;
-                new_entry.is_method = entry.is_method;
-                new_entry.struct_name = entry.struct_name;
-                new_entry.method_name = entry.method_name;
-                new_entry.param_type_kinds = entry.param_type_kinds;  // Copy vector
-                other.m_entries.push_back(new_entry);
-                other.m_name_to_index[new_entry.name] = static_cast<i32>(other.m_entries.size() - 1);
-            } else {
-                // Direct copy for manual entries or simple auto-bound entries
-                other.m_entries.push_back(entry);
-                other.m_name_to_index[entry.name] = static_cast<i32>(other.m_entries.size() - 1);
-            }
+        for (const auto& entry : m_function_entries) {
+            other.m_function_entries.push_back(entry);
+            other.m_name_to_index[entry.name] = static_cast<i32>(other.m_function_entries.size() - 1);
         }
         // Copy struct entries
         for (const auto& se : m_struct_entries) {
@@ -704,18 +661,18 @@ private:
     template<typename T> static constexpr NativeTypeKind get_type_kind();
 
     template<typename Tuple, std::size_t... Is>
-    Vector<NativeTypeKind> get_param_type_kinds(std::index_sequence<Is...>) {
-        Vector<NativeTypeKind> kinds;
-        (kinds.push_back(get_type_kind<std::tuple_element_t<Is, Tuple>>()), ...);
-        return kinds;
+    Vector<NativeParamDesc> get_param_descs(std::index_sequence<Is...>) {
+        Vector<NativeParamDesc> descs;
+        (descs.push_back(concrete_param(get_type_kind<std::tuple_element_t<Is, Tuple>>())), ...);
+        return descs;
     }
 
-    // Extract param type kinds for method parameters, skipping self (index 0)
+    // Extract param descs for method parameters, skipping self (index 0)
     template<typename Tuple, std::size_t... Is>
-    Vector<NativeTypeKind> get_method_param_type_kinds(std::index_sequence<Is...>) {
-        Vector<NativeTypeKind> kinds;
-        (kinds.push_back(get_type_kind<std::tuple_element_t<Is + 1, Tuple>>()), ...);
-        return kinds;
+    Vector<NativeParamDesc> get_method_param_descs(std::index_sequence<Is...>) {
+        Vector<NativeParamDesc> descs;
+        (descs.push_back(concrete_param(get_type_kind<std::tuple_element_t<Is + 1, Tuple>>())), ...);
+        return descs;
     }
 
     // Convert NativeTypeKind to actual Type*
@@ -751,7 +708,7 @@ private:
 
     BumpAllocator& m_allocator;
     TypeCache& m_types;
-    Vector<NativeEntry> m_entries;
+    Vector<NativeFunctionEntry> m_function_entries;
     Vector<NativeStructEntry> m_struct_entries;
     tsl::robin_map<StringView, i32, StringViewHash, StringViewEqual> m_name_to_index;
     tsl::robin_map<StringView, NativeGenericTypeEntry, StringViewHash, StringViewEqual> m_generic_types;

@@ -276,10 +276,10 @@ TEST_CASE("Interop - Registry basic") {
         CHECK(entry.name == "add");
         CHECK(entry.param_count == 2);
         CHECK(entry.is_manual == false);
-        CHECK(entry.return_type_kind == NativeTypeKind::I32);
-        CHECK(entry.param_type_kinds.size() == 2);
-        CHECK(entry.param_type_kinds[0] == NativeTypeKind::I32);
-        CHECK(entry.param_type_kinds[1] == NativeTypeKind::I32);
+        CHECK(entry.return_desc.kind == NativeTypeKind::I32);
+        CHECK(entry.param_descs.size() == 2);
+        CHECK(entry.param_descs[0].kind == NativeTypeKind::I32);
+        CHECK(entry.param_descs[1].kind == NativeTypeKind::I32);
     }
 }
 

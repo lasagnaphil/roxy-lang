@@ -13,7 +13,7 @@ void ModuleRegistry::register_native_module(StringView name, NativeRegistry* nat
     // Add all non-method native functions as exports
     // Methods (is_method=true) are accessed via method dispatch, not as module exports
     for (u32 i = 0; i < natives->size(); i++) {
-        const NativeEntry& entry = natives->get_entry(i);
+        const NativeFunctionEntry& entry = natives->get_entry(i);
         if (entry.is_method) continue;
 
         ModuleExport exp;
@@ -44,10 +44,10 @@ void ModuleRegistry::register_native_module(StringView name, NativeRegistry* nat
                 param_array = reinterpret_cast<Type**>(
                     m_allocator.alloc_bytes(sizeof(Type*) * entry.param_count, alignof(Type*)));
                 for (u32 j = 0; j < entry.param_count; j++) {
-                    param_array[j] = type_from_kind(entry.param_type_kinds[j], types);
+                    param_array[j] = type_from_kind(entry.param_descs[j].kind, types);
                 }
             }
-            Type* ret_type = type_from_kind(entry.return_type_kind, types);
+            Type* ret_type = type_from_kind(entry.return_desc.kind, types);
             exp.type = types.function_type(Span<Type*>(param_array, entry.param_count), ret_type);
         }
 
