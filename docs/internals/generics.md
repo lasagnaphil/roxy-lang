@@ -17,9 +17,11 @@ Generics enable writing code that works with multiple types while maintaining st
 **Not yet implemented:**
 - Type inference (type arguments must be explicit)
 - Trait bounds on type parameters
-- Generic methods on generic structs
-- Generic constructors/destructors
+- User-defined generic methods on generic structs
+- User-defined generic constructors/destructors
 - Higher-kinded types, associated types, specialization, const generics
+
+**Native generic types** (e.g., `List<T>`) are supported via `NativeRegistry::register_generic_type`. See [interop.md](interop.md#generic-native-types) for details.
 
 ## Syntax
 
@@ -209,15 +211,16 @@ type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ;
 
 1. **No type inference**: Type arguments must always be explicit (`identity<i32>(42)`, not `identity(42)`)
 2. **No trait bounds**: `<T: Printable>` syntax is not yet supported
-3. **No generic methods**: Methods on generic structs are not yet supported
-4. **No higher-kinded types**: Can't abstract over type constructors
-5. **No associated types**: Traits can't define type members
-6. **No specialization**: Can't provide different implementations for specific types
-7. **No const generics**: Can't parameterize by values
+3. **No user-defined generic methods**: Methods on user-defined generic structs are not yet supported (native generic types like `List<T>` have methods via the `NativeRegistry` API)
+4. **No user-defined generic constructors/destructors**: Same as above — native types support these via `bind_generic_constructor`/`bind_generic_destructor`
+5. **No higher-kinded types**: Can't abstract over type constructors
+6. **No associated types**: Traits can't define type members
+7. **No specialization**: Can't provide different implementations for specific types
+8. **No const generics**: Can't parameterize by values
 
 ## Future Work
 
 1. **Type inference** — Infer type arguments from usage context
 2. **Trait bounds** — `<T: Printable>` for constrained polymorphism
-3. **Generic methods** — Methods on generic structs (`fun Box.get<T>(): T`)
-4. **Generic constructors** — `fun new Box<T>(value: T)`
+3. **User-defined generic methods** — Methods on generic structs (`fun Box.get<T>(): T`)
+4. **User-defined generic constructors** — `fun new Box<T>(value: T)`

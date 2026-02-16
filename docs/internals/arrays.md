@@ -29,7 +29,7 @@ var lst: List<i32> = List<i32>();
 var lst: List<i32> = List<i32>(10);
 ```
 
-`List<T>` is a **built-in type**, not a generic struct that goes through monomorphization. Since all Roxy Values are 64-bit, a single runtime implementation handles all element types uniformly. The compiler recognizes "List" as a special name (like "string") and constructs the appropriate type from the type argument.
+`List<T>` is registered as a **generic native type** via `NativeRegistry::register_generic_type`. When the compiler encounters `List<i32>`, the semantic analyzer recognizes it as a native generic, creates a monomorphized struct type (`List$i32`), and resolves its methods and constructor from the registry using `instantiate_generic_methods` / `instantiate_generic_constructor`. Since all Roxy Values are 64-bit, a single set of runtime native functions handles all element types uniformly.
 
 ## Methods
 
@@ -98,5 +98,6 @@ fun main(): i32 {
 
 - `include/roxy/vm/list.hpp` - ListHeader and list operations
 - `src/roxy/vm/list.cpp` - List allocation and access implementation
-- `include/roxy/vm/natives.hpp` - Native list functions
-- `src/roxy/vm/natives.cpp` - Native function implementations
+- `include/roxy/vm/natives.hpp` - Built-in native function constants
+- `src/roxy/vm/natives.cpp` - Native function implementations (List<T> generic type registration)
+- `include/roxy/vm/binding/registry.hpp` - Generic type registration API

@@ -39,7 +39,7 @@ cmake .. -G Ninja -DENABLE_ASAN=ON
 ### CMake Libraries
 
 The project is organized into 4 libraries:
-- `roxy_core` - File utilities + fmt library
+- `roxy_core` - File utilities, rx::String, rx::format_to
 - `roxy_shared` - Lexer and tokens
 - `roxy_compiler` - Parser, AST, semantic analysis, SSA IR, IR builder
 - `roxy_vm` - Bytecode, value, object, VM, interpreter, lowering
