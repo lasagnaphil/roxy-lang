@@ -140,3 +140,125 @@ TEST_CASE("format_to - mixed types") {
     format_to(buf, sizeof(buf), "error at line {}: '{}' is not a {}", (u32)42, name, "number");
     CHECK(strcmp(buf, "error at line 42: 'foo' is not a number") == 0);
 }
+
+TEST_CASE("format_to - zero-pad integer") {
+    char buf[64];
+
+    format_to(buf, sizeof(buf), "{:04}", (u32)42);
+    CHECK(strcmp(buf, "0042") == 0);
+
+    format_to(buf, sizeof(buf), "{:04}", (u32)0);
+    CHECK(strcmp(buf, "0000") == 0);
+
+    format_to(buf, sizeof(buf), "{:04}", (u32)12345);
+    CHECK(strcmp(buf, "12345") == 0);  // wider than width, no truncation
+}
+
+TEST_CASE("format_to - left-align string") {
+    char buf[64];
+
+    format_to(buf, sizeof(buf), "{:<12}", "hello");
+    CHECK(strcmp(buf, "hello       ") == 0);
+
+    format_to(buf, sizeof(buf), "[{:<8}]", "abc");
+    CHECK(strcmp(buf, "[abc     ]") == 0);
+}
+
+TEST_CASE("format_to - right-align integer") {
+    char buf[64];
+
+    format_to(buf, sizeof(buf), "{:>8}", 42);
+    CHECK(strcmp(buf, "      42") == 0);
+
+    format_to(buf, sizeof(buf), "[{:>6}]", 123);
+    CHECK(strcmp(buf, "[   123]") == 0);
+}
+
+TEST_CASE("format_to - force sign") {
+    char buf[64];
+
+    format_to(buf, sizeof(buf), "{:+}", 42);
+    CHECK(strcmp(buf, "+42") == 0);
+
+    format_to(buf, sizeof(buf), "{:+}", -42);
+    CHECK(strcmp(buf, "-42") == 0);
+
+    format_to(buf, sizeof(buf), "{:+}", 0);
+    CHECK(strcmp(buf, "+0") == 0);
+}
+
+TEST_CASE("format_to - hex lowercase zero-padded") {
+    char buf[64];
+
+    format_to(buf, sizeof(buf), "{:08x}", (u32)42);
+    CHECK(strcmp(buf, "0000002a") == 0);
+
+    format_to(buf, sizeof(buf), "{:08x}", (u32)255);
+    CHECK(strcmp(buf, "000000ff") == 0);
+
+    format_to(buf, sizeof(buf), "{:x}", (u32)255);
+    CHECK(strcmp(buf, "ff") == 0);
+}
+
+TEST_CASE("format_to - hex uppercase zero-padded") {
+    char buf[64];
+
+    format_to(buf, sizeof(buf), "{:08X}", (u32)42);
+    CHECK(strcmp(buf, "0000002A") == 0);
+
+    format_to(buf, sizeof(buf), "{:08X}", (u32)0xDEADBEEF);
+    CHECK(strcmp(buf, "DEADBEEF") == 0);
+}
+
+TEST_CASE("format_to - sign + zero-pad combination") {
+    char buf[64];
+
+    format_to(buf, sizeof(buf), "{:+08}", 42);
+    CHECK(strcmp(buf, "+0000042") == 0);
+
+    format_to(buf, sizeof(buf), "{:+08}", -42);
+    CHECK(strcmp(buf, "-0000042") == 0);
+}
+
+TEST_CASE("format_to - zero-pad negative number") {
+    char buf[64];
+
+    format_to(buf, sizeof(buf), "{:06}", -42);
+    CHECK(strcmp(buf, "-00042") == 0);
+}
+
+TEST_CASE("format_to - width 0 (no effect)") {
+    char buf[64];
+
+    format_to(buf, sizeof(buf), "{:}", 42);
+    CHECK(strcmp(buf, "42") == 0);
+}
+
+TEST_CASE("format_to - custom fill char") {
+    char buf[64];
+
+    format_to(buf, sizeof(buf), "{:*>8}", 42);
+    CHECK(strcmp(buf, "******42") == 0);
+
+    format_to(buf, sizeof(buf), "{:.<8}", "hi");
+    CHECK(strcmp(buf, "hi......") == 0);
+}
+
+TEST_CASE("format_to - format spec in context") {
+    char buf[128];
+
+    // Simulates bytecode disassembly header: "%04u: %-12s "
+    format_to(buf, sizeof(buf), "{:04}: {:<12} ", (u32)5, "LOAD_INT");
+    CHECK(strcmp(buf, "0005: LOAD_INT     ") == 0);
+
+    // Simulates jump offset: "%+d -> %u"
+    format_to(buf, sizeof(buf), "{:+} -> {}", (i32)5, (u32)10);
+    CHECK(strcmp(buf, "+5 -> 10") == 0);
+
+    format_to(buf, sizeof(buf), "{:+} -> {}", (i32)-3, (u32)8);
+    CHECK(strcmp(buf, "-3 -> 8") == 0);
+
+    // Simulates hex instruction dump: "0x%08X"
+    format_to(buf, sizeof(buf), "0x{:08X}", (u32)0x12345678);
+    CHECK(strcmp(buf, "0x12345678") == 0);
+}

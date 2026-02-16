@@ -98,6 +98,7 @@ add_executable(roxy_tests
     tests/unit/slab_allocator_test.cpp
     tests/unit/format_test.cpp
     tests/unit/string_test.cpp
+    tests/unit/static_string_test.cpp
 
     # E2E tests
     tests/e2e/test_helpers.cpp

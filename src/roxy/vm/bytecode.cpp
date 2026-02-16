@@ -1,6 +1,6 @@
 #include "roxy/vm/bytecode.hpp"
 
-#include <cstdio>
+#include "roxy/core/static_string.hpp"
 
 namespace rx {
 
@@ -145,10 +145,10 @@ void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out) {
         while (*str) out.push_back(*str++);
     };
 
-    // Print offset
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%04u: %-12s ", offset, opcode_to_string(op));
-    append(buf);
+    // Print offset and opcode
+    StaticString<64> buf;
+    buf.format("{:04}: {:<12} ", offset, opcode_to_string(op));
+    append(buf.c_str());
 
     switch (op) {
         // Format: dst
@@ -156,13 +156,13 @@ void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out) {
         case Opcode::LOAD_TRUE:
         case Opcode::LOAD_FALSE:
         case Opcode::RET_VOID:
-            snprintf(buf, sizeof(buf), "R%u", a);
+            buf.format("R{}", a);
             break;
 
         // Format: dst, imm16
         case Opcode::LOAD_INT:
         case Opcode::LOAD_CONST:
-            snprintf(buf, sizeof(buf), "R%u, %d", a, static_cast<i16>(imm));
+            buf.format("R{}, {}", a, static_cast<i16>(imm));
             break;
 
         // Format: dst, src
@@ -184,13 +184,13 @@ void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out) {
         case Opcode::REF_DEC:
         case Opcode::WEAK_CHECK:
         case Opcode::DEL_OBJ:
-            snprintf(buf, sizeof(buf), "R%u, R%u", a, b);
+            buf.format("R{}, R{}", a, b);
             break;
 
         // Format: dst, src, bits
         case Opcode::TRUNC_S:
         case Opcode::TRUNC_U:
-            snprintf(buf, sizeof(buf), "R%u, R%u, bits=%u", a, b, c);
+            buf.format("R{}, R{}, bits={}", a, b, c);
             break;
 
         // Format: dst, src1, src2
@@ -239,80 +239,80 @@ void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out) {
         case Opcode::OR:
         case Opcode::GET_INDEX:
         case Opcode::SET_INDEX:
-            snprintf(buf, sizeof(buf), "R%u, R%u, R%u", a, b, c);
+            buf.format("R{}, R{}, R{}", a, b, c);
             break;
 
         // Format: offset
         case Opcode::JMP:
-            snprintf(buf, sizeof(buf), "%+d -> %u", soff, offset + 1 + soff);
+            buf.format("{:+} -> {}", (i32)soff, (u32)(offset + 1 + soff));
             break;
 
         // Format: reg, offset
         case Opcode::JMP_IF:
         case Opcode::JMP_IF_NOT:
-            snprintf(buf, sizeof(buf), "R%u, %+d -> %u", a, soff, offset + 1 + soff);
+            buf.format("R{}, {:+} -> {}", a, (i32)soff, (u32)(offset + 1 + soff));
             break;
 
         // Format: reg
         case Opcode::RET:
-            snprintf(buf, sizeof(buf), "R%u", a);
+            buf.format("R{}", a);
             break;
 
         // Format: dst, func_idx, arg_count (args at dst+1, dst+2, ...)
         case Opcode::CALL:
         case Opcode::CALL_NATIVE:
-            snprintf(buf, sizeof(buf), "R%u, func[%u], %u args from R%u", a, b, c, a + 1);
+            buf.format("R{}, func[{}], {} args from R{}", a, b, c, (u32)(a + 1));
             break;
 
         // Format: dst, src, field_idx
         case Opcode::GET_FIELD:
         case Opcode::SET_FIELD:
-            snprintf(buf, sizeof(buf), "R%u, R%u, field[%u]", a, b, imm);
+            buf.format("R{}, R{}, field[{}]", a, b, imm);
             break;
 
         // Format: dst, type_idx
         case Opcode::NEW_OBJ:
-            snprintf(buf, sizeof(buf), "R%u, type[%u]", a, imm);
+            buf.format("R{}, type[{}]", a, imm);
             break;
 
         // Format: dst, imm16 (stack address)
         case Opcode::STACK_ADDR:
-            snprintf(buf, sizeof(buf), "R%u, stack[%u]", a, imm);
+            buf.format("R{}, stack[{}]", a, imm);
             break;
 
         // Format: dst, src, slot_offset (two-word instruction)
         case Opcode::GET_FIELD_ADDR:
-            snprintf(buf, sizeof(buf), "R%u, R%u  ; (two-word)", a, b);
+            buf.format("R{}, R{}  ; (two-word)", a, b);
             break;
 
         // Format: dst, src, slot_count (struct operations)
         case Opcode::STRUCT_LOAD_REGS:
-            snprintf(buf, sizeof(buf), "R%u, R%u, slots=%u", a, b, c);
+            buf.format("R{}, R{}, slots={}", a, b, c);
             break;
 
         case Opcode::STRUCT_STORE_REGS:
-            snprintf(buf, sizeof(buf), "R%u, R%u, slots=%u", a, b, c);
+            buf.format("R{}, R{}, slots={}", a, b, c);
             break;
 
         case Opcode::STRUCT_COPY:
-            snprintf(buf, sizeof(buf), "R%u, R%u, slots=%u", a, b, c);
+            buf.format("R{}, R{}, slots={}", a, b, c);
             break;
 
         case Opcode::RET_STRUCT_SMALL:
-            snprintf(buf, sizeof(buf), "R%u, slots=%u", a, b);
+            buf.format("R{}, slots={}", a, b);
             break;
 
         case Opcode::NOP:
         case Opcode::HALT:
-            buf[0] = '\0';
+            buf.clear();
             break;
 
         default:
-            snprintf(buf, sizeof(buf), "0x%08X", instr);
+            buf.format("0x{:08X}", instr);
             break;
     }
 
-    append(buf);
+    append(buf.c_str());
     out.push_back('\n');
 }
 
@@ -321,11 +321,10 @@ void disassemble_function(const BCFunction* func, Vector<char>& out) {
         while (*str) out.push_back(*str++);
     };
 
-    char buf[128];
-    snprintf(buf, sizeof(buf), "function %.*s (params: %u, regs: %u)\n",
-             func->name.size(), func->name.data(),
-             func->param_count, func->register_count);
-    append(buf);
+    StaticString<128> buf;
+    buf.format("function {} (params: {}, regs: {})\n",
+               func->name, func->param_count, func->register_count);
+    append(buf.c_str());
 
     // Constants
     if (!func->constants.empty()) {
@@ -334,23 +333,22 @@ void disassemble_function(const BCFunction* func, Vector<char>& out) {
             const auto& c = func->constants[i];
             switch (c.type) {
                 case BCConstant::Null:
-                    snprintf(buf, sizeof(buf), "    [%u] null\n", i);
+                    buf.format("    [{}] null\n", i);
                     break;
                 case BCConstant::Bool:
-                    snprintf(buf, sizeof(buf), "    [%u] %s\n", i, c.as_bool ? "true" : "false");
+                    buf.format("    [{}] {}\n", i, c.as_bool ? "true" : "false");
                     break;
                 case BCConstant::Int:
-                    snprintf(buf, sizeof(buf), "    [%u] %lld\n", i, static_cast<long long>(c.as_int));
+                    buf.format("    [{}] {}\n", i, c.as_int);
                     break;
                 case BCConstant::Float:
-                    snprintf(buf, sizeof(buf), "    [%u] %g\n", i, c.as_float);
+                    buf.format("    [{}] {}\n", i, c.as_float);
                     break;
                 case BCConstant::String:
-                    snprintf(buf, sizeof(buf), "    [%u] \"%.*s\"\n", i,
-                             c.as_string.length, c.as_string.data);
+                    buf.format("    [{}] \"{}\"\n", i, StringView(c.as_string.data, c.as_string.length));
                     break;
             }
-            append(buf);
+            append(buf.c_str());
         }
     }
 
@@ -367,27 +365,25 @@ void disassemble_module(const BCModule* module, Vector<char>& out) {
         while (*str) out.push_back(*str++);
     };
 
-    char buf[128];
-    snprintf(buf, sizeof(buf), "module %.*s\n\n",
-             module->name.size(), module->name.data());
-    append(buf);
+    StaticString<128> buf;
+    buf.format("module {}\n\n", module->name);
+    append(buf.c_str());
 
     // Native functions
     if (!module->native_functions.empty()) {
         append("native functions:\n");
         for (u32 i = 0; i < module->native_functions.size(); i++) {
             const auto& nf = module->native_functions[i];
-            snprintf(buf, sizeof(buf), "  [%u] %.*s (params: %u)\n", i,
-                     nf.name.size(), nf.name.data(), nf.param_count);
-            append(buf);
+            buf.format("  [{}] {} (params: {})\n", i, nf.name, nf.param_count);
+            append(buf.c_str());
         }
         append("\n");
     }
 
     // Functions
     for (u32 i = 0; i < module->functions.size(); i++) {
-        snprintf(buf, sizeof(buf), "[%u] ", i);
-        append(buf);
+        buf.format("[{}] ", i);
+        append(buf.c_str());
         disassemble_function(module->functions[i].get(), out);
         append("\n");
     }
