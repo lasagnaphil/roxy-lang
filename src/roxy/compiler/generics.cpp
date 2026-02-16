@@ -78,8 +78,8 @@ StringView GenericInstantiator::type_name_for_mangling(Type* type) {
 StringView GenericInstantiator::mangle_name(StringView base_name, Span<Type*> type_args) {
     // Calculate total length: base$arg1$arg2
     u32 total_len = base_name.size();
-    for (u32 i = 0; i < type_args.size(); i++) {
-        StringView arg_name = type_name_for_mangling(type_args[i]);
+    for (auto* type_arg : type_args) {
+        StringView arg_name = type_name_for_mangling(type_arg);
         total_len += 1 + arg_name.size(); // '$' + name
     }
 
@@ -88,9 +88,9 @@ StringView GenericInstantiator::mangle_name(StringView base_name, Span<Type*> ty
     memcpy(buf + pos, base_name.data(), base_name.size());
     pos += base_name.size();
 
-    for (u32 i = 0; i < type_args.size(); i++) {
+    for (auto* type_arg : type_args) {
         buf[pos++] = '$';
-        StringView arg_name = type_name_for_mangling(type_args[i]);
+        StringView arg_name = type_name_for_mangling(type_arg);
         memcpy(buf + pos, arg_name.data(), arg_name.size());
         pos += arg_name.size();
     }

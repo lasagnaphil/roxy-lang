@@ -91,8 +91,7 @@ bool SemanticAnalyzer::analyze(Program* program) {
     if (too_many_errors()) return false;
 
     // Pass 0b: Process user imports
-    for (u32 i = 0; i < program->declarations.size(); i++) {
-        Decl* decl = program->declarations[i];
+    for (auto* decl : program->declarations) {
         if (decl && decl->kind == AstKind::DeclImport) {
             analyze_import_decl(decl);
         }
@@ -198,8 +197,7 @@ void SemanticAnalyzer::error_fmt(SourceLocation loc, const char* fmt, ...) {
 // Pass 1: Collect type declarations
 
 void SemanticAnalyzer::collect_type_declarations(Program* program) {
-    for (u32 i = 0; i < program->declarations.size(); i++) {
-        Decl* decl = program->declarations[i];
+    for (auto* decl : program->declarations) {
         if (!decl) continue;
 
         // Register generic functions as templates (not concrete functions)
@@ -273,8 +271,7 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
 // Pass 2: Resolve type members
 
 void SemanticAnalyzer::resolve_type_members(Program* program) {
-    for (u32 i = 0; i < program->declarations.size(); i++) {
-        Decl* decl = program->declarations[i];
+    for (auto* decl : program->declarations) {
         if (!decl) continue;
 
         if (decl->kind == AstKind::DeclStruct) {
@@ -305,14 +302,13 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             // First, inherit parent fields
             if (type->struct_info.parent) {
                 Type* parent = type->struct_info.parent;
-                for (u32 j = 0; j < parent->struct_info.fields.size(); j++) {
-                    fields.push_back(parent->struct_info.fields[j]);
+                for (const auto& field : parent->struct_info.fields) {
+                    fields.push_back(field);
                 }
             }
 
             // Then add own fields
-            for (u32 j = 0; j < sd.fields.size(); j++) {
-                FieldDecl& fd = sd.fields[j];
+            for (auto& fd : sd.fields) {
 
                 Type* field_type = resolve_type_expr(fd.type);
                 if (!field_type) {
@@ -336,8 +332,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
 
             // Compute field slot offsets for regular fields
             u32 current_slot = 0;
-            for (u32 j = 0; j < fields.size(); j++) {
-                FieldInfo& fi = fields[j];
+            for (auto& fi : fields) {
                 fi.slot_count = get_type_slot_count(fi.type);
                 fi.slot_offset = current_slot;
                 current_slot += fi.slot_count;
@@ -345,8 +340,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
 
             // Process when clauses (tagged unions)
             Vector<WhenClauseInfo> when_clauses;
-            for (u32 j = 0; j < sd.when_clauses.size(); j++) {
-                WhenFieldDecl& wfd = sd.when_clauses[j];
+            for (auto& wfd : sd.when_clauses) {
 
                 // Resolve discriminant type - must be enum
                 Type* disc_type = resolve_type_expr(wfd.discriminant_type);
@@ -375,13 +369,11 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                 u32 max_variant_slots = 0;
                 Vector<VariantInfo> variants;
 
-                for (u32 k = 0; k < wfd.cases.size(); k++) {
-                    WhenCaseFieldDecl& case_decl = wfd.cases[k];
+                for (auto& case_decl : wfd.cases) {
 
                     // Validate case names are enum variants
                     i64 discriminant_value = 0;
-                    for (u32 m = 0; m < case_decl.case_names.size(); m++) {
-                        StringView case_name = case_decl.case_names[m];
+                    for (const auto& case_name : case_decl.case_names) {
                         Symbol* sym = m_symbols.lookup(case_name);
                         if (!sym || sym->kind != SymbolKind::EnumVariant) {
                             error_fmt(case_decl.loc, "'%.*s' is not a known enum variant",
@@ -394,8 +386,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                     // Process variant fields
                     Vector<VariantFieldInfo> var_fields;
                     u32 var_slot = 0;
-                    for (u32 m = 0; m < case_decl.fields.size(); m++) {
-                        FieldDecl& fd = case_decl.fields[m];
+                    for (auto& fd : case_decl.fields) {
                         Type* field_type = resolve_type_expr(fd.type);
                         if (!field_type) field_type = m_types.error_type();
 
@@ -410,8 +401,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                     }
 
                     // Create VariantInfo for each case name
-                    for (u32 m = 0; m < case_decl.case_names.size(); m++) {
-                        StringView case_name = case_decl.case_names[m];
+                    for (const auto& case_name : case_decl.case_names) {
                         Symbol* sym = m_symbols.lookup(case_name);
                         i64 value = sym ? sym->enum_variant.value : 0;
 
@@ -481,8 +471,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
 
             // Define enum variants in global scope (accessible as EnumName::Variant)
             i64 next_value = 0;
-            for (u32 j = 0; j < ed.variants.size(); j++) {
-                EnumVariant& v = ed.variants[j];
+            for (auto& v : ed.variants) {
 
                 i64 value = next_value;
                 if (v.value) {
@@ -516,8 +505,8 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             // Register function in global scope (for forward references)
             // Resolve parameter types
             Vector<Type*> param_types;
-            for (u32 j = 0; j < fd.params.size(); j++) {
-                Type* ptype = resolve_type_expr(fd.params[j].type);
+            for (const auto& param : fd.params) {
+                Type* ptype = resolve_type_expr(param.type);
                 if (!ptype) ptype = m_types.error_type();
                 param_types.push_back(ptype);
             }
@@ -631,8 +620,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
 // Pass 3: Analyze function bodies
 
 void SemanticAnalyzer::analyze_function_bodies(Program* program) {
-    for (u32 i = 0; i < program->declarations.size(); i++) {
-        Decl* decl = program->declarations[i];
+    for (auto* decl : program->declarations) {
         if (!decl) continue;
 
         if (decl->kind == AstKind::DeclFun) {
@@ -651,14 +639,12 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
             m_symbols.push_struct_scope(struct_type);
 
             // Define fields in struct scope
-            for (u32 j = 0; j < struct_type->struct_info.fields.size(); j++) {
-                FieldInfo& fi = struct_type->struct_info.fields[j];
+            for (auto& fi : struct_type->struct_info.fields) {
                 m_symbols.define_field(fi.name, fi.type, decl->loc, fi.index, fi.is_pub);
             }
 
             // Analyze methods
-            for (u32 j = 0; j < sd.methods.size(); j++) {
-                FunDecl* method = sd.methods[j];
+            for (auto* method : sd.methods) {
                 if (!method) continue;
 
                 // Create a temporary Decl wrapper for the method
@@ -811,8 +797,8 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             m_generics.is_generic_struct(type_expr->name)) {
             // Resolve type args to concrete types
             Vector<Type*> type_arg_types;
-            for (u32 i = 0; i < type_expr->type_args.size(); i++) {
-                Type* arg_type = resolve_type_expr(type_expr->type_args[i]);
+            for (auto* type_arg : type_expr->type_args) {
+                Type* arg_type = resolve_type_expr(type_arg);
                 if (!arg_type || arg_type->is_error()) return m_types.error_type();
                 type_arg_types.push_back(arg_type);
             }
@@ -1049,8 +1035,7 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
 
     if (imp.is_from_import) {
         // from math.vec2 import sin, cos;
-        for (u32 i = 0; i < imp.names.size(); i++) {
-            ImportName& name = imp.names[i];
+        for (auto& name : imp.names) {
 
             // Find the export in the module
             const ModuleExport* exp = m_modules.find_export(module, name.name);
@@ -1119,8 +1104,8 @@ void SemanticAnalyzer::analyze_constructor_decl(Decl* decl) {
     }
 
     // Check for duplicate constructor names
-    for (u32 i = 0; i < struct_type->struct_info.constructors.size(); i++) {
-        if (struct_type->struct_info.constructors[i].name == cd.name) {
+    for (const auto& ctor : struct_type->struct_info.constructors) {
+        if (ctor.name == cd.name) {
             if (cd.name.empty()) {
                 error_fmt(decl->loc, "duplicate default constructor for struct '%.*s'",
                          cd.struct_name.size(), cd.struct_name.data());
@@ -1135,8 +1120,8 @@ void SemanticAnalyzer::analyze_constructor_decl(Decl* decl) {
 
     // Resolve parameter types
     Vector<Type*> param_types;
-    for (u32 i = 0; i < cd.params.size(); i++) {
-        Type* ptype = resolve_type_expr(cd.params[i].type);
+    for (const auto& param : cd.params) {
+        Type* ptype = resolve_type_expr(param.type);
         if (!ptype) ptype = m_types.error_type();
         param_types.push_back(ptype);
     }
@@ -1156,8 +1141,8 @@ void SemanticAnalyzer::analyze_constructor_decl(Decl* decl) {
 
     // Add to struct's constructor list
     Vector<ConstructorInfo> ctors;
-    for (u32 i = 0; i < struct_type->struct_info.constructors.size(); i++) {
-        ctors.push_back(struct_type->struct_info.constructors[i]);
+    for (const auto& ctor : struct_type->struct_info.constructors) {
+        ctors.push_back(ctor);
     }
     ctors.push_back(ctor_info);
 
@@ -1189,8 +1174,8 @@ void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
     }
 
     // Check for duplicate destructor names
-    for (u32 i = 0; i < struct_type->struct_info.destructors.size(); i++) {
-        if (struct_type->struct_info.destructors[i].name == dd.name) {
+    for (const auto& dtor : struct_type->struct_info.destructors) {
+        if (dtor.name == dd.name) {
             if (dd.name.empty()) {
                 error_fmt(decl->loc, "duplicate default destructor for struct '%.*s'",
                          dd.struct_name.size(), dd.struct_name.data());
@@ -1205,8 +1190,8 @@ void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
 
     // Resolve parameter types
     Vector<Type*> param_types;
-    for (u32 i = 0; i < dd.params.size(); i++) {
-        Type* ptype = resolve_type_expr(dd.params[i].type);
+    for (const auto& param : dd.params) {
+        Type* ptype = resolve_type_expr(param.type);
         if (!ptype) ptype = m_types.error_type();
         param_types.push_back(ptype);
     }
@@ -1226,8 +1211,8 @@ void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
 
     // Add to struct's destructor list
     Vector<DestructorInfo> dtors;
-    for (u32 i = 0; i < struct_type->struct_info.destructors.size(); i++) {
-        dtors.push_back(struct_type->struct_info.destructors[i]);
+    for (const auto& dtor : struct_type->struct_info.destructors) {
+        dtors.push_back(dtor);
     }
     dtors.push_back(dtor_info);
 
@@ -1259,8 +1244,8 @@ void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
     }
 
     // Check for duplicate method names
-    for (u32 i = 0; i < struct_type->struct_info.methods.size(); i++) {
-        if (struct_type->struct_info.methods[i].name == md.name) {
+    for (const auto& method : struct_type->struct_info.methods) {
+        if (method.name == md.name) {
             error_fmt(decl->loc, "duplicate method '%.*s' for struct '%.*s'",
                      md.name.size(), md.name.data(),
                      md.struct_name.size(), md.struct_name.data());
@@ -1270,8 +1255,8 @@ void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
 
     // Resolve parameter types
     Vector<Type*> param_types;
-    for (u32 i = 0; i < md.params.size(); i++) {
-        Type* ptype = resolve_type_expr(md.params[i].type);
+    for (const auto& param : md.params) {
+        Type* ptype = resolve_type_expr(param.type);
         if (!ptype) ptype = m_types.error_type();
         param_types.push_back(ptype);
     }
@@ -1296,8 +1281,8 @@ void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
 
     // Add to struct's method list
     Vector<MethodInfo> methods;
-    for (u32 i = 0; i < struct_type->struct_info.methods.size(); i++) {
-        methods.push_back(struct_type->struct_info.methods[i]);
+    for (const auto& method : struct_type->struct_info.methods) {
+        methods.push_back(method);
     }
     methods.push_back(method_info);
 
@@ -1319,8 +1304,7 @@ void SemanticAnalyzer::analyze_constructor_body(Decl* decl, Type* struct_type) {
     m_symbols.push_struct_scope(struct_type);
 
     // Define fields in scope
-    for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
-        FieldInfo& fi = struct_type->struct_info.fields[i];
+    for (auto& fi : struct_type->struct_info.fields) {
         m_symbols.define_field(fi.name, fi.type, decl->loc, fi.index, fi.is_pub);
     }
 
@@ -1356,8 +1340,7 @@ void SemanticAnalyzer::analyze_destructor_body(Decl* decl, Type* struct_type) {
     m_symbols.push_struct_scope(struct_type);
 
     // Define fields in scope
-    for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
-        FieldInfo& fi = struct_type->struct_info.fields[i];
+    for (auto& fi : struct_type->struct_info.fields) {
         m_symbols.define_field(fi.name, fi.type, decl->loc, fi.index, fi.is_pub);
     }
 
@@ -1393,8 +1376,7 @@ void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
     m_symbols.push_struct_scope(struct_type);
 
     // Define fields in scope
-    for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
-        FieldInfo& fi = struct_type->struct_info.fields[i];
+    for (auto& fi : struct_type->struct_info.fields) {
         m_symbols.define_field(fi.name, fi.type, decl->loc, fi.index, fi.is_pub);
     }
 
@@ -1432,8 +1414,8 @@ void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
 
     // Check for duplicate method names in this trait
     TraitTypeInfo& tti = trait_type->trait_info;
-    for (u32 i = 0; i < tti.methods.size(); i++) {
-        if (tti.methods[i].name == md.name) {
+    for (const auto& trait_method : tti.methods) {
+        if (trait_method.name == md.name) {
             error_fmt(decl->loc, "duplicate trait method '%.*s' in trait '%.*s'",
                      md.name.size(), md.name.data(),
                      tti.name.size(), tti.name.data());
@@ -1446,8 +1428,8 @@ void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
     // so we use nullptr sentinels for Self type.
     // Resolve parameter types - use nullptr for Self
     Vector<Type*> param_types;
-    for (u32 i = 0; i < md.params.size(); i++) {
-        TypeExpr* type_expr = md.params[i].type;
+    for (const auto& param : md.params) {
+        TypeExpr* type_expr = param.type;
         if (type_expr && type_expr->name == "Self") {
             param_types.push_back(nullptr);  // nullptr sentinel for Self
         } else {
@@ -1487,8 +1469,8 @@ void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
 
     // Add to trait's method list
     Vector<TraitMethodInfo> methods;
-    for (u32 i = 0; i < tti.methods.size(); i++) {
-        methods.push_back(tti.methods[i]);
+    for (const auto& method : tti.methods) {
+        methods.push_back(method);
     }
     methods.push_back(tmi);
 
@@ -1720,8 +1702,8 @@ void SemanticAnalyzer::validate_trait_implementations() {
         if (tti.parent) {
             // Check that struct also implements parent trait
             bool has_parent = false;
-            for (u32 i = 0; i < sti.implemented_traits.size(); i++) {
-                if (sti.implemented_traits[i] == tti.parent) {
+            for (auto* trait : sti.implemented_traits) {
+                if (trait == tti.parent) {
                     has_parent = true;
                     break;
                 }
@@ -1769,8 +1751,8 @@ void SemanticAnalyzer::validate_trait_implementations() {
                     // (reuse analyze_method_decl but with trait_name cleared for registration)
                     // Resolve param types with Self -> struct_type
                     Vector<Type*> param_types;
-                    for (u32 j = 0; j < md.params.size(); j++) {
-                        Type* ptype = resolve_type_expr(md.params[j].type);
+                    for (const auto& param : md.params) {
+                        Type* ptype = resolve_type_expr(param.type);
                         if (!ptype) ptype = m_types.error_type();
                         param_types.push_back(ptype);
                     }
@@ -1780,8 +1762,8 @@ void SemanticAnalyzer::validate_trait_implementations() {
 
                     // Check for duplicate method name on struct
                     bool is_duplicate = false;
-                    for (u32 j = 0; j < sti.methods.size(); j++) {
-                        if (sti.methods[j].name == md.name) {
+                    for (const auto& method : sti.methods) {
+                        if (method.name == md.name) {
                             is_duplicate = true;
                             break;
                         }
@@ -1803,8 +1785,8 @@ void SemanticAnalyzer::validate_trait_implementations() {
 
                         // Add to struct's method list
                         Vector<MethodInfo> methods;
-                        for (u32 j = 0; j < sti.methods.size(); j++) {
-                            methods.push_back(sti.methods[j]);
+                        for (const auto& method : sti.methods) {
+                            methods.push_back(method);
                         }
                         methods.push_back(mi);
 
@@ -1844,8 +1826,8 @@ void SemanticAnalyzer::validate_trait_implementations() {
 
         // Update struct's implemented_traits list
         Vector<Type*> traits;
-        for (u32 i = 0; i < sti.implemented_traits.size(); i++) {
-            traits.push_back(sti.implemented_traits[i]);
+        for (auto* trait : sti.implemented_traits) {
+            traits.push_back(trait);
         }
         traits.push_back(trait_type);
 
@@ -1878,8 +1860,7 @@ void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type
     // Resolve concrete param types (Self -> struct_type)
     StructTypeInfo& sti = struct_type->struct_info;
     Vector<Type*> param_types;
-    for (u32 i = 0; i < tmi.param_types.size(); i++) {
-        Type* pt = tmi.param_types[i];
+    for (auto* pt : tmi.param_types) {
         param_types.push_back(pt ? pt : struct_type);  // nullptr sentinel -> concrete type
     }
 
@@ -1900,8 +1881,8 @@ void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type
     mi.decl = synth;
 
     Vector<MethodInfo> methods;
-    for (u32 i = 0; i < sti.methods.size(); i++) {
-        methods.push_back(sti.methods[i]);
+    for (const auto& method : sti.methods) {
+        methods.push_back(method);
     }
     methods.push_back(mi);
 
@@ -1979,8 +1960,7 @@ void SemanticAnalyzer::analyze_block_stmt(Stmt* stmt) {
     m_symbols.push_scope(ScopeKind::Block);
 
     BlockStmt& block = stmt->block;
-    for (u32 i = 0; i < block.declarations.size(); i++) {
-        Decl* decl = block.declarations[i];
+    for (auto* decl : block.declarations) {
         if (!decl) continue;
 
         if (decl->kind == AstKind::DeclVar) {
@@ -2115,9 +2095,9 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
 
     // Look up destructor by name
     const DestructorInfo* dtor = nullptr;
-    for (u32 i = 0; i < sti.destructors.size(); i++) {
-        if (sti.destructors[i].name == ds.destructor_name) {
-            dtor = &sti.destructors[i];
+    for (const auto& destructor : sti.destructors) {
+        if (destructor.name == ds.destructor_name) {
+            dtor = &destructor;
             break;
         }
     }
@@ -2216,17 +2196,13 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
     tsl::robin_map<StringView, bool, StringViewHash, StringViewEqual> covered_variants;
 
     // Analyze each case
-    for (u32 i = 0; i < ws.cases.size(); i++) {
-        WhenCase& wc = ws.cases[i];
-
+    for (auto& wc : ws.cases) {
         // Validate case names are valid enum variants
-        for (u32 j = 0; j < wc.case_names.size(); j++) {
-            StringView case_name = wc.case_names[j];
-
+        for (const auto& case_name : wc.case_names) {
             // Look up the variant in the enum
             bool found = false;
-            for (u32 k = 0; k < ed.variants.size(); k++) {
-                if (ed.variants[k].name == case_name) {
+            for (const auto& variant : ed.variants) {
+                if (variant.name == case_name) {
                     found = true;
                     break;
                 }
@@ -2251,8 +2227,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
 
         // Analyze case body in a new scope
         m_symbols.push_scope(ScopeKind::Block);
-        for (u32 j = 0; j < wc.body.size(); j++) {
-            Decl* decl = wc.body[j];
+        for (auto& decl : wc.body) {
             if (!decl) continue;
             if (decl->kind == AstKind::DeclVar) {
                 analyze_var_decl(decl);
@@ -2266,8 +2241,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
     // Analyze else body if present
     if (ws.else_body.size() > 0) {
         m_symbols.push_scope(ScopeKind::Block);
-        for (u32 i = 0; i < ws.else_body.size(); i++) {
-            Decl* decl = ws.else_body[i];
+        for (auto& decl : ws.else_body) {
             if (!decl) continue;
             if (decl->kind == AstKind::DeclVar) {
                 analyze_var_decl(decl);
@@ -2343,16 +2317,16 @@ Type* SemanticAnalyzer::analyze_expr(Expr* expr) {
 
 Type* SemanticAnalyzer::analyze_string_interp_expr(Expr* expr) {
     auto& si = expr->string_interp;
-    for (u32 i = 0; i < si.expressions.size(); i++) {
-        Type* etype = analyze_expr(si.expressions[i]);
+    for (auto& expression : si.expressions) {
+        Type* etype = analyze_expr(expression);
         if (!etype || etype->is_error()) continue;
         if (etype->is_void()) {
-            error(si.expressions[i]->loc, "cannot interpolate void expression in f-string");
+            error(expression->loc, "cannot interpolate void expression in f-string");
             continue;
         }
         // Uniform trait check for ALL types (primitives and structs)
         if (!m_types.implements_trait(etype, m_printable_type)) {
-            error_fmt(si.expressions[i]->loc,
+            error_fmt(expression->loc,
                      "type '%s' does not implement Printable (no to_string method)",
                      type_kind_to_string(etype->kind));
         }
@@ -2483,8 +2457,8 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
 
             // Resolve type args to concrete types
             Vector<Type*> type_arg_types;
-            for (u32 i = 0; i < ce.type_args.size(); i++) {
-                Type* arg_type = resolve_type_expr(ce.type_args[i]);
+            for (auto& type_arg : ce.type_args) {
+                Type* arg_type = resolve_type_expr(type_arg);
                 if (!arg_type || arg_type->is_error()) return m_types.error_type();
                 type_arg_types.push_back(arg_type);
             }
@@ -2572,8 +2546,8 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         if (m_generics.is_generic_struct(func_name)) {
             // Resolve type args
             Vector<Type*> type_arg_types;
-            for (u32 i = 0; i < ce.type_args.size(); i++) {
-                Type* arg_type = resolve_type_expr(ce.type_args[i]);
+            for (auto& type_arg : ce.type_args) {
+                Type* arg_type = resolve_type_expr(type_arg);
                 if (!arg_type || arg_type->is_error()) return m_types.error_type();
                 type_arg_types.push_back(arg_type);
             }
@@ -2655,9 +2629,9 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         if (se.method_name.empty()) {
             // Look for default constructor
             const ConstructorInfo* ctor = nullptr;
-            for (u32 i = 0; i < parent_sti.constructors.size(); i++) {
-                if (parent_sti.constructors[i].name.empty()) {
-                    ctor = &parent_sti.constructors[i];
+            for (const auto& constructor : parent_sti.constructors) {
+                if (constructor.name.empty()) {
+                    ctor = &constructor;
                     break;
                 }
             }
@@ -2694,9 +2668,9 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         // method_name is not empty - this is super.name()
         // First try to find it as a constructor, then as a method
         const ConstructorInfo* ctor = nullptr;
-        for (u32 i = 0; i < parent_sti.constructors.size(); i++) {
-            if (parent_sti.constructors[i].name == se.method_name) {
-                ctor = &parent_sti.constructors[i];
+        for (const auto& constructor : parent_sti.constructors) {
+            if (constructor.name == se.method_name) {
+                ctor = &constructor;
                 break;
             }
         }
@@ -3029,9 +3003,9 @@ Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, 
 
     // Look up constructor by name
     const ConstructorInfo* ctor = nullptr;
-    for (u32 i = 0; i < sti.constructors.size(); i++) {
-        if (sti.constructors[i].name == ctor_name) {
-            ctor = &sti.constructors[i];
+    for (const auto& constructor : sti.constructors) {
+        if (constructor.name == ctor_name) {
+            ctor = &constructor;
             break;
         }
     }
@@ -3198,19 +3172,19 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
 
     // Look up field
     StructTypeInfo& sti = base_type->struct_info;
-    for (u32 i = 0; i < sti.fields.size(); i++) {
-        if (sti.fields[i].name == ge.name) {
+    for (const auto& field : sti.fields) {
+        if (field.name == ge.name) {
             // Check visibility: non-public fields can only be accessed from the same module
             // If either module name is empty, we're in single-file mode where all access is allowed
             bool same_module = sti.module_name.empty() || m_program->module_name.empty() ||
                                sti.module_name == m_program->module_name;
-            if (!sti.fields[i].is_pub && !same_module) {
+            if (!field.is_pub && !same_module) {
                 error_fmt(expr->loc, "field '%.*s' is private in struct '%.*s'",
                          ge.name.size(), ge.name.data(),
                          sti.name.size(), sti.name.data());
                 return m_types.error_type();
             }
-            return sti.fields[i].type;
+            return field.type;
         }
     }
 
@@ -3376,8 +3350,8 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
     if (sl.type_args.size() > 0 && m_generics.is_generic_struct(sl.type_name)) {
         // Resolve type args
         Vector<Type*> type_arg_types;
-        for (u32 i = 0; i < sl.type_args.size(); i++) {
-            Type* arg_type = resolve_type_expr(sl.type_args[i]);
+        for (auto* type_arg : sl.type_args) {
+            Type* arg_type = resolve_type_expr(type_arg);
             if (!arg_type || arg_type->is_error()) return m_types.error_type();
             type_arg_types.push_back(arg_type);
         }
@@ -3421,9 +3395,9 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
                 continue;
             }
             StructDecl& sd = current->struct_info.decl->struct_decl;
-            for (u32 j = 0; j < sd.fields.size(); j++) {
-                if (sd.fields[j].name == field_name) {
-                    return sd.fields[j].default_value;
+            for (const auto& field : sd.fields) {
+                if (field.name == field_name) {
+                    return field.default_value;
                 }
             }
             current = current->struct_info.parent;
@@ -3439,8 +3413,7 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
     i64 discriminant_value = -1;  // Track which variant is selected
 
     // Validate each field initializer
-    for (u32 i = 0; i < sl.fields.size(); i++) {
-        FieldInit& fi = sl.fields[i];
+    for (auto& fi : sl.fields) {
 
         // Find field in struct
         i32 field_idx = -1;
@@ -3467,8 +3440,7 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
             check_assignable(field_type, value_type, fi.loc);
 
             // Track discriminant value if this is a discriminant field
-            for (u32 j = 0; j < type->struct_info.when_clauses.size(); j++) {
-                const WhenClauseInfo& clause = type->struct_info.when_clauses[j];
+            for (const auto& clause : type->struct_info.when_clauses) {
                 if (clause.discriminant_name == fi.name) {
                     // Check if value is a static get (e.g., Attack from enum)
                     if (fi.value->kind == AstKind::ExprIdentifier) {

@@ -70,8 +70,8 @@ public:
 struct StringViewHash {
     u64 operator()(StringView sv) const {
         u64 hash = 14695981039346656037ULL;
-        for (u32 i = 0; i < sv.size(); i++) {
-            hash ^= static_cast<u64>(sv[i]);
+        for (char c : sv) {
+            hash ^= static_cast<u64>(c);
             hash *= 1099511628211ULL;
         }
         return hash;

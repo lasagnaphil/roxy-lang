@@ -28,8 +28,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
     // Track which struct types have user-defined default constructors
     tsl::robin_map<StringView, bool, StringViewHash, StringViewEqual> has_default_ctor;
 
-    for (u32 i = 0; i < program->declarations.size(); i++) {
-        Decl* decl = program->declarations[i];
+    for (auto* decl : program->declarations) {
         if (!decl) continue;
 
         if (decl->kind == AstKind::DeclFun) {
@@ -45,8 +44,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
             if (decl->struct_decl.type_params.size() > 0) continue;
             // Build methods
             StructDecl& sd = decl->struct_decl;
-            for (u32 j = 0; j < sd.methods.size(); j++) {
-                FunDecl* method = sd.methods[j];
+            for (auto* method : sd.methods) {
                 if (method && !method->is_native && method->body) {
                     IRFunction* func = build_function(method);
                     module->functions.push_back(func);
@@ -87,8 +85,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
     }
 
     // Process synthetic (injected default method) declarations
-    for (u32 si = 0; si < synthetic_decls.size(); si++) {
-        Decl* decl = synthetic_decls[si];
+    for (auto* decl : synthetic_decls) {
         if (decl && decl->kind == AstKind::DeclMethod) {
             MethodDecl& md = decl->method_decl;
             Type* struct_type = m_types.named_type_by_name(md.struct_name);
@@ -110,8 +107,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
     }
 
     // Generate synthesized default constructors for structs without user-defined ones
-    for (u32 i = 0; i < program->declarations.size(); i++) {
-        Decl* decl = program->declarations[i];
+    for (auto* decl : program->declarations) {
         if (!decl) continue;
 
         if (decl->kind == AstKind::DeclStruct) {
@@ -179,8 +175,8 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     // Generate body
     if (decl->body && decl->body->kind == AstKind::StmtBlock) {
         BlockStmt& block = decl->body->block;
-        for (u32 i = 0; i < block.declarations.size(); i++) {
-            gen_decl(block.declarations[i]);
+        for (auto* decl : block.declarations) {
+            gen_decl(decl);
         }
     }
 
@@ -238,8 +234,8 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
     // Generate body
     if (decl->body && decl->body->kind == AstKind::StmtBlock) {
         BlockStmt& block = decl->body->block;
-        for (u32 i = 0; i < block.declarations.size(); i++) {
-            gen_decl(block.declarations[i]);
+        for (auto* decl : block.declarations) {
+            gen_decl(decl);
         }
     }
 
@@ -268,8 +264,8 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
     // Generate body
     if (decl->body && decl->body->kind == AstKind::StmtBlock) {
         BlockStmt& block = decl->body->block;
-        for (u32 i = 0; i < block.declarations.size(); i++) {
-            gen_decl(block.declarations[i]);
+        for (auto* decl : block.declarations) {
+            gen_decl(decl);
         }
     }
 
@@ -326,8 +322,8 @@ IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
     // Generate body
     if (decl->body && decl->body->kind == AstKind::StmtBlock) {
         BlockStmt& block = decl->body->block;
-        for (u32 i = 0; i < block.declarations.size(); i++) {
-            gen_decl(block.declarations[i]);
+        for (auto* decl : block.declarations) {
+            gen_decl(decl);
         }
     }
 
@@ -390,14 +386,14 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
     };
 
     // Initialize regular fields from sd.fields
-    for (u32 i = 0; i < sd.fields.size(); i++) {
+    for (const auto& field : sd.fields) {
         // Find the corresponding FieldInfo in sti.fields
-        const FieldInfo* fi = sti.find_field(sd.fields[i].name);
+        const FieldInfo* fi = sti.find_field(field.name);
         if (!fi) continue;
 
         ValueId value;
-        if (sd.fields[i].default_value) {
-            value = gen_expr(sd.fields[i].default_value);
+        if (field.default_value) {
+            value = gen_expr(field.default_value);
         } else if (fi->type && fi->type->is_struct()) {
             // For nested structs, recursively zero-init
             u32 nested_slots = fi->type->struct_info.slot_count;
@@ -405,12 +401,12 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
             // Zero the nested struct fields
             StructTypeInfo& nested_sti = fi->type->struct_info;
             StructDecl& nested_sd = nested_sti.decl->struct_decl;
-            for (u32 j = 0; j < nested_sd.fields.size(); j++) {
-                const FieldInfo* nfi = nested_sti.find_field(nested_sd.fields[j].name);
+            for (const auto& nested_field : nested_sd.fields) {
+                const FieldInfo* nfi = nested_sti.find_field(nested_field.name);
                 if (!nfi) continue;
                 ValueId nval;
-                if (nested_sd.fields[j].default_value) {
-                    nval = gen_expr(nested_sd.fields[j].default_value);
+                if (nested_field.default_value) {
+                    nval = gen_expr(nested_field.default_value);
                 } else {
                     nval = zero_init_field(*nfi);
                 }
@@ -425,7 +421,7 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
         }
 
         // For struct-typed fields with default values, use StructCopy
-        if (fi->type && fi->type->is_struct() && sd.fields[i].default_value) {
+        if (fi->type && fi->type->is_struct() && field.default_value) {
             ValueId field_addr = emit_get_field_addr(self_ptr, fi->name, fi->slot_offset, fi->type);
             emit_struct_copy(field_addr, value, fi->slot_count);
         } else {
@@ -434,8 +430,7 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
     }
 
     // Initialize discriminant fields from when clauses (zero-init them)
-    for (u32 i = 0; i < sd.when_clauses.size(); i++) {
-        const WhenFieldDecl& wfd = sd.when_clauses[i];
+    for (const auto& wfd : sd.when_clauses) {
         const FieldInfo* fi = sti.find_field(wfd.discriminant_name);
         if (!fi) continue;
 
@@ -811,8 +806,8 @@ void IRBuilder::gen_block_stmt(Stmt* stmt) {
     push_scope();
 
     BlockStmt& block = stmt->block;
-    for (u32 i = 0; i < block.declarations.size(); i++) {
-        gen_decl(block.declarations[i]);
+    for (auto* decl : block.declarations) {
+        gen_decl(decl);
     }
 
     pop_scope();
@@ -834,24 +829,24 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     // Find variables that are assigned in either branch and exist before the if
     // These need phi nodes (block params) at the merge point
     Vector<StringView> phi_vars;
-    for (u32 i = 0; i < then_modified.size(); i++) {
-        LocalVar* lv = find_local(then_modified[i]);
+    for (const auto& name : then_modified) {
+        LocalVar* lv = find_local(name);
         if (lv && lv->value.is_valid()) {
             bool found = false;
-            for (u32 j = 0; j < phi_vars.size(); j++) {
-                if (phi_vars[j] == then_modified[i]) { found = true; break; }
+            for (const auto& pv : phi_vars) {
+                if (pv == name) { found = true; break; }
             }
-            if (!found) phi_vars.push_back(then_modified[i]);
+            if (!found) phi_vars.push_back(name);
         }
     }
-    for (u32 i = 0; i < else_modified.size(); i++) {
-        LocalVar* lv = find_local(else_modified[i]);
+    for (const auto& name : else_modified) {
+        LocalVar* lv = find_local(name);
         if (lv && lv->value.is_valid()) {
             bool found = false;
-            for (u32 j = 0; j < phi_vars.size(); j++) {
-                if (phi_vars[j] == else_modified[i]) { found = true; break; }
+            for (const auto& pv : phi_vars) {
+                if (pv == name) { found = true; break; }
             }
-            if (!found) phi_vars.push_back(else_modified[i]);
+            if (!found) phi_vars.push_back(name);
         }
     }
 
@@ -868,12 +863,12 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
         ValueId original_value;
     };
     Vector<PhiInfo> phi_info;
-    for (u32 i = 0; i < phi_vars.size(); i++) {
-        LocalVar* lv = find_local(phi_vars[i]);
+    for (const auto& pv : phi_vars) {
+        LocalVar* lv = find_local(pv);
         if (lv) {
             ValueId param = m_current_func->new_value();
-            merge_block->params.push_back({param, lv->type, phi_vars[i]});
-            phi_info.push_back({phi_vars[i], lv->type, param, lv->value});
+            merge_block->params.push_back({param, lv->type, pv});
+            phi_info.push_back({pv, lv->type, param, lv->value});
         }
     }
 
@@ -883,8 +878,8 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     } else {
         // No else branch - pass original values as args to merge_block
         Vector<BlockArgPair> fallthrough_args;
-        for (u32 i = 0; i < phi_info.size(); i++) {
-            fallthrough_args.push_back({phi_info[i].original_value});
+        for (const auto& pi : phi_info) {
+            fallthrough_args.push_back({pi.original_value});
         }
         finish_block_branch(cond, then_block->id, merge_block->id, {}, alloc_span(fallthrough_args));
     }
@@ -904,8 +899,8 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
         // Build args for merge block
         Vector<BlockArgPair> then_args;
-        for (u32 i = 0; i < phi_info.size(); i++) {
-            ValueId val = lookup_local(phi_info[i].name);
+        for (const auto& pi : phi_info) {
+            ValueId val = lookup_local(pi.name);
             then_args.push_back({val});
         }
         finish_block_goto(merge_block->id, alloc_span(then_args));
@@ -921,8 +916,8 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
         if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
             // Build args for merge block
             Vector<BlockArgPair> else_args;
-            for (u32 i = 0; i < phi_info.size(); i++) {
-                ValueId val = lookup_local(phi_info[i].name);
+            for (const auto& pi : phi_info) {
+                ValueId val = lookup_local(pi.name);
                 else_args.push_back({val});
             }
             finish_block_goto(merge_block->id, alloc_span(else_args));
@@ -933,8 +928,8 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     set_current_block(merge_block);
 
     // Bind variables to merge block params (phi results)
-    for (u32 i = 0; i < phi_info.size(); i++) {
-        define_local(phi_info[i].name, phi_info[i].merge_param, phi_info[i].type);
+    for (const auto& pi : phi_info) {
+        define_local(pi.name, pi.merge_param, pi.type);
     }
 }
 
@@ -953,8 +948,7 @@ void IRBuilder::gen_while_stmt(Stmt* stmt) {
     // 3. Create block params for modified vars that exist before the loop
     Vector<LoopVarInfo> loop_vars;
     Vector<BlockArgPair> initial_args;
-    for (u32 i = 0; i < modified_vars.size(); i++) {
-        StringView name = modified_vars[i];
+    for (const auto& name : modified_vars) {
         LocalVar* lv = find_local(name);
         if (lv && lv->value.is_valid()) {
             ValueId param = m_current_func->new_value();
@@ -969,8 +963,8 @@ void IRBuilder::gen_while_stmt(Stmt* stmt) {
 
     // 5. In header, bind locals to block params
     set_current_block(header_block);
-    for (u32 i = 0; i < loop_vars.size(); i++) {
-        define_local(loop_vars[i].name, loop_vars[i].header_param, loop_vars[i].type);
+    for (const auto& lv : loop_vars) {
+        define_local(lv.name, lv.header_param, lv.type);
     }
 
     // 6. Condition and branch
@@ -996,8 +990,8 @@ void IRBuilder::gen_while_stmt(Stmt* stmt) {
 
     // 10. Exit block - use header params as final values
     set_current_block(exit_block);
-    for (u32 i = 0; i < saved_loop_vars.size(); i++) {
-        define_local(saved_loop_vars[i].name, saved_loop_vars[i].header_param, saved_loop_vars[i].type);
+    for (const auto& slv : saved_loop_vars) {
+        define_local(slv.name, slv.header_param, slv.type);
     }
 }
 
@@ -1025,8 +1019,7 @@ void IRBuilder::gen_for_stmt(Stmt* stmt) {
     // 4. Create block params on header for modified vars that exist before the loop
     Vector<LoopVarInfo> loop_vars;
     Vector<BlockArgPair> initial_args;
-    for (u32 i = 0; i < modified_vars.size(); i++) {
-        StringView name = modified_vars[i];
+    for (const auto& name : modified_vars) {
         LocalVar* lv = find_local(name);
         if (lv && lv->value.is_valid()) {
             ValueId param = m_current_func->new_value();
@@ -1041,8 +1034,8 @@ void IRBuilder::gen_for_stmt(Stmt* stmt) {
 
     // 6. In header, bind locals to block params
     set_current_block(header_block);
-    for (u32 i = 0; i < loop_vars.size(); i++) {
-        define_local(loop_vars[i].name, loop_vars[i].header_param, loop_vars[i].type);
+    for (const auto& lv : loop_vars) {
+        define_local(lv.name, lv.header_param, lv.type);
     }
 
     // 7. Condition and branch
@@ -1081,8 +1074,8 @@ void IRBuilder::gen_for_stmt(Stmt* stmt) {
 
     // 11. Exit block - use header params as final values
     set_current_block(exit_block);
-    for (u32 i = 0; i < saved_loop_vars.size(); i++) {
-        define_local(saved_loop_vars[i].name, saved_loop_vars[i].header_param, saved_loop_vars[i].type);
+    for (const auto& slv : saved_loop_vars) {
+        define_local(slv.name, slv.header_param, slv.type);
     }
 }
 
@@ -1148,9 +1141,9 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
 
         // Look up destructor by name
         const DestructorInfo* dtor = nullptr;
-        for (u32 i = 0; i < sti.destructors.size(); i++) {
-            if (sti.destructors[i].name == ds.destructor_name) {
-                dtor = &sti.destructors[i];
+        for (const auto& d : sti.destructors) {
+            if (d.name == ds.destructor_name) {
+                dtor = &d;
                 break;
             }
         }
@@ -1163,8 +1156,7 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
             Vector<ValueId> call_args;
             call_args.push_back(val);  // 'self' pointer
 
-            for (u32 i = 0; i < ds.arguments.size(); i++) {
-                CallArg& arg = ds.arguments[i];
+            for (auto& arg : ds.arguments) {
                 if (arg.modifier != ParamModifier::None) {
                     // Pass address of lvalue for out/inout args
                     call_args.push_back(gen_lvalue_addr(arg.expr));
@@ -1176,8 +1168,8 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
             emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
         } else if (ds.destructor_name.empty()) {
             // Check for default destructor even if not explicitly requested
-            for (u32 i = 0; i < sti.destructors.size(); i++) {
-                if (sti.destructors[i].name.empty()) {
+            for (const auto& d : sti.destructors) {
+                if (d.name.empty()) {
                     // Found default destructor - call it
                     StringView dtor_name = mangle_destructor(sti.name);
                     Vector<ValueId> call_args;
@@ -1201,16 +1193,14 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
 
     // 1. Collect variables assigned in any case or else body
     Vector<StringView> modified_in_cases;
-    for (u32 i = 0; i < ws.cases.size(); i++) {
-        for (u32 j = 0; j < ws.cases[i].body.size(); j++) {
-            Decl* d = ws.cases[i].body[j];
+    for (auto& wc : ws.cases) {
+        for (auto* d : wc.body) {
             if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtWhen) {
                 collect_assigned_vars(&d->stmt, modified_in_cases);
             }
         }
     }
-    for (u32 i = 0; i < ws.else_body.size(); i++) {
-        Decl* d = ws.else_body[i];
+    for (auto* d : ws.else_body) {
         if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtWhen) {
             collect_assigned_vars(&d->stmt, modified_in_cases);
         }
@@ -1218,14 +1208,14 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
 
     // 2. Find phi vars: modified vars that exist before the when
     Vector<StringView> phi_vars;
-    for (u32 i = 0; i < modified_in_cases.size(); i++) {
-        LocalVar* lv = find_local(modified_in_cases[i]);
+    for (const auto& name : modified_in_cases) {
+        LocalVar* lv = find_local(name);
         if (lv && lv->value.is_valid()) {
             bool found = false;
-            for (u32 j = 0; j < phi_vars.size(); j++) {
-                if (phi_vars[j] == modified_in_cases[i]) { found = true; break; }
+            for (const auto& pv : phi_vars) {
+                if (pv == name) { found = true; break; }
             }
-            if (!found) phi_vars.push_back(modified_in_cases[i]);
+            if (!found) phi_vars.push_back(name);
         }
     }
 
@@ -1243,12 +1233,12 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         ValueId original_value;
     };
     Vector<PhiInfo> phi_info;
-    for (u32 i = 0; i < phi_vars.size(); i++) {
-        LocalVar* lv = find_local(phi_vars[i]);
+    for (const auto& pv : phi_vars) {
+        LocalVar* lv = find_local(pv);
         if (lv) {
             ValueId param = m_current_func->new_value();
-            merge_block->params.push_back({param, lv->type, phi_vars[i]});
-            phi_info.push_back({phi_vars[i], lv->type, param, lv->value});
+            merge_block->params.push_back({param, lv->type, pv});
+            phi_info.push_back({pv, lv->type, param, lv->value});
         }
     }
 
@@ -1267,9 +1257,9 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
     Vector<CaseInfo> case_infos;
 
     // Create body blocks for each case
-    for (u32 i = 0; i < ws.cases.size(); i++) {
+    for (auto& wc : ws.cases) {
         IRBlock* body_block = create_block("when_case");
-        case_infos.push_back({body_block, &ws.cases[i]});
+        case_infos.push_back({body_block, &wc});
     }
 
     // Create else block if there's an else clause
@@ -1285,8 +1275,7 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
 
         // Build condition: discriminant == case_name1 || discriminant == case_name2 || ...
         ValueId case_cond = ValueId::invalid();
-        for (u32 j = 0; j < wc.case_names.size(); j++) {
-            StringView case_name = wc.case_names[j];
+        for (const auto& case_name : wc.case_names) {
 
             // Look up the enum variant value from symbol table
             i64 variant_value = 0;
@@ -1324,8 +1313,8 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         // When falling through to merge, pass original phi values
         if (fallthrough_block == merge_block) {
             Vector<BlockArgPair> fallthrough_args;
-            for (u32 k = 0; k < phi_info.size(); k++) {
-                fallthrough_args.push_back({phi_info[k].original_value});
+            for (const auto& pi : phi_info) {
+                fallthrough_args.push_back({pi.original_value});
             }
             finish_block_branch(case_cond, ci.body_block->id, fallthrough_block->id,
                                 {}, alloc_span(fallthrough_args));
@@ -1354,8 +1343,8 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         push_scope();
 
         // Generate body statements
-        for (u32 j = 0; j < wc.body.size(); j++) {
-            gen_decl(wc.body[j]);
+        for (auto* d : wc.body) {
+            gen_decl(d);
         }
 
         pop_scope();
@@ -1363,8 +1352,8 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         // Jump to merge block with phi args if not terminated
         if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
             Vector<BlockArgPair> args;
-            for (u32 k = 0; k < phi_info.size(); k++) {
-                ValueId val = lookup_local(phi_info[k].name);
+            for (const auto& pi : phi_info) {
+                ValueId val = lookup_local(pi.name);
                 args.push_back({val});
             }
             finish_block_goto(merge_block->id, alloc_span(args));
@@ -1382,8 +1371,8 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         set_current_block(else_block);
         push_scope();
 
-        for (u32 i = 0; i < ws.else_body.size(); i++) {
-            gen_decl(ws.else_body[i]);
+        for (auto* d : ws.else_body) {
+            gen_decl(d);
         }
 
         pop_scope();
@@ -1391,8 +1380,8 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         // Jump to merge block with phi args if not terminated
         if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
             Vector<BlockArgPair> args;
-            for (u32 k = 0; k < phi_info.size(); k++) {
-                ValueId val = lookup_local(phi_info[k].name);
+            for (const auto& pi : phi_info) {
+                ValueId val = lookup_local(pi.name);
                 args.push_back({val});
             }
             finish_block_goto(merge_block->id, alloc_span(args));
@@ -1401,8 +1390,8 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
 
     // 9. Continue from merge block, bind phi results
     set_current_block(merge_block);
-    for (u32 i = 0; i < phi_info.size(); i++) {
-        define_local(phi_info[i].name, phi_info[i].merge_param, phi_info[i].type);
+    for (const auto& pi : phi_info) {
+        define_local(pi.name, pi.merge_param, pi.type);
     }
 }
 
@@ -2214,8 +2203,7 @@ ValueId IRBuilder::gen_constructor_call(Expr* expr) {
     Vector<ValueId> call_args;
     call_args.push_back(obj);  // 'self' pointer
 
-    for (u32 i = 0; i < ce.arguments.size(); i++) {
-        CallArg& arg = ce.arguments[i];
+    for (auto& arg : ce.arguments) {
         if (arg.modifier != ParamModifier::None) {
             // Pass address of lvalue for out/inout args
             call_args.push_back(gen_lvalue_addr(arg.expr));
@@ -2312,8 +2300,8 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
 
     // Build map of provided field initializers
     tsl::robin_map<StringView, Expr*, StringViewHash, StringViewEqual> provided_fields;
-    for (u32 i = 0; i < sl.fields.size(); i++) {
-        provided_fields[sl.fields[i].name] = sl.fields[i].value;
+    for (auto& field : sl.fields) {
+        provided_fields[field.name] = field.value;
     }
 
     // Helper to find default value for a field by searching the inheritance chain
@@ -2325,9 +2313,9 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
                 continue;
             }
             StructDecl& sd = current->struct_info.decl->struct_decl;
-            for (u32 j = 0; j < sd.fields.size(); j++) {
-                if (sd.fields[j].name == field_name) {
-                    return sd.fields[j].default_value;
+            for (auto& field : sd.fields) {
+                if (field.name == field_name) {
+                    return field.default_value;
                 }
             }
             current = current->struct_info.parent;
@@ -2336,8 +2324,7 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
     };
 
     // Initialize regular fields (including discriminants which are in struct_info.fields)
-    for (u32 i = 0; i < struct_type->struct_info.fields.size(); i++) {
-        FieldInfo& fi = struct_type->struct_info.fields[i];
+    for (auto& fi : struct_type->struct_info.fields) {
         Expr* value_expr = nullptr;
 
         auto it = provided_fields.find(fi.name);
@@ -2362,16 +2349,13 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
     }
 
     // Initialize variant fields from when clauses
-    for (u32 i = 0; i < struct_type->struct_info.when_clauses.size(); i++) {
-        const WhenClauseInfo& clause = struct_type->struct_info.when_clauses[i];
+    for (const auto& clause : struct_type->struct_info.when_clauses) {
 
         // For each variant in the clause
-        for (u32 j = 0; j < clause.variants.size(); j++) {
-            const VariantInfo& variant = clause.variants[j];
+        for (const auto& variant : clause.variants) {
 
             // Initialize variant fields if they're provided
-            for (u32 k = 0; k < variant.fields.size(); k++) {
-                const VariantFieldInfo& vfi = variant.fields[k];
+            for (const auto& vfi : variant.fields) {
 
                 auto it = provided_fields.find(vfi.name);
                 if (it != provided_fields.end()) {
@@ -2684,8 +2668,7 @@ void IRBuilder::collect_assigned_vars(Stmt* stmt, Vector<StringView>& out) {
             break;
         case AstKind::StmtBlock: {
             BlockStmt& block = stmt->block;
-            for (u32 i = 0; i < block.declarations.size(); i++) {
-                Decl* d = block.declarations[i];
+            for (auto* d : block.declarations) {
                 if (!d) continue;
                 // Recurse into statements (not var decls - those are new vars)
                 if (d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtDelete) {
@@ -2707,16 +2690,14 @@ void IRBuilder::collect_assigned_vars(Stmt* stmt, Vector<StringView>& out) {
             break;
         case AstKind::StmtWhen: {
             WhenStmt& ws = stmt->when_stmt;
-            for (u32 i = 0; i < ws.cases.size(); i++) {
-                for (u32 j = 0; j < ws.cases[i].body.size(); j++) {
-                    Decl* d = ws.cases[i].body[j];
+            for (auto& when_case : ws.cases) {
+                for (auto* d : when_case.body) {
                     if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtWhen) {
                         collect_assigned_vars(&d->stmt, out);
                     }
                 }
             }
-            for (u32 i = 0; i < ws.else_body.size(); i++) {
-                Decl* d = ws.else_body[i];
+            for (auto* d : ws.else_body) {
                 if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtWhen) {
                     collect_assigned_vars(&d->stmt, out);
                 }
@@ -2738,8 +2719,8 @@ void IRBuilder::collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out) 
                 StringView name = expr->assign.target->identifier.name;
                 // Add if not already present
                 bool found = false;
-                for (u32 i = 0; i < out.size(); i++) {
-                    if (out[i] == name) {
+                for (const auto& existing : out) {
+                    if (existing == name) {
                         found = true;
                         break;
                     }
@@ -2766,8 +2747,8 @@ void IRBuilder::collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out) 
             break;
         case AstKind::ExprCall:
             collect_assigned_vars_expr(expr->call.callee, out);
-            for (u32 i = 0; i < expr->call.arguments.size(); i++) {
-                collect_assigned_vars_expr(expr->call.arguments[i].expr, out);
+            for (auto& arg : expr->call.arguments) {
+                collect_assigned_vars_expr(arg.expr, out);
             }
             break;
         case AstKind::ExprIndex:
@@ -2781,8 +2762,8 @@ void IRBuilder::collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out) 
             collect_assigned_vars_expr(expr->grouping.expr, out);
             break;
         case AstKind::ExprStringInterp:
-            for (u32 i = 0; i < expr->string_interp.expressions.size(); i++) {
-                collect_assigned_vars_expr(expr->string_interp.expressions[i], out);
+            for (auto* sub_expr : expr->string_interp.expressions) {
+                collect_assigned_vars_expr(sub_expr, out);
             }
             break;
         default:
@@ -2794,9 +2775,9 @@ Span<BlockArgPair> IRBuilder::make_loop_args(const Vector<LoopVarInfo>& loop_var
     if (loop_vars.empty()) return {};
 
     Vector<BlockArgPair> args;
-    for (u32 i = 0; i < loop_vars.size(); i++) {
+    for (const auto& lv : loop_vars) {
         // Look up the current value of this variable
-        ValueId current_val = lookup_local(loop_vars[i].name);
+        ValueId current_val = lookup_local(lv.name);
         args.push_back({current_val});
     }
     return alloc_span(args);
@@ -2963,8 +2944,7 @@ void IRBuilder::setup_parameters(Span<Param> params, Type* self_type) {
     }
 
     // Set up other parameters
-    for (u32 i = 0; i < params.size(); i++) {
-        Param& param = params[i];
+    for (auto& param : params) {
         Type* param_type = nullptr;
         if (param.type) {
             param_type = m_types.type_by_name(param.type->name);

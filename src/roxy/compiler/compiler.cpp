@@ -99,8 +99,7 @@ bool Compiler::parse_all() {
         m_module_states[i].program = program;
 
         // Collect imports from the program
-        for (u32 j = 0; j < program->declarations.size(); j++) {
-            Decl* decl = program->declarations[j];
+        for (auto* decl : program->declarations) {
             if (decl && decl->kind == AstKind::DeclImport) {
                 m_module_states[i].imports.push_back(decl->import_decl.module_path);
             }
@@ -197,8 +196,7 @@ bool Compiler::analyze_all() {
         if (mod_info) {
             // Register public functions as exports
             // Look up function types from the symbol table
-            for (u32 j = 0; j < program->declarations.size(); j++) {
-                Decl* decl = program->declarations[j];
+            for (auto* decl : program->declarations) {
                 if (decl && decl->kind == AstKind::DeclFun && decl->fun_decl.is_pub) {
                     // Look up the function in the symbol table to get its type
                     Symbol* sym = analyzer.symbols().lookup(decl->fun_decl.name);

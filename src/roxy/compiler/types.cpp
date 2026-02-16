@@ -253,9 +253,9 @@ Type* TypeCache::type_by_name(StringView name) {
 }
 
 const FieldInfo* StructTypeInfo::find_field(StringView field_name) const {
-    for (u32 i = 0; i < fields.size(); i++) {
-        if (fields[i].name == field_name) {
-            return &fields[i];
+    for (const auto& field : fields) {
+        if (field.name == field_name) {
+            return &field;
         }
     }
     return nullptr;
@@ -264,15 +264,13 @@ const FieldInfo* StructTypeInfo::find_field(StringView field_name) const {
 const VariantFieldInfo* StructTypeInfo::find_variant_field(StringView field_name,
                                                             const WhenClauseInfo** out_clause,
                                                             const VariantInfo** out_variant) const {
-    for (u32 i = 0; i < when_clauses.size(); i++) {
-        const WhenClauseInfo& clause = when_clauses[i];
-        for (u32 j = 0; j < clause.variants.size(); j++) {
-            const VariantInfo& variant = clause.variants[j];
-            for (u32 k = 0; k < variant.fields.size(); k++) {
-                if (variant.fields[k].name == field_name) {
+    for (const auto& clause : when_clauses) {
+        for (const auto& variant : clause.variants) {
+            for (const auto& field : variant.fields) {
+                if (field.name == field_name) {
                     if (out_clause) *out_clause = &clause;
                     if (out_variant) *out_variant = &variant;
-                    return &variant.fields[k];
+                    return &field;
                 }
             }
         }
@@ -291,8 +289,8 @@ void TypeCache::register_primitive_trait(TypeKind kind, Type* trait) {
 const MethodInfo* TypeCache::lookup_primitive_method(TypeKind kind, StringView name) const {
     auto it = m_primitive_methods.find(static_cast<u8>(kind));
     if (it == m_primitive_methods.end()) return nullptr;
-    for (u32 i = 0; i < it->second.size(); i++) {
-        if (it->second[i].name == name) return &it->second[i];
+    for (const auto& method : it->second) {
+        if (method.name == name) return &method;
     }
     return nullptr;
 }
@@ -300,8 +298,8 @@ const MethodInfo* TypeCache::lookup_primitive_method(TypeKind kind, StringView n
 bool TypeCache::primitive_implements_trait(TypeKind kind, Type* trait) const {
     auto it = m_primitive_traits.find(static_cast<u8>(kind));
     if (it == m_primitive_traits.end()) return false;
-    for (u32 i = 0; i < it->second.size(); i++) {
-        if (it->second[i] == trait) return true;
+    for (auto* t : it->second) {
+        if (t == trait) return true;
     }
     return false;
 }
@@ -319,8 +317,8 @@ const MethodInfo* TypeCache::lookup_method(Type* type, StringView name, Type** f
 bool TypeCache::implements_trait(Type* type, Type* trait) const {
     if (type->is_struct()) {
         StructTypeInfo& sti = type->struct_info;
-        for (u32 i = 0; i < sti.implemented_traits.size(); i++) {
-            if (sti.implemented_traits[i] == trait) return true;
+        for (auto* impl_trait : sti.implemented_traits) {
+            if (impl_trait == trait) return true;
         }
         return false;
     }
@@ -338,10 +336,10 @@ const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name,
     Type* current = struct_type;
     while (current && current->is_struct()) {
         StructTypeInfo& sti = current->struct_info;
-        for (u32 i = 0; i < sti.methods.size(); i++) {
-            if (sti.methods[i].name == name) {
+        for (auto& method : sti.methods) {
+            if (method.name == name) {
                 if (found_in_type) *found_in_type = current;
-                return &sti.methods[i];
+                return &method;
             }
         }
         current = sti.parent;
@@ -399,8 +397,8 @@ static void append_string(Vector<char>& out, const char* str) {
 }
 
 static void append_string(Vector<char>& out, StringView str) {
-    for (u32 i = 0; i < str.size(); i++) {
-        out.push_back(str[i]);
+    for (char c : str) {
+        out.push_back(c);
     }
 }
 

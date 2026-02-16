@@ -106,8 +106,8 @@ static void append_str(Vector<char>& out, const char* str) {
 }
 
 static void append_string_view(Vector<char>& out, StringView sv) {
-    for (u32 i = 0; i < sv.size(); i++) {
-        out.push_back(sv[i]);
+    for (char c : sv) {
+        out.push_back(c);
     }
 }
 
@@ -169,8 +169,8 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
 
         case IROp::ConstString:
             append_str(out, " \"");
-            for (u32 i = 0; i < inst->const_data.string_val.size(); i++) {
-                out.push_back(inst->const_data.string_val[i]);
+            for (char c : inst->const_data.string_val) {
+                out.push_back(c);
             }
             append_str(out, "\"");
             break;
@@ -245,8 +245,8 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
             append_str(out, " ");
             append_value_id(out, inst->field.object);
             append_str(out, ".");
-            for (u32 i = 0; i < inst->field.field_name.size(); i++) {
-                out.push_back(inst->field.field_name[i]);
+            for (char c : inst->field.field_name) {
+                out.push_back(c);
             }
             break;
 
@@ -254,8 +254,8 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
             append_str(out, " &");
             append_value_id(out, inst->field.object);
             append_str(out, ".");
-            for (u32 i = 0; i < inst->field.field_name.size(); i++) {
-                out.push_back(inst->field.field_name[i]);
+            for (char c : inst->field.field_name) {
+                out.push_back(c);
             }
             break;
 
@@ -263,8 +263,8 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
             append_str(out, " ");
             append_value_id(out, inst->field.object);
             append_str(out, ".");
-            for (u32 i = 0; i < inst->field.field_name.size(); i++) {
-                out.push_back(inst->field.field_name[i]);
+            for (char c : inst->field.field_name) {
+                out.push_back(c);
             }
             append_str(out, " <- ");
             append_value_id(out, inst->store_value);
@@ -289,8 +289,8 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
 
         case IROp::New:
             append_str(out, " ");
-            for (u32 i = 0; i < inst->new_data.type_name.size(); i++) {
-                out.push_back(inst->new_data.type_name[i]);
+            for (char c : inst->new_data.type_name) {
+                out.push_back(c);
             }
             append_str(out, "(");
             for (u32 i = 0; i < inst->new_data.args.size(); i++) {
@@ -303,8 +303,8 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
         case IROp::Call:
         case IROp::CallNative:
             append_str(out, " ");
-            for (u32 i = 0; i < inst->call.func_name.size(); i++) {
-                out.push_back(inst->call.func_name[i]);
+            for (char c : inst->call.func_name) {
+                out.push_back(c);
             }
             append_str(out, "(");
             for (u32 i = 0; i < inst->call.args.size(); i++) {
@@ -413,8 +413,8 @@ void ir_block_to_string(const IRBlock* block, Vector<char>& out) {
     append_block_id(out, block->id);
     if (!block->name.empty()) {
         append_str(out, " [");
-        for (u32 i = 0; i < block->name.size(); i++) {
-            out.push_back(block->name[i]);
+        for (char c : block->name) {
+            out.push_back(c);
         }
         append_str(out, "]");
     }
@@ -479,8 +479,8 @@ void ir_block_to_string(const IRBlock* block, Vector<char>& out) {
 
 void ir_function_to_string(const IRFunction* func, Vector<char>& out) {
     append_str(out, "fn ");
-    for (u32 i = 0; i < func->name.size(); i++) {
-        out.push_back(func->name[i]);
+    for (char c : func->name) {
+        out.push_back(c);
     }
     append_str(out, "(");
     for (u32 i = 0; i < func->params.size(); i++) {
@@ -514,8 +514,8 @@ void ir_function_to_string(const IRFunction* func, Vector<char>& out) {
 void ir_module_to_string(const IRModule* module, Vector<char>& out) {
     if (!module->name.empty()) {
         append_str(out, "// Module: ");
-        for (u32 i = 0; i < module->name.size(); i++) {
-            out.push_back(module->name[i]);
+        for (char c : module->name) {
+            out.push_back(c);
         }
         out.push_back('\n');
         out.push_back('\n');
