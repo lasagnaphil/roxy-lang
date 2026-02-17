@@ -213,8 +213,9 @@ private:
                                                   Span<FieldInit> literal_fields,
                                                   SourceLocation loc);
 
-    // List method population from NativeRegistry
+    // List/enum method population
     void populate_list_methods(Type* list_type);
+    void populate_enum_methods(Type* enum_type);
     NativeRegistry* get_builtin_registry();
 
     // Trait analysis helpers

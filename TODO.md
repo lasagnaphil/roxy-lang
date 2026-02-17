@@ -75,10 +75,10 @@ Last updated: 2026-02-16
   - Issue: `ref<Child>` is assignable to `ref<Parent>`, but `ref` is mutable — allows writing a `Parent` value through a reference that actually points to a `Child`, corrupting layout
   - Fix: Make reference subtyping invariant, or split into read-only `ref` (covariant) and mutable `mut_ref` (invariant)
 
-- [ ] **Struct comparison allowed without Eq trait**
-  - File: `src/roxy/compiler/semantic.cpp` (`get_binary_result_type`, line 3801)
+- [x] **Struct comparison allowed without Eq trait**
+  - File: `src/roxy/compiler/semantic.cpp` (`get_binary_result_type`)
   - Issue: When both operands have the same struct type, comparison is allowed even if no `Eq` trait is implemented — falls through to `return m_types.bool_type()` unconditionally
-  - Fix: Require `Eq`/`Ord` trait implementation for struct comparisons; reject if no trait method found
+  - Fix: Restricted same-type fallback to non-struct types; structs now require trait methods
 
 - [x] **Trait method signature validation only checks parameter count**
   - File: `src/roxy/compiler/semantic.cpp` (`validate_trait_implementations`)

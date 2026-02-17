@@ -159,6 +159,7 @@ struct EnumTypeInfo {
     StringView name;
     Decl* decl;           // Points to the EnumDecl AST node
     Type* underlying;     // Underlying integer type (defaults to i32)
+    Span<MethodInfo> methods;  // Builtin methods (eq, ne)
 };
 
 // Type info for list types

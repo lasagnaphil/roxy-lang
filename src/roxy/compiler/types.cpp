@@ -298,6 +298,11 @@ const MethodInfo* TypeCache::lookup_method(Type* type, StringView name, Type** f
     if (type->is_list()) {
         return lookup_list_method(type->list_info, name);
     }
+    if (type->is_enum()) {
+        for (const auto& method : type->enum_info.methods) {
+            if (method.name == name) return &method;
+        }
+    }
     return nullptr;
 }
 

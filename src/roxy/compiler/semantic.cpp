@@ -234,6 +234,7 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
 
             // Create the enum type
             Type* type = m_types.enum_type(name, decl);
+            populate_enum_methods(type);
             m_type_env.register_named_type(name, type);
 
             // Define in global scope
@@ -2030,12 +2031,26 @@ void SemanticAnalyzer::register_primitive_operator_methods() {
         Span<Type*> bool_param = make_param_span(m_types.bool_type());
         const char* bool_ops[] = { "eq", "ne" };
         for (const char* op_name : bool_ops) {
-            MethodInfo mi;
-            mi.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
-            mi.param_types = bool_param;
-            mi.return_type = m_types.bool_type();
-            mi.decl = nullptr;
-            m_types.register_primitive_method(TypeKind::Bool, mi);
+            MethodInfo method_info;
+            method_info.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
+            method_info.param_types = bool_param;
+            method_info.return_type = m_types.bool_type();
+            method_info.decl = nullptr;
+            m_types.register_primitive_method(TypeKind::Bool, method_info);
+        }
+    }
+
+    // Register for string: eq, ne → bool
+    {
+        Span<Type*> string_param = make_param_span(m_types.string_type());
+        const char* string_ops[] = { "eq", "ne" };
+        for (const char* op_name : string_ops) {
+            MethodInfo method_info;
+            method_info.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
+            method_info.param_types = string_param;
+            method_info.return_type = m_types.bool_type();
+            method_info.decl = nullptr;
+            m_types.register_primitive_method(TypeKind::String, method_info);
         }
     }
 }
@@ -2827,6 +2842,33 @@ Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, Strin
     }
 
     return return_type;
+}
+
+void SemanticAnalyzer::populate_enum_methods(Type* type) {
+    assert(type && type->is_enum());
+
+    // eq(other: Self): bool, ne(other: Self): bool
+    MethodInfo* methods = reinterpret_cast<MethodInfo*>(
+        m_allocator.alloc_bytes(sizeof(MethodInfo) * 2, alignof(MethodInfo)));
+
+    Type** enum_param = reinterpret_cast<Type**>(
+        m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
+    enum_param[0] = type;
+    Span<Type*> param_span(enum_param, 1);
+
+    methods[0].name = StringView("eq", 2);
+    methods[0].param_types = param_span;
+    methods[0].return_type = m_types.bool_type();
+    methods[0].decl = nullptr;
+    methods[0].native_name = StringView();
+
+    methods[1].name = StringView("ne", 2);
+    methods[1].param_types = param_span;
+    methods[1].return_type = m_types.bool_type();
+    methods[1].decl = nullptr;
+    methods[1].native_name = StringView();
+
+    type->enum_info.methods = Span<MethodInfo>(methods, 2);
 }
 
 NativeRegistry* SemanticAnalyzer::get_builtin_registry() {
@@ -4028,9 +4070,6 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
         case BinaryOp::GreaterEq: {
             if (Type* result = try_resolve_binary_op(op, left, right))
                 return result;
-            // Same-type fallback (enum == enum, etc.)
-            if (left == right)
-                return m_types.bool_type();
             // Type mismatch check for better error messages
             if (left->is_numeric() && right->is_numeric()) {
                 require_types_match(left, right, loc, "comparison operator");
