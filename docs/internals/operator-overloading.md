@@ -4,7 +4,7 @@ Operators in Roxy are implemented via traits. The compiler rewrites operators in
 
 **Implemented:** Comparison operator dispatch (`==`, `!=`, `<`, `<=`, `>`, `>=`) for struct types with `eq`/`ne`/`lt`/`le`/`gt`/`ge` methods.
 
-**Not yet implemented:** Arithmetic, bitwise, compound assignment, and indexing operator traits (require generics for mixed-type `Rhs`).
+**Not yet implemented:** Arithmetic, bitwise, compound assignment, and indexing operator dispatch. Generic traits (the foundation for mixed-type `Rhs`) are now implemented — what remains is wiring the operator-to-method dispatch in semantic analysis and IR generation.
 
 See `traits.md` for the general trait system design.
 
@@ -329,23 +329,14 @@ fun i32.shr(other: i32): i32 for Shr { /* intrinsic */ }
 
 ## Generics Requirement
 
-**Same-type operators** work without generics:
-- `Eq`, `Ord` (comparison)
-- `Add`, `Sub`, `Neg` (when `Rhs` = `Self`)
-- `BitAnd`, `BitOr`, `BitXor`, `BitNot`, `Shl`, `Shr` (when `Rhs` = `Self`)
-- All `*Assign` traits (when `Rhs` = `Self`)
-
-**Mixed-type operators** require generics:
-- `Mul<f64>`, `Div<f64>` for `Vec2 * scalar`
-- `Index<i32>` for array indexing
-- Any operation where left and right operand types differ
-
-Without generics, use explicit method calls for mixed-type operations:
+Generic traits with type parameters are now implemented (see `traits.md` § Generic Traits). This means both same-type and mixed-type operator traits can be declared and implemented:
 
 ```roxy
-// Without generics - use method syntax
-var scaled: Vec2 = a.scale(2.0);
+// Same-type: Rhs = Self
+fun Vec2.add(other: Vec2): Vec2 for Add<Vec2> { ... }
 
-// With generics - use operator syntax
-var scaled: Vec2 = a * 2.0;
+// Mixed-type: Rhs = i32
+fun Vec2.mul(scalar: i32): Vec2 for Mul<i32> { ... }
 ```
+
+**What remains** is wiring operator dispatch: the compiler needs to rewrite `a + b` → `a.add(b)` and `a * 2` → `a.mul(2)` for arithmetic/bitwise operators (comparison operators are already dispatched).

@@ -165,7 +165,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Tests:** `tests/e2e/when_test.cpp`
 
 ### Traits
-**Traits** - Ad-hoc polymorphism with trait declarations, required/default methods, `for Trait` implementations, trait inheritance, `Self` type, comparison operator dispatch.
+**Traits** - Ad-hoc polymorphism with trait declarations, required/default methods, `for Trait` implementations, trait inheritance, `Self` type, comparison operator dispatch, and generic traits with type parameters (`trait Add<Rhs>`, `for Mul<i32>`).
 **Details:** `docs/internals/traits.md`, `docs/internals/operator-overloading.md` | **Tests:** `tests/e2e/traits_test.cpp`
 
 ### Generics
@@ -178,7 +178,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 - LSP parser (error recovery, lossless CST)
 - LSP server features (completion, hover, go-to-definition)
 - Optimizations
-- Arithmetic/bitwise operator traits (require generics, see `docs/internals/operator-overloading.md`)
+- Arithmetic/bitwise operator dispatch (generic trait infrastructure exists, dispatch not yet wired; see `docs/internals/operator-overloading.md`)
 
 ## Testing
 

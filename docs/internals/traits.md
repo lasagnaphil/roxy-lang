@@ -2,9 +2,9 @@
 
 Traits provide a way to define shared behavior across types. They enable polymorphism without function overloading.
 
-**Implemented features:** Trait declarations, required/default methods, trait implementations (`for Trait`), trait inheritance, `Self` type, and operator dispatch for comparison operators (`==`, `!=`, `<`, `<=`, `>`, `>=`).
+**Implemented features:** Trait declarations, required/default methods, trait implementations (`for Trait`), trait inheritance, `Self` type, operator dispatch for comparison operators (`==`, `!=`, `<`, `<=`, `>`, `>=`), and generic traits with type parameters (`trait Add<Rhs>`).
 
-**Not yet implemented:** Generic functions with trait bounds (`<T: Trait>`), arithmetic/bitwise operator traits (require generics), traits on primitive types, standard library traits.
+**Not yet implemented:** Generic functions with trait bounds (`<T: Trait>`), arithmetic/bitwise operator dispatch (generic trait infrastructure exists, dispatch not wired), traits on primitive types, standard library traits.
 
 ## Syntax Overview
 
@@ -131,6 +131,84 @@ fun DebugPrintable.debug_print() {
 ```
 
 Implementing `DebugPrintable` requires also implementing `Printable`.
+
+## Generic Traits
+
+Traits can have type parameters, enabling mixed-type operations:
+
+```roxy
+trait Add<Rhs>;
+fun Add.add(other: Rhs): Self;
+
+trait Convert<From, To>;
+fun Convert.convert(input: From): To;
+```
+
+### Implementing Generic Traits
+
+Specify concrete type arguments in the `for` clause:
+
+```roxy
+struct Vec2 { x: i32; y: i32; }
+
+// Same-type: Rhs = Vec2
+fun Vec2.add(other: Vec2): Vec2 for Add<Vec2> {
+    return Vec2 { x = self.x + other.x, y = self.y + other.y };
+}
+
+// Mixed-type: Rhs = i32
+trait Mul<Rhs>;
+fun Mul.mul(other: Rhs): Self;
+
+fun Vec2.mul(scalar: i32): Vec2 for Mul<i32> {
+    return Vec2 { x = self.x * scalar, y = self.y * scalar };
+}
+```
+
+### Default Methods with Type Parameters
+
+Default methods can use trait type parameters. When injected into a struct, type parameters are substituted with the concrete type arguments:
+
+```roxy
+trait Add<Rhs>;
+fun Add.add(other: Rhs): Self;
+fun Add.add_twice(other: Rhs): Self {
+    return self.add(other).add(other);   // Rhs is substituted when injected
+}
+
+struct Num { val: i32; }
+
+fun Num.add(other: Num): Num for Add<Num> {
+    return Num { val = self.val + other.val };
+}
+// Num now has add_twice() with Rhs=Num substituted in the body
+```
+
+### Multi-Parameter Generic Traits
+
+```roxy
+trait Convert<From, To>;
+fun Convert.convert(input: From): To;
+
+struct Converter { factor: i32; }
+
+fun Converter.convert(input: i32): i32 for Convert<i32, i32> {
+    return input * self.factor;
+}
+```
+
+### Error Cases
+
+The compiler validates generic trait usage:
+- **Wrong type arg count:** `for Add` when `Add<Rhs>` expects 1 type argument → error
+- **Type args on non-generic trait:** `for Eq<i32>` when `Eq` has no type parameters → error
+
+### Constraints
+
+- A struct can implement a given generic trait only once per set of type arguments
+- No default type arguments (must always specify `for Add<Vec2>`, not `for Add`)
+- Generic trait inheritance is not yet supported (e.g., `trait AddAssign<Rhs> : Add<Rhs>`)
+- No trait bounds on type parameters
 
 ## Generic Functions with Trait Bounds
 
@@ -307,7 +385,7 @@ fun main(): i32 {
 ## Grammar
 
 ```
-trait_decl      -> "trait" Identifier ( ":" Identifier )? ";" ;
+trait_decl      -> "trait" Identifier generic_params? ( ":" Identifier )? ";" ;
 
 trait_method    -> "fun" Identifier "." Identifier
                    "(" parameters? ")" ( ":" type_expr )?
@@ -315,12 +393,13 @@ trait_method    -> "fun" Identifier "." Identifier
 
 impl_method     -> "fun" Identifier "." Identifier
                    "(" parameters? ")" ( ":" type_expr )?
-                   "for" Identifier
+                   "for" Identifier generic_args?
                    block ;
 
+generic_params  -> "<" type_param ( "," type_param )* ">" ;
 type_param      -> Identifier ( ":" trait_bounds )? ;
 trait_bounds    -> Identifier ( "+" Identifier )* ;
-generic_params  -> "<" type_param ( "," type_param )* ">" ;
+generic_args    -> "<" type_expr ( "," type_expr )* ">" ;
 ```
 
 ## Standard Traits (Planned)
@@ -360,7 +439,7 @@ This works because each struct has at most one implementation of each method nam
 
 ### Default Method Injection
 
-Default methods (trait methods with bodies) are deep-cloned for each implementing struct that doesn't override them. The AST is cloned so that `resolved_type` annotations are independent per concrete `Self` type. These are added as synthetic declarations processed alongside regular methods.
+Default methods (trait methods with bodies) are deep-cloned for each implementing struct that doesn't override them. A `TypeSubstitution` is built that maps `Self` → the concrete struct type, plus any trait type parameters → their concrete type arguments. The body, parameters, and return type are cloned using `GenericInstantiator::clone_stmt()` and `substitute_type_expr()`, which perform the substitution during cloning. These are added as synthetic declarations processed alongside regular methods.
 
 ### Operator Dispatch
 
@@ -393,9 +472,10 @@ See `generics.md` for discussion of compile-time trade-offs and the recommendati
 
 | File | Purpose |
 |------|---------|
-| `include/roxy/compiler/types.hpp` | `TraitMethodInfo`, `TraitTypeInfo`, trait type kind |
-| `include/roxy/compiler/ast.hpp` | `DeclTrait` AST node, `trait_name` on `MethodDecl` |
-| `src/roxy/compiler/parser.cpp` | `trait_declaration()`, `for Trait` parsing |
-| `src/roxy/compiler/semantic.cpp` | Trait analysis, validation, default method injection |
+| `include/roxy/compiler/types.hpp` | `TraitMethodInfo`, `TraitTypeInfo` (with `type_params`), trait type kind |
+| `include/roxy/compiler/ast.hpp` | `TraitDecl` (with `type_params`), `MethodDecl` (with `trait_type_args`) |
+| `src/roxy/compiler/parser.cpp` | `trait_declaration()`, `for Trait<Args>` parsing |
+| `include/roxy/compiler/generics.hpp` | `clone_stmt()`, `substitute_type_expr()` (used by default method injection) |
+| `src/roxy/compiler/semantic.cpp` | Trait analysis, validation, generic trait type arg resolution, default method injection |
 | `src/roxy/compiler/ir_builder.cpp` | Operator dispatch, synthetic decl processing |
-| `tests/e2e/traits_test.cpp` | E2E tests |
+| `tests/e2e/traits_test.cpp` | E2E tests (11 non-generic + 6 generic trait tests) |

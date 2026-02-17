@@ -4,7 +4,7 @@ Generics enable writing code that works with multiple types while maintaining st
 
 ## Implementation Status
 
-**Implemented (Phase 1 + 2):**
+**Implemented (Phase 1 + 2 + 3):**
 - Generic functions with explicit type arguments
 - Generic structs with explicit type arguments
 - Monomorphization with AST cloning and type substitution
@@ -13,6 +13,7 @@ Generics enable writing code that works with multiple types while maintaining st
 - Generic structs as function parameters and return types
 - Generic functions returning generic structs
 - Synthesized default constructors for generic struct instances
+- Generic traits with type parameters (`trait Add<Rhs>`, see `traits.md`)
 
 **Not yet implemented:**
 - Type inference (type arguments must be explicit)
