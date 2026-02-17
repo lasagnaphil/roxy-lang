@@ -47,8 +47,16 @@ enum class TokenKind {
     GreaterEqual,   // >=
     Amp,            // &
     AmpAmp,         // &&
+    AmpEqual,       // &=
     Pipe,           // |
     PipePipe,       // ||
+    PipeEqual,      // |=
+    Caret,          // ^
+    CaretEqual,     // ^=
+    LessLess,       // <<
+    LessLessEqual,  // <<=
+    GreaterGreater, // >>
+    GreaterGreaterEqual, // >>=
     ColonColon,     // ::
 
     // Keywords - Types/modifiers

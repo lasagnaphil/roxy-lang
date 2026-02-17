@@ -170,6 +170,13 @@ private:
     Type* get_binary_result_type(BinaryOp op, Type* left, Type* right, SourceLocation loc);
     Type* get_unary_result_type(UnaryOp op, Type* operand, SourceLocation loc);
 
+    // Unified operator dispatch helpers (work for both primitives and structs)
+    Type* try_resolve_binary_op(BinaryOp op, Type* left, Type* right);
+    Type* try_resolve_unary_op(UnaryOp op, Type* operand);
+
+    // Register built-in operator methods for primitive types
+    void register_primitive_operator_methods();
+
     // Type mismatch error helpers
     // Returns true if types match, false and reports error if they don't
     bool require_types_match(Type* left, Type* right, SourceLocation loc, const char* context);

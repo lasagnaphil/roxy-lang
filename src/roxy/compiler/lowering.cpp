@@ -415,6 +415,9 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::DivD:
         case IROp::BitAnd:
         case IROp::BitOr:
+        case IROp::BitXor:
+        case IROp::Shl:
+        case IROp::Shr:
         case IROp::EqI:
         case IROp::NeI:
         case IROp::LtI:
@@ -1032,7 +1035,10 @@ Opcode BytecodeBuilder::get_opcode(IROp op) const {
         // Bitwise
         case IROp::BitAnd:  return Opcode::BIT_AND;
         case IROp::BitOr:   return Opcode::BIT_OR;
+        case IROp::BitXor:  return Opcode::BIT_XOR;
         case IROp::BitNot:  return Opcode::BIT_NOT;
+        case IROp::Shl:     return Opcode::SHL;
+        case IROp::Shr:     return Opcode::SHR;
 
         // Type conversions
         case IROp::I_TO_F64:  return Opcode::I_TO_F64;

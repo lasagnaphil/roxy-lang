@@ -2,9 +2,9 @@
 
 Operators in Roxy are implemented via traits. The compiler rewrites operators into trait method calls, enabling user-defined types to support standard operators.
 
-**Implemented:** Comparison operator dispatch (`==`, `!=`, `<`, `<=`, `>`, `>=`) for struct types with `eq`/`ne`/`lt`/`le`/`gt`/`ge` methods.
+**Implemented:** All arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`), bitwise (`&`, `|`, `^`, `~`, `<<`, `>>`), unary (`-`, `~`), and compound assignment (`+=`, `-=`, etc.) operator dispatch for both struct types and primitive types, through a unified trait method lookup.
 
-**Not yet implemented:** Arithmetic, bitwise, compound assignment, and indexing operator dispatch. Generic traits (the foundation for mixed-type `Rhs`) are now implemented — what remains is wiring the operator-to-method dispatch in semantic analysis and IR generation.
+**Not yet implemented:** Indexing operator dispatch (`[]`), compound assignment trait methods for primitives (falls back to binary op validation).
 
 See `traits.md` for the general trait system design.
 
@@ -300,36 +300,45 @@ fun main(): i32 {
 
 ## Builtin Implementations
 
-Primitive types have compiler-provided trait implementations:
+Primitive types have compiler-registered built-in operator methods. These are registered during semantic analysis (Pass 1.8) via `register_primitive_operator_methods()` using the existing `TypeCache::register_primitive_method()` API. They are not user-writable — the IR builder emits direct IR ops (e.g., `AddI`, `SubF`) rather than method calls.
+
+**Integer types (i32, i64):**
+- Arithmetic: `add`, `sub`, `mul`, `div`, `mod` (param: Self, return: Self)
+- Bitwise: `bit_and`, `bit_or`, `bit_xor`, `shl`, `shr` (param: Self, return: Self)
+- Comparison: `eq`, `ne`, `lt`, `le`, `gt`, `ge` (param: Self, return: bool)
+- Unary: `neg`, `bit_not` (no params, return: Self)
+
+**Float types (f32, f64):**
+- Arithmetic: `add`, `sub`, `mul`, `div` (param: Self, return: Self)
+- Comparison: `eq`, `ne`, `lt`, `le`, `gt`, `ge` (param: Self, return: bool)
+- Unary: `neg` (no params, return: Self)
+
+**Bool:**
+- Comparison: `eq`, `ne` (param: Self, return: bool)
 
 ```roxy
-// Compiler intrinsics (not user-writable)
+// Conceptual representation (not user-writable):
 fun i32.add(other: i32): i32 for Add { /* intrinsic */ }
 fun i32.sub(other: i32): i32 for Sub { /* intrinsic */ }
-fun i32.mul(other: i32): i32 for Mul { /* intrinsic */ }
-fun i32.div(other: i32): i32 for Div { /* intrinsic */ }
-fun i32.mod(other: i32): i32 for Mod { /* intrinsic */ }
-fun i32.neg(): i32 for Neg { /* intrinsic */ }
-
-fun i32.add_assign(other: i32) for AddAssign { /* intrinsic */ }
-fun i32.sub_assign(other: i32) for SubAssign { /* intrinsic */ }
-// ... etc
-
 fun i32.eq(other: i32): bool for Eq { /* intrinsic */ }
-fun i32.cmp(other: i32): i32 for Ord { /* intrinsic */ }
-
+fun i32.neg(): i32 for Neg { /* intrinsic */ }
 fun i32.bit_and(other: i32): i32 for BitAnd { /* intrinsic */ }
-fun i32.bit_or(other: i32): i32 for BitOr { /* intrinsic */ }
-fun i32.bit_xor(other: i32): i32 for BitXor { /* intrinsic */ }
-fun i32.bit_not(): i32 for BitNot { /* intrinsic */ }
-fun i32.shl(other: i32): i32 for Shl { /* intrinsic */ }
-fun i32.shr(other: i32): i32 for Shr { /* intrinsic */ }
 // ... etc for all primitive types
 ```
 
+## Unified Dispatch Architecture
+
+The semantic analyzer uses a unified dispatch path for both primitive and struct operator resolution:
+
+1. **Registration (Pass 1.8):** `register_primitive_operator_methods()` registers operator methods on primitive types using `TypeCache::register_primitive_method()`.
+2. **Resolution:** `try_resolve_binary_op()` and `try_resolve_unary_op()` call `TypeCache::lookup_method()`, which handles both structs (via `lookup_method_in_hierarchy()`) and primitives (via `lookup_primitive_method()`).
+3. **Code generation:** The IR builder still distinguishes primitives from structs — primitives emit direct IR ops (`AddI`, `SubF`, etc.), while structs emit trait method calls. This is the right separation: the type checker validates uniformly via traits, but codegen emits intrinsics for primitives.
+
+The shared operator-to-method-name mappings live in `include/roxy/compiler/operator_traits.hpp` (`binary_op_to_trait_method()`, `unary_op_to_trait_method()`, `assign_op_to_trait_method()`), used by both semantic analysis and IR generation.
+
 ## Generics Requirement
 
-Generic traits with type parameters are now implemented (see `traits.md` § Generic Traits). This means both same-type and mixed-type operator traits can be declared and implemented:
+Generic traits with type parameters are implemented (see `traits.md` § Generic Traits). This enables both same-type and mixed-type operator traits:
 
 ```roxy
 // Same-type: Rhs = Self
@@ -338,5 +347,3 @@ fun Vec2.add(other: Vec2): Vec2 for Add<Vec2> { ... }
 // Mixed-type: Rhs = i32
 fun Vec2.mul(scalar: i32): Vec2 for Mul<i32> { ... }
 ```
-
-**What remains** is wiring operator dispatch: the compiler needs to rewrite `a + b` → `a.add(b)` and `a * 2` → `a.mul(2)` for arithmetic/bitwise operators (comparison operators are already dispatched).

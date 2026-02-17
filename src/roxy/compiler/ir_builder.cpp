@@ -1,4 +1,5 @@
 #include "roxy/compiler/ir_builder.hpp"
+#include "roxy/compiler/operator_traits.hpp"
 #include "roxy/compiler/generics.hpp"
 #include "roxy/compiler/module_registry.hpp"
 #include "roxy/core/format.hpp"
@@ -1483,10 +1484,28 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
 ValueId IRBuilder::gen_unary_expr(Expr* expr) {
     UnaryExpr& unary_expr = expr->unary;
 
+    // Check for struct unary operator trait dispatch
+    Type* operand_type = unary_expr.operand->resolved_type;
+    if (operand_type && operand_type->is_struct()) {
+        const char* method_name_str = unary_op_to_trait_method(unary_expr.op);
+        if (method_name_str) {
+            StringView method_name(method_name_str, static_cast<u32>(strlen(method_name_str)));
+            Type* found_in = nullptr;
+            const MethodInfo* mi = lookup_method_in_hierarchy(operand_type, method_name, &found_in);
+            if (mi && found_in) {
+                ValueId self_ptr = gen_lvalue_addr(unary_expr.operand);
+                StringView mangled = mangle_method(found_in->struct_info.name, method_name);
+                Span<ValueId> args = alloc_span<ValueId>(1);
+                args[0] = self_ptr;
+                return emit_call(mangled, args, expr->resolved_type);
+            }
+        }
+    }
+
     ValueId operand = gen_expr(unary_expr.operand);
     Type* result_type = expr->resolved_type;
 
-    IROp op = get_unary_op(unary_expr.op, unary_expr.operand->resolved_type);
+    IROp op = get_unary_op(unary_expr.op, operand_type);
     return emit_unary(op, operand, result_type);
 }
 
@@ -1533,38 +1552,25 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
         }
     }
 
-    // Check for struct operator trait dispatch (comparison operators on structs)
+    // Check for struct operator trait dispatch
     if (left_type && left_type->is_struct()) {
-        const char* method_name_str = nullptr;
-        switch (binary_expr.op) {
-            case BinaryOp::Equal:    method_name_str = "eq"; break;
-            case BinaryOp::NotEqual: method_name_str = "ne"; break;
-            case BinaryOp::Less:     method_name_str = "lt"; break;
-            case BinaryOp::LessEq:  method_name_str = "le"; break;
-            case BinaryOp::Greater:  method_name_str = "gt"; break;
-            case BinaryOp::GreaterEq: method_name_str = "ge"; break;
-            default: break;
-        }
-
+        const char* method_name_str = binary_op_to_trait_method(binary_expr.op);
         if (method_name_str) {
             StringView method_name(method_name_str, static_cast<u32>(strlen(method_name_str)));
             Type* found_in = nullptr;
             const MethodInfo* mi = lookup_method_in_hierarchy(left_type, method_name, &found_in);
             if (mi && found_in) {
                 // Generate a method call: left.method(right)
-                // Build self pointer (address of left operand)
                 ValueId self_ptr = gen_lvalue_addr(binary_expr.left);
                 ValueId right_val = gen_expr(binary_expr.right);
 
-                // Create mangled call name
                 StringView mangled = mangle_method(found_in->struct_info.name, method_name);
 
-                // Build args: [self_ptr, right_val]
                 Span<ValueId> args = alloc_span<ValueId>(2);
                 args[0] = self_ptr;
                 args[1] = right_val;
 
-                return emit_call(mangled, args, m_types.bool_type());
+                return emit_call(mangled, args, expr->resolved_type);
             }
         }
     }
@@ -2022,8 +2028,28 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
 
     // Handle compound assignment
     if (assign_expr.op != AssignOp::Assign) {
-        ValueId old_val = gen_expr(assign_expr.target);
         Type* type = assign_expr.target->resolved_type;
+
+        // Check for struct compound assignment trait dispatch
+        if (type && type->is_struct()) {
+            const char* method_name_str = assign_op_to_trait_method(assign_expr.op);
+            if (method_name_str) {
+                StringView method_name(method_name_str, static_cast<u32>(strlen(method_name_str)));
+                Type* found_in = nullptr;
+                const MethodInfo* mi = lookup_method_in_hierarchy(type, method_name, &found_in);
+                if (mi && found_in) {
+                    ValueId self_ptr = gen_lvalue_addr(assign_expr.target);
+                    StringView mangled = mangle_method(found_in->struct_info.name, method_name);
+                    Span<ValueId> args = alloc_span<ValueId>(2);
+                    args[0] = self_ptr;
+                    args[1] = value;
+                    return emit_call(mangled, args, m_types.void_type());
+                }
+            }
+        }
+
+        // Primitive compound assignment
+        ValueId old_val = gen_expr(assign_expr.target);
 
         IROp op;
         switch (assign_expr.op) {
@@ -2041,6 +2067,21 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
                 break;
             case AssignOp::ModAssign:
                 op = IROp::ModI;
+                break;
+            case AssignOp::BitAndAssign:
+                op = IROp::BitAnd;
+                break;
+            case AssignOp::BitOrAssign:
+                op = IROp::BitOr;
+                break;
+            case AssignOp::BitXorAssign:
+                op = IROp::BitXor;
+                break;
+            case AssignOp::ShlAssign:
+                op = IROp::Shl;
+                break;
+            case AssignOp::ShrAssign:
+                op = IROp::Shr;
                 break;
             default:
                 op = IROp::Copy;
@@ -2815,6 +2856,12 @@ IROp IRBuilder::get_binary_op(BinaryOp op, Type* type) {
             return IROp::BitAnd;
         case BinaryOp::BitOr:
             return IROp::BitOr;
+        case BinaryOp::BitXor:
+            return IROp::BitXor;
+        case BinaryOp::Shl:
+            return IROp::Shl;
+        case BinaryOp::Shr:
+            return IROp::Shr;
         default:
             return IROp::Copy;
     }

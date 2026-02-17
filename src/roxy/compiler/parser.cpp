@@ -105,11 +105,13 @@ struct InfixRule {
 //   1: || (logical or)
 //   2: && (logical and)
 //   3: |  (bitwise or)
-//   4: &  (bitwise and)
-//   5: == != (equality)
-//   6: < <= > >= (comparison)
-//   7: + - (additive)
-//   8: * / % (multiplicative)
+//   4: ^  (bitwise xor)
+//   5: &  (bitwise and)
+//   6: == != (equality)
+//   7: < <= > >= (comparison)
+//   8: << >> (shift)
+//   9: + - (additive)
+//  10: * / % (multiplicative)
 static InfixRule get_infix_rule(TokenKind kind) {
     switch (kind) {
         // Precedence 1: logical or
@@ -118,23 +120,28 @@ static InfixRule get_infix_rule(TokenKind kind) {
         case TokenKind::AmpAmp:       return {2, false, BinaryOp::And};
         // Precedence 3: bitwise or
         case TokenKind::Pipe:         return {3, false, BinaryOp::BitOr};
-        // Precedence 4: bitwise and
-        case TokenKind::Amp:          return {4, false, BinaryOp::BitAnd};
-        // Precedence 5: equality
-        case TokenKind::EqualEqual:   return {5, false, BinaryOp::Equal};
-        case TokenKind::BangEqual:    return {5, false, BinaryOp::NotEqual};
-        // Precedence 6: comparison
-        case TokenKind::Less:         return {6, false, BinaryOp::Less};
-        case TokenKind::LessEqual:    return {6, false, BinaryOp::LessEq};
-        case TokenKind::Greater:      return {6, false, BinaryOp::Greater};
-        case TokenKind::GreaterEqual: return {6, false, BinaryOp::GreaterEq};
-        // Precedence 7: additive
-        case TokenKind::Plus:         return {7, false, BinaryOp::Add};
-        case TokenKind::Minus:        return {7, false, BinaryOp::Sub};
-        // Precedence 8: multiplicative
-        case TokenKind::Star:         return {8, false, BinaryOp::Mul};
-        case TokenKind::Slash:        return {8, false, BinaryOp::Div};
-        case TokenKind::Percent:      return {8, false, BinaryOp::Mod};
+        // Precedence 4: bitwise xor
+        case TokenKind::Caret:        return {4, false, BinaryOp::BitXor};
+        // Precedence 5: bitwise and
+        case TokenKind::Amp:          return {5, false, BinaryOp::BitAnd};
+        // Precedence 6: equality
+        case TokenKind::EqualEqual:   return {6, false, BinaryOp::Equal};
+        case TokenKind::BangEqual:    return {6, false, BinaryOp::NotEqual};
+        // Precedence 7: comparison
+        case TokenKind::Less:         return {7, false, BinaryOp::Less};
+        case TokenKind::LessEqual:    return {7, false, BinaryOp::LessEq};
+        case TokenKind::Greater:      return {7, false, BinaryOp::Greater};
+        case TokenKind::GreaterEqual: return {7, false, BinaryOp::GreaterEq};
+        // Precedence 8: shift
+        case TokenKind::LessLess:     return {8, false, BinaryOp::Shl};
+        case TokenKind::GreaterGreater: return {8, false, BinaryOp::Shr};
+        // Precedence 9: additive
+        case TokenKind::Plus:         return {9, false, BinaryOp::Add};
+        case TokenKind::Minus:        return {9, false, BinaryOp::Sub};
+        // Precedence 10: multiplicative
+        case TokenKind::Star:         return {10, false, BinaryOp::Mul};
+        case TokenKind::Slash:        return {10, false, BinaryOp::Div};
+        case TokenKind::Percent:      return {10, false, BinaryOp::Mod};
         // Not an infix operator
         default:                      return {0, false, {}};
     }
@@ -179,7 +186,10 @@ Expr* Parser::expression() {
     // Handle assignment (lowest precedence, right-associative)
     if (check(TokenKind::Equal) || check(TokenKind::PlusEqual) ||
         check(TokenKind::MinusEqual) || check(TokenKind::StarEqual) ||
-        check(TokenKind::SlashEqual) || check(TokenKind::PercentEqual)) {
+        check(TokenKind::SlashEqual) || check(TokenKind::PercentEqual) ||
+        check(TokenKind::AmpEqual) || check(TokenKind::PipeEqual) ||
+        check(TokenKind::CaretEqual) || check(TokenKind::LessLessEqual) ||
+        check(TokenKind::GreaterGreaterEqual)) {
 
         Token op_token = m_current;
         AssignOp op;
@@ -190,6 +200,11 @@ Expr* Parser::expression() {
             case TokenKind::StarEqual:    op = AssignOp::MulAssign; break;
             case TokenKind::SlashEqual:   op = AssignOp::DivAssign; break;
             case TokenKind::PercentEqual: op = AssignOp::ModAssign; break;
+            case TokenKind::AmpEqual:     op = AssignOp::BitAndAssign; break;
+            case TokenKind::PipeEqual:    op = AssignOp::BitOrAssign; break;
+            case TokenKind::CaretEqual:   op = AssignOp::BitXorAssign; break;
+            case TokenKind::LessLessEqual: op = AssignOp::ShlAssign; break;
+            case TokenKind::GreaterGreaterEqual: op = AssignOp::ShrAssign; break;
             default: op = AssignOp::Assign; break;
         }
         advance();
@@ -1850,8 +1865,7 @@ Span<TypeParam> Parser::parse_type_params() {
         params.push_back(type_param);
     } while (match(TokenKind::Comma));
 
-    consume(TokenKind::Greater, "Expected '>' after type parameters");
-    if (m_has_error) return {};
+    if (!consume_closing_angle()) return {};
 
     return alloc_span(params);
 }
@@ -1868,8 +1882,7 @@ Span<TypeExpr*> Parser::parse_type_args() {
         args.push_back(type);
     } while (match(TokenKind::Comma));
 
-    consume(TokenKind::Greater, "Expected '>' after type arguments");
-    if (m_has_error) return {};
+    if (!consume_closing_angle()) return {};
 
     return alloc_span(args);
 }
@@ -1893,8 +1906,28 @@ Span<TypeExpr*> Parser::try_parse_generic_args() {
         args.push_back(type);
     } while (match(TokenKind::Comma));
 
-    // Check for '>'
-    if (!match(TokenKind::Greater)) {
+    // Check for '>' (also handle >> splitting for nested generics)
+    if (check(TokenKind::Greater)) {
+        advance();
+    } else if (check(TokenKind::GreaterGreater)) {
+        // Split >>: consume first > and rewrite current to >
+        m_previous = m_current;
+        m_previous.length = 1;
+        m_current.kind = TokenKind::Greater;
+        m_current.start = m_current.start + 1;
+        m_current.length = 1;
+        m_current.loc.column += 1;
+        m_current.loc.offset += 1;
+    } else if (check(TokenKind::GreaterGreaterEqual)) {
+        // Split >>=: consume first > and rewrite current to >=
+        m_previous = m_current;
+        m_previous.length = 1;
+        m_current.kind = TokenKind::GreaterEqual;
+        m_current.start = m_current.start + 1;
+        m_current.length = 2;
+        m_current.loc.column += 1;
+        m_current.loc.offset += 1;
+    } else {
         restore_state(saved);
         return {};
     }
@@ -1908,6 +1941,38 @@ Span<TypeExpr*> Parser::try_parse_generic_args() {
     // Not followed by ( or { - this was a comparison, backtrack
     restore_state(saved);
     return {};
+}
+
+// Closing angle bracket helper for nested generics (e.g., List<List<i32>>)
+// Handles >> by splitting: consumes first > and modifies current token to >
+bool Parser::consume_closing_angle() {
+    if (match(TokenKind::Greater)) {
+        return true;
+    }
+    if (check(TokenKind::GreaterGreater)) {
+        // Split >> into > + >: consume one > and rewrite current token to >
+        m_previous = m_current;
+        m_previous.length = 1;  // Just the first >
+        m_current.kind = TokenKind::Greater;
+        m_current.start = m_current.start + 1;
+        m_current.length = 1;
+        m_current.loc.column += 1;
+        m_current.loc.offset += 1;
+        return true;
+    }
+    if (check(TokenKind::GreaterGreaterEqual)) {
+        // Split >>= into > + >=: consume one > and rewrite current token to >=
+        m_previous = m_current;
+        m_previous.length = 1;
+        m_current.kind = TokenKind::GreaterEqual;
+        m_current.start = m_current.start + 1;
+        m_current.length = 2;
+        m_current.loc.column += 1;
+        m_current.loc.offset += 1;
+        return true;
+    }
+    report_error("Expected '>' after type parameters");
+    return false;
 }
 
 // Type expression parsing

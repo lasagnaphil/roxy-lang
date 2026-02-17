@@ -102,7 +102,10 @@ enum class IROp : u8 {
     // Bitwise
     BitAnd,
     BitOr,
+    BitXor,
     BitNot,
+    Shl,
+    Shr,
 
     // Type conversions
     I_TO_F64,       // int to f64

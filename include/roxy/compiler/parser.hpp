@@ -106,6 +106,9 @@ private:
     Span<TypeExpr*> parse_type_args();       // <i32, string> in type annotations
     Span<TypeExpr*> try_parse_generic_args(); // Trial parse <types> in expression position
 
+    // Closing angle bracket that handles >> splitting for nested generics
+    bool consume_closing_angle();
+
     // Parser state save/restore for trial parsing
     struct SavedState {
         Token current;

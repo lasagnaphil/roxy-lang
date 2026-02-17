@@ -534,13 +534,25 @@ Token Lexer::next_token() {
         case '=':
             return make_token(match('=') ? TokenKind::EqualEqual : TokenKind::Equal);
         case '<':
+            if (match('<')) {
+                return make_token(match('=') ? TokenKind::LessLessEqual : TokenKind::LessLess);
+            }
             return make_token(match('=') ? TokenKind::LessEqual : TokenKind::Less);
         case '>':
+            if (match('>')) {
+                return make_token(match('=') ? TokenKind::GreaterGreaterEqual : TokenKind::GreaterGreater);
+            }
             return make_token(match('=') ? TokenKind::GreaterEqual : TokenKind::Greater);
         case '&':
-            return make_token(match('&') ? TokenKind::AmpAmp : TokenKind::Amp);
+            if (match('&')) return make_token(TokenKind::AmpAmp);
+            if (match('=')) return make_token(TokenKind::AmpEqual);
+            return make_token(TokenKind::Amp);
         case '|':
-            return make_token(match('|') ? TokenKind::PipePipe : TokenKind::Pipe);
+            if (match('|')) return make_token(TokenKind::PipePipe);
+            if (match('=')) return make_token(TokenKind::PipeEqual);
+            return make_token(TokenKind::Pipe);
+        case '^':
+            return make_token(match('=') ? TokenKind::CaretEqual : TokenKind::Caret);
 
         case '"': return scan_string();
     }

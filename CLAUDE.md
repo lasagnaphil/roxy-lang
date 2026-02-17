@@ -165,7 +165,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Tests:** `tests/e2e/when_test.cpp`
 
 ### Traits
-**Traits** - Ad-hoc polymorphism with trait declarations, required/default methods, `for Trait` implementations, trait inheritance, `Self` type, comparison operator dispatch, and generic traits with type parameters (`trait Add<Rhs>`, `for Mul<i32>`).
+**Traits** - Ad-hoc polymorphism with trait declarations, required/default methods, `for Trait` implementations, trait inheritance, `Self` type, operator dispatch (arithmetic, comparison, bitwise, unary) for both structs and primitives via unified `TypeCache::lookup_method()`, and generic traits with type parameters (`trait Add<Rhs>`, `for Mul<i32>`).
 **Details:** `docs/internals/traits.md`, `docs/internals/operator-overloading.md` | **Tests:** `tests/e2e/traits_test.cpp`
 
 ### Generics
@@ -178,7 +178,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 - LSP parser (error recovery, lossless CST)
 - LSP server features (completion, hover, go-to-definition)
 - Optimizations
-- Arithmetic/bitwise operator dispatch (generic trait infrastructure exists, dispatch not yet wired; see `docs/internals/operator-overloading.md`)
+- Indexing operator dispatch (`[]` via `Index`/`IndexMut` traits; see `docs/internals/operator-overloading.md`)
 
 ## Testing
 
@@ -221,6 +221,6 @@ On Windows, use `.exe` extension.
   - `inheritance.md` - Struct inheritance, subtyping, `super` keyword
   - `tagged-unions.md` - Discriminated unions with `when` clause
   - `traits.md` - Traits: declarations, required/default methods, trait inheritance, operator dispatch
-  - `operator-overloading.md` - Operator traits (comparison implemented; arithmetic/bitwise NOT YET IMPLEMENTED)
+  - `operator-overloading.md` - Operator traits (arithmetic, comparison, bitwise, unary) with unified primitive/struct dispatch
   - `generics.md` - Generic functions and structs with monomorphization
   - `c-backend.md` - C backend design plan (AOT compilation via SSA IR → C)

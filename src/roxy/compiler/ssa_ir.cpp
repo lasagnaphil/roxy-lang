@@ -60,7 +60,10 @@ const char* ir_op_to_string(IROp op) {
 
         case IROp::BitAnd: return "bit_and";
         case IROp::BitOr:  return "bit_or";
+        case IROp::BitXor: return "bit_xor";
         case IROp::BitNot: return "bit_not";
+        case IROp::Shl:    return "shl";
+        case IROp::Shr:    return "shr";
 
         case IROp::I_TO_F64: return "i_to_f64";
         case IROp::F64_TO_I: return "f64_to_i";
@@ -210,6 +213,9 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
         case IROp::Or:
         case IROp::BitAnd:
         case IROp::BitOr:
+        case IROp::BitXor:
+        case IROp::Shl:
+        case IROp::Shr:
             append_str(out, " ");
             append_value_id(out, inst->binary.left);
             append_str(out, ", ");

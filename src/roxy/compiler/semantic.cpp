@@ -1,4 +1,5 @@
 #include "roxy/compiler/semantic.hpp"
+#include "roxy/compiler/operator_traits.hpp"
 #include "roxy/compiler/module_registry.hpp"
 #include "roxy/vm/natives.hpp"
 #include "roxy/vm/binding/registry.hpp"
@@ -167,6 +168,9 @@ bool SemanticAnalyzer::analyze(Program* program) {
             m_types.register_primitive_trait(tk, printable_type);
          }
     }
+
+    // Pass 1.8: Register built-in operator trait methods for primitive types
+    register_primitive_operator_methods();
 
     // Pass 2: Resolve type members (fields, methods, inheritance)
     resolve_type_members(program);
@@ -472,9 +476,13 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                             }
                             resolved_trait_type_args = m_allocator.alloc_span(args);
                         } else if (trait_type_info.type_params.size() > 0) {
-                            error_fmt(decl->loc, "trait '{}' requires {} type argument(s)",
-                                     method_decl.trait_name, trait_type_info.type_params.size());
-                            continue;
+                            // Default all type params to Self (the implementing struct type)
+                            // This enables `for Add` as shorthand for `for Add<Vec2>` on struct Vec2
+                            Vector<Type*> args;
+                            for (u32 i = 0; i < trait_type_info.type_params.size(); i++) {
+                                args.push_back(struct_type_lookup);
+                            }
+                            resolved_trait_type_args = m_allocator.alloc_span(args);
                         }
 
                         m_pending_trait_impls.push_back({decl, struct_type_lookup, trait_type, resolved_trait_type_args});
@@ -1882,18 +1890,152 @@ void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type
     m_synthetic_decls.push_back(synth);
 }
 
-// Operator trait dispatch in get_binary_result_type
-// Maps binary operators to trait method names
-static const char* binary_op_to_trait_method(BinaryOp op) {
-    switch (op) {
-        case BinaryOp::Equal:    return "eq";
-        case BinaryOp::NotEqual: return "ne";
-        case BinaryOp::Less:     return "lt";
-        case BinaryOp::LessEq:  return "le";
-        case BinaryOp::Greater:  return "gt";
-        case BinaryOp::GreaterEq: return "ge";
-        default: return nullptr;
+// ===== Primitive Operator Registration =====
+
+void SemanticAnalyzer::register_primitive_operator_methods() {
+    // Guard: only register once (TypeEnv persists across modules)
+    // Use I32's "add" method as a sentinel — if it's already registered, skip.
+    if (m_types.lookup_primitive_method(TypeKind::I32, StringView("add", 3))) return;
+
+    // Helper: allocate a Span<Type*> with one element from the bump allocator
+    auto make_param_span = [this](Type* param) -> Span<Type*> {
+        Type** data = reinterpret_cast<Type**>(
+            m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
+        data[0] = param;
+        return Span<Type*>(data, 1);
+    };
+
+    Span<Type*> no_params(nullptr, 0);
+
+    // Register for integer types (I32, I64)
+    struct { TypeKind kind; Type* type; } int_types[] = {
+        { TypeKind::I32, m_types.i32_type() },
+        { TypeKind::I64, m_types.i64_type() },
+    };
+    for (auto& entry : int_types) {
+        Span<Type*> self_param = make_param_span(entry.type);
+
+        // Arithmetic: add, sub, mul, div, mod → Self
+        const char* arith_ops[] = { "add", "sub", "mul", "div", "mod" };
+        for (const char* op_name : arith_ops) {
+            MethodInfo mi;
+            mi.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
+            mi.param_types = self_param;
+            mi.return_type = entry.type;
+            mi.decl = nullptr;
+            m_types.register_primitive_method(entry.kind, mi);
+        }
+
+        // Bitwise: bit_and, bit_or, bit_xor, shl, shr → Self
+        const char* bit_ops[] = { "bit_and", "bit_or", "bit_xor", "shl", "shr" };
+        for (const char* op_name : bit_ops) {
+            MethodInfo mi;
+            mi.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
+            mi.param_types = self_param;
+            mi.return_type = entry.type;
+            mi.decl = nullptr;
+            m_types.register_primitive_method(entry.kind, mi);
+        }
+
+        // Comparison: eq, ne, lt, le, gt, ge → bool
+        const char* cmp_ops[] = { "eq", "ne", "lt", "le", "gt", "ge" };
+        for (const char* op_name : cmp_ops) {
+            MethodInfo mi;
+            mi.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
+            mi.param_types = self_param;
+            mi.return_type = m_types.bool_type();
+            mi.decl = nullptr;
+            m_types.register_primitive_method(entry.kind, mi);
+        }
+
+        // Unary: neg, bit_not → Self (no params besides self)
+        const char* unary_ops[] = { "neg", "bit_not" };
+        for (const char* op_name : unary_ops) {
+            MethodInfo mi;
+            mi.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
+            mi.param_types = no_params;
+            mi.return_type = entry.type;
+            mi.decl = nullptr;
+            m_types.register_primitive_method(entry.kind, mi);
+        }
     }
+
+    // Register for float types (F32, F64)
+    struct { TypeKind kind; Type* type; } float_types[] = {
+        { TypeKind::F32, m_types.f32_type() },
+        { TypeKind::F64, m_types.f64_type() },
+    };
+    for (auto& entry : float_types) {
+        Span<Type*> self_param = make_param_span(entry.type);
+
+        // Arithmetic: add, sub, mul, div → Self (no mod for floats)
+        const char* arith_ops[] = { "add", "sub", "mul", "div" };
+        for (const char* op_name : arith_ops) {
+            MethodInfo mi;
+            mi.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
+            mi.param_types = self_param;
+            mi.return_type = entry.type;
+            mi.decl = nullptr;
+            m_types.register_primitive_method(entry.kind, mi);
+        }
+
+        // Comparison: eq, ne, lt, le, gt, ge → bool
+        const char* cmp_ops[] = { "eq", "ne", "lt", "le", "gt", "ge" };
+        for (const char* op_name : cmp_ops) {
+            MethodInfo mi;
+            mi.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
+            mi.param_types = self_param;
+            mi.return_type = m_types.bool_type();
+            mi.decl = nullptr;
+            m_types.register_primitive_method(entry.kind, mi);
+        }
+
+        // Unary: neg → Self (no bit_not for floats)
+        MethodInfo neg_mi;
+        neg_mi.name = StringView("neg", 3);
+        neg_mi.param_types = no_params;
+        neg_mi.return_type = entry.type;
+        neg_mi.decl = nullptr;
+        m_types.register_primitive_method(entry.kind, neg_mi);
+    }
+
+    // Register for bool: eq, ne → bool
+    {
+        Span<Type*> bool_param = make_param_span(m_types.bool_type());
+        const char* bool_ops[] = { "eq", "ne" };
+        for (const char* op_name : bool_ops) {
+            MethodInfo mi;
+            mi.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
+            mi.param_types = bool_param;
+            mi.return_type = m_types.bool_type();
+            mi.decl = nullptr;
+            m_types.register_primitive_method(TypeKind::Bool, mi);
+        }
+    }
+}
+
+// ===== Operator Dispatch Helpers =====
+
+Type* SemanticAnalyzer::try_resolve_binary_op(BinaryOp op, Type* left, Type* right) {
+    const char* method_name = binary_op_to_trait_method(op);
+    if (!method_name) return nullptr;
+    StringView name(method_name, static_cast<u32>(strlen(method_name)));
+    const MethodInfo* mi = m_types.lookup_method(left, name);
+    if (mi && mi->param_types.size() == 1 && mi->param_types[0] == right) {
+        return mi->return_type;
+    }
+    return nullptr;
+}
+
+Type* SemanticAnalyzer::try_resolve_unary_op(UnaryOp op, Type* operand) {
+    const char* method_name = unary_op_to_trait_method(op);
+    if (!method_name) return nullptr;
+    StringView name(method_name, static_cast<u32>(strlen(method_name)));
+    const MethodInfo* mi = m_types.lookup_method(operand, name);
+    if (mi && mi->param_types.size() == 0 && mi->return_type) {
+        return mi->return_type;
+    }
+    return nullptr;
 }
 
 // ===== Statement Analysis =====
@@ -3402,6 +3544,16 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
 
     // For compound assignment operators, check operand compatibility
     if (assign_expr.op != AssignOp::Assign) {
+        // Check for compound assignment trait method (works for both structs and primitives)
+        const char* method_name = assign_op_to_trait_method(assign_expr.op);
+        if (method_name) {
+            StringView name(method_name, static_cast<u32>(strlen(method_name)));
+            const MethodInfo* mi = m_types.lookup_method(target_type, name);
+            if (mi && mi->param_types.size() == 1 && mi->param_types[0] == value_type) {
+                return target_type;
+            }
+        }
+        // Fall back to binary op validation
         BinaryOp binop;
         switch (assign_expr.op) {
             case AssignOp::AddAssign: binop = BinaryOp::Add; break;
@@ -3409,6 +3561,11 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
             case AssignOp::MulAssign: binop = BinaryOp::Mul; break;
             case AssignOp::DivAssign: binop = BinaryOp::Div; break;
             case AssignOp::ModAssign: binop = BinaryOp::Mod; break;
+            case AssignOp::BitAndAssign: binop = BinaryOp::BitAnd; break;
+            case AssignOp::BitOrAssign:  binop = BinaryOp::BitOr; break;
+            case AssignOp::BitXorAssign: binop = BinaryOp::BitXor; break;
+            case AssignOp::ShlAssign:    binop = BinaryOp::Shl; break;
+            case AssignOp::ShrAssign:    binop = BinaryOp::Shr; break;
             default: binop = BinaryOp::Add; break;
         }
         get_binary_result_type(binop, target_type, value_type, expr->loc);
@@ -3760,89 +3917,67 @@ void SemanticAnalyzer::error_cannot_convert(Type* source, Type* target, SourceLo
 
 Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* right, SourceLocation loc) {
     switch (op) {
-        // Arithmetic operators
         case BinaryOp::Add:
         case BinaryOp::Sub:
         case BinaryOp::Mul:
         case BinaryOp::Div:
-        case BinaryOp::Mod:
-            if (left->is_numeric() && right->is_numeric()) {
-                if (!require_types_match(left, right, loc, "arithmetic operator")) {
-                    return m_types.error_type();
-                }
-                return left;
-            }
-            // String concatenation for Add
-            if (op == BinaryOp::Add && left->kind == TypeKind::String && right->kind == TypeKind::String) {
+        case BinaryOp::Mod: {
+            // String concatenation (Add only)
+            if (op == BinaryOp::Add && left->kind == TypeKind::String && right->kind == TypeKind::String)
                 return m_types.string_type();
+            // Unified dispatch: primitives and structs
+            if (Type* result = try_resolve_binary_op(op, left, right))
+                return result;
+            // Type mismatch check for better error messages
+            if (left->is_numeric() && right->is_numeric()) {
+                require_types_match(left, right, loc, "arithmetic operator");
+                return m_types.error_type();
             }
             error(loc, "invalid operands for arithmetic operator");
             return m_types.error_type();
+        }
 
-        // Comparison operators
         case BinaryOp::Equal:
         case BinaryOp::NotEqual:
         case BinaryOp::Less:
         case BinaryOp::LessEq:
         case BinaryOp::Greater:
-        case BinaryOp::GreaterEq:
-            if (left->is_numeric() && right->is_numeric()) {
-                if (!require_types_match(left, right, loc, "comparison operator")) {
-                    return m_types.error_type();
-                }
+        case BinaryOp::GreaterEq: {
+            if (Type* result = try_resolve_binary_op(op, left, right))
+                return result;
+            // Same-type fallback (enum == enum, etc.)
+            if (left == right)
                 return m_types.bool_type();
-            }
-            if (left == right) {
-                // Check for struct operator trait dispatch
-                if (left->is_struct()) {
-                    const char* method_name = binary_op_to_trait_method(op);
-                    if (method_name) {
-                        StringView name(method_name, static_cast<u32>(strlen(method_name)));
-                        const MethodInfo* mi = lookup_method_in_hierarchy(left, name);
-                        if (mi) {
-                            // Verify the method takes one parameter of the same struct type
-                            // and returns bool
-                            if (mi->param_types.size() == 1 && mi->param_types[0] == left &&
-                                mi->return_type && mi->return_type->is_bool()) {
-                                return m_types.bool_type();
-                            }
-                        }
-                    }
-                }
-                return m_types.bool_type();  // Same type comparison
-            }
-            // Check for struct operator trait dispatch (different types shouldn't happen but be safe)
-            if (left->is_struct() && left == right) {
-                const char* method_name = binary_op_to_trait_method(op);
-                if (method_name) {
-                    StringView name(method_name, static_cast<u32>(strlen(method_name)));
-                    const MethodInfo* mi = lookup_method_in_hierarchy(left, name);
-                    if (mi) return m_types.bool_type();
-                }
+            // Type mismatch check for better error messages
+            if (left->is_numeric() && right->is_numeric()) {
+                require_types_match(left, right, loc, "comparison operator");
+                return m_types.error_type();
             }
             error(loc, "invalid operands for comparison operator");
             return m_types.error_type();
+        }
 
-        // Logical operators
         case BinaryOp::And:
         case BinaryOp::Or:
-            if (left->is_bool() && right->is_bool()) {
+            if (left->is_bool() && right->is_bool())
                 return m_types.bool_type();
-            }
             error(loc, "logical operators require boolean operands");
             return m_types.error_type();
 
-        // Bitwise operators
         case BinaryOp::BitAnd:
         case BinaryOp::BitOr:
+        case BinaryOp::BitXor:
+        case BinaryOp::Shl:
+        case BinaryOp::Shr: {
+            if (Type* result = try_resolve_binary_op(op, left, right))
+                return result;
             if (left->is_integer() && right->is_integer()) {
-                if (!require_types_match(left, right, loc, "bitwise operator")) {
-                    return m_types.error_type();
-                }
-                return left;
+                require_types_match(left, right, loc, "bitwise operator");
+                return m_types.error_type();
             }
             error(loc, "bitwise operators require integer operands");
             return m_types.error_type();
+        }
     }
 
     return m_types.error_type();
@@ -3851,23 +3986,20 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
 Type* SemanticAnalyzer::get_unary_result_type(UnaryOp op, Type* operand, SourceLocation loc) {
     switch (op) {
         case UnaryOp::Negate:
-            if (operand->is_numeric()) {
-                return operand;
-            }
+            if (Type* result = try_resolve_unary_op(op, operand))
+                return result;
             error(loc, "unary '-' requires numeric operand");
             return m_types.error_type();
 
         case UnaryOp::Not:
-            if (operand->is_bool()) {
+            if (operand->is_bool())
                 return m_types.bool_type();
-            }
             error(loc, "unary '!' requires boolean operand");
             return m_types.error_type();
 
         case UnaryOp::BitNot:
-            if (operand->is_integer()) {
-                return operand;
-            }
+            if (Type* result = try_resolve_unary_op(op, operand))
+                return result;
             error(loc, "unary '~' requires integer operand");
             return m_types.error_type();
     }

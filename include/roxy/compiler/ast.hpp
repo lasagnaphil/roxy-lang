@@ -92,6 +92,9 @@ enum class BinaryOp : u8 {
     Or,         // ||
     BitAnd,     // &
     BitOr,      // |
+    BitXor,     // ^
+    Shl,        // <<
+    Shr,        // >>
 };
 
 enum class AssignOp : u8 {
@@ -101,6 +104,11 @@ enum class AssignOp : u8 {
     MulAssign,  // *=
     DivAssign,  // /=
     ModAssign,  // %=
+    BitAndAssign, // &=
+    BitOrAssign,  // |=
+    BitXorAssign, // ^=
+    ShlAssign,    // <<=
+    ShrAssign,    // >>=
 };
 
 // Parameter modifier for function parameters (also used in call arguments)

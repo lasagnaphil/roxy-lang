@@ -48,8 +48,16 @@ const char* token_kind_to_string(TokenKind kind) {
         case TokenKind::GreaterEqual:   return ">=";
         case TokenKind::Amp:            return "&";
         case TokenKind::AmpAmp:         return "&&";
+        case TokenKind::AmpEqual:       return "&=";
         case TokenKind::Pipe:           return "|";
         case TokenKind::PipePipe:       return "||";
+        case TokenKind::PipeEqual:      return "|=";
+        case TokenKind::Caret:          return "^";
+        case TokenKind::CaretEqual:     return "^=";
+        case TokenKind::LessLess:       return "<<";
+        case TokenKind::LessLessEqual:  return "<<=";
+        case TokenKind::GreaterGreater: return ">>";
+        case TokenKind::GreaterGreaterEqual: return ">>=";
         case TokenKind::ColonColon:     return "::";
 
         // Keywords - Types/modifiers
