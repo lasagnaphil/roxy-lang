@@ -448,6 +448,118 @@ TEST_CASE("E2E - Generic inference: backward compat explicit args") {
     CHECK(result.value == 42);
 }
 
+// ============================================================================
+// Variable Type Inference with Generic RHS
+// ============================================================================
+
+TEST_CASE("E2E - Generic var inference: struct literal inferred") {
+    const char* source = R"(
+        struct Box<T> {
+            value: T;
+        }
+
+        fun main(): i32 {
+            var b = Box { value = 42 };
+            return b.value;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic var inference: function call inferred") {
+    const char* source = R"(
+        fun identity<T>(value: T): T {
+            return value;
+        }
+
+        fun main(): i32 {
+            var b = identity(42);
+            return b;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic var inference: function returning generic struct") {
+    const char* source = R"(
+        struct Box<T> {
+            value: T;
+        }
+
+        fun wrap<T>(v: T): Box<T> {
+            return Box<T> { value = v };
+        }
+
+        fun main(): i32 {
+            var b = wrap(42);
+            return b.value;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic var inference: multiple type params") {
+    const char* source = R"(
+        struct Pair<T, U> {
+            first: T;
+            second: U;
+        }
+
+        fun main(): i32 {
+            var p = Pair { first = 10, second = 2.5 };
+            return p.first + i32(p.second);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 12);
+}
+
+TEST_CASE("E2E - Generic var inference: explicit type args no LHS annotation") {
+    const char* source = R"(
+        struct Box<T> {
+            value: T;
+        }
+
+        fun main(): i32 {
+            var b = Box<i32> { value = 42 };
+            return b.value;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic var inference: chained field access") {
+    const char* source = R"(
+        struct Box<T> {
+            value: T;
+        }
+
+        fun main(): i32 {
+            var b = Box { value = 42 };
+            var v = b.value;
+            return v;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
 TEST_CASE("E2E - Generic inference: error uninferrable param") {
     const char* source = R"(
         fun make_default<T>(): T {

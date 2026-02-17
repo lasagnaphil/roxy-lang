@@ -88,6 +88,9 @@ private:
     // Type resolution from AST TypeExpr
     Type* resolve_type_expr(TypeExpr* type_expr);
 
+    // Resolve fields of a generic struct instance (idempotent)
+    void resolve_generic_struct_fields(GenericStructInstance* inst);
+
     // Declaration analysis
     void analyze_decl(Decl* decl);
     void analyze_var_decl(Decl* decl);

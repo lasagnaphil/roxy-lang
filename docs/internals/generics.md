@@ -103,6 +103,17 @@ Box { value = 42 }                    // T = i32
 Pair { first = 10, second = 2.5 }     // T = i32, U = f64
 ```
 
+### Composing with Variable Type Inference
+
+Generic inference composes with `var` type inference — the variable's type is deduced from the generic RHS:
+
+```roxy
+var b = Box { value = 42 };           // var type inferred as Box<i32>
+var result = identity(42);            // var type inferred as i32
+var b2 = wrap(42);                    // var type inferred as Box<i32>
+var p = Pair { first = 10, second = 2.5 };  // var type inferred as Pair<i32, f64>
+```
+
 ### Limitations
 
 - All type parameters must be inferable from function arguments or struct field values. If a type parameter only appears in the return type, inference fails:

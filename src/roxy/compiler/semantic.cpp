@@ -731,6 +731,44 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
 
 // ===== Type Expression Resolution =====
 
+void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst) {
+    if (inst->is_analyzed) return;
+
+    m_named_types[inst->mangled_name] = inst->concrete_type;
+    m_types.register_named_type(inst->mangled_name, inst->concrete_type);
+
+    StructDecl& sd = inst->instantiated_decl->struct_decl;
+    StructTypeInfo& sti = inst->concrete_type->struct_info;
+
+    Vector<FieldInfo> fields;
+    u32 slot_offset = 0;
+    for (u32 fi = 0; fi < sd.fields.size(); fi++) {
+        Type* field_type = resolve_type_expr(sd.fields[fi].type);
+        if (!field_type) field_type = m_types.error_type();
+
+        u32 sc = 0;
+        if (field_type->is_struct()) sc = field_type->struct_info.slot_count;
+        else if (field_type->kind == TypeKind::I64 || field_type->kind == TypeKind::U64 ||
+                 field_type->kind == TypeKind::F64 || field_type->is_reference() ||
+                 field_type->is_list() || field_type->kind == TypeKind::String) sc = 2;
+        else sc = 1;
+
+        FieldInfo info;
+        info.name = sd.fields[fi].name;
+        info.type = field_type;
+        info.is_pub = sd.fields[fi].is_pub;
+        info.index = fi;
+        info.slot_offset = slot_offset;
+        info.slot_count = sc;
+        fields.push_back(info);
+        slot_offset += sc;
+    }
+
+    sti.fields = m_allocator.alloc_span(fields);
+    sti.slot_count = slot_offset;
+    inst->is_analyzed = true;
+}
+
 Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
     if (!type_expr) return nullptr;
 
@@ -792,41 +830,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             type_expr->type_args = Span<TypeExpr*>();
 
             // Immediately resolve struct fields if not yet analyzed
-            if (!inst->is_analyzed) {
-                m_named_types[inst->mangled_name] = inst->concrete_type;
-                m_types.register_named_type(inst->mangled_name, inst->concrete_type);
-
-                StructDecl& sd = inst->instantiated_decl->struct_decl;
-                StructTypeInfo& sti = inst->concrete_type->struct_info;
-
-                Vector<FieldInfo> fields;
-                u32 slot_offset = 0;
-                for (u32 fi = 0; fi < sd.fields.size(); fi++) {
-                    Type* field_type = resolve_type_expr(sd.fields[fi].type);
-                    if (!field_type) field_type = m_types.error_type();
-
-                    u32 sc = 0;
-                    if (field_type->is_struct()) sc = field_type->struct_info.slot_count;
-                    else if (field_type->kind == TypeKind::I64 || field_type->kind == TypeKind::U64 ||
-                             field_type->kind == TypeKind::F64 || field_type->is_reference() ||
-                             field_type->is_list() || field_type->kind == TypeKind::String) sc = 2;
-                    else sc = 1;
-
-                    FieldInfo info;
-                    info.name = sd.fields[fi].name;
-                    info.type = field_type;
-                    info.is_pub = sd.fields[fi].is_pub;
-                    info.index = fi;
-                    info.slot_offset = slot_offset;
-                    info.slot_count = sc;
-                    fields.push_back(info);
-                    slot_offset += sc;
-                }
-
-                sti.fields = m_allocator.alloc_span(fields);
-                sti.slot_count = slot_offset;
-                inst->is_analyzed = true;
-            }
+            resolve_generic_struct_fields(inst);
         }
 
         if (!base_type) {
@@ -3474,6 +3478,7 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
         Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
         StringView mangled = m_generics.instantiate_struct(sl.type_name, type_args);
         GenericStructInstance* inst = m_generics.find_struct_instance(mangled);
+        resolve_generic_struct_fields(inst);
         type = inst->concrete_type;
         sl.mangled_name = mangled;
         sl.type_name = mangled;  // Update to mangled name for IR builder
@@ -3492,6 +3497,7 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
             Span<Type*> type_args = m_allocator.alloc_span(inferred.type_args);
             StringView mangled = m_generics.instantiate_struct(sl.type_name, type_args);
             GenericStructInstance* inst = m_generics.find_struct_instance(mangled);
+            resolve_generic_struct_fields(inst);
             type = inst->concrete_type;
             sl.mangled_name = mangled;
             sl.type_name = mangled;
