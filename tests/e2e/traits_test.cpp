@@ -533,3 +533,70 @@ TEST_CASE("E2E - Generic trait error: type args on non-generic trait") {
     TestResult result = run_and_capture(source, "main");
     CHECK(!result.success);
 }
+
+TEST_CASE("E2E - Trait error: wrong parameter type (Self trait)") {
+    const char* source = R"(
+        trait Addable;
+        fun Addable.add(other: Self): Self;
+
+        struct Num {
+            val: i32;
+        }
+
+        fun Num.add(other: i32): Num for Addable {
+            return Num { val = self.val + other };
+        }
+
+        fun main(): i32 {
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK_FALSE(result.success);
+}
+
+TEST_CASE("E2E - Trait error: wrong return type (Self trait)") {
+    const char* source = R"(
+        trait Addable;
+        fun Addable.add(other: Self): Self;
+
+        struct Num {
+            val: i32;
+        }
+
+        fun Num.add(other: Num): i32 for Addable {
+            return self.val + other.val;
+        }
+
+        fun main(): i32 {
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK_FALSE(result.success);
+}
+
+TEST_CASE("E2E - Trait error: wrong parameter type (generic trait)") {
+    const char* source = R"(
+        trait Mul<Rhs>;
+        fun Mul.mul(other: Rhs): Self;
+
+        struct Vec2 {
+            x: i32;
+            y: i32;
+        }
+
+        fun Vec2.mul(scalar: f64): Vec2 for Mul<i32> {
+            return Vec2 { x = self.x, y = self.y };
+        }
+
+        fun main(): i32 {
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK_FALSE(result.success);
+}

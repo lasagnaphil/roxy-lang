@@ -1696,6 +1696,41 @@ void SemanticAnalyzer::validate_trait_implementations() {
                     Type* return_type = method_decl.return_type ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
                     if (!return_type) return_type = m_types.error_type();
 
+                    // Validate parameter types match trait signature
+                    if (method_decl.params.size() == trait_type_info.methods[i].param_types.size()) {
+                        for (u32 p = 0; p < param_types.size(); p++) {
+                            if (param_types[p]->is_error()) continue;
+                            Type* expected = resolve_trait_type(trait_type_info.methods[i].param_types[p],
+                                                                struct_type, trait_type_args);
+                            if (param_types[p] != expected) {
+                                Vector<char> got_str, exp_str;
+                                type_to_string(param_types[p], got_str);
+                                type_to_string(expected, exp_str);
+                                got_str.push_back('\0');
+                                exp_str.push_back('\0');
+                                error_fmt(decl->loc,
+                                         "method '{}' parameter {} has type '{}' but trait '{}' expects '{}'",
+                                         method_decl.name, p + 1, got_str.data(), trait_type_info.name, exp_str.data());
+                            }
+                        }
+                    }
+
+                    // Validate return type matches trait signature
+                    if (!return_type->is_error()) {
+                        Type* expected_ret = resolve_trait_type(trait_type_info.methods[i].return_type,
+                                                                struct_type, trait_type_args);
+                        if (return_type != expected_ret) {
+                            Vector<char> got_str, exp_str;
+                            type_to_string(return_type, got_str);
+                            type_to_string(expected_ret, exp_str);
+                            got_str.push_back('\0');
+                            exp_str.push_back('\0');
+                            error_fmt(decl->loc,
+                                     "method '{}' return type is '{}' but trait '{}' expects '{}'",
+                                     method_decl.name, got_str.data(), trait_type_info.name, exp_str.data());
+                        }
+                    }
+
                     // Check for duplicate method name on struct
                     bool is_duplicate = false;
                     for (const auto& method : struct_type_info.methods) {
@@ -1758,6 +1793,15 @@ void SemanticAnalyzer::validate_trait_implementations() {
     }
 }
 
+Type* SemanticAnalyzer::resolve_trait_type(Type* abstract_type, Type* struct_type, Span<Type*> trait_type_args) {
+    if (!abstract_type) return struct_type;  // nullptr sentinel = Self
+    if (abstract_type->is_type_param() && trait_type_args.size() > 0) {
+        u32 idx = abstract_type->type_param_info.index;
+        if (idx < trait_type_args.size()) return trait_type_args[idx];
+    }
+    return abstract_type;
+}
+
 void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type,
                                               TraitMethodInfo& trait_method_info, Span<Type*> trait_type_args) {
     // Create a synthetic DeclMethod that targets the implementing struct
@@ -1815,33 +1859,9 @@ void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type
     StructTypeInfo& struct_type_info = struct_type->struct_info;
     Vector<Type*> param_types;
     for (auto* param_type : trait_method_info.param_types) {
-        if (!param_type) {
-            param_types.push_back(struct_type);  // nullptr sentinel -> Self
-        } else if (param_type->is_type_param() && trait_type_args.size() > 0) {
-            u32 idx = param_type->type_param_info.index;
-            if (idx < trait_type_args.size()) {
-                param_types.push_back(trait_type_args[idx]);
-            } else {
-                param_types.push_back(param_type);
-            }
-        } else {
-            param_types.push_back(param_type);
-        }
+        param_types.push_back(resolve_trait_type(param_type, struct_type, trait_type_args));
     }
-
-    Type* return_type;
-    if (!trait_method_info.return_type) {
-        return_type = struct_type;  // Self
-    } else if (trait_method_info.return_type->is_type_param() && trait_type_args.size() > 0) {
-        u32 idx = trait_method_info.return_type->type_param_info.index;
-        if (idx < trait_type_args.size()) {
-            return_type = trait_type_args[idx];
-        } else {
-            return_type = trait_method_info.return_type;
-        }
-    } else {
-        return_type = trait_method_info.return_type;
-    }
+    Type* return_type = resolve_trait_type(trait_method_info.return_type, struct_type, trait_type_args);
 
     // Add MethodInfo to struct's method list
     MethodInfo mi;

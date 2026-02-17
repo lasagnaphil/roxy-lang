@@ -80,10 +80,9 @@ Last updated: 2026-02-16
   - Issue: When both operands have the same struct type, comparison is allowed even if no `Eq` trait is implemented — falls through to `return m_types.bool_type()` unconditionally
   - Fix: Require `Eq`/`Ord` trait implementation for struct comparisons; reject if no trait method found
 
-- [ ] **Trait method signature validation only checks parameter count**
-  - File: `src/roxy/compiler/semantic.cpp` (`validate_trait_implementations`, lines 1682-1685)
-  - Issue: A trait requiring `fun eq(other: Self): bool` could be "implemented" with `fun eq(other: i32): i32` — only parameter count is checked, not parameter types or return type
-  - Fix: Validate full method signature with Self/TypeParam substitution
+- [x] **Trait method signature validation only checks parameter count**
+  - File: `src/roxy/compiler/semantic.cpp` (`validate_trait_implementations`)
+  - Fixed: Full method signature validation now checks parameter types and return type with Self/TypeParam substitution via `resolve_trait_type` helper
 
 - [x] **Name mangling collisions for compound type arguments**
   - File: `src/roxy/compiler/generics.cpp` (`type_name_for_mangling`, `type_to_type_expr`)

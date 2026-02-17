@@ -214,6 +214,7 @@ private:
     void validate_trait_implementations();
     void inject_default_method(Type* struct_type, Type* trait_type,
                                TraitMethodInfo& tmi, Span<Type*> trait_type_args);
+    Type* resolve_trait_type(Type* abstract_type, Type* struct_type, Span<Type*> trait_type_args);
 
     // Pending trait implementations (struct_name resolved to struct type + trait decl)
     struct PendingTraitImpl {
