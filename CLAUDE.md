@@ -51,6 +51,7 @@ The project is organized into 4 libraries:
   - Functions/methods: `snake_case`
   - Types/classes: `PascalCase`
   - Member variables: `m_` prefix (e.g., `m_source`, `m_current`)
+  - Local variables: Use descriptive names, avoid excessive abbreviations (e.g., `method_info` not `mi`, `struct_type` not `st`)
 - **Types:** Use aliases from `types.hpp`: `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`, `f32`, `f64`
 - **Headers:** Use `#pragma once`
 - **Assertions:** Use `assert()` for invariants
