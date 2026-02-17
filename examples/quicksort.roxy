@@ -1,42 +1,68 @@
-fun swap(arr: i32[], i: i32, j: i32) {
+fun swap(arr: inout List<i32>, i: i32, j: i32) {
     var temp: i32 = arr[i];
     arr[i] = arr[j];
     arr[j] = temp;
 }
 
-fun partition(arr: i32[], low: i32, high: i32): i32 {
+fun partition(arr: inout List<i32>, low: i32, high: i32): i32 {
     var pivot: i32 = arr[high];
     var i: i32 = low - 1;
     for (var j: i32 = low; j < high; j = j + 1) {
         if (arr[j] <= pivot) {
             i = i + 1;
-            swap(arr, i, j);
+            swap(inout arr, i, j);
         }
     }
-    swap(arr, i + 1, high);
+    swap(inout arr, i + 1, high);
     return i + 1;
 }
 
-fun quicksort(arr: i32[], low: i32, high: i32) {
+fun quicksort(arr: inout List<i32>, low: i32, high: i32) {
     if (low < high) {
-        var pi: i32 = partition(arr, low, high);
-        quicksort(arr, low, pi - 1);
-        quicksort(arr, pi + 1, high);
+        var pi: i32 = partition(inout arr, low, high);
+        quicksort(inout arr, low, pi - 1);
+        quicksort(inout arr, pi + 1, high);
     }
 }
 
+fun is_sorted(arr: List<i32>): bool {
+    for (var i: i32 = 0; i < arr.len() - 1; i = i + 1) {
+        if (arr[i] > arr[i + 1]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 fun main(): i32 {
-    var arr: i32[] = array_new_int(5);
-    arr[0] = 5;
-    arr[1] = 2;
-    arr[2] = 8;
-    arr[3] = 1;
-    arr[4] = 9;
+    var count: i32 = 1000;
+    var arr: List<i32> = List<i32>();
 
-    quicksort(arr, 0, array_len(arr) - 1);
+    // Generate pseudo-random numbers using LCG
+    var seed: i64 = 12345l;
+    for (var i: i32 = 0; i < count; i = i + 1) {
+        seed = (seed * 16807l) % 2147483647l;
+        var val: i32 = i32(seed % 10000l);
+        arr.push(val);
+    }
 
-    // Print sorted array
-    for (var i: i32 = 0; i < array_len(arr); i = i + 1) {
+    quicksort(inout arr, 0, arr.len() - 1);
+
+    // Verify sorted
+    if (is_sorted(arr)) {
+        print_str("PASS: array is sorted");
+    } else {
+        print_str("FAIL: array is NOT sorted");
+    }
+    print(arr.len());
+
+    // Print first and last few elements to spot check
+    print_str("First 5:");
+    for (var i: i32 = 0; i < 5; i = i + 1) {
+        print(arr[i]);
+    }
+    print_str("Last 5:");
+    for (var i: i32 = arr.len() - 5; i < arr.len(); i = i + 1) {
         print(arr[i]);
     }
 
