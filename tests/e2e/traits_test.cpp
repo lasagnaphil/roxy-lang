@@ -875,3 +875,147 @@ TEST_CASE("E2E - Nested generics with >> token splitting") {
     CHECK(result.success);
     CHECK(result.value == 42);
 }
+
+// ========== Index Operator Dispatch Tests ==========
+
+TEST_CASE("E2E - Index read dispatch on struct") {
+    const char* source = R"(
+        struct Grid {
+            a: i32;
+            b: i32;
+            c: i32;
+        }
+
+        fun Grid.index(i: i32): i32 {
+            if (i == 0) return self.a;
+            if (i == 1) return self.b;
+            return self.c;
+        }
+
+        fun main(): i32 {
+            var g: Grid = Grid { a = 10, b = 20, c = 30 };
+            print(g[0]);
+            print(g[1]);
+            print(g[2]);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "10\n20\n30\n");
+}
+
+TEST_CASE("E2E - Index write dispatch on struct") {
+    const char* source = R"(
+        struct Grid {
+            a: i32;
+            b: i32;
+            c: i32;
+        }
+
+        fun Grid.index(i: i32): i32 {
+            if (i == 0) return self.a;
+            if (i == 1) return self.b;
+            return self.c;
+        }
+
+        fun Grid.index_mut(i: i32, val: i32) {
+            if (i == 0) { self.a = val; return; }
+            if (i == 1) { self.b = val; return; }
+            self.c = val;
+        }
+
+        fun main(): i32 {
+            var g: Grid = Grid { a = 0, b = 0, c = 0 };
+            g[0] = 100;
+            g[1] = 200;
+            g[2] = 300;
+            print(g[0]);
+            print(g[1]);
+            print(g[2]);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "100\n200\n300\n");
+}
+
+TEST_CASE("E2E - Index compound assignment dispatch on struct") {
+    const char* source = R"(
+        struct Grid {
+            a: i32;
+            b: i32;
+            c: i32;
+        }
+
+        fun Grid.index(i: i32): i32 {
+            if (i == 0) return self.a;
+            if (i == 1) return self.b;
+            return self.c;
+        }
+
+        fun Grid.index_mut(i: i32, val: i32) {
+            if (i == 0) { self.a = val; return; }
+            if (i == 1) { self.b = val; return; }
+            self.c = val;
+        }
+
+        fun main(): i32 {
+            var g: Grid = Grid { a = 10, b = 20, c = 30 };
+            g[0] += 5;
+            g[1] += 10;
+            g[2] += 15;
+            print(g[0]);
+            print(g[1]);
+            print(g[2]);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "15\n30\n45\n");
+}
+
+TEST_CASE("E2E - Index error: no index method on struct") {
+    const char* source = R"(
+        struct Foo {
+            x: i32;
+        }
+
+        fun main(): i32 {
+            var f: Foo = Foo { x = 42 };
+            print(f[0]);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(!result.success);
+}
+
+TEST_CASE("E2E - Index error: no index_mut method on struct") {
+    const char* source = R"(
+        struct Grid {
+            a: i32;
+            b: i32;
+        }
+
+        fun Grid.index(i: i32): i32 {
+            if (i == 0) return self.a;
+            return self.b;
+        }
+
+        fun main(): i32 {
+            var g: Grid = Grid { a = 10, b = 20 };
+            g[0] = 99;
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(!result.success);
+}

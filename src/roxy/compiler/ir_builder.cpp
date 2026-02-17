@@ -1940,6 +1940,26 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
 ValueId IRBuilder::gen_index_expr(Expr* expr) {
     IndexExpr& index_expr = expr->index;
 
+    Type* obj_type = index_expr.object->resolved_type;
+    Type* base_type = obj_type ? obj_type->base_type() : nullptr;
+
+    // Struct indexing: dispatch to "index" method
+    if (base_type && base_type->is_struct()) {
+        StringView method_name("index", 5);
+        Type* found_in = nullptr;
+        const MethodInfo* method_info = lookup_method_in_hierarchy(base_type, method_name, &found_in);
+        if (method_info && found_in) {
+            ValueId self_ptr = gen_lvalue_addr(index_expr.object);
+            ValueId index_val = gen_expr(index_expr.index);
+            StringView mangled = mangle_method(found_in->struct_info.name, method_name);
+            Span<ValueId> args = alloc_span<ValueId>(2);
+            args[0] = self_ptr;
+            args[1] = index_val;
+            return emit_call(mangled, args, expr->resolved_type);
+        }
+    }
+
+    // List indexing (and fallback): use built-in GetIndex IR op
     ValueId obj = gen_expr(index_expr.object);
     ValueId index = gen_expr(index_expr.index);
 
@@ -2179,6 +2199,28 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
     else if (assign_expr.target->kind == AstKind::ExprIndex) {
         // Index assignment
         IndexExpr& index_expr = assign_expr.target->index;
+
+        Type* obj_type = index_expr.object->resolved_type;
+        Type* container_type = obj_type ? obj_type->base_type() : nullptr;
+
+        // Struct indexing: dispatch to "index_mut" method
+        if (container_type && container_type->is_struct()) {
+            StringView method_name("index_mut", 9);
+            Type* found_in = nullptr;
+            const MethodInfo* method_info = lookup_method_in_hierarchy(container_type, method_name, &found_in);
+            if (method_info && found_in) {
+                ValueId self_ptr = gen_lvalue_addr(index_expr.object);
+                ValueId index_val = gen_expr(index_expr.index);
+                StringView mangled = mangle_method(found_in->struct_info.name, method_name);
+                Span<ValueId> args = alloc_span<ValueId>(3);
+                args[0] = self_ptr;
+                args[1] = index_val;
+                args[2] = value;
+                return emit_call(mangled, args, m_types.void_type());
+            }
+        }
+
+        // List indexing (and fallback): use built-in SetIndex IR op
         ValueId obj = gen_expr(index_expr.object);
         ValueId index = gen_expr(index_expr.index);
         return emit_set_index(obj, index, value, expr->resolved_type);

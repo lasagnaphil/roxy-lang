@@ -2,9 +2,7 @@
 
 Operators in Roxy are implemented via traits. The compiler rewrites operators into trait method calls, enabling user-defined types to support standard operators.
 
-**Implemented:** All arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`), bitwise (`&`, `|`, `^`, `~`, `<<`, `>>`), unary (`-`, `~`), and compound assignment (`+=`, `-=`, etc.) operator dispatch for both struct types and primitive types, through a unified trait method lookup.
-
-**Not yet implemented:** Indexing operator dispatch (`[]`), compound assignment trait methods for primitives (falls back to binary op validation).
+**Implemented:** All arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`), bitwise (`&`, `|`, `^`, `~`, `<<`, `>>`), unary (`-`, `~`), compound assignment (`+=`, `-=`, etc.), and indexing (`[]`) operator dispatch for both struct types and primitive types, through a unified trait method lookup. Compound assignment trait methods are also registered on primitives. List types participate in the unified dispatch via `index`/`index_mut` methods registered alongside their native methods.
 
 See `traits.md` for the general trait system design.
 
@@ -307,14 +305,20 @@ Primitive types have compiler-registered built-in operator methods. These are re
 - Bitwise: `bit_and`, `bit_or`, `bit_xor`, `shl`, `shr` (param: Self, return: Self)
 - Comparison: `eq`, `ne`, `lt`, `le`, `gt`, `ge` (param: Self, return: bool)
 - Unary: `neg`, `bit_not` (no params, return: Self)
+- Compound assignment: `add_assign`, `sub_assign`, `mul_assign`, `div_assign`, `mod_assign`, `bit_and_assign`, `bit_or_assign`, `bit_xor_assign`, `shl_assign`, `shr_assign` (param: Self, return: void)
 
 **Float types (f32, f64):**
 - Arithmetic: `add`, `sub`, `mul`, `div` (param: Self, return: Self)
 - Comparison: `eq`, `ne`, `lt`, `le`, `gt`, `ge` (param: Self, return: bool)
 - Unary: `neg` (no params, return: Self)
+- Compound assignment: `add_assign`, `sub_assign`, `mul_assign`, `div_assign` (param: Self, return: void)
 
 **Bool:**
 - Comparison: `eq`, `ne` (param: Self, return: bool)
+
+**List types (`List<T>`):**
+- `index` (param: i32, return: T) — subscript read
+- `index_mut` (params: i32, T, return: void) — subscript write
 
 ```roxy
 // Conceptual representation (not user-writable):
@@ -330,9 +334,9 @@ fun i32.bit_and(other: i32): i32 for BitAnd { /* intrinsic */ }
 
 The semantic analyzer uses a unified dispatch path for both primitive and struct operator resolution:
 
-1. **Registration (Pass 1.8):** `register_primitive_operator_methods()` registers operator methods on primitive types using `TypeCache::register_primitive_method()`.
-2. **Resolution:** `try_resolve_binary_op()` and `try_resolve_unary_op()` call `TypeCache::lookup_method()`, which handles both structs (via `lookup_method_in_hierarchy()`) and primitives (via `lookup_primitive_method()`).
-3. **Code generation:** The IR builder still distinguishes primitives from structs — primitives emit direct IR ops (`AddI`, `SubF`, etc.), while structs emit trait method calls. This is the right separation: the type checker validates uniformly via traits, but codegen emits intrinsics for primitives.
+1. **Registration (Pass 1.8):** `register_primitive_operator_methods()` registers operator methods on primitive types using `TypeCache::register_primitive_method()`. `populate_list_methods()` registers `index`/`index_mut` methods on list types alongside their native methods.
+2. **Resolution:** `try_resolve_binary_op()`, `try_resolve_unary_op()`, and `analyze_index_expr()` call `TypeCache::lookup_method()`, which handles structs (via `lookup_method_in_hierarchy()`), primitives (via `lookup_primitive_method()`), and lists (via `lookup_list_method()`).
+3. **Code generation:** The IR builder still distinguishes primitives/lists from structs — primitives emit direct IR ops (`AddI`, `SubF`, etc.), lists emit `GetIndex`/`SetIndex` IR ops, while structs emit trait method calls. This is the right separation: the type checker validates uniformly via method lookup, but codegen emits intrinsics for primitives and lists.
 
 The shared operator-to-method-name mappings live in `include/roxy/compiler/operator_traits.hpp` (`binary_op_to_trait_method()`, `unary_op_to_trait_method()`, `assign_op_to_trait_method()`), used by both semantic analysis and IR generation.
 

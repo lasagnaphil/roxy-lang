@@ -295,6 +295,9 @@ const MethodInfo* TypeCache::lookup_method(Type* type, StringView name, Type** f
     if (type->is_primitive()) {
         return lookup_primitive_method(type->kind, name);
     }
+    if (type->is_list()) {
+        return lookup_list_method(type->list_info, name);
+    }
     return nullptr;
 }
 

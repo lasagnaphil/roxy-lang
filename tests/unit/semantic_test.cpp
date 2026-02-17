@@ -511,7 +511,7 @@ TEST_CASE("Semantic Error: Indexing non-list") {
             var y = x[0];
         }
     )"));
-    CHECK(t.has_error_containing("non-list"));
+    CHECK(t.has_error_containing("index"));
 }
 
 TEST_CASE("Semantic Error: Member access on non-struct") {

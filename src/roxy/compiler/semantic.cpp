@@ -1958,6 +1958,21 @@ void SemanticAnalyzer::register_primitive_operator_methods() {
             mi.decl = nullptr;
             m_types.register_primitive_method(entry.kind, mi);
         }
+
+        // Compound assignment: add_assign, sub_assign, mul_assign, div_assign, mod_assign,
+        // bit_and_assign, bit_or_assign, bit_xor_assign, shl_assign, shr_assign → void
+        const char* compound_ops[] = {
+            "add_assign", "sub_assign", "mul_assign", "div_assign", "mod_assign",
+            "bit_and_assign", "bit_or_assign", "bit_xor_assign", "shl_assign", "shr_assign"
+        };
+        for (const char* op_name : compound_ops) {
+            MethodInfo method_info;
+            method_info.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
+            method_info.param_types = self_param;
+            method_info.return_type = m_types.void_type();
+            method_info.decl = nullptr;
+            m_types.register_primitive_method(entry.kind, method_info);
+        }
     }
 
     // Register for float types (F32, F64)
@@ -1997,6 +2012,17 @@ void SemanticAnalyzer::register_primitive_operator_methods() {
         neg_mi.return_type = entry.type;
         neg_mi.decl = nullptr;
         m_types.register_primitive_method(entry.kind, neg_mi);
+
+        // Compound assignment: add_assign, sub_assign, mul_assign, div_assign → void
+        const char* compound_ops[] = { "add_assign", "sub_assign", "mul_assign", "div_assign" };
+        for (const char* op_name : compound_ops) {
+            MethodInfo method_info;
+            method_info.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
+            method_info.param_types = self_param;
+            method_info.return_type = m_types.void_type();
+            method_info.decl = nullptr;
+            m_types.register_primitive_method(entry.kind, method_info);
+        }
     }
 
     // Register for bool: eq, ne → bool
@@ -2819,10 +2845,50 @@ void SemanticAnalyzer::populate_list_methods(Type* type) {
 
     Type* type_args[] = { type->list_info.element_type };
     Span<Type*> ta(type_args, 1);
-    type->list_info.methods = registry->instantiate_generic_methods(
+    Span<MethodInfo> native_methods = registry->instantiate_generic_methods(
         "List", ta, m_allocator, m_types);
     type->list_info.alloc_native_name = registry->get_generic_alloc_name("List");
     type->list_info.copy_native_name = registry->get_generic_copy_name("List");
+
+    // Append index(i: i32): T and index_mut(i: i32, val: T): void
+    Type* elem_type = type->list_info.element_type;
+    u32 total = native_methods.size() + 2;
+    MethodInfo* combined = reinterpret_cast<MethodInfo*>(
+        m_allocator.alloc_bytes(sizeof(MethodInfo) * total, alignof(MethodInfo)));
+
+    // Copy existing methods
+    for (u32 i = 0; i < native_methods.size(); i++) {
+        combined[i] = native_methods[i];
+    }
+
+    // index(i: i32): T
+    {
+        Type** idx_param = reinterpret_cast<Type**>(
+            m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
+        idx_param[0] = m_types.i32_type();
+        MethodInfo& method_info = combined[native_methods.size()];
+        method_info.name = StringView("index", 5);
+        method_info.param_types = Span<Type*>(idx_param, 1);
+        method_info.return_type = elem_type;
+        method_info.decl = nullptr;
+        method_info.native_name = StringView();
+    }
+
+    // index_mut(i: i32, val: T): void
+    {
+        Type** mut_params = reinterpret_cast<Type**>(
+            m_allocator.alloc_bytes(sizeof(Type*) * 2, alignof(Type*)));
+        mut_params[0] = m_types.i32_type();
+        mut_params[1] = elem_type;
+        MethodInfo& method_info = combined[native_methods.size() + 1];
+        method_info.name = StringView("index_mut", 9);
+        method_info.param_types = Span<Type*>(mut_params, 2);
+        method_info.return_type = m_types.void_type();
+        method_info.decl = nullptr;
+        method_info.native_name = StringView();
+    }
+
+    type->list_info.methods = Span<MethodInfo>(combined, total);
 }
 
 Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) {
@@ -3393,16 +3459,18 @@ Type* SemanticAnalyzer::analyze_index_expr(Expr* expr) {
     // Unwrap reference types
     Type* base_type = obj_type->base_type();
 
-    if (!base_type->is_list()) {
-        error(index_expr.object->loc, "cannot index non-list type");
-        return m_types.error_type();
+    // Unified dispatch: look up "index" method on any type (list, struct, etc.)
+    StringView method_name("index", 5);
+    const MethodInfo* method_info = m_types.lookup_method(base_type, method_name);
+    if (method_info && method_info->param_types.size() == 1) {
+        if (!idx_type->is_error()) {
+            check_assignable(method_info->param_types[0], idx_type, index_expr.index->loc);
+        }
+        return method_info->return_type;
     }
 
-    if (!idx_type->is_error()) {
-        check_integer(idx_type, index_expr.index->loc);
-    }
-
-    return base_type->list_info.element_type;
+    error(index_expr.object->loc, "type has no 'index' method for subscript operator");
+    return m_types.error_type();
 }
 
 Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
@@ -3571,6 +3639,21 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
         get_binary_result_type(binop, target_type, value_type, expr->loc);
     } else {
         check_assignable(target_type, value_type, assign_expr.value->loc);
+    }
+
+    // Validate index_mut exists for index assignment targets
+    if (assign_expr.target->kind == AstKind::ExprIndex) {
+        IndexExpr& index_target = assign_expr.target->index;
+        Type* container_type = index_target.object->resolved_type;
+        if (container_type) container_type = container_type->base_type();
+        if (container_type) {
+            StringView method_name("index_mut", 9);
+            const MethodInfo* method_info = m_types.lookup_method(container_type, method_name);
+            if (!method_info) {
+                error(assign_expr.target->loc, "type has no 'index_mut' method for index assignment");
+                return m_types.error_type();
+            }
+        }
     }
 
     return target_type;
