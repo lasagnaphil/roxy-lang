@@ -100,6 +100,9 @@ private:
     // Get the type name string for mangling
     StringView type_name_for_mangling(Type* type);
 
+    // Convert a resolved Type* back into a TypeExpr for AST substitution
+    TypeExpr* type_to_type_expr(Type* type, SourceLocation loc);
+
     BumpAllocator& m_allocator;
     TypeCache& m_types;
 

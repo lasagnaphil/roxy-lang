@@ -560,6 +560,49 @@ TEST_CASE("E2E - Generic var inference: chained field access") {
     CHECK(result.value == 42);
 }
 
+// ============================================================================
+// Generic Compound Type Argument Tests (name mangling)
+// ============================================================================
+
+TEST_CASE("E2E - Generic function with List type argument") {
+    const char* source = R"(
+        fun get_len<T>(lst: T): i32 {
+            return 0;
+        }
+
+        fun main(): i32 {
+            var a: List<i32> = List<i32>();
+            a.push(10);
+            var b: List<f32> = List<f32>();
+            b.push(1.5f);
+            return get_len<List<i32>>(a) + get_len<List<f32>>(b) + a.len();
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 1);
+}
+
+TEST_CASE("E2E - Generic struct with List type argument") {
+    const char* source = R"(
+        struct Wrapper<T> {
+            value: T;
+        }
+
+        fun main(): i32 {
+            var lst: List<i32> = List<i32>();
+            lst.push(42);
+            var w = Wrapper<List<i32>> { value = lst };
+            return w.value.len();
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 1);
+}
+
 TEST_CASE("E2E - Generic inference: error uninferrable param") {
     const char* source = R"(
         fun make_default<T>(): T {

@@ -66,6 +66,68 @@ Last updated: 2026-02-16
 
 ---
 
+## Type System Improvements
+
+### Soundness Fixes
+
+- [ ] **Covariant mutable reference subtyping is unsound**
+  - File: `src/roxy/compiler/semantic.cpp` (`check_assignable`, lines 3651-3659)
+  - Issue: `ref<Child>` is assignable to `ref<Parent>`, but `ref` is mutable — allows writing a `Parent` value through a reference that actually points to a `Child`, corrupting layout
+  - Fix: Make reference subtyping invariant, or split into read-only `ref` (covariant) and mutable `mut_ref` (invariant)
+
+- [ ] **Struct comparison allowed without Eq trait**
+  - File: `src/roxy/compiler/semantic.cpp` (`get_binary_result_type`, line 3801)
+  - Issue: When both operands have the same struct type, comparison is allowed even if no `Eq` trait is implemented — falls through to `return m_types.bool_type()` unconditionally
+  - Fix: Require `Eq`/`Ord` trait implementation for struct comparisons; reject if no trait method found
+
+- [ ] **Trait method signature validation only checks parameter count**
+  - File: `src/roxy/compiler/semantic.cpp` (`validate_trait_implementations`, lines 1682-1685)
+  - Issue: A trait requiring `fun eq(other: Self): bool` could be "implemented" with `fun eq(other: i32): i32` — only parameter count is checked, not parameter types or return type
+  - Fix: Validate full method signature with Self/TypeParam substitution
+
+- [x] **Name mangling collisions for compound type arguments**
+  - File: `src/roxy/compiler/generics.cpp` (`type_name_for_mangling`, `type_to_type_expr`)
+  - Fixed: `type_name_for_mangling` now handles all type kinds (List, Ref, Function, Trait, etc.). Added `type_to_type_expr` to build structurally correct `TypeExpr` nodes during substitution, so `List<T>` substituted with `List<i32>` resolves properly.
+
+### Structural Improvements
+
+- [ ] **Replace nullptr sentinel for Self type**
+  - Files: `src/roxy/compiler/semantic.cpp` (`analyze_trait_method_decl`, line 1347), `include/roxy/compiler/types.hpp`
+  - Issue: `Self` is encoded as `nullptr` in `TraitMethodInfo::param_types`, while trait type params use proper `TypeParam` nodes — dual encoding is fragile since `nullptr` also means "uninitialized" or "error" elsewhere
+  - Fix: Add `TypeKind::Self` to the type kind enum
+
+- [ ] **Integer literal polymorphism**
+  - File: `src/roxy/compiler/semantic.cpp` (`check_assignable`)
+  - Issue: `var x: i64 = 42` fails because unsuffixed `42` is always `i32` — no implicit widening
+  - Fix: Add `TypeKind::IntLiteral` that unifies with any integer type during assignability checking, similar to Rust's integer inference
+
+- [ ] **Ternary expression reports spurious errors**
+  - File: `src/roxy/compiler/semantic.cpp` (`analyze_ternary_expr`, lines 2380-2385)
+  - Issue: Bidirectional `check_assignable` tries `then_type <: else_type` first; if it fails, an error is reported before trying the reverse direction — succeeding in the reverse still leaves the spurious error
+  - Fix: Add a non-error-reporting "probe" version of `check_assignable`
+
+### Toward System F<:
+
+- [ ] **Bounded quantification (`<T: Trait>`)**
+  - Issue: Type parameters are unconstrained — errors in generic function bodies are only caught at monomorphization time (C++ template style), not at declaration time
+  - Fix: Add trait bounds on type parameters; check generic bodies against bounds before instantiation
+
+- [ ] **Unified type environment abstraction**
+  - Issue: Type environment concerns are scattered across `TypeCache` (type creation/interning), `SymbolTable` (scoped bindings), and `SemanticAnalyzer` (named types, traits, generics) — no single place to reason about the full type environment
+  - Fix: Extract a `TypeEnv` that wraps all three
+
+### Dead Code Cleanup
+
+- [ ] **Redundant nil-to-weak check**
+  - File: `src/roxy/compiler/semantic.cpp` (`check_assignable`, line 3641)
+  - Issue: `source->is_nil() && target->kind == TypeKind::Weak` is unreachable — line 3640 already handles `source->is_nil() && target->is_reference()`, and `Weak` is a reference type
+
+- [ ] **Unreachable struct comparison block**
+  - File: `src/roxy/compiler/semantic.cpp` (`get_binary_result_type`, lines 3803-3811)
+  - Issue: `if (left->is_struct() && left == right)` is unreachable because `left == right` was already handled at line 3784
+
+---
+
 ## Code Quality Improvements
 
 - [ ] Extract bytecode constants to dedicated header

@@ -71,8 +71,70 @@ StringView GenericInstantiator::type_name_for_mangling(Type* type) {
         case TypeKind::String: return "string";
         case TypeKind::Struct: return type->struct_info.name;
         case TypeKind::Enum:   return type->enum_info.name;
-        default:               return "unknown";
+        case TypeKind::Trait:  return type->trait_info.name;
+        case TypeKind::Nil:    return "nil";
+        case TypeKind::Error:  return "error";
+        case TypeKind::TypeParam: return type->type_param_info.name;
+        case TypeKind::List: {
+            // List$<elem>
+            StringView prefix = "List";
+            StringView elem = type_name_for_mangling(type->list_info.element_type);
+            u32 total_len = prefix.size() + 1 + elem.size();
+            char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(total_len + 1, 1));
+            u32 pos = 0;
+            memcpy(buf + pos, prefix.data(), prefix.size()); pos += prefix.size();
+            buf[pos++] = '$';
+            memcpy(buf + pos, elem.data(), elem.size()); pos += elem.size();
+            buf[pos] = '\0';
+            return StringView(buf, total_len);
+        }
+        case TypeKind::Uniq:
+        case TypeKind::Ref:
+        case TypeKind::Weak: {
+            // uniq$<inner>, ref$<inner>, weak$<inner>
+            StringView prefix;
+            if (type->kind == TypeKind::Uniq) prefix = "uniq";
+            else if (type->kind == TypeKind::Ref) prefix = "ref";
+            else prefix = "weak";
+            StringView inner = type_name_for_mangling(type->ref_info.inner_type);
+            u32 total_len = prefix.size() + 1 + inner.size();
+            char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(total_len + 1, 1));
+            u32 pos = 0;
+            memcpy(buf + pos, prefix.data(), prefix.size()); pos += prefix.size();
+            buf[pos++] = '$';
+            memcpy(buf + pos, inner.data(), inner.size()); pos += inner.size();
+            buf[pos] = '\0';
+            return StringView(buf, total_len);
+        }
+        case TypeKind::Function: {
+            // fun$<param1>$<param2>_ret$<return>
+            StringView prefix = "fun";
+            StringView ret_sep = "_ret";
+            StringView ret_name = type_name_for_mangling(type->func_info.return_type);
+            u32 total_len = prefix.size();
+            Vector<StringView> param_names;
+            for (auto* param_type : type->func_info.param_types) {
+                StringView pname = type_name_for_mangling(param_type);
+                param_names.push_back(pname);
+                total_len += 1 + pname.size(); // '$' + name
+            }
+            total_len += ret_sep.size() + 1 + ret_name.size(); // _ret$<return>
+            char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(total_len + 1, 1));
+            u32 pos = 0;
+            memcpy(buf + pos, prefix.data(), prefix.size()); pos += prefix.size();
+            for (auto& pname : param_names) {
+                buf[pos++] = '$';
+                memcpy(buf + pos, pname.data(), pname.size()); pos += pname.size();
+            }
+            memcpy(buf + pos, ret_sep.data(), ret_sep.size()); pos += ret_sep.size();
+            buf[pos++] = '$';
+            memcpy(buf + pos, ret_name.data(), ret_name.size()); pos += ret_name.size();
+            buf[pos] = '\0';
+            return StringView(buf, total_len);
+        }
     }
+    assert(false && "Unhandled type kind in type_name_for_mangling");
+    return "unknown";
 }
 
 StringView GenericInstantiator::mangle_name(StringView base_name, Span<Type*> type_args) {
@@ -246,6 +308,66 @@ GenericStructInstance* GenericInstantiator::find_struct_instance_by_type(Type* c
 
 // AST cloning with type substitution
 
+TypeExpr* GenericInstantiator::type_to_type_expr(Type* type, SourceLocation loc) {
+    TypeExpr* result = m_allocator.emplace<TypeExpr>();
+    result->loc = loc;
+    result->ref_kind = RefKind::None;
+    result->type_args = {};
+
+    switch (type->kind) {
+        // Primitives and named types — just use the name
+        case TypeKind::Void:   result->name = "void"; break;
+        case TypeKind::Bool:   result->name = "bool"; break;
+        case TypeKind::I8:     result->name = "i8"; break;
+        case TypeKind::I16:    result->name = "i16"; break;
+        case TypeKind::I32:    result->name = "i32"; break;
+        case TypeKind::I64:    result->name = "i64"; break;
+        case TypeKind::U8:     result->name = "u8"; break;
+        case TypeKind::U16:    result->name = "u16"; break;
+        case TypeKind::U32:    result->name = "u32"; break;
+        case TypeKind::U64:    result->name = "u64"; break;
+        case TypeKind::F32:    result->name = "f32"; break;
+        case TypeKind::F64:    result->name = "f64"; break;
+        case TypeKind::String: result->name = "string"; break;
+        case TypeKind::Struct: result->name = type->struct_info.name; break;
+        case TypeKind::Enum:   result->name = type->enum_info.name; break;
+        case TypeKind::Trait:  result->name = type->trait_info.name; break;
+        case TypeKind::TypeParam: result->name = type->type_param_info.name; break;
+        case TypeKind::Nil:    result->name = "nil"; break;
+        case TypeKind::Error:  result->name = "error"; break;
+
+        case TypeKind::List: {
+            result->name = "List";
+            TypeExpr** args = reinterpret_cast<TypeExpr**>(
+                m_allocator.alloc_bytes(sizeof(TypeExpr*), alignof(TypeExpr*)));
+            args[0] = type_to_type_expr(type->list_info.element_type, loc);
+            result->type_args = Span<TypeExpr*>(args, 1);
+            break;
+        }
+
+        case TypeKind::Uniq:
+        case TypeKind::Ref:
+        case TypeKind::Weak: {
+            // Recursively build the inner type, then set ref_kind
+            TypeExpr* inner = type_to_type_expr(type->ref_info.inner_type, loc);
+            *result = *inner;
+            if (type->kind == TypeKind::Uniq) result->ref_kind = RefKind::Uniq;
+            else if (type->kind == TypeKind::Ref) result->ref_kind = RefKind::Ref;
+            else result->ref_kind = RefKind::Weak;
+            break;
+        }
+
+        case TypeKind::Function: {
+            // Function types as type arguments are uncommon, but handle gracefully
+            // Use the mangled name as a fallback
+            result->name = type_name_for_mangling(type);
+            break;
+        }
+    }
+
+    return result;
+}
+
 TypeExpr* GenericInstantiator::substitute_type_expr(TypeExpr* type_expr, const TypeSubstitution& subst) {
     if (!type_expr) return nullptr;
 
@@ -256,9 +378,13 @@ TypeExpr* GenericInstantiator::substitute_type_expr(TypeExpr* type_expr, const T
     if (type_expr->type_args.size() == 0) {
         Type* concrete = subst.lookup(type_expr->name);
         if (concrete) {
-            // Replace the type name with the concrete type's name
-            result->name = type_name_for_mangling(concrete);
-            return result;
+            // Build a proper TypeExpr that preserves compound type structure
+            TypeExpr* concrete_expr = type_to_type_expr(concrete, type_expr->loc);
+            // Preserve the original ref_kind if the concrete type is not already a reference
+            if (type_expr->ref_kind != RefKind::None && concrete_expr->ref_kind == RefKind::None) {
+                concrete_expr->ref_kind = type_expr->ref_kind;
+            }
+            return concrete_expr;
         }
     }
 
