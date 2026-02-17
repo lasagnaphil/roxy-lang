@@ -1343,12 +1343,19 @@ Decl* Parser::method_declaration(bool is_pub, Token struct_token) {
         if (m_has_error) return nullptr;
     }
 
-    // Check for "for Trait" clause
+    // Check for "for Trait" or "for Trait<Args>" clause
     StringView trait_name(nullptr, 0);
+    Span<TypeExpr*> trait_type_args;
     if (match(TokenKind::KwFor)) {
         Token trait_token = consume(TokenKind::Identifier, "Expected trait name after 'for'");
         if (m_has_error) return nullptr;
         trait_name = trait_token.text();
+
+        // Check for type args: for Trait<i32, f64>
+        if (check(TokenKind::Less)) {
+            trait_type_args = parse_type_args();
+            if (m_has_error) return nullptr;
+        }
     }
 
     // Allow body-less methods (for required trait methods): ends with ';'
@@ -1373,6 +1380,7 @@ Decl* Parser::method_declaration(bool is_pub, Token struct_token) {
     decl->method_decl.body = body;
     decl->method_decl.is_pub = is_pub;
     decl->method_decl.trait_name = trait_name;
+    decl->method_decl.trait_type_args = trait_type_args;
     return decl;
 }
 
@@ -1677,6 +1685,13 @@ Decl* Parser::trait_declaration(bool is_pub) {
     Token name_token = consume(TokenKind::Identifier, "Expected trait name");
     if (m_has_error) return nullptr;
 
+    // Check for generic type params: trait Name<T, U>
+    Span<TypeParam> type_params;
+    if (check(TokenKind::Less)) {
+        type_params = parse_type_params();
+        if (m_has_error) return nullptr;
+    }
+
     StringView parent_name(nullptr, 0);
     if (match(TokenKind::Colon)) {
         Token parent_token = consume(TokenKind::Identifier, "Expected parent trait name");
@@ -1691,6 +1706,7 @@ Decl* Parser::trait_declaration(bool is_pub) {
     decl->kind = AstKind::DeclTrait;
     decl->loc = loc;
     decl->trait_decl.name = name_token.text();
+    decl->trait_decl.type_params = type_params;
     decl->trait_decl.parent_name = parent_name;
     decl->trait_decl.is_pub = is_pub;
     return decl;

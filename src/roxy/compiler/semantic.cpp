@@ -239,6 +239,7 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
 
             // Create the trait type
             Type* type = m_types.trait_type(name, decl);
+            type->trait_info.type_params = decl->trait_decl.type_params;
             m_trait_types[name] = type;
 
             // Define in global scope
@@ -429,7 +430,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                 analyze_trait_method_decl(decl, trait_it->second);
             }
             else if (!md.trait_name.empty()) {
-                // This is a trait implementation (fun Type.method(...) for Trait)
+                // This is a trait implementation (fun Type.method(...) for Trait<Args>)
                 auto struct_it = m_named_types.find(md.struct_name);
                 if (struct_it == m_named_types.end()) {
                     error_fmt(decl->loc, "method for unknown type '{}'", md.struct_name);
@@ -440,7 +441,35 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                     if (impl_trait_it == m_trait_types.end()) {
                         error_fmt(decl->loc, "unknown trait '{}'", md.trait_name);
                     } else {
-                        m_pending_trait_impls.push_back({decl, struct_it->second, impl_trait_it->second});
+                        Type* trait_type = impl_trait_it->second;
+                        TraitTypeInfo& tti = trait_type->trait_info;
+
+                        // Resolve trait type args
+                        Span<Type*> resolved_trait_type_args;
+                        if (md.trait_type_args.size() > 0) {
+                            if (tti.type_params.size() == 0) {
+                                error_fmt(decl->loc, "trait '{}' does not take type arguments", md.trait_name);
+                                continue;
+                            }
+                            if (md.trait_type_args.size() != tti.type_params.size()) {
+                                error_fmt(decl->loc, "trait '{}' expects {} type argument(s), got {}",
+                                         md.trait_name, tti.type_params.size(), md.trait_type_args.size());
+                                continue;
+                            }
+                            Vector<Type*> args;
+                            for (auto* type_arg : md.trait_type_args) {
+                                Type* arg_type = resolve_type_expr(type_arg);
+                                if (!arg_type) arg_type = m_types.error_type();
+                                args.push_back(arg_type);
+                            }
+                            resolved_trait_type_args = m_allocator.alloc_span(args);
+                        } else if (tti.type_params.size() > 0) {
+                            error_fmt(decl->loc, "trait '{}' requires {} type argument(s)",
+                                     md.trait_name, tti.type_params.size());
+                            continue;
+                        }
+
+                        m_pending_trait_impls.push_back({decl, struct_it->second, trait_type, resolved_trait_type_args});
                     }
                 }
             }
@@ -1305,27 +1334,54 @@ void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
     // We need a struct scope to resolve 'Self' in parameter types.
     // For trait method declarations, we don't have a concrete struct,
     // so we use nullptr sentinels for Self type.
-    // Resolve parameter types - use nullptr for Self
+    // Also resolve trait type params (e.g., Rhs in trait Add<Rhs>) to TypeParam types.
+    // Resolve parameter types - use nullptr for Self, TypeParam for trait type params
     Vector<Type*> param_types;
     for (const auto& param : md.params) {
         TypeExpr* type_expr = param.type;
         if (type_expr && type_expr->name == "Self") {
             param_types.push_back(nullptr);  // nullptr sentinel for Self
         } else {
-            Type* ptype = resolve_type_expr(type_expr);
-            if (!ptype) ptype = m_types.error_type();
-            param_types.push_back(ptype);
+            // Check if this is a trait type param
+            Type* tp = nullptr;
+            if (type_expr) {
+                for (u32 i = 0; i < tti.type_params.size(); i++) {
+                    if (type_expr->name == tti.type_params[i].name) {
+                        tp = m_types.type_param(tti.type_params[i].name, i);
+                        break;
+                    }
+                }
+            }
+            if (tp) {
+                param_types.push_back(tp);
+            } else {
+                Type* ptype = resolve_type_expr(type_expr);
+                if (!ptype) ptype = m_types.error_type();
+                param_types.push_back(ptype);
+            }
         }
     }
 
-    // Resolve return type (nullptr for Self)
+    // Resolve return type (nullptr for Self, TypeParam for trait type params)
     Type* return_type = nullptr;
     if (md.return_type) {
         if (md.return_type->name == "Self") {
             return_type = nullptr;  // sentinel for Self
         } else {
-            return_type = resolve_type_expr(md.return_type);
-            if (!return_type) return_type = m_types.error_type();
+            // Check if return type is a trait type param
+            Type* tp = nullptr;
+            for (u32 i = 0; i < tti.type_params.size(); i++) {
+                if (md.return_type->name == tti.type_params[i].name) {
+                    tp = m_types.type_param(tti.type_params[i].name, i);
+                    break;
+                }
+            }
+            if (tp) {
+                return_type = tp;
+            } else {
+                return_type = resolve_type_expr(md.return_type);
+                if (!return_type) return_type = m_types.error_type();
+            }
         }
     } else {
         return_type = m_types.void_type();
@@ -1531,10 +1587,11 @@ static Span<Decl*> clone_decl_list(BumpAllocator& alloc, Span<Decl*> decls) {
 }
 
 void SemanticAnalyzer::validate_trait_implementations() {
-    // Group pending impls by (struct, trait)
+    // Group pending impls by (struct, trait, type_args)
     struct TraitImplGroup {
         Type* struct_type;
         Type* trait_type;
+        Span<Type*> trait_type_args;
         Vector<Decl*> impl_decls;
     };
 
@@ -1542,16 +1599,28 @@ void SemanticAnalyzer::validate_trait_implementations() {
     Vector<TraitImplGroup> groups;
 
     for (auto& pending : m_pending_trait_impls) {
-        // Find or create group
+        // Find or create group - match on struct, trait, AND type args
         TraitImplGroup* group = nullptr;
         for (auto& g : groups) {
             if (g.struct_type == pending.struct_type && g.trait_type == pending.trait_type) {
-                group = &g;
-                break;
+                // Also check type args match element-wise
+                bool args_match = g.trait_type_args.size() == pending.trait_type_args.size();
+                if (args_match) {
+                    for (u32 i = 0; i < g.trait_type_args.size(); i++) {
+                        if (g.trait_type_args[i] != pending.trait_type_args[i]) {
+                            args_match = false;
+                            break;
+                        }
+                    }
+                }
+                if (args_match) {
+                    group = &g;
+                    break;
+                }
             }
         }
         if (!group) {
-            groups.push_back({pending.struct_type, pending.trait_type, {}});
+            groups.push_back({pending.struct_type, pending.trait_type, pending.trait_type_args, {}});
             group = &groups.back();
         }
         group->impl_decls.push_back(pending.decl);
@@ -1561,6 +1630,7 @@ void SemanticAnalyzer::validate_trait_implementations() {
     for (auto& group : groups) {
         Type* struct_type = group.struct_type;
         Type* trait_type = group.trait_type;
+        Span<Type*> trait_type_args = group.trait_type_args;
         TraitTypeInfo& tti = trait_type->trait_info;
         StructTypeInfo& sti = struct_type->struct_info;
 
@@ -1611,7 +1681,6 @@ void SemanticAnalyzer::validate_trait_implementations() {
                     }
 
                     // Register as a regular method on the struct
-                    // (reuse analyze_method_decl but with trait_name cleared for registration)
                     // Resolve param types with Self -> struct_type
                     Vector<Type*> param_types;
                     for (const auto& param : md.params) {
@@ -1663,7 +1732,7 @@ void SemanticAnalyzer::validate_trait_implementations() {
             if (!implemented[i]) {
                 if (tti.methods[i].has_default) {
                     // Inject default implementation
-                    inject_default_method(struct_type, trait_type, tti.methods[i]);
+                    inject_default_method(struct_type, trait_type, tti.methods[i], trait_type_args);
                 } else {
                     error_fmt(group.impl_decls[0]->loc,
                              "trait '%.*s' requires method '%.*s' which is not implemented for '%.*s'",
@@ -1685,31 +1754,90 @@ void SemanticAnalyzer::validate_trait_implementations() {
     }
 }
 
-void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type, TraitMethodInfo& tmi) {
+void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type,
+                                              TraitMethodInfo& tmi, Span<Type*> trait_type_args) {
     // Create a synthetic DeclMethod that targets the implementing struct
     // with a cloned body from the trait's default method
     Decl* trait_decl = tmi.decl;
     MethodDecl& trait_md = trait_decl->method_decl;
+    TraitTypeInfo& tti = trait_type->trait_info;
 
     Decl* synth = m_allocator.emplace<Decl>();
     synth->kind = AstKind::DeclMethod;
     synth->loc = trait_decl->loc;
     synth->method_decl.struct_name = struct_type->struct_info.name;
     synth->method_decl.name = tmi.name;
-    synth->method_decl.params = trait_md.params;  // Params are shared (they're just names + type exprs)
-    synth->method_decl.return_type = trait_md.return_type;
-    synth->method_decl.body = clone_stmt(m_allocator, trait_md.body);  // Clone the body
     synth->method_decl.is_pub = trait_md.is_pub;
     synth->method_decl.trait_name = trait_type->trait_info.name;
+    synth->method_decl.trait_type_args = Span<TypeExpr*>();
 
-    // Resolve concrete param types (Self -> struct_type)
+    // Build type substitution: always include Self -> struct_type,
+    // plus trait type params -> concrete type args for generic traits
+    {
+        Vector<StringView> param_names;
+        Vector<Type*> concrete_types;
+
+        // Always substitute Self -> struct_type
+        param_names.push_back(StringView("Self", 4));
+        concrete_types.push_back(struct_type);
+
+        // Add trait type params for generic traits
+        if (tti.type_params.size() > 0 && trait_type_args.size() > 0) {
+            for (u32 i = 0; i < tti.type_params.size(); i++) {
+                param_names.push_back(tti.type_params[i].name);
+                concrete_types.push_back(trait_type_args[i]);
+            }
+        }
+
+        TypeSubstitution subst;
+        subst.param_names = m_allocator.alloc_span(param_names);
+        subst.concrete_types = m_allocator.alloc_span(concrete_types);
+
+        // Clone body with type substitution
+        synth->method_decl.body = m_generics.clone_stmt(trait_md.body, subst);
+
+        // Clone params with type-expr substitution
+        Vector<Param> cloned_params;
+        for (const auto& param : trait_md.params) {
+            Param p = param;
+            p.type = m_generics.substitute_type_expr(param.type, subst);
+            cloned_params.push_back(p);
+        }
+        synth->method_decl.params = m_allocator.alloc_span(cloned_params);
+        synth->method_decl.return_type = m_generics.substitute_type_expr(trait_md.return_type, subst);
+    }
+
+    // Resolve concrete param types (Self -> struct_type, TypeParam -> concrete type)
     StructTypeInfo& sti = struct_type->struct_info;
     Vector<Type*> param_types;
     for (auto* pt : tmi.param_types) {
-        param_types.push_back(pt ? pt : struct_type);  // nullptr sentinel -> concrete type
+        if (!pt) {
+            param_types.push_back(struct_type);  // nullptr sentinel -> Self
+        } else if (pt->is_type_param() && trait_type_args.size() > 0) {
+            u32 idx = pt->type_param_info.index;
+            if (idx < trait_type_args.size()) {
+                param_types.push_back(trait_type_args[idx]);
+            } else {
+                param_types.push_back(pt);
+            }
+        } else {
+            param_types.push_back(pt);
+        }
     }
 
-    Type* return_type = tmi.return_type ? tmi.return_type : struct_type;
+    Type* return_type;
+    if (!tmi.return_type) {
+        return_type = struct_type;  // Self
+    } else if (tmi.return_type->is_type_param() && trait_type_args.size() > 0) {
+        u32 idx = tmi.return_type->type_param_info.index;
+        if (idx < trait_type_args.size()) {
+            return_type = trait_type_args[idx];
+        } else {
+            return_type = tmi.return_type;
+        }
+    } else {
+        return_type = tmi.return_type;
+    }
 
     // Add MethodInfo to struct's method list
     MethodInfo mi;

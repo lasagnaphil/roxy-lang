@@ -118,12 +118,16 @@ struct TraitMethodInfo {
     bool has_default;          // true if method has a body (default implementation)
 };
 
+// Forward declaration
+struct TypeParam;
+
 // Type info for trait types
 struct TraitTypeInfo {
     StringView name;
     Decl* decl;                        // Points to the DeclTrait AST node
     Type* parent;                      // Parent trait type, nullptr if no inheritance
     Span<TraitMethodInfo> methods;     // Trait methods (required and default)
+    Span<TypeParam> type_params;       // Generic type params: <T, U>
 };
 
 // Type info for struct types

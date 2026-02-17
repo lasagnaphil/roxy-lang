@@ -206,6 +206,7 @@ Type* TypeCache::trait_type(StringView name, Decl* decl) {
     type->trait_info.decl = decl;
     type->trait_info.parent = nullptr;
     type->trait_info.methods = Span<TraitMethodInfo>();
+    type->trait_info.type_params = Span<TypeParam>();
     return type;
 }
 

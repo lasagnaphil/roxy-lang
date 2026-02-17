@@ -191,13 +191,15 @@ private:
     // Trait analysis helpers
     void analyze_trait_method_decl(Decl* decl, Type* trait_type);
     void validate_trait_implementations();
-    void inject_default_method(Type* struct_type, Type* trait_type, TraitMethodInfo& tmi);
+    void inject_default_method(Type* struct_type, Type* trait_type,
+                               TraitMethodInfo& tmi, Span<Type*> trait_type_args);
 
     // Pending trait implementations (struct_name resolved to struct type + trait decl)
     struct PendingTraitImpl {
         Decl* decl;
         Type* struct_type;
         Type* trait_type;
+        Span<Type*> trait_type_args;   // Resolved type args for generic traits
     };
     Vector<PendingTraitImpl> m_pending_trait_impls;
 

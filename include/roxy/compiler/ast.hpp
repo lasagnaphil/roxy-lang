@@ -490,7 +490,7 @@ struct DestructorDecl {
 
 // Method declaration: fun StructName.method_name(params): RetType { body }
 // Also used for trait methods:  fun TraitName.method(params): RetType;    (body = nullptr)
-// And trait implementations:    fun Type.method(params): RetType for Trait { body }
+// And trait implementations:    fun Type.method(params): RetType for Trait<Args> { body }
 struct MethodDecl {
     StringView struct_name;
     StringView name;
@@ -499,11 +499,13 @@ struct MethodDecl {
     Stmt* body;                // nullptr for required trait methods (no body)
     bool is_pub;
     StringView trait_name;     // Non-empty for "fun Type.method() for Trait"
+    Span<TypeExpr*> trait_type_args;   // Type args in "for Trait<Args>"
 };
 
-// Trait declaration: trait Name; or trait Name : Parent;
+// Trait declaration: trait Name; or trait Name<T>; or trait Name : Parent;
 struct TraitDecl {
     StringView name;
+    Span<TypeParam> type_params;   // Generic type params: <T, U>
     StringView parent_name;    // empty if no parent trait
     bool is_pub;
 };

@@ -372,3 +372,164 @@ TEST_CASE("E2E - Trait method not in trait error") {
     TestResult result = run_and_capture(source, "main");
     CHECK(!result.success);
 }
+
+// ============================================================================
+// Generic Trait Tests
+// ============================================================================
+
+TEST_CASE("E2E - Generic trait basic required method") {
+    const char* source = R"(
+        trait Add<Rhs>;
+        fun Add.add(other: Rhs): Self;
+
+        struct Vec2 {
+            x: i32;
+            y: i32;
+        }
+
+        fun Vec2.add(other: Vec2): Vec2 for Add<Vec2> {
+            return Vec2 { x = self.x + other.x, y = self.y + other.y };
+        }
+
+        fun main(): i32 {
+            var a: Vec2 = Vec2 { x = 1, y = 2 };
+            var b: Vec2 = Vec2 { x = 3, y = 4 };
+            var c: Vec2 = a.add(b);
+            print(c.x);
+            print(c.y);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "4\n6\n");
+}
+
+TEST_CASE("E2E - Generic trait mixed-type Rhs") {
+    const char* source = R"(
+        trait Mul<Rhs>;
+        fun Mul.mul(other: Rhs): Self;
+
+        struct Vec2 {
+            x: i32;
+            y: i32;
+        }
+
+        fun Vec2.mul(scalar: i32): Vec2 for Mul<i32> {
+            return Vec2 { x = self.x * scalar, y = self.y * scalar };
+        }
+
+        fun main(): i32 {
+            var v: Vec2 = Vec2 { x = 2, y = 3 };
+            var r: Vec2 = v.mul(4);
+            print(r.x);
+            print(r.y);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "8\n12\n");
+}
+
+TEST_CASE("E2E - Generic trait default method injection") {
+    const char* source = R"(
+        trait Add<Rhs>;
+        fun Add.add(other: Rhs): Self;
+        fun Add.add_twice(other: Rhs): Self {
+            return self.add(other).add(other);
+        }
+
+        struct Num {
+            val: i32;
+        }
+
+        fun Num.add(other: Num): Num for Add<Num> {
+            return Num { val = self.val + other.val };
+        }
+
+        fun main(): i32 {
+            var a: Num = Num { val = 10 };
+            var b: Num = Num { val = 5 };
+            var c: Num = a.add_twice(b);
+            print(c.val);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "20\n");
+}
+
+TEST_CASE("E2E - Generic trait multi-param") {
+    const char* source = R"(
+        trait Convert<From, To>;
+        fun Convert.convert(input: From): To;
+
+        struct Converter {
+            factor: i32;
+        }
+
+        fun Converter.convert(input: i32): i32 for Convert<i32, i32> {
+            return input * self.factor;
+        }
+
+        fun main(): i32 {
+            var c: Converter = Converter { factor = 3 };
+            var result: i32 = c.convert(7);
+            print(result);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "21\n");
+}
+
+TEST_CASE("E2E - Generic trait error: wrong type arg count") {
+    const char* source = R"(
+        trait Add<Rhs>;
+        fun Add.add(other: Rhs): Self;
+
+        struct Num {
+            val: i32;
+        }
+
+        fun Num.add(other: Num): Num for Add {
+            return Num { val = self.val + other.val };
+        }
+
+        fun main(): i32 {
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(!result.success);
+}
+
+TEST_CASE("E2E - Generic trait error: type args on non-generic trait") {
+    const char* source = R"(
+        trait Eq;
+        fun Eq.eq(other: Self): bool;
+
+        struct Num {
+            val: i32;
+        }
+
+        fun Num.eq(other: Num): bool for Eq<i32> {
+            return self.val == other.val;
+        }
+
+        fun main(): i32 {
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(!result.success);
+}

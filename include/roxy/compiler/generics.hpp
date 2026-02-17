@@ -80,17 +80,19 @@ public:
     // Name mangling
     StringView mangle_name(StringView base_name, Span<Type*> type_args);
 
+    // Public AST cloning with type substitution (used by trait default method injection)
+    Stmt* clone_stmt(Stmt* stmt, const TypeSubstitution& subst);
+    TypeExpr* substitute_type_expr(TypeExpr* type_expr, const TypeSubstitution& subst);
+
 private:
     // Clone AST with type substitution
     Decl* clone_fun_decl(Decl* original, const TypeSubstitution& subst, StringView new_name);
     Decl* clone_struct_decl(Decl* original, const TypeSubstitution& subst, StringView new_name);
     Expr* clone_expr(Expr* expr, const TypeSubstitution& subst);
-    Stmt* clone_stmt(Stmt* stmt, const TypeSubstitution& subst);
     Decl* clone_decl(Decl* decl, const TypeSubstitution& subst);
     Span<Decl*> clone_decl_list(Span<Decl*> decls, const TypeSubstitution& subst);
     Span<CallArg> clone_call_args(Span<CallArg> args, const TypeSubstitution& subst);
     Span<FieldInit> clone_field_inits(Span<FieldInit> fields, const TypeSubstitution& subst);
-    TypeExpr* substitute_type_expr(TypeExpr* type_expr, const TypeSubstitution& subst);
 
     // Get the type name string for mangling
     StringView type_name_for_mangling(Type* type);
