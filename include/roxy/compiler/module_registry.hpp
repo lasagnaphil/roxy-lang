@@ -87,13 +87,13 @@ public:
     }
 
     // Get all registered modules
-    const tsl::robin_map<StringView, ModuleInfo*, StringViewHash, StringViewEqual>& modules() const {
+    const tsl::robin_map<StringView, ModuleInfo*>& modules() const {
         return m_modules;
     }
 
 private:
     BumpAllocator& m_allocator;
-    tsl::robin_map<StringView, ModuleInfo*, StringViewHash, StringViewEqual> m_modules;
+    tsl::robin_map<StringView, ModuleInfo*> m_modules;
 };
 
 }

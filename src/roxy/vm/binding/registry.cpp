@@ -370,7 +370,7 @@ void NativeRegistry::apply_structs_to_types(TypeCache& types, BumpAllocator& all
 
 void NativeRegistry::apply_methods_to_types(TypeCache& types, BumpAllocator& allocator) {
     // Group methods by struct name
-    tsl::robin_map<StringView, Vector<const NativeFunctionEntry*>, StringViewHash, StringViewEqual> methods_by_struct;
+    tsl::robin_map<StringView, Vector<const NativeFunctionEntry*>> methods_by_struct;
     for (const auto& entry : m_function_entries) {
         if (!entry.is_method) continue;
         methods_by_struct[entry.struct_name].push_back(&entry);

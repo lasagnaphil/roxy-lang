@@ -388,7 +388,7 @@ private:
     tsl::robin_map<Type*, Type*, TypeHash, TypeEqual> m_interned;
 
     // Named type registry (structs and enums)
-    tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_named_types;
+    tsl::robin_map<StringView, Type*> m_named_types;
 
     // Primitive method and trait tables (keyed by TypeKind)
     tsl::robin_map<u8, Vector<MethodInfo>> m_primitive_methods;

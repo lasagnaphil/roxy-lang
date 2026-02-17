@@ -109,7 +109,7 @@ bool Compiler::parse_all() {
 
 bool Compiler::topological_sort() {
     // Build module name to index map
-    tsl::robin_map<StringView, u32, StringViewHash, StringViewEqual> name_to_idx;
+    tsl::robin_map<StringView, u32> name_to_idx;
     for (u32 i = 0; i < m_sources.size(); i++) {
         name_to_idx[m_sources[i].name] = i;
     }
@@ -134,7 +134,7 @@ bool Compiler::detect_cycle(u32 module_idx, Vector<u8>& state, Vector<u32>& orde
     state[module_idx] = 1; // Visiting
 
     // Build module name to index map (could cache this)
-    tsl::robin_map<StringView, u32, StringViewHash, StringViewEqual> name_to_idx;
+    tsl::robin_map<StringView, u32> name_to_idx;
     for (u32 i = 0; i < m_sources.size(); i++) {
         name_to_idx[m_sources[i].name] = i;
     }
@@ -264,7 +264,7 @@ BCModule* Compiler::link_modules() {
     merged_ir.name = "linked";
 
     // Map from (module_name, func_name) to global function index
-    tsl::robin_map<StringView, u32, StringViewHash, StringViewEqual> func_name_to_global_idx;
+    tsl::robin_map<StringView, u32> func_name_to_global_idx;
 
     // Collect all functions
     for (u32 idx : m_compile_order) {

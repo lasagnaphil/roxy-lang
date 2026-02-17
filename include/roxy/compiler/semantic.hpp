@@ -186,11 +186,11 @@ private:
     GenericInstantiator m_generics;
 
     // Named type lookup (structs/enums by name)
-    tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_named_types;
+    tsl::robin_map<StringView, Type*> m_named_types;
 
     // Trait support
     Type* m_printable_type = nullptr;  // Builtin Printable trait for f-string interpolation
-    tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_trait_types;
+    tsl::robin_map<StringView, Type*> m_trait_types;
     Vector<Decl*> m_synthetic_decls;  // Injected default method declarations
 
     // Generic type argument inference

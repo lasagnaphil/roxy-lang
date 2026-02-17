@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <functional>
 
 namespace rx {
 
@@ -66,23 +67,20 @@ public:
     bool operator!=(const char* str) const { return !equals(str); }
 };
 
-// Hash function for StringView (for use in hash maps)
-struct StringViewHash {
-    u64 operator()(StringView sv) const {
-        u64 hash = 14695981039346656037ULL;
+}
+
+// Specialization of std::hash for rx::StringView so that
+// tsl::robin_map<StringView, ...> works without explicit hash/equal args.
+namespace std {
+template<>
+struct hash<rx::StringView> {
+    size_t operator()(rx::StringView sv) const noexcept {
+        rx::u64 h = 14695981039346656037ULL;
         for (char c : sv) {
-            hash ^= static_cast<u64>(c);
-            hash *= 1099511628211ULL;
+            h ^= static_cast<rx::u64>(c);
+            h *= 1099511628211ULL;
         }
-        return hash;
+        return static_cast<size_t>(h);
     }
 };
-
-// Equality function for StringView (for use in hash maps)
-struct StringViewEqual {
-    bool operator()(StringView a, StringView b) const {
-        return a == b;
-    }
-};
-
 }

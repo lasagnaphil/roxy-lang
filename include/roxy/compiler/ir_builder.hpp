@@ -164,10 +164,10 @@ private:
         ValueId value;
         Type* type;
     };
-    Vector<tsl::robin_map<StringView, LocalVar, StringViewHash, StringViewEqual>> m_local_scopes;
+    Vector<tsl::robin_map<StringView, LocalVar>> m_local_scopes;
 
     // Track which parameters are pointers (for out/inout semantics)
-    tsl::robin_map<StringView, bool, StringViewHash, StringViewEqual> m_param_is_ptr;
+    tsl::robin_map<StringView, bool> m_param_is_ptr;
 
     // Track ref-typed parameters for RefInc/RefDec at function boundaries
     Vector<ValueId> m_ref_params;

@@ -2156,7 +2156,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
     EnumDecl& ed = eti.decl->enum_decl;
 
     // Track which enum variants have been covered (for duplicate detection)
-    tsl::robin_map<StringView, bool, StringViewHash, StringViewEqual> covered_variants;
+    tsl::robin_map<StringView, bool> covered_variants;
 
     // Analyze each case
     for (auto& wc : ws.cases) {
@@ -3546,7 +3546,7 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
     Vector<bool> field_initialized(type->struct_info.fields.size(), false);
 
     // Track initialized variant fields by name
-    tsl::robin_map<StringView, bool, StringViewHash, StringViewEqual> variant_field_initialized;
+    tsl::robin_map<StringView, bool> variant_field_initialized;
     i64 discriminant_value = -1;  // Track which variant is selected
 
     // Validate each field initializer

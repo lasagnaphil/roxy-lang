@@ -148,7 +148,7 @@ private:
     Scope* m_current;
 
     // Fast lookup map for current scope chain
-    tsl::robin_map<StringView, Symbol*, StringViewHash, StringViewEqual> m_lookup_cache;
+    tsl::robin_map<StringView, Symbol*> m_lookup_cache;
 
     Scope* create_scope(ScopeKind kind);
     void rebuild_lookup_cache();

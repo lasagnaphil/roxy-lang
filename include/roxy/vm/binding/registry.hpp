@@ -297,8 +297,8 @@ private:
     TypeCache& m_types;
     Vector<NativeFunctionEntry> m_function_entries;
     Vector<NativeStructEntry> m_struct_entries;
-    tsl::robin_map<StringView, i32, StringViewHash, StringViewEqual> m_name_to_index;
-    tsl::robin_map<StringView, NativeGenericTypeEntry, StringViewHash, StringViewEqual> m_generic_types;
+    tsl::robin_map<StringView, i32> m_name_to_index;
+    tsl::robin_map<StringView, NativeGenericTypeEntry> m_generic_types;
 };
 
 // Template specializations for get_type_kind

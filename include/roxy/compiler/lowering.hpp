@@ -96,7 +96,7 @@ private:
     tsl::robin_map<u32, u32> m_value_to_stack_slot;
 
     // Variable name to stack slot mapping (for VarAddr on local variables)
-    tsl::robin_map<StringView, u32, StringViewHash, StringViewEqual> m_var_name_to_stack_slot;
+    tsl::robin_map<StringView, u32> m_var_name_to_stack_slot;
 
     u32 m_next_stack_slot;
 
@@ -108,10 +108,10 @@ private:
     IRModule* m_ir_module;
 
     // Function name to index mapping
-    tsl::robin_map<StringView, u32, StringViewHash, StringViewEqual> m_func_indices;
+    tsl::robin_map<StringView, u32> m_func_indices;
 
     // Type name to index mapping (for heap allocation)
-    tsl::robin_map<StringView, u16, StringViewHash, StringViewEqual> m_type_indices;
+    tsl::robin_map<StringView, u16> m_type_indices;
 
     // Native registry for copy constructor lookup
     NativeRegistry* m_registry = nullptr;

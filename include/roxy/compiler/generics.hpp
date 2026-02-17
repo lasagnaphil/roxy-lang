@@ -104,10 +104,10 @@ private:
     TypeCache& m_types;
 
     // Generic function templates
-    tsl::robin_map<StringView, Decl*, StringViewHash, StringViewEqual> m_generic_funs;
+    tsl::robin_map<StringView, Decl*> m_generic_funs;
 
     // Generic struct templates
-    tsl::robin_map<StringView, Decl*, StringViewHash, StringViewEqual> m_generic_structs;
+    tsl::robin_map<StringView, Decl*> m_generic_structs;
 
     // All function instances (including already analyzed ones)
     Vector<GenericFunInstance*> m_all_fun_instances;
@@ -120,8 +120,8 @@ private:
     Vector<GenericStructInstance*> m_pending_structs;
 
     // Cache: mangled_name -> instance (to avoid duplicate instantiation)
-    tsl::robin_map<StringView, GenericFunInstance*, StringViewHash, StringViewEqual> m_fun_instance_cache;
-    tsl::robin_map<StringView, GenericStructInstance*, StringViewHash, StringViewEqual> m_struct_instance_cache;
+    tsl::robin_map<StringView, GenericFunInstance*> m_fun_instance_cache;
+    tsl::robin_map<StringView, GenericStructInstance*> m_struct_instance_cache;
 };
 
 }

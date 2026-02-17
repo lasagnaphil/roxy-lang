@@ -27,7 +27,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
     IRModule* module = m_allocator.emplace<IRModule>();
 
     // Track which struct types have user-defined default constructors
-    tsl::robin_map<StringView, bool, StringViewHash, StringViewEqual> has_default_ctor;
+    tsl::robin_map<StringView, bool> has_default_ctor;
 
     for (auto* decl : program->declarations) {
         if (!decl) continue;
@@ -886,7 +886,7 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     }
 
     // Save variable state before then branch (so else branch sees original values)
-    Vector<tsl::robin_map<StringView, LocalVar, StringViewHash, StringViewEqual>> saved_scopes;
+    Vector<tsl::robin_map<StringView, LocalVar>> saved_scopes;
     if (else_block) {
         saved_scopes.reserve(m_local_scopes.size());
         for (auto& scope : m_local_scopes) {
@@ -1244,7 +1244,7 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
     }
 
     // 5. Save variable state before any case (so all cases see original values)
-    Vector<tsl::robin_map<StringView, LocalVar, StringViewHash, StringViewEqual>> saved_scopes;
+    Vector<tsl::robin_map<StringView, LocalVar>> saved_scopes;
     saved_scopes.reserve(m_local_scopes.size());
     for (auto& scope : m_local_scopes) {
         saved_scopes.push_back(scope);
@@ -2313,7 +2313,7 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
     }
 
     // Build map of provided field initializers
-    tsl::robin_map<StringView, Expr*, StringViewHash, StringViewEqual> provided_fields;
+    tsl::robin_map<StringView, Expr*> provided_fields;
     for (auto& field : sl.fields) {
         provided_fields[field.name] = field.value;
     }
