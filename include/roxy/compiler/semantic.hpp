@@ -16,6 +16,12 @@ namespace rx {
 class NativeRegistry;
 class ModuleRegistry;
 
+// Result of generic type argument inference
+struct InferredTypeArgs {
+    bool success;
+    Vector<Type*> type_args;  // indexed by type param position
+};
+
 // Semantic error with location information
 struct SemanticError {
     SourceLocation loc;
@@ -183,6 +189,18 @@ private:
     Type* m_printable_type = nullptr;  // Builtin Printable trait for f-string interpolation
     tsl::robin_map<StringView, Type*, StringViewHash, StringViewEqual> m_trait_types;
     Vector<Decl*> m_synthetic_decls;  // Injected default method declarations
+
+    // Generic type argument inference
+    bool unify_type_expr(TypeExpr* pattern, Type* concrete,
+                         Span<TypeParam> type_params, Vector<Type*>& bindings);
+    InferredTypeArgs infer_type_args_from_call(Span<TypeParam> type_params,
+                                                Span<Param> params,
+                                                Span<CallArg> args,
+                                                SourceLocation loc);
+    InferredTypeArgs infer_type_args_from_fields(Span<TypeParam> type_params,
+                                                  Span<FieldDecl> template_fields,
+                                                  Span<FieldInit> literal_fields,
+                                                  SourceLocation loc);
 
     // List method population from NativeRegistry
     void populate_list_methods(Type* list_type);

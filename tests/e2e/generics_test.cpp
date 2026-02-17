@@ -284,3 +284,182 @@ TEST_CASE("E2E - Generic function with generic struct") {
     CHECK(result.success);
     CHECK(result.value == 42);
 }
+
+// ============================================================================
+// Generic Type Argument Inference Tests
+// ============================================================================
+
+TEST_CASE("E2E - Generic inference: identity i32") {
+    const char* source = R"(
+        fun identity<T>(value: T): T {
+            return value;
+        }
+
+        fun main(): i32 {
+            return identity(42);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic inference: identity f64") {
+    const char* source = R"(
+        fun identity<T>(value: T): T {
+            return value;
+        }
+
+        fun main(): i32 {
+            var x: f64 = identity(3.14);
+            return i32(x);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 3);
+}
+
+TEST_CASE("E2E - Generic inference: two type params") {
+    const char* source = R"(
+        fun first<T, U>(a: T, b: U): T {
+            return a;
+        }
+
+        fun main(): i32 {
+            return first(42, 3.14);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic inference: function with struct arg") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun get_x<T>(p: T): i32 {
+            return 99;
+        }
+
+        fun main(): i32 {
+            var p: Point = Point { x = 10, y = 20 };
+            return get_x(p);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 99);
+}
+
+TEST_CASE("E2E - Generic inference: computation") {
+    const char* source = R"(
+        fun double_val<T>(value: T): T {
+            return value + value;
+        }
+
+        fun main(): i32 {
+            return double_val(21);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic inference: struct literal") {
+    const char* source = R"(
+        struct Box<T> {
+            value: T;
+        }
+
+        fun main(): i32 {
+            var b: Box<i32> = Box { value = 42 };
+            return b.value;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic inference: struct literal multiple params") {
+    const char* source = R"(
+        struct Pair<T, U> {
+            first: T;
+            second: U;
+        }
+
+        fun main(): i32 {
+            var p: Pair<i32, f64> = Pair { first = 10, second = 2.5 };
+            return p.first + i32(p.second);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 12);
+}
+
+TEST_CASE("E2E - Generic inference: function returning generic struct") {
+    const char* source = R"(
+        struct Box<T> {
+            value: T;
+        }
+
+        fun wrap<T>(v: T): Box<T> {
+            return Box<T> { value = v };
+        }
+
+        fun main(): i32 {
+            var b: Box<i32> = wrap(42);
+            return b.value;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic inference: backward compat explicit args") {
+    const char* source = R"(
+        fun identity<T>(value: T): T {
+            return value;
+        }
+
+        fun main(): i32 {
+            return identity<i32>(42);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic inference: error uninferrable param") {
+    const char* source = R"(
+        fun make_default<T>(): T {
+            var x: T;
+            return x;
+        }
+
+        fun main(): i32 {
+            return make_default();
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK_FALSE(result.success);
+}

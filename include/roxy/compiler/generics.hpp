@@ -77,6 +77,9 @@ public:
     GenericFunInstance* find_fun_instance(StringView mangled_name) const;
     GenericStructInstance* find_struct_instance(StringView mangled_name) const;
 
+    // Look up a struct instance by its concrete Type* pointer
+    GenericStructInstance* find_struct_instance_by_type(Type* concrete_type) const;
+
     // Name mangling
     StringView mangle_name(StringView base_name, Span<Type*> type_args);
 

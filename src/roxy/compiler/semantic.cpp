@@ -2423,6 +2423,165 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
     }
 }
 
+// ============================================================================
+// Generic type argument inference
+// ============================================================================
+
+bool SemanticAnalyzer::unify_type_expr(TypeExpr* pattern, Type* concrete,
+                                        Span<TypeParam> type_params,
+                                        Vector<Type*>& bindings) {
+    if (!pattern || !concrete || concrete->is_error()) return false;
+
+    // Check if pattern name matches a type parameter
+    for (u32 i = 0; i < type_params.size(); i++) {
+        if (pattern->name == type_params[i].name && pattern->type_args.size() == 0) {
+            // This is a type parameter reference
+            if (bindings[i] == nullptr) {
+                bindings[i] = concrete;
+                return true;
+            }
+            // Already bound — check consistency
+            return bindings[i] == concrete;
+        }
+    }
+
+    // Reference types: uniq/ref/weak
+    if (pattern->ref_kind != RefKind::None) {
+        if (pattern->ref_kind == RefKind::Uniq && concrete->kind == TypeKind::Uniq) {
+            // Create a sub-pattern without the ref wrapper
+            TypeExpr inner_pattern = *pattern;
+            inner_pattern.ref_kind = RefKind::None;
+            return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type,
+                                   type_params, bindings);
+        }
+        if (pattern->ref_kind == RefKind::Ref && concrete->kind == TypeKind::Ref) {
+            TypeExpr inner_pattern = *pattern;
+            inner_pattern.ref_kind = RefKind::None;
+            return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type,
+                                   type_params, bindings);
+        }
+        if (pattern->ref_kind == RefKind::Weak && concrete->kind == TypeKind::Weak) {
+            TypeExpr inner_pattern = *pattern;
+            inner_pattern.ref_kind = RefKind::None;
+            return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type,
+                                   type_params, bindings);
+        }
+        return false;
+    }
+
+    // List<T> pattern against List type
+    if (pattern->name == "List" && pattern->type_args.size() == 1 && concrete->is_list()) {
+        return unify_type_expr(pattern->type_args[0], concrete->list_info.element_type,
+                               type_params, bindings);
+    }
+
+    // Generic struct pattern: e.g., Box<T> against Box$i32
+    if (pattern->type_args.size() > 0 && concrete->is_struct()) {
+        GenericStructInstance* inst = m_generics.find_struct_instance_by_type(concrete);
+        if (inst) {
+            // Verify original template name matches
+            Decl* original = inst->original_decl;
+            if (original->struct_decl.name != pattern->name) return false;
+
+            // Match type arg count
+            if (inst->substitution.concrete_types.size() != pattern->type_args.size())
+                return false;
+
+            // Recurse into each type arg
+            for (u32 i = 0; i < pattern->type_args.size(); i++) {
+                if (!unify_type_expr(pattern->type_args[i],
+                                     inst->substitution.concrete_types[i],
+                                     type_params, bindings))
+                    return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // Concrete name match (primitives, structs, enums)
+    if (pattern->type_args.size() == 0) {
+        // Resolve the pattern name to a type and compare
+        Type* pattern_type = m_types.type_by_name(pattern->name);
+        if (pattern_type && pattern_type == concrete) return true;
+
+        // Also check named types from the analyzer's scope
+        auto it = m_named_types.find(pattern->name);
+        if (it != m_named_types.end() && it->second == concrete) return true;
+
+        return false;
+    }
+
+    return false;
+}
+
+InferredTypeArgs SemanticAnalyzer::infer_type_args_from_call(
+        Span<TypeParam> type_params, Span<Param> params,
+        Span<CallArg> args, SourceLocation loc) {
+    InferredTypeArgs result;
+    result.success = false;
+    result.type_args.resize(type_params.size());
+    for (u32 i = 0; i < type_params.size(); i++) result.type_args[i] = nullptr;
+
+    // Arg count mismatch — cannot infer
+    if (args.size() != params.size()) return result;
+
+    // Analyze each argument to get its concrete type, then unify
+    for (u32 i = 0; i < args.size(); i++) {
+        Type* arg_type = analyze_expr(args[i].expr);
+        if (!arg_type || arg_type->is_error()) return result;
+
+        if (!unify_type_expr(params[i].type, arg_type, type_params, result.type_args)) {
+            return result;
+        }
+    }
+
+    // Check that all type params were resolved
+    for (u32 i = 0; i < type_params.size(); i++) {
+        if (result.type_args[i] == nullptr) return result;
+    }
+
+    result.success = true;
+    return result;
+}
+
+InferredTypeArgs SemanticAnalyzer::infer_type_args_from_fields(
+        Span<TypeParam> type_params, Span<FieldDecl> template_fields,
+        Span<FieldInit> literal_fields, SourceLocation loc) {
+    InferredTypeArgs result;
+    result.success = false;
+    result.type_args.resize(type_params.size());
+    for (u32 i = 0; i < type_params.size(); i++) result.type_args[i] = nullptr;
+
+    // For each literal field, find the matching template field and unify
+    for (u32 i = 0; i < literal_fields.size(); i++) {
+        // Find matching template field by name
+        TypeExpr* field_type_expr = nullptr;
+        for (u32 j = 0; j < template_fields.size(); j++) {
+            if (template_fields[j].name == literal_fields[i].name) {
+                field_type_expr = template_fields[j].type;
+                break;
+            }
+        }
+        if (!field_type_expr) return result;  // Unknown field
+
+        Type* value_type = analyze_expr(literal_fields[i].value);
+        if (!value_type || value_type->is_error()) return result;
+
+        if (!unify_type_expr(field_type_expr, value_type, type_params, result.type_args)) {
+            return result;
+        }
+    }
+
+    // Check that all type params were resolved
+    for (u32 i = 0; i < type_params.size(); i++) {
+        if (result.type_args[i] == nullptr) return result;
+    }
+
+    result.success = true;
+    return result;
+}
+
 Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, StringView func_name) {
     Decl* template_decl = m_generics.get_generic_fun_decl(func_name);
     FunDecl& template_fd = template_decl->fun_decl;
@@ -2798,6 +2957,59 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         }
         if (m_generics.is_generic_struct(func_name)) {
             return analyze_generic_struct_constructor_call(expr, ce, func_name);
+        }
+    }
+
+    // Generic function call WITHOUT explicit type args — attempt inference
+    if (ce.type_args.size() == 0 && ce.callee->kind == AstKind::ExprIdentifier) {
+        StringView func_name = ce.callee->identifier.name;
+        if (m_generics.is_generic_fun(func_name)) {
+            Decl* template_decl = m_generics.get_generic_fun_decl(func_name);
+            FunDecl& template_fd = template_decl->fun_decl;
+
+            auto inferred = infer_type_args_from_call(
+                template_fd.type_params, template_fd.params,
+                ce.arguments, expr->loc);
+
+            if (inferred.success) {
+                Span<Type*> type_args = m_allocator.alloc_span(inferred.type_args);
+                StringView mangled = m_generics.instantiate_fun(func_name, type_args);
+                ce.mangled_name = mangled;
+
+                // Type-check arguments against instantiated function
+                GenericFunInstance* inst = m_generics.find_fun_instance(mangled);
+                FunDecl& inst_fd = inst->instantiated_decl->fun_decl;
+
+                if (ce.arguments.size() != inst_fd.params.size()) {
+                    error_fmt(expr->loc, "function '{}' expects {} arguments but got {}",
+                             func_name, inst_fd.params.size(), ce.arguments.size());
+                    return m_types.error_type();
+                }
+
+                for (u32 i = 0; i < ce.arguments.size(); i++) {
+                    // Args were already analyzed in infer_type_args_from_call,
+                    // so just resolve param type and check assignability
+                    Type* arg_type = ce.arguments[i].expr->resolved_type;
+                    Type* param_type = nullptr;
+                    if (inst_fd.params[i].type) {
+                        param_type = resolve_type_expr(inst_fd.params[i].type);
+                    }
+                    if (param_type && !param_type->is_error() && arg_type && !arg_type->is_error()) {
+                        check_assignable(param_type, arg_type, ce.arguments[i].expr->loc);
+                    }
+                }
+
+                Type* return_type = m_types.void_type();
+                if (inst_fd.return_type) {
+                    return_type = resolve_type_expr(inst_fd.return_type);
+                }
+                return return_type;
+            } else {
+                error_fmt(expr->loc,
+                    "cannot infer type arguments for generic function '{}'; "
+                    "provide explicit type arguments", func_name);
+                return m_types.error_type();
+            }
         }
     }
 
@@ -3265,6 +3477,30 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
         type = inst->concrete_type;
         sl.mangled_name = mangled;
         sl.type_name = mangled;  // Update to mangled name for IR builder
+    }
+
+    // Generic struct literal WITHOUT type args — attempt inference
+    if (!type && sl.type_args.size() == 0 && m_generics.is_generic_struct(sl.type_name)) {
+        Decl* template_decl = m_generics.get_generic_struct_decl(sl.type_name);
+        StructDecl& template_sd = template_decl->struct_decl;
+
+        auto inferred = infer_type_args_from_fields(
+            template_sd.type_params, template_sd.fields,
+            sl.fields, expr->loc);
+
+        if (inferred.success) {
+            Span<Type*> type_args = m_allocator.alloc_span(inferred.type_args);
+            StringView mangled = m_generics.instantiate_struct(sl.type_name, type_args);
+            GenericStructInstance* inst = m_generics.find_struct_instance(mangled);
+            type = inst->concrete_type;
+            sl.mangled_name = mangled;
+            sl.type_name = mangled;
+        } else {
+            error_fmt(expr->loc,
+                "cannot infer type arguments for generic struct '{}'; "
+                "provide explicit type arguments", sl.type_name);
+            return m_types.error_type();
+        }
     }
 
     if (!type) {

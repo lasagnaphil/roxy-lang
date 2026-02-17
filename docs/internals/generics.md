@@ -4,7 +4,7 @@ Generics enable writing code that works with multiple types while maintaining st
 
 ## Implementation Status
 
-**Implemented (Phase 1 + 2 + 3):**
+**Implemented (Phase 1 + 2 + 3 + 4):**
 - Generic functions with explicit type arguments
 - Generic structs with explicit type arguments
 - Monomorphization with AST cloning and type substitution
@@ -14,9 +14,9 @@ Generics enable writing code that works with multiple types while maintaining st
 - Generic functions returning generic structs
 - Synthesized default constructors for generic struct instances
 - Generic traits with type parameters (`trait Add<Rhs>`, see `traits.md`)
+- Local type inference for generic type arguments (function calls and struct literals)
 
 **Not yet implemented:**
-- Type inference (type arguments must be explicit)
 - Trait bounds on type parameters
 - User-defined generic methods on generic structs
 - User-defined generic constructors/destructors
@@ -37,9 +37,9 @@ fun first<T, U>(a: T, b: U): T {
     return a;
 }
 
-// Usage — explicit type arguments required
-var x: i32 = identity<i32>(42);
-var y: f64 = identity<f64>(3.14);
+// Usage — explicit or inferred type arguments
+var x: i32 = identity<i32>(42);   // explicit
+var y: f64 = identity(3.14);      // inferred: T = f64
 ```
 
 ### Generic Structs
@@ -54,9 +54,10 @@ struct Pair<T, U> {
     second: U;
 }
 
-// Usage
-var b: Box<i32> = Box<i32> { value = 42 };
-var p: Pair<i32, f64> = Pair<i32, f64> { first = 10, second = 2.5 };
+// Usage — explicit or inferred type arguments
+var b: Box<i32> = Box<i32> { value = 42 };               // explicit
+var b2: Box<i32> = Box { value = 42 };                    // inferred: T = i32
+var p: Pair<i32, f64> = Pair { first = 10, second = 2.5 }; // inferred: T = i32, U = f64
 ```
 
 ### Generic Structs in Function Signatures
@@ -71,8 +72,46 @@ fun make_box(v: i32): Box<i32> { return Box<i32> { value = v }; }
 // Generic function returning a generic struct
 fun wrap<T>(v: T): Box<T> { return Box<T> { value = v }; }
 
-var b: Box<i32> = wrap<i32>(42);
+var b: Box<i32> = wrap(42);   // inferred: T = i32
 ```
+
+## Type Inference
+
+When type arguments are omitted, the compiler attempts **local type inference** by unifying the template parameter types against the concrete argument types.
+
+### Function Calls
+
+For a generic function call without explicit type args, the compiler analyzes each argument expression to determine its concrete type, then walks the template's parameter `TypeExpr` tree in parallel with the concrete `Type*` to bind type parameters:
+
+```roxy
+fun identity<T>(value: T): T { return value; }
+fun first<T, U>(a: T, b: U): T { return a; }
+
+identity(42);         // T = i32 (from argument type)
+first(42, 3.14);      // T = i32, U = f64
+```
+
+### Struct Literals
+
+For generic struct literals without explicit type args, the compiler matches each field initializer against the template's field declarations:
+
+```roxy
+struct Box<T> { value: T; }
+struct Pair<T, U> { first: T; second: U; }
+
+Box { value = 42 }                    // T = i32
+Pair { first = 10, second = 2.5 }     // T = i32, U = f64
+```
+
+### Limitations
+
+- All type parameters must be inferable from function arguments or struct field values. If a type parameter only appears in the return type, inference fails:
+  ```roxy
+  fun make_default<T>(): T { ... }
+  make_default();         // ERROR: cannot infer T
+  make_default<i32>();    // OK: explicit type arg
+  ```
+- Generic struct *constructor calls* (e.g., `Box(42)`) are not supported for inference since user-defined generic constructors are not yet implemented.
 
 ## Disambiguation: `<>` in Expression Position
 
@@ -206,11 +245,11 @@ type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ;
 | `include/roxy/shared/lexer.hpp` | save_position()/restore_position() for parser backtracking |
 | `src/roxy/compiler/semantic.cpp` | Generic template registration, instantiation, type resolution |
 | `src/roxy/compiler/ir_builder.cpp` | IR generation for generic instances |
-| `tests/e2e/generics_test.cpp` | E2E tests (15 test cases) |
+| `tests/e2e/generics_test.cpp` | E2E tests (25 test cases) |
 
 ## Limitations
 
-1. **No type inference**: Type arguments must always be explicit (`identity<i32>(42)`, not `identity(42)`)
+1. **Limited type inference**: Type arguments can be inferred from function args and struct fields, but not from return type context alone
 2. **No trait bounds**: `<T: Printable>` syntax is not yet supported
 3. **No user-defined generic methods**: Methods on user-defined generic structs are not yet supported (native generic types like `List<T>` have methods via the `NativeRegistry` API)
 4. **No user-defined generic constructors/destructors**: Same as above — native types support these via `bind_generic_constructor`/`bind_generic_destructor`
@@ -221,7 +260,6 @@ type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ;
 
 ## Future Work
 
-1. **Type inference** — Infer type arguments from usage context
-2. **Trait bounds** — `<T: Printable>` for constrained polymorphism
+1. **Trait bounds** — `<T: Printable>` for constrained polymorphism
 3. **User-defined generic methods** — Methods on generic structs (`fun Box.get<T>(): T`)
 4. **User-defined generic constructors** — `fun new Box<T>(value: T)`

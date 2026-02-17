@@ -235,6 +235,15 @@ GenericStructInstance* GenericInstantiator::find_struct_instance(StringView mang
     return nullptr;
 }
 
+GenericStructInstance* GenericInstantiator::find_struct_instance_by_type(Type* concrete_type) const {
+    for (auto* inst : m_all_struct_instances) {
+        if (inst->concrete_type == concrete_type) {
+            return inst;
+        }
+    }
+    return nullptr;
+}
+
 // AST cloning with type substitution
 
 TypeExpr* GenericInstantiator::substitute_type_expr(TypeExpr* type_expr, const TypeSubstitution& subst) {
