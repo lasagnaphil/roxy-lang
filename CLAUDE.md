@@ -174,6 +174,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 
 ## Planned Components (Not Yet Implemented)
 
+- C backend (AOT compilation via SSA IR → C transpilation, see `docs/internals/c-backend.md`)
 - LSP parser (error recovery, lossless CST)
 - LSP server features (completion, hover, go-to-definition)
 - Optimizations
@@ -222,3 +223,4 @@ On Windows, use `.exe` extension.
   - `traits.md` - Traits: declarations, required/default methods, trait inheritance, operator dispatch
   - `operator-overloading.md` - Operator traits (comparison implemented; arithmetic/bitwise NOT YET IMPLEMENTED)
   - `generics.md` - Generic functions and structs with monomorphization
+  - `c-backend.md` - C backend design plan (AOT compilation via SSA IR → C)
