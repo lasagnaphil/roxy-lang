@@ -489,11 +489,11 @@ Expr* Parser::primary() {
                     if (m_has_error) return nullptr;
                     Expr* value = expression();
                     if (m_has_error) return nullptr;
-                    FieldInit fi;
-                    fi.name = name_token.text();
-                    fi.value = value;
-                    fi.loc = name_token.loc;
-                    fields.push_back(fi);
+                    FieldInit field_init;
+                    field_init.name = name_token.text();
+                    field_init.value = value;
+                    field_init.loc = name_token.loc;
+                    fields.push_back(field_init);
                 } while (match(TokenKind::Comma));
             }
             consume(TokenKind::RightBrace, "Expected '}' after struct literal fields");
@@ -596,11 +596,11 @@ Expr* Parser::primary() {
                             if (m_has_error) return nullptr;
                             Expr* value = expression();
                             if (m_has_error) return nullptr;
-                            FieldInit fi;
-                            fi.name = field_token.text();
-                            fi.value = value;
-                            fi.loc = field_token.loc;
-                            fields.push_back(fi);
+                            FieldInit field_init;
+                            field_init.name = field_token.text();
+                            field_init.value = value;
+                            field_init.loc = field_token.loc;
+                            fields.push_back(field_init);
                         } while (match(TokenKind::Comma));
                     }
                     consume(TokenKind::RightBrace, "Expected '}' after struct literal fields");
@@ -672,11 +672,11 @@ Expr* Parser::primary() {
                     if (m_has_error) return nullptr;
                     Expr* value = expression();
                     if (m_has_error) return nullptr;
-                    FieldInit fi;
-                    fi.name = field_token.text();
-                    fi.value = value;
-                    fi.loc = field_token.loc;
-                    fields.push_back(fi);
+                    FieldInit field_init;
+                    field_init.name = field_token.text();
+                    field_init.value = value;
+                    field_init.loc = field_token.loc;
+                    fields.push_back(field_init);
                 } while (match(TokenKind::Comma));
             }
             consume(TokenKind::RightBrace, "Expected '}' after struct literal fields");
@@ -983,16 +983,16 @@ Stmt* Parser::delete_statement() {
     // Check if the expression is a call on a member (potential destructor call)
     // e.g., d.save(5) where d is the object and save is the destructor
     if (expr->kind == AstKind::ExprCall) {
-        CallExpr& ce = expr->call;
-        if (ce.callee->kind == AstKind::ExprGet) {
-            GetExpr& ge = ce.callee->get;
+        CallExpr& call_expr = expr->call;
+        if (call_expr.callee->kind == AstKind::ExprGet) {
+            GetExpr& get_expr = call_expr.callee->get;
             // This is a destructor call: object.destructor_name(args)
-            dtor_name = ge.name;
-            for (u32 i = 0; i < ce.arguments.size(); i++) {
-                arguments.push_back(ce.arguments[i]);
+            dtor_name = get_expr.name;
+            for (u32 i = 0; i < call_expr.arguments.size(); i++) {
+                arguments.push_back(call_expr.arguments[i]);
             }
             // The actual object to delete is the object of the get expression
-            expr = ge.object;
+            expr = get_expr.object;
         }
     }
 
@@ -1844,10 +1844,10 @@ Span<TypeParam> Parser::parse_type_params() {
         Token name_token = consume(TokenKind::Identifier, "Expected type parameter name");
         if (m_has_error) return {};
 
-        TypeParam tp;
-        tp.name = name_token.text();
-        tp.loc = name_token.loc;
-        params.push_back(tp);
+        TypeParam type_param;
+        type_param.name = name_token.text();
+        type_param.loc = name_token.loc;
+        params.push_back(type_param);
     } while (match(TokenKind::Comma));
 
     consume(TokenKind::Greater, "Expected '>' after type parameters");

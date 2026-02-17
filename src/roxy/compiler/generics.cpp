@@ -112,8 +112,8 @@ StringView GenericInstantiator::instantiate_fun(StringView name, Span<Type*> typ
     Decl* original = get_generic_fun_decl(name);
     assert(original && "Generic function template not found");
 
-    FunDecl& fd = original->fun_decl;
-    assert(fd.type_params.size() == type_args.size());
+    FunDecl& fun_decl = original->fun_decl;
+    assert(fun_decl.type_params.size() == type_args.size());
 
     // Build substitution
     TypeSubstitution subst;
@@ -122,8 +122,8 @@ StringView GenericInstantiator::instantiate_fun(StringView name, Span<Type*> typ
     Type** concrete_types = reinterpret_cast<Type**>(
         m_allocator.alloc_bytes(sizeof(Type*) * type_args.size(), alignof(Type*)));
 
-    for (u32 i = 0; i < fd.type_params.size(); i++) {
-        param_names[i] = fd.type_params[i].name;
+    for (u32 i = 0; i < fun_decl.type_params.size(); i++) {
+        param_names[i] = fun_decl.type_params[i].name;
         concrete_types[i] = type_args[i];
     }
     subst.param_names = Span<StringView>(param_names, type_args.size());
@@ -160,8 +160,8 @@ StringView GenericInstantiator::instantiate_struct(StringView name, Span<Type*> 
     Decl* original = get_generic_struct_decl(name);
     assert(original && "Generic struct template not found");
 
-    StructDecl& sd = original->struct_decl;
-    assert(sd.type_params.size() == type_args.size());
+    StructDecl& struct_decl = original->struct_decl;
+    assert(struct_decl.type_params.size() == type_args.size());
 
     // Build substitution
     TypeSubstitution subst;
@@ -170,8 +170,8 @@ StringView GenericInstantiator::instantiate_struct(StringView name, Span<Type*> 
     Type** concrete_types = reinterpret_cast<Type**>(
         m_allocator.alloc_bytes(sizeof(Type*) * type_args.size(), alignof(Type*)));
 
-    for (u32 i = 0; i < sd.type_params.size(); i++) {
-        param_names[i] = sd.type_params[i].name;
+    for (u32 i = 0; i < struct_decl.type_params.size(); i++) {
+        param_names[i] = struct_decl.type_params[i].name;
         concrete_types[i] = type_args[i];
     }
     subst.param_names = Span<StringView>(param_names, type_args.size());
@@ -468,26 +468,26 @@ Decl* GenericInstantiator::clone_fun_decl(Decl* original, const TypeSubstitution
     Decl* d = m_allocator.emplace<Decl>();
     *d = *original;
 
-    FunDecl& fd = d->fun_decl;
-    fd.name = new_name;
-    fd.type_params = Span<TypeParam>(); // Clear type params - this is a concrete instantiation
+    FunDecl& fun_decl = d->fun_decl;
+    fun_decl.name = new_name;
+    fun_decl.type_params = Span<TypeParam>(); // Clear type params - this is a concrete instantiation
 
     // Substitute parameter types
-    if (fd.params.size() > 0) {
+    if (fun_decl.params.size() > 0) {
         Param* params = reinterpret_cast<Param*>(
-            m_allocator.alloc_bytes(sizeof(Param) * fd.params.size(), alignof(Param)));
-        for (u32 i = 0; i < fd.params.size(); i++) {
+            m_allocator.alloc_bytes(sizeof(Param) * fun_decl.params.size(), alignof(Param)));
+        for (u32 i = 0; i < fun_decl.params.size(); i++) {
             params[i] = original->fun_decl.params[i];
             params[i].type = substitute_type_expr(original->fun_decl.params[i].type, subst);
         }
-        fd.params = Span<Param>(params, fd.params.size());
+        fun_decl.params = Span<Param>(params, fun_decl.params.size());
     }
 
     // Substitute return type
-    fd.return_type = substitute_type_expr(original->fun_decl.return_type, subst);
+    fun_decl.return_type = substitute_type_expr(original->fun_decl.return_type, subst);
 
     // Clone body with substitution
-    fd.body = clone_stmt(original->fun_decl.body, subst);
+    fun_decl.body = clone_stmt(original->fun_decl.body, subst);
 
     return d;
 }
@@ -496,29 +496,29 @@ Decl* GenericInstantiator::clone_struct_decl(Decl* original, const TypeSubstitut
     Decl* d = m_allocator.emplace<Decl>();
     *d = *original;
 
-    StructDecl& sd = d->struct_decl;
-    sd.name = new_name;
-    sd.type_params = Span<TypeParam>(); // Clear type params - concrete instantiation
+    StructDecl& struct_decl = d->struct_decl;
+    struct_decl.name = new_name;
+    struct_decl.type_params = Span<TypeParam>(); // Clear type params - concrete instantiation
 
     // Substitute field types
-    if (sd.fields.size() > 0) {
+    if (struct_decl.fields.size() > 0) {
         FieldDecl* fields = reinterpret_cast<FieldDecl*>(
-            m_allocator.alloc_bytes(sizeof(FieldDecl) * sd.fields.size(), alignof(FieldDecl)));
-        for (u32 i = 0; i < sd.fields.size(); i++) {
+            m_allocator.alloc_bytes(sizeof(FieldDecl) * struct_decl.fields.size(), alignof(FieldDecl)));
+        for (u32 i = 0; i < struct_decl.fields.size(); i++) {
             fields[i] = original->struct_decl.fields[i];
             fields[i].type = substitute_type_expr(original->struct_decl.fields[i].type, subst);
             if (fields[i].default_value) {
                 fields[i].default_value = clone_expr(original->struct_decl.fields[i].default_value, subst);
             }
         }
-        sd.fields = Span<FieldDecl>(fields, sd.fields.size());
+        struct_decl.fields = Span<FieldDecl>(fields, struct_decl.fields.size());
     }
 
     // Clone methods with substitution
-    if (sd.methods.size() > 0) {
+    if (struct_decl.methods.size() > 0) {
         FunDecl** methods = reinterpret_cast<FunDecl**>(
-            m_allocator.alloc_bytes(sizeof(FunDecl*) * sd.methods.size(), alignof(FunDecl*)));
-        for (u32 i = 0; i < sd.methods.size(); i++) {
+            m_allocator.alloc_bytes(sizeof(FunDecl*) * struct_decl.methods.size(), alignof(FunDecl*)));
+        for (u32 i = 0; i < struct_decl.methods.size(); i++) {
             // Create a temporary Decl to clone the method
             Decl* tmp = m_allocator.emplace<Decl>();
             tmp->kind = AstKind::DeclFun;
@@ -528,7 +528,7 @@ Decl* GenericInstantiator::clone_struct_decl(Decl* original, const TypeSubstitut
             Decl* cloned = clone_fun_decl(tmp, subst, original->struct_decl.methods[i]->name);
             methods[i] = &cloned->fun_decl;
         }
-        sd.methods = Span<FunDecl*>(methods, sd.methods.size());
+        struct_decl.methods = Span<FunDecl*>(methods, struct_decl.methods.size());
     }
 
     return d;

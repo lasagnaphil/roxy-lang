@@ -320,8 +320,8 @@ const MethodInfo* TypeCache::lookup_method(Type* type, StringView name, Type** f
 
 bool TypeCache::implements_trait(Type* type, Type* trait) const {
     if (type->is_struct()) {
-        StructTypeInfo& sti = type->struct_info;
-        for (auto* impl_trait : sti.implemented_traits) {
+        StructTypeInfo& struct_type_info = type->struct_info;
+        for (auto* impl_trait : struct_type_info.implemented_traits) {
             if (impl_trait == trait) return true;
         }
         return false;
@@ -339,14 +339,14 @@ bool TypeCache::implements_trait(Type* type, Type* trait) const {
 const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name, Type** found_in_type) {
     Type* current = struct_type;
     while (current && current->is_struct()) {
-        StructTypeInfo& sti = current->struct_info;
-        for (auto& method : sti.methods) {
+        StructTypeInfo& struct_type_info = current->struct_info;
+        for (auto& method : struct_type_info.methods) {
             if (method.name == name) {
                 if (found_in_type) *found_in_type = current;
                 return &method;
             }
         }
-        current = sti.parent;
+        current = struct_type_info.parent;
     }
     return nullptr;
 }

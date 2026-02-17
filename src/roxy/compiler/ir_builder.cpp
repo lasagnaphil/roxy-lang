@@ -44,8 +44,8 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
             // Skip generic struct templates
             if (decl->struct_decl.type_params.size() > 0) continue;
             // Build methods
-            StructDecl& sd = decl->struct_decl;
-            for (auto* method : sd.methods) {
+            StructDecl& struct_decl = decl->struct_decl;
+            for (auto* method : struct_decl.methods) {
                 if (method && !method->is_native && method->body) {
                     IRFunction* func = build_function(method);
                     module->functions.push_back(func);
@@ -54,32 +54,32 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
         }
         else if (decl->kind == AstKind::DeclConstructor) {
             // Build constructor
-            ConstructorDecl& cd = decl->constructor_decl;
-            Type* struct_type = m_types.named_type_by_name(cd.struct_name);
-            if (struct_type && cd.body) {
-                IRFunction* func = build_constructor(&cd, struct_type);
+            ConstructorDecl& constructor_decl = decl->constructor_decl;
+            Type* struct_type = m_types.named_type_by_name(constructor_decl.struct_name);
+            if (struct_type && constructor_decl.body) {
+                IRFunction* func = build_constructor(&constructor_decl, struct_type);
                 module->functions.push_back(func);
                 // Track if this is a default constructor (no name)
-                if (cd.name.empty()) {
-                    has_default_ctor[cd.struct_name] = true;
+                if (constructor_decl.name.empty()) {
+                    has_default_ctor[constructor_decl.struct_name] = true;
                 }
             }
         }
         else if (decl->kind == AstKind::DeclDestructor) {
             // Build destructor
-            DestructorDecl& dd = decl->destructor_decl;
-            Type* struct_type = m_types.named_type_by_name(dd.struct_name);
-            if (struct_type && dd.body) {
-                IRFunction* func = build_destructor(&dd, struct_type);
+            DestructorDecl& destructor_decl = decl->destructor_decl;
+            Type* struct_type = m_types.named_type_by_name(destructor_decl.struct_name);
+            if (struct_type && destructor_decl.body) {
+                IRFunction* func = build_destructor(&destructor_decl, struct_type);
                 module->functions.push_back(func);
             }
         }
         else if (decl->kind == AstKind::DeclMethod) {
             // Build method - skip trait method declarations (struct_name is a trait, not a struct)
-            MethodDecl& md = decl->method_decl;
-            Type* struct_type = m_types.named_type_by_name(md.struct_name);
-            if (struct_type && struct_type->is_struct() && md.body) {
-                IRFunction* func = build_method(&md, struct_type);
+            MethodDecl& method_decl = decl->method_decl;
+            Type* struct_type = m_types.named_type_by_name(method_decl.struct_name);
+            if (struct_type && struct_type->is_struct() && method_decl.body) {
+                IRFunction* func = build_method(&method_decl, struct_type);
                 module->functions.push_back(func);
             }
         }
@@ -88,10 +88,10 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
     // Process synthetic (injected default method) declarations
     for (auto* decl : synthetic_decls) {
         if (decl && decl->kind == AstKind::DeclMethod) {
-            MethodDecl& md = decl->method_decl;
-            Type* struct_type = m_types.named_type_by_name(md.struct_name);
-            if (struct_type && struct_type->is_struct() && md.body) {
-                IRFunction* func = build_method(&md, struct_type);
+            MethodDecl& method_decl = decl->method_decl;
+            Type* struct_type = m_types.named_type_by_name(method_decl.struct_name);
+            if (struct_type && struct_type->is_struct() && method_decl.body) {
+                IRFunction* func = build_method(&method_decl, struct_type);
                 module->functions.push_back(func);
             }
         }
@@ -114,10 +114,10 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
         if (decl->kind == AstKind::DeclStruct) {
             // Skip generic struct templates
             if (decl->struct_decl.type_params.size() > 0) continue;
-            StructDecl& sd = decl->struct_decl;
+            StructDecl& struct_decl = decl->struct_decl;
             // Check if this struct already has a user-defined default constructor
-            if (has_default_ctor.find(sd.name) == has_default_ctor.end()) {
-                Type* struct_type = m_types.named_type_by_name(sd.name);
+            if (has_default_ctor.find(struct_decl.name) == has_default_ctor.end()) {
+                Type* struct_type = m_types.named_type_by_name(struct_decl.name);
                 if (struct_type) {
                     IRFunction* func = build_synthesized_default_constructor(struct_type);
                     module->functions.push_back(func);
@@ -340,8 +340,8 @@ IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
 IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) {
     m_current_func = m_allocator.emplace<IRFunction>();
 
-    StructTypeInfo& sti = struct_type->struct_info;
-    m_current_func->name = mangle_constructor(sti.name);
+    StructTypeInfo& struct_type_info = struct_type->struct_info;
+    m_current_func->name = mangle_constructor(struct_type_info.name);
 
     // Set up parameters - only 'self'
     setup_parameters({}, struct_type);
@@ -368,76 +368,76 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
     u32 inherited_field_count = parent_type ? parent_type->struct_info.fields.size() : 0;
 
     // Generate field initialization code (only for own fields, not inherited)
-    StructDecl& sd = sti.decl->struct_decl;
+    StructDecl& struct_decl = struct_type_info.decl->struct_decl;
     ValueId self_ptr = self_param.value;
 
     // Helper lambda to zero-initialize a field
-    auto zero_init_field = [&](const FieldInfo& fi) -> ValueId {
-        if (fi.type->is_bool()) {
+    auto zero_init_field = [&](const FieldInfo& field_info) -> ValueId {
+        if (field_info.type->is_bool()) {
             return emit_const_bool(false);
-        } else if (fi.type->is_integer() || fi.type->is_enum()) {
-            return emit_const_int(0, fi.type);
-        } else if (fi.type->is_float()) {
-            return emit_const_float(0.0, fi.type);
-        } else if (fi.type->kind == TypeKind::String) {
+        } else if (field_info.type->is_integer() || field_info.type->is_enum()) {
+            return emit_const_int(0, field_info.type);
+        } else if (field_info.type->is_float()) {
+            return emit_const_float(0.0, field_info.type);
+        } else if (field_info.type->kind == TypeKind::String) {
             return emit_const_string("");
         } else {
             return emit_const_null();
         }
     };
 
-    // Initialize regular fields from sd.fields
-    for (const auto& field : sd.fields) {
-        // Find the corresponding FieldInfo in sti.fields
-        const FieldInfo* fi = sti.find_field(field.name);
-        if (!fi) continue;
+    // Initialize regular fields from struct_decl.fields
+    for (const auto& field : struct_decl.fields) {
+        // Find the corresponding FieldInfo in struct_type_info.fields
+        const FieldInfo* field_info = struct_type_info.find_field(field.name);
+        if (!field_info) continue;
 
         ValueId value;
         if (field.default_value) {
             value = gen_expr(field.default_value);
-        } else if (fi->type && fi->type->is_struct()) {
+        } else if (field_info->type && field_info->type->is_struct()) {
             // For nested structs, recursively zero-init
-            u32 nested_slots = fi->type->struct_info.slot_count;
-            ValueId nested_ptr = emit_stack_alloc(nested_slots, fi->type);
+            u32 nested_slots = field_info->type->struct_info.slot_count;
+            ValueId nested_ptr = emit_stack_alloc(nested_slots, field_info->type);
             // Zero the nested struct fields
-            StructTypeInfo& nested_sti = fi->type->struct_info;
-            StructDecl& nested_sd = nested_sti.decl->struct_decl;
-            for (const auto& nested_field : nested_sd.fields) {
-                const FieldInfo* nfi = nested_sti.find_field(nested_field.name);
-                if (!nfi) continue;
+            StructTypeInfo& nested_struct_type_info = field_info->type->struct_info;
+            StructDecl& nested_struct_decl = nested_struct_type_info.decl->struct_decl;
+            for (const auto& nested_field : nested_struct_decl.fields) {
+                const FieldInfo* nested_field_info = nested_struct_type_info.find_field(nested_field.name);
+                if (!nested_field_info) continue;
                 ValueId nval;
                 if (nested_field.default_value) {
                     nval = gen_expr(nested_field.default_value);
                 } else {
-                    nval = zero_init_field(*nfi);
+                    nval = zero_init_field(*nested_field_info);
                 }
-                emit_set_field(nested_ptr, nfi->name, nfi->slot_offset, nfi->slot_count, nval, nfi->type);
+                emit_set_field(nested_ptr, nested_field_info->name, nested_field_info->slot_offset, nested_field_info->slot_count, nval, nested_field_info->type);
             }
             // Copy nested struct to field
-            ValueId field_addr = emit_get_field_addr(self_ptr, fi->name, fi->slot_offset, fi->type);
+            ValueId field_addr = emit_get_field_addr(self_ptr, field_info->name, field_info->slot_offset, field_info->type);
             emit_struct_copy(field_addr, nested_ptr, nested_slots);
             continue;
         } else {
-            value = zero_init_field(*fi);
+            value = zero_init_field(*field_info);
         }
 
         // For struct-typed fields with default values, use StructCopy
-        if (fi->type && fi->type->is_struct() && field.default_value) {
-            ValueId field_addr = emit_get_field_addr(self_ptr, fi->name, fi->slot_offset, fi->type);
-            emit_struct_copy(field_addr, value, fi->slot_count);
+        if (field_info->type && field_info->type->is_struct() && field.default_value) {
+            ValueId field_addr = emit_get_field_addr(self_ptr, field_info->name, field_info->slot_offset, field_info->type);
+            emit_struct_copy(field_addr, value, field_info->slot_count);
         } else {
-            emit_set_field(self_ptr, fi->name, fi->slot_offset, fi->slot_count, value, fi->type);
+            emit_set_field(self_ptr, field_info->name, field_info->slot_offset, field_info->slot_count, value, field_info->type);
         }
     }
 
     // Initialize discriminant fields from when clauses (zero-init them)
-    for (const auto& wfd : sd.when_clauses) {
-        const FieldInfo* fi = sti.find_field(wfd.discriminant_name);
-        if (!fi) continue;
+    for (const auto& wfd : struct_decl.when_clauses) {
+        const FieldInfo* field_info = struct_type_info.find_field(wfd.discriminant_name);
+        if (!field_info) continue;
 
         // Discriminants are zero-initialized (first enum variant)
-        ValueId value = zero_init_field(*fi);
-        emit_set_field(self_ptr, fi->name, fi->slot_offset, fi->slot_count, value, fi->type);
+        ValueId value = zero_init_field(*field_info);
+        emit_set_field(self_ptr, field_info->name, field_info->slot_offset, field_info->slot_count, value, field_info->type);
     }
 
     // End function body (will add implicit return)
@@ -1138,11 +1138,11 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
 
     // Check if there's a destructor to call
     if (struct_type && struct_type->is_struct()) {
-        StructTypeInfo& sti = struct_type->struct_info;
+        StructTypeInfo& struct_type_info = struct_type->struct_info;
 
         // Look up destructor by name
         const DestructorInfo* dtor = nullptr;
-        for (const auto& d : sti.destructors) {
+        for (const auto& d : struct_type_info.destructors) {
             if (d.name == ds.destructor_name) {
                 dtor = &d;
                 break;
@@ -1151,7 +1151,7 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
 
         if (dtor) {
             // Call the destructor
-            StringView dtor_name = mangle_destructor(sti.name, ds.destructor_name);
+            StringView dtor_name = mangle_destructor(struct_type_info.name, ds.destructor_name);
 
             // Build arguments: 'self' pointer + destructor arguments
             Vector<ValueId> call_args;
@@ -1169,10 +1169,10 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
             emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
         } else if (ds.destructor_name.empty()) {
             // Check for default destructor even if not explicitly requested
-            for (const auto& d : sti.destructors) {
+            for (const auto& d : struct_type_info.destructors) {
                 if (d.name.empty()) {
                     // Found default destructor - call it
-                    StringView dtor_name = mangle_destructor(sti.name);
+                    StringView dtor_name = mangle_destructor(struct_type_info.name);
                     Vector<ValueId> call_args;
                     call_args.push_back(val);
                     emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
@@ -1485,29 +1485,29 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
 }
 
 ValueId IRBuilder::gen_unary_expr(Expr* expr) {
-    UnaryExpr& ue = expr->unary;
+    UnaryExpr& unary_expr = expr->unary;
 
-    ValueId operand = gen_expr(ue.operand);
+    ValueId operand = gen_expr(unary_expr.operand);
     Type* result_type = expr->resolved_type;
 
-    IROp op = get_unary_op(ue.op, ue.operand->resolved_type);
+    IROp op = get_unary_op(unary_expr.op, unary_expr.operand->resolved_type);
     return emit_unary(op, operand, result_type);
 }
 
 ValueId IRBuilder::gen_binary_expr(Expr* expr) {
-    BinaryExpr& be = expr->binary;
+    BinaryExpr& binary_expr = expr->binary;
 
     // Check for string operations - rewrite to native function calls
-    Type* left_type = be.left->resolved_type;
+    Type* left_type = binary_expr.left->resolved_type;
     if (left_type && left_type->kind == TypeKind::String) {
-        ValueId left = gen_expr(be.left);
-        ValueId right = gen_expr(be.right);
+        ValueId left = gen_expr(binary_expr.left);
+        ValueId right = gen_expr(binary_expr.right);
 
         StringView func_name;
         Type* result_type = nullptr;
         i32 native_idx = -1;
 
-        switch (be.op) {
+        switch (binary_expr.op) {
             case BinaryOp::Add:
                 func_name = "str_concat";
                 result_type = m_types.string_type();
@@ -1540,7 +1540,7 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
     // Check for struct operator trait dispatch (comparison operators on structs)
     if (left_type && left_type->is_struct()) {
         const char* method_name_str = nullptr;
-        switch (be.op) {
+        switch (binary_expr.op) {
             case BinaryOp::Equal:    method_name_str = "eq"; break;
             case BinaryOp::NotEqual: method_name_str = "ne"; break;
             case BinaryOp::Less:     method_name_str = "lt"; break;
@@ -1557,8 +1557,8 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
             if (mi && found_in) {
                 // Generate a method call: left.method(right)
                 // Build self pointer (address of left operand)
-                ValueId self_ptr = gen_lvalue_addr(be.left);
-                ValueId right_val = gen_expr(be.right);
+                ValueId self_ptr = gen_lvalue_addr(binary_expr.left);
+                ValueId right_val = gen_expr(binary_expr.right);
 
                 // Create mangled call name
                 StringView mangled = mangle_method(found_in->struct_info.name, method_name);
@@ -1574,8 +1574,8 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
     }
 
     // Short-circuit evaluation for && and ||
-    if (be.op == BinaryOp::And) {
-        ValueId left = gen_expr(be.left);
+    if (binary_expr.op == BinaryOp::And) {
+        ValueId left = gen_expr(binary_expr.left);
 
         IRBlock* right_block = create_block("and.rhs");
         IRBlock* merge_block = create_block("and.end");
@@ -1584,7 +1584,7 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
         finish_block_branch(left, right_block->id, merge_block->id);
 
         set_current_block(right_block);
-        ValueId right = gen_expr(be.right);
+        ValueId right = gen_expr(binary_expr.right);
         IRBlock* right_end_block = m_current_block;
         finish_block_goto(merge_block->id);
 
@@ -1596,8 +1596,8 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
         // This is a simplified approach - proper SSA would need phi/block arguments
         return right;
     }
-    else if (be.op == BinaryOp::Or) {
-        ValueId left = gen_expr(be.left);
+    else if (binary_expr.op == BinaryOp::Or) {
+        ValueId left = gen_expr(binary_expr.left);
 
         IRBlock* right_block = create_block("or.rhs");
         IRBlock* merge_block = create_block("or.end");
@@ -1606,7 +1606,7 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
         finish_block_branch(left, merge_block->id, right_block->id);
 
         set_current_block(right_block);
-        ValueId right = gen_expr(be.right);
+        ValueId right = gen_expr(binary_expr.right);
         finish_block_goto(merge_block->id);
 
         set_current_block(merge_block);
@@ -1614,24 +1614,24 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
     }
 
     // Regular binary operations
-    ValueId left = gen_expr(be.left);
-    ValueId right = gen_expr(be.right);
+    ValueId left = gen_expr(binary_expr.left);
+    ValueId right = gen_expr(binary_expr.right);
     Type* result_type = expr->resolved_type;
-    Type* operand_type = be.left->resolved_type;
+    Type* operand_type = binary_expr.left->resolved_type;
 
     // Check if it's a comparison or arithmetic operation
     IROp op;
-    switch (be.op) {
+    switch (binary_expr.op) {
         case BinaryOp::Equal:
         case BinaryOp::NotEqual:
         case BinaryOp::Less:
         case BinaryOp::LessEq:
         case BinaryOp::Greater:
         case BinaryOp::GreaterEq:
-            op = get_comparison_op(be.op, operand_type);
+            op = get_comparison_op(binary_expr.op, operand_type);
             break;
         default:
-            op = get_binary_op(be.op, operand_type);
+            op = get_binary_op(binary_expr.op, operand_type);
             break;
     }
 
@@ -1639,9 +1639,9 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
 }
 
 ValueId IRBuilder::gen_ternary_expr(Expr* expr) {
-    TernaryExpr& te = expr->ternary;
+    TernaryExpr& ternary_expr = expr->ternary;
 
-    ValueId cond = gen_expr(te.condition);
+    ValueId cond = gen_expr(ternary_expr.condition);
 
     IRBlock* then_block = create_block("tern.then");
     IRBlock* else_block = create_block("tern.else");
@@ -1651,12 +1651,12 @@ ValueId IRBuilder::gen_ternary_expr(Expr* expr) {
 
     // Then branch
     set_current_block(then_block);
-    ValueId then_val = gen_expr(te.then_expr);
+    ValueId then_val = gen_expr(ternary_expr.then_expr);
     finish_block_goto(merge_block->id);
 
     // Else branch
     set_current_block(else_block);
-    ValueId else_val = gen_expr(te.else_expr);
+    ValueId else_val = gen_expr(ternary_expr.else_expr);
     finish_block_goto(merge_block->id);
 
     // Merge - simplified, proper SSA would use block arguments
@@ -1665,18 +1665,18 @@ ValueId IRBuilder::gen_ternary_expr(Expr* expr) {
 }
 
 ValueId IRBuilder::gen_call_expr(Expr* expr) {
-    CallExpr& ce = expr->call;
+    CallExpr& call_expr = expr->call;
 
     // Check if this is a primitive type cast (set by semantic analysis)
-    if (ce.callee->kind == AstKind::ExprIdentifier &&
-        ce.callee->resolved_type && ce.callee->resolved_type->is_primitive() &&
-        !ce.callee->resolved_type->is_void()) {
+    if (call_expr.callee->kind == AstKind::ExprIdentifier &&
+        call_expr.callee->resolved_type && call_expr.callee->resolved_type->is_primitive() &&
+        !call_expr.callee->resolved_type->is_void()) {
         return gen_primitive_cast(expr);
     }
 
     // Check if this is a constructor call - callee has a struct type (set by semantic analysis)
-    if (ce.callee->kind == AstKind::ExprIdentifier &&
-        ce.callee->resolved_type && ce.callee->resolved_type->is_struct()) {
+    if (call_expr.callee->kind == AstKind::ExprIdentifier &&
+        call_expr.callee->resolved_type && call_expr.callee->resolved_type->is_struct()) {
         return gen_constructor_call(expr);
     }
 
@@ -1684,24 +1684,24 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     // Uses two-step allocate+init pattern matching struct constructors:
     //   1. Call alloc native (no args) to get list pointer
     //   2. Call constructor method with [self, user_args...]
-    if (ce.callee->kind == AstKind::ExprIdentifier &&
-        ce.callee->resolved_type && ce.callee->resolved_type->is_list()) {
+    if (call_expr.callee->kind == AstKind::ExprIdentifier &&
+        call_expr.callee->resolved_type && call_expr.callee->resolved_type->is_list()) {
         // Generate user arguments first
-        u32 user_argc = static_cast<u32>(ce.arguments.size());
+        u32 user_argc = static_cast<u32>(call_expr.arguments.size());
         Span<ValueId> user_args = alloc_span<ValueId>(user_argc);
         for (u32 i = 0; i < user_argc; i++) {
-            user_args[i] = gen_expr(ce.arguments[i].expr);
+            user_args[i] = gen_expr(call_expr.arguments[i].expr);
         }
 
         // Step 1: Allocate empty list (non-method native, 0 args)
-        StringView alloc_name = ce.callee->resolved_type->list_info.alloc_native_name;
+        StringView alloc_name = call_expr.callee->resolved_type->list_info.alloc_native_name;
         i32 alloc_idx = m_registry.get_index(alloc_name);
         Span<ValueId> empty = alloc_span<ValueId>(0);
         ValueId list_ptr = emit_call_native(alloc_name, empty, expr->resolved_type,
                                              static_cast<u8>(alloc_idx));
 
         // Step 2: Call constructor method with [self, user_args...]
-        StringView ctor_name = ce.mangled_name;  // "List$$new"
+        StringView ctor_name = call_expr.mangled_name;  // "List$$new"
         i32 ctor_idx = m_registry.get_index(ctor_name);
         Span<ValueId> ctor_args = alloc_span<ValueId>(user_argc + 1);
         ctor_args[0] = list_ptr;  // self
@@ -1718,11 +1718,11 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     // The callee is a GetExpr where the object is a type name (not a variable)
     // For named constructors: ge.object is an identifier that resolves to a STRUCT TYPE (not a variable of struct type)
     // This is detected by checking if the identifier matches a type name
-    if (ce.callee->kind == AstKind::ExprGet) {
-        GetExpr& ge = ce.callee->get;
-        if (ge.object->kind == AstKind::ExprIdentifier) {
+    if (call_expr.callee->kind == AstKind::ExprGet) {
+        GetExpr& get_expr = call_expr.callee->get;
+        if (get_expr.object->kind == AstKind::ExprIdentifier) {
             // Check if this is a type name (constructor) or a variable (method call)
-            StringView name = ge.object->identifier.name;
+            StringView name = get_expr.object->identifier.name;
             Type* named_type = m_types.named_type_by_name(name);
             if (named_type && named_type->is_struct()) {
                 // This is a named constructor call: Type.ctor_name(...)
@@ -1733,7 +1733,7 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     }
 
     // Check if this is a super call: super() / super.ctor_name() / super.method_name()
-    if (ce.callee->kind == AstKind::ExprSuper) {
+    if (call_expr.callee->kind == AstKind::ExprSuper) {
         return gen_super_call(expr);
     }
 
@@ -1760,9 +1760,9 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     }
 
     // Evaluate arguments - for out/inout args, pass address instead of value
-    Span<ValueId> args = alloc_span<ValueId>(ce.arguments.size());
-    for (u32 i = 0; i < ce.arguments.size(); i++) {
-        CallArg& arg = ce.arguments[i];
+    Span<ValueId> args = alloc_span<ValueId>(call_expr.arguments.size());
+    for (u32 i = 0; i < call_expr.arguments.size(); i++) {
+        CallArg& arg = call_expr.arguments[i];
         if (arg.modifier != ParamModifier::None) {
             // Pass address of lvalue
             args[i] = gen_lvalue_addr(arg.expr);
@@ -1805,9 +1805,9 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     ValueId result;
 
     // Get function name from callee
-    if (ce.callee->kind == AstKind::ExprIdentifier) {
+    if (call_expr.callee->kind == AstKind::ExprIdentifier) {
         // Use mangled name for generic function calls (e.g., "identity$i32")
-        StringView func_name = ce.mangled_name.size() > 0 ? ce.mangled_name : ce.callee->identifier.name;
+        StringView func_name = call_expr.mangled_name.size() > 0 ? call_expr.mangled_name : call_expr.callee->identifier.name;
         StringView lookup_name = func_name;
 
         // Check if this is an imported function (may have alias)
@@ -1831,15 +1831,15 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             result = output_ptr;
         }
     }
-    else if (ce.callee->kind == AstKind::ExprGet) {
-        GetExpr& ge = ce.callee->get;
+    else if (call_expr.callee->kind == AstKind::ExprGet) {
+        GetExpr& get_expr = call_expr.callee->get;
 
         // Check for module-qualified call: module.function()
         // The object's resolved_type is nullptr for module references
-        if (ge.object->kind == AstKind::ExprIdentifier && ge.object->resolved_type == nullptr) {
+        if (get_expr.object->kind == AstKind::ExprIdentifier && get_expr.object->resolved_type == nullptr) {
             // This is a module-qualified call
-            StringView module_name = ge.object->identifier.name;
-            StringView func_name = ge.name;
+            StringView module_name = get_expr.object->identifier.name;
+            StringView func_name = get_expr.name;
 
             // Look up in native registry - the function name is just the member name
             i32 native_idx = m_registry.get_index(func_name);
@@ -1857,15 +1857,15 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             }
         } else {
             // Method call: obj.method(args)
-            ValueId obj = gen_expr(ge.object);
+            ValueId obj = gen_expr(get_expr.object);
 
             // Get the struct type from the object
-            Type* obj_type = ge.object->resolved_type;
+            Type* obj_type = get_expr.object->resolved_type;
             Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
 
             // Check for List method call (builtin native methods)
             if (struct_type && struct_type->is_list()) {
-                StringView native_name = ce.mangled_name;
+                StringView native_name = call_expr.mangled_name;
                 i32 native_idx = m_registry.get_index(native_name);
 
                 // Generic: [obj] + args
@@ -1881,11 +1881,11 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             // Look up method in the type hierarchy to find where it's defined
             // This ensures we use the correct struct name for mangling (important for inheritance)
             Type* method_owner = nullptr;
-            StringView method_name = ge.name;
+            StringView method_name = get_expr.name;
             if (struct_type && struct_type->is_struct()) {
-                lookup_method_in_hierarchy(struct_type, ge.name, &method_owner);
+                lookup_method_in_hierarchy(struct_type, get_expr.name, &method_owner);
                 Type* name_type = method_owner ? method_owner : struct_type;
-                method_name = mangle_method(name_type->struct_info.name, ge.name);
+                method_name = mangle_method(name_type->struct_info.name, get_expr.name);
             }
 
             // Prepend object to arguments, append output pointer if large struct return
@@ -1936,21 +1936,21 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
 }
 
 ValueId IRBuilder::gen_index_expr(Expr* expr) {
-    IndexExpr& ie = expr->index;
+    IndexExpr& index_expr = expr->index;
 
-    ValueId obj = gen_expr(ie.object);
-    ValueId index = gen_expr(ie.index);
+    ValueId obj = gen_expr(index_expr.object);
+    ValueId index = gen_expr(index_expr.index);
 
     return emit_get_index(obj, index, expr->resolved_type);
 }
 
 ValueId IRBuilder::gen_get_expr(Expr* expr) {
-    GetExpr& ge = expr->get;
+    GetExpr& get_expr = expr->get;
 
-    ValueId obj = gen_expr(ge.object);
+    ValueId obj = gen_expr(get_expr.object);
 
     // Get the struct type from the object
-    Type* obj_type = ge.object->resolved_type;
+    Type* obj_type = get_expr.object->resolved_type;
     Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
 
     u32 slot_offset = 0;
@@ -1961,21 +1961,21 @@ ValueId IRBuilder::gen_get_expr(Expr* expr) {
     const VariantInfo* variant = nullptr;
 
     if (struct_type && struct_type->is_struct()) {
-        const FieldInfo* fi = struct_type->struct_info.find_field(ge.name);
-        if (fi) {
-            slot_offset = fi->slot_offset;
-            slot_count = fi->slot_count;
-            field_type = fi->type;
+        const FieldInfo* field_info = struct_type->struct_info.find_field(get_expr.name);
+        if (field_info) {
+            slot_offset = field_info->slot_offset;
+            slot_count = field_info->slot_count;
+            field_type = field_info->type;
         } else {
             // Check for variant field in when clauses
-            const VariantFieldInfo* vfi = struct_type->struct_info.find_variant_field(
-                ge.name, &when_clause, &variant);
-            if (vfi) {
+            const VariantFieldInfo* variant_field_info = struct_type->struct_info.find_variant_field(
+                get_expr.name, &when_clause, &variant);
+            if (variant_field_info) {
                 is_variant_field = true;
                 // Compute the actual offset: union_slot_offset + variant field's offset within the union
-                slot_offset = when_clause->union_slot_offset + vfi->slot_offset;
-                slot_count = vfi->slot_count;
-                field_type = vfi->type;
+                slot_offset = when_clause->union_slot_offset + variant_field_info->slot_offset;
+                slot_count = variant_field_info->slot_count;
+                field_type = variant_field_info->type;
             }
         }
     }
@@ -2012,25 +2012,25 @@ ValueId IRBuilder::gen_get_expr(Expr* expr) {
     // If the field is a struct type, we need to compute its address (pointer)
     // instead of loading its value, since nested struct access needs the address.
     if (field_type && field_type->is_struct()) {
-        return emit_get_field_addr(obj, ge.name, slot_offset, expr->resolved_type);
+        return emit_get_field_addr(obj, get_expr.name, slot_offset, expr->resolved_type);
     }
 
-    return emit_get_field(obj, ge.name, slot_offset, slot_count, expr->resolved_type);
+    return emit_get_field(obj, get_expr.name, slot_offset, slot_count, expr->resolved_type);
 }
 
 ValueId IRBuilder::gen_assign_expr(Expr* expr) {
-    AssignExpr& ae = expr->assign;
+    AssignExpr& assign_expr = expr->assign;
 
     // Get the value to assign
-    ValueId value = gen_expr(ae.value);
+    ValueId value = gen_expr(assign_expr.value);
 
     // Handle compound assignment
-    if (ae.op != AssignOp::Assign) {
-        ValueId old_val = gen_expr(ae.target);
-        Type* type = ae.target->resolved_type;
+    if (assign_expr.op != AssignOp::Assign) {
+        ValueId old_val = gen_expr(assign_expr.target);
+        Type* type = assign_expr.target->resolved_type;
 
         IROp op;
-        switch (ae.op) {
+        switch (assign_expr.op) {
             case AssignOp::AddAssign:
                 op = type->is_float() ? IROp::AddF : IROp::AddI;
                 break;
@@ -2055,8 +2055,8 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
     }
 
     // Assign based on target type
-    if (ae.target->kind == AstKind::ExprIdentifier) {
-        StringView name = ae.target->identifier.name;
+    if (assign_expr.target->kind == AstKind::ExprIdentifier) {
+        StringView name = assign_expr.target->identifier.name;
 
         // If this is a pointer parameter (out/inout), store through the pointer
         if (m_param_is_ptr.count(name)) {
@@ -2076,13 +2076,13 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
         define_local(name, value, expr->resolved_type);
         return value;
     }
-    else if (ae.target->kind == AstKind::ExprGet) {
+    else if (assign_expr.target->kind == AstKind::ExprGet) {
         // Field assignment
-        GetExpr& ge = ae.target->get;
-        ValueId obj = gen_expr(ge.object);
+        GetExpr& get_expr = assign_expr.target->get;
+        ValueId obj = gen_expr(get_expr.object);
 
         // Get the struct type from the object
-        Type* obj_type = ge.object->resolved_type;
+        Type* obj_type = get_expr.object->resolved_type;
         Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
 
         u32 slot_offset = 0;
@@ -2092,18 +2092,18 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
         const VariantInfo* variant = nullptr;
 
         if (struct_type && struct_type->is_struct()) {
-            const FieldInfo* fi = struct_type->struct_info.find_field(ge.name);
-            if (fi) {
-                slot_offset = fi->slot_offset;
-                slot_count = fi->slot_count;
+            const FieldInfo* field_info = struct_type->struct_info.find_field(get_expr.name);
+            if (field_info) {
+                slot_offset = field_info->slot_offset;
+                slot_count = field_info->slot_count;
             } else {
                 // Check for variant field in when clauses
-                const VariantFieldInfo* vfi = struct_type->struct_info.find_variant_field(
-                    ge.name, &when_clause, &variant);
-                if (vfi) {
+                const VariantFieldInfo* variant_field_info = struct_type->struct_info.find_variant_field(
+                    get_expr.name, &when_clause, &variant);
+                if (variant_field_info) {
                     is_variant_field = true;
-                    slot_offset = when_clause->union_slot_offset + vfi->slot_offset;
-                    slot_count = vfi->slot_count;
+                    slot_offset = when_clause->union_slot_offset + variant_field_info->slot_offset;
+                    slot_count = variant_field_info->slot_count;
                 }
             }
         }
@@ -2137,13 +2137,13 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
             set_current_block(pass_block);
         }
 
-        return emit_set_field(obj, ge.name, slot_offset, slot_count, value, expr->resolved_type);
+        return emit_set_field(obj, get_expr.name, slot_offset, slot_count, value, expr->resolved_type);
     }
-    else if (ae.target->kind == AstKind::ExprIndex) {
+    else if (assign_expr.target->kind == AstKind::ExprIndex) {
         // Index assignment
-        IndexExpr& ie = ae.target->index;
-        ValueId obj = gen_expr(ie.object);
-        ValueId index = gen_expr(ie.index);
+        IndexExpr& index_expr = assign_expr.target->index;
+        ValueId obj = gen_expr(index_expr.object);
+        ValueId index = gen_expr(index_expr.index);
         return emit_set_index(obj, index, value, expr->resolved_type);
     }
 
@@ -2160,14 +2160,14 @@ ValueId IRBuilder::gen_this_expr(Expr* expr) {
 }
 
 ValueId IRBuilder::gen_primitive_cast(Expr* expr) {
-    CallExpr& ce = expr->call;
+    CallExpr& call_expr = expr->call;
 
     // Get target type from callee (set by semantic analysis)
-    Type* target_type = ce.callee->resolved_type;
+    Type* target_type = call_expr.callee->resolved_type;
 
     // Get source value and type
-    ValueId source = gen_expr(ce.arguments[0].expr);
-    Type* source_type = ce.arguments[0].expr->resolved_type;
+    ValueId source = gen_expr(call_expr.arguments[0].expr);
+    Type* source_type = call_expr.arguments[0].expr->resolved_type;
 
     // If same type, no-op
     if (source_type == target_type) {
@@ -2182,22 +2182,22 @@ ValueId IRBuilder::gen_primitive_cast(Expr* expr) {
 }
 
 ValueId IRBuilder::gen_constructor_call(Expr* expr) {
-    CallExpr& ce = expr->call;
+    CallExpr& call_expr = expr->call;
     Type* result_type = expr->resolved_type;
 
     // Get struct type from callee (set by semantic analysis)
     // For Type(), callee is an identifier with struct type
     // For Type.ctor_name(), callee is a GetExpr with object having struct type
     Type* struct_type = nullptr;
-    if (ce.callee->kind == AstKind::ExprIdentifier) {
-        struct_type = ce.callee->resolved_type;
-    } else if (ce.callee->kind == AstKind::ExprGet) {
-        struct_type = ce.callee->get.object->resolved_type;
+    if (call_expr.callee->kind == AstKind::ExprIdentifier) {
+        struct_type = call_expr.callee->resolved_type;
+    } else if (call_expr.callee->kind == AstKind::ExprGet) {
+        struct_type = call_expr.callee->get.object->resolved_type;
     }
 
     // Determine allocation mode and final struct type
     ValueId obj;
-    if (ce.is_heap) {
+    if (call_expr.is_heap) {
         // uniq Type() - heap allocation
         // result_type is uniq<StructType>
         Span<ValueId> empty_args = {};
@@ -2210,14 +2210,14 @@ ValueId IRBuilder::gen_constructor_call(Expr* expr) {
     }
 
     // Call constructor (user-defined or synthesized)
-    StructTypeInfo& sti = struct_type->struct_info;
-    StringView ctor_name = mangle_constructor(sti.name, ce.constructor_name);
+    StructTypeInfo& struct_type_info = struct_type->struct_info;
+    StringView ctor_name = mangle_constructor(struct_type_info.name, call_expr.constructor_name);
 
     // Build arguments: 'self' pointer + constructor arguments
     Vector<ValueId> call_args;
     call_args.push_back(obj);  // 'self' pointer
 
-    for (auto& arg : ce.arguments) {
+    for (auto& arg : call_expr.arguments) {
         if (arg.modifier != ParamModifier::None) {
             // Pass address of lvalue for out/inout args
             call_args.push_back(gen_lvalue_addr(arg.expr));
@@ -2232,14 +2232,14 @@ ValueId IRBuilder::gen_constructor_call(Expr* expr) {
 }
 
 ValueId IRBuilder::gen_super_call(Expr* expr) {
-    CallExpr& ce = expr->call;
-    SuperExpr& se = ce.callee->super_expr;
+    CallExpr& call_expr = expr->call;
+    SuperExpr& super_expr = call_expr.callee->super_expr;
 
     // Get the 'self' pointer
     ValueId self_ptr = lookup_local("self");
 
     // Get the parent struct type from the callee's resolved_type (ref<StructType>)
-    Type* ref_type = ce.callee->resolved_type;
+    Type* ref_type = call_expr.callee->resolved_type;
     Type* target_type = nullptr;
     if (ref_type && ref_type->is_reference()) {
         target_type = ref_type->ref_info.inner_type;
@@ -2254,19 +2254,19 @@ ValueId IRBuilder::gen_super_call(Expr* expr) {
     // Method calls return the method's return type
     bool is_constructor_call = expr->resolved_type && expr->resolved_type->kind == TypeKind::Void;
 
-    StructTypeInfo& target_sti = target_type->struct_info;
+    StructTypeInfo& target_struct_type_info = target_type->struct_info;
 
     StringView call_name;
     if (is_constructor_call) {
-        call_name = mangle_constructor(target_sti.name, se.method_name);
+        call_name = mangle_constructor(target_struct_type_info.name, super_expr.method_name);
     } else {
-        call_name = mangle_method(target_sti.name, se.method_name);
+        call_name = mangle_method(target_struct_type_info.name, super_expr.method_name);
     }
 
     // Evaluate arguments
-    Span<ValueId> args = alloc_span<ValueId>(ce.arguments.size());
-    for (u32 i = 0; i < ce.arguments.size(); i++) {
-        CallArg& arg = ce.arguments[i];
+    Span<ValueId> args = alloc_span<ValueId>(call_expr.arguments.size());
+    for (u32 i = 0; i < call_expr.arguments.size(); i++) {
+        CallArg& arg = call_expr.arguments[i];
         if (arg.modifier != ParamModifier::None) {
             args[i] = gen_lvalue_addr(arg.expr);
         } else {
@@ -2326,8 +2326,8 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
                 current = current->struct_info.parent;
                 continue;
             }
-            StructDecl& sd = current->struct_info.decl->struct_decl;
-            for (auto& field : sd.fields) {
+            StructDecl& struct_decl = current->struct_info.decl->struct_decl;
+            for (auto& field : struct_decl.fields) {
                 if (field.name == field_name) {
                     return field.default_value;
                 }
@@ -2338,27 +2338,27 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
     };
 
     // Initialize regular fields (including discriminants which are in struct_info.fields)
-    for (auto& fi : struct_type->struct_info.fields) {
+    for (auto& field_info : struct_type->struct_info.fields) {
         Expr* value_expr = nullptr;
 
-        auto it = provided_fields.find(fi.name);
+        auto it = provided_fields.find(field_info.name);
         if (it != provided_fields.end()) {
             value_expr = it->second;
         } else {
             // Use default value from struct declaration (searching inheritance chain)
-            value_expr = find_field_default(struct_type, fi.name);
+            value_expr = find_field_default(struct_type, field_info.name);
         }
 
         ValueId value = gen_expr(value_expr);
 
         // For struct-typed fields, use StructCopy since the value is a pointer
-        if (fi.type && fi.type->is_struct()) {
+        if (field_info.type && field_info.type->is_struct()) {
             // Get address of the field
-            ValueId field_addr = emit_get_field_addr(struct_ptr, fi.name, fi.slot_offset, fi.type);
+            ValueId field_addr = emit_get_field_addr(struct_ptr, field_info.name, field_info.slot_offset, field_info.type);
             // Copy struct data from value (source pointer) to field_addr (dest pointer)
-            emit_struct_copy(field_addr, value, fi.slot_count);
+            emit_struct_copy(field_addr, value, field_info.slot_count);
         } else {
-            emit_set_field(struct_ptr, fi.name, fi.slot_offset, fi.slot_count, value, fi.type);
+            emit_set_field(struct_ptr, field_info.name, field_info.slot_offset, field_info.slot_count, value, field_info.type);
         }
     }
 
@@ -2369,21 +2369,21 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         for (const auto& variant : clause.variants) {
 
             // Initialize variant fields if they're provided
-            for (const auto& vfi : variant.fields) {
+            for (const auto& variant_field_info : variant.fields) {
 
-                auto it = provided_fields.find(vfi.name);
+                auto it = provided_fields.find(variant_field_info.name);
                 if (it != provided_fields.end()) {
                     ValueId value = gen_expr(it->second);
 
                     // Compute the actual offset: union_slot_offset + variant field's offset
-                    u32 actual_slot_offset = clause.union_slot_offset + vfi.slot_offset;
+                    u32 actual_slot_offset = clause.union_slot_offset + variant_field_info.slot_offset;
 
                     // For struct-typed variant fields, use StructCopy
-                    if (vfi.type && vfi.type->is_struct()) {
-                        ValueId field_addr = emit_get_field_addr(struct_ptr, vfi.name, actual_slot_offset, vfi.type);
-                        emit_struct_copy(field_addr, value, vfi.slot_count);
+                    if (variant_field_info.type && variant_field_info.type->is_struct()) {
+                        ValueId field_addr = emit_get_field_addr(struct_ptr, variant_field_info.name, actual_slot_offset, variant_field_info.type);
+                        emit_struct_copy(field_addr, value, variant_field_info.slot_count);
                     } else {
-                        emit_set_field(struct_ptr, vfi.name, actual_slot_offset, vfi.slot_count, value, vfi.type);
+                        emit_set_field(struct_ptr, variant_field_info.name, actual_slot_offset, variant_field_info.slot_count, value, variant_field_info.type);
                     }
                 }
             }
@@ -2409,21 +2409,21 @@ ValueId IRBuilder::gen_static_get_expr(Expr* expr) {
 }
 
 ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
-    auto& si = expr->string_interp;
+    auto& string_interp = expr->string_interp;
     Type* string_type = m_types.string_type();
 
     // Build a flat list of string-valued ValueIds
     Vector<ValueId> string_parts;
 
-    for (u32 i = 0; i < si.parts.size(); i++) {
+    for (u32 i = 0; i < string_interp.parts.size(); i++) {
         // Add text part if non-empty
-        if (si.parts[i].size() > 0) {
-            string_parts.push_back(emit_const_string(si.parts[i]));
+        if (string_interp.parts[i].size() > 0) {
+            string_parts.push_back(emit_const_string(string_interp.parts[i]));
         }
 
         // Add expression part (if there is one — there are N expressions for N+1 parts)
-        if (i < si.expressions.size()) {
-            Expr* sub = si.expressions[i];
+        if (i < string_interp.expressions.size()) {
+            Expr* sub = string_interp.expressions[i];
             Type* etype = sub->resolved_type;
             ValueId val = gen_expr(sub);
 
@@ -2540,22 +2540,22 @@ ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {
         }
         case AstKind::ExprGet: {
             // Field access - use GET_FIELD_ADDR
-            GetExpr& ge = expr->get;
-            ValueId obj = gen_expr(ge.object);
+            GetExpr& get_expr = expr->get;
+            ValueId obj = gen_expr(get_expr.object);
 
             // Get the struct type from the object
-            Type* obj_type = ge.object->resolved_type;
+            Type* obj_type = get_expr.object->resolved_type;
             Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
 
             u32 slot_offset = 0;
             if (struct_type && struct_type->is_struct()) {
-                const FieldInfo* fi = struct_type->struct_info.find_field(ge.name);
-                if (fi) {
-                    slot_offset = fi->slot_offset;
+                const FieldInfo* field_info = struct_type->struct_info.find_field(get_expr.name);
+                if (field_info) {
+                    slot_offset = field_info->slot_offset;
                 }
             }
 
-            return emit_get_field_addr(obj, ge.name, slot_offset, expr->resolved_type);
+            return emit_get_field_addr(obj, get_expr.name, slot_offset, expr->resolved_type);
         }
         case AstKind::ExprGrouping:
             return gen_lvalue_addr(expr->grouping.expr);
@@ -2584,10 +2584,10 @@ void IRBuilder::gen_decl(Decl* decl) {
 }
 
 void IRBuilder::gen_var_decl(Decl* decl) {
-    VarDecl& vd = decl->var_decl;
+    VarDecl& var_decl = decl->var_decl;
 
     // Use the resolved type from semantic analysis
-    Type* type = vd.resolved_type;
+    Type* type = var_decl.resolved_type;
     if (!type) {
         type = m_types.error_type();
     }
@@ -2597,12 +2597,12 @@ void IRBuilder::gen_var_decl(Decl* decl) {
     // Check if this is a struct type - needs stack allocation
     if (type->is_struct()) {
         // If the initializer is a struct literal, it already allocates and initializes
-        if (vd.initializer && vd.initializer->kind == AstKind::ExprStructLiteral) {
-            value = gen_expr(vd.initializer);
-        } else if (vd.initializer) {
+        if (var_decl.initializer && var_decl.initializer->kind == AstKind::ExprStructLiteral) {
+            value = gen_expr(var_decl.initializer);
+        } else if (var_decl.initializer) {
             // Initializer is an expression returning a struct (e.g., function call)
             // The call returns a pointer to struct data that we need to copy
-            value = gen_expr(vd.initializer);
+            value = gen_expr(var_decl.initializer);
             // Note: The lowering handles struct return unpacking, so value is already
             // a pointer to the struct data on the local stack
         } else {
@@ -2612,15 +2612,15 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         }
     } else {
         // Non-struct types: use register storage
-        if (vd.initializer) {
-            value = gen_expr(vd.initializer);
+        if (var_decl.initializer) {
+            value = gen_expr(var_decl.initializer);
         } else {
             // Default initialization
             value = emit_const_null();
         }
     }
 
-    define_local(vd.name, value, type);
+    define_local(var_decl.name, value, type);
 }
 
 // Variable management
