@@ -3,12 +3,13 @@
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/unique_ptr.hpp"
 #include "roxy/core/format.hpp"
 #include "roxy/shared/token.hpp"
 #include "roxy/compiler/ast.hpp"
 #include "roxy/compiler/types.hpp"
+#include "roxy/compiler/type_env.hpp"
 #include "roxy/compiler/symbol_table.hpp"
-#include "roxy/compiler/generics.hpp"
 
 namespace rx {
 
@@ -37,10 +38,14 @@ constexpr u32 MAX_SEMANTIC_ERRORS = 20;
 // SemanticAnalyzer performs type checking and symbol resolution
 class SemanticAnalyzer {
 public:
-    // Constructor with external TypeCache and ModuleRegistry
+    // Constructor with external TypeEnv and ModuleRegistry
     // Both must outlive the SemanticAnalyzer
-    SemanticAnalyzer(BumpAllocator& allocator, TypeCache& types, ModuleRegistry& modules,
+    SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, ModuleRegistry& modules,
                      NativeRegistry* registry = nullptr);
+
+    // Constructor with external SymbolTable (for persisting symbols across phases)
+    SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, ModuleRegistry& modules,
+                     SymbolTable& external_symbols, NativeRegistry* registry = nullptr);
 
     // Analyze a program - returns true if no errors
     bool analyze(Program* program);
@@ -48,6 +53,9 @@ public:
     // Error access
     bool has_errors() const { return !m_errors.empty(); }
     const Vector<SemanticError>& errors() const { return m_errors; }
+
+    // Access type environment for external use
+    TypeEnv& type_env() { return m_type_env; }
 
     // Access type cache for external use
     TypeCache& types() { return m_types; }
@@ -175,22 +183,15 @@ private:
     bool can_convert_ref(Type* from, Type* to) const;
 
     BumpAllocator& m_allocator;
-    TypeCache& m_types;
+    TypeEnv& m_type_env;
+    TypeCache& m_types;  // Cached ref to m_type_env.types() to minimize churn
     ModuleRegistry& m_modules;
     NativeRegistry* m_registry;
-    SymbolTable m_symbols;
+    UniquePtr<SymbolTable> m_owned_symbols;  // null when using external symbols
+    SymbolTable& m_symbols;
     Vector<SemanticError> m_errors;
     Program* m_program;                   // Current program being analyzed
 
-    // Generics support
-    GenericInstantiator m_generics;
-
-    // Named type lookup (structs/enums by name)
-    tsl::robin_map<StringView, Type*> m_named_types;
-
-    // Trait support
-    Type* m_printable_type = nullptr;  // Builtin Printable trait for f-string interpolation
-    tsl::robin_map<StringView, Type*> m_trait_types;
     Vector<Decl*> m_synthetic_decls;  // Injected default method declarations
 
     // Generic type argument inference
@@ -228,8 +229,8 @@ private:
 public:
     const Vector<Decl*>& synthetic_decls() const { return m_synthetic_decls; }
 
-    // Access generics for IR builder
-    GenericInstantiator& generics() { return m_generics; }
+    // Access generics via type env
+    GenericInstantiator& generics() { return m_type_env.generics(); }
 };
 
 }

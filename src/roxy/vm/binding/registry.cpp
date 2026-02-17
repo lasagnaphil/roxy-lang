@@ -1,4 +1,5 @@
 #include "roxy/vm/binding/registry.hpp"
+#include "roxy/compiler/type_env.hpp"
 
 #include <cstring>
 
@@ -331,11 +332,12 @@ ResolvedConstructor NativeRegistry::instantiate_generic_constructor(StringView n
     return {StringView(nullptr, 0), Span<Type*>(), 0};
 }
 
-void NativeRegistry::apply_structs_to_types(TypeCache& types, BumpAllocator& allocator, SymbolTable& symbols) {
+void NativeRegistry::apply_structs_to_types(TypeEnv& type_env, BumpAllocator& allocator, SymbolTable& symbols) {
+    TypeCache& types = type_env.types();
     for (const auto& se : m_struct_entries) {
         // Create struct type (decl = nullptr for native structs)
         Type* type = types.struct_type(se.name, nullptr);
-        types.register_named_type(se.name, type);
+        type_env.register_named_type(se.name, type);
 
         // Build fields
         u32 num_fields = static_cast<u32>(se.fields.size());
@@ -368,7 +370,8 @@ void NativeRegistry::apply_structs_to_types(TypeCache& types, BumpAllocator& all
     }
 }
 
-void NativeRegistry::apply_methods_to_types(TypeCache& types, BumpAllocator& allocator) {
+void NativeRegistry::apply_methods_to_types(TypeEnv& type_env, BumpAllocator& allocator) {
+    TypeCache& types = type_env.types();
     // Group methods by struct name
     tsl::robin_map<StringView, Vector<const NativeFunctionEntry*>> methods_by_struct;
     for (const auto& entry : m_function_entries) {
@@ -377,7 +380,7 @@ void NativeRegistry::apply_methods_to_types(TypeCache& types, BumpAllocator& all
     }
 
     for (auto& [struct_name, methods] : methods_by_struct) {
-        Type* struct_type = types.named_type_by_name(struct_name);
+        Type* struct_type = type_env.named_type_by_name(struct_name);
         if (!struct_type || !struct_type->is_struct()) continue;
 
         u32 existing = struct_type->struct_info.methods.size();

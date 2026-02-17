@@ -8,6 +8,7 @@
 #include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/parser.hpp"
 #include "roxy/compiler/semantic.hpp"
+#include "roxy/compiler/type_env.hpp"
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
 #include "roxy/compiler/lowering.hpp"
@@ -68,7 +69,7 @@ static bool parse_args(int argc, char** argv, Options& opts) {
 }
 
 static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len,
-                         TypeCache& types, NativeRegistry& registry, bool print_ir) {
+                         TypeEnv& type_env, NativeRegistry& registry, bool print_ir) {
     Lexer lexer(source, len);
     Parser parser(lexer, allocator);
     Program* program = parser.parse();
@@ -82,9 +83,9 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len,
 
     // Create module registry and register builtin module for prelude auto-import
     ModuleRegistry modules(allocator);
-    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, types);
+    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, type_env.types());
 
-    SemanticAnalyzer analyzer(allocator, types, modules);
+    SemanticAnalyzer analyzer(allocator, type_env, modules);
     if (!analyzer.analyze(program)) {
         fprintf(stderr, "Semantic errors:\n");
         for (const auto& err : analyzer.errors()) {
@@ -94,7 +95,7 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len,
         return nullptr;
     }
 
-    IRBuilder ir_builder(allocator, types, registry, analyzer.symbols(), modules);
+    IRBuilder ir_builder(allocator, type_env, registry, analyzer.symbols(), modules);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         fprintf(stderr, "IR generation failed\n");
@@ -137,16 +138,16 @@ int main(int argc, char** argv) {
     const char* source = reinterpret_cast<const char*>(source_buf.data());
     u32 len = static_cast<u32>(source_buf.size() - 1);  // Exclude null terminator
 
-    // Create allocator and type cache for interop
+    // Create allocator and type environment
     BumpAllocator allocator(65536);
-    TypeCache types(allocator);
+    TypeEnv type_env(allocator);
 
     // Create registry and register built-in natives
-    NativeRegistry registry(allocator, types);
+    NativeRegistry registry(allocator, type_env.types());
     register_builtin_natives(registry);
 
     // Compile
-    UniquePtr<BCModule> module(compile(allocator, source, len, types, registry, opts.print_ir));
+    UniquePtr<BCModule> module(compile(allocator, source, len, type_env, registry, opts.print_ir));
     if (!module) {
         return 1;
     }

@@ -6,7 +6,9 @@
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/unique_ptr.hpp"
 #include "roxy/core/format.hpp"
+#include "roxy/compiler/type_env.hpp"
 #include "roxy/compiler/module_registry.hpp"
+#include "roxy/compiler/symbol_table.hpp"
 #include "roxy/vm/bytecode.hpp"
 #include "roxy/vm/binding/registry.hpp"
 
@@ -74,7 +76,7 @@ private:
     }
 
     BumpAllocator& m_allocator;
-    TypeCache m_types;
+    TypeEnv m_type_env;
     ModuleRegistry m_module_registry;
 
     // Builtin module registry (auto-imported as prelude)
@@ -85,9 +87,11 @@ private:
 
     // Per-module compilation state (parallel to m_sources)
     struct ModuleState {
-        Program* program;           // Parsed AST
-        IRModule* ir_module;        // Generated IR
-        Vector<StringView> imports; // Module names this module imports
+        Program* program = nullptr;           // Parsed AST
+        IRModule* ir_module = nullptr;        // Generated IR
+        Vector<StringView> imports;           // Module names this module imports
+        SymbolTable* symbols = nullptr;       // Persisted from analysis (owned)
+        Vector<Decl*> synthetic_decls;        // Persisted from analysis
     };
     Vector<ModuleState> m_module_states;
 

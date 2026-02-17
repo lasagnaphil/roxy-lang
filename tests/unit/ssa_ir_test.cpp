@@ -5,6 +5,7 @@
 #include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/parser.hpp"
 #include "roxy/compiler/semantic.hpp"
+#include "roxy/compiler/type_env.hpp"
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
 #include "roxy/compiler/module_registry.hpp"
@@ -20,8 +21,8 @@ static IRModule* build_ir(BumpAllocator& allocator, const char* source) {
     u32 len = 0;
     while (source[len]) len++;
 
-    TypeCache types(allocator);
-    NativeRegistry registry(allocator, types);
+    TypeEnv type_env(allocator);
+    NativeRegistry registry(allocator, type_env.types());
     register_builtin_natives(registry);
 
     Lexer lexer(source, len);
@@ -34,14 +35,14 @@ static IRModule* build_ir(BumpAllocator& allocator, const char* source) {
 
     // Create module registry and register builtin module for prelude auto-import
     ModuleRegistry modules(allocator);
-    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, types);
+    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, type_env.types());
 
-    SemanticAnalyzer analyzer(allocator, types, modules);
+    SemanticAnalyzer analyzer(allocator, type_env, modules);
     if (!analyzer.analyze(program)) {
         return nullptr;
     }
 
-    IRBuilder builder(allocator, types, registry, analyzer.symbols(), modules);
+    IRBuilder builder(allocator, type_env, registry, analyzer.symbols(), modules);
     return builder.build(program);
 }
 

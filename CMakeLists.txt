@@ -56,6 +56,7 @@ add_library(roxy_compiler
     src/roxy/compiler/generics.cpp
     src/roxy/compiler/module_registry.cpp
     src/roxy/compiler/compiler.cpp
+    src/roxy/compiler/type_env.cpp
 )
 target_link_libraries(roxy_compiler roxy_shared)
 

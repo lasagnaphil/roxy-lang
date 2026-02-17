@@ -20,6 +20,9 @@
 
 namespace rx {
 
+// Forward declaration
+class TypeEnv;
+
 // Type kind enum for deferred type creation
 enum class NativeTypeKind : u8 {
     Void, Bool,
@@ -221,11 +224,11 @@ public:
                                                          BumpAllocator& allocator,
                                                          TypeCache& types) const;
 
-    // Create struct types from registered native structs and add to TypeCache/SymbolTable
-    void apply_structs_to_types(TypeCache& types, BumpAllocator& allocator, SymbolTable& symbols);
+    // Create struct types from registered native structs and add to TypeEnv/SymbolTable
+    void apply_structs_to_types(TypeEnv& type_env, BumpAllocator& allocator, SymbolTable& symbols);
 
     // Add method entries to their struct types (call after apply_structs_to_types)
-    void apply_methods_to_types(TypeCache& types, BumpAllocator& allocator);
+    void apply_methods_to_types(TypeEnv& type_env, BumpAllocator& allocator);
 
     // Apply registered functions to symbol table for semantic analysis
     void apply_to_symbols(SymbolTable& symbols, TypeCache& types, BumpAllocator& allocator);

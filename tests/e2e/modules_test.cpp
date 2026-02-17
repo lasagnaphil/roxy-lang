@@ -2,6 +2,7 @@
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/string_view.hpp"
 #include "roxy/compiler/compiler.hpp"
+#include "roxy/compiler/type_env.hpp"
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/natives.hpp"
@@ -20,13 +21,13 @@ static i32 math_negate(i32 x) { return -x; }
 // Helper to compile and run with module support
 struct ModuleTestContext {
     BumpAllocator allocator;
-    TypeCache types;
+    TypeEnv type_env;
     NativeRegistry math_natives;
 
     ModuleTestContext()
         : allocator(16384)
-        , types(allocator)
-        , math_natives(allocator, types)
+        , type_env(allocator)
+        , math_natives(allocator, type_env.types())
     {
         // Register math module natives
         math_natives.bind<math_add>("add");

@@ -235,26 +235,6 @@ Type* TypeCache::primitive_by_name(StringView name) {
     return nullptr;
 }
 
-void TypeCache::register_named_type(StringView name, Type* type) {
-    m_named_types[name] = type;
-}
-
-Type* TypeCache::named_type_by_name(StringView name) {
-    auto it = m_named_types.find(name);
-    if (it != m_named_types.end()) {
-        return it->second;
-    }
-    return nullptr;
-}
-
-Type* TypeCache::type_by_name(StringView name) {
-    // First try primitives
-    Type* prim = primitive_by_name(name);
-    if (prim) return prim;
-
-    // Then try named types (structs, enums)
-    return named_type_by_name(name);
-}
 
 const FieldInfo* StructTypeInfo::find_field(StringView field_name) const {
     for (const auto& field : fields) {

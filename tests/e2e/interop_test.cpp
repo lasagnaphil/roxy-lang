@@ -4,6 +4,7 @@
 #include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/parser.hpp"
 #include "roxy/compiler/semantic.hpp"
+#include "roxy/compiler/type_env.hpp"
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
 #include "roxy/compiler/lowering.hpp"
@@ -51,7 +52,7 @@ void my_void_func(i32 x) { (void)x; }
 // The registry should only contain automatically bound functions (no manual bindings
 // that depend on types). Manual bindings will be skipped.
 static Value compile_and_run_with_registry(const char* source, StringView func_name,
-                                           BumpAllocator& allocator, TypeCache& types,
+                                           BumpAllocator& allocator, TypeEnv& type_env,
                                            NativeRegistry& registry,
                                            Span<Value> args = {}) {
     u32 len = 0;
@@ -65,15 +66,15 @@ static Value compile_and_run_with_registry(const char* source, StringView func_n
         return Value::make_null();
     }
 
-    // Create module registry and SemanticAnalyzer with shared TypeCache
+    // Create module registry and SemanticAnalyzer with shared TypeEnv
     ModuleRegistry modules(allocator);
-    SemanticAnalyzer analyzer(allocator, types, modules, &registry);
+    SemanticAnalyzer analyzer(allocator, type_env, modules, &registry);
 
     if (!analyzer.analyze(program)) {
         return Value::make_null();
     }
 
-    IRBuilder ir_builder(allocator, types, registry, analyzer.symbols(), modules);
+    IRBuilder ir_builder(allocator, type_env, registry, analyzer.symbols(), modules);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         return Value::make_null();
@@ -108,10 +109,10 @@ static Value compile_and_run_with_registry(const char* source, StringView func_n
 static Value compile_and_run_with_builtins(const char* source, StringView func_name,
                                            Span<Value> args = {}) {
     BumpAllocator allocator(8192);
-    TypeCache types(allocator);
+    TypeEnv type_env(allocator);
 
     // Create registry and register built-in natives
-    NativeRegistry registry(allocator, types);
+    NativeRegistry registry(allocator, type_env.types());
     register_builtin_natives(registry);
 
     u32 len = 0;
@@ -127,14 +128,14 @@ static Value compile_and_run_with_builtins(const char* source, StringView func_n
 
     // Create module registry and register builtin module for prelude auto-import
     ModuleRegistry modules(allocator);
-    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, types);
+    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, type_env.types());
 
-    SemanticAnalyzer analyzer(allocator, types, modules);
+    SemanticAnalyzer analyzer(allocator, type_env, modules);
     if (!analyzer.analyze(program)) {
         return Value::make_null();
     }
 
-    IRBuilder ir_builder(allocator, types, registry, analyzer.symbols(), modules);
+    IRBuilder ir_builder(allocator, type_env, registry, analyzer.symbols(), modules);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         return Value::make_null();
@@ -289,8 +290,8 @@ TEST_CASE("Interop - Registry basic") {
 
 TEST_CASE("Interop - Bound integer functions") {
     BumpAllocator alloc(4096);
-    TypeCache types(alloc);
-    NativeRegistry registry(alloc, types);
+    TypeEnv type_env(alloc);
+    NativeRegistry registry(alloc, type_env.types());
 
     // Register bound functions
     registry.bind<my_add>("add");
@@ -305,7 +306,7 @@ TEST_CASE("Interop - Bound integer functions") {
                 return add(10, 20);
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         CHECK(result.is_int());
         CHECK(result.as_int == 30);
     }
@@ -316,7 +317,7 @@ TEST_CASE("Interop - Bound integer functions") {
                 return mul(6, 7);
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         CHECK(result.is_int());
         CHECK(result.as_int == 42);
     }
@@ -327,7 +328,7 @@ TEST_CASE("Interop - Bound integer functions") {
                 return abs(-42);
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         CHECK(result.is_int());
         CHECK(result.as_int == 42);
     }
@@ -338,7 +339,7 @@ TEST_CASE("Interop - Bound integer functions") {
                 return neg(42);
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         CHECK(result.is_int());
         CHECK(result.as_int == -42);
     }
@@ -349,7 +350,7 @@ TEST_CASE("Interop - Bound integer functions") {
                 return square(7);
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         CHECK(result.is_int());
         CHECK(result.as_int == 49);
     }
@@ -360,7 +361,7 @@ TEST_CASE("Interop - Bound integer functions") {
                 return square(add(3, 4));
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         CHECK(result.is_int());
         CHECK(result.as_int == 49);
     }
@@ -368,8 +369,8 @@ TEST_CASE("Interop - Bound integer functions") {
 
 TEST_CASE("Interop - Bound boolean functions") {
     BumpAllocator alloc(4096);
-    TypeCache types(alloc);
-    NativeRegistry registry(alloc, types);
+    TypeEnv type_env(alloc);
+    NativeRegistry registry(alloc, type_env.types());
 
     registry.bind<my_is_positive>("is_positive");
     registry.bind<my_is_even>("is_even");
@@ -380,7 +381,7 @@ TEST_CASE("Interop - Bound boolean functions") {
                 return is_positive(5);
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         // With untyped registers, bools are 0 or 1
         CHECK(result.as_u64() == 1);  // true
     }
@@ -391,7 +392,7 @@ TEST_CASE("Interop - Bound boolean functions") {
                 return is_positive(-5);
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         // With untyped registers, bools are 0 or 1
         CHECK(result.as_u64() == 0);  // false
     }
@@ -402,7 +403,7 @@ TEST_CASE("Interop - Bound boolean functions") {
                 return is_even(4);
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         // With untyped registers, bools are 0 or 1
         CHECK(result.as_u64() == 1);  // true
     }
@@ -410,8 +411,8 @@ TEST_CASE("Interop - Bound boolean functions") {
 
 TEST_CASE("Interop - Bound float functions") {
     BumpAllocator alloc(4096);
-    TypeCache types(alloc);
-    NativeRegistry registry(alloc, types);
+    TypeEnv type_env(alloc);
+    NativeRegistry registry(alloc, type_env.types());
 
     registry.bind<my_sqrt>("sqrt");
     registry.bind<my_add_f>("add_f");
@@ -422,7 +423,7 @@ TEST_CASE("Interop - Bound float functions") {
                 return sqrt(4.0);
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         // With untyped registers, interpret result bits as float
         Value float_result = Value::float_from_u64(result.as_u64());
         CHECK(float_result.as_float == doctest::Approx(2.0));
@@ -434,7 +435,7 @@ TEST_CASE("Interop - Bound float functions") {
                 return sqrt(2.0);
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         // With untyped registers, interpret result bits as float
         Value float_result = Value::float_from_u64(result.as_u64());
         CHECK(float_result.as_float == doctest::Approx(1.41421356));
@@ -446,7 +447,7 @@ TEST_CASE("Interop - Bound float functions") {
                 return add_f(1.5, 2.5);
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         // With untyped registers, interpret result bits as float
         Value float_result = Value::float_from_u64(result.as_u64());
         CHECK(float_result.as_float == doctest::Approx(4.0));
@@ -455,8 +456,8 @@ TEST_CASE("Interop - Bound float functions") {
 
 TEST_CASE("Interop - Void return function") {
     BumpAllocator alloc(4096);
-    TypeCache types(alloc);
-    NativeRegistry registry(alloc, types);
+    TypeEnv type_env(alloc);
+    NativeRegistry registry(alloc, type_env.types());
 
     registry.bind<my_void_func>("void_fn");
 
@@ -466,7 +467,7 @@ TEST_CASE("Interop - Void return function") {
             return 1;
         }
     )";
-    Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+    Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
     CHECK(result.is_int());
     CHECK(result.as_int == 1);
 }
@@ -529,10 +530,10 @@ TEST_CASE("Interop - Built-in natives via registry") {
 template<typename BindFunc>
 static Value compile_and_run_mixed(const char* source, StringView func_name, BindFunc bind_fn) {
     BumpAllocator allocator(8192);
-    TypeCache types(allocator);
+    TypeEnv type_env(allocator);
 
     // Create registry and register built-in natives
-    NativeRegistry registry(allocator, types);
+    NativeRegistry registry(allocator, type_env.types());
     register_builtin_natives(registry);
 
     // Let the caller add custom bindings
@@ -551,14 +552,14 @@ static Value compile_and_run_mixed(const char* source, StringView func_name, Bin
 
     // Create module registry and register builtin module for prelude auto-import
     ModuleRegistry modules(allocator);
-    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, types);
+    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, type_env.types());
 
-    SemanticAnalyzer analyzer(allocator, types, modules);
+    SemanticAnalyzer analyzer(allocator, type_env, modules);
     if (!analyzer.analyze(program)) {
         return Value::make_null();
     }
 
-    IRBuilder ir_builder(allocator, types, registry, analyzer.symbols(), modules);
+    IRBuilder ir_builder(allocator, type_env, registry, analyzer.symbols(), modules);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
         return Value::make_null();
@@ -627,8 +628,8 @@ i32 point_weighted(CppPoint* self, i32 wx, i32 wy) { return self->x * wx + self-
 
 TEST_CASE("Interop - Native struct with auto-bound method") {
     BumpAllocator alloc(8192);
-    TypeCache types(alloc);
-    NativeRegistry registry(alloc, types);
+    TypeEnv type_env(alloc);
+    NativeRegistry registry(alloc, type_env.types());
 
     registry.register_struct("Point", {
         {"x", NativeTypeKind::I32},
@@ -642,15 +643,15 @@ TEST_CASE("Interop - Native struct with auto-bound method") {
             return p.sum();
         }
     )";
-    Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+    Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
     CHECK(result.is_int());
     CHECK(result.as_int == 7);
 }
 
 TEST_CASE("Interop - Native struct with manual method") {
     BumpAllocator alloc(8192);
-    TypeCache types(alloc);
-    NativeRegistry registry(alloc, types);
+    TypeEnv type_env(alloc);
+    NativeRegistry registry(alloc, type_env.types());
 
     registry.register_struct("Point", {
         {"x", NativeTypeKind::I32},
@@ -674,15 +675,15 @@ TEST_CASE("Interop - Native struct with manual method") {
             return p.product();
         }
     )";
-    Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+    Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
     CHECK(result.is_int());
     CHECK(result.as_int == 30);
 }
 
 TEST_CASE("Interop - Native method with parameters") {
     BumpAllocator alloc(8192);
-    TypeCache types(alloc);
-    NativeRegistry registry(alloc, types);
+    TypeEnv type_env(alloc);
+    NativeRegistry registry(alloc, type_env.types());
 
     registry.register_struct("Point", {
         {"x", NativeTypeKind::I32},
@@ -696,15 +697,15 @@ TEST_CASE("Interop - Native method with parameters") {
             return p.scaled_sum(10);
         }
     )";
-    Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+    Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
     CHECK(result.is_int());
     CHECK(result.as_int == 70);  // (3 + 4) * 10
 }
 
 TEST_CASE("Interop - Multiple methods on one struct") {
     BumpAllocator alloc(8192);
-    TypeCache types(alloc);
-    NativeRegistry registry(alloc, types);
+    TypeEnv type_env(alloc);
+    NativeRegistry registry(alloc, type_env.types());
 
     registry.register_struct("Point", {
         {"x", NativeTypeKind::I32},
@@ -721,7 +722,7 @@ TEST_CASE("Interop - Multiple methods on one struct") {
                 return p.sum() + p.diff();
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         CHECK(result.is_int());
         CHECK(result.as_int == 13 + 7);  // sum=13, diff=7
     }
@@ -733,7 +734,7 @@ TEST_CASE("Interop - Multiple methods on one struct") {
                 return p.is_origin();
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         CHECK(result.as_u64() == 0);  // false
     }
 
@@ -744,15 +745,15 @@ TEST_CASE("Interop - Multiple methods on one struct") {
                 return p.is_origin();
             }
         )";
-        Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+        Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         CHECK(result.as_u64() == 1);  // true
     }
 }
 
 TEST_CASE("Interop - Native method with multiple parameters") {
     BumpAllocator alloc(8192);
-    TypeCache types(alloc);
-    NativeRegistry registry(alloc, types);
+    TypeEnv type_env(alloc);
+    NativeRegistry registry(alloc, type_env.types());
 
     registry.register_struct("Point", {
         {"x", NativeTypeKind::I32},
@@ -766,15 +767,15 @@ TEST_CASE("Interop - Native method with multiple parameters") {
             return p.weighted(2, 5);
         }
     )";
-    Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+    Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
     CHECK(result.is_int());
     CHECK(result.as_int == 26);  // 3*2 + 4*5
 }
 
 TEST_CASE("Interop - Native struct field access") {
     BumpAllocator alloc(8192);
-    TypeCache types(alloc);
-    NativeRegistry registry(alloc, types);
+    TypeEnv type_env(alloc);
+    NativeRegistry registry(alloc, type_env.types());
 
     registry.register_struct("Point", {
         {"x", NativeTypeKind::I32},
@@ -787,15 +788,15 @@ TEST_CASE("Interop - Native struct field access") {
             return p.x + p.y;
         }
     )";
-    Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+    Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
     CHECK(result.is_int());
     CHECK(result.as_int == 30);
 }
 
 TEST_CASE("Interop - Native struct with free function") {
     BumpAllocator alloc(8192);
-    TypeCache types(alloc);
-    NativeRegistry registry(alloc, types);
+    TypeEnv type_env(alloc);
+    NativeRegistry registry(alloc, type_env.types());
 
     registry.register_struct("Point", {
         {"x", NativeTypeKind::I32},
@@ -810,7 +811,7 @@ TEST_CASE("Interop - Native struct with free function") {
             return square(p.sum());
         }
     )";
-    Value result = compile_and_run_with_registry(source, "test", alloc, types, registry);
+    Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
     CHECK(result.is_int());
     CHECK(result.as_int == 49);  // square(7) = 49
 }

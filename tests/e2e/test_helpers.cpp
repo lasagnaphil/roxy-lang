@@ -3,6 +3,7 @@
 #include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/parser.hpp"
 #include "roxy/compiler/semantic.hpp"
+#include "roxy/compiler/type_env.hpp"
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
 #include "roxy/compiler/lowering.hpp"
@@ -39,14 +40,14 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
     u32 len = 0;
     while (source[len]) len++;
 
-    // Create type cache and registry
-    TypeCache types(allocator);
-    NativeRegistry registry(allocator, types);
+    // Create type environment and registry
+    TypeEnv type_env(allocator);
+    NativeRegistry registry(allocator, type_env.types());
     register_builtin_natives(registry);
 
     // Create module registry and register builtin module for prelude auto-import
     ModuleRegistry modules(allocator);
-    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, types);
+    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, type_env.types());
 
     Lexer lexer(source, len);
     Parser parser(lexer, allocator);
@@ -56,7 +57,7 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
         return nullptr;
     }
 
-    SemanticAnalyzer analyzer(allocator, types, modules);
+    SemanticAnalyzer analyzer(allocator, type_env, modules);
     if (!analyzer.analyze(program)) {
         if (debug) {
             printf("Semantic errors:\n");
@@ -79,8 +80,8 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
         synthetic_decls = Span<Decl*>(data, static_cast<u32>(syn_vec.size()));
     }
 
-    IRBuilder ir_builder(allocator, analyzer.types(), registry, analyzer.symbols(), modules);
-    IRModule* ir_module = ir_builder.build(program, synthetic_decls, &analyzer.generics());
+    IRBuilder ir_builder(allocator, type_env, registry, analyzer.symbols(), modules);
+    IRModule* ir_module = ir_builder.build(program, synthetic_decls);
     if (!ir_module) {
         return nullptr;
     }

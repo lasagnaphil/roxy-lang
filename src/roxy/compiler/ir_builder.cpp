@@ -10,10 +10,11 @@
 
 namespace rx {
 
-IRBuilder::IRBuilder(BumpAllocator& allocator, TypeCache& types, NativeRegistry& registry,
+IRBuilder::IRBuilder(BumpAllocator& allocator, TypeEnv& type_env, NativeRegistry& registry,
                      SymbolTable& symbols, ModuleRegistry& module_registry)
     : m_allocator(allocator)
-    , m_types(types)
+    , m_type_env(type_env)
+    , m_types(type_env.types())
     , m_registry(registry)
     , m_symbols(symbols)
     , m_module_registry(module_registry)
@@ -22,8 +23,7 @@ IRBuilder::IRBuilder(BumpAllocator& allocator, TypeCache& types, NativeRegistry&
 {
 }
 
-IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
-                           GenericInstantiator* generics) {
+IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
     IRModule* module = m_allocator.emplace<IRModule>();
 
     // Track which struct types have user-defined default constructors
@@ -55,7 +55,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
         else if (decl->kind == AstKind::DeclConstructor) {
             // Build constructor
             ConstructorDecl& constructor_decl = decl->constructor_decl;
-            Type* struct_type = m_types.named_type_by_name(constructor_decl.struct_name);
+            Type* struct_type = m_type_env.named_type_by_name(constructor_decl.struct_name);
             if (struct_type && constructor_decl.body) {
                 IRFunction* func = build_constructor(&constructor_decl, struct_type);
                 module->functions.push_back(func);
@@ -68,7 +68,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
         else if (decl->kind == AstKind::DeclDestructor) {
             // Build destructor
             DestructorDecl& destructor_decl = decl->destructor_decl;
-            Type* struct_type = m_types.named_type_by_name(destructor_decl.struct_name);
+            Type* struct_type = m_type_env.named_type_by_name(destructor_decl.struct_name);
             if (struct_type && destructor_decl.body) {
                 IRFunction* func = build_destructor(&destructor_decl, struct_type);
                 module->functions.push_back(func);
@@ -77,7 +77,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
         else if (decl->kind == AstKind::DeclMethod) {
             // Build method - skip trait method declarations (struct_name is a trait, not a struct)
             MethodDecl& method_decl = decl->method_decl;
-            Type* struct_type = m_types.named_type_by_name(method_decl.struct_name);
+            Type* struct_type = m_type_env.named_type_by_name(method_decl.struct_name);
             if (struct_type && struct_type->is_struct() && method_decl.body) {
                 IRFunction* func = build_method(&method_decl, struct_type);
                 module->functions.push_back(func);
@@ -89,7 +89,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
     for (auto* decl : synthetic_decls) {
         if (decl && decl->kind == AstKind::DeclMethod) {
             MethodDecl& method_decl = decl->method_decl;
-            Type* struct_type = m_types.named_type_by_name(method_decl.struct_name);
+            Type* struct_type = m_type_env.named_type_by_name(method_decl.struct_name);
             if (struct_type && struct_type->is_struct() && method_decl.body) {
                 IRFunction* func = build_method(&method_decl, struct_type);
                 module->functions.push_back(func);
@@ -98,12 +98,10 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
     }
 
     // Process generic function instances
-    if (generics) {
-        for (auto* instance : generics->all_fun_instances()) {
-            if (instance->is_analyzed && instance->instantiated_decl) {
-                IRFunction* func = build_function(&instance->instantiated_decl->fun_decl);
-                module->functions.push_back(func);
-            }
+    for (auto* instance : m_type_env.generics().all_fun_instances()) {
+        if (instance->is_analyzed && instance->instantiated_decl) {
+            IRFunction* func = build_function(&instance->instantiated_decl->fun_decl);
+            module->functions.push_back(func);
         }
     }
 
@@ -117,7 +115,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
             StructDecl& struct_decl = decl->struct_decl;
             // Check if this struct already has a user-defined default constructor
             if (has_default_ctor.find(struct_decl.name) == has_default_ctor.end()) {
-                Type* struct_type = m_types.named_type_by_name(struct_decl.name);
+                Type* struct_type = m_type_env.named_type_by_name(struct_decl.name);
                 if (struct_type) {
                     IRFunction* func = build_synthesized_default_constructor(struct_type);
                     module->functions.push_back(func);
@@ -127,14 +125,12 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls,
     }
 
     // Generate synthesized default constructors for generic struct instances
-    if (generics) {
-        for (auto* instance : generics->all_struct_instances()) {
-            if (instance->is_analyzed && instance->concrete_type) {
-                // Check if there's a user-defined default constructor for this instance
-                if (has_default_ctor.find(instance->mangled_name) == has_default_ctor.end()) {
-                    IRFunction* func = build_synthesized_default_constructor(instance->concrete_type);
-                    module->functions.push_back(func);
-                }
+    for (auto* instance : m_type_env.generics().all_struct_instances()) {
+        if (instance->is_analyzed && instance->concrete_type) {
+            // Check if there's a user-defined default constructor for this instance
+            if (has_default_ctor.find(instance->mangled_name) == has_default_ctor.end()) {
+                IRFunction* func = build_synthesized_default_constructor(instance->concrete_type);
+                module->functions.push_back(func);
             }
         }
     }
@@ -151,7 +147,7 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
 
     // Resolve return type
     if (decl->return_type) {
-        m_current_func->return_type = m_types.type_by_name(decl->return_type->name);
+        m_current_func->return_type = m_type_env.type_by_name(decl->return_type->name);
         if (!m_current_func->return_type) {
             m_current_func->return_type = m_types.void_type();
         }
@@ -298,7 +294,7 @@ IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
 
     // Resolve return type
     if (decl->return_type) {
-        m_current_func->return_type = m_types.type_by_name(decl->return_type->name);
+        m_current_func->return_type = m_type_env.type_by_name(decl->return_type->name);
         if (!m_current_func->return_type) {
             m_current_func->return_type = m_types.void_type();
         }
@@ -1723,7 +1719,7 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         if (get_expr.object->kind == AstKind::ExprIdentifier) {
             // Check if this is a type name (constructor) or a variable (method call)
             StringView name = get_expr.object->identifier.name;
-            Type* named_type = m_types.named_type_by_name(name);
+            Type* named_type = m_type_env.named_type_by_name(name);
             if (named_type && named_type->is_struct()) {
                 // This is a named constructor call: Type.ctor_name(...)
                 return gen_constructor_call(expr);
@@ -2959,7 +2955,7 @@ void IRBuilder::setup_parameters(Span<Param> params, Type* self_type) {
             // Use type resolved by semantic analysis (handles generics like List<T>)
             param_type = param.resolved_type;
         } else if (param.type) {
-            param_type = m_types.type_by_name(param.type->name);
+            param_type = m_type_env.type_by_name(param.type->name);
             if (!param_type) {
                 param_type = m_types.error_type();
             }

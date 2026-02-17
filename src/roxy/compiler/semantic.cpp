@@ -46,15 +46,29 @@ static u32 get_type_slot_count(Type* type) {
 
 // ===== Initialization & Passes =====
 
-SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeCache& types, ModuleRegistry& modules,
+SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, ModuleRegistry& modules,
                                    NativeRegistry* registry)
     : m_allocator(allocator)
-    , m_types(types)
+    , m_type_env(type_env)
+    , m_types(type_env.types())
     , m_modules(modules)
     , m_registry(registry)
-    , m_symbols(allocator)
+    , m_owned_symbols(new SymbolTable(allocator))
+    , m_symbols(*m_owned_symbols)
     , m_program(nullptr)
-    , m_generics(allocator, types)
+{
+}
+
+SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, ModuleRegistry& modules,
+                                   SymbolTable& external_symbols, NativeRegistry* registry)
+    : m_allocator(allocator)
+    , m_type_env(type_env)
+    , m_types(type_env.types())
+    , m_modules(modules)
+    , m_registry(registry)
+    , m_owned_symbols(nullptr)
+    , m_symbols(external_symbols)
+    , m_program(nullptr)
 {
 }
 
@@ -109,26 +123,21 @@ bool SemanticAnalyzer::analyze(Program* program) {
 
     // Pass 1.5: Create native struct types from registry
     if (m_registry) {
-        m_registry->apply_structs_to_types(m_types, m_allocator, m_symbols);
-        // Also add native structs to m_named_types so they're visible for type lookup
-        for (const auto& se : m_registry->struct_entries()) {
-            Type* type = m_types.named_type_by_name(se.name);
-            if (type) {
-                m_named_types[se.name] = type;
-            }
-        }
+        m_registry->apply_structs_to_types(m_type_env, m_allocator, m_symbols);
     }
 
     // Pass 1.6: Apply native methods to struct types
     if (m_registry) {
-        m_registry->apply_methods_to_types(m_types, m_allocator);
+        m_registry->apply_methods_to_types(m_type_env, m_allocator);
     }
 
     // Pass 1.7: Register builtin Printable trait and primitive implementations
-    {
+    // Guard against re-initialization since TypeEnv persists across modules
+    if (!m_type_env.printable_type()) {
         // Create the Printable trait type
-        m_printable_type = m_types.trait_type(StringView("Printable", 9), nullptr);
-        m_trait_types[StringView("Printable", 9)] = m_printable_type;
+        Type* printable_type = m_types.trait_type(StringView("Printable", 9), nullptr);
+        m_type_env.set_printable_type(printable_type);
+        m_type_env.register_trait_type(StringView("Printable", 9), printable_type);
 
         // Add to_string() as the required trait method
         TraitMethodInfo trait_method_info;
@@ -141,7 +150,7 @@ bool SemanticAnalyzer::analyze(Program* program) {
         TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
             m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
         tmi_data[0] = trait_method_info;
-        m_printable_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
+        printable_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
 
         // Register to_string method and Printable trait for each primitive type
         TypeKind prim_kinds[] = {
@@ -155,7 +164,7 @@ bool SemanticAnalyzer::analyze(Program* program) {
             mi.return_type = m_types.string_type();
             mi.decl = nullptr;
             m_types.register_primitive_method(tk, mi);
-            m_types.register_primitive_trait(tk, m_printable_type);
+            m_types.register_primitive_trait(tk, printable_type);
          }
     }
 
@@ -184,7 +193,7 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
 
         // Register generic functions as templates (not concrete functions)
         if (decl->kind == AstKind::DeclFun && decl->fun_decl.type_params.size() > 0) {
-            m_generics.register_generic_fun(decl->fun_decl.name, decl);
+            m_type_env.generics().register_generic_fun(decl->fun_decl.name, decl);
             continue;
         }
 
@@ -193,20 +202,19 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
 
             // Register generic structs as templates (not concrete types)
             if (decl->struct_decl.type_params.size() > 0) {
-                m_generics.register_generic_struct(name, decl);
+                m_type_env.generics().register_generic_struct(name, decl);
                 continue;
             }
 
             // Check for duplicate type names
-            if (m_named_types.find(name) != m_named_types.end()) {
+            if (m_type_env.named_type_by_name(name) != nullptr) {
                 error_fmt(decl->loc, "duplicate type declaration '{}'", name);
                 continue;
             }
 
             // Create the struct type
             Type* type = m_types.struct_type(name, decl, m_program->module_name);
-            m_named_types[name] = type;
-            m_types.register_named_type(name, type);  // Register with TypeCache for IR builder access
+            m_type_env.register_named_type(name, type);
 
             // Define in global scope
             m_symbols.define(SymbolKind::Struct, name, type, decl->loc, decl);
@@ -215,14 +223,14 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
             StringView name = decl->enum_decl.name;
 
             // Check for duplicate type names
-            if (m_named_types.find(name) != m_named_types.end()) {
+            if (m_type_env.named_type_by_name(name) != nullptr) {
                 error_fmt(decl->loc, "duplicate type declaration '{}'", name);
                 continue;
             }
 
             // Create the enum type
             Type* type = m_types.enum_type(name, decl);
-            m_named_types[name] = type;
+            m_type_env.register_named_type(name, type);
 
             // Define in global scope
             m_symbols.define(SymbolKind::Enum, name, type, decl->loc, decl);
@@ -231,8 +239,8 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
             StringView name = decl->trait_decl.name;
 
             // Check for duplicate type/trait names
-            if (m_named_types.find(name) != m_named_types.end() ||
-                m_trait_types.find(name) != m_trait_types.end()) {
+            if (m_type_env.named_type_by_name(name) != nullptr ||
+                m_type_env.trait_type_by_name(name) != nullptr) {
                 error_fmt(decl->loc, "duplicate type declaration '{}'", name);
                 continue;
             }
@@ -240,7 +248,7 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
             // Create the trait type
             Type* type = m_types.trait_type(name, decl);
             type->trait_info.type_params = decl->trait_decl.type_params;
-            m_trait_types[name] = type;
+            m_type_env.register_trait_type(name, type);
 
             // Define in global scope
             m_symbols.define(SymbolKind::Trait, name, type, decl->loc, decl);
@@ -260,17 +268,17 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             // Skip generic struct templates - they have unresolved type params
             if (struct_decl.type_params.size() > 0) continue;
 
-            Type* type = m_named_types[struct_decl.name];
+            Type* type = m_type_env.named_type_by_name(struct_decl.name);
 
             // Resolve parent type
             if (!struct_decl.parent_name.empty()) {
-                auto it = m_named_types.find(struct_decl.parent_name);
-                if (it == m_named_types.end()) {
+                Type* parent = m_type_env.named_type_by_name(struct_decl.parent_name);
+                if (!parent) {
                     error_fmt(decl->loc, "unknown parent type '{}'", struct_decl.parent_name);
-                } else if (it->second->kind != TypeKind::Struct) {
+                } else if (parent->kind != TypeKind::Struct) {
                     error_fmt(decl->loc, "parent type '{}' is not a struct", struct_decl.parent_name);
                 } else {
-                    type->struct_info.parent = it->second;
+                    type->struct_info.parent = parent;
                 }
             }
 
@@ -332,7 +340,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
         }
         else if (decl->kind == AstKind::DeclEnum) {
             EnumDecl& ed = decl->enum_decl;
-            Type* type = m_named_types[ed.name];
+            Type* type = m_type_env.named_type_by_name(ed.name);
 
             // Define enum variants in global scope (accessible as EnumName::Variant)
             i64 next_value = 0;
@@ -424,24 +432,24 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             MethodDecl& method_decl = decl->method_decl;
 
             // Check if struct_name is actually a trait name
-            auto trait_it = m_trait_types.find(method_decl.struct_name);
-            if (trait_it != m_trait_types.end() && method_decl.trait_name.empty()) {
+            Type* trait_lookup = m_type_env.trait_type_by_name(method_decl.struct_name);
+            if (trait_lookup && method_decl.trait_name.empty()) {
                 // This is a trait method declaration (fun TraitName.method(...))
-                analyze_trait_method_decl(decl, trait_it->second);
+                analyze_trait_method_decl(decl, trait_lookup);
             }
             else if (!method_decl.trait_name.empty()) {
                 // This is a trait implementation (fun Type.method(...) for Trait<Args>)
-                auto struct_it = m_named_types.find(method_decl.struct_name);
-                if (struct_it == m_named_types.end()) {
+                Type* struct_type_lookup = m_type_env.named_type_by_name(method_decl.struct_name);
+                if (!struct_type_lookup) {
                     error_fmt(decl->loc, "method for unknown type '{}'", method_decl.struct_name);
-                } else if (struct_it->second->kind != TypeKind::Struct) {
+                } else if (struct_type_lookup->kind != TypeKind::Struct) {
                     error_fmt(decl->loc, "'{}' is not a struct type", method_decl.struct_name);
                 } else {
-                    auto impl_trait_it = m_trait_types.find(method_decl.trait_name);
-                    if (impl_trait_it == m_trait_types.end()) {
+                    Type* impl_trait = m_type_env.trait_type_by_name(method_decl.trait_name);
+                    if (!impl_trait) {
                         error_fmt(decl->loc, "unknown trait '{}'", method_decl.trait_name);
                     } else {
-                        Type* trait_type = impl_trait_it->second;
+                        Type* trait_type = impl_trait;
                         TraitTypeInfo& trait_type_info = trait_type->trait_info;
 
                         // Resolve trait type args
@@ -469,7 +477,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                             continue;
                         }
 
-                        m_pending_trait_impls.push_back({decl, struct_it->second, trait_type, resolved_trait_type_args});
+                        m_pending_trait_impls.push_back({decl, struct_type_lookup, trait_type, resolved_trait_type_args});
                     }
                 }
             }
@@ -480,17 +488,17 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
         }
         else if (decl->kind == AstKind::DeclTrait) {
             TraitDecl& trait_decl = decl->trait_decl;
-            Type* trait_type = m_trait_types[trait_decl.name];
+            Type* trait_type = m_type_env.trait_type_by_name(trait_decl.name);
 
             // Resolve parent trait
             if (!trait_decl.parent_name.empty()) {
-                auto parent_iter = m_trait_types.find(trait_decl.parent_name);
-                if (parent_iter == m_trait_types.end()) {
+                Type* parent_trait = m_type_env.trait_type_by_name(trait_decl.parent_name);
+                if (!parent_trait) {
                     error_fmt(decl->loc, "unknown parent trait '{}'", trait_decl.parent_name);
-                } else if (parent_iter->second == trait_type) {
+                } else if (parent_trait == trait_type) {
                     error_fmt(decl->loc, "trait '{}' cannot inherit from itself", trait_decl.name);
                 } else {
-                    trait_type->trait_info.parent = parent_iter->second;
+                    trait_type->trait_info.parent = parent_trait;
                 }
             }
         }
@@ -608,7 +616,7 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
 
             // Analyze struct methods
             StructDecl& struct_decl = decl->struct_decl;
-            Type* struct_type = m_named_types[struct_decl.name];
+            Type* struct_type = m_type_env.named_type_by_name(struct_decl.name);
 
             m_symbols.push_struct_scope(struct_type);
 
@@ -634,27 +642,27 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
         }
         else if (decl->kind == AstKind::DeclConstructor) {
             ConstructorDecl& constructor_decl = decl->constructor_decl;
-            auto it = m_named_types.find(constructor_decl.struct_name);
-            if (it != m_named_types.end()) {
-                analyze_constructor_body(decl, it->second);
+            Type* ctor_struct = m_type_env.named_type_by_name(constructor_decl.struct_name);
+            if (ctor_struct) {
+                analyze_constructor_body(decl, ctor_struct);
             }
         }
         else if (decl->kind == AstKind::DeclDestructor) {
             DestructorDecl& destructor_decl = decl->destructor_decl;
-            auto it = m_named_types.find(destructor_decl.struct_name);
-            if (it != m_named_types.end()) {
-                analyze_destructor_body(decl, it->second);
+            Type* dtor_struct = m_type_env.named_type_by_name(destructor_decl.struct_name);
+            if (dtor_struct) {
+                analyze_destructor_body(decl, dtor_struct);
             }
         }
         else if (decl->kind == AstKind::DeclMethod) {
             MethodDecl& method_decl = decl->method_decl;
             // Skip trait method declarations (struct_name is a trait)
-            if (m_trait_types.find(method_decl.struct_name) != m_trait_types.end() && method_decl.trait_name.empty()) {
+            if (m_type_env.trait_type_by_name(method_decl.struct_name) && method_decl.trait_name.empty()) {
                 continue;
             }
-            auto it = m_named_types.find(method_decl.struct_name);
-            if (it != m_named_types.end()) {
-                analyze_method_body(decl, it->second);
+            Type* method_struct = m_type_env.named_type_by_name(method_decl.struct_name);
+            if (method_struct) {
+                analyze_method_body(decl, method_struct);
             }
         }
     }
@@ -663,24 +671,23 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
     for (Decl* decl : m_synthetic_decls) {
         if (decl && decl->kind == AstKind::DeclMethod) {
             MethodDecl& method_decl = decl->method_decl;
-            auto it = m_named_types.find(method_decl.struct_name);
-            if (it != m_named_types.end()) {
-                analyze_method_body(decl, it->second);
+            Type* synth_struct = m_type_env.named_type_by_name(method_decl.struct_name);
+            if (synth_struct) {
+                analyze_method_body(decl, synth_struct);
             }
         }
     }
 
     // Process pending generic instances (worklist loop)
-    while (m_generics.has_pending_structs() || m_generics.has_pending_funs()) {
+    while (m_type_env.generics().has_pending_structs() || m_type_env.generics().has_pending_funs()) {
         if (too_many_errors()) return;
 
         // Process pending struct instances first (they create types that functions may use)
-        if (m_generics.has_pending_structs()) {
-            auto pending_structs = m_generics.take_pending_structs();
+        if (m_type_env.generics().has_pending_structs()) {
+            auto pending_structs = m_type_env.generics().take_pending_structs();
             for (auto* inst : pending_structs) {
                 // Register the concrete struct type
-                m_named_types[inst->mangled_name] = inst->concrete_type;
-                m_types.register_named_type(inst->mangled_name, inst->concrete_type);
+                m_type_env.register_named_type(inst->mangled_name, inst->concrete_type);
 
                 // Resolve members (fields, slot layout) — mirrors resolve_type_members logic
                 StructDecl& struct_decl = inst->instantiated_decl->struct_decl;
@@ -719,8 +726,8 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
         }
 
         // Process pending function instances
-        if (m_generics.has_pending_funs()) {
-            auto pending_funs = m_generics.take_pending_funs();
+        if (m_type_env.generics().has_pending_funs()) {
+            auto pending_funs = m_type_env.generics().take_pending_funs();
             for (auto* inst : pending_funs) {
                 analyze_fun_decl(inst->instantiated_decl);
                 inst->is_analyzed = true;
@@ -734,8 +741,7 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
 void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst) {
     if (inst->is_analyzed) return;
 
-    m_named_types[inst->mangled_name] = inst->concrete_type;
-    m_types.register_named_type(inst->mangled_name, inst->concrete_type);
+    m_type_env.register_named_type(inst->mangled_name, inst->concrete_type);
 
     StructDecl& struct_decl = inst->instantiated_decl->struct_decl;
     StructTypeInfo& struct_type_info = inst->concrete_type->struct_info;
@@ -800,7 +806,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
 
         // Check for generic struct instantiation: Box<i32>
         if (!base_type && type_expr->type_args.size() > 0 &&
-            m_generics.is_generic_struct(type_expr->name)) {
+            m_type_env.generics().is_generic_struct(type_expr->name)) {
             // Resolve type args to concrete types
             Vector<Type*> type_arg_types;
             for (auto* type_arg : type_expr->type_args) {
@@ -810,7 +816,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             }
 
             // Validate arg count
-            Decl* template_decl = m_generics.get_generic_struct_decl(type_expr->name);
+            Decl* template_decl = m_type_env.generics().get_generic_struct_decl(type_expr->name);
             if (template_decl->struct_decl.type_params.size() != type_arg_types.size()) {
                 error_fmt(type_expr->loc, "generic struct '{}' expects {} type arguments but got {}",
                          type_expr->name,
@@ -821,8 +827,8 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
 
             // Instantiate the generic struct
             Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
-            StringView mangled = m_generics.instantiate_struct(type_expr->name, type_args);
-            GenericStructInstance* inst = m_generics.find_struct_instance(mangled);
+            StringView mangled = m_type_env.generics().instantiate_struct(type_expr->name, type_args);
+            GenericStructInstance* inst = m_type_env.generics().find_struct_instance(mangled);
             base_type = inst->concrete_type;
 
             // Update the TypeExpr to use the mangled name so the IR builder can find it
@@ -839,10 +845,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
         }
 
         if (!base_type) {
-            auto it = m_named_types.find(type_expr->name);
-            if (it != m_named_types.end()) {
-                base_type = it->second;
-            }
+            base_type = m_type_env.named_type_by_name(type_expr->name);
         }
 
         if (!base_type) {
@@ -1044,14 +1047,13 @@ void SemanticAnalyzer::analyze_constructor_decl(Decl* decl) {
     ConstructorDecl& constructor_decl = decl->constructor_decl;
 
     // Look up the struct type
-    auto it = m_named_types.find(constructor_decl.struct_name);
-    if (it == m_named_types.end()) {
+    Type* struct_type = m_type_env.named_type_by_name(constructor_decl.struct_name);
+    if (!struct_type) {
         error_fmt(decl->loc, "constructor for unknown struct '{}'",
                  constructor_decl.struct_name);
         return;
     }
 
-    Type* struct_type = it->second;
     if (struct_type->kind != TypeKind::Struct) {
         error_fmt(decl->loc, "'{}' is not a struct type",
                  constructor_decl.struct_name);
@@ -1100,14 +1102,13 @@ void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
     DestructorDecl& destructor_decl = decl->destructor_decl;
 
     // Look up the struct type
-    auto it = m_named_types.find(destructor_decl.struct_name);
-    if (it == m_named_types.end()) {
+    Type* struct_type = m_type_env.named_type_by_name(destructor_decl.struct_name);
+    if (!struct_type) {
         error_fmt(decl->loc, "destructor for unknown struct '{}'",
                  destructor_decl.struct_name);
         return;
     }
 
-    Type* struct_type = it->second;
     if (struct_type->kind != TypeKind::Struct) {
         error_fmt(decl->loc, "'{}' is not a struct type",
                  destructor_decl.struct_name);
@@ -1156,14 +1157,13 @@ void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
     MethodDecl& method_decl = decl->method_decl;
 
     // Look up the struct type
-    auto it = m_named_types.find(method_decl.struct_name);
-    if (it == m_named_types.end()) {
+    Type* struct_type = m_type_env.named_type_by_name(method_decl.struct_name);
+    if (!struct_type) {
         error_fmt(decl->loc, "method for unknown struct '{}'",
                  method_decl.struct_name);
         return;
     }
 
-    Type* struct_type = it->second;
     if (struct_type->kind != TypeKind::Struct) {
         error_fmt(decl->loc, "'{}' is not a struct type",
                  method_decl.struct_name);
@@ -1842,17 +1842,17 @@ void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type
         subst.concrete_types = m_allocator.alloc_span(concrete_types);
 
         // Clone body with type substitution
-        synth->method_decl.body = m_generics.clone_stmt(trait_md.body, subst);
+        synth->method_decl.body = m_type_env.generics().clone_stmt(trait_md.body, subst);
 
         // Clone params with type-expr substitution
         Vector<Param> cloned_params;
         for (const auto& param : trait_md.params) {
             Param p = param;
-            p.type = m_generics.substitute_type_expr(param.type, subst);
+            p.type = m_type_env.generics().substitute_type_expr(param.type, subst);
             cloned_params.push_back(p);
         }
         synth->method_decl.params = m_allocator.alloc_span(cloned_params);
-        synth->method_decl.return_type = m_generics.substitute_type_expr(trait_md.return_type, subst);
+        synth->method_decl.return_type = m_type_env.generics().substitute_type_expr(trait_md.return_type, subst);
     }
 
     // Resolve concrete param types (Self -> struct_type, TypeParam -> concrete type)
@@ -2307,7 +2307,7 @@ Type* SemanticAnalyzer::analyze_string_interp_expr(Expr* expr) {
             continue;
         }
         // Uniform trait check for ALL types (primitives and structs)
-        if (!m_types.implements_trait(etype, m_printable_type)) {
+        if (!m_types.implements_trait(etype, m_type_env.printable_type())) {
             error_fmt(expression->loc,
                      "type '%s' does not implement Printable (no to_string method)",
                      type_kind_to_string(etype->kind));
@@ -2501,7 +2501,7 @@ bool SemanticAnalyzer::unify_type_expr(TypeExpr* pattern, Type* concrete,
 
     // Generic struct pattern: e.g., Box<T> against Box$i32
     if (pattern->type_args.size() > 0 && concrete->is_struct()) {
-        GenericStructInstance* inst = m_generics.find_struct_instance_by_type(concrete);
+        GenericStructInstance* inst = m_type_env.generics().find_struct_instance_by_type(concrete);
         if (inst) {
             // Verify original template name matches
             Decl* original = inst->original_decl;
@@ -2526,12 +2526,8 @@ bool SemanticAnalyzer::unify_type_expr(TypeExpr* pattern, Type* concrete,
     // Concrete name match (primitives, structs, enums)
     if (pattern->type_args.size() == 0) {
         // Resolve the pattern name to a type and compare
-        Type* pattern_type = m_types.type_by_name(pattern->name);
+        Type* pattern_type = m_type_env.type_by_name(pattern->name);
         if (pattern_type && pattern_type == concrete) return true;
-
-        // Also check named types from the analyzer's scope
-        auto it = m_named_types.find(pattern->name);
-        if (it != m_named_types.end() && it->second == concrete) return true;
 
         return false;
     }
@@ -2607,7 +2603,7 @@ InferredTypeArgs SemanticAnalyzer::infer_type_args_from_fields(
 }
 
 Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, StringView func_name) {
-    Decl* template_decl = m_generics.get_generic_fun_decl(func_name);
+    Decl* template_decl = m_type_env.generics().get_generic_fun_decl(func_name);
     FunDecl& template_fun_decl = template_decl->fun_decl;
 
     // Validate type arg count
@@ -2627,11 +2623,11 @@ Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, Strin
 
     // Instantiate the generic function
     Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
-    StringView mangled = m_generics.instantiate_fun(func_name, type_args);
+    StringView mangled = m_type_env.generics().instantiate_fun(func_name, type_args);
     ce.mangled_name = mangled;
 
     // Use the instantiated function's substituted types for type checking
-    GenericFunInstance* inst = m_generics.find_fun_instance(mangled);
+    GenericFunInstance* inst = m_type_env.generics().find_fun_instance(mangled);
     FunDecl& inst_fun_decl = inst->instantiated_decl->fun_decl;
 
     // Resolve parameter types and type-check arguments
@@ -2743,8 +2739,8 @@ Type* SemanticAnalyzer::analyze_generic_struct_constructor_call(Expr* expr, Call
 
     // Instantiate the struct
     Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
-    StringView mangled = m_generics.instantiate_struct(func_name, type_args);
-    GenericStructInstance* inst = m_generics.find_struct_instance(mangled);
+    StringView mangled = m_type_env.generics().instantiate_struct(func_name, type_args);
+    GenericStructInstance* inst = m_type_env.generics().find_struct_instance(mangled);
     Type* struct_type = inst->concrete_type;
 
     ce.mangled_name = mangled;
@@ -2973,13 +2969,13 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
     if (call_expr.type_args.size() > 0 && call_expr.callee->kind == AstKind::ExprIdentifier) {
         StringView func_name = call_expr.callee->identifier.name;
 
-        if (m_generics.is_generic_fun(func_name)) {
+        if (m_type_env.generics().is_generic_fun(func_name)) {
             return analyze_generic_fun_call(expr, call_expr, func_name);
         }
         if (func_name == "List") {
             return analyze_list_constructor_call(expr, call_expr);
         }
-        if (m_generics.is_generic_struct(func_name)) {
+        if (m_type_env.generics().is_generic_struct(func_name)) {
             return analyze_generic_struct_constructor_call(expr, call_expr, func_name);
         }
     }
@@ -2987,8 +2983,8 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
     // Generic function call WITHOUT explicit type args — attempt inference
     if (call_expr.type_args.size() == 0 && call_expr.callee->kind == AstKind::ExprIdentifier) {
         StringView func_name = call_expr.callee->identifier.name;
-        if (m_generics.is_generic_fun(func_name)) {
-            Decl* template_decl = m_generics.get_generic_fun_decl(func_name);
+        if (m_type_env.generics().is_generic_fun(func_name)) {
+            Decl* template_decl = m_type_env.generics().get_generic_fun_decl(func_name);
             FunDecl& template_fun_decl = template_decl->fun_decl;
 
             auto inferred = infer_type_args_from_call(
@@ -2997,11 +2993,11 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
 
             if (inferred.success) {
                 Span<Type*> type_args = m_allocator.alloc_span(inferred.type_args);
-                StringView mangled = m_generics.instantiate_fun(func_name, type_args);
+                StringView mangled = m_type_env.generics().instantiate_fun(func_name, type_args);
                 call_expr.mangled_name = mangled;
 
                 // Type-check arguments against instantiated function
-                GenericFunInstance* inst = m_generics.find_fun_instance(mangled);
+                GenericFunInstance* inst = m_type_env.generics().find_fun_instance(mangled);
                 FunDecl& inst_fun_decl = inst->instantiated_decl->fun_decl;
 
                 if (call_expr.arguments.size() != inst_fun_decl.params.size()) {
@@ -3040,11 +3036,10 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
     // Constructor call: Type(args)
     if (call_expr.callee->kind == AstKind::ExprIdentifier) {
         StringView type_name = call_expr.callee->identifier.name;
-        auto it = m_named_types.find(type_name);
-        if (it != m_named_types.end() && it->second->is_struct()) {
-            Type* struct_type = it->second;
-            call_expr.callee->resolved_type = struct_type;
-            return analyze_constructor_call(expr, struct_type, call_expr.constructor_name, call_expr.is_heap);
+        Type* ctor_type = m_type_env.named_type_by_name(type_name);
+        if (ctor_type && ctor_type->is_struct()) {
+            call_expr.callee->resolved_type = ctor_type;
+            return analyze_constructor_call(expr, ctor_type, call_expr.constructor_name, call_expr.is_heap);
         }
     }
 
@@ -3053,12 +3048,11 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         GetExpr& get_expr = call_expr.callee->get;
         if (get_expr.object->kind == AstKind::ExprIdentifier) {
             StringView type_name = get_expr.object->identifier.name;
-            auto it = m_named_types.find(type_name);
-            if (it != m_named_types.end() && it->second->is_struct()) {
-                Type* struct_type = it->second;
-                get_expr.object->resolved_type = struct_type;
+            Type* named_ctor_type = m_type_env.named_type_by_name(type_name);
+            if (named_ctor_type && named_ctor_type->is_struct()) {
+                get_expr.object->resolved_type = named_ctor_type;
                 call_expr.constructor_name = get_expr.name;
-                return analyze_constructor_call(expr, struct_type, get_expr.name, call_expr.is_heap);
+                return analyze_constructor_call(expr, named_ctor_type, get_expr.name, call_expr.is_heap);
             }
         }
     }
@@ -3370,13 +3364,11 @@ Type* SemanticAnalyzer::analyze_static_get_expr(Expr* expr) {
     StaticGetExpr& sge = expr->static_get;
 
     // Look up the type
-    auto it = m_named_types.find(sge.type_name);
-    if (it == m_named_types.end()) {
+    Type* type = m_type_env.named_type_by_name(sge.type_name);
+    if (!type) {
         error_fmt(expr->loc, "unknown type '{}'", sge.type_name);
         return m_types.error_type();
     }
-
-    Type* type = it->second;
 
     if (type->is_enum()) {
         // Look up enum variant
@@ -3486,7 +3478,7 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
     Type* type = nullptr;
 
     // Check for generic struct literal: Box<i32> { value = 42 }
-    if (sl.type_args.size() > 0 && m_generics.is_generic_struct(sl.type_name)) {
+    if (sl.type_args.size() > 0 && m_type_env.generics().is_generic_struct(sl.type_name)) {
         // Resolve type args
         Vector<Type*> type_arg_types;
         for (auto* type_arg : sl.type_args) {
@@ -3496,8 +3488,8 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
         }
 
         Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
-        StringView mangled = m_generics.instantiate_struct(sl.type_name, type_args);
-        GenericStructInstance* inst = m_generics.find_struct_instance(mangled);
+        StringView mangled = m_type_env.generics().instantiate_struct(sl.type_name, type_args);
+        GenericStructInstance* inst = m_type_env.generics().find_struct_instance(mangled);
         resolve_generic_struct_fields(inst);
         type = inst->concrete_type;
         sl.mangled_name = mangled;
@@ -3505,8 +3497,8 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
     }
 
     // Generic struct literal WITHOUT type args — attempt inference
-    if (!type && sl.type_args.size() == 0 && m_generics.is_generic_struct(sl.type_name)) {
-        Decl* template_decl = m_generics.get_generic_struct_decl(sl.type_name);
+    if (!type && sl.type_args.size() == 0 && m_type_env.generics().is_generic_struct(sl.type_name)) {
+        Decl* template_decl = m_type_env.generics().get_generic_struct_decl(sl.type_name);
         StructDecl& template_struct_decl = template_decl->struct_decl;
 
         auto inferred = infer_type_args_from_fields(
@@ -3515,8 +3507,8 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
 
         if (inferred.success) {
             Span<Type*> type_args = m_allocator.alloc_span(inferred.type_args);
-            StringView mangled = m_generics.instantiate_struct(sl.type_name, type_args);
-            GenericStructInstance* inst = m_generics.find_struct_instance(mangled);
+            StringView mangled = m_type_env.generics().instantiate_struct(sl.type_name, type_args);
+            GenericStructInstance* inst = m_type_env.generics().find_struct_instance(mangled);
             resolve_generic_struct_fields(inst);
             type = inst->concrete_type;
             sl.mangled_name = mangled;
@@ -3531,12 +3523,11 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
 
     if (!type) {
         // Look up struct type
-        auto it = m_named_types.find(sl.type_name);
-        if (it == m_named_types.end()) {
+        type = m_type_env.named_type_by_name(sl.type_name);
+        if (!type) {
             error_fmt(expr->loc, "unknown struct type '{}'", sl.type_name);
             return m_types.error_type();
         }
-        type = it->second;
     }
     if (!type->is_struct()) {
         error_fmt(expr->loc, "'{}' is not a struct type", sl.type_name);

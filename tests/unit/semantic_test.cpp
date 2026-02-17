@@ -4,6 +4,7 @@
 #include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/parser.hpp"
 #include "roxy/compiler/semantic.hpp"
+#include "roxy/compiler/type_env.hpp"
 #include "roxy/compiler/module_registry.hpp"
 #include "roxy/vm/natives.hpp"
 #include "roxy/vm/binding/registry.hpp"
@@ -15,7 +16,7 @@ using namespace rx;
 // Helper to parse and analyze source code
 struct SemanticTestHelper {
     BumpAllocator allocator{4096};
-    TypeCache* types = nullptr;
+    TypeEnv* type_env = nullptr;
     ModuleRegistry* modules = nullptr;
     NativeRegistry* natives = nullptr;
     SemanticAnalyzer* analyzer = nullptr;
@@ -34,13 +35,13 @@ struct SemanticTestHelper {
             return false;
         }
 
-        types = allocator.emplace<TypeCache>(allocator);
+        type_env = allocator.emplace<TypeEnv>(allocator);
         modules = allocator.emplace<ModuleRegistry>(allocator);
-        natives = allocator.emplace<NativeRegistry>(allocator, *types);
+        natives = allocator.emplace<NativeRegistry>(allocator, type_env->types());
         register_builtin_natives(*natives);
-        modules->register_native_module(BUILTIN_MODULE_NAME, natives, *types);
+        modules->register_native_module(BUILTIN_MODULE_NAME, natives, type_env->types());
 
-        analyzer = allocator.emplace<SemanticAnalyzer>(allocator, *types, *modules);
+        analyzer = allocator.emplace<SemanticAnalyzer>(allocator, *type_env, *modules);
         analyze_ok = analyzer->analyze(program);
         return analyze_ok;
     }

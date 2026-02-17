@@ -15,19 +15,19 @@ namespace rx {
 
 Compiler::Compiler(BumpAllocator& allocator)
     : m_allocator(allocator)
-    , m_types(allocator)
+    , m_type_env(allocator)
     , m_module_registry(allocator)
-    , m_builtin_registry(new NativeRegistry(allocator, m_types))
+    , m_builtin_registry(new NativeRegistry(allocator, m_type_env.types()))
 {
     // Register built-in natives and add as "builtin" module (auto-imported as prelude)
     register_builtin_natives(*m_builtin_registry);
-    m_module_registry.register_native_module(BUILTIN_MODULE_NAME, m_builtin_registry.get(), m_types);
+    m_module_registry.register_native_module(BUILTIN_MODULE_NAME, m_builtin_registry.get(), m_type_env.types());
     m_native_registries.push_back({BUILTIN_MODULE_NAME, m_builtin_registry.get()});
 }
 
 void Compiler::add_native_registry(StringView module_name, NativeRegistry* registry) {
     m_native_registries.push_back({module_name, registry});
-    m_module_registry.register_native_module(module_name, registry, m_types);
+    m_module_registry.register_native_module(module_name, registry, m_type_env.types());
 }
 
 void Compiler::add_source(StringView module_name, const char* source, u32 length) {
@@ -43,17 +43,13 @@ void Compiler::add_source(StringView module_name, const char* source, u32 length
 
 BCModule* Compiler::compile() {
     // Build combined registry with all native functions from all registries
-    m_combined_registry = make_unique<NativeRegistry>(m_allocator, m_types);
+    m_combined_registry = make_unique<NativeRegistry>(m_allocator, m_type_env.types());
     for (const auto& [name, registry] : m_native_registries) {
         registry->copy_entries_to(*m_combined_registry);
     }
 
     // Initialize per-module state
     m_module_states.resize(m_sources.size());
-    for (auto& state : m_module_states) {
-        state.program = nullptr;
-        state.ir_module = nullptr;
-    }
 
     // Phase 1: Parse all modules
     if (!parse_all()) {
@@ -176,15 +172,26 @@ bool Compiler::analyze_all() {
         // Set module name on program for visibility checking
         program->module_name = src.name;
 
-        // Use the shared TypeCache for type consistency
-        SemanticAnalyzer analyzer(m_allocator, m_types, m_module_registry);
+        // Allocate an external SymbolTable that persists after analyzer scope
+        auto* symbols = new SymbolTable(m_allocator);
+
+        // Use the shared TypeEnv for type consistency, with external symbol table
+        SemanticAnalyzer analyzer(m_allocator, m_type_env, m_module_registry, *symbols);
 
         if (!analyzer.analyze(program)) {
             for (const auto& err : analyzer.errors()) {
                 add_error_fmt("Semantic error in module '{}' at line {}: {}",
                              src.name, err.loc.line, err.message);
             }
+            delete symbols;
             return false;
+        }
+
+        // Persist symbols and synthetic decls for build_ir_all()
+        m_module_states[idx].symbols = symbols;
+        const auto& syn_vec = analyzer.synthetic_decls();
+        for (auto* d : syn_vec) {
+            m_module_states[idx].synthetic_decls.push_back(d);
         }
 
         // After analysis, register this module's exports
@@ -195,7 +202,7 @@ bool Compiler::analyze_all() {
             for (auto* decl : program->declarations) {
                 if (decl && decl->kind == AstKind::DeclFun && decl->fun_decl.is_pub) {
                     // Look up the function in the symbol table to get its type
-                    Symbol* sym = analyzer.symbols().lookup(decl->fun_decl.name);
+                    Symbol* sym = symbols->lookup(decl->fun_decl.name);
                     Type* func_type = sym ? sym->type : nullptr;
 
                     ModuleExport exp;
@@ -216,19 +223,15 @@ bool Compiler::analyze_all() {
 }
 
 bool Compiler::build_ir_all() {
-    // Build IR in topological order
+    // Build IR in topological order — no re-analysis needed,
+    // symbols and synthetic_decls were persisted during analyze_all()
     for (u32 idx : m_compile_order) {
         const SourceModule& src = m_sources[idx];
         Program* program = m_module_states[idx].program;
+        SymbolTable& symbols = *m_module_states[idx].symbols;
 
-        // We need a symbol table for IR building
-        // For now, create a fresh semantic analyzer to get the symbols
-        // Note: program->module_name was already set during semantic analysis pass
-        SemanticAnalyzer analyzer(m_allocator, m_types, m_module_registry);
-        analyzer.analyze(program); // Re-analyze to populate symbols
-
-        // Capture synthetic declarations (e.g., injected default trait methods)
-        const auto& syn_vec = analyzer.synthetic_decls();
+        // Build synthetic_decls span from persisted vector
+        auto& syn_vec = m_module_states[idx].synthetic_decls;
         Span<Decl*> synthetic_decls;
         if (!syn_vec.empty()) {
             Decl** data = reinterpret_cast<Decl**>(m_allocator.alloc_bytes(
@@ -240,8 +243,8 @@ bool Compiler::build_ir_all() {
         }
 
         // Use combined registry with all native functions
-        IRBuilder ir_builder(m_allocator, m_types, *m_combined_registry, analyzer.symbols(), m_module_registry);
-        IRModule* ir_module = ir_builder.build(program, synthetic_decls, &analyzer.generics());
+        IRBuilder ir_builder(m_allocator, m_type_env, *m_combined_registry, symbols, m_module_registry);
+        IRModule* ir_module = ir_builder.build(program, synthetic_decls);
 
         if (!ir_module) {
             add_error_fmt("IR generation failed for module '{}'",

@@ -5,6 +5,7 @@
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/compiler/ast.hpp"
 #include "roxy/compiler/ssa_ir.hpp"
+#include "roxy/compiler/type_env.hpp"
 #include "roxy/compiler/types.hpp"
 #include "roxy/compiler/symbol_table.hpp"
 
@@ -15,18 +16,16 @@ namespace rx {
 // Forward declarations
 class NativeRegistry;
 class ModuleRegistry;
-class GenericInstantiator;
 
 // IRBuilder generates SSA IR from a type-checked AST
 // Assumes semantic analysis has already been performed and expr->resolved_type is set
 class IRBuilder {
 public:
-    IRBuilder(BumpAllocator& allocator, TypeCache& types, NativeRegistry& registry,
+    IRBuilder(BumpAllocator& allocator, TypeEnv& type_env, NativeRegistry& registry,
               SymbolTable& symbols, ModuleRegistry& module_registry);
 
     // Build IR module from a program
-    IRModule* build(Program* program, Span<Decl*> synthetic_decls = {},
-                    GenericInstantiator* generics = nullptr);
+    IRModule* build(Program* program, Span<Decl*> synthetic_decls = {});
 
     // Build IR for a single function
     IRFunction* build_function(FunDecl* decl);
@@ -150,7 +149,8 @@ private:
     void end_function_body();
 
     BumpAllocator& m_allocator;
-    TypeCache& m_types;
+    TypeEnv& m_type_env;
+    TypeCache& m_types;  // Cached ref to m_type_env.types()
     NativeRegistry& m_registry;
     SymbolTable& m_symbols;
     ModuleRegistry& m_module_registry;

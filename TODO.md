@@ -111,9 +111,8 @@ Last updated: 2026-02-16
   - Issue: Type parameters are unconstrained — errors in generic function bodies are only caught at monomorphization time (C++ template style), not at declaration time
   - Fix: Add trait bounds on type parameters; check generic bodies against bounds before instantiation
 
-- [ ] **Unified type environment abstraction**
-  - Issue: Type environment concerns are scattered across `TypeCache` (type creation/interning), `SymbolTable` (scoped bindings), and `SemanticAnalyzer` (named types, traits, generics) — no single place to reason about the full type environment
-  - Fix: Extract a `TypeEnv` that wraps all three
+- [x] **Unified type environment abstraction**
+  - Fixed: Introduced `TypeEnv` class consolidating `TypeCache`, `GenericInstantiator`, named/trait type registries, and `Printable` type pointer. Eliminated dual registration of named types and redundant re-analysis in `Compiler::build_ir_all()`.
 
 ### Dead Code Cleanup
 
