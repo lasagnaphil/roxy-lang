@@ -53,13 +53,14 @@ template<> struct RoxyType<i32> {
 ### Function Binder
 
 ```cpp
-// Automatically generates native wrapper for any C++ function
+// Automatically generates native wrapper for any C++ function.
+// The C++ function must take RoxyVM* as its first parameter.
 template<auto FnPtr>
 struct FunctionBinder {
     static void invoke(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         u64* regs = vm->call_stack.back().registers;
-        // Extract args from registers, call function, store result
-        auto result = call_with_args(FnPtr, regs, first_arg);
+        // Pass vm as first arg, extract remaining args from registers, store result
+        auto result = FnPtr(vm, RoxyType<Arg1>::from_reg(regs[first_arg]), ...);
         regs[dst] = RoxyType<decltype(result)>::to_reg(result);
     }
     static NativeFunction get() { return &invoke; }
@@ -116,9 +117,9 @@ public:
 ## Usage Example
 
 ```cpp
-// Simple C++ functions
-i32 my_add(i32 a, i32 b) { return a + b; }
-f64 my_sqrt(f64 x) { return std::sqrt(x); }
+// Simple C++ functions (all take RoxyVM* as first parameter)
+i32 my_add(RoxyVM* vm, i32 a, i32 b) { return a + b; }
+f64 my_sqrt(RoxyVM* vm, f64 x) { return std::sqrt(x); }
 
 // Setup
 BumpAllocator allocator(8192);
@@ -217,14 +218,14 @@ Native structs have `decl = nullptr` (no AST node) since they are defined from C
 
 ### Auto-Binding Methods
 
-Write a free C++ function where the first parameter is a pointer to the struct:
+Write a free C++ function where the first parameter is `RoxyVM*` and the second is a pointer to the struct:
 
 ```cpp
 struct CppPoint { i32 x, y; };
 
-i32 point_sum(CppPoint* self) { return self->x + self->y; }
-i32 point_scaled(CppPoint* self, i32 scale) { return (self->x + self->y) * scale; }
-bool point_is_origin(CppPoint* self) { return self->x == 0 && self->y == 0; }
+i32 point_sum(RoxyVM* vm, CppPoint* self) { return self->x + self->y; }
+i32 point_scaled(RoxyVM* vm, CppPoint* self, i32 scale) { return (self->x + self->y) * scale; }
+bool point_is_origin(RoxyVM* vm, CppPoint* self) { return self->x == 0 && self->y == 0; }
 ```
 
 Then bind with `bind_method<FnPtr>`:
@@ -235,7 +236,7 @@ registry.bind_method<point_scaled>("Point", "scaled");
 registry.bind_method<point_is_origin>("Point", "is_origin");
 ```
 
-The `RoxyType<T*>` specialization handles pointer extraction from registers automatically. The self parameter is excluded from the Roxy-visible parameter count — `point_scaled` appears as a 1-parameter method in Roxy:
+The `RoxyVM*` parameter is provided automatically by the binding system. The `RoxyType<T*>` specialization handles pointer extraction from registers automatically. Both `RoxyVM*` and the self parameter are excluded from the Roxy-visible parameter count — `point_scaled` appears as a 1-parameter method in Roxy:
 
 ```roxy
 fun test(): i32 {
@@ -297,7 +298,7 @@ v3 = call_native "Point$$sum" [v2]   // v2 = pointer to p
 ```cpp
 // C++ side
 struct CppPoint { i32 x, y; };
-i32 point_sum(CppPoint* self) { return self->x + self->y; }
+i32 point_sum(RoxyVM* vm, CppPoint* self) { return self->x + self->y; }
 
 BumpAllocator allocator(8192);
 TypeCache types(allocator);
@@ -398,6 +399,52 @@ The runtime native functions are type-erased (all Roxy Values are 64-bit), so a 
 ## Semantic Integration
 
 Built-in functions are registered during semantic analysis initialization. The IR builder detects calls to these functions and emits `CallNative` IR instead of regular `Call` IR.
+
+## RoxyList<T> — List Interop
+
+`RoxyList<T>` is a thin non-owning typed wrapper around a Roxy list data pointer. It allows C++ bound functions to read, modify, and create lists.
+
+### Usage in Bound Functions
+
+```cpp
+// C++ function that reads a list created by Roxy
+i32 list_sum(RoxyVM* vm, RoxyList<i32> list) {
+    i32 total = 0;
+    for (u32 i = 0; i < list.len(); i++) {
+        total += list.get(static_cast<i64>(i));
+    }
+    return total;
+}
+
+// C++ function that modifies a list
+void list_push_42(RoxyVM* vm, RoxyList<i32> list) {
+    list.push(42);
+}
+
+// Register
+registry.bind<list_sum>("list_sum");
+registry.bind<list_push_42>("list_push_42");
+```
+
+### API
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `alloc` | `static RoxyList<T> alloc(RoxyVM*, u32 cap)` | Factory: allocate a new list |
+| `get` | `T get(i64 index) const` | Bounds-checked element access |
+| `set` | `void set(i64 index, T value)` | Bounds-checked element write |
+| `push` | `void push(T value)` | Append element (grows if needed) |
+| `pop` | `T pop()` | Remove and return last element |
+| `len` | `u32 len() const` | Current length |
+| `cap` | `u32 cap() const` | Current capacity |
+| `is_valid` | `bool is_valid() const` | Check for null data pointer |
+| `data` | `void* data() const` | Raw list data pointer |
+
+### RoxyType Specialization
+
+The `RoxyType<RoxyList<T>>` specialization enables automatic type resolution:
+- `get(tc)` returns `tc.list_type(RoxyType<T>::get(tc))` — resolves to `List<i32>`, `List<f64>`, etc.
+- `from_reg(u64)` / `to_reg(RoxyList<T>)` handle register ↔ wrapper conversion
 
 ## Roxy-Native C++ Containers
 

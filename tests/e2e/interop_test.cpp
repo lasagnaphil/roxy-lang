@@ -23,26 +23,26 @@ using namespace rx;
 // Simple C++ functions to bind
 // ============================================================================
 
-// Simple integer functions
-i32 my_add(i32 a, i32 b) { return a + b; }
-i32 my_multiply(i32 a, i32 b) { return a * b; }
-i32 my_abs(i32 x) { return x < 0 ? -x : x; }
-i32 my_negate(i32 x) { return -x; }
-i32 my_square(i32 x) { return x * x; }
+// Simple integer functions (all take RoxyVM* as first parameter)
+i32 my_add(RoxyVM* vm, i32 a, i32 b) { (void)vm; return a + b; }
+i32 my_multiply(RoxyVM* vm, i32 a, i32 b) { (void)vm; return a * b; }
+i32 my_abs(RoxyVM* vm, i32 x) { (void)vm; return x < 0 ? -x : x; }
+i32 my_negate(RoxyVM* vm, i32 x) { (void)vm; return -x; }
+i32 my_square(RoxyVM* vm, i32 x) { (void)vm; return x * x; }
 
 // Boolean functions
-bool my_is_positive(i32 x) { return x > 0; }
-bool my_is_even(i32 x) { return x % 2 == 0; }
-bool my_and(bool a, bool b) { return a && b; }
-bool my_not(bool b) { return !b; }
+bool my_is_positive(RoxyVM* vm, i32 x) { (void)vm; return x > 0; }
+bool my_is_even(RoxyVM* vm, i32 x) { (void)vm; return x % 2 == 0; }
+bool my_and(RoxyVM* vm, bool a, bool b) { (void)vm; return a && b; }
+bool my_not(RoxyVM* vm, bool b) { (void)vm; return !b; }
 
 // Float functions
-f64 my_sqrt(f64 x) { return std::sqrt(x); }
-f64 my_add_f(f64 a, f64 b) { return a + b; }
-f64 my_floor(f64 x) { return std::floor(x); }
+f64 my_sqrt(RoxyVM* vm, f64 x) { (void)vm; return std::sqrt(x); }
+f64 my_add_f(RoxyVM* vm, f64 a, f64 b) { (void)vm; return a + b; }
+f64 my_floor(RoxyVM* vm, f64 x) { (void)vm; return std::floor(x); }
 
 // Void function
-void my_void_func(i32 x) { (void)x; }
+void my_void_func(RoxyVM* vm, i32 x) { (void)vm; (void)x; }
 
 // ============================================================================
 // Test Helpers
@@ -228,23 +228,26 @@ TEST_CASE("Interop - Type traits") {
 TEST_CASE("Interop - Function traits") {
     using Traits1 = FunctionTraits<decltype(&my_add)>;
     CHECK(std::is_same_v<Traits1::return_type, i32>);
-    CHECK(Traits1::arity == 2);
-    CHECK(std::is_same_v<Traits1::arg_type<0>, i32>);
+    CHECK(Traits1::arity == 3);  // RoxyVM* + 2 params
+    CHECK(std::is_same_v<Traits1::arg_type<0>, RoxyVM*>);
     CHECK(std::is_same_v<Traits1::arg_type<1>, i32>);
+    CHECK(std::is_same_v<Traits1::arg_type<2>, i32>);
 
     using Traits2 = FunctionTraits<decltype(&my_sqrt)>;
     CHECK(std::is_same_v<Traits2::return_type, f64>);
-    CHECK(Traits2::arity == 1);
-    CHECK(std::is_same_v<Traits2::arg_type<0>, f64>);
+    CHECK(Traits2::arity == 2);  // RoxyVM* + 1 param
+    CHECK(std::is_same_v<Traits2::arg_type<0>, RoxyVM*>);
+    CHECK(std::is_same_v<Traits2::arg_type<1>, f64>);
 
     using Traits3 = FunctionTraits<decltype(&my_is_positive)>;
     CHECK(std::is_same_v<Traits3::return_type, bool>);
-    CHECK(Traits3::arity == 1);
-    CHECK(std::is_same_v<Traits3::arg_type<0>, i32>);
+    CHECK(Traits3::arity == 2);  // RoxyVM* + 1 param
+    CHECK(std::is_same_v<Traits3::arg_type<0>, RoxyVM*>);
+    CHECK(std::is_same_v<Traits3::arg_type<1>, i32>);
 
     using Traits4 = FunctionTraits<decltype(&my_void_func)>;
     CHECK(std::is_same_v<Traits4::return_type, void>);
-    CHECK(Traits4::arity == 1);
+    CHECK(Traits4::arity == 2);  // RoxyVM* + 1 param
 }
 
 // ============================================================================
@@ -276,11 +279,12 @@ TEST_CASE("Interop - Registry basic") {
         const auto& entry = registry.get_entry(0);
         CHECK(entry.name == "add");
         CHECK(entry.param_count == 2);
-        CHECK(entry.is_manual == false);
-        CHECK(entry.return_desc.kind == NativeTypeKind::I32);
-        CHECK(entry.param_descs.size() == 2);
-        CHECK(entry.param_descs[0].kind == NativeTypeKind::I32);
-        CHECK(entry.param_descs[1].kind == NativeTypeKind::I32);
+        CHECK(entry.type_info_mode == NativeTypeInfoMode::Resolver);
+        // Resolver mode: types resolved via resolver functions
+        CHECK(entry.return_resolver(types) == types.i32_type());
+        CHECK(entry.param_resolvers.size() == 2);
+        CHECK(entry.param_resolvers[0](types) == types.i32_type());
+        CHECK(entry.param_resolvers[1](types) == types.i32_type());
     }
 }
 
@@ -619,12 +623,12 @@ TEST_CASE("Interop - Mixed bound and built-in functions") {
 // C++ struct to bind as a native struct
 struct CppPoint { i32 x, y; };
 
-// Free functions acting as methods (first param is self pointer)
-i32 point_sum(CppPoint* self) { return self->x + self->y; }
-i32 point_diff(CppPoint* self) { return self->x - self->y; }
-bool point_is_origin(CppPoint* self) { return self->x == 0 && self->y == 0; }
-i32 point_scaled_sum(CppPoint* self, i32 scale) { return (self->x + self->y) * scale; }
-i32 point_weighted(CppPoint* self, i32 wx, i32 wy) { return self->x * wx + self->y * wy; }
+// Free functions acting as methods (RoxyVM* first, self pointer second)
+i32 point_sum(RoxyVM* vm, CppPoint* self) { (void)vm; return self->x + self->y; }
+i32 point_diff(RoxyVM* vm, CppPoint* self) { (void)vm; return self->x - self->y; }
+bool point_is_origin(RoxyVM* vm, CppPoint* self) { (void)vm; return self->x == 0 && self->y == 0; }
+i32 point_scaled_sum(RoxyVM* vm, CppPoint* self, i32 scale) { (void)vm; return (self->x + self->y) * scale; }
+i32 point_weighted(RoxyVM* vm, CppPoint* self, i32 wx, i32 wy) { (void)vm; return self->x * wx + self->y * wy; }
 
 TEST_CASE("Interop - Native struct with auto-bound method") {
     BumpAllocator alloc(8192);
@@ -814,4 +818,86 @@ TEST_CASE("Interop - Native struct with free function") {
     Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
     CHECK(result.is_int());
     CHECK(result.as_int == 49);  // square(7) = 49
+}
+
+// ============================================================================
+// RoxyList<T> Interop Tests
+// ============================================================================
+
+// C++ function that reads a list created by Roxy
+i32 list_sum(RoxyVM* vm, RoxyList<i32> list) {
+    (void)vm;
+    i32 total = 0;
+    for (u32 i = 0; i < list.len(); i++) {
+        total += list.get(static_cast<i64>(i));
+    }
+    return total;
+}
+
+// C++ function that modifies a list
+void list_push_42(RoxyVM* vm, RoxyList<i32> list) {
+    (void)vm;
+    list.push(42);
+}
+
+// C++ function with list + primitive params
+i32 list_get_at(RoxyVM* vm, RoxyList<i32> list, i32 index) {
+    (void)vm;
+    return list.get(static_cast<i64>(index));
+}
+
+TEST_CASE("Interop - RoxyList: C++ reads list from Roxy") {
+    const char* source = R"(
+        fun test(): i32 {
+            var lst: List<i32> = List<i32>();
+            lst.push(10);
+            lst.push(20);
+            lst.push(30);
+            return list_sum(lst);
+        }
+    )";
+
+    Value result = compile_and_run_mixed(source, "test",
+        [](NativeRegistry& reg) {
+            reg.bind<list_sum>("list_sum");
+        });
+    CHECK(result.is_int());
+    CHECK(result.as_int == 60);  // 10 + 20 + 30
+}
+
+TEST_CASE("Interop - RoxyList: C++ modifies list") {
+    const char* source = R"(
+        fun test(): i32 {
+            var lst: List<i32> = List<i32>();
+            lst.push(1);
+            list_push_42(lst);
+            return lst[0] + lst[1];
+        }
+    )";
+
+    Value result = compile_and_run_mixed(source, "test",
+        [](NativeRegistry& reg) {
+            reg.bind<list_push_42>("list_push_42");
+        });
+    CHECK(result.is_int());
+    CHECK(result.as_int == 43);  // 1 + 42
+}
+
+TEST_CASE("Interop - RoxyList: C++ reads list with index param") {
+    const char* source = R"(
+        fun test(): i32 {
+            var lst: List<i32> = List<i32>();
+            lst.push(100);
+            lst.push(200);
+            lst.push(300);
+            return list_get_at(lst, 1);
+        }
+    )";
+
+    Value result = compile_and_run_mixed(source, "test",
+        [](NativeRegistry& reg) {
+            reg.bind<list_get_at>("list_get_at");
+        });
+    CHECK(result.is_int());
+    CHECK(result.as_int == 200);
 }

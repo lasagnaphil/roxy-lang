@@ -261,10 +261,10 @@ When analyzing `module.function()` expressions, the semantic analyzer:
 Native modules are C++ function registries exposed to Roxy:
 
 ```cpp
-// Create registry and bind functions
+// Create registry and bind functions (all take RoxyVM* as first parameter)
 NativeRegistry math_registry(allocator, types);
-math_registry.bind<math_sin>("sin");
-math_registry.bind<math_cos>("cos");
+math_registry.bind<math_sin>("sin");    // f64 math_sin(RoxyVM* vm, f64 x)
+math_registry.bind<math_cos>("cos");    // f64 math_cos(RoxyVM* vm, f64 x)
 
 // Register as a module
 ModuleRegistry modules(allocator);

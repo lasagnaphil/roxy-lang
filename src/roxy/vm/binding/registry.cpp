@@ -47,6 +47,37 @@ static Type* resolve_param_desc(const NativeParamDesc& desc, Span<Type*> type_ar
     return type_from_kind(desc.kind, types);
 }
 
+// NativeFunctionEntry type resolution methods
+
+Type* NativeFunctionEntry::resolve_return_type(TypeCache& types) const {
+    switch (type_info_mode) {
+        case NativeTypeInfoMode::Desc:
+            return type_from_kind(return_desc.kind, types);
+        case NativeTypeInfoMode::Direct:
+            return return_type;
+        case NativeTypeInfoMode::Resolver:
+            return return_resolver(types);
+        default:
+            return types.error_type();
+    }
+}
+
+void NativeFunctionEntry::resolve_param_types(TypeCache& types, Type** out_params) const {
+    for (u32 i = 0; i < param_count; i++) {
+        switch (type_info_mode) {
+            case NativeTypeInfoMode::Desc:
+                out_params[i] = type_from_kind(param_descs[i].kind, types);
+                break;
+            case NativeTypeInfoMode::Direct:
+                out_params[i] = param_types[i];
+                break;
+            case NativeTypeInfoMode::Resolver:
+                out_params[i] = param_resolvers[i](types);
+                break;
+        }
+    }
+}
+
 // NativeRegistry method implementations
 
 void NativeRegistry::bind_manual(const char* name, NativeFunction func,
@@ -58,7 +89,7 @@ void NativeRegistry::bind_manual(const char* name, NativeFunction func,
     entry.return_desc = concrete_param(NativeTypeKind::Void);  // Not used for manual
     entry.param_count = static_cast<u32>(param_types.size());
     entry.min_args = entry.param_count;
-    entry.is_manual = true;
+    entry.type_info_mode = NativeTypeInfoMode::Direct;
     entry.is_method = false;
     entry.method_kind = GenericMethodKind::Method;
 
@@ -80,7 +111,7 @@ void NativeRegistry::bind_native(const char* name, NativeFunction func,
     entry.return_desc = concrete_param(return_type_kind);
     entry.param_count = static_cast<u32>(param_type_kinds.size());
     entry.min_args = entry.param_count;
-    entry.is_manual = false;  // Use type kinds, not stored Type*
+    entry.type_info_mode = NativeTypeInfoMode::Desc;
     entry.is_method = false;
     entry.method_kind = GenericMethodKind::Method;
 
@@ -114,7 +145,7 @@ void NativeRegistry::bind_method_native(const char* struct_name, const char* met
     entry.return_desc = concrete_param(return_type_kind);
     entry.param_count = static_cast<u32>(param_type_kinds.size());
     entry.min_args = entry.param_count;
-    entry.is_manual = false;
+    entry.type_info_mode = NativeTypeInfoMode::Desc;
     entry.is_method = true;
     entry.method_kind = GenericMethodKind::Method;
 
@@ -138,7 +169,7 @@ void NativeRegistry::bind_method_manual(const char* struct_name, const char* met
     entry.return_desc = concrete_param(NativeTypeKind::Void);
     entry.param_count = static_cast<u32>(param_types.size());
     entry.min_args = entry.param_count;
-    entry.is_manual = true;
+    entry.type_info_mode = NativeTypeInfoMode::Direct;
     entry.is_method = true;
     entry.method_kind = GenericMethodKind::Method;
 
@@ -176,7 +207,7 @@ void NativeRegistry::bind_generic_method(const char* type_name, const char* meth
     ne.func = func;
     ne.param_count = static_cast<u32>(params.size());
     ne.min_args = ne.param_count;
-    ne.is_manual = false;
+    ne.type_info_mode = NativeTypeInfoMode::Desc;
     ne.is_method = true;
     ne.method_kind = GenericMethodKind::Method;
     ne.struct_name = sn;
@@ -201,7 +232,7 @@ void NativeRegistry::bind_generic_constructor(const char* type_name, NativeFunct
     ne.func = func;
     ne.param_count = static_cast<u32>(params.size());
     ne.min_args = min_args;
-    ne.is_manual = false;
+    ne.type_info_mode = NativeTypeInfoMode::Desc;
     ne.is_method = true;
     ne.method_kind = GenericMethodKind::Constructor;
     ne.struct_name = sn;
@@ -224,7 +255,7 @@ void NativeRegistry::bind_generic_destructor(const char* type_name, NativeFuncti
     ne.func = func;
     ne.param_count = 0;
     ne.min_args = 0;
-    ne.is_manual = false;
+    ne.type_info_mode = NativeTypeInfoMode::Desc;
     ne.is_method = true;
     ne.method_kind = GenericMethodKind::Destructor;
     ne.struct_name = sn;
@@ -406,21 +437,10 @@ void NativeRegistry::apply_methods_to_types(TypeEnv& type_env, BumpAllocator& al
             if (pc > 0) {
                 ptypes = reinterpret_cast<Type**>(
                     allocator.alloc_bytes(sizeof(Type*) * pc, alignof(Type*)));
-                for (u32 j = 0; j < pc; j++) {
-                    if (e->is_manual) {
-                        ptypes[j] = e->param_types[j];
-                    } else {
-                        ptypes[j] = type_from_kind(e->param_descs[j].kind, types);
-                    }
-                }
+                e->resolve_param_types(types, ptypes);
             }
             mi.param_types = Span<Type*>(ptypes, pc);
-
-            if (e->is_manual) {
-                mi.return_type = e->return_type;
-            } else {
-                mi.return_type = type_from_kind(e->return_desc.kind, types);
-            }
+            mi.return_type = e->resolve_return_type(types);
         }
 
         struct_type->struct_info.methods = Span<MethodInfo>(mi_array, total);
@@ -432,22 +452,15 @@ void NativeRegistry::apply_to_symbols(SymbolTable& symbols, TypeCache& types, Bu
         // Skip method entries - they are applied via apply_methods_to_types
         if (entry.is_method) continue;
 
-        // Get or create return type
-        Type* ret_type = entry.is_manual ? entry.return_type
-                                          : type_from_kind(entry.return_desc.kind, types);
+        // Get return type
+        Type* ret_type = entry.resolve_return_type(types);
 
-        // Allocate param types array
+        // Allocate and resolve param types
         Type** param_array = nullptr;
         if (entry.param_count > 0) {
             param_array = reinterpret_cast<Type**>(
                 allocator.alloc_bytes(sizeof(Type*) * entry.param_count, alignof(Type*)));
-            for (u32 i = 0; i < entry.param_count; i++) {
-                if (entry.is_manual) {
-                    param_array[i] = entry.param_types[i];
-                } else {
-                    param_array[i] = type_from_kind(entry.param_descs[i].kind, types);
-                }
-            }
+            entry.resolve_param_types(types, param_array);
         }
 
         // Create function type using provided TypeCache

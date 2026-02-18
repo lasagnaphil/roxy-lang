@@ -24,32 +24,15 @@ void ModuleRegistry::register_native_module(StringView name, NativeRegistry* nat
         exp.index = i;
         exp.decl = nullptr;
 
-        // Get the function type from the native entry
-        // We need to build the function type from the native entry's type info
-        if (entry.is_manual) {
-            // Manual binding - types are stored directly
-            Type** param_array = nullptr;
-            if (entry.param_count > 0) {
-                param_array = reinterpret_cast<Type**>(
-                    m_allocator.alloc_bytes(sizeof(Type*) * entry.param_count, alignof(Type*)));
-                for (u32 j = 0; j < entry.param_count; j++) {
-                    param_array[j] = entry.param_types[j];
-                }
-            }
-            exp.type = types.function_type(Span<Type*>(param_array, entry.param_count), entry.return_type);
-        } else {
-            // Automatic binding - need to convert type kinds to types
-            Type** param_array = nullptr;
-            if (entry.param_count > 0) {
-                param_array = reinterpret_cast<Type**>(
-                    m_allocator.alloc_bytes(sizeof(Type*) * entry.param_count, alignof(Type*)));
-                for (u32 j = 0; j < entry.param_count; j++) {
-                    param_array[j] = type_from_kind(entry.param_descs[j].kind, types);
-                }
-            }
-            Type* ret_type = type_from_kind(entry.return_desc.kind, types);
-            exp.type = types.function_type(Span<Type*>(param_array, entry.param_count), ret_type);
+        // Build function type from the native entry's type info
+        Type* ret_type = entry.resolve_return_type(types);
+        Type** param_array = nullptr;
+        if (entry.param_count > 0) {
+            param_array = reinterpret_cast<Type**>(
+                m_allocator.alloc_bytes(sizeof(Type*) * entry.param_count, alignof(Type*)));
+            entry.resolve_param_types(types, param_array);
         }
+        exp.type = types.function_type(Span<Type*>(param_array, entry.param_count), ret_type);
 
         module->exports.push_back(exp);
     }

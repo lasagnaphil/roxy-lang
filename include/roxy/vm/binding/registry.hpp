@@ -62,23 +62,42 @@ struct NativeStructEntry {
     Vector<NativeFieldEntry> fields;
 };
 
+// Function pointer that resolves a C++ type to a Roxy Type* given a TypeCache.
+// Used by auto-bound functions to defer type resolution to use-time.
+using TypeResolverFn = Type* (*)(TypeCache&);
+
+// How a native function's parameter/return types are described
+enum class NativeTypeInfoMode : u8 {
+    Desc,       // NativeParamDesc-based (NativeTypeKind or type_param) — bind_native, bind_method_native
+    Direct,     // Type* stored directly — bind_manual, bind_method_manual
+    Resolver,   // TypeResolverFn deferred resolution — bind<>, bind_method<>
+};
+
 // Entry for a registered native function (unified for both concrete and generic types)
 struct NativeFunctionEntry {
     StringView name;                           // Mangled name for methods (e.g., "Point$$sum")
     NativeFunction func;
-    // Type info path 1 (is_manual=false): param_descs + return_desc
+    NativeTypeInfoMode type_info_mode = NativeTypeInfoMode::Desc;
+    // Type info path: Desc
     Vector<NativeParamDesc> param_descs;       // Replaces param_type_kinds; supports type params for generics
     NativeParamDesc return_desc;               // Replaces return_type_kind
-    // Type info path 2 (is_manual=true): param_types + return_type
+    // Type info path: Direct
     Vector<Type*> param_types;
-    Type* return_type;
+    Type* return_type = nullptr;
+    // Type info path: Resolver (deferred type resolution for cross-TypeCache compatibility)
+    Vector<TypeResolverFn> param_resolvers;
+    TypeResolverFn return_resolver = nullptr;
     u32 param_count;
     u32 min_args;                              // = param_count normally; < param_count for optional params
-    bool is_manual;                            // True if registered with bind_manual
     bool is_method;                            // True if this is a struct method
     GenericMethodKind method_kind;             // Method/Constructor/Destructor
     StringView struct_name;                    // Non-empty for methods
     StringView method_name;                    // Original unmangled method name
+
+    // Resolve parameter/return types using the given TypeCache.
+    // Works for all three modes: Desc, Direct, and Resolver.
+    Type* resolve_return_type(TypeCache& types) const;
+    void resolve_param_types(TypeCache& types, Type** out_params) const;
 };
 
 // Resolved constructor info (returned by instantiate_generic_constructor)
@@ -105,7 +124,8 @@ public:
         , m_types(types)
     {}
 
-    // Register a C++ function with automatic wrapper generation
+    // Register a C++ function with automatic wrapper generation.
+    // The C++ function must take RoxyVM* as its first parameter.
     // Usage: registry.bind<my_function>("my_function")
     template<auto FnPtr>
     void bind(const char* name) {
@@ -114,19 +134,16 @@ public:
         NativeFunctionEntry entry;
         entry.name = make_string_view(name);
         entry.func = FunctionBinder<FnPtr>::get();
-        entry.param_count = Traits::arity;
-        entry.min_args = Traits::arity;
-        entry.is_manual = false;
+        entry.param_count = Traits::arity - 1;  // exclude RoxyVM*
+        entry.min_args = entry.param_count;
+        entry.type_info_mode = NativeTypeInfoMode::Resolver;
         entry.is_method = false;
         entry.method_kind = GenericMethodKind::Method;
 
-        // Extract return type desc
-        entry.return_desc = concrete_param(get_type_kind<typename Traits::return_type>());
-        entry.return_type = nullptr;
-
-        // Extract parameter descs
-        entry.param_descs = get_param_descs<typename Traits::args_tuple>(
-            std::make_index_sequence<Traits::arity>{});
+        // Store resolver functions for deferred type resolution
+        entry.return_resolver = &RoxyType<typename Traits::return_type>::get;
+        entry.param_resolvers = get_param_resolvers_skip_first<typename Traits::args_tuple>(
+            std::make_index_sequence<Traits::arity - 1>{});
 
         m_function_entries.push_back(entry);
 
@@ -146,31 +163,30 @@ public:
     // Register a native struct type
     void register_struct(const char* name, std::initializer_list<NativeFieldEntry> fields);
 
-    // Auto-bind a method on a native struct (first parameter is self pointer)
+    // Auto-bind a method on a native struct.
+    // The C++ function must take (RoxyVM*, SelfPtr*, ...) as its first two parameters.
     // Usage: registry.bind_method<point_sum>("Point", "sum")
     template<auto FnPtr>
     void bind_method(const char* struct_name, const char* method_name) {
         using Traits = FunctionPointerTraits<FnPtr>;
-        static_assert(Traits::arity >= 1, "Method must have at least one parameter (self)");
+        static_assert(Traits::arity >= 2,
+                      "Method must have RoxyVM* and self pointer as first two parameters");
 
         NativeFunctionEntry entry;
         entry.struct_name = make_string_view(struct_name);
         entry.method_name = make_string_view(method_name);
         entry.name = mangle_method_name(entry.struct_name, entry.method_name);
         entry.func = FunctionBinder<FnPtr>::get();
-        entry.param_count = Traits::arity - 1;  // Exclude self from Roxy-visible param count
+        entry.param_count = Traits::arity - 2;  // Exclude RoxyVM* and self
         entry.min_args = entry.param_count;
-        entry.is_manual = false;
+        entry.type_info_mode = NativeTypeInfoMode::Resolver;
         entry.is_method = true;
         entry.method_kind = GenericMethodKind::Method;
 
-        // Extract return type desc
-        entry.return_desc = concrete_param(get_type_kind<typename Traits::return_type>());
-        entry.return_type = nullptr;
-
-        // Extract parameter descs, skipping self (index 0)
-        entry.param_descs = get_method_param_descs<typename Traits::args_tuple>(
-            std::make_index_sequence<Traits::arity - 1>{});
+        // Store resolver functions, skipping RoxyVM* and self
+        entry.return_resolver = &RoxyType<typename Traits::return_type>::get;
+        entry.param_resolvers = get_param_resolvers_skip_two<typename Traits::args_tuple>(
+            std::make_index_sequence<Traits::arity - 2>{});
 
         m_function_entries.push_back(entry);
         m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
@@ -278,22 +294,20 @@ private:
         return StringView(ptr, len);
     }
 
-    // Map C++ types to NativeTypeKind
-    template<typename T> static constexpr NativeTypeKind get_type_kind();
-
+    // Extract param resolvers, skipping the first element (RoxyVM*)
     template<typename Tuple, std::size_t... Is>
-    Vector<NativeParamDesc> get_param_descs(std::index_sequence<Is...>) {
-        Vector<NativeParamDesc> descs;
-        (descs.push_back(concrete_param(get_type_kind<std::tuple_element_t<Is, Tuple>>())), ...);
-        return descs;
+    static Vector<TypeResolverFn> get_param_resolvers_skip_first(std::index_sequence<Is...>) {
+        Vector<TypeResolverFn> resolvers;
+        (resolvers.push_back(&RoxyType<std::tuple_element_t<Is + 1, Tuple>>::get), ...);
+        return resolvers;
     }
 
-    // Extract param descs for method parameters, skipping self (index 0)
+    // Extract param resolvers, skipping the first two elements (RoxyVM* and self)
     template<typename Tuple, std::size_t... Is>
-    Vector<NativeParamDesc> get_method_param_descs(std::index_sequence<Is...>) {
-        Vector<NativeParamDesc> descs;
-        (descs.push_back(concrete_param(get_type_kind<std::tuple_element_t<Is + 1, Tuple>>())), ...);
-        return descs;
+    static Vector<TypeResolverFn> get_param_resolvers_skip_two(std::index_sequence<Is...>) {
+        Vector<TypeResolverFn> resolvers;
+        (resolvers.push_back(&RoxyType<std::tuple_element_t<Is + 2, Tuple>>::get), ...);
+        return resolvers;
     }
 
     BumpAllocator& m_allocator;
@@ -303,19 +317,5 @@ private:
     tsl::robin_map<StringView, i32> m_name_to_index;
     tsl::robin_map<StringView, NativeGenericTypeEntry> m_generic_types;
 };
-
-// Template specializations for get_type_kind
-template<> constexpr NativeTypeKind NativeRegistry::get_type_kind<void>() { return NativeTypeKind::Void; }
-template<> constexpr NativeTypeKind NativeRegistry::get_type_kind<bool>() { return NativeTypeKind::Bool; }
-template<> constexpr NativeTypeKind NativeRegistry::get_type_kind<i8>() { return NativeTypeKind::I8; }
-template<> constexpr NativeTypeKind NativeRegistry::get_type_kind<i16>() { return NativeTypeKind::I16; }
-template<> constexpr NativeTypeKind NativeRegistry::get_type_kind<i32>() { return NativeTypeKind::I32; }
-template<> constexpr NativeTypeKind NativeRegistry::get_type_kind<i64>() { return NativeTypeKind::I64; }
-template<> constexpr NativeTypeKind NativeRegistry::get_type_kind<u8>() { return NativeTypeKind::U8; }
-template<> constexpr NativeTypeKind NativeRegistry::get_type_kind<u16>() { return NativeTypeKind::U16; }
-template<> constexpr NativeTypeKind NativeRegistry::get_type_kind<u32>() { return NativeTypeKind::U32; }
-template<> constexpr NativeTypeKind NativeRegistry::get_type_kind<u64>() { return NativeTypeKind::U64; }
-template<> constexpr NativeTypeKind NativeRegistry::get_type_kind<f32>() { return NativeTypeKind::F32; }
-template<> constexpr NativeTypeKind NativeRegistry::get_type_kind<f64>() { return NativeTypeKind::F64; }
 
 }
