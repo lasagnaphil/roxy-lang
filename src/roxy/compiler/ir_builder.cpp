@@ -4,7 +4,6 @@
 #include "roxy/compiler/module_registry.hpp"
 #include "roxy/core/format.hpp"
 #include "roxy/vm/binding/registry.hpp"
-#include "roxy/vm/natives.hpp"
 
 #include <cassert>
 #include <cstring>
@@ -2569,7 +2568,7 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
 
     // Left-fold concatenation with str_concat
     ValueId result = string_parts[0];
-    StringView concat_name(NATIVE_STR_CONCAT, static_cast<u32>(strlen(NATIVE_STR_CONCAT)));
+    StringView concat_name("str_concat", 10);
     i32 concat_idx = m_registry.get_index(concat_name);
 
     for (u32 i = 1; i < string_parts.size(); i++) {

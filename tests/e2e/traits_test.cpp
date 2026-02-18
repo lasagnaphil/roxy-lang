@@ -27,7 +27,7 @@ TEST_CASE("E2E - Trait basic required method") {
 
         fun main(): i32 {
             var p: Point = Point { x = 3, y = 7 };
-            print(p.value());
+            print(f"{p.value()}");
             return 0;
         }
     )";
@@ -58,8 +58,8 @@ TEST_CASE("E2E - Trait default method") {
 
         fun main(): i32 {
             var p: Pair = Pair { a = 5, b = 3 };
-            print(p.sum());
-            print(p.double_sum());
+            print(f"{p.sum()}");
+            print(f"{p.double_sum()}");
             return 0;
         }
     )";
@@ -91,8 +91,8 @@ TEST_CASE("E2E - Trait inheritance") {
 
         fun main(): i32 {
             var f: Foo = Foo { x = 5 };
-            print(f.base_val());
-            print(f.child_val());
+            print(f"{f.base_val()}");
+            print(f"{f.child_val()}");
             return 0;
         }
     )";
@@ -152,10 +152,10 @@ TEST_CASE("E2E - Trait Eq operator") {
             var a: Vec2 = Vec2 { x = 1, y = 2 };
             var b: Vec2 = Vec2 { x = 1, y = 2 };
             var c: Vec2 = Vec2 { x = 3, y = 4 };
-            print(bool_to_int(a == b));
-            print(bool_to_int(a == c));
-            print(bool_to_int(a != c));
-            print(bool_to_int(a != b));
+            print(f"{bool_to_int(a == b)}");
+            print(f"{bool_to_int(a == c)}");
+            print(f"{bool_to_int(a != c)}");
+            print(f"{bool_to_int(a != b)}");
             return 0;
         }
     )";
@@ -207,12 +207,12 @@ TEST_CASE("E2E - Trait Ord operator with inheritance") {
             var a: Score = Score { value = 10 };
             var b: Score = Score { value = 20 };
             var c: Score = Score { value = 10 };
-            print(bool_to_int(a < b));
-            print(bool_to_int(b < a));
-            print(bool_to_int(a <= c));
-            print(bool_to_int(a > b));
-            print(bool_to_int(b > a));
-            print(bool_to_int(a >= c));
+            print(f"{bool_to_int(a < b)}");
+            print(f"{bool_to_int(b < a)}");
+            print(f"{bool_to_int(a <= c)}");
+            print(f"{bool_to_int(a > b)}");
+            print(f"{bool_to_int(b > a)}");
+            print(f"{bool_to_int(a >= c)}");
             return 0;
         }
     )";
@@ -247,8 +247,8 @@ TEST_CASE("E2E - Trait override default method") {
 
         fun main(): i32 {
             var p: Pair = Pair { a = 5, b = 3 };
-            print(p.sum());
-            print(p.double_sum());
+            print(f"{p.sum()}");
+            print(f"{p.double_sum()}");
             return 0;
         }
     )";
@@ -276,7 +276,7 @@ TEST_CASE("E2E - Trait Self type in parameters") {
             var a: Num = Num { val = 10 };
             var b: Num = Num { val = 25 };
             var c: Num = a.add(b);
-            print(c.val);
+            print(f"{c.val}");
             return 0;
         }
     )";
@@ -309,8 +309,8 @@ TEST_CASE("E2E - Multiple traits on one struct") {
 
         fun main(): i32 {
             var p: Point = Point { x = 42, y = 99 };
-            print(p.get_x());
-            print(p.get_y());
+            print(f"{p.get_x()}");
+            print(f"{p.get_y()}");
             return 0;
         }
     )";
@@ -337,7 +337,7 @@ TEST_CASE("E2E - Struct method takes priority over trait default") {
 
         fun main(): i32 {
             var p: Person = Person { id = 42 };
-            print(p.greet());
+            print(f"{p.greet()}");
             return 0;
         }
     )";
@@ -395,8 +395,8 @@ TEST_CASE("E2E - Generic trait basic required method") {
             var a: Vec2 = Vec2 { x = 1, y = 2 };
             var b: Vec2 = Vec2 { x = 3, y = 4 };
             var c: Vec2 = a.add(b);
-            print(c.x);
-            print(c.y);
+            print(f"{c.x}");
+            print(f"{c.y}");
             return 0;
         }
     )";
@@ -423,8 +423,8 @@ TEST_CASE("E2E - Generic trait mixed-type Rhs") {
         fun main(): i32 {
             var v: Vec2 = Vec2 { x = 2, y = 3 };
             var r: Vec2 = v.mul(4);
-            print(r.x);
-            print(r.y);
+            print(f"{r.x}");
+            print(f"{r.y}");
             return 0;
         }
     )";
@@ -454,7 +454,7 @@ TEST_CASE("E2E - Generic trait default method injection") {
             var a: Num = Num { val = 10 };
             var b: Num = Num { val = 5 };
             var c: Num = a.add_twice(b);
-            print(c.val);
+            print(f"{c.val}");
             return 0;
         }
     )";
@@ -480,7 +480,7 @@ TEST_CASE("E2E - Generic trait multi-param") {
         fun main(): i32 {
             var c: Converter = Converter { factor = 3 };
             var result: i32 = c.convert(7);
-            print(result);
+            print(f"{result}");
             return 0;
         }
     )";
@@ -630,10 +630,10 @@ TEST_CASE("E2E - Arithmetic operator dispatch (+ -)") {
             var b: Vec2 = Vec2 { x = 3, y = 7 };
             var c: Vec2 = a + b;
             var d: Vec2 = a - b;
-            print(c.x);
-            print(c.y);
-            print(d.x);
-            print(d.y);
+            print(f"{c.x}");
+            print(f"{c.y}");
+            print(f"{d.x}");
+            print(f"{d.y}");
             return 0;
         }
     )";
@@ -660,8 +660,8 @@ TEST_CASE("E2E - Mixed-type arithmetic (* with scalar)") {
         fun main(): i32 {
             var v: Vec2 = Vec2 { x = 3, y = 5 };
             var r: Vec2 = v * 4;
-            print(r.x);
-            print(r.y);
+            print(f"{r.x}");
+            print(f"{r.y}");
             return 0;
         }
     )";
@@ -687,11 +687,11 @@ TEST_CASE("E2E - Unary negation dispatch") {
         fun main(): i32 {
             var n: Num = Num { val = 5 };
             var m: Num = -n;
-            print(m.val);
+            print(f"{m.val}");
 
             // Also test direct call
             var m2: Num = n.neg();
-            print(m2.val);
+            print(f"{m2.val}");
             return 0;
         }
     )";
@@ -725,8 +725,8 @@ TEST_CASE("E2E - Compound assignment dispatch (+=)") {
             var v: Vec2 = Vec2 { x = 1, y = 2 };
             var d: Vec2 = Vec2 { x = 10, y = 20 };
             v += d;
-            print(v.x);
-            print(v.y);
+            print(f"{v.x}");
+            print(f"{v.y}");
             return 0;
         }
     )";
@@ -761,8 +761,8 @@ TEST_CASE("E2E - Bitwise operator dispatch on structs") {
             var b: Flags = Flags { val = 0x0F };
             var c: Flags = a & b;
             var d: Flags = a | b;
-            print(c.val);
-            print(d.val);
+            print(f"{c.val}");
+            print(f"{d.val}");
             return 0;
         }
     )";
@@ -778,15 +778,15 @@ TEST_CASE("E2E - New operators on primitives (^ << >>)") {
             var a: i32 = 0xFF;
             var b: i32 = 0x0F;
             var xor_result: i32 = a ^ b;
-            print(xor_result);
+            print(f"{xor_result}");
 
             var x: i32 = 1;
             var shifted_left: i32 = x << 4;
-            print(shifted_left);
+            print(f"{shifted_left}");
 
             var y: i32 = 256;
             var shifted_right: i32 = y >> 3;
-            print(shifted_right);
+            print(f"{shifted_right}");
 
             return 0;
         }
@@ -802,23 +802,23 @@ TEST_CASE("E2E - New compound assignments on primitives (&= |= ^= <<= >>=)") {
         fun main(): i32 {
             var a: i32 = 0xFF;
             a &= 0x0F;
-            print(a);
+            print(f"{a}");
 
             var b: i32 = 0xF0;
             b |= 0x0F;
-            print(b);
+            print(f"{b}");
 
             var c: i32 = 0xFF;
             c ^= 0x0F;
-            print(c);
+            print(f"{c}");
 
             var d: i32 = 1;
             d <<= 8;
-            print(d);
+            print(f"{d}");
 
             var e: i32 = 1024;
             e >>= 5;
-            print(e);
+            print(f"{e}");
 
             return 0;
         }
@@ -847,8 +847,8 @@ TEST_CASE("E2E - Default type param (for Add without explicit <Vec2>)") {
             var a: Vec2 = Vec2 { x = 1, y = 2 };
             var b: Vec2 = Vec2 { x = 3, y = 4 };
             var c: Vec2 = a + b;
-            print(c.x);
-            print(c.y);
+            print(f"{c.x}");
+            print(f"{c.y}");
             return 0;
         }
     )";
@@ -894,9 +894,9 @@ TEST_CASE("E2E - Index read dispatch on struct") {
 
         fun main(): i32 {
             var g: Grid = Grid { a = 10, b = 20, c = 30 };
-            print(g[0]);
-            print(g[1]);
-            print(g[2]);
+            print(f"{g[0]}");
+            print(f"{g[1]}");
+            print(f"{g[2]}");
             return 0;
         }
     )";
@@ -931,9 +931,9 @@ TEST_CASE("E2E - Index write dispatch on struct") {
             g[0] = 100;
             g[1] = 200;
             g[2] = 300;
-            print(g[0]);
-            print(g[1]);
-            print(g[2]);
+            print(f"{g[0]}");
+            print(f"{g[1]}");
+            print(f"{g[2]}");
             return 0;
         }
     )";
@@ -968,9 +968,9 @@ TEST_CASE("E2E - Index compound assignment dispatch on struct") {
             g[0] += 5;
             g[1] += 10;
             g[2] += 15;
-            print(g[0]);
-            print(g[1]);
-            print(g[2]);
+            print(f"{g[0]}");
+            print(f"{g[1]}");
+            print(f"{g[2]}");
             return 0;
         }
     )";
@@ -988,7 +988,7 @@ TEST_CASE("E2E - Index error: no index method on struct") {
 
         fun main(): i32 {
             var f: Foo = Foo { x = 42 };
-            print(f[0]);
+            print(f"{f[0]}");
             return 0;
         }
     )";

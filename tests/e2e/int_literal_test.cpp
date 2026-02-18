@@ -11,7 +11,7 @@ TEST_CASE("E2E - IntLiteral basic coercion to i64") {
     const char* source = R"(
         fun main(): i32 {
             var x: i64 = 42;
-            print_i64(x);
+            print(f"{x}");
             return 0;
         }
     )";
@@ -29,7 +29,7 @@ TEST_CASE("E2E - IntLiteral basic coercion to i8") {
 
         fun main(): i32 {
             var x: i8 = 42;
-            print(check(x));
+            print(f"{check(x)}");
             return 0;
         }
     )";
@@ -47,7 +47,7 @@ TEST_CASE("E2E - IntLiteral basic coercion to u32") {
 
         fun main(): i32 {
             var x: u32 = 42;
-            print(check(x));
+            print(f"{check(x)}");
             return 0;
         }
     )";
@@ -61,7 +61,7 @@ TEST_CASE("E2E - IntLiteral basic coercion to u64") {
     const char* source = R"(
         fun main(): i32 {
             var x: u64 = 42;
-            print_i64(i64(x));
+            print(f"{i64(x)}");
             return 0;
         }
     )";
@@ -75,7 +75,7 @@ TEST_CASE("E2E - IntLiteral default inference is i32") {
     const char* source = R"(
         fun main(): i32 {
             var x = 42;
-            print(x);
+            print(f"{x}");
             return 0;
         }
     )";
@@ -92,7 +92,7 @@ TEST_CASE("E2E - IntLiteral function argument coercion") {
         }
 
         fun main(): i32 {
-            print_i64(add_one(42));
+            print(f"{add_one(42)}");
             return 0;
         }
     )";
@@ -109,7 +109,7 @@ TEST_CASE("E2E - IntLiteral return statement coercion") {
         }
 
         fun main(): i32 {
-            print_i64(get_value());
+            print(f"{get_value()}");
             return 0;
         }
     )";
@@ -123,9 +123,9 @@ TEST_CASE("E2E - IntLiteral binary ops with suffixed literal") {
     const char* source = R"(
         fun main(): i32 {
             var a: i64 = 42 + 1l;
-            print_i64(a);
+            print(f"{a}");
             var b: i64 = 1l + 42;
-            print_i64(b);
+            print(f"{b}");
             return 0;
         }
     )";
@@ -139,7 +139,7 @@ TEST_CASE("E2E - IntLiteral binary ops default to i32") {
     const char* source = R"(
         fun main(): i32 {
             var x = 42 + 1;
-            print(x);
+            print(f"{x}");
             return 0;
         }
     )";
@@ -153,7 +153,7 @@ TEST_CASE("E2E - IntLiteral unary negate coercion") {
     const char* source = R"(
         fun main(): i32 {
             var x: i64 = -42;
-            print_i64(x);
+            print(f"{x}");
             return 0;
         }
     )";
@@ -168,7 +168,7 @@ TEST_CASE("E2E - IntLiteral compound assignment") {
         fun main(): i32 {
             var x: i64 = 0l;
             x += 42;
-            print_i64(x);
+            print(f"{x}");
             return 0;
         }
     )";
@@ -184,7 +184,7 @@ TEST_CASE("E2E - IntLiteral ternary coercion compiles") {
     const char* source = R"(
         fun main(): i32 {
             var x: i64 = false ? 0l : 42;
-            print_i64(x);
+            print(f"{x}");
             return 0;
         }
     )";
@@ -213,7 +213,7 @@ TEST_CASE("E2E - IntLiteral simple assignment coercion") {
         fun main(): i32 {
             var x: i64 = 0l;
             x = 42;
-            print_i64(x);
+            print(f"{x}");
             return 0;
         }
     )";
@@ -232,7 +232,7 @@ TEST_CASE("E2E - IntLiteral struct field init") {
 
         fun main(): i32 {
             var p: Point = Point { x = 10, y = 20 };
-            print_i64(p.x + p.y);
+            print(f"{p.x + p.y}");
             return 0;
         }
     )";
@@ -247,7 +247,7 @@ TEST_CASE("E2E - IntLiteral comparison with typed variable") {
         fun main(): i32 {
             var x: i64 = 42l;
             if (x == 42) {
-                print(1);
+                print(f"{1}");
             }
             return 0;
         }

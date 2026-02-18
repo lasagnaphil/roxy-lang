@@ -10,7 +10,7 @@ Strings in Roxy are heap-allocated objects managed through the object system. Th
 - Concatenation via `+` operator or `str_concat()` function
 - Equality/inequality comparison via `==`/`!=` operators
 - Length query via `str_len()` function
-- Printing via `print_str()` function
+- Printing via `print()` function
 
 ## Memory Layout
 
@@ -103,16 +103,16 @@ Arbitrary expressions are supported inside `{}`:
 ```
 var a: i32 = 3;
 var b: i32 = 4;
-print_str(f"{a} + {b} = {a + b}");  // "3 + 4 = 7"
+print(f"{a} + {b} = {a + b}");  // "3 + 4 = 7"
 
 fun double_it(x: i32): i32 { return x * 2; }
-print_str(f"result: {double_it(5)}");  // "result: 10"
+print(f"result: {double_it(5)}");  // "result: 10"
 ```
 
 Struct literals with braces work correctly because the lexer tracks brace nesting depth:
 
 ```
-print_str(f"point: {Point { x = 1, y = 2 }}");
+print(f"point: {Point { x = 1, y = 2 }}");
 ```
 
 ### Compilation Pipeline
@@ -157,7 +157,7 @@ fun Point.to_string(): string for Printable {
 
 // Now Point can be interpolated:
 var p: Point = Point { x = 1, y = 2 };
-print_str(f"point = {p}");  // "point = (1, 2)"
+print(f"point = {p}");  // "point = (1, 2)"
 ```
 
 ## String Operations
@@ -204,10 +204,10 @@ var len: i32 = str_len(s);  // Returns 5
 
 ### Printing
 
-Print a string to stdout using `print_str()`:
+Print a string to stdout using `print()`:
 
 ```
-print_str("Hello, World!");
+print("Hello, World!");
 ```
 
 ## Native Functions
@@ -220,7 +220,7 @@ All string operations are implemented as native functions:
 | `str_eq` | `(string, string) -> bool` | Test equality |
 | `str_ne` | `(string, string) -> bool` | Test inequality |
 | `str_len` | `(string) -> i32` | Get string length |
-| `print_str` | `(string) -> void` | Print string to stdout |
+| `print` | `(string) -> void` | Print string to stdout |
 | `bool$$to_string` | `(bool) -> string` | Convert bool to `"true"`/`"false"` |
 | `i32$$to_string` | `(i32) -> string` | Convert i32 to decimal string |
 | `i64$$to_string` | `(i64) -> string` | Convert i64 to decimal string |
@@ -285,7 +285,7 @@ fun greet(name: string): string {
 
 fun main(): i32 {
     var greeting: string = greet("World");
-    print_str(greeting);
+    print(greeting);
 
     if (greeting == "Hello, World!") {
         return str_len(greeting);  // Returns 13
@@ -303,18 +303,18 @@ fun main(): i32 {
     var score: f64 = 9.5;
 
     // Basic interpolation
-    print_str(f"Hello, {name}!");           // "Hello, World!"
+    print(f"Hello, {name}!");           // "Hello, World!"
 
     // Multiple types
-    print_str(f"{name} v{count}: {score}"); // "World v3: 9.5"
+    print(f"{name} v{count}: {score}"); // "World v3: 9.5"
 
     // Expressions in braces
     var a: i32 = 3;
     var b: i32 = 4;
-    print_str(f"{a} + {b} = {a + b}");     // "3 + 4 = 7"
+    print(f"{a} + {b} = {a + b}");     // "3 + 4 = 7"
 
     // Escaped braces
-    print_str(f"use \{ and \}");            // "use { and }"
+    print(f"use \{ and \}");            // "use { and }"
 
     return 0;
 }

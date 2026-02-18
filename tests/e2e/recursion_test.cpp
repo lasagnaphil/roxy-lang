@@ -17,10 +17,10 @@ TEST_CASE("E2E - Factorial (recursive)") {
         }
 
         fun main(): i32 {
-            print(factorial(0));
-            print(factorial(1));
-            print(factorial(5));
-            print(factorial(10));
+            print(f"{factorial(0)}");
+            print(f"{factorial(1)}");
+            print(f"{factorial(5)}");
+            print(f"{factorial(10)}");
             return 0;
         }
     )";
@@ -40,10 +40,10 @@ TEST_CASE("E2E - Fibonacci (recursive)") {
         }
 
         fun main(): i32 {
-            print(fib(0));
-            print(fib(1));
-            print(fib(10));
-            print(fib(15));
+            print(f"{fib(0)}");
+            print(f"{fib(1)}");
+            print(f"{fib(10)}");
+            print(f"{fib(15)}");
             return 0;
         }
     )";
@@ -63,10 +63,10 @@ TEST_CASE("E2E - GCD (Euclidean algorithm)") {
         }
 
         fun main(): i32 {
-            print(gcd(48, 18));
-            print(gcd(100, 35));
-            print(gcd(17, 13));
-            print(gcd(12, 12));
+            print(f"{gcd(48, 18)}");
+            print(f"{gcd(100, 35)}");
+            print(f"{gcd(17, 13)}");
+            print(f"{gcd(12, 12)}");
             return 0;
         }
     )";
@@ -87,9 +87,9 @@ TEST_CASE("E2E - Power function (recursive)") {
         }
 
         fun main(): i32 {
-            print(power(2, 0));
-            print(power(2, 10));
-            print(power(3, 5));
+            print(f"{power(2, 0)}");
+            print(f"{power(2, 10)}");
+            print(f"{power(3, 5)}");
             return 0;
         }
     )";
@@ -111,7 +111,7 @@ TEST_CASE("E2E - Simple function call") {
         }
 
         fun main(): i32 {
-            print(square(5));
+            print(f"{square(5)}");
             return 0;
         }
     )";
@@ -132,7 +132,7 @@ TEST_CASE("E2E - Multiple functions calling each other") {
         }
 
         fun main(): i32 {
-            print(sum_of_squares(3, 4));
+            print(f"{sum_of_squares(3, 4)}");
             return 0;
         }
     )";
@@ -160,10 +160,10 @@ TEST_CASE("E2E - Mutual recursion") {
         }
 
         fun main(): i32 {
-            print(is_even(0));
-            print(is_even(4));
-            print(is_even(7));
-            print(is_odd(5));
+            print(f"{is_even(0)}");
+            print(f"{is_even(4)}");
+            print(f"{is_even(7)}");
+            print(f"{is_odd(5)}");
             return 0;
         }
     )";

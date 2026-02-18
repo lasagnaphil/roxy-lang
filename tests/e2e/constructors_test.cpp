@@ -24,8 +24,8 @@ TEST_CASE("E2E - Constructor: stack-allocated default constructor") {
 
         fun main(): i32 {
             var p: Point = Point();
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             return 0;
         }
     )";
@@ -49,8 +49,8 @@ TEST_CASE("E2E - Constructor: stack-allocated with params") {
 
         fun main(): i32 {
             var p: Point = Point(5, 15);
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             return 0;
         }
     )";
@@ -74,8 +74,8 @@ TEST_CASE("E2E - Constructor: stack-allocated named constructor") {
 
         fun main(): i32 {
             var p: Point = Point.from_coords(7, 14);
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             return 0;
         }
     )";
@@ -103,8 +103,8 @@ TEST_CASE("E2E - Constructor: heap-allocated default constructor") {
 
         fun main(): i32 {
             var p: uniq Point = uniq Point();
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             delete p;
             return 0;
         }
@@ -129,8 +129,8 @@ TEST_CASE("E2E - Constructor: heap-allocated with params") {
 
         fun main(): i32 {
             var p: uniq Point = uniq Point(5, 15);
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             delete p;
             return 0;
         }
@@ -155,8 +155,8 @@ TEST_CASE("E2E - Constructor: heap-allocated named constructor") {
 
         fun main(): i32 {
             var p: uniq Point = uniq Point.from_coords(7, 14);
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             delete p;
             return 0;
         }
@@ -194,12 +194,12 @@ TEST_CASE("E2E - Constructor: multiple constructors") {
             var p2: uniq Point = uniq Point.from_coords(3, 6);
             var p3: uniq Point = uniq Point.from_value(9);
 
-            print(p1.x);
-            print(p1.y);
-            print(p2.x);
-            print(p2.y);
-            print(p3.x);
-            print(p3.y);
+            print(f"{p1.x}");
+            print(f"{p1.y}");
+            print(f"{p2.x}");
+            print(f"{p2.y}");
+            print(f"{p3.x}");
+            print(f"{p3.y}");
 
             delete p1;
             delete p2;
@@ -228,12 +228,12 @@ TEST_CASE("E2E - Destructor: default destructor") {
         }
 
         fun delete Counter() {
-            print(100);
+            print(f"{100}");
         }
 
         fun main(): i32 {
             var c: uniq Counter = uniq Counter(42);
-            print(c.value);
+            print(f"{c.value}");
             delete c;
             return 0;
         }
@@ -255,7 +255,7 @@ TEST_CASE("E2E - Destructor: named destructor with args") {
         }
 
         fun delete Data.save(multiplier: i32) {
-            print(self.value * multiplier);
+            print(f"{self.value * multiplier}");
         }
 
         fun main(): i32 {
@@ -281,12 +281,12 @@ TEST_CASE("E2E - Destructor: multiple destructors") {
         }
 
         fun delete Resource() {
-            print(self.id);
+            print(f"{self.id}");
         }
 
         fun delete Resource.with_message(msg: i32) {
-            print(msg);
-            print(self.id);
+            print(f"{msg}");
+            print(f"{self.id}");
         }
 
         fun main(): i32 {
@@ -316,19 +316,19 @@ TEST_CASE("E2E - Constructor + Destructor lifecycle") {
 
         fun new Object(id: i32) {
             self.id = id;
-            print(1);
+            print(f"{1}");
         }
 
         fun delete Object() {
-            print(2);
+            print(f"{2}");
         }
 
         fun main(): i32 {
-            print(0);
+            print(f"{0}");
             var obj: uniq Object = uniq Object(42);
-            print(obj.id);
+            print(f"{obj.id}");
             delete obj;
-            print(3);
+            print(f"{3}");
             return 0;
         }
     )";
@@ -350,7 +350,7 @@ TEST_CASE("E2E - Constructor: no constructor defined (zero-init heap)") {
 
         fun main(): i32 {
             var s: uniq Simple = uniq Simple();
-            print(s.value);
+            print(f"{s.value}");
             delete s;
             return 0;
         }
@@ -369,7 +369,7 @@ TEST_CASE("E2E - Constructor: no constructor defined (zero-init stack)") {
 
         fun main(): i32 {
             var s: Simple = Simple();
-            print(s.value);
+            print(f"{s.value}");
             return 0;
         }
     )";
@@ -395,7 +395,7 @@ TEST_CASE("E2E - Constructor: pub constructor") {
 
         fun main(): i32 {
             var w: uniq Widget = uniq Widget(123);
-            print(w.id);
+            print(f"{w.id}");
             delete w;
             return 0;
         }
@@ -419,8 +419,8 @@ TEST_CASE("E2E - Struct literal (stack)") {
 
         fun main(): i32 {
             var p: Point = Point { x = 42, y = 99 };
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             return 0;
         }
     )";
@@ -439,8 +439,8 @@ TEST_CASE("E2E - Struct literal (heap)") {
 
         fun main(): i32 {
             var p: uniq Point = uniq Point { x = 42, y = 99 };
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             delete p;
             return 0;
         }

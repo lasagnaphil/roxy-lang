@@ -2309,6 +2309,11 @@ Type* SemanticAnalyzer::analyze_string_interp_expr(Expr* expr) {
             error(expression->loc, "cannot interpolate void expression in f-string");
             continue;
         }
+        // Coerce IntLiteral to i32 so it has a Printable implementation
+        if (etype->is_int_literal()) {
+            coerce_int_literal(expression, m_types.i32_type());
+            etype = expression->resolved_type;
+        }
         // Uniform trait check for ALL types (primitives and structs)
         if (!m_types.implements_trait(etype, m_type_env.printable_type())) {
             error_fmt(expression->loc,

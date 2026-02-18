@@ -14,9 +14,9 @@ TEST_CASE("E2E - List basic operations") {
             lst.push(10);
             lst.push(20);
             lst.push(30);
-            print(lst[0]);
-            print(lst[1]);
-            print(lst[2]);
+            print(f"{lst[0]}");
+            print(f"{lst[1]}");
+            print(f"{lst[2]}");
             return 0;
         }
     )";
@@ -30,11 +30,11 @@ TEST_CASE("E2E - List length and capacity") {
     const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
-            print(lst.len());
+            print(f"{lst.len()}");
             lst.push(1);
             lst.push(2);
             lst.push(3);
-            print(lst.len());
+            print(f"{lst.len()}");
             return 0;
         }
     )";
@@ -48,11 +48,11 @@ TEST_CASE("E2E - List with initial capacity") {
     const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>(10);
-            print(lst.len());
-            print(lst.cap());
+            print(f"{lst.len()}");
+            print(f"{lst.cap()}");
             lst.push(42);
-            print(lst.len());
-            print(lst.cap());
+            print(f"{lst.len()}");
+            print(f"{lst.cap()}");
             return 0;
         }
     )";
@@ -70,11 +70,11 @@ TEST_CASE("E2E - List pop") {
             lst.push(20);
             lst.push(30);
             var x: i32 = lst.pop();
-            print(x);
-            print(lst.len());
+            print(f"{x}");
+            print(f"{lst.len()}");
             var y: i32 = lst.pop();
-            print(y);
-            print(lst.len());
+            print(f"{y}");
+            print(f"{lst.len()}");
             return 0;
         }
     )";
@@ -93,9 +93,9 @@ TEST_CASE("E2E - List index assignment") {
             lst.push(30);
             lst[0] = 100;
             lst[2] = 300;
-            print(lst[0]);
-            print(lst[1]);
-            print(lst[2]);
+            print(f"{lst[0]}");
+            print(f"{lst[1]}");
+            print(f"{lst[2]}");
             return 0;
         }
     )";
@@ -117,10 +117,10 @@ TEST_CASE("E2E - List with loop") {
 
             var sum: i32 = 0;
             for (var i: i32 = 0; i < lst.len(); i = i + 1) {
-                print(lst[i]);
+                print(f"{lst[i]}");
                 sum = sum + lst[i];
             }
-            print(sum);
+            print(f"{sum}");
             return 0;
         }
     )";
@@ -144,9 +144,9 @@ TEST_CASE("E2E - List swap") {
             lst.push(20);
             lst.push(30);
             swap(inout lst, 0, 2);
-            print(lst[0]);
-            print(lst[1]);
-            print(lst[2]);
+            print(f"{lst[0]}");
+            print(f"{lst[1]}");
+            print(f"{lst[2]}");
             return 0;
         }
     )";
@@ -196,7 +196,7 @@ TEST_CASE("E2E - List quicksort") {
             quicksort(inout lst, 0, lst.len() - 1);
 
             for (var i: i32 = 0; i < lst.len(); i = i + 1) {
-                print(lst[i]);
+                print(f"{lst[i]}");
             }
             return 0;
         }
@@ -214,10 +214,10 @@ TEST_CASE("E2E - List growth") {
             for (var i: i32 = 0; i < 20; i = i + 1) {
                 lst.push(i * 10);
             }
-            print(lst.len());
-            print(lst[0]);
-            print(lst[9]);
-            print(lst[19]);
+            print(f"{lst.len()}");
+            print(f"{lst[0]}");
+            print(f"{lst[9]}");
+            print(f"{lst[19]}");
             return 0;
         }
     )";
@@ -242,7 +242,7 @@ TEST_CASE("E2E - List sum function") {
             lst.push(10);
             lst.push(20);
             lst.push(30);
-            print(sum(lst));
+            print(f"{sum(lst)}");
             return 0;
         }
     )";
@@ -265,8 +265,8 @@ TEST_CASE("E2E - List value parameter isolation") {
             lst.push(20);
             lst.push(30);
             modify(lst);
-            print(lst[0]);
-            print(lst.len());
+            print(f"{lst[0]}");
+            print(f"{lst.len()}");
             return 0;
         }
     )";
@@ -289,8 +289,8 @@ TEST_CASE("E2E - List inout parameter mutation") {
             lst.push(20);
             lst.push(30);
             modify(inout lst);
-            print(lst[0]);
-            print(lst.len());
+            print(f"{lst[0]}");
+            print(f"{lst.len()}");
             return 0;
         }
     )";

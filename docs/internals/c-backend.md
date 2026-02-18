@@ -418,8 +418,7 @@ void roxy_list_set(roxy_list* list, int32_t index, uint64_t value);
 ### I/O
 
 ```c
-void roxy_print_i32(int32_t value);
-void roxy_print_str(roxy_string* s);
+void roxy_print(roxy_string* s);
 ```
 
 ### Memory Management Strategy

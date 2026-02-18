@@ -21,8 +21,8 @@ TEST_CASE("E2E - Basic struct field access") {
             var p: Point;
             p.x = 10;
             p.y = 20;
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             return 0;
         }
     )";
@@ -43,8 +43,8 @@ TEST_CASE("E2E - Struct with 64-bit field") {
             var d: Data;
             d.a = 10;
             d.b = 100000000000l;
-            print(d.a);
-            print_i64(d.b);
+            print(f"{d.a}");
+            print(f"{d.b}");
             return 0;
         }
     )";
@@ -68,10 +68,10 @@ TEST_CASE("E2E - Multiple struct variables") {
             p1.y = 2;
             p2.x = 3;
             p2.y = 4;
-            print(p1.x);
-            print(p1.y);
-            print(p2.x);
-            print(p2.y);
+            print(f"{p1.x}");
+            print(f"{p1.y}");
+            print(f"{p2.x}");
+            print(f"{p2.y}");
             return 0;
         }
     )";
@@ -92,8 +92,8 @@ TEST_CASE("E2E - Struct field assignment from expression") {
             var p: Point;
             p.x = 3 * 4;
             p.y = p.x + 5;
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             return 0;
         }
     )";
@@ -135,9 +135,9 @@ TEST_CASE("E2E - Struct in conditional") {
             p.x = 10;
             p.y = 5;
             if (p.x > p.y) {
-                print(p.x);
+                print(f"{p.x}");
             } else {
-                print(p.y);
+                print(f"{p.y}");
             }
             return 0;
         }
@@ -159,7 +159,7 @@ TEST_CASE("E2E - Struct in loop") {
             c.value = 0;
             for (var i: i32 = 0; i < 5; i = i + 1) {
                 c.value = c.value + i;
-                print(c.value);
+                print(f"{c.value}");
             }
             return 0;
         }
@@ -188,10 +188,10 @@ TEST_CASE("E2E - Nested structs") {
             r.origin.y = 20;
             r.size.x = 100;
             r.size.y = 200;
-            print(r.origin.x);
-            print(r.origin.y);
-            print(r.size.x);
-            print(r.size.y);
+            print(f"{r.origin.x}");
+            print(f"{r.origin.y}");
+            print(f"{r.size.x}");
+            print(f"{r.size.y}");
             return 0;
         }
     )";
@@ -222,9 +222,9 @@ TEST_CASE("E2E - Deeply nested structs (3 levels)") {
             o.id = 1;
             o.middle.data = 10;
             o.middle.inner.value = 100;
-            print(o.id);
-            print(o.middle.data);
-            print(o.middle.inner.value);
+            print(f"{o.id}");
+            print(f"{o.middle.data}");
+            print(f"{o.middle.inner.value}");
             return 0;
         }
     )";
@@ -260,8 +260,8 @@ TEST_CASE("E2E - Multiple nested struct variables") {
             line2.end.x = 15;
             line2.end.y = 15;
 
-            print(line1.end.x);
-            print(line2.start.x);
+            print(f"{line1.end.x}");
+            print(f"{line2.start.x}");
             return 0;
         }
     )";
@@ -284,8 +284,8 @@ TEST_CASE("E2E - Struct literal") {
 
         fun main(): i32 {
             var p = Point { x = 10, y = 20 };
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             return 0;
         }
     )";
@@ -305,9 +305,9 @@ TEST_CASE("E2E - Struct literal with default values") {
 
         fun main(): i32 {
             var c = Config { width = 1920 };
-            print(c.width);
-            print(c.height);
-            print(c.fullscreen);
+            print(f"{c.width}");
+            print(f"{c.height}");
+            print(f"{c.fullscreen}");
             return 0;
         }
     )";
@@ -326,8 +326,8 @@ TEST_CASE("E2E - Struct literal field order") {
 
         fun main(): i32 {
             var p = Point { y = 20, x = 10 };
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             return 0;
         }
     )";
@@ -347,9 +347,9 @@ TEST_CASE("E2E - Empty struct literal (all defaults)") {
 
         fun main(): i32 {
             var d = Defaults {};
-            print(d.a);
-            print(d.b);
-            print(d.c);
+            print(f"{d.a}");
+            print(f"{d.b}");
+            print(f"{d.c}");
             return 0;
         }
     )";
@@ -369,8 +369,8 @@ TEST_CASE("E2E - Struct literal with expressions") {
         fun main(): i32 {
             var a = 5;
             var p = Point { x = a * 2, y = a + 10 };
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             return 0;
         }
     )";
@@ -389,8 +389,8 @@ TEST_CASE("E2E - Struct literal with 64-bit field") {
 
         fun main(): i32 {
             var d = Data { a = 10, b = 100000000000l };
-            print(d.a);
-            print_i64(d.b);
+            print(f"{d.a}");
+            print(f"{d.b}");
             return 0;
         }
     )";
@@ -417,7 +417,7 @@ TEST_CASE("E2E - Small struct parameter") {
 
         fun main(): i32 {
             var pt = Point { x = 3, y = 4 };
-            print(distance_sq(pt));
+            print(f"{distance_sq(pt)}");
             return 0;
         }
     )";
@@ -441,8 +441,8 @@ TEST_CASE("E2E - Struct parameter value semantics") {
 
         fun main(): i32 {
             var pt = Point { x = 5, y = 10 };
-            print(modify(pt));
-            print(pt.x);
+            print(f"{modify(pt)}");
+            print(f"{pt.x}");
             return 0;
         }
     )";
@@ -460,10 +460,10 @@ TEST_CASE("E2E - Multiple struct parameters") {
         }
 
         fun add(a: Point, b: Point): i32 {
-            print(a.x);
-            print(a.y);
-            print(b.x);
-            print(b.y);
+            print(f"{a.x}");
+            print(f"{a.y}");
+            print(f"{b.x}");
+            print(f"{b.y}");
             return 0;
         }
 
@@ -488,15 +488,15 @@ TEST_CASE("E2E - Mixed struct and primitive parameters") {
         }
 
         fun scale(p: Point, factor: i32): i32 {
-            print(p.x);
-            print(p.y);
-            print(factor);
+            print(f"{p.x}");
+            print(f"{p.y}");
+            print(f"{factor}");
             return (p.x + p.y) * factor;
         }
 
         fun main(): i32 {
             var pt = Point { x = 3, y = 7 };
-            print(scale(pt, 5));
+            print(f"{scale(pt, 5)}");
             return 0;
         }
     )";
@@ -524,8 +524,8 @@ TEST_CASE("E2E - Return small struct") {
 
         fun main(): i32 {
             var pt = make_point(10, 20);
-            print(pt.x);
-            print(pt.y);
+            print(f"{pt.x}");
+            print(f"{pt.y}");
             return 0;
         }
     )";
@@ -550,8 +550,8 @@ TEST_CASE("E2E - Return struct with modification") {
         fun main(): i32 {
             var p1 = Point { x = 5, y = 10 };
             var p2 = double_point(p1);
-            print(p2.x);
-            print(p2.y);
+            print(f"{p2.x}");
+            print(f"{p2.y}");
             return 0;
         }
     )";
@@ -578,8 +578,8 @@ TEST_CASE("E2E - Chain struct returns") {
 
         fun main(): i32 {
             var p = offset(origin(), 5, 10);
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             return 0;
         }
     )";
@@ -601,8 +601,8 @@ TEST_CASE("E2E - Struct return used in expression") {
         }
 
         fun main(): i32 {
-            print(make_point(7, 8).x);
-            print(make_point(3, 4).y);
+            print(f"{make_point(7, 8).x}");
+            print(f"{make_point(3, 4).y}");
             return 0;
         }
     )";
@@ -632,11 +632,11 @@ TEST_CASE("E2E - Large struct return (>16 bytes)") {
 
         fun main(): i32 {
             var data = make_big(10);
-            print(data.a);
-            print(data.b);
-            print(data.c);
-            print(data.d);
-            print(data.e);
+            print(f"{data.a}");
+            print(f"{data.b}");
+            print(f"{data.c}");
+            print(f"{data.d}");
+            print(f"{data.e}");
             return 0;
         }
     )";
@@ -661,8 +661,8 @@ TEST_CASE("E2E - Large struct return value semantics") {
 
         fun main(): i32 {
             var data = make_big();
-            print(modify_big(data));
-            print(data.a);
+            print(f"{modify_big(data)}");
+            print(f"{data.a}");
             return 0;
         }
     )";
@@ -685,7 +685,7 @@ TEST_CASE("E2E - Large struct chained returns") {
         }
 
         fun main(): i32 {
-            print(sum_big(make_big(5)));
+            print(f"{sum_big(make_big(5))}");
             return 0;
         }
     )";
@@ -710,10 +710,10 @@ TEST_CASE("E2E - Large struct return with 64-bit field") {
 
         fun main(): i32 {
             var data = make_big();
-            print(data.a);
-            print(data.b);
-            print_i64(data.c);
-            print(data.d);
+            print(f"{data.a}");
+            print(f"{data.b}");
+            print(f"{data.c}");
+            print(f"{data.d}");
             return 0;
         }
     )";
@@ -732,8 +732,8 @@ TEST_CASE("E2E - Large struct return used in expression") {
         }
 
         fun main(): i32 {
-            print(make_big(2).c);
-            print(make_big(3).d);
+            print(f"{make_big(2).c}");
+            print(f"{make_big(3).d}");
             return 0;
         }
     )";
@@ -763,11 +763,11 @@ TEST_CASE("E2E - Large struct return chained function calls") {
 
         fun main(): i32 {
             var result = add_big(make_big(10), make_big(5));
-            print(result.a);
-            print(result.b);
-            print(result.c);
-            print(result.d);
-            print(result.e);
+            print(f"{result.a}");
+            print(f"{result.b}");
+            print(f"{result.c}");
+            print(f"{result.d}");
+            print(f"{result.e}");
             return 0;
         }
     )";

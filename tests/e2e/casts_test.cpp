@@ -13,7 +13,7 @@ TEST_CASE("E2E - Cast integer truncation") {
             fun main(): i32 {
                 var x: i64 = 1000l;
                 var y: i32 = i32(x);
-                print(y);
+                print(f"{y}");
                 return 0;
             }
         )";
@@ -27,7 +27,7 @@ TEST_CASE("E2E - Cast integer truncation") {
             fun main(): i32 {
                 var x: i32 = 70000;
                 var y: i16 = i16(x);
-                print(i32(y));
+                print(f"{i32(y)}");
                 return 0;
             }
         )";
@@ -42,7 +42,7 @@ TEST_CASE("E2E - Cast integer truncation") {
             fun main(): i32 {
                 var x: i32 = 300;
                 var y: i8 = i8(x);
-                print(i32(y));
+                print(f"{i32(y)}");
                 return 0;
             }
         )";
@@ -57,7 +57,7 @@ TEST_CASE("E2E - Cast integer truncation") {
             fun main(): i32 {
                 var x: i64 = -100l;
                 var y: i32 = i32(x);
-                print(y);
+                print(f"{y}");
                 return 0;
             }
         )";
@@ -73,7 +73,7 @@ TEST_CASE("E2E - Cast integer widening") {
             fun main(): i32 {
                 var x: i32 = 12345;
                 var y: i64 = i64(x);
-                print_i64(y);
+                print(f"{y}");
                 return 0;
             }
         )";
@@ -88,7 +88,7 @@ TEST_CASE("E2E - Cast integer widening") {
                 var x: i32 = -50;
                 var y: i8 = i8(x);
                 var z: i32 = i32(y);
-                print(z);
+                print(f"{z}");
                 return 0;
             }
         )";
@@ -103,7 +103,7 @@ TEST_CASE("E2E - Cast integer widening") {
                 var x: u32 = 200u;
                 var y: u8 = u8(x);
                 var z: i32 = i32(y);
-                print(z);
+                print(f"{z}");
                 return 0;
             }
         )";
@@ -121,7 +121,7 @@ TEST_CASE("E2E - Cast float conversions") {
                 var y: f32 = f32(x);
                 var z: f64 = f64(y);
                 var w: i32 = i32(z * 100.0);
-                print(w);
+                print(f"{w}");
                 return 0;
             }
         )";
@@ -137,7 +137,7 @@ TEST_CASE("E2E - Cast float conversions") {
                 var x: f64 = 2.718;
                 var y: f32 = f32(x);
                 var z: i32 = i32(f64(y) * 1000.0);
-                print(z);
+                print(f"{z}");
                 return 0;
             }
         )";
@@ -155,7 +155,7 @@ TEST_CASE("E2E - Cast integer to float") {
                 var x: i32 = 42;
                 var y: f64 = f64(x);
                 var z: i32 = i32(y + 0.5);
-                print(z);
+                print(f"{z}");
                 return 0;
             }
         )";
@@ -170,7 +170,7 @@ TEST_CASE("E2E - Cast integer to float") {
                 var x: i64 = 100l;
                 var y: f32 = f32(x);
                 var z: i32 = i32(f64(y));
-                print(z);
+                print(f"{z}");
                 return 0;
             }
         )";
@@ -186,10 +186,10 @@ TEST_CASE("E2E - Cast float to integer") {
             fun main(): i32 {
                 var x: f64 = 3.7;
                 var y: i32 = i32(x);
-                print(y);
+                print(f"{y}");
                 var a: f64 = -3.7;
                 var b: i32 = i32(a);
-                print(b);
+                print(f"{b}");
                 return 0;
             }
         )";
@@ -204,7 +204,7 @@ TEST_CASE("E2E - Cast float to integer") {
                 var x: f64 = 99.9;
                 var y: f32 = f32(x);
                 var z: i64 = i64(y);
-                print_i64(z);
+                print(f"{z}");
                 return 0;
             }
         )";
@@ -222,8 +222,8 @@ TEST_CASE("E2E - Cast bool conversions") {
                 var y: i32 = 0;
                 var a: bool = bool(x);
                 var b: bool = bool(y);
-                if (a) { print(1); } else { print(0); }
-                if (b) { print(1); } else { print(0); }
+                if (a) { print(f"{1}"); } else { print(f"{0}"); }
+                if (b) { print(f"{1}"); } else { print(f"{0}"); }
                 return 0;
             }
         )";
@@ -239,8 +239,8 @@ TEST_CASE("E2E - Cast bool conversions") {
                 var f: bool = false;
                 var x: i32 = i32(t);
                 var y: i32 = i32(f);
-                print(x);
-                print(y);
+                print(f"{x}");
+                print(f"{y}");
                 return 0;
             }
         )";
@@ -254,8 +254,8 @@ TEST_CASE("E2E - Cast bool conversions") {
             fun main(): i32 {
                 var x: f64 = 0.0;
                 var y: f64 = 1.5;
-                if (bool(x)) { print(1); } else { print(0); }
-                if (bool(y)) { print(1); } else { print(0); }
+                if (bool(x)) { print(f"{1}"); } else { print(f"{0}"); }
+                if (bool(y)) { print(f"{1}"); } else { print(f"{0}"); }
                 return 0;
             }
         )";
@@ -271,8 +271,8 @@ TEST_CASE("E2E - Cast bool conversions") {
                 var f: bool = false;
                 var x: f64 = f64(t);
                 var y: f64 = f64(f);
-                print(i32(x));
-                print(i32(y));
+                print(f"{i32(x)}");
+                print(f"{i32(y)}");
                 return 0;
             }
         )";
@@ -287,7 +287,7 @@ TEST_CASE("E2E - Cast no-op (same type)") {
         fun main(): i32 {
             var x: i32 = 42;
             var y: i32 = i32(x);
-            print(y);
+            print(f"{y}");
             return 0;
         }
     )";
@@ -303,7 +303,7 @@ TEST_CASE("E2E - Cast in expressions") {
                 var x: i32 = 10;
                 var y: i64 = 20l;
                 var z: i64 = i64(x) + y;
-                print_i64(z);
+                print(f"{z}");
                 return 0;
             }
         )";
@@ -317,7 +317,7 @@ TEST_CASE("E2E - Cast in expressions") {
             fun main(): i32 {
                 var x: i32 = 100;
                 var y: f64 = f64(i64(x));
-                print(i32(y));
+                print(f"{i32(y)}");
                 return 0;
             }
         )";
@@ -335,7 +335,7 @@ TEST_CASE("E2E - Cast in expressions") {
                 var x: i32 = 5;
                 var y: i32 = 7;
                 var z: i64 = add_longs(i64(x), i64(y));
-                print_i64(z);
+                print(f"{z}");
                 return 0;
             }
         )";
@@ -351,7 +351,7 @@ TEST_CASE("E2E - Cast unsigned types") {
             fun main(): i32 {
                 var x: u32 = 100u;
                 var y: i32 = i32(x);
-                print(y);
+                print(f"{y}");
                 return 0;
             }
         )";
@@ -365,7 +365,7 @@ TEST_CASE("E2E - Cast unsigned types") {
             fun main(): i32 {
                 var x: i32 = 50;
                 var y: u32 = u32(x);
-                print(i32(y));
+                print(f"{i32(y)}");
                 return 0;
             }
         )";
@@ -379,7 +379,7 @@ TEST_CASE("E2E - Cast unsigned types") {
             fun main(): i32 {
                 var x: u64 = 4294967296ul;
                 var y: u32 = u32(x);
-                print(i32(y));
+                print(f"{i32(y)}");
                 return 0;
             }
         )";

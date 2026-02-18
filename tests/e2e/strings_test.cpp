@@ -11,7 +11,7 @@ TEST_CASE("E2E - String literal") {
     const char* source = R"(
         fun main(): i32 {
             var s: string = "hello";
-            print_str(s);
+            print(s);
             return 0;
         }
     )";
@@ -25,8 +25,8 @@ TEST_CASE("E2E - Empty string") {
     const char* source = R"(
         fun main(): i32 {
             var s: string = "";
-            print_str(s);
-            print_str("done");
+            print(s);
+            print("done");
             return 0;
         }
     )";
@@ -39,9 +39,9 @@ TEST_CASE("E2E - Empty string") {
 TEST_CASE("E2E - String length") {
     const char* source = R"(
         fun main(): i32 {
-            print(str_len("hello"));
-            print(str_len(""));
-            print(str_len("hello world"));
+            print(f"{str_len("hello")}");
+            print(f"{str_len("")}");
+            print(f"{str_len("hello world")}");
             return 0;
         }
     )";
@@ -55,7 +55,7 @@ TEST_CASE("E2E - String concatenation with str_concat") {
     const char* source = R"(
         fun main(): i32 {
             var s: string = str_concat("hello", " world");
-            print_str(s);
+            print(s);
             return 0;
         }
     )";
@@ -69,7 +69,7 @@ TEST_CASE("E2E - String concatenation with + operator") {
     const char* source = R"(
         fun main(): i32 {
             var s: string = "hello" + " world";
-            print_str(s);
+            print(s);
             return 0;
         }
     )";
@@ -83,7 +83,7 @@ TEST_CASE("E2E - Multiple string concatenations") {
     const char* source = R"(
         fun main(): i32 {
             var s: string = "a" + "b" + "c" + "d";
-            print_str(s);
+            print(s);
             return 0;
         }
     )";
@@ -102,13 +102,13 @@ TEST_CASE("E2E - String equality") {
 
         fun main(): i32 {
             // Same strings
-            print_str(bool_to_str("abc" == "abc"));
+            print(bool_to_str("abc" == "abc"));
             // Different strings
-            print_str(bool_to_str("abc" == "def"));
+            print(bool_to_str("abc" == "def"));
             // With variables
             var a: string = "hello";
             var b: string = "hello";
-            print_str(bool_to_str(a == b));
+            print(bool_to_str(a == b));
             return 0;
         }
     )";
@@ -127,9 +127,9 @@ TEST_CASE("E2E - String inequality") {
 
         fun main(): i32 {
             // Different strings
-            print_str(bool_to_str("abc" != "def"));
+            print(bool_to_str("abc" != "def"));
             // Same strings
-            print_str(bool_to_str("abc" != "abc"));
+            print(bool_to_str("abc" != "abc"));
             return 0;
         }
     )";
@@ -142,8 +142,8 @@ TEST_CASE("E2E - String inequality") {
 TEST_CASE("E2E - String as function parameter") {
     const char* source = R"(
         fun print_greeting(name: string) {
-            print_str("Hello, ");
-            print_str(name);
+            print("Hello, ");
+            print(name);
         }
 
         fun main(): i32 {
@@ -164,7 +164,7 @@ TEST_CASE("E2E - String as return value") {
         }
 
         fun main(): i32 {
-            print_str(make_greeting());
+            print(make_greeting());
             return 0;
         }
     )";
@@ -181,8 +181,8 @@ TEST_CASE("E2E - String concatenation in function") {
         }
 
         fun main(): i32 {
-            print_str(greet("World"));
-            print_str(greet("Roxy"));
+            print(greet("World"));
+            print(greet("Roxy"));
             return 0;
         }
     )";
@@ -203,9 +203,9 @@ TEST_CASE("E2E - String comparison in if statement") {
         }
 
         fun main(): i32 {
-            print_str(check("yes"));
-            print_str(check("no"));
-            print_str(check("maybe"));
+            print(check("yes"));
+            print(check("no"));
+            print(check("maybe"));
             return 0;
         }
     )";
@@ -219,9 +219,9 @@ TEST_CASE("E2E - String variable reassignment") {
     const char* source = R"(
         fun main(): i32 {
             var s: string = "short";
-            print_str(s);
+            print(s);
             s = "much longer string";
-            print_str(s);
+            print(s);
             return 0;
         }
     )";
@@ -241,9 +241,9 @@ TEST_CASE("E2E - String equality after concatenation") {
         fun main(): i32 {
             var a: string = "hel" + "lo";
             var b: string = "hello";
-            print_str(bool_to_str(a == b));
-            print_str(a);
-            print_str(b);
+            print(bool_to_str(a == b));
+            print(a);
+            print(b);
             return 0;
         }
     )";
@@ -257,7 +257,7 @@ TEST_CASE("E2E - String with special characters") {
     const char* source = R"(
         fun main(): i32 {
             var s: string = "hello\nworld";
-            print_str(s);
+            print(s);
             return 0;
         }
     )";
@@ -267,28 +267,12 @@ TEST_CASE("E2E - String with special characters") {
     CHECK(result.stdout_output == "hello\nworld\n");
 }
 
-TEST_CASE("E2E - Mixed print and print_str") {
-    const char* source = R"(
-        fun main(): i32 {
-            print(42);
-            print_str("hello");
-            print(123);
-            print_str("world");
-            return 0;
-        }
-    )";
-
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\nhello\n123\nworld\n");
-}
-
 TEST_CASE("E2E - String in loop") {
     const char* source = R"(
         fun main(): i32 {
             for (var i: i32 = 0; i < 3; i = i + 1) {
-                print_str("iteration");
-                print(i);
+                print("iteration");
+                print(f"{i}");
             }
             return 0;
         }
@@ -307,7 +291,7 @@ TEST_CASE("E2E - F-string basic interpolation") {
     const char* source = R"(
         fun main(): i32 {
             var name: string = "World";
-            print_str(f"Hello, {name}!");
+            print(f"Hello, {name}!");
             return 0;
         }
     )";
@@ -321,7 +305,7 @@ TEST_CASE("E2E - F-string integer interpolation") {
     const char* source = R"(
         fun main(): i32 {
             var x: i32 = 42;
-            print_str(f"x = {x}");
+            print(f"x = {x}");
             return 0;
         }
     )";
@@ -336,7 +320,7 @@ TEST_CASE("E2E - F-string expression in braces") {
         fun main(): i32 {
             var a: i32 = 3;
             var b: i32 = 4;
-            print_str(f"{a} + {b} = {a + b}");
+            print(f"{a} + {b} = {a + b}");
             return 0;
         }
     )";
@@ -353,7 +337,7 @@ TEST_CASE("E2E - F-string function call in braces") {
         }
 
         fun main(): i32 {
-            print_str(f"double: {double_it(5)}");
+            print(f"double: {double_it(5)}");
             return 0;
         }
     )";
@@ -366,8 +350,8 @@ TEST_CASE("E2E - F-string function call in braces") {
 TEST_CASE("E2E - F-string bool interpolation") {
     const char* source = R"(
         fun main(): i32 {
-            print_str(f"val: {true}");
-            print_str(f"val: {false}");
+            print(f"val: {true}");
+            print(f"val: {false}");
             return 0;
         }
     )";
@@ -381,7 +365,7 @@ TEST_CASE("E2E - F-string float interpolation") {
     const char* source = R"(
         fun main(): i32 {
             var pi: f64 = 3.14;
-            print_str(f"pi: {pi}");
+            print(f"pi: {pi}");
             return 0;
         }
     )";
@@ -394,7 +378,7 @@ TEST_CASE("E2E - F-string float interpolation") {
 TEST_CASE("E2E - F-string no interpolation") {
     const char* source = R"(
         fun main(): i32 {
-            print_str(f"plain text");
+            print(f"plain text");
             return 0;
         }
     )";
@@ -408,7 +392,7 @@ TEST_CASE("E2E - F-string empty parts") {
     const char* source = R"(
         fun main(): i32 {
             var x: i32 = 42;
-            print_str(f"{x}");
+            print(f"{x}");
             return 0;
         }
     )";
@@ -421,7 +405,7 @@ TEST_CASE("E2E - F-string empty parts") {
 TEST_CASE("E2E - F-string escaped braces") {
     const char* source = R"(
         fun main(): i32 {
-            print_str(f"use \{ and \}");
+            print(f"use \{ and \}");
             return 0;
         }
     )";
@@ -437,7 +421,7 @@ TEST_CASE("E2E - F-string multiple types") {
             var name: string = "app";
             var ver: i32 = 2;
             var score: f64 = 9.5;
-            print_str(f"{name} v{ver}: {score}");
+            print(f"{name} v{ver}: {score}");
             return 0;
         }
     )";
@@ -451,7 +435,7 @@ TEST_CASE("E2E - F-string concatenation with +") {
     const char* source = R"(
         fun main(): i32 {
             var name: string = "World";
-            print_str(f"hello" + f" {name}");
+            print(f"hello" + f" {name}");
             return 0;
         }
     )";
@@ -466,7 +450,7 @@ TEST_CASE("E2E - F-string in variable") {
         fun main(): i32 {
             var x: i32 = 10;
             var s: string = f"value is {x}";
-            print_str(s);
+            print(s);
             return 0;
         }
     )";
@@ -480,7 +464,7 @@ TEST_CASE("E2E - F-string i64 interpolation") {
     const char* source = R"(
         fun main(): i32 {
             var big: i64 = 1000000l;
-            print_str(f"big = {big}");
+            print(f"big = {big}");
             return 0;
         }
     )";
@@ -496,7 +480,7 @@ TEST_CASE("E2E - F-string string expression") {
             var a: string = "hello";
             var b: string = "world";
             var space: string = " ";
-            print_str(f"{a + space + b}");
+            print(f"{a + space + b}");
             return 0;
         }
     )";
@@ -509,7 +493,7 @@ TEST_CASE("E2E - F-string string expression") {
 TEST_CASE("E2E - F-string empty") {
     const char* source = R"(
         fun main(): i32 {
-            print_str(f"");
+            print(f"");
             return 0;
         }
     )";

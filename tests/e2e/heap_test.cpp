@@ -43,8 +43,8 @@ TEST_CASE("E2E - Heap allocation with print") {
             var p: uniq Point = uniq Point();
             p.x = 42;
             p.y = 58;
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             delete p;
             return 0;
         }
@@ -69,8 +69,8 @@ TEST_CASE("E2E - Multiple heap allocations") {
             p1.y = 2;
             p2.x = 10;
             p2.y = 20;
-            print(p1.x);
-            print(p2.x);
+            print(f"{p1.x}");
+            print(f"{p2.x}");
             delete p1;
             delete p2;
             return 0;
@@ -97,10 +97,10 @@ TEST_CASE("E2E - Heap allocation larger struct") {
             d.b = 2;
             d.c = 3;
             d.d = 100000000000l;
-            print(d.a);
-            print(d.b);
-            print(d.c);
-            print_i64(d.d);
+            print(f"{d.a}");
+            print(f"{d.b}");
+            print(f"{d.c}");
+            print(f"{d.d}");
             delete d;
             return 0;
         }
@@ -124,8 +124,8 @@ TEST_CASE("E2E - Heap allocation with computation") {
             p.y = 7;
             var sum: i32 = p.x + p.y;
             var product: i32 = p.x * p.y;
-            print(sum);
-            print(product);
+            print(f"{sum}");
+            print(f"{product}");
             delete p;
             return 0;
         }
@@ -150,7 +150,7 @@ TEST_CASE("E2E - Heap allocation in loop") {
                 sum = sum + c.value;
                 delete c;
             }
-            print(sum);
+            print(f"{sum}");
             return 0;
         }
     )";
@@ -180,7 +180,7 @@ TEST_CASE("E2E - Uniq passed to function") {
             p.x = 10;
             p.y = 20;
             var result: i32 = sum_point(p);
-            print(result);
+            print(f"{result}");
             delete p;
             return 0;
         }
@@ -209,8 +209,8 @@ TEST_CASE("E2E - Heap allocation nested struct") {
             line.start.y = 0;
             line.end.x = 10;
             line.end.y = 10;
-            print(line.start.x);
-            print(line.end.x);
+            print(f"{line.start.x}");
+            print(f"{line.end.x}");
             delete line;
             return 0;
         }
@@ -243,7 +243,7 @@ TEST_CASE("E2E - Constraint reference borrow check success") {
             p.y = 8;
             var result: i32 = read_point(p);
             delete p;
-            print(result);
+            print(f"{result}");
             return 0;
         }
     )";
@@ -275,7 +275,7 @@ TEST_CASE("E2E - Ref parameter borrow tracking") {
             var result: i32 = borrow_point(p);  // Pass uniq as ref
             // After function returns, ref_count is back to 0
             delete p;  // Should succeed - no active borrows
-            print(result);
+            print(f"{result}");
             return 0;
         }
     )";
@@ -308,8 +308,8 @@ TEST_CASE("E2E - Multiple ref borrows in sequence") {
             var x: i32 = get_x(p);  // Borrow 1
             var y: i32 = get_y(p);  // Borrow 2
             delete p;
-            print(x);
-            print(y);
+            print(f"{x}");
+            print(f"{y}");
             return 0;
         }
     )";
@@ -340,7 +340,7 @@ TEST_CASE("E2E - Ref parameter with multiple returns") {
             p.y = 30;
             var m: i32 = max_coord(p);
             delete p;
-            print(m);
+            print(f"{m}");
             return 0;
         }
     )";
@@ -360,7 +360,7 @@ TEST_CASE("E2E - Delete null pointer is safe") {
         fun main(): i32 {
             var p: uniq Point = nil;
             delete p;
-            print(42);
+            print(f"{42}");
             return 0;
         }
     )";
@@ -417,7 +417,7 @@ TEST_CASE("E2E - Runtime error: delete with active borrow") {
             var p: uniq Point = uniq Point();
             p.x = 42;
             var result: i32 = try_delete_while_borrowed(p, p);
-            print(result);
+            print(f"{result}");
             return 0;
         }
     )";
@@ -515,7 +515,7 @@ TEST_CASE("E2E - Valid: uniq to ref conversion") {
             owner.y = 20;
             var result: i32 = borrow(owner);  // uniq -> ref OK
             delete owner;
-            print(result);
+            print(f"{result}");
             return 0;
         }
     )";
@@ -533,7 +533,7 @@ TEST_CASE("E2E - Valid: nil to uniq assignment") {
         fun main(): i32 {
             var p: uniq Point = nil;
             delete p;  // Safe to delete nil
-            print(42);
+            print(f"{42}");
             return 0;
         }
     )";

@@ -45,7 +45,7 @@ fun use_skill(skill: ref Skill) {
         case Attack:
             // skill.attack is accessible here
             var dmg: i32 = skill.attack.damage;
-            print(dmg);
+            print(f"{dmg}");
         case Defend:
             // skill.defend is accessible here
             var reduce: f32 = skill.defend.damage_reduce;
@@ -180,7 +180,7 @@ fun new Skill.make_attack(name: string, dmg: i32) {
 ```roxy
 when skill.type {
     case Attack:
-        print(skill.attack.damage);
+        print(f"{skill.attack.damage}");
     // Defend case is implicitly skipped
 }
 ```
@@ -190,9 +190,9 @@ Use `else` for explicit default handling:
 ```roxy
 when skill.type {
     case Attack:
-        print(skill.attack.damage);
+        print(f"{skill.attack.damage}");
     else:
-        print_str("Not an attack");
+        print("Not an attack");
 }
 ```
 
@@ -323,19 +323,19 @@ Each `when` clause is independent - you must pattern match on each discriminant 
 fun describe(ability: ref Ability) {
     when ability.damage_type {
         case Physical:
-            print_str("Physical, penetration: ");
+            print("Physical, penetration: ");
             print_f32(ability.armor_penetration);
         case Magical:
-            print_str("Magical, scaling: ");
+            print("Magical, scaling: ");
             print_f32(ability.magic_scaling);
     }
 
     when ability.target_type {
         case Single:
-            print_str("Range: ");
+            print("Range: ");
             print_f32(ability.range);
         case Area:
-            print_str("Radius: ");
+            print("Radius: ");
             print_f32(ability.radius);
     }
 }
@@ -459,7 +459,7 @@ skills.push(Skill.Defend { name = "Block", defend = DefendData { damage_reduce =
 for (var i: i32 = 0; i < skills.len(); i = i + 1) {
     when skills[i].type {
         case Attack:
-            print(skills[i].attack.damage);
+            print(f"{skills[i].attack.damage}");
         case Defend:
             print_f32(skills[i].defend.damage_reduce);
     }

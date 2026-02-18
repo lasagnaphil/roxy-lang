@@ -159,8 +159,7 @@ static void native_list_pop(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = result.as_u64();
 }
 
-// Native function: print(value: i32)
-// Note: With untyped registers, we interpret the value as i64 by default
+// Native function: print(s: string)
 static void native_print(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 1) {
         vm->error = "print requires 1 argument";
@@ -168,26 +167,14 @@ static void native_print(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     }
 
     u64* regs = vm->call_stack.back().registers;
-    i64 val = static_cast<i64>(regs[first_arg]);
+    void* str = reinterpret_cast<void*>(regs[first_arg]);
 
-    // With untyped registers, we just print as integer
-    printf("%lld\n", (long long)val);
-
-    // print returns void, but we set dst to 0 for safety
-    regs[dst] = 0;
-}
-
-// Native function: print_i64(value: i64)
-static void native_print_i64(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    if (argc < 1) {
-        vm->error = "print_i64 requires 1 argument";
-        return;
+    if (str) {
+        printf("%s\n", string_chars(str));
+    } else {
+        printf("(null)\n");
     }
 
-    u64* regs = vm->call_stack.back().registers;
-    i64 val = static_cast<i64>(regs[first_arg]);
-
-    printf("%lld\n", (long long)val);
     regs[dst] = 0;
 }
 
@@ -262,24 +249,7 @@ static void native_str_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = static_cast<u64>(string_length(str));
 }
 
-// Native function: print_str(s: string)
-static void native_print_str(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    if (argc < 1) {
-        vm->error = "print_str requires 1 argument";
-        return;
-    }
 
-    u64* regs = vm->call_stack.back().registers;
-    void* str = reinterpret_cast<void*>(regs[first_arg]);
-
-    if (str) {
-        printf("%s\n", string_chars(str));
-    } else {
-        printf("(null)\n");
-    }
-
-    regs[dst] = 0;
-}
 
 // Native function: bool$$to_string(val: bool) -> string
 static void native_bool_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
@@ -357,42 +327,35 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_generic_method("List", "pop",  native_list_pop,
                                  {}, type_param(0));
 
-    // Register print(value: i32) -> void
-    registry.bind_native(NATIVE_PRINT, native_print,
-                         {TK::I32}, TK::Void);
-
-    // Register print_i64(value: i64) -> void
-    registry.bind_native(NATIVE_PRINT_I64, native_print_i64,
-                         {TK::I64}, TK::Void);
-
-    // String functions
-    registry.bind_native(NATIVE_STR_CONCAT, native_str_concat,
-                         {TK::String, TK::String}, TK::String);
-
-    registry.bind_native(NATIVE_STR_EQ, native_str_eq,
-                         {TK::String, TK::String}, TK::Bool);
-
-    registry.bind_native(NATIVE_STR_NE, native_str_ne,
-                         {TK::String, TK::String}, TK::Bool);
-
-    registry.bind_native(NATIVE_STR_LEN, native_str_len,
-                         {TK::String}, TK::I32);
-
-    registry.bind_native(NATIVE_PRINT_STR, native_print_str,
+    // Register print(s: string) -> void
+    registry.bind_native("print", native_print,
                          {TK::String}, TK::Void);
 
+    // String functions
+    registry.bind_native("str_concat", native_str_concat,
+                         {TK::String, TK::String}, TK::String);
+
+    registry.bind_native("str_eq", native_str_eq,
+                         {TK::String, TK::String}, TK::Bool);
+
+    registry.bind_native("str_ne", native_str_ne,
+                         {TK::String, TK::String}, TK::Bool);
+
+    registry.bind_native("str_len", native_str_len,
+                         {TK::String}, TK::I32);
+
     // to_string natives for primitive types
-    registry.bind_native(NATIVE_BOOL_TO_STRING, native_bool_to_string,
+    registry.bind_native("bool$$to_string", native_bool_to_string,
                          {TK::Bool}, TK::String);
-    registry.bind_native(NATIVE_I32_TO_STRING, native_i32_to_string,
+    registry.bind_native("i32$$to_string", native_i32_to_string,
                          {TK::I32}, TK::String);
-    registry.bind_native(NATIVE_I64_TO_STRING, native_i64_to_string,
+    registry.bind_native("i64$$to_string", native_i64_to_string,
                          {TK::I64}, TK::String);
-    registry.bind_native(NATIVE_F32_TO_STRING, native_f32_to_string,
+    registry.bind_native("f32$$to_string", native_f32_to_string,
                          {TK::F32}, TK::String);
-    registry.bind_native(NATIVE_F64_TO_STRING, native_f64_to_string,
+    registry.bind_native("f64$$to_string", native_f64_to_string,
                          {TK::F64}, TK::String);
-    registry.bind_native(NATIVE_STRING_TO_STRING, native_string_to_string,
+    registry.bind_native("string$$to_string", native_string_to_string,
                          {TK::String}, TK::String);
 }
 

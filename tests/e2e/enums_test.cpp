@@ -41,9 +41,9 @@ TEST_CASE("E2E - Enum comparison") {
             fun main(): i32 {
                 var c: Color = Color::Green;
                 if (c == Color::Red) {
-                    print(1);
+                    print(f"{1}");
                 } else {
-                    print(0);
+                    print(f"{0}");
                 }
                 return 0;
             }
@@ -62,9 +62,9 @@ TEST_CASE("E2E - Enum comparison") {
             fun main(): i32 {
                 var c: Color = Color::Green;
                 if (c == Color::Green) {
-                    print(1);
+                    print(f"{1}");
                 } else {
-                    print(0);
+                    print(f"{0}");
                 }
                 return 0;
             }
@@ -85,9 +85,9 @@ TEST_CASE("E2E - Enum explicit values") {
             fun main(): i32 {
                 var s: Status = Status::Active;
                 if (s == Status::Active) {
-                    print(1);
+                    print(f"{1}");
                 } else {
-                    print(0);
+                    print(f"{0}");
                 }
                 return 0;
             }
@@ -103,9 +103,9 @@ TEST_CASE("E2E - Enum explicit values") {
             enum Code { A = 5, B, C }  // B=6, C=7
 
             fun main(): i32 {
-                if (Code::A == Code::A) { print(1); } else { print(0); }
-                if (Code::B == Code::B) { print(1); } else { print(0); }
-                if (Code::C == Code::C) { print(1); } else { print(0); }
+                if (Code::A == Code::A) { print(f"{1}"); } else { print(f"{0}"); }
+                if (Code::B == Code::B) { print(f"{1}"); } else { print(f"{0}"); }
+                if (Code::C == Code::C) { print(f"{1}"); } else { print(f"{0}"); }
                 return 0;
             }
         )";
@@ -129,9 +129,9 @@ TEST_CASE("E2E - Enum in struct field") {
         fun main(): i32 {
             var p: Player = Player { x = 10, y = 20, facing = Direction::East };
             if (p.facing == Direction::East) {
-                print(1);
+                print(f"{1}");
             } else {
-                print(0);
+                print(f"{0}");
             }
             return 0;
         }
@@ -157,9 +157,9 @@ TEST_CASE("E2E - Enum as function parameter") {
         }
 
         fun main(): i32 {
-            print(apply(10, 3, Op::Add));
-            print(apply(10, 3, Op::Sub));
-            print(apply(10, 3, Op::Mul));
+            print(f"{apply(10, 3, Op::Add)}");
+            print(f"{apply(10, 3, Op::Sub)}");
+            print(f"{apply(10, 3, Op::Mul)}");
             return 0;
         }
     )";

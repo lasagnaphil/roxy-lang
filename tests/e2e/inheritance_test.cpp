@@ -19,8 +19,8 @@ TEST_CASE("E2E - Inherit field access") {
 
         fun main(): i32 {
             var d: Dog = Dog { hp = 100, breed = 5 };
-            print(d.hp);
-            print(d.breed);
+            print(f"{d.hp}");
+            print(f"{d.breed}");
             return 0;
         }
     )";
@@ -46,7 +46,7 @@ TEST_CASE("E2E - Inherit method from parent") {
 
         fun main(): i32 {
             var d: Dog = Dog { hp = 100, breed = 5 };
-            print(d.get_hp());
+            print(f"{d.get_hp()}");
             return 0;
         }
     )";
@@ -77,8 +77,8 @@ TEST_CASE("E2E - Method override in child") {
         fun main(): i32 {
             var a: Animal = Animal { hp = 50 };
             var d: Dog = Dog { hp = 100, breed = 5 };
-            print(a.speak());
-            print(d.speak());
+            print(f"{a.speak()}");
+            print(f"{d.speak()}");
             return 0;
         }
     )";
@@ -108,7 +108,7 @@ TEST_CASE("E2E - Super method call") {
 
         fun main(): i32 {
             var d: Dog = Dog { hp = 100, breed = 5 };
-            print(d.speak());
+            print(f"{d.speak()}");
             return 0;
         }
     )";
@@ -128,7 +128,7 @@ TEST_CASE("E2E - Constructor chaining implicit") {
 
         fun new Animal() {
             self.hp = 50;
-            print(1);
+            print(f"{1}");
         }
 
         struct Dog : Animal {
@@ -138,13 +138,13 @@ TEST_CASE("E2E - Constructor chaining implicit") {
         fun new Dog(breed: i32) {
             // No explicit super() - will implicitly call Animal() default constructor
             self.breed = breed;
-            print(2);
+            print(f"{2}");
         }
 
         fun main(): i32 {
             var d: Dog = Dog(5);
-            print(d.hp);
-            print(d.breed);
+            print(f"{d.hp}");
+            print(f"{d.breed}");
             return 0;
         }
     )";
@@ -163,7 +163,7 @@ TEST_CASE("E2E - Constructor chaining explicit super") {
 
         fun new Animal(hp: i32) {
             self.hp = hp;
-            print(1);
+            print(f"{1}");
         }
 
         struct Dog : Animal {
@@ -173,13 +173,13 @@ TEST_CASE("E2E - Constructor chaining explicit super") {
         fun new Dog(hp: i32, breed: i32) {
             super(hp);
             self.breed = breed;
-            print(2);
+            print(f"{2}");
         }
 
         fun main(): i32 {
             var d: Dog = Dog(100, 5);
-            print(d.hp);
-            print(d.breed);
+            print(f"{d.hp}");
+            print(f"{d.breed}");
             return 0;
         }
     )";
@@ -196,7 +196,7 @@ TEST_CASE("E2E - Destructor chaining") {
         }
 
         fun delete Animal() {
-            print(1);
+            print(f"{1}");
         }
 
         struct Dog : Animal {
@@ -204,7 +204,7 @@ TEST_CASE("E2E - Destructor chaining") {
         }
 
         fun delete Dog() {
-            print(2);
+            print(f"{2}");
         }
 
         fun main(): i32 {
@@ -231,13 +231,13 @@ TEST_CASE("E2E - Value slicing on assignment") {
         }
 
         fun print_hp(a: Animal) {
-            print(a.hp);
+            print(f"{a.hp}");
         }
 
         fun main(): i32 {
             var d: Dog = Dog { hp = 100, breed = 5 };
             var a: Animal = d;
-            print(a.hp);
+            print(f"{a.hp}");
             print_hp(d);
             return 0;
         }
@@ -259,7 +259,7 @@ TEST_CASE("E2E - Reference subtyping uniq to ref") {
         }
 
         fun print_animal(a: ref Animal) {
-            print(a.hp);
+            print(f"{a.hp}");
         }
 
         fun main(): i32 {
@@ -303,10 +303,10 @@ TEST_CASE("E2E - Multi-level inheritance") {
 
         fun main(): i32 {
             var lab: Labrador = Labrador { hp = 100, breed = 5, color = 3 };
-            print(lab.hp);
-            print(lab.breed);
-            print(lab.color);
-            print(lab.get_type());
+            print(f"{lab.hp}");
+            print(f"{lab.breed}");
+            print(f"{lab.color}");
+            print(f"{lab.get_type()}");
             return 0;
         }
     )";
@@ -328,8 +328,8 @@ TEST_CASE("E2E - Synthesized constructor with inheritance") {
 
         fun main(): i32 {
             var d: Dog = Dog {};
-            print(d.hp);
-            print(d.breed);
+            print(f"{d.hp}");
+            print(f"{d.breed}");
             return 0;
         }
     )";
@@ -355,7 +355,7 @@ TEST_CASE("E2E - Child accessing parent field in method") {
 
         fun main(): i32 {
             var d: Dog = Dog { hp = 100, breed = 5 };
-            print(d.get_stats());
+            print(f"{d.get_stats()}");
             return 0;
         }
     )";

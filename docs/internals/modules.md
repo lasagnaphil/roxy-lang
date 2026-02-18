@@ -61,8 +61,7 @@ fun helper(): i32 {  // Not exported (private)
 Built-in functions are automatically available without explicit imports. They are registered in a special `"builtin"` module that is auto-imported as a prelude.
 
 **Built-in functions:**
-- `print(value: i32)` - Print integer to stdout
-- `print_str(s: string)` - Print string to stdout
+- `print(s: string)` - Print string to stdout
 - `str_concat(a: string, b: string): string` - Concatenate strings
 - `str_eq(a: string, b: string): bool` - String equality
 - `str_ne(a: string, b: string): bool` - String inequality
@@ -72,8 +71,8 @@ These can be used without imports:
 
 ```roxy
 fun main(): i32 {
-    print(42);           // No import needed
-    print_str("hello");  // No import needed
+    print(f"{42}");      // No import needed
+    print("hello");      // No import needed
     return 0;
 }
 ```

@@ -16,7 +16,7 @@ TEST_CASE("E2E - Basic inout parameter") {
         fun main(): i32 {
             var n: i32 = 41;
             increment(inout n);
-            print(n);
+            print(f"{n}");
             return 0;
         }
     )";
@@ -35,7 +35,7 @@ TEST_CASE("E2E - Basic out parameter") {
         fun main(): i32 {
             var n: i32 = 0;
             init_value(out n);
-            print(n);
+            print(f"{n}");
             return 0;
         }
     )";
@@ -56,8 +56,8 @@ TEST_CASE("E2E - Multiple out parameters") {
             var x: i32 = 0;
             var y: i32 = 0;
             init_pair(out x, out y);
-            print(x);
-            print(y);
+            print(f"{x}");
+            print(f"{y}");
             return 0;
         }
     )";
@@ -79,8 +79,8 @@ TEST_CASE("E2E - Swap with inout") {
             var x: i32 = 10;
             var y: i32 = 20;
             swap(inout x, inout y);
-            print(x);
-            print(y);
+            print(f"{x}");
+            print(f"{y}");
             return 0;
         }
     )";
@@ -99,7 +99,7 @@ TEST_CASE("E2E - Inout with computation") {
         fun main(): i32 {
             var n: i32 = 21;
             double_value(inout n);
-            print(n);
+            print(f"{n}");
             return 0;
         }
     )";
@@ -118,11 +118,11 @@ TEST_CASE("E2E - Multiple inout calls") {
         fun main(): i32 {
             var n: i32 = 0;
             increment(inout n);
-            print(n);
+            print(f"{n}");
             increment(inout n);
-            print(n);
+            print(f"{n}");
             increment(inout n);
-            print(n);
+            print(f"{n}");
             return 0;
         }
     )";
@@ -141,7 +141,7 @@ TEST_CASE("E2E - Mixed regular and inout parameters") {
         fun main(): i32 {
             var n: i32 = 10;
             add_to(inout n, 32);
-            print(n);
+            print(f"{n}");
             return 0;
         }
     )";
@@ -166,8 +166,8 @@ TEST_CASE("E2E - Inout with struct parameter") {
         fun main(): i32 {
             var pt = Point { x = 10, y = 20 };
             double_point(inout pt);
-            print(pt.x);
-            print(pt.y);
+            print(f"{pt.x}");
+            print(f"{pt.y}");
             return 0;
         }
     )";
@@ -192,8 +192,8 @@ TEST_CASE("E2E - Out with struct parameter") {
         fun main(): i32 {
             var pt: Point;
             init_point(out pt, 15, 27);
-            print(pt.x);
-            print(pt.y);
+            print(f"{pt.x}");
+            print(f"{pt.y}");
             return 0;
         }
     )";
@@ -219,8 +219,8 @@ TEST_CASE("E2E - Inout struct field modification") {
         fun main(): i32 {
             var pt = Point { x = 10, y = 20 };
             swap_coords(inout pt);
-            print(pt.x);
-            print(pt.y);
+            print(f"{pt.x}");
+            print(f"{pt.y}");
             return 0;
         }
     )";
@@ -255,10 +255,10 @@ TEST_CASE("E2E - Inout with nested struct") {
                 size = Point { x = 10, y = 20 }
             };
             scale_rect(inout rect, 3);
-            print(rect.origin.x);
-            print(rect.origin.y);
-            print(rect.size.x);
-            print(rect.size.y);
+            print(f"{rect.origin.x}");
+            print(f"{rect.origin.y}");
+            print(f"{rect.size.x}");
+            print(f"{rect.size.y}");
             return 0;
         }
     )";
@@ -291,7 +291,7 @@ TEST_CASE("E2E - Four-slot struct followed by int parameter") {
 
         fun main(): i32 {
             var s = FourSlot { a = 1, b = 2, c = 3, d = 4 };
-            print(sum_with_extra(s, 100));
+            print(f"{sum_with_extra(s, 100)}");
             return 0;
         }
     )";
@@ -317,7 +317,7 @@ TEST_CASE("E2E - Three-slot struct followed by int parameter") {
 
         fun main(): i32 {
             var s = ThreeSlot { a = 10, b = 20, c = 30 };
-            print(sum_with_extra(s, 500));
+            print(f"{sum_with_extra(s, 500)}");
             return 0;
         }
     )";
@@ -343,7 +343,7 @@ TEST_CASE("E2E - Four-slot struct followed by two int parameters") {
 
         fun main(): i32 {
             var s = FourSlot { a = 5, b = 0, c = 0, d = 7 };
-            print(compute(s, 10, 20));
+            print(f"{compute(s, 10, 20)}");
             return 0;
         }
     )";
@@ -370,7 +370,7 @@ TEST_CASE("E2E - Two four-slot struct parameters") {
         fun main(): i32 {
             var s1 = FourSlot { a = 1, b = 2, c = 3, d = 4 };
             var s2 = FourSlot { a = 10, b = 20, c = 30, d = 40 };
-            print(add_structs(s1, s2));
+            print(f"{add_structs(s1, s2)}");
             return 0;
         }
     )";
@@ -403,7 +403,7 @@ TEST_CASE("E2E - Mix of two-slot and four-slot struct parameters") {
         fun main(): i32 {
             var t = TwoSlot { x = 1, y = 2 };
             var f = FourSlot { a = 10, b = 20, c = 30, d = 40 };
-            print(mixed(t, f, 1000));
+            print(f"{mixed(t, f, 1000)}");
             return 0;
         }
     )";
@@ -440,10 +440,10 @@ TEST_CASE("E2E - Four-slot struct parameter with struct return") {
             var s = FourSlot { a = 1, b = 2, c = 3, d = 4 };
             var t1 = extract(s, 0);
             var t2 = extract(s, 1);
-            print(t1.x);
-            print(t1.y);
-            print(t2.x);
-            print(t2.y);
+            print(f"{t1.x}");
+            print(f"{t1.y}");
+            print(f"{t2.x}");
+            print(f"{t2.y}");
             return 0;
         }
     )";
@@ -469,7 +469,7 @@ TEST_CASE("E2E - Int parameter before four-slot struct") {
 
         fun main(): i32 {
             var s = FourSlot { a = 1, b = 2, c = 3, d = 4 };
-            print(multiply_struct(10, s));
+            print(f"{multiply_struct(10, s)}");
             return 0;
         }
     )";
@@ -498,7 +498,7 @@ TEST_CASE("E2E - Multiple four-slot structs with int in middle") {
         fun main(): i32 {
             var x = FourSlot { a = 1, b = 1, c = 1, d = 1 };
             var y = FourSlot { a = 5, b = 5, c = 5, d = 5 };
-            print(weighted_sum(x, 10, y));
+            print(f"{weighted_sum(x, 10, y)}");
             return 0;
         }
     )";

@@ -24,9 +24,9 @@ TEST_CASE("E2E - When basic") {
         }
 
         fun main(): i32 {
-            print(test_color(Color::Red));
-            print(test_color(Color::Green));
-            print(test_color(Color::Blue));
+            print(f"{test_color(Color::Red)}");
+            print(f"{test_color(Color::Green)}");
+            print(f"{test_color(Color::Blue)}");
             return 0;
         }
     )";
@@ -52,10 +52,10 @@ TEST_CASE("E2E - When with else") {
         }
 
         fun main(): i32 {
-            print(status_code(Status::Pending));
-            print(status_code(Status::Active));
-            print(status_code(Status::Done));
-            print(status_code(Status::Cancelled));
+            print(f"{status_code(Status::Pending)}");
+            print(f"{status_code(Status::Active)}");
+            print(f"{status_code(Status::Done)}");
+            print(f"{status_code(Status::Cancelled)}");
             return 0;
         }
     )";
@@ -79,10 +79,10 @@ TEST_CASE("E2E - When with multiple case names") {
         }
 
         fun main(): i32 {
-            print(is_weekend(Day::Mon));
-            print(is_weekend(Day::Fri));
-            print(is_weekend(Day::Sat));
-            print(is_weekend(Day::Sun));
+            print(f"{is_weekend(Day::Mon)}");
+            print(f"{is_weekend(Day::Fri)}");
+            print(f"{is_weekend(Day::Sat)}");
+            print(f"{is_weekend(Day::Sun)}");
             return 0;
         }
     )";
@@ -109,9 +109,9 @@ TEST_CASE("E2E - When with enum explicit values") {
         }
 
         fun main(): i32 {
-            print(get_multiplier(Priority::Low));
-            print(get_multiplier(Priority::Medium));
-            print(get_multiplier(Priority::High));
+            print(f"{get_multiplier(Priority::Low)}");
+            print(f"{get_multiplier(Priority::Medium)}");
+            print(f"{get_multiplier(Priority::High)}");
             return 0;
         }
     )";
@@ -141,9 +141,9 @@ TEST_CASE("E2E - When with local variables in case") {
         }
 
         fun main(): i32 {
-            print(calc(Op::Add, 10, 3));
-            print(calc(Op::Sub, 10, 3));
-            print(calc(Op::Mul, 10, 3));
+            print(f"{calc(Op::Add, 10, 3)}");
+            print(f"{calc(Op::Sub, 10, 3)}");
+            print(f"{calc(Op::Mul, 10, 3)}");
             return 0;
         }
     )";
@@ -163,13 +163,13 @@ TEST_CASE("E2E - When with multiple statements per case") {
             var code: i32 = 0;
             when l {
                 case Debug:
-                    print(1);
+                    print(f"{1}");
                     code = 10;
                 case Info:
-                    print(2);
+                    print(f"{2}");
                     code = 20;
                 case Error:
-                    print(3);
+                    print(f"{3}");
                     code = 30;
             }
             return code;
@@ -179,9 +179,9 @@ TEST_CASE("E2E - When with multiple statements per case") {
             var c1: i32 = log_level(Level::Debug);
             var c2: i32 = log_level(Level::Info);
             var c3: i32 = log_level(Level::Error);
-            print(c1);
-            print(c2);
-            print(c3);
+            print(f"{c1}");
+            print(f"{c2}");
+            print(f"{c3}");
             return 0;
         }
     )";
@@ -206,8 +206,8 @@ TEST_CASE("E2E - When exhaustive without else") {
         }
 
         fun main(): i32 {
-            print(to_int(Bool2::True2));
-            print(to_int(Bool2::False2));
+            print(f"{to_int(Bool2::True2)}");
+            print(f"{to_int(Bool2::False2)}");
             return 0;
         }
     )";
@@ -235,9 +235,9 @@ TEST_CASE("E2E - When with variable discriminant") {
         }
 
         fun main(): i32 {
-            print(check_mode(Mode::Read));
-            print(check_mode(Mode::Write));
-            print(check_mode(Mode::ReadWrite));
+            print(f"{check_mode(Mode::Read)}");
+            print(f"{check_mode(Mode::Write)}");
+            print(f"{check_mode(Mode::ReadWrite)}");
             return 0;
         }
     )";
@@ -263,8 +263,8 @@ TEST_CASE("E2E - When phi without else") {
         }
 
         fun main(): i32 {
-            print(calc(Op::Add, 10, 5));
-            print(calc(Op::Sub, 10, 5));
+            print(f"{calc(Op::Add, 10, 5)}");
+            print(f"{calc(Op::Sub, 10, 5)}");
             return 0;
         }
     )";
@@ -294,10 +294,10 @@ TEST_CASE("E2E - When phi with else") {
         }
 
         fun main(): i32 {
-            print(status_value(Status::Ok));
-            print(status_value(Status::Warning));
-            print(status_value(Status::Error));
-            print(status_value(Status::Unknown));
+            print(f"{status_value(Status::Ok)}");
+            print(f"{status_value(Status::Warning)}");
+            print(f"{status_value(Status::Error)}");
+            print(f"{status_value(Status::Unknown)}");
             return 0;
         }
     )";
@@ -329,9 +329,9 @@ TEST_CASE("E2E - When phi multiple variables") {
         }
 
         fun main(): i32 {
-            print(process_action(Action::Move));
-            print(process_action(Action::Jump));
-            print(process_action(Action::Attack));
+            print(f"{process_action(Action::Move)}");
+            print(f"{process_action(Action::Jump)}");
+            print(f"{process_action(Action::Attack)}");
             return 0;
         }
     )";
@@ -358,9 +358,9 @@ TEST_CASE("E2E - When phi partial coverage") {
         }
 
         fun main(): i32 {
-            print(get_score(Priority::Low, 10));
-            print(get_score(Priority::Medium, 10));
-            print(get_score(Priority::High, 10));
+            print(f"{get_score(Priority::Low, 10)}");
+            print(f"{get_score(Priority::Medium, 10)}");
+            print(f"{get_score(Priority::High, 10)}");
             return 0;
         }
     )";

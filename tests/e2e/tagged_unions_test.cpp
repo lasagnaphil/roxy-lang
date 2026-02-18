@@ -42,7 +42,7 @@ TEST_CASE("E2E - Tagged unions struct literal with variant A") {
 
         fun main(): i32 {
             var d: Data = Data { kind = Kind::A, val_a = 42 };
-            print(d.val_a);
+            print(f"{d.val_a}");
             return 0;
         }
     )";
@@ -67,7 +67,7 @@ TEST_CASE("E2E - Tagged unions struct literal with variant B") {
 
         fun main(): i32 {
             var d: Data = Data { kind = Kind::B, val_b = 99 };
-            print(d.val_b);
+            print(f"{d.val_b}");
             return 0;
         }
     )";
@@ -97,8 +97,8 @@ TEST_CASE("E2E - Tagged unions with regular fields") {
                 type = SkillType::Attack,
                 damage = 100
             };
-            print(skill.name_id);
-            print(skill.damage);
+            print(f"{skill.name_id}");
+            print(f"{skill.damage}");
             return 0;
         }
     )";
@@ -126,8 +126,8 @@ TEST_CASE("E2E - Tagged unions multiple fields per variant") {
 
         fun main(): i32 {
             var p: Point = Point { kind = Kind::Point2D, x = 10, y = 20 };
-            print(p.x);
-            print(p.y);
+            print(f"{p.x}");
+            print(f"{p.y}");
             return 0;
         }
     )";
@@ -153,7 +153,7 @@ TEST_CASE("E2E - Tagged unions variant field assignment") {
         fun main(): i32 {
             var d: Data = Data { kind = Kind::A, val_a = 10 };
             d.val_a = 20;
-            print(d.val_a);
+            print(f"{d.val_a}");
             return 0;
         }
     )";
@@ -182,7 +182,7 @@ TEST_CASE("E2E - Tagged unions method access") {
 
         fun main(): i32 {
             var d: Data = Data { kind = Kind::A, val_a = 42 };
-            print(d.get_val_a());
+            print(f"{d.get_val_a()}");
             return 0;
         }
     )";
@@ -209,17 +209,17 @@ TEST_CASE("E2E - Tagged unions use with when statement") {
             var d1: Data = Data { kind = Kind::A, val_a = 10 };
             when d1.kind {
                 case A:
-                    print(d1.val_a);
+                    print(f"{d1.val_a}");
                 case B:
-                    print(d1.val_b);
+                    print(f"{d1.val_b}");
             }
 
             var d2: Data = Data { kind = Kind::B, val_b = 20 };
             when d2.kind {
                 case A:
-                    print(d2.val_a);
+                    print(f"{d2.val_a}");
                 case B:
-                    print(d2.val_b);
+                    print(f"{d2.val_b}");
             }
             return 0;
         }

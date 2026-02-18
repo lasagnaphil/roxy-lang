@@ -20,7 +20,7 @@ fun Printable.print();
 // Default method (has body)
 fun Printable.println() {
     self.print();
-    print_str("\n");
+    print("\n");
 }
 ```
 
@@ -125,7 +125,7 @@ fun Printable.print();
 
 trait DebugPrintable : Printable;
 fun DebugPrintable.debug_print() {
-    print_str("[DEBUG] ");
+    print("[DEBUG] ");
     self.print();
 }
 ```
@@ -216,18 +216,18 @@ Functions can require types to implement specific traits:
 
 ```roxy
 fun debug<T: Printable>(value: T) {
-    print_str("[DEBUG] ");
+    print("[DEBUG] ");
     value.print();
-    print_str("\n");
+    print("\n");
 }
 
 // Multiple trait bounds
 fun compare_and_print<T: Printable + Comparable>(a: T, b: T) {
     a.print();
     if (a.lt(b)) {
-        print_str(" < ");
+        print(" < ");
     } else {
-        print_str(" >= ");
+        print(" >= ");
     }
     b.print();
 }
@@ -243,29 +243,28 @@ trait Printable;
 fun Printable.print();
 fun Printable.println() {
     self.print();
-    print_str("\n");
+    print("\n");
 }
 
 // Builtin implementations
 fun i32.print() for Printable {
-    print_i32(self);
+    print(f"{self}");
 }
 
 fun i64.print() for Printable {
-    print_i64(self);
+    print(f"{self}");
 }
 
 fun f64.print() for Printable {
-    print_f64(self);
+    print(f"{self}");
 }
 
 fun bool.print() for Printable {
-    if (self) { print_str("true"); }
-    else { print_str("false"); }
+    print(f"{self}");
 }
 
 fun string.print() for Printable {
-    print_str(self);
+    print(self);
 }
 
 // Universal print function
@@ -297,22 +296,22 @@ Built-in parameterized types (see `generics.md`) can also implement traits:
 ```roxy
 // Built-in list implements Printable if element type does
 fun List<T>.print() for Printable where T: Printable {
-    print_str("[");
+    print("[");
     for (var i: i32 = 0; i < self.len(); i = i + 1) {
-        if (i > 0) { print_str(", "); }
+        if (i > 0) { print(", "); }
         self[i].print();
     }
-    print_str("]");
+    print("]");
 }
 
 // Option<T> implements Printable if T does
 fun Option.print<T>() for Printable where T: Printable {
     if (self.has_value()) {
-        print_str("Some(");
+        print("Some(");
         self.unwrap().print();
-        print_str(")");
+        print(")");
     } else {
-        print_str("None");
+        print("None");
     }
 }
 ```
@@ -327,7 +326,7 @@ trait Printable;
 fun Printable.print();
 fun Printable.println() {
     self.print();
-    print_str("\n");
+    print("\n");
 }
 
 trait Comparable;
@@ -349,9 +348,9 @@ fun Score.double(): i32 {
 
 // === Trait implementations ===
 fun Score.print() for Printable {
-    print_str(self.name);
-    print_str(": ");
-    print_i32(self.value);
+    print(self.name);
+    print(": ");
+    print(f"{self.value}");
 }
 
 fun Score.compare(other: Score): i32 for Comparable {
@@ -360,7 +359,7 @@ fun Score.compare(other: Score): i32 for Comparable {
 
 // === Generic function ===
 fun print_winner<T: Printable + Comparable>(a: T, b: T) {
-    print_str("Winner: ");
+    print("Winner: ");
     if (a.gt(b)) {
         a.println();
     } else {

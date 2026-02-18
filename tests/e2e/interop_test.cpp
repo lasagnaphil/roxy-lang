@@ -484,7 +484,7 @@ TEST_CASE("Interop - Built-in natives via registry") {
     SUBCASE("print works") {
         const char* source = R"(
             fun test(): i32 {
-                print(42);
+                print(f"{42}");
                 return 0;
             }
         )";
@@ -600,9 +600,9 @@ TEST_CASE("Interop - Mixed bound and built-in functions") {
             lst.push(abs(-5));
             lst.push(square(4));
             lst.push(lst.len());
-            print(lst[0]);
-            print(lst[1]);
-            print(lst[2]);
+            print(f"{lst[0]}");
+            print(f"{lst[1]}");
+            print(f"{lst[2]}");
             return lst[0] + lst[1] + lst[2];
         }
     )";

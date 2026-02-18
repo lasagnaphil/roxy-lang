@@ -23,7 +23,7 @@ TEST_CASE("E2E - Arithmetic expressions") {
     SUBCASE("Addition") {
         const char* source = R"(
             fun main(): i32 {
-                print(10 + 32);
+                print(f"{10 + 32}");
                 return 0;
             }
         )";
@@ -35,7 +35,7 @@ TEST_CASE("E2E - Arithmetic expressions") {
     SUBCASE("Complex expression") {
         const char* source = R"(
             fun main(): i32 {
-                print(1 + 2 * 3 + 4 * 5);
+                print(f"{1 + 2 * 3 + 4 * 5}");
                 return 0;
             }
         )";
@@ -48,7 +48,7 @@ TEST_CASE("E2E - Arithmetic expressions") {
     SUBCASE("Parentheses") {
         const char* source = R"(
             fun main(): i32 {
-                print((1 + 2) * (3 + 4));
+                print(f"{(1 + 2) * (3 + 4)}");
                 return 0;
             }
         )";
@@ -61,8 +61,8 @@ TEST_CASE("E2E - Arithmetic expressions") {
     SUBCASE("Division and modulo") {
         const char* source = R"(
             fun main(): i32 {
-                print(100 / 3);
-                print(100 % 3);
+                print(f"{100 / 3}");
+                print(f"{100 % 3}");
                 return 0;
             }
         )";
@@ -74,8 +74,8 @@ TEST_CASE("E2E - Arithmetic expressions") {
     SUBCASE("Negation") {
         const char* source = R"(
             fun main(): i32 {
-                print(-42);
-                print(-(-42));
+                print(f"{-42}");
+                print(f"{-(-42)}");
                 return 0;
             }
         )";
@@ -91,9 +91,9 @@ TEST_CASE("E2E - Local variables") {
             var a: i32 = 10;
             var b: i32 = 20;
             var c: i32 = a + b;
-            print(a);
-            print(b);
-            print(c);
+            print(f"{a}");
+            print(f"{b}");
+            print(f"{c}");
             return 0;
         }
     )";
@@ -110,8 +110,8 @@ TEST_CASE("E2E - Function calls") {
         }
 
         fun main(): i32 {
-            print(add(17, 25));
-            print(add(100, 200));
+            print(f"{add(17, 25)}");
+            print(f"{add(100, 200)}");
             return 0;
         }
     )";
@@ -135,9 +135,9 @@ TEST_CASE("E2E - If statement") {
         }
 
         fun main(): i32 {
-            print(abs(42));
-            print(abs(-42));
-            print(abs(0));
+            print(f"{abs(42)}");
+            print(f"{abs(-42)}");
+            print(f"{abs(0)}");
             return 0;
         }
     )";
@@ -158,9 +158,9 @@ TEST_CASE("E2E - If-else statement") {
         }
 
         fun main(): i32 {
-            print(max(10, 5));
-            print(max(3, 7));
-            print(max(5, 5));
+            print(f"{max(10, 5)}");
+            print(f"{max(3, 7)}");
+            print(f"{max(5, 5)}");
             return 0;
         }
     )";
@@ -183,8 +183,8 @@ TEST_CASE("E2E - While loop") {
         }
 
         fun main(): i32 {
-            print(sum_to_n(10));
-            print(sum_to_n(100));
+            print(f"{sum_to_n(10)}");
+            print(f"{sum_to_n(100)}");
             return 0;
         }
     )";
@@ -200,9 +200,9 @@ TEST_CASE("E2E - For loop") {
             var sum: i32 = 0;
             for (var i: i32 = 1; i <= 10; i = i + 1) {
                 sum = sum + i;
-                print(i);
+                print(f"{i}");
             }
-            print(sum);
+            print(f"{sum}");
             return 0;
         }
     )";
@@ -217,7 +217,7 @@ TEST_CASE("E2E - Nested loops") {
         fun main(): i32 {
             for (var i: i32 = 1; i <= 3; i = i + 1) {
                 for (var j: i32 = 1; j <= 3; j = j + 1) {
-                    print(i * 10 + j);
+                    print(f"{i * 10 + j}");
                 }
             }
             return 0;
@@ -238,10 +238,10 @@ TEST_CASE("E2E - Boolean expressions") {
             var b: i32 = 3;
 
             // AND with comparisons - all work correctly
-            if ((a > b) && (b > 0)) { print(1); } else { print(0); }
-            if ((a > b) && (b < 0)) { print(1); } else { print(0); }
-            if ((a < b) && (b > 0)) { print(1); } else { print(0); }
-            if ((a < b) && (b < 0)) { print(1); } else { print(0); }
+            if ((a > b) && (b > 0)) { print(f"{1}"); } else { print(f"{0}"); }
+            if ((a > b) && (b < 0)) { print(f"{1}"); } else { print(f"{0}"); }
+            if ((a < b) && (b > 0)) { print(f"{1}"); } else { print(f"{0}"); }
+            if ((a < b) && (b < 0)) { print(f"{1}"); } else { print(f"{0}"); }
 
             return 0;
         }
@@ -261,16 +261,16 @@ TEST_CASE("E2E - Comparison operators") {
         }
 
         fun main(): i32 {
-            print(bool_to_int(5 == 5));
-            print(bool_to_int(5 == 3));
-            print(bool_to_int(5 != 3));
-            print(bool_to_int(5 != 5));
-            print(bool_to_int(3 < 5));
-            print(bool_to_int(5 < 3));
-            print(bool_to_int(5 <= 5));
-            print(bool_to_int(3 > 5));
-            print(bool_to_int(5 > 3));
-            print(bool_to_int(5 >= 5));
+            print(f"{bool_to_int(5 == 5)}");
+            print(f"{bool_to_int(5 == 3)}");
+            print(f"{bool_to_int(5 != 3)}");
+            print(f"{bool_to_int(5 != 5)}");
+            print(f"{bool_to_int(3 < 5)}");
+            print(f"{bool_to_int(5 < 3)}");
+            print(f"{bool_to_int(5 <= 5)}");
+            print(f"{bool_to_int(3 > 5)}");
+            print(f"{bool_to_int(5 > 3)}");
+            print(f"{bool_to_int(5 >= 5)}");
             return 0;
         }
     )";

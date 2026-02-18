@@ -70,10 +70,10 @@ TEST_CASE("E2E - Ackermann function (deeply recursive)") {
         }
 
         fun main(): i32 {
-            print(ackermann(0, 0));
-            print(ackermann(1, 1));
-            print(ackermann(2, 2));
-            print(ackermann(3, 2));
+            print(f"{ackermann(0, 0)}");
+            print(f"{ackermann(1, 1)}");
+            print(f"{ackermann(2, 2)}");
+            print(f"{ackermann(3, 2)}");
             return 0;
         }
     )";
@@ -112,9 +112,9 @@ TEST_CASE("E2E - Collatz conjecture steps") {
         }
 
         fun main(): i32 {
-            print(collatz_steps(1));
-            print(collatz_steps(6));
-            print(collatz_steps(27));
+            print(f"{collatz_steps(1)}");
+            print(f"{collatz_steps(6)}");
+            print(f"{collatz_steps(27)}");
             return 0;
         }
     )";
@@ -149,19 +149,19 @@ TEST_CASE("E2E - Prime checking") {
 
         fun main(): i32 {
             // Test primes: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 97
-            print(is_prime(2));
-            print(is_prime(3));
-            print(is_prime(5));
-            print(is_prime(7));
-            print(is_prime(11));
-            print(is_prime(97));
+            print(f"{is_prime(2)}");
+            print(f"{is_prime(3)}");
+            print(f"{is_prime(5)}");
+            print(f"{is_prime(7)}");
+            print(f"{is_prime(11)}");
+            print(f"{is_prime(97)}");
             // Test non-primes: 0, 1, 4, 6, 9, 100
-            print(is_prime(0));
-            print(is_prime(1));
-            print(is_prime(4));
-            print(is_prime(6));
-            print(is_prime(9));
-            print(is_prime(100));
+            print(f"{is_prime(0)}");
+            print(f"{is_prime(1)}");
+            print(f"{is_prime(4)}");
+            print(f"{is_prime(6)}");
+            print(f"{is_prime(9)}");
+            print(f"{is_prime(100)}");
             return 0;
         }
     )";
@@ -179,9 +179,9 @@ TEST_CASE("E2E - Prime checking") {
 TEST_CASE("E2E - Print function") {
     const char* source = R"(
         fun main(): i32 {
-            print(42);
-            print(123);
-            print(0);
+            print(f"{42}");
+            print(f"{123}");
+            print(f"{0}");
             return 0;
         }
     )";

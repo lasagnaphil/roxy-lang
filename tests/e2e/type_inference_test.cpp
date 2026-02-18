@@ -11,7 +11,7 @@ TEST_CASE("E2E - Type inference - Default integer type is i32") {
     const char* source = R"(
         fun main(): i32 {
             var a = 42;       // i32
-            print(a);
+            print(f"{a}");
             return 0;
         }
     )";
@@ -26,7 +26,7 @@ TEST_CASE("E2E - Type inference - Integer suffixes") {
             fun main(): i32 {
                 var a = 42l;      // i64
                 var b: i64 = a;   // Should work
-                print(42);
+                print(f"{42}");
                 return 0;
             }
         )";
@@ -40,7 +40,7 @@ TEST_CASE("E2E - Type inference - Integer suffixes") {
             fun main(): i32 {
                 var a = 42u;      // u32
                 var b: u32 = a;   // Should work
-                print(42);
+                print(f"{42}");
                 return 0;
             }
         )";
@@ -54,7 +54,7 @@ TEST_CASE("E2E - Type inference - Integer suffixes") {
             fun main(): i32 {
                 var a = 42ul;     // u64
                 var b: u64 = a;   // Should work
-                print(42);
+                print(f"{42}");
                 return 0;
             }
         )";
@@ -70,7 +70,7 @@ TEST_CASE("E2E - Type inference - Float suffixes") {
             fun main(): i32 {
                 var a = 3.14;     // f64
                 var b: f64 = a;   // Should work
-                print(1);
+                print(f"{1}");
                 return 0;
             }
         )";
@@ -83,7 +83,7 @@ TEST_CASE("E2E - Type inference - Float suffixes") {
             fun main(): i32 {
                 var a = 3.14f;    // f32
                 var b: f32 = a;   // Should work
-                print(1);
+                print(f"{1}");
                 return 0;
             }
         )";
@@ -99,7 +99,7 @@ TEST_CASE("E2E - Type inference - Arithmetic with inferred types") {
                 var a = 10;
                 var b = 20;
                 var c = a + b;    // i32 + i32 = i32
-                print(c);
+                print(f"{c}");
                 return 0;
             }
         )";
@@ -114,7 +114,7 @@ TEST_CASE("E2E - Type inference - Arithmetic with inferred types") {
                 var a = 10l;
                 var b = 20l;
                 var c = a + b;    // i64 + i64 = i64
-                print(30);
+                print(f"{30}");
                 return 0;
             }
         )";
@@ -131,7 +131,7 @@ TEST_CASE("E2E - Type inference - For loop with inferred index") {
             for (var i = 0; i < 10; i = i + 1) {
                 sum = sum + i;
             }
-            print(sum);
+            print(f"{sum}");
             return 0;
         }
     )";
@@ -227,7 +227,7 @@ TEST_CASE("E2E - Type inference - Correct type matching works") {
         const char* source = R"(
             fun main(): i32 {
                 var x: i32 = 42;  // 42 is i32, assigned to i32
-                print(x);
+                print(f"{x}");
                 return 0;
             }
         )";
@@ -240,7 +240,7 @@ TEST_CASE("E2E - Type inference - Correct type matching works") {
         const char* source = R"(
             fun main(): i32 {
                 var x: i64 = 42l;  // 42l is i64, assigned to i64
-                print(42);
+                print(f"{42}");
                 return 0;
             }
         )";
@@ -259,7 +259,7 @@ TEST_CASE("E2E - Type inference - Function parameter type checking") {
 
             fun main(): i32 {
                 var result = add_one(41);
-                print(result);
+                print(f"{result}");
                 return 0;
             }
         )";

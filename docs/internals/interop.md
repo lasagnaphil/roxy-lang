@@ -186,13 +186,7 @@ registry.bind_native("list_new", native_list_new,
 | `str_eq` | `(a: string, b: string) -> bool` | Test string equality |
 | `str_ne` | `(a: string, b: string) -> bool` | Test string inequality |
 | `str_len` | `(s: string) -> i32` | Return string length |
-| `print_str` | `(s: string) -> void` | Print string to stdout |
-
-### Other Functions
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `print` | `(value: i32) -> void` | Print integer to stdout |
+| `print` | `(s: string) -> void` | Print string to stdout |
 
 ## Native Struct and Method Binding
 

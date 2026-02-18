@@ -23,7 +23,7 @@ TEST_CASE("E2E - Basic method call") {
 
         fun main(): i32 {
             var p: Point = Point { x = 10, y = 20 };
-            print(p.sum());
+            print(f"{p.sum()}");
             return 0;
         }
     )";
@@ -46,7 +46,7 @@ TEST_CASE("E2E - Method with parameters") {
 
         fun main(): i32 {
             var p: Point = Point { x = 10, y = 20 };
-            print(p.add(5, 15));
+            print(f"{p.add(5, 15)}");
             return 0;
         }
     )";
@@ -73,9 +73,9 @@ TEST_CASE("E2E - Method modifying self") {
         fun main(): i32 {
             var c: Counter = Counter { value = 0 };
             c.increment();
-            print(c.value);
+            print(f"{c.value}");
             c.add(10);
-            print(c.value);
+            print(f"{c.value}");
             return 0;
         }
     )";
@@ -99,8 +99,8 @@ TEST_CASE("E2E - Method returning struct") {
         fun main(): i32 {
             var p: Point = Point { x = 3, y = 4 };
             var q: Point = p.scaled(2);
-            print(q.x);
-            print(q.y);
+            print(f"{q.x}");
+            print(f"{q.y}");
             return 0;
         }
     )";
@@ -127,8 +127,8 @@ TEST_CASE("E2E - Multiple methods on same struct") {
 
         fun main(): i32 {
             var r: Rect = Rect { width = 5, height = 3 };
-            print(r.area());
-            print(r.perimeter());
+            print(f"{r.area()}");
+            print(f"{r.perimeter()}");
             return 0;
         }
     )";
@@ -151,7 +151,7 @@ TEST_CASE("E2E - Method on heap-allocated struct") {
 
         fun main(): i32 {
             var p: uniq Point = uniq Point { x = 100, y = 200 };
-            print(p.sum());
+            print(f"{p.sum()}");
             delete p;
             return 0;
         }
@@ -175,9 +175,9 @@ TEST_CASE("E2E - Chained method calls") {
         fun main(): i32 {
             var c1: Counter = Counter { value = 5 };
             var c2: Counter = Counter { value = 10 };
-            print(c1.get());
-            print(c2.get());
-            print(c1.get() + c2.get());
+            print(f"{c1.get()}");
+            print(f"{c2.get()}");
+            print(f"{c1.get() + c2.get()}");
             return 0;
         }
     )";
@@ -203,7 +203,7 @@ TEST_CASE("E2E - Method with struct parameter") {
         fun main(): i32 {
             var p1: Point = Point { x = 0, y = 0 };
             var p2: Point = Point { x = 3, y = 4 };
-            print(p1.distance_sq(p2));
+            print(f"{p1.distance_sq(p2)}");
             return 0;
         }
     )";
