@@ -446,6 +446,53 @@ The `RoxyType<RoxyList<T>>` specialization enables automatic type resolution:
 - `get(tc)` returns `tc.list_type(RoxyType<T>::get(tc))` — resolves to `List<i32>`, `List<f64>`, etc.
 - `from_reg(u64)` / `to_reg(RoxyList<T>)` handle register ↔ wrapper conversion
 
+## RoxyString — String Interop
+
+`RoxyString` is a thin non-owning wrapper around a Roxy string data pointer. It allows C++ bound functions to read, create, compare, and concatenate Roxy strings.
+
+### Usage in Bound Functions
+
+```cpp
+// C++ function that reads a string from Roxy
+i32 str_get_len(RoxyVM* vm, RoxyString str) {
+    return static_cast<i32>(str.length());
+}
+
+// C++ function that creates a string for Roxy
+RoxyString str_make_greeting(RoxyVM* vm) {
+    return RoxyString::alloc(vm, "hello from C++");
+}
+
+// C++ function that concatenates two strings
+RoxyString str_join(RoxyVM* vm, RoxyString a, RoxyString b) {
+    return a.concat(vm, b);
+}
+
+// Register
+registry.bind<str_get_len>("str_get_len");
+registry.bind<str_make_greeting>("str_make_greeting");
+registry.bind<str_join>("str_join");
+```
+
+### API
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `alloc` | `static RoxyString alloc(RoxyVM*, const char*, u32 length)` | Factory: allocate a new string |
+| `alloc` | `static RoxyString alloc(RoxyVM*, const char*)` | Factory: allocate (uses strlen) |
+| `length` | `u32 length() const` | String length (excluding null terminator) |
+| `c_str` | `const char* c_str() const` | Null-terminated character data |
+| `equals` | `bool equals(const RoxyString&) const` | Equality comparison |
+| `concat` | `RoxyString concat(RoxyVM*, RoxyString) const` | Concatenate, returns new string |
+| `is_valid` | `bool is_valid() const` | Check for null data pointer |
+| `data` | `void* data() const` | Raw string data pointer |
+
+### RoxyType Specialization
+
+The `RoxyType<RoxyString>` specialization enables automatic type resolution:
+- `get(tc)` returns `tc.string_type()`
+- `from_reg(u64)` / `to_reg(RoxyString)` handle register ↔ wrapper conversion
+
 ## Roxy-Native C++ Containers
 
 > **Note:** This feature is planned but not yet implemented.
@@ -621,6 +668,7 @@ include/roxy/
 - `include/roxy/vm/binding/binder.hpp` - Automatic wrapper generation
 - `include/roxy/vm/binding/registry.hpp` - NativeRegistry class (declarations + templates)
 - `src/roxy/vm/binding/registry.cpp` - NativeRegistry non-template method implementations
+- `include/roxy/vm/binding/roxy_string.hpp` - RoxyString wrapper + RoxyType specialization
 - `include/roxy/vm/binding/interop.hpp` - Convenience header
 - `include/roxy/vm/natives.hpp` - Built-in native functions
 - `src/roxy/vm/natives.cpp` - Native function implementations (incl. List<T> generic type registration)

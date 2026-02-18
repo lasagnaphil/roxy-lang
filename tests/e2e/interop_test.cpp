@@ -901,3 +901,111 @@ TEST_CASE("Interop - RoxyList: C++ reads list with index param") {
     CHECK(result.is_int());
     CHECK(result.as_int == 200);
 }
+
+// ============================================================================
+// RoxyString Interop Tests
+// ============================================================================
+
+// C++ function that reads a string from Roxy and returns its length
+i32 str_get_len(RoxyVM* vm, RoxyString str) {
+    (void)vm;
+    return static_cast<i32>(str.length());
+}
+
+// C++ function that checks if a string equals "hello"
+bool str_check_hello(RoxyVM* vm, RoxyString str) {
+    (void)vm;
+    return str.equals(RoxyString(string_alloc(vm, "hello", 5)));
+}
+
+// C++ function that creates a new string and returns it to Roxy
+RoxyString str_make_greeting(RoxyVM* vm) {
+    return RoxyString::alloc(vm, "hello from C++");
+}
+
+// C++ function that concatenates two strings
+RoxyString str_join(RoxyVM* vm, RoxyString a, RoxyString b) {
+    return a.concat(vm, b);
+}
+
+TEST_CASE("Interop - RoxyString: C++ reads string length") {
+    const char* source = R"(
+        fun test(): i32 {
+            var s: string = "hello";
+            return str_get_len(s);
+        }
+    )";
+
+    Value result = compile_and_run_mixed(source, "test",
+        [](NativeRegistry& reg) {
+            reg.bind<str_get_len>("str_get_len");
+        });
+    CHECK(result.is_int());
+    CHECK(result.as_int == 5);
+}
+
+TEST_CASE("Interop - RoxyString: C++ compares strings") {
+    SUBCASE("matching string") {
+        const char* source = R"(
+            fun test(): bool {
+                var s: string = "hello";
+                return str_check_hello(s);
+            }
+        )";
+
+        Value result = compile_and_run_mixed(source, "test",
+            [](NativeRegistry& reg) {
+                reg.bind<str_check_hello>("str_check_hello");
+            });
+        CHECK(result.as_u64() == 1);  // true
+    }
+
+    SUBCASE("non-matching string") {
+        const char* source = R"(
+            fun test(): bool {
+                var s: string = "world";
+                return str_check_hello(s);
+            }
+        )";
+
+        Value result = compile_and_run_mixed(source, "test",
+            [](NativeRegistry& reg) {
+                reg.bind<str_check_hello>("str_check_hello");
+            });
+        CHECK(result.as_u64() == 0);  // false
+    }
+}
+
+TEST_CASE("Interop - RoxyString: C++ creates string for Roxy") {
+    const char* source = R"(
+        fun test(): i32 {
+            var s: string = str_make_greeting();
+            return str_len(s);
+        }
+    )";
+
+    Value result = compile_and_run_mixed(source, "test",
+        [](NativeRegistry& reg) {
+            reg.bind<str_make_greeting>("str_make_greeting");
+        });
+    CHECK(result.is_int());
+    CHECK(result.as_int == 14);  // "hello from C++" is 14 chars
+}
+
+TEST_CASE("Interop - RoxyString: C++ concatenates strings") {
+    const char* source = R"(
+        fun test(): i32 {
+            var a: string = "hello ";
+            var b: string = "world";
+            var c: string = str_join(a, b);
+            return str_len(c);
+        }
+    )";
+
+    Value result = compile_and_run_mixed(source, "test",
+        [](NativeRegistry& reg) {
+            reg.bind<str_join>("str_join");
+        });
+    CHECK(result.is_int());
+    CHECK(result.as_int == 11);  // "hello world" is 11 chars
+}
