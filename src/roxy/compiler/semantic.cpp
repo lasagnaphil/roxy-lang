@@ -160,12 +160,12 @@ bool SemanticAnalyzer::analyze(Program* program) {
             TypeKind::F32, TypeKind::F64, TypeKind::String
         };
         for (TypeKind tk : prim_kinds) {
-            MethodInfo mi;
-            mi.name = StringView("to_string", 9);
-            mi.param_types = Span<Type*>(nullptr, 0);
-            mi.return_type = m_types.string_type();
-            mi.decl = nullptr;
-            m_types.register_primitive_method(tk, mi);
+            MethodInfo method_info;
+            method_info.name = StringView("to_string", 9);
+            method_info.param_types = Span<Type*>(nullptr, 0);
+            method_info.return_type = m_types.string_type();
+            method_info.decl = nullptr;
+            m_types.register_primitive_method(tk, method_info);
             m_types.register_primitive_trait(tk, printable_type);
          }
     }
@@ -715,12 +715,7 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                     Type* field_type = resolve_type_expr(struct_decl.fields[j].type);
                     if (!field_type) field_type = m_types.error_type();
 
-                    u32 sc = 0;
-                    if (field_type->is_struct()) sc = field_type->struct_info.slot_count;
-                    else if (field_type->kind == TypeKind::I64 || field_type->kind == TypeKind::U64 ||
-                             field_type->kind == TypeKind::F64 || field_type->is_reference() ||
-                             field_type->is_list() || field_type->kind == TypeKind::String) sc = 2;
-                    else sc = 1;
+                    u32 slot_count = get_type_slot_count(field_type);
 
                     FieldInfo field_info;
                     field_info.name = struct_decl.fields[j].name;
@@ -728,9 +723,9 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                     field_info.is_pub = struct_decl.fields[j].is_pub;
                     field_info.index = j;
                     field_info.slot_offset = slot_offset;
-                    field_info.slot_count = sc;
+                    field_info.slot_count = slot_count;
                     fields.push_back(field_info);
-                    slot_offset += sc;
+                    slot_offset += slot_count;
                 }
 
                 // Allocate field info in bump allocator
@@ -768,12 +763,7 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         Type* field_type = resolve_type_expr(struct_decl.fields[fi].type);
         if (!field_type) field_type = m_types.error_type();
 
-        u32 sc = 0;
-        if (field_type->is_struct()) sc = field_type->struct_info.slot_count;
-        else if (field_type->kind == TypeKind::I64 || field_type->kind == TypeKind::U64 ||
-                 field_type->kind == TypeKind::F64 || field_type->is_reference() ||
-                 field_type->is_list() || field_type->kind == TypeKind::String) sc = 2;
-        else sc = 1;
+        u32 slot_count = get_type_slot_count(field_type);
 
         FieldInfo info;
         info.name = struct_decl.fields[fi].name;
@@ -781,9 +771,9 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         info.is_pub = struct_decl.fields[fi].is_pub;
         info.index = fi;
         info.slot_offset = slot_offset;
-        info.slot_count = sc;
+        info.slot_count = slot_count;
         fields.push_back(info);
-        slot_offset += sc;
+        slot_offset += slot_count;
     }
 
     struct_type_info.fields = m_allocator.alloc_span(fields);
@@ -1112,13 +1102,7 @@ void SemanticAnalyzer::analyze_constructor_decl(Decl* decl) {
     ctor_info.decl = decl;
 
     // Add to struct's constructor list
-    Vector<ConstructorInfo> ctors;
-    for (const auto& ctor : struct_type->struct_info.constructors) {
-        ctors.push_back(ctor);
-    }
-    ctors.push_back(ctor_info);
-
-    struct_type->struct_info.constructors = m_allocator.alloc_span(ctors);
+    append_constructor(struct_type->struct_info, ctor_info);
 }
 
 void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
@@ -1167,13 +1151,7 @@ void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
     dtor_info.decl = decl;
 
     // Add to struct's destructor list
-    Vector<DestructorInfo> dtors;
-    for (const auto& dtor : struct_type->struct_info.destructors) {
-        dtors.push_back(dtor);
-    }
-    dtors.push_back(dtor_info);
-
-    struct_type->struct_info.destructors = m_allocator.alloc_span(dtors);
+    append_destructor(struct_type->struct_info, dtor_info);
 }
 
 void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
@@ -1222,19 +1200,13 @@ void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
     method_info.decl = decl;
 
     // Add to struct's method list
-    Vector<MethodInfo> methods;
-    for (const auto& method : struct_type->struct_info.methods) {
-        methods.push_back(method);
-    }
-    methods.push_back(method_info);
-
-    struct_type->struct_info.methods = m_allocator.alloc_span(methods);
+    append_method(struct_type->struct_info, method_info);
 }
 
-void SemanticAnalyzer::analyze_constructor_body(Decl* decl, Type* struct_type) {
-    ConstructorDecl& constructor_decl = decl->constructor_decl;
-
-    if (!constructor_decl.body) return;
+void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
+                                            Span<Param> params, Stmt* body,
+                                            Type* return_type) {
+    if (!body) return;
 
     // Push struct scope so 'self' and fields are accessible
     m_symbols.push_struct_scope(struct_type);
@@ -1243,89 +1215,13 @@ void SemanticAnalyzer::analyze_constructor_body(Decl* decl, Type* struct_type) {
     for (auto& field_info : struct_type->struct_info.fields) {
         m_symbols.define_field(field_info.name, field_info.type, decl->loc, field_info.index, field_info.is_pub);
     }
-
-    // Push function scope (constructors return void)
-    m_symbols.push_function_scope(m_types.void_type());
-
-    // Define parameters
-    for (u32 i = 0; i < constructor_decl.params.size(); i++) {
-        Param& p = constructor_decl.params[i];
-        Type* ptype = resolve_type_expr(p.type);
-        if (!ptype) ptype = m_types.error_type();
-
-        if (m_symbols.lookup_local(p.name)) {
-            error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
-        } else {
-            m_symbols.define_parameter(p.name, ptype, p.loc, i);
-        }
-    }
-
-    // Analyze body
-    analyze_stmt(constructor_decl.body);
-
-    m_symbols.pop_scope();  // function scope
-    m_symbols.pop_scope();  // struct scope
-}
-
-void SemanticAnalyzer::analyze_destructor_body(Decl* decl, Type* struct_type) {
-    DestructorDecl& destructor_decl = decl->destructor_decl;
-
-    if (!destructor_decl.body) return;
-
-    // Push struct scope so 'self' and fields are accessible
-    m_symbols.push_struct_scope(struct_type);
-
-    // Define fields in scope
-    for (auto& field_info : struct_type->struct_info.fields) {
-        m_symbols.define_field(field_info.name, field_info.type, decl->loc, field_info.index, field_info.is_pub);
-    }
-
-    // Push function scope (destructors return void)
-    m_symbols.push_function_scope(m_types.void_type());
-
-    // Define parameters
-    for (u32 i = 0; i < destructor_decl.params.size(); i++) {
-        Param& p = destructor_decl.params[i];
-        Type* ptype = resolve_type_expr(p.type);
-        if (!ptype) ptype = m_types.error_type();
-
-        if (m_symbols.lookup_local(p.name)) {
-            error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
-        } else {
-            m_symbols.define_parameter(p.name, ptype, p.loc, i);
-        }
-    }
-
-    // Analyze body
-    analyze_stmt(destructor_decl.body);
-
-    m_symbols.pop_scope();  // function scope
-    m_symbols.pop_scope();  // struct scope
-}
-
-void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
-    MethodDecl& method_decl = decl->method_decl;
-
-    if (!method_decl.body) return;
-
-    // Push struct scope so 'self' and fields are accessible
-    m_symbols.push_struct_scope(struct_type);
-
-    // Define fields in scope
-    for (auto& field_info : struct_type->struct_info.fields) {
-        m_symbols.define_field(field_info.name, field_info.type, decl->loc, field_info.index, field_info.is_pub);
-    }
-
-    // Resolve return type
-    Type* return_type = method_decl.return_type ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
-    if (!return_type) return_type = m_types.error_type();
 
     // Push function scope with return type
     m_symbols.push_function_scope(return_type);
 
     // Define parameters
-    for (u32 i = 0; i < method_decl.params.size(); i++) {
-        Param& p = method_decl.params[i];
+    for (u32 i = 0; i < params.size(); i++) {
+        Param& p = params[i];
         Type* ptype = resolve_type_expr(p.type);
         if (!ptype) ptype = m_types.error_type();
 
@@ -1337,13 +1233,78 @@ void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
     }
 
     // Analyze body
-    analyze_stmt(method_decl.body);
+    analyze_stmt(body);
 
     m_symbols.pop_scope();  // function scope
     m_symbols.pop_scope();  // struct scope
 }
 
+void SemanticAnalyzer::analyze_constructor_body(Decl* decl, Type* struct_type) {
+    auto& cd = decl->constructor_decl;
+    analyze_member_body(decl, struct_type, cd.params, cd.body, m_types.void_type());
+}
+
+void SemanticAnalyzer::analyze_destructor_body(Decl* decl, Type* struct_type) {
+    auto& dd = decl->destructor_decl;
+    analyze_member_body(decl, struct_type, dd.params, dd.body, m_types.void_type());
+}
+
+void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
+    MethodDecl& method_decl = decl->method_decl;
+    Type* return_type = method_decl.return_type ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
+    if (!return_type) return_type = m_types.error_type();
+    analyze_member_body(decl, struct_type, method_decl.params, method_decl.body, return_type);
+}
+
+// ===== Span Append Helpers =====
+
+void SemanticAnalyzer::append_method(StructTypeInfo& info, MethodInfo method) {
+    Vector<MethodInfo> methods;
+    for (const auto& m : info.methods) {
+        methods.push_back(m);
+    }
+    methods.push_back(method);
+    info.methods = m_allocator.alloc_span(methods);
+}
+
+void SemanticAnalyzer::append_constructor(StructTypeInfo& info, ConstructorInfo ctor) {
+    Vector<ConstructorInfo> ctors;
+    for (const auto& c : info.constructors) {
+        ctors.push_back(c);
+    }
+    ctors.push_back(ctor);
+    info.constructors = m_allocator.alloc_span(ctors);
+}
+
+void SemanticAnalyzer::append_destructor(StructTypeInfo& info, DestructorInfo dtor) {
+    Vector<DestructorInfo> dtors;
+    for (const auto& d : info.destructors) {
+        dtors.push_back(d);
+    }
+    dtors.push_back(dtor);
+    info.destructors = m_allocator.alloc_span(dtors);
+}
+
 // ===== Trait Validation =====
+
+Type* SemanticAnalyzer::resolve_trait_type_expr(TypeExpr* type_expr,
+                                                 const TraitTypeInfo& trait_info) {
+    if (!type_expr) {
+        return m_types.error_type();
+    }
+    if (type_expr->name == "Self") {
+        return m_types.self_type();
+    }
+    // Check if this is a trait type param
+    for (u32 i = 0; i < trait_info.type_params.size(); i++) {
+        if (type_expr->name == trait_info.type_params[i].name) {
+            return m_types.type_param(trait_info.type_params[i].name, i);
+        }
+    }
+    Type* resolved = resolve_type_expr(type_expr);
+    if (!resolved) resolved = m_types.error_type();
+    return resolved;
+}
 
 void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
     MethodDecl& method_decl = decl->method_decl;
@@ -1361,54 +1322,13 @@ void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
     // Resolve parameter types - use TypeKind::Self for Self, TypeParam for trait type params
     Vector<Type*> param_types;
     for (const auto& param : method_decl.params) {
-        TypeExpr* type_expr = param.type;
-        if (type_expr && type_expr->name == "Self") {
-            param_types.push_back(m_types.self_type());
-        } else {
-            // Check if this is a trait type param
-            Type* param_type = nullptr;
-            if (type_expr) {
-                for (u32 i = 0; i < trait_type_info.type_params.size(); i++) {
-                    if (type_expr->name == trait_type_info.type_params[i].name) {
-                        param_type = m_types.type_param(trait_type_info.type_params[i].name, i);
-                        break;
-                    }
-                }
-            }
-            if (param_type) {
-                param_types.push_back(param_type);
-            } else {
-                Type* ptype = resolve_type_expr(type_expr);
-                if (!ptype) ptype = m_types.error_type();
-                param_types.push_back(ptype);
-            }
-        }
+        param_types.push_back(resolve_trait_type_expr(param.type, trait_type_info));
     }
 
     // Resolve return type (TypeKind::Self for Self, TypeParam for trait type params)
-    Type* return_type = nullptr;
-    if (method_decl.return_type) {
-        if (method_decl.return_type->name == "Self") {
-            return_type = m_types.self_type();
-        } else {
-            // Check if return type is a trait type param
-            Type* param_type = nullptr;
-            for (u32 i = 0; i < trait_type_info.type_params.size(); i++) {
-                if (method_decl.return_type->name == trait_type_info.type_params[i].name) {
-                    param_type = m_types.type_param(trait_type_info.type_params[i].name, i);
-                    break;
-                }
-            }
-            if (param_type) {
-                return_type = param_type;
-            } else {
-                return_type = resolve_type_expr(method_decl.return_type);
-                if (!return_type) return_type = m_types.error_type();
-            }
-        }
-    } else {
-        return_type = m_types.void_type();
-    }
+    Type* return_type = method_decl.return_type
+        ? resolve_trait_type_expr(method_decl.return_type, trait_type_info)
+        : m_types.void_type();
 
     // Create trait method info
     TraitMethodInfo trait_method_info;
@@ -1760,20 +1680,14 @@ void SemanticAnalyzer::validate_trait_implementations() {
                     }
 
                     if (!is_duplicate) {
-                        MethodInfo mi;
-                        mi.name = method_decl.name;
-                        mi.param_types = m_allocator.alloc_span(param_types);
-                        mi.return_type = return_type;
-                        mi.decl = decl;
+                        MethodInfo method_info;
+                        method_info.name = method_decl.name;
+                        method_info.param_types = m_allocator.alloc_span(param_types);
+                        method_info.return_type = return_type;
+                        method_info.decl = decl;
 
                         // Add to struct's method list
-                        Vector<MethodInfo> methods;
-                        for (const auto& method : struct_type_info.methods) {
-                            methods.push_back(method);
-                        }
-                        methods.push_back(mi);
-
-                        struct_type_info.methods = m_allocator.alloc_span(methods);
+                        append_method(struct_type_info, method_info);
                     }
                     break;
                 }
@@ -1883,19 +1797,13 @@ void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type
     Type* return_type = resolve_trait_type(trait_method_info.return_type, struct_type, trait_type_args);
 
     // Add MethodInfo to struct's method list
-    MethodInfo mi;
-    mi.name = trait_method_info.name;
-    mi.param_types = m_allocator.alloc_span(param_types);
-    mi.return_type = return_type;
-    mi.decl = synth;
+    MethodInfo method_info;
+    method_info.name = trait_method_info.name;
+    method_info.param_types = m_allocator.alloc_span(param_types);
+    method_info.return_type = return_type;
+    method_info.decl = synth;
 
-    Vector<MethodInfo> methods;
-    for (const auto& method : struct_type_info.methods) {
-        methods.push_back(method);
-    }
-    methods.push_back(mi);
-
-    struct_type_info.methods = m_allocator.alloc_span(methods);
+    append_method(struct_type_info, method_info);
 
     // Add to synthetic decls list for IR builder
     m_synthetic_decls.push_back(synth);
@@ -1918,6 +1826,19 @@ void SemanticAnalyzer::register_primitive_operator_methods() {
 
     Span<Type*> no_params(nullptr, 0);
 
+    // Helper: register a batch of operator methods for a primitive type
+    auto register_ops = [this](TypeKind kind, const char* const* op_names, u32 count,
+                               Span<Type*> param_types, Type* return_type) {
+        for (u32 i = 0; i < count; i++) {
+            MethodInfo method_info;
+            method_info.name = StringView(op_names[i], static_cast<u32>(strlen(op_names[i])));
+            method_info.param_types = param_types;
+            method_info.return_type = return_type;
+            method_info.decl = nullptr;
+            m_types.register_primitive_method(kind, method_info);
+        }
+    };
+
     // Register for integer types (I32, I64)
     struct { TypeKind kind; Type* type; } int_types[] = {
         { TypeKind::I32, m_types.i32_type() },
@@ -1926,64 +1847,23 @@ void SemanticAnalyzer::register_primitive_operator_methods() {
     for (auto& entry : int_types) {
         Span<Type*> self_param = make_param_span(entry.type);
 
-        // Arithmetic: add, sub, mul, div, mod → Self
         const char* arith_ops[] = { "add", "sub", "mul", "div", "mod" };
-        for (const char* op_name : arith_ops) {
-            MethodInfo mi;
-            mi.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
-            mi.param_types = self_param;
-            mi.return_type = entry.type;
-            mi.decl = nullptr;
-            m_types.register_primitive_method(entry.kind, mi);
-        }
+        register_ops(entry.kind, arith_ops, 5, self_param, entry.type);
 
-        // Bitwise: bit_and, bit_or, bit_xor, shl, shr → Self
         const char* bit_ops[] = { "bit_and", "bit_or", "bit_xor", "shl", "shr" };
-        for (const char* op_name : bit_ops) {
-            MethodInfo mi;
-            mi.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
-            mi.param_types = self_param;
-            mi.return_type = entry.type;
-            mi.decl = nullptr;
-            m_types.register_primitive_method(entry.kind, mi);
-        }
+        register_ops(entry.kind, bit_ops, 5, self_param, entry.type);
 
-        // Comparison: eq, ne, lt, le, gt, ge → bool
         const char* cmp_ops[] = { "eq", "ne", "lt", "le", "gt", "ge" };
-        for (const char* op_name : cmp_ops) {
-            MethodInfo mi;
-            mi.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
-            mi.param_types = self_param;
-            mi.return_type = m_types.bool_type();
-            mi.decl = nullptr;
-            m_types.register_primitive_method(entry.kind, mi);
-        }
+        register_ops(entry.kind, cmp_ops, 6, self_param, m_types.bool_type());
 
-        // Unary: neg, bit_not → Self (no params besides self)
         const char* unary_ops[] = { "neg", "bit_not" };
-        for (const char* op_name : unary_ops) {
-            MethodInfo mi;
-            mi.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
-            mi.param_types = no_params;
-            mi.return_type = entry.type;
-            mi.decl = nullptr;
-            m_types.register_primitive_method(entry.kind, mi);
-        }
+        register_ops(entry.kind, unary_ops, 2, no_params, entry.type);
 
-        // Compound assignment: add_assign, sub_assign, mul_assign, div_assign, mod_assign,
-        // bit_and_assign, bit_or_assign, bit_xor_assign, shl_assign, shr_assign → void
         const char* compound_ops[] = {
             "add_assign", "sub_assign", "mul_assign", "div_assign", "mod_assign",
             "bit_and_assign", "bit_or_assign", "bit_xor_assign", "shl_assign", "shr_assign"
         };
-        for (const char* op_name : compound_ops) {
-            MethodInfo method_info;
-            method_info.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
-            method_info.param_types = self_param;
-            method_info.return_type = m_types.void_type();
-            method_info.decl = nullptr;
-            m_types.register_primitive_method(entry.kind, method_info);
-        }
+        register_ops(entry.kind, compound_ops, 10, self_param, m_types.void_type());
     }
 
     // Register for float types (F32, F64)
@@ -1994,74 +1874,31 @@ void SemanticAnalyzer::register_primitive_operator_methods() {
     for (auto& entry : float_types) {
         Span<Type*> self_param = make_param_span(entry.type);
 
-        // Arithmetic: add, sub, mul, div → Self (no mod for floats)
         const char* arith_ops[] = { "add", "sub", "mul", "div" };
-        for (const char* op_name : arith_ops) {
-            MethodInfo mi;
-            mi.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
-            mi.param_types = self_param;
-            mi.return_type = entry.type;
-            mi.decl = nullptr;
-            m_types.register_primitive_method(entry.kind, mi);
-        }
+        register_ops(entry.kind, arith_ops, 4, self_param, entry.type);
 
-        // Comparison: eq, ne, lt, le, gt, ge → bool
         const char* cmp_ops[] = { "eq", "ne", "lt", "le", "gt", "ge" };
-        for (const char* op_name : cmp_ops) {
-            MethodInfo mi;
-            mi.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
-            mi.param_types = self_param;
-            mi.return_type = m_types.bool_type();
-            mi.decl = nullptr;
-            m_types.register_primitive_method(entry.kind, mi);
-        }
+        register_ops(entry.kind, cmp_ops, 6, self_param, m_types.bool_type());
 
-        // Unary: neg → Self (no bit_not for floats)
-        MethodInfo neg_mi;
-        neg_mi.name = StringView("neg", 3);
-        neg_mi.param_types = no_params;
-        neg_mi.return_type = entry.type;
-        neg_mi.decl = nullptr;
-        m_types.register_primitive_method(entry.kind, neg_mi);
+        const char* unary_ops[] = { "neg" };
+        register_ops(entry.kind, unary_ops, 1, no_params, entry.type);
 
-        // Compound assignment: add_assign, sub_assign, mul_assign, div_assign → void
         const char* compound_ops[] = { "add_assign", "sub_assign", "mul_assign", "div_assign" };
-        for (const char* op_name : compound_ops) {
-            MethodInfo method_info;
-            method_info.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
-            method_info.param_types = self_param;
-            method_info.return_type = m_types.void_type();
-            method_info.decl = nullptr;
-            m_types.register_primitive_method(entry.kind, method_info);
-        }
+        register_ops(entry.kind, compound_ops, 4, self_param, m_types.void_type());
     }
 
     // Register for bool: eq, ne → bool
     {
         Span<Type*> bool_param = make_param_span(m_types.bool_type());
         const char* bool_ops[] = { "eq", "ne" };
-        for (const char* op_name : bool_ops) {
-            MethodInfo method_info;
-            method_info.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
-            method_info.param_types = bool_param;
-            method_info.return_type = m_types.bool_type();
-            method_info.decl = nullptr;
-            m_types.register_primitive_method(TypeKind::Bool, method_info);
-        }
+        register_ops(TypeKind::Bool, bool_ops, 2, bool_param, m_types.bool_type());
     }
 
     // Register for string: eq, ne → bool
     {
         Span<Type*> string_param = make_param_span(m_types.string_type());
         const char* string_ops[] = { "eq", "ne" };
-        for (const char* op_name : string_ops) {
-            MethodInfo method_info;
-            method_info.name = StringView(op_name, static_cast<u32>(strlen(op_name)));
-            method_info.param_types = string_param;
-            method_info.return_type = m_types.bool_type();
-            method_info.decl = nullptr;
-            m_types.register_primitive_method(TypeKind::String, method_info);
-        }
+        register_ops(TypeKind::String, string_ops, 2, string_param, m_types.bool_type());
     }
 }
 

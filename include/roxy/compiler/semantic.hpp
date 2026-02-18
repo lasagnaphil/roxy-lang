@@ -109,6 +109,8 @@ private:
     void analyze_constructor_decl(Decl* decl);
     void analyze_destructor_decl(Decl* decl);
     void analyze_method_decl(Decl* decl);
+    void analyze_member_body(Decl* decl, Type* struct_type,
+                             Span<Param> params, Stmt* body, Type* return_type);
     void analyze_constructor_body(Decl* decl, Type* struct_type);
     void analyze_destructor_body(Decl* decl, Type* struct_type);
     void analyze_method_body(Decl* decl, Type* struct_type);
@@ -221,7 +223,13 @@ private:
     void populate_enum_methods(Type* enum_type);
     NativeRegistry* get_builtin_registry();
 
+    // Helpers for appending to bump-allocated Span lists on StructTypeInfo
+    void append_method(StructTypeInfo& info, MethodInfo method);
+    void append_constructor(StructTypeInfo& info, ConstructorInfo ctor);
+    void append_destructor(StructTypeInfo& info, DestructorInfo dtor);
+
     // Trait analysis helpers
+    Type* resolve_trait_type_expr(TypeExpr* type_expr, const TraitTypeInfo& trait_info);
     void analyze_trait_method_decl(Decl* decl, Type* trait_type);
     void validate_trait_implementations();
     void inject_default_method(Type* struct_type, Type* trait_type,
