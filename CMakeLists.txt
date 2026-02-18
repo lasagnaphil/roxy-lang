@@ -124,6 +124,7 @@ add_executable(roxy_tests
     tests/e2e/tagged_unions_test.cpp
     tests/e2e/traits_test.cpp
     tests/e2e/generics_test.cpp
+    tests/e2e/int_literal_test.cpp
 )
 target_link_libraries(roxy_tests roxy_vm)
 

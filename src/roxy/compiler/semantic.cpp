@@ -22,6 +22,7 @@ static u32 get_type_slot_count(Type* type) {
         case TypeKind::I32: case TypeKind::U32:
         case TypeKind::F32:
         case TypeKind::Enum:  // Enums are stored as i32
+        case TypeKind::IntLiteral:  // Safety net: defaults to i32 (1 slot)
             return 1;
         
         // 2 slots (8 bytes)
@@ -355,7 +356,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                 if (v.value) {
                     // Analyze the value expression
                     Type* vtype = analyze_expr(v.value);
-                    if (vtype && !vtype->is_error() && !vtype->is_integer()) {
+                    if (vtype && !vtype->is_error() && !vtype->is_integer() && !vtype->is_int_literal()) {
                         error_fmt(v.loc, "enum variant value must be an integer");
                     }
                     // For simplicity, we require compile-time integer literals
@@ -415,8 +416,14 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                 if (!var_type) {
                     // Type inference
                     var_type = init_type;
+                    if (var_type->is_int_literal()) {
+                        var_type = m_types.i32_type();
+                        coerce_int_literal(var_decl.initializer, var_type);
+                    }
                 } else if (!check_assignable(var_type, init_type, decl->loc)) {
                     // Error already reported by check_assignable
+                } else {
+                    coerce_int_literal(var_decl.initializer, var_type);
                 }
             } else if (!var_type) {
                 error(decl->loc, "variable declaration requires type annotation or initializer");
@@ -914,9 +921,16 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
             if (var_type->is_nil()) {
                 error(decl->loc, "cannot infer type from nil literal");
                 var_type = m_types.error_type();
+            } else if (var_type->is_int_literal()) {
+                // Default unsuffixed integer literals to i32
+                var_type = m_types.i32_type();
+                coerce_int_literal(var_decl.initializer, var_type);
             }
         } else if (!check_assignable(var_type, init_type, decl->loc)) {
             // Error already reported
+        } else {
+            // Coerce int literals to the annotated type
+            coerce_int_literal(var_decl.initializer, var_type);
         }
     } else if (!var_type) {
         error(decl->loc, "variable declaration requires type annotation or initializer");
@@ -2058,8 +2072,14 @@ Type* SemanticAnalyzer::try_resolve_binary_op(BinaryOp op, Type* left, Type* rig
     if (!method_name) return nullptr;
     StringView name(method_name, static_cast<u32>(strlen(method_name)));
     const MethodInfo* mi = m_types.lookup_method(left, name);
-    if (mi && mi->param_types.size() == 1 && mi->param_types[0] == right) {
-        return mi->return_type;
+    if (mi && mi->param_types.size() == 1) {
+        if (mi->param_types[0] == right) {
+            return mi->return_type;
+        }
+        // IntLiteral is compatible with the method's integer param type
+        if (right->is_int_literal() && mi->param_types[0]->is_integer()) {
+            return mi->return_type;
+        }
     }
     return nullptr;
 }
@@ -2214,6 +2234,8 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
         Type* actual = analyze_expr(rs.value);
         if (!check_assignable(expected, actual, stmt->loc)) {
             // Error already reported
+        } else {
+            coerce_int_literal(rs.value, expected);
         }
     } else {
         if (!expected->is_void()) {
@@ -2319,6 +2341,7 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
             // Type check (skip for 'out' since it's write-only)
             if (arg.modifier != ParamModifier::Out) {
                 check_assignable(dtor->param_types[i], arg_type, arg.expr->loc);
+                coerce_int_literal(arg.expr, dtor->param_types[i]);
             }
         }
     } else {
@@ -2504,7 +2527,7 @@ Type* SemanticAnalyzer::analyze_literal_expr(Expr* expr) {
         case LiteralKind::Bool:
             return m_types.bool_type();
         case LiteralKind::I32:
-            return m_types.i32_type();
+            return m_types.int_literal_type();
         case LiteralKind::I64:
             return m_types.i64_type();
         case LiteralKind::U32:
@@ -2553,6 +2576,42 @@ Type* SemanticAnalyzer::analyze_binary_expr(Expr* expr) {
         return m_types.error_type();
     }
 
+    // Coerce int literals: match the concrete side, or default both to i32
+    if (left_type->is_int_literal() && right_type->is_integer()) {
+        coerce_int_literal(binary_expr.left, right_type);
+        left_type = right_type;
+    } else if (right_type->is_int_literal() && left_type->is_integer()) {
+        coerce_int_literal(binary_expr.right, left_type);
+        right_type = left_type;
+    } else if (left_type->is_int_literal() && right_type->is_int_literal()) {
+        coerce_int_literal(binary_expr.left, m_types.i32_type());
+        coerce_int_literal(binary_expr.right, m_types.i32_type());
+        left_type = m_types.i32_type();
+        right_type = m_types.i32_type();
+    } else if (right_type->is_int_literal() && !left_type->is_int_literal()) {
+        // Right is IntLiteral, left is non-integer (e.g., struct) — coerce to method's param type
+        const char* method_name = binary_op_to_trait_method(binary_expr.op);
+        if (method_name) {
+            StringView name(method_name, static_cast<u32>(strlen(method_name)));
+            const MethodInfo* mi = m_types.lookup_method(left_type, name);
+            if (mi && mi->param_types.size() == 1 && mi->param_types[0]->is_integer()) {
+                coerce_int_literal(binary_expr.right, mi->param_types[0]);
+                right_type = mi->param_types[0];
+            }
+        }
+    } else if (left_type->is_int_literal() && !right_type->is_int_literal()) {
+        // Left is IntLiteral, right is non-integer — coerce to method's param type
+        const char* method_name = binary_op_to_trait_method(binary_expr.op);
+        if (method_name) {
+            StringView name(method_name, static_cast<u32>(strlen(method_name)));
+            const MethodInfo* mi = m_types.lookup_method(right_type, name);
+            if (mi && mi->param_types.size() == 1 && mi->param_types[0]->is_integer()) {
+                coerce_int_literal(binary_expr.left, mi->param_types[0]);
+                left_type = mi->param_types[0];
+            }
+        }
+    }
+
     return get_binary_result_type(binary_expr.op, left_type, right_type, expr->loc);
 }
 
@@ -2569,6 +2628,20 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
 
     if (then_type->is_error()) return else_type;
     if (else_type->is_error()) return then_type;
+
+    // Coerce int literals in ternary branches
+    if (then_type->is_int_literal() && else_type->is_integer()) {
+        coerce_int_literal(ternary_expr.then_expr, else_type);
+        then_type = else_type;
+    } else if (else_type->is_int_literal() && then_type->is_integer()) {
+        coerce_int_literal(ternary_expr.else_expr, then_type);
+        else_type = then_type;
+    } else if (then_type->is_int_literal() && else_type->is_int_literal()) {
+        coerce_int_literal(ternary_expr.then_expr, m_types.i32_type());
+        coerce_int_literal(ternary_expr.else_expr, m_types.i32_type());
+        then_type = m_types.i32_type();
+        else_type = m_types.i32_type();
+    }
 
     // Types must be compatible
     if (then_type == else_type) {
@@ -2622,6 +2695,7 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
         // Type check (skip for 'out' since it's write-only)
         if (arg.modifier != ParamModifier::Out) {
             check_assignable(param_types[i], arg_type, arg.expr->loc);
+            coerce_int_literal(arg.expr, param_types[i]);
         }
     }
 }
@@ -2638,6 +2712,8 @@ bool SemanticAnalyzer::unify_type_expr(TypeExpr* pattern, Type* concrete,
     // Check if pattern name matches a type parameter
     for (u32 i = 0; i < type_params.size(); i++) {
         if (pattern->name == type_params[i].name && pattern->type_args.size() == 0) {
+            // Default IntLiteral to i32 when binding generic type params
+            if (concrete->is_int_literal()) concrete = m_types.i32_type();
             // This is a type parameter reference
             if (bindings[i] == nullptr) {
                 bindings[i] = concrete;
@@ -2828,6 +2904,7 @@ Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, Strin
 
         if (param_type && !param_type->is_error() && arg_type && !arg_type->is_error()) {
             check_assignable(param_type, arg_type, arg.expr->loc);
+            coerce_int_literal(arg.expr, param_type);
         }
     }
 
@@ -3043,6 +3120,8 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
                 Type* arg_type = analyze_expr(arg.expr);
                 if (!check_assignable(ctor->param_types[i], arg_type, arg.expr->loc)) {
                     // Error already reported
+                } else {
+                    coerce_int_literal(arg.expr, ctor->param_types[i]);
                 }
             }
         }
@@ -3075,6 +3154,8 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
             Type* arg_type = analyze_expr(arg.expr);
             if (!check_assignable(ctor->param_types[i], arg_type, arg.expr->loc)) {
                 // Error already reported
+            } else {
+                coerce_int_literal(arg.expr, ctor->param_types[i]);
             }
         }
 
@@ -3100,6 +3181,8 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
             Type* arg_type = analyze_expr(arg.expr);
             if (!check_assignable(mi->param_types[i], arg_type, arg.expr->loc)) {
                 // Error already reported
+            } else {
+                coerce_int_literal(arg.expr, mi->param_types[i]);
             }
         }
 
@@ -3465,6 +3548,7 @@ Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, 
             // Type check (skip for 'out' since it's write-only)
             if (arg.modifier != ParamModifier::Out) {
                 check_assignable(ctor->param_types[i], arg_type, arg.expr->loc);
+                coerce_int_literal(arg.expr, ctor->param_types[i]);
             }
         }
     } else {
@@ -3503,6 +3587,7 @@ Type* SemanticAnalyzer::analyze_index_expr(Expr* expr) {
     if (method_info && method_info->param_types.size() == 1) {
         if (!idx_type->is_error()) {
             check_assignable(method_info->param_types[0], idx_type, index_expr.index->loc);
+            coerce_int_literal(index_expr.index, method_info->param_types[0]);
         }
         return method_info->return_type;
     }
@@ -3650,6 +3735,11 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
 
     // For compound assignment operators, check operand compatibility
     if (assign_expr.op != AssignOp::Assign) {
+        // Coerce int literals to the target type before trait lookup
+        if (value_type->is_int_literal() && target_type->is_integer()) {
+            coerce_int_literal(assign_expr.value, target_type);
+            value_type = target_type;
+        }
         // Check for compound assignment trait method (works for both structs and primitives)
         const char* method_name = assign_op_to_trait_method(assign_expr.op);
         if (method_name) {
@@ -3677,6 +3767,7 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
         get_binary_result_type(binop, target_type, value_type, expr->loc);
     } else {
         check_assignable(target_type, value_type, assign_expr.value->loc);
+        coerce_int_literal(assign_expr.value, target_type);
     }
 
     // Validate index_mut exists for index assignment targets
@@ -3863,6 +3954,7 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
             Type* value_type = analyze_expr(fi.value);
             Type* field_type = type->struct_info.fields[field_idx].type;
             check_assignable(field_type, value_type, fi.loc);
+            coerce_int_literal(fi.value, field_type);
 
             // Track discriminant value if this is a discriminant field
             for (const auto& clause : type->struct_info.when_clauses) {
@@ -3895,6 +3987,7 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
             // Type-check field value
             Type* value_type = analyze_expr(fi.value);
             check_assignable(variant_field_info->type, value_type, fi.loc);
+            coerce_int_literal(fi.value, variant_field_info->type);
             continue;
         }
 
@@ -3950,6 +4043,9 @@ bool SemanticAnalyzer::check_assignable(Type* target, Type* source, SourceLocati
     // Check reference type conversions
     if (can_convert_ref(source, target)) return true;
 
+    // IntLiteral is assignable to any concrete integer type
+    if (source->is_int_literal() && target->is_integer()) return true;
+
     // Strict numeric typing: no implicit conversions between numeric types
     if (target->is_numeric() && source->is_numeric() && target != source) {
         error_cannot_convert(source, target, loc, "implicitly convert");
@@ -3984,6 +4080,17 @@ bool SemanticAnalyzer::check_assignable(Type* target, Type* source, SourceLocati
 
     error_fmt(loc, "cannot assign '{}' to '{}'", source_str.data(), target_str.data());
     return false;
+}
+
+void SemanticAnalyzer::coerce_int_literal(Expr* expr, Type* target) {
+    if (!expr || !target || !target->is_integer()) return;
+    if (!expr->resolved_type || !expr->resolved_type->is_int_literal()) return;
+    expr->resolved_type = target;
+    // Recursively concretize through transparent wrappers
+    if (expr->kind == AstKind::ExprGrouping)
+        coerce_int_literal(expr->grouping.expr, target);
+    else if (expr->kind == AstKind::ExprUnary)
+        coerce_int_literal(expr->unary.operand, target);
 }
 
 bool SemanticAnalyzer::check_numeric(Type* type, SourceLocation loc) {
@@ -4104,6 +4211,8 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
 Type* SemanticAnalyzer::get_unary_result_type(UnaryOp op, Type* operand, SourceLocation loc) {
     switch (op) {
         case UnaryOp::Negate:
+            if (operand->is_int_literal())
+                return m_types.int_literal_type();
             if (Type* result = try_resolve_unary_op(op, operand))
                 return result;
             error(loc, "unary '-' requires numeric operand");
@@ -4116,6 +4225,8 @@ Type* SemanticAnalyzer::get_unary_result_type(UnaryOp op, Type* operand, SourceL
             return m_types.error_type();
 
         case UnaryOp::BitNot:
+            if (operand->is_int_literal())
+                return m_types.int_literal_type();
             if (Type* result = try_resolve_unary_op(op, operand))
                 return result;
             error(loc, "unary '~' requires integer operand");

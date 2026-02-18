@@ -95,7 +95,7 @@ Last updated: 2026-02-16
   - Issue: `Self` is encoded as `nullptr` in `TraitMethodInfo::param_types`, while trait type params use proper `TypeParam` nodes — dual encoding is fragile since `nullptr` also means "uninitialized" or "error" elsewhere
   - Fix: Add `TypeKind::Self` to the type kind enum
 
-- [ ] **Integer literal polymorphism**
+- [x] **Integer literal polymorphism**
   - File: `src/roxy/compiler/semantic.cpp` (`check_assignable`)
   - Issue: `var x: i64 = 42` fails because unsuffixed `42` is always `i32` — no implicit widening
   - Fix: Add `TypeKind::IntLiteral` that unifies with any integer type during assignability checking, similar to Rust's integer inference

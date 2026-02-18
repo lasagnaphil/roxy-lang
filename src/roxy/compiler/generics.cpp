@@ -74,6 +74,7 @@ StringView GenericInstantiator::type_name_for_mangling(Type* type) {
         case TypeKind::Trait:  return type->trait_info.name;
         case TypeKind::Nil:    return "nil";
         case TypeKind::Self:   return "Self";
+        case TypeKind::IntLiteral: return "i32";
         case TypeKind::Error:  return "error";
         case TypeKind::TypeParam: return type->type_param_info.name;
         case TypeKind::List: {
@@ -336,6 +337,7 @@ TypeExpr* GenericInstantiator::type_to_type_expr(Type* type, SourceLocation loc)
         case TypeKind::TypeParam: result->name = type->type_param_info.name; break;
         case TypeKind::Nil:    result->name = "nil"; break;
         case TypeKind::Self:   result->name = "Self"; break;
+        case TypeKind::IntLiteral: result->name = "i32"; break;
         case TypeKind::Error:  result->name = "error"; break;
 
         case TypeKind::List: {

@@ -48,6 +48,9 @@ enum class TypeKind : u8 {
     // Self type (used in trait method signatures)
     Self,
 
+    // Unsuffixed integer literal type (polymorphic, defaults to i32)
+    IntLiteral,
+
     // Special types
     Nil,    // Type of nil literal, assignable to reference types
     Error,  // Sentinel for type errors, allows analysis to continue
@@ -283,6 +286,10 @@ struct Type {
         return kind == TypeKind::Self;
     }
 
+    bool is_int_literal() const {
+        return kind == TypeKind::IntLiteral;
+    }
+
     // Get the inner type for reference types
     Type* inner_type() const {
         if (is_reference()) {
@@ -334,6 +341,7 @@ public:
     Type* nil_type() { return m_nil; }
     Type* error_type() { return m_error; }
     Type* self_type() { return m_self; }
+    Type* int_literal_type() { return m_int_literal; }
 
     // Factory methods for compound types (with interning)
     Type* list_type(Type* element_type);
@@ -386,6 +394,7 @@ private:
     Type* m_nil;
     Type* m_error;
     Type* m_self;
+    Type* m_int_literal;
 
     // Type interning cache for compound types
     tsl::robin_map<Type*, Type*, TypeHash, TypeEqual> m_interned;

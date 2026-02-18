@@ -142,15 +142,15 @@ TEST_CASE("E2E - Type inference - For loop with inferred index") {
 }
 
 TEST_CASE("E2E - Type inference - Type mismatch errors") {
-    SUBCASE("Cannot assign i32 to i64 variable") {
+    SUBCASE("Unsuffixed integer literal coerces to i64") {
         const char* source = R"(
             fun main(): i32 {
-                var x: i64 = 42;  // ERROR: 42 is i32, cannot assign to i64
+                var x: i64 = 42;  // OK: unsuffixed literal coerces to i64
                 return 0;
             }
         )";
         TestResult result = run_and_capture(source, "main");
-        CHECK(!result.success);
+        CHECK(result.success);
     }
 
     SUBCASE("Cannot assign i64 to i32 variable") {
@@ -188,26 +188,26 @@ TEST_CASE("E2E - Type inference - Type mismatch errors") {
 }
 
 TEST_CASE("E2E - Type inference - Binary operator type mismatch") {
-    SUBCASE("Cannot add i32 and i64") {
+    SUBCASE("Unsuffixed literal coerces in add with i64") {
         const char* source = R"(
             fun main(): i32 {
-                var x = 1 + 2l;  // ERROR: i32 + i64
+                var x = 1 + 2l;  // OK: 1 coerces to i64
                 return 0;
             }
         )";
         TestResult result = run_and_capture(source, "main");
-        CHECK(!result.success);
+        CHECK(result.success);
     }
 
-    SUBCASE("Cannot compare i32 and i64") {
+    SUBCASE("Unsuffixed literal coerces in compare with i64") {
         const char* source = R"(
             fun main(): i32 {
-                var x = 1 < 2l;  // ERROR: i32 < i64
+                var x = 1 < 2l;  // OK: 1 coerces to i64
                 return 0;
             }
         )";
         TestResult result = run_and_capture(source, "main");
-        CHECK(!result.success);
+        CHECK(result.success);
     }
 
     SUBCASE("Cannot mix f32 and f64") {

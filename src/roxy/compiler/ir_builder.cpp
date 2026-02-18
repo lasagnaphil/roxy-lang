@@ -1443,8 +1443,14 @@ ValueId IRBuilder::gen_literal_expr(Expr* expr) {
         case LiteralKind::I32:
         case LiteralKind::I64:
         case LiteralKind::U32:
-        case LiteralKind::U64:
-            return emit_const_int(lit.int_value, expr->resolved_type);
+        case LiteralKind::U64: {
+            // Safety net: if IntLiteral wasn't concretized, default to i32
+            Type* int_type = expr->resolved_type;
+            if (int_type && int_type->is_int_literal()) {
+                int_type = m_types.i32_type();
+            }
+            return emit_const_int(lit.int_value, int_type);
+        }
         case LiteralKind::F32:
         case LiteralKind::F64:
             return emit_const_float(lit.float_value, expr->resolved_type);

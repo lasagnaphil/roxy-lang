@@ -162,6 +162,9 @@ private:
     Type* analyze_struct_literal_expr(Expr* expr);
     Type* analyze_string_interp_expr(Expr* expr);
 
+    // Integer literal coercion: concretizes IntLiteral expressions to a target integer type
+    void coerce_int_literal(Expr* expr, Type* target);
+
     // Type checking helpers
     bool check_assignable(Type* target, Type* source, SourceLocation loc);
     bool check_numeric(Type* type, SourceLocation loc);
