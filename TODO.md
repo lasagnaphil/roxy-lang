@@ -90,7 +90,7 @@ Last updated: 2026-02-16
 
 ### Structural Improvements
 
-- [ ] **Replace nullptr sentinel for Self type**
+- [x] **Replace nullptr sentinel for Self type**
   - Files: `src/roxy/compiler/semantic.cpp` (`analyze_trait_method_decl`, line 1347), `include/roxy/compiler/types.hpp`
   - Issue: `Self` is encoded as `nullptr` in `TraitMethodInfo::param_types`, while trait type params use proper `TypeParam` nodes — dual encoding is fragile since `nullptr` also means "uninitialized" or "error" elsewhere
   - Fix: Add `TypeKind::Self` to the type kind enum

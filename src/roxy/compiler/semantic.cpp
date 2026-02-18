@@ -1344,16 +1344,12 @@ void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
         }
     }
 
-    // We need a struct scope to resolve 'Self' in parameter types.
-    // For trait method declarations, we don't have a concrete struct,
-    // so we use nullptr sentinels for Self type.
-    // Also resolve trait type params (e.g., Rhs in trait Add<Rhs>) to TypeParam types.
-    // Resolve parameter types - use nullptr for Self, TypeParam for trait type params
+    // Resolve parameter types - use TypeKind::Self for Self, TypeParam for trait type params
     Vector<Type*> param_types;
     for (const auto& param : method_decl.params) {
         TypeExpr* type_expr = param.type;
         if (type_expr && type_expr->name == "Self") {
-            param_types.push_back(nullptr);  // nullptr sentinel for Self
+            param_types.push_back(m_types.self_type());
         } else {
             // Check if this is a trait type param
             Type* param_type = nullptr;
@@ -1375,11 +1371,11 @@ void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
         }
     }
 
-    // Resolve return type (nullptr for Self, TypeParam for trait type params)
+    // Resolve return type (TypeKind::Self for Self, TypeParam for trait type params)
     Type* return_type = nullptr;
     if (method_decl.return_type) {
         if (method_decl.return_type->name == "Self") {
-            return_type = nullptr;  // sentinel for Self
+            return_type = m_types.self_type();
         } else {
             // Check if return type is a trait type param
             Type* param_type = nullptr;
@@ -1803,7 +1799,7 @@ void SemanticAnalyzer::validate_trait_implementations() {
 }
 
 Type* SemanticAnalyzer::resolve_trait_type(Type* abstract_type, Type* struct_type, Span<Type*> trait_type_args) {
-    if (!abstract_type) return struct_type;  // nullptr sentinel = Self
+    if (abstract_type->is_self()) return struct_type;
     if (abstract_type->is_type_param() && trait_type_args.size() > 0) {
         u32 idx = abstract_type->type_param_info.index;
         if (idx < trait_type_args.size()) return trait_type_args[idx];

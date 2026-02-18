@@ -45,6 +45,9 @@ enum class TypeKind : u8 {
     // Generic type parameter
     TypeParam,
 
+    // Self type (used in trait method signatures)
+    Self,
+
     // Special types
     Nil,    // Type of nil literal, assignable to reference types
     Error,  // Sentinel for type errors, allows analysis to continue
@@ -112,8 +115,8 @@ struct WhenClauseInfo {
 // Trait method information
 struct TraitMethodInfo {
     StringView name;
-    Span<Type*> param_types;   // nullptr entries = Self type
-    Type* return_type;         // nullptr = Self type
+    Span<Type*> param_types;   // Self type entries use TypeKind::Self
+    Type* return_type;         // Self type entries use TypeKind::Self
     Decl* decl;                // Points to the DeclMethod AST node
     bool has_default;          // true if method has a body (default implementation)
 };
@@ -276,6 +279,10 @@ struct Type {
         return kind == TypeKind::TypeParam;
     }
 
+    bool is_self() const {
+        return kind == TypeKind::Self;
+    }
+
     // Get the inner type for reference types
     Type* inner_type() const {
         if (is_reference()) {
@@ -326,6 +333,7 @@ public:
     Type* string_type() { return m_string; }
     Type* nil_type() { return m_nil; }
     Type* error_type() { return m_error; }
+    Type* self_type() { return m_self; }
 
     // Factory methods for compound types (with interning)
     Type* list_type(Type* element_type);
@@ -377,6 +385,7 @@ private:
     Type* m_string;
     Type* m_nil;
     Type* m_error;
+    Type* m_self;
 
     // Type interning cache for compound types
     tsl::robin_map<Type*, Type*, TypeHash, TypeEqual> m_interned;

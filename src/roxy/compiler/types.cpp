@@ -111,6 +111,7 @@ TypeCache::TypeCache(BumpAllocator& allocator)
     m_string = create_primitive(TypeKind::String);
     m_nil = create_primitive(TypeKind::Nil);
     m_error = create_primitive(TypeKind::Error);
+    m_self = create_primitive(TypeKind::Self);
 }
 
 Type* TypeCache::create_primitive(TypeKind kind) {
@@ -383,6 +384,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TypeKind::Ref: return "ref";
         case TypeKind::Weak: return "weak";
         case TypeKind::TypeParam: return "<type_param>";
+        case TypeKind::Self: return "Self";
         case TypeKind::Nil: return "nil";
         case TypeKind::Error: return "<error>";
     }
@@ -422,6 +424,7 @@ void type_to_string(const Type* type, Vector<char>& out) {
         case TypeKind::F64:
         case TypeKind::String:
         case TypeKind::Nil:
+        case TypeKind::Self:
         case TypeKind::Error:
             append_string(out, type_kind_to_string(type->kind));
             break;
