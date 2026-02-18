@@ -53,8 +53,6 @@ Type* NativeFunctionEntry::resolve_return_type(TypeCache& types) const {
     switch (type_info_mode) {
         case NativeTypeInfoMode::Desc:
             return type_from_kind(return_desc.kind, types);
-        case NativeTypeInfoMode::Direct:
-            return return_type;
         case NativeTypeInfoMode::Resolver:
             return return_resolver(types);
         default:
@@ -68,9 +66,6 @@ void NativeFunctionEntry::resolve_param_types(TypeCache& types, Type** out_param
             case NativeTypeInfoMode::Desc:
                 out_params[i] = type_from_kind(param_descs[i].kind, types);
                 break;
-            case NativeTypeInfoMode::Direct:
-                out_params[i] = param_types[i];
-                break;
             case NativeTypeInfoMode::Resolver:
                 out_params[i] = param_resolvers[i](types);
                 break;
@@ -80,34 +75,12 @@ void NativeFunctionEntry::resolve_param_types(TypeCache& types, Type** out_param
 
 // NativeRegistry method implementations
 
-void NativeRegistry::bind_manual(const char* name, NativeFunction func,
-                                 std::initializer_list<Type*> param_types, Type* return_type) {
-    NativeFunctionEntry entry;
-    entry.name = make_string_view(name);
-    entry.func = func;
-    entry.return_type = return_type;
-    entry.return_desc = concrete_param(NativeTypeKind::Void);  // Not used for manual
-    entry.param_count = static_cast<u32>(param_types.size());
-    entry.min_args = entry.param_count;
-    entry.type_info_mode = NativeTypeInfoMode::Direct;
-    entry.is_method = false;
-    entry.method_kind = GenericMethodKind::Method;
-
-    for (Type* t : param_types) {
-        entry.param_types.push_back(t);
-    }
-
-    m_function_entries.push_back(entry);
-    m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
-}
-
 void NativeRegistry::bind_native(const char* name, NativeFunction func,
                                  std::initializer_list<NativeTypeKind> param_type_kinds,
                                  NativeTypeKind return_type_kind) {
     NativeFunctionEntry entry;
     entry.name = make_string_view(name);
     entry.func = func;
-    entry.return_type = nullptr;
     entry.return_desc = concrete_param(return_type_kind);
     entry.param_count = static_cast<u32>(param_type_kinds.size());
     entry.min_args = entry.param_count;
@@ -141,7 +114,6 @@ void NativeRegistry::bind_method_native(const char* struct_name, const char* met
     entry.method_name = make_string_view(method_name);
     entry.name = mangle_method_name(entry.struct_name, entry.method_name);
     entry.func = func;
-    entry.return_type = nullptr;
     entry.return_desc = concrete_param(return_type_kind);
     entry.param_count = static_cast<u32>(param_type_kinds.size());
     entry.min_args = entry.param_count;
@@ -151,30 +123,6 @@ void NativeRegistry::bind_method_native(const char* struct_name, const char* met
 
     for (NativeTypeKind k : param_type_kinds) {
         entry.param_descs.push_back(concrete_param(k));
-    }
-
-    m_function_entries.push_back(entry);
-    m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
-}
-
-void NativeRegistry::bind_method_manual(const char* struct_name, const char* method_name,
-                                        NativeFunction func,
-                                        std::initializer_list<Type*> param_types, Type* return_type) {
-    NativeFunctionEntry entry;
-    entry.struct_name = make_string_view(struct_name);
-    entry.method_name = make_string_view(method_name);
-    entry.name = mangle_method_name(entry.struct_name, entry.method_name);
-    entry.func = func;
-    entry.return_type = return_type;
-    entry.return_desc = concrete_param(NativeTypeKind::Void);
-    entry.param_count = static_cast<u32>(param_types.size());
-    entry.min_args = entry.param_count;
-    entry.type_info_mode = NativeTypeInfoMode::Direct;
-    entry.is_method = true;
-    entry.method_kind = GenericMethodKind::Method;
-
-    for (Type* t : param_types) {
-        entry.param_types.push_back(t);
     }
 
     m_function_entries.push_back(entry);
@@ -213,7 +161,7 @@ void NativeRegistry::bind_generic_method(const char* type_name, const char* meth
     ne.struct_name = sn;
     ne.method_name = mn;
     ne.return_desc = return_desc;
-    ne.return_type = nullptr;
+
     for (auto& p : params) ne.param_descs.push_back(p);
 
     m_function_entries.push_back(ne);
@@ -238,7 +186,7 @@ void NativeRegistry::bind_generic_constructor(const char* type_name, NativeFunct
     ne.struct_name = sn;
     ne.method_name = mn;
     ne.return_desc = concrete_param(NativeTypeKind::Void);
-    ne.return_type = nullptr;
+
     for (auto& p : params) ne.param_descs.push_back(p);
 
     m_function_entries.push_back(ne);
@@ -261,7 +209,7 @@ void NativeRegistry::bind_generic_destructor(const char* type_name, NativeFuncti
     ne.struct_name = sn;
     ne.method_name = mn;
     ne.return_desc = concrete_param(NativeTypeKind::Void);
-    ne.return_type = nullptr;
+
 
     m_function_entries.push_back(ne);
     m_name_to_index[mangled] = static_cast<i32>(m_function_entries.size() - 1);

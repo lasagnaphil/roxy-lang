@@ -254,11 +254,6 @@ For methods that need direct VM access (e.g., for allocation or complex register
 registry.bind_method_native("Point", "product", native_product_fn,
                             {NativeTypeKind::I32},  // extra params after self
                             NativeTypeKind::I32);   // return type
-
-// With Type* (must use same TypeCache as compilation)
-registry.bind_method_manual("Point", "distance", native_distance_fn,
-                            {types.f64_type()},     // extra params after self
-                            types.f64_type());      // return type
 ```
 
 Manual method wrappers receive self as `regs[first_arg]` (a pointer to the struct on the stack), followed by any additional arguments.

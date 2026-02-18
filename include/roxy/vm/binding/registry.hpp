@@ -69,7 +69,6 @@ using TypeResolverFn = Type* (*)(TypeCache&);
 // How a native function's parameter/return types are described
 enum class NativeTypeInfoMode : u8 {
     Desc,       // NativeParamDesc-based (NativeTypeKind or type_param) — bind_native, bind_method_native
-    Direct,     // Type* stored directly — bind_manual, bind_method_manual
     Resolver,   // TypeResolverFn deferred resolution — bind<>, bind_method<>
 };
 
@@ -81,9 +80,6 @@ struct NativeFunctionEntry {
     // Type info path: Desc
     Vector<NativeParamDesc> param_descs;       // Replaces param_type_kinds; supports type params for generics
     NativeParamDesc return_desc;               // Replaces return_type_kind
-    // Type info path: Direct
-    Vector<Type*> param_types;
-    Type* return_type = nullptr;
     // Type info path: Resolver (deferred type resolution for cross-TypeCache compatibility)
     Vector<TypeResolverFn> param_resolvers;
     TypeResolverFn return_resolver = nullptr;
@@ -95,7 +91,7 @@ struct NativeFunctionEntry {
     StringView method_name;                    // Original unmangled method name
 
     // Resolve parameter/return types using the given TypeCache.
-    // Works for all three modes: Desc, Direct, and Resolver.
+    // Works for both modes: Desc and Resolver.
     Type* resolve_return_type(TypeCache& types) const;
     void resolve_param_types(TypeCache& types, Type** out_params) const;
 };
@@ -151,10 +147,6 @@ public:
         m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
     }
 
-    // Register a native function with manual wrapper (for functions needing VM access)
-    void bind_manual(const char* name, NativeFunction func,
-                     std::initializer_list<Type*> param_types, Type* return_type);
-
     // Register a native function with type kinds (for functions needing VM access)
     void bind_native(const char* name, NativeFunction func,
                      std::initializer_list<NativeTypeKind> param_type_kinds,
@@ -197,11 +189,6 @@ public:
                             NativeFunction func,
                             std::initializer_list<NativeTypeKind> param_type_kinds,
                             NativeTypeKind return_type_kind);
-
-    // Manual-bind a method with Type* (for methods needing VM access)
-    void bind_method_manual(const char* struct_name, const char* method_name,
-                            NativeFunction func,
-                            std::initializer_list<Type*> param_types, Type* return_type);
 
     // Register a generic native type with its allocation function.
     void register_generic_type(const char* name, u32 type_param_count,
