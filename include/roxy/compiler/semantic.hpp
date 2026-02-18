@@ -152,6 +152,9 @@ private:
     void check_call_args(Span<CallArg> args, Span<Type*> param_types,
                          Span<Param> params, SourceLocation loc);
 
+    // Build a function type for a method call: (ref<self_type>, method_params...) -> return_type
+    Type* build_method_function_type(Type* self_type, const MethodInfo* method_info);
+
     // Cast checking helper
     bool can_cast(Type* source, Type* target);
     Type* analyze_index_expr(Expr* expr);
@@ -181,6 +184,9 @@ private:
 
     // Register built-in operator methods for primitive types
     void register_primitive_operator_methods();
+
+    // Convert a Type* to a null-terminated string for use in error messages
+    Vector<char> type_string(Type* type);
 
     // Type mismatch error helpers
     // Returns true if types match, false and reports error if they don't

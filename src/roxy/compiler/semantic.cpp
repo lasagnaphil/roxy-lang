@@ -8,6 +8,15 @@
 
 namespace rx {
 
+static const ConstructorInfo* find_constructor(Span<ConstructorInfo> constructors, StringView name) {
+    for (const auto& constructor : constructors) {
+        if (constructor.name == name) {
+            return &constructor;
+        }
+    }
+    return nullptr;
+}
+
 // Returns number of u32 slots needed for a type
 // 1 slot = 4 bytes (for bool, i8-i32, u8-u32, f32)
 // 2 slots = 8 bytes (for i64, u64, f64, pointers)
@@ -172,8 +181,6 @@ bool SemanticAnalyzer::analyze(Program* program) {
 
     // Pass 1.8: Register built-in operator trait methods for primitive types
     register_primitive_operator_methods();
-
-    // Pass 2: Resolve type members (fields, methods, inheritance)
     resolve_type_members(program);
     if (too_many_errors()) return false;
 
@@ -1642,11 +1649,8 @@ void SemanticAnalyzer::validate_trait_implementations() {
                             Type* expected = resolve_trait_type(trait_type_info.methods[i].param_types[p],
                                                                 struct_type, trait_type_args);
                             if (param_types[p] != expected) {
-                                Vector<char> got_str, exp_str;
-                                type_to_string(param_types[p], got_str);
-                                type_to_string(expected, exp_str);
-                                got_str.push_back('\0');
-                                exp_str.push_back('\0');
+                                auto got_str = type_string(param_types[p]);
+                                auto exp_str = type_string(expected);
                                 error_fmt(decl->loc,
                                          "method '{}' parameter {} has type '{}' but trait '{}' expects '{}'",
                                          method_decl.name, p + 1, got_str.data(), trait_type_info.name, exp_str.data());
@@ -1659,11 +1663,8 @@ void SemanticAnalyzer::validate_trait_implementations() {
                         Type* expected_ret = resolve_trait_type(trait_type_info.methods[i].return_type,
                                                                 struct_type, trait_type_args);
                         if (return_type != expected_ret) {
-                            Vector<char> got_str, exp_str;
-                            type_to_string(return_type, got_str);
-                            type_to_string(expected_ret, exp_str);
-                            got_str.push_back('\0');
-                            exp_str.push_back('\0');
+                            auto got_str = type_string(return_type);
+                            auto exp_str = type_string(expected_ret);
                             error_fmt(decl->loc,
                                      "method '{}' return type is '{}' but trait '{}' expects '{}'",
                                      method_decl.name, got_str.data(), trait_type_info.name, exp_str.data());
@@ -2141,46 +2142,9 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
             return;
         }
 
-        // Get destructor's parameter info
-        DestructorDecl* dtor_decl = &dtor->decl->destructor_decl;
-
         // Check argument types and modifiers
-        for (u32 i = 0; i < ds.arguments.size(); i++) {
-            CallArg& arg = ds.arguments[i];
-
-            // Get expected modifier from DestructorDecl
-            ParamModifier expected_mod = ParamModifier::None;
-            if (i < dtor_decl->params.size()) {
-                expected_mod = dtor_decl->params[i].modifier;
-            }
-
-            // Check modifier matches
-            if (expected_mod != arg.modifier) {
-                if (expected_mod == ParamModifier::Out) {
-                    error(arg.expr->loc, "argument requires 'out' modifier");
-                } else if (expected_mod == ParamModifier::Inout) {
-                    error(arg.expr->loc, "argument requires 'inout' modifier");
-                } else if (arg.modifier != ParamModifier::None) {
-                    error(arg.modifier_loc, "unexpected modifier for this parameter");
-                }
-            }
-
-            // Check lvalue requirement for out/inout
-            if (arg.modifier == ParamModifier::Out || arg.modifier == ParamModifier::Inout) {
-                if (!is_lvalue(arg.expr)) {
-                    error(arg.expr->loc, "'out'/'inout' argument must be a variable");
-                }
-            }
-
-            // Analyze argument expression
-            Type* arg_type = analyze_expr(arg.expr);
-
-            // Type check (skip for 'out' since it's write-only)
-            if (arg.modifier != ParamModifier::Out) {
-                check_assignable(dtor->param_types[i], arg_type, arg.expr->loc);
-                coerce_int_literal(arg.expr, dtor->param_types[i]);
-            }
-        }
+        DestructorDecl* dtor_decl = &dtor->decl->destructor_decl;
+        check_call_args(ds.arguments, dtor->param_types, dtor_decl->params, stmt->loc);
     } else {
         // No destructor defined with this name
         if (!ds.destructor_name.empty()) {
@@ -2535,6 +2499,17 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
             coerce_int_literal(arg.expr, param_types[i]);
         }
     }
+}
+
+Type* SemanticAnalyzer::build_method_function_type(Type* self_type, const MethodInfo* method_info) {
+    u32 total_params = 1 + method_info->param_types.size();
+    Type** ptypes = reinterpret_cast<Type**>(
+        m_allocator.alloc_bytes(sizeof(Type*) * total_params, alignof(Type*)));
+    ptypes[0] = m_types.ref_type(self_type);
+    for (u32 j = 0; j < method_info->param_types.size(); j++) {
+        ptypes[j + 1] = method_info->param_types[j];
+    }
+    return m_types.function_type(Span<Type*>(ptypes, total_params), method_info->return_type);
 }
 
 // ============================================================================
@@ -2928,14 +2903,7 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
 
     // If method_name is empty, this is super() or super(args) - constructor call
     if (super_expr.method_name.empty()) {
-        // Look for default constructor
-        const ConstructorInfo* ctor = nullptr;
-        for (const auto& constructor : parent_struct_type_info.constructors) {
-            if (constructor.name.empty()) {
-                ctor = &constructor;
-                break;
-            }
-        }
+        const ConstructorInfo* ctor = find_constructor(parent_struct_type_info.constructors, {});
 
         // If no default constructor but there are args, error
         if (!ctor && ce.arguments.size() > 0) {
@@ -2970,13 +2938,7 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
 
     // method_name is not empty - this is super.name()
     // First try to find it as a constructor, then as a method
-    const ConstructorInfo* ctor = nullptr;
-    for (const auto& constructor : parent_struct_type_info.constructors) {
-        if (constructor.name == super_expr.method_name) {
-            ctor = &constructor;
-            break;
-        }
-    }
+    const ConstructorInfo* ctor = find_constructor(parent_struct_type_info.constructors, super_expr.method_name);
 
     if (ctor) {
         // It's a named constructor call
@@ -3069,17 +3031,7 @@ Type* SemanticAnalyzer::analyze_struct_method_call(Expr* expr, CallExpr& ce, Get
     check_call_args(ce.arguments, mi->param_types, params, expr->loc);
 
     // Set callee's resolved_type to a function type for IR builder
-    // The function type includes 'self' as the first parameter
-    // Use found_in_type for proper method resolution (inheritance)
-    u32 total_params = 1 + mi->param_types.size();
-    Type** ptypes = reinterpret_cast<Type**>(
-        m_allocator.alloc_bytes(sizeof(Type*) * total_params, alignof(Type*)));
-    ptypes[0] = m_types.ref_type(found_in_type);  // Use the type where method was found
-    for (u32 j = 0; j < mi->param_types.size(); j++) {
-        ptypes[j + 1] = mi->param_types[j];
-    }
-    ce.callee->resolved_type = m_types.function_type(
-        Span<Type*>(ptypes, total_params), mi->return_type);
+    ce.callee->resolved_type = build_method_function_type(found_in_type, mi);
 
     // Store the struct type where method was found in the GetExpr
     // IR builder will use this for correct method name mangling
@@ -3298,11 +3250,8 @@ Type* SemanticAnalyzer::analyze_primitive_cast(Expr* expr, Type* target_type) {
 
     // Check if the cast is valid
     if (!can_cast(source_type, target_type)) {
-        Vector<char> source_str, target_str;
-        type_to_string(source_type, source_str);
-        type_to_string(target_type, target_str);
-        source_str.push_back('\0');
-        target_str.push_back('\0');
+        auto source_str = type_string(source_type);
+        auto target_str = type_string(target_type);
         error_fmt(expr->loc, "cannot cast '{}' to '{}'", source_str.data(), target_str.data());
         return m_types.error_type();
     }
@@ -3318,13 +3267,7 @@ Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, 
     StructTypeInfo& struct_type_info = struct_type->struct_info;
 
     // Look up constructor by name
-    const ConstructorInfo* ctor = nullptr;
-    for (const auto& constructor : struct_type_info.constructors) {
-        if (constructor.name == ctor_name) {
-            ctor = &constructor;
-            break;
-        }
-    }
+    const ConstructorInfo* ctor = find_constructor(struct_type_info.constructors, ctor_name);
 
     // If a constructor name was specified but not found
     if (!ctor_name.empty() && !ctor) {
@@ -3348,46 +3291,9 @@ Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, 
             return result_type();
         }
 
-        // Get constructor's parameter info
-        ConstructorDecl* ctor_decl = &ctor->decl->constructor_decl;
-
         // Check argument types and modifiers
-        for (u32 i = 0; i < call_expr.arguments.size(); i++) {
-            CallArg& arg = call_expr.arguments[i];
-
-            // Get expected modifier from ConstructorDecl
-            ParamModifier expected_mod = ParamModifier::None;
-            if (i < ctor_decl->params.size()) {
-                expected_mod = ctor_decl->params[i].modifier;
-            }
-
-            // Check modifier matches
-            if (expected_mod != arg.modifier) {
-                if (expected_mod == ParamModifier::Out) {
-                    error(arg.expr->loc, "argument requires 'out' modifier");
-                } else if (expected_mod == ParamModifier::Inout) {
-                    error(arg.expr->loc, "argument requires 'inout' modifier");
-                } else if (arg.modifier != ParamModifier::None) {
-                    error(arg.modifier_loc, "unexpected modifier for this parameter");
-                }
-            }
-
-            // Check lvalue requirement for out/inout
-            if (arg.modifier == ParamModifier::Out || arg.modifier == ParamModifier::Inout) {
-                if (!is_lvalue(arg.expr)) {
-                    error(arg.expr->loc, "'out'/'inout' argument must be a variable");
-                }
-            }
-
-            // Analyze argument expression
-            Type* arg_type = analyze_expr(arg.expr);
-
-            // Type check (skip for 'out' since it's write-only)
-            if (arg.modifier != ParamModifier::Out) {
-                check_assignable(ctor->param_types[i], arg_type, arg.expr->loc);
-                coerce_int_literal(arg.expr, ctor->param_types[i]);
-            }
-        }
+        ConstructorDecl* ctor_decl = &ctor->decl->constructor_decl;
+        check_call_args(call_expr.arguments, ctor->param_types, ctor_decl->params, expr->loc);
     } else {
         // No constructor defined - either using default construction or error
         if (!ctor_name.empty()) {
@@ -3510,20 +3416,7 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
     Type* found_in_type = nullptr;
     const MethodInfo* mi = lookup_method_in_hierarchy(base_type, get_expr.name, &found_in_type);
     if (mi) {
-        // Build function type with implicit self parameter
-        // Method type: (ref<StructType>, param_types...) -> return_type
-
-        // Build parameter types: ref<StructType> + method params
-        // Use found_in_type for proper method resolution (inheritance)
-        u32 total_params = 1 + mi->param_types.size();
-        Type** ptypes = reinterpret_cast<Type**>(
-            m_allocator.alloc_bytes(sizeof(Type*) * total_params, alignof(Type*)));
-        ptypes[0] = m_types.ref_type(found_in_type);  // self parameter - type where method is defined
-        for (u32 j = 0; j < mi->param_types.size(); j++) {
-            ptypes[j + 1] = mi->param_types[j];
-        }
-
-        return m_types.function_type(Span<Type*>(ptypes, total_params), mi->return_type);
+        return build_method_function_type(found_in_type, mi);
     }
 
     error_fmt(expr->loc, "struct '{}' has no member '{}'", struct_type_info.name, get_expr.name);
@@ -3665,17 +3558,7 @@ Type* SemanticAnalyzer::analyze_super_expr(Expr* expr) {
         return m_types.error_type();
     }
 
-    // Build function type with ref<ParentType> as self
-    // The function type: (ref<ParentType>, param_types...) -> return_type
-    u32 total_params = 1 + mi->param_types.size();
-    Type** ptypes = reinterpret_cast<Type**>(
-        m_allocator.alloc_bytes(sizeof(Type*) * total_params, alignof(Type*)));
-    ptypes[0] = m_types.ref_type(found_in_type);  // self parameter - parent type
-    for (u32 j = 0; j < mi->param_types.size(); j++) {
-        ptypes[j + 1] = mi->param_types[j];
-    }
-
-    return m_types.function_type(Span<Type*>(ptypes, total_params), mi->return_type);
+    return build_method_function_type(found_in_type, mi);
 }
 
 Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
@@ -3909,12 +3792,8 @@ bool SemanticAnalyzer::check_assignable(Type* target, Type* source, SourceLocati
         return false;
     }
 
-    Vector<char> target_str, source_str;
-    type_to_string(target, target_str);
-    type_to_string(source, source_str);
-    target_str.push_back('\0');
-    source_str.push_back('\0');
-
+    auto source_str = type_string(source);
+    auto target_str = type_string(target);
     error_fmt(loc, "cannot assign '{}' to '{}'", source_str.data(), target_str.data());
     return false;
 }
@@ -3957,25 +3836,26 @@ bool SemanticAnalyzer::check_boolean(Type* type, SourceLocation loc) {
     return true;
 }
 
+Vector<char> SemanticAnalyzer::type_string(Type* type) {
+    Vector<char> str;
+    type_to_string(type, str);
+    str.push_back('\0');
+    return str;
+}
+
 bool SemanticAnalyzer::require_types_match(Type* left, Type* right, SourceLocation loc, const char* context) {
     if (left == right) return true;
 
-    Vector<char> left_str, right_str;
-    type_to_string(left, left_str);
-    type_to_string(right, right_str);
-    left_str.push_back('\0');
-    right_str.push_back('\0');
+    auto left_str = type_string(left);
+    auto right_str = type_string(right);
     error_fmt(loc, "{} requires matching types, got '{}' and '{}'",
               context, left_str.data(), right_str.data());
     return false;
 }
 
 void SemanticAnalyzer::error_cannot_convert(Type* source, Type* target, SourceLocation loc, const char* context) {
-    Vector<char> source_str, target_str;
-    type_to_string(source, source_str);
-    type_to_string(target, target_str);
-    source_str.push_back('\0');
-    target_str.push_back('\0');
+    auto source_str = type_string(source);
+    auto target_str = type_string(target);
     error_fmt(loc, "cannot {} '{}' to '{}'",
               context, source_str.data(), target_str.data());
 }
