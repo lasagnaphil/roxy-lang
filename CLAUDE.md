@@ -126,13 +126,13 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Files:** `compiler/types.hpp`, `compiler/types.cpp`
 
 **Enums** - C-style enumerations with integer underlying type. Access via `Type::Variant`.
-**Tests:** `tests/e2e/enums_test.cpp`
+**Tests:** `tests/e2e/test_enums.cpp`
 
 **Structs** - Stack-allocated value types with slot-based layout, inheritance, methods, constructors/destructors.
 **Details:** `docs/internals/structs.md`, `docs/internals/methods.md`, `docs/internals/inheritance.md`, `docs/internals/constructors.md`
 
 **Tagged Unions** - Discriminated unions with `when` clause in struct definitions.
-**Details:** `docs/internals/tagged-unions.md` | **Tests:** `tests/e2e/tagged_unions_test.cpp`
+**Details:** `docs/internals/tagged-unions.md` | **Tests:** `tests/e2e/test_tagged_unions.cpp`
 
 ### IR and Bytecode
 **SSA IR** - Block arguments (not phi nodes), 43+ operations for all basic operations.
@@ -166,15 +166,15 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 
 ### Control Flow
 **When Statement** - Pattern matching on enum values with phi node support for variable modifications.
-**Tests:** `tests/e2e/when_test.cpp`
+**Tests:** `tests/e2e/test_when.cpp`
 
 ### Traits
 **Traits** - Ad-hoc polymorphism with trait declarations, required/default methods, `for Trait` implementations, trait inheritance, `Self` type, operator dispatch (arithmetic, comparison, bitwise, unary, indexing) for structs, primitives, and lists via unified `TypeCache::lookup_method()`, and generic traits with type parameters (`trait Add<Rhs>`, `for Mul<i32>`).
-**Details:** `docs/internals/traits.md`, `docs/internals/operator-overloading.md` | **Tests:** `tests/e2e/traits_test.cpp`
+**Details:** `docs/internals/traits.md`, `docs/internals/operator-overloading.md` | **Tests:** `tests/e2e/test_traits.cpp`
 
 ### Generics
 **Generics** - Parametric polymorphism with monomorphization. Generic functions (`fun identity<T>(v: T): T`) and generic structs (`struct Box<T> { value: T; }`). Supports local type inference from function arguments and struct field values (`identity(42)` infers T=i32, `Box { value = 42 }` infers T=i32). Explicit type arguments also supported. Angle bracket syntax with trial-parse disambiguation.
-**Details:** `docs/internals/generics.md` | **Tests:** `tests/e2e/generics_test.cpp`
+**Details:** `docs/internals/generics.md` | **Tests:** `tests/e2e/test_generics.cpp`
 
 ## Planned Components (Not Yet Implemented)
 

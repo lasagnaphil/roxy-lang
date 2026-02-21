@@ -288,4 +288,4 @@ The `register_native_module` function:
 | `src/roxy/compiler/semantic.cpp` | Import analysis, prelude auto-import |
 | `src/roxy/compiler/ir_builder.cpp` | CallExternal IR emission |
 | `src/roxy/compiler/lowering.cpp` | Static linking (CallExternal → CALL) |
-| `tests/e2e/modules_test.cpp` | Module system E2E tests |
+| `tests/e2e/test_modules.cpp` | Module system E2E tests |

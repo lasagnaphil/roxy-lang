@@ -256,7 +256,7 @@ type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ;
 | `include/roxy/shared/lexer.hpp` | save_position()/restore_position() for parser backtracking |
 | `src/roxy/compiler/semantic.cpp` | Generic template registration, instantiation, type resolution |
 | `src/roxy/compiler/ir_builder.cpp` | IR generation for generic instances |
-| `tests/e2e/generics_test.cpp` | E2E tests (25 test cases) |
+| `tests/e2e/test_generics.cpp` | E2E tests (25 test cases) |
 
 ## Limitations
 

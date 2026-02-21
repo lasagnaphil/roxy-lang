@@ -168,4 +168,4 @@ Non-public methods are module-private.
 - `src/roxy/compiler/parser.cpp` - Method parsing
 - `src/roxy/compiler/semantic.cpp` - Method registration and body analysis
 - `src/roxy/compiler/ir_builder.cpp` - Method IR generation
-- `tests/e2e/methods_test.cpp` - E2E test cases
+- `tests/e2e/test_methods.cpp` - E2E test cases

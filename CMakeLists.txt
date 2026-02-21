@@ -91,42 +91,42 @@ add_executable(roxy_tests
     tests/test_main.cpp
 
     # Unit tests
-    tests/unit/lexer_test.cpp
-    tests/unit/parser_test.cpp
-    tests/unit/semantic_test.cpp
-    tests/unit/ssa_ir_test.cpp
-    tests/unit/bytecode_test.cpp
-    tests/unit/vm_test.cpp
-    tests/unit/lowering_test.cpp
-    tests/unit/slab_allocator_test.cpp
-    tests/unit/format_test.cpp
-    tests/unit/string_test.cpp
-    tests/unit/static_string_test.cpp
+    tests/unit/test_lexer.cpp
+    tests/unit/test_parser.cpp
+    tests/unit/test_semantic.cpp
+    tests/unit/test_ssa_ir.cpp
+    tests/unit/test_bytecode.cpp
+    tests/unit/test_vm.cpp
+    tests/unit/test_lowering.cpp
+    tests/unit/test_slab_allocator.cpp
+    tests/unit/test_format.cpp
+    tests/unit/test_string.cpp
+    tests/unit/test_static_string.cpp
 
     # E2E tests
     tests/e2e/test_helpers.cpp
-    tests/e2e/basics_test.cpp
-    tests/e2e/recursion_test.cpp
-    tests/e2e/algorithms_test.cpp
-    tests/e2e/lists_test.cpp
-    tests/e2e/maps_test.cpp
-    tests/e2e/structs_test.cpp
-    tests/e2e/params_test.cpp
-    tests/e2e/interop_test.cpp
-    tests/e2e/strings_test.cpp
-    tests/e2e/heap_test.cpp
-    tests/e2e/modules_test.cpp
-    tests/e2e/constructors_test.cpp
-    tests/e2e/methods_test.cpp
-    tests/e2e/inheritance_test.cpp
-    tests/e2e/type_inference_test.cpp
-    tests/e2e/casts_test.cpp
-    tests/e2e/enums_test.cpp
-    tests/e2e/when_test.cpp
-    tests/e2e/tagged_unions_test.cpp
-    tests/e2e/traits_test.cpp
-    tests/e2e/generics_test.cpp
-    tests/e2e/int_literal_test.cpp
+    tests/e2e/test_basics.cpp
+    tests/e2e/test_recursion.cpp
+    tests/e2e/test_algorithms.cpp
+    tests/e2e/test_lists.cpp
+    tests/e2e/test_maps.cpp
+    tests/e2e/test_structs.cpp
+    tests/e2e/test_params.cpp
+    tests/e2e/test_interop.cpp
+    tests/e2e/test_strings.cpp
+    tests/e2e/test_heap.cpp
+    tests/e2e/test_modules.cpp
+    tests/e2e/test_constructors.cpp
+    tests/e2e/test_methods.cpp
+    tests/e2e/test_inheritance.cpp
+    tests/e2e/test_type_inference.cpp
+    tests/e2e/test_casts.cpp
+    tests/e2e/test_enums.cpp
+    tests/e2e/test_when.cpp
+    tests/e2e/test_tagged_unions.cpp
+    tests/e2e/test_traits.cpp
+    tests/e2e/test_generics.cpp
+    tests/e2e/test_int_literal.cpp
 )
 target_link_libraries(roxy_tests roxy_vm)
 

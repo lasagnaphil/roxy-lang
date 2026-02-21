@@ -327,4 +327,4 @@ fun main(): i32 {
 | `src/roxy/compiler/parser.cpp` | Parser for constructor/destructor syntax |
 | `src/roxy/compiler/semantic.cpp` | Semantic analysis and type checking |
 | `src/roxy/compiler/ir_builder.cpp` | IR generation for constructors/destructors |
-| `tests/e2e/constructors_test.cpp` | End-to-end tests |
+| `tests/e2e/test_constructors.cpp` | End-to-end tests |

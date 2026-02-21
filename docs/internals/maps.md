@@ -113,4 +113,4 @@ map.remove(42);
 | `src/roxy/vm/natives.cpp` | Hash + Map native function implementations |
 | `src/roxy/vm/natives.cpp` | Map index/index_mut native functions |
 | `src/roxy/compiler/ir_builder.cpp` | Map constructor + method call generation |
-| `tests/e2e/maps_test.cpp` | E2E tests |
+| `tests/e2e/test_maps.cpp` | E2E tests |

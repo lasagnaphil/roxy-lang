@@ -750,7 +750,7 @@ For small enums (2-4 variants), the comparison chain is likely faster. For large
 
 ### Phase 6: Testing
 - [x] Parser tests for new syntax
-- [x] E2E tests for runtime behavior (8 test cases in `tagged_unions_test.cpp`)
+- [x] E2E tests for runtime behavior (8 test cases in `test_tagged_unions.cpp`)
 - [ ] Edge cases: nested when, multiple when clauses, inheritance
 
 ## Examples
@@ -897,4 +897,4 @@ Implementing tagged unions requires:
 | `include/roxy/vm/bytecode.hpp` | Add SWITCH opcode (optional) |
 | `src/roxy/vm/interpreter.cpp` | Implement SWITCH (optional) |
 | `tests/unit/*.cpp` | Parser, semantic tests |
-| `tests/e2e/tagged_unions_test.cpp` | E2E tests |
+| `tests/e2e/test_tagged_unions.cpp` | E2E tests |

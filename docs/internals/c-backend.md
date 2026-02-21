@@ -563,7 +563,7 @@ Functions without `pub` are emitted as `static`. Functions with `pub` get extern
 C backend tests should mirror existing E2E tests:
 
 ```cpp
-// In tests/e2e/c_backend_test.cpp
+// In tests/e2e/test_c_backend.cpp
 TEST_CASE("C Backend - Basics") {
     const char* source = R"(
         fun main(): i32 {
@@ -622,7 +622,7 @@ The two paths complement each other: interpreter for development, C backend for 
 | `src/roxy/compiler/c_emitter.cpp` | C emission implementation |
 | `include/roxy/rt/roxy_rt.h` | C runtime library header |
 | `src/roxy/rt/roxy_rt.c` | C runtime library implementation |
-| `tests/e2e/c_backend_test.cpp` | E2E tests |
+| `tests/e2e/test_c_backend.cpp` | E2E tests |
 
 ## Dependencies
 

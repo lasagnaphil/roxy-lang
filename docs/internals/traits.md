@@ -477,4 +477,4 @@ See `generics.md` for discussion of compile-time trade-offs and the recommendati
 | `include/roxy/compiler/generics.hpp` | `clone_stmt()`, `substitute_type_expr()` (used by default method injection) |
 | `src/roxy/compiler/semantic.cpp` | Trait analysis, validation, generic trait type arg resolution, default method injection |
 | `src/roxy/compiler/ir_builder.cpp` | Operator dispatch, synthetic decl processing |
-| `tests/e2e/traits_test.cpp` | E2E tests (11 non-generic + 6 generic trait tests) |
+| `tests/e2e/test_traits.cpp` | E2E tests (11 non-generic + 6 generic trait tests) |
