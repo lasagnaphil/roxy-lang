@@ -14,21 +14,21 @@ Last updated: 2026-02-16
 
 ## Medium Priority
 
-- [ ] **Magic numbers for 16-bit range**
+- [x] **Magic numbers for 16-bit range**
   - Files: `src/roxy/compiler/lowering.cpp:235,287`
   - Fix: Extract `-32768`/`32767` to `constexpr i64 IMM16_MIN/MAX`
 
-- [ ] **Hardcoded array size limit**
+- [x] **Hardcoded array size limit**
   - File: `src/roxy/vm/natives.cpp:23`
   - Issue: `if (size > 1000000)` - arbitrary undocumented limit
   - Fix: Make configurable via VMConfig or define named constant
 
-- [ ] **Float division behavior inconsistency**
+- [x] **Float division behavior inconsistency**
   - File: `src/roxy/vm/interpreter.cpp:110-147`
   - Issue: Float div-by-zero produces IEEE 754 infinity/NaN, but integer div-by-zero errors
   - Fix: Document behavior or add optional strict mode
 
-- [ ] **Local function declarations explicitly blocked**
+- [x] **Local function declarations explicitly blocked**
   - File: `src/roxy/compiler/semantic.cpp:886`
   - Issue: Grammar allows local functions but semantic analysis rejects them
   - Decision needed: Support or remove from grammar

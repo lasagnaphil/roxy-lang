@@ -2202,7 +2202,7 @@ void SemanticAnalyzer::analyze_block_stmt(Stmt* stmt) {
             analyze_var_decl(decl);
         } else if (decl->kind == AstKind::DeclFun) {
             // Local functions (if supported)
-            error(decl->loc, "local function declarations are not supported");
+            error(decl->loc, "local function declarations are not supported; move this function to module scope");
         } else {
             // Statement wrapped in a Decl
             analyze_stmt(&decl->stmt);

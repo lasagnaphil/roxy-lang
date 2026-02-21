@@ -12,6 +12,8 @@
 
 namespace rx {
 
+static constexpr i64 MAX_COLLECTION_CAPACITY = 1000000;
+
 // Allocates an empty list (capacity 0). Non-method, no self.
 static void native_list_alloc(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack.back().registers;
@@ -38,8 +40,8 @@ static void native_list_init(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
             vm->error = "list capacity cannot be negative";
             return;
         }
-        if (cap > 1000000) {
-            vm->error = "list capacity too large";
+        if (cap > MAX_COLLECTION_CAPACITY) {
+            vm->error = "list capacity too large (max 1000000)";
             return;
         }
         u32 capacity = static_cast<u32>(cap);
@@ -481,8 +483,8 @@ static void native_map_init(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
             vm->error = "map capacity cannot be negative";
             return;
         }
-        if (cap > 1000000) {
-            vm->error = "map capacity too large";
+        if (cap > MAX_COLLECTION_CAPACITY) {
+            vm->error = "map capacity too large (max 1000000)";
             return;
         }
         if (cap > 0) {

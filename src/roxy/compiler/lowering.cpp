@@ -311,7 +311,7 @@ u16 BytecodeBuilder::add_constant(const BCConstant& c) {
 
 u16 BytecodeBuilder::add_int_constant(i64 value) {
     // Check if we can use immediate
-    if (value >= -32768 && value <= 32767) {
+    if (value >= IMM16_MIN && value <= IMM16_MAX) {
         return static_cast<u16>(value);  // Used directly as immediate
     }
     return add_constant(BCConstant::make_int(value));
@@ -363,7 +363,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
 
         case IROp::ConstInt: {
             i64 value = inst->const_data.int_val;
-            if (value >= -32768 && value <= 32767) {
+            if (value >= IMM16_MIN && value <= IMM16_MAX) {
                 emit_abi(Opcode::LOAD_INT, dst, static_cast<u16>(static_cast<i16>(value)));
             } else {
                 u16 const_idx = add_constant(BCConstant::make_int(value));

@@ -10,6 +10,10 @@
 
 namespace rx {
 
+// 16-bit signed immediate range for bytecode encoding
+constexpr i64 IMM16_MIN = -32768;
+constexpr i64 IMM16_MAX = 32767;
+
 class NativeRegistry;
 
 // BytecodeBuilder lowers SSA IR to bytecode

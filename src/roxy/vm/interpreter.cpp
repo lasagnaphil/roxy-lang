@@ -156,6 +156,9 @@ bool interpret(RoxyVM* vm) {
                 regs[a] = reg_from_f32(reg_as_f32(regs[b]) * reg_as_f32(regs[c]));
                 break;
 
+            // Float/double division by zero follows IEEE 754 semantics:
+            // produces +/-infinity or NaN, unlike integer division which
+            // raises a runtime error above (DIV_I, MOD_I).
             case Opcode::DIV_F:
                 regs[a] = reg_from_f32(reg_as_f32(regs[b]) / reg_as_f32(regs[c]));
                 break;
