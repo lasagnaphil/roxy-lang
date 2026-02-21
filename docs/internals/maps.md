@@ -111,6 +111,6 @@ map.remove(42);
 | `include/roxy/compiler/type_env.hpp` | m_hash_type storage |
 | `src/roxy/compiler/semantic.cpp` | Hash trait, Map type resolution, methods |
 | `src/roxy/vm/natives.cpp` | Hash + Map native function implementations |
-| `src/roxy/vm/interpreter.cpp` | GET_INDEX/SET_INDEX type dispatch |
+| `src/roxy/vm/natives.cpp` | Map index/index_mut native functions |
 | `src/roxy/compiler/ir_builder.cpp` | Map constructor + method call generation |
 | `tests/e2e/maps_test.cpp` | E2E tests |

@@ -72,8 +72,6 @@ private:
     ValueId emit_get_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, Type* result_type);
     ValueId emit_get_field_addr(ValueId object, StringView field_name, u32 slot_offset, Type* result_type);
     ValueId emit_set_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, ValueId value, Type* result_type);
-    ValueId emit_get_index(ValueId object, ValueId index, Type* result_type);
-    ValueId emit_set_index(ValueId object, ValueId index, ValueId value, Type* result_type);
     ValueId emit_load_ptr(ValueId ptr, u32 slot_count, Type* result_type);
     ValueId emit_store_ptr(ValueId ptr, ValueId value, u32 slot_count, Type* result_type);
     void emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_count);

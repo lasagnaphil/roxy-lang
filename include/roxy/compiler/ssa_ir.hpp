@@ -118,9 +118,6 @@ enum class IROp : u8 {
     GetField,       // obj.field (load value)
     GetFieldAddr,   // &obj.field (compute address, for nested struct access)
     SetField,       // obj.field = value
-    GetIndex,       // arr[i]
-    SetIndex,       // arr[i] = value
-
     // Reference operations
     RefInc,         // increment ref count
     RefDec,         // decrement ref count
@@ -188,12 +185,6 @@ struct FieldData {
     u32 slot_count;    // Number of u32 slots (1 for 32-bit, 2 for 64-bit)
 };
 
-// Index access data
-struct IndexData {
-    ValueId object;
-    ValueId index;
-};
-
 // New object data
 struct NewData {
     StringView type_name;
@@ -253,7 +244,6 @@ struct IRInst {
         CallData call;                  // For Call/CallNative
         CallExternalData call_external; // For CallExternal
         FieldData field;                // For GetField/SetField
-        IndexData index;                // For GetIndex/SetIndex
         NewData new_data;               // For New
         StackAllocData stack_alloc;     // For StackAlloc
         StructCopyData struct_copy;     // For StructCopy
@@ -264,7 +254,7 @@ struct IRInst {
         u32 block_arg_index;            // For BlockArg (parameter index)
     };
 
-    // For SetField/SetIndex, the value being stored
+    // For SetField, the value being stored
     ValueId store_value;
 
     IRInst() : op(IROp::ConstNull), result(ValueId::invalid()), type(nullptr), store_value(ValueId::invalid()) {

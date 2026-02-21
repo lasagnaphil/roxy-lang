@@ -68,9 +68,8 @@ enum class IROp {
     // Conversions (4)
     I2F, F2I, I2B, B2I,
 
-    // Memory (6)
+    // Memory (4)
     StackAlloc, GetField, GetFieldAddr, SetField,
-    GetIndex, SetIndex,
 
     // Reference counting (3)
     RefInc, RefDec, WeakCheck,

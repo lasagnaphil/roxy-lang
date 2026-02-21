@@ -336,7 +336,7 @@ The semantic analyzer uses a unified dispatch path for both primitive and struct
 
 1. **Registration (Pass 1.8):** `register_primitive_operator_methods()` registers operator methods on primitive types using `TypeCache::register_primitive_method()`. `populate_list_methods()` registers `index`/`index_mut` methods on list types alongside their native methods.
 2. **Resolution:** `try_resolve_binary_op()`, `try_resolve_unary_op()`, and `analyze_index_expr()` call `TypeCache::lookup_method()`, which handles structs (via `lookup_method_in_hierarchy()`), primitives (via `lookup_primitive_method()`), and lists (via `lookup_list_method()`).
-3. **Code generation:** The IR builder still distinguishes primitives/lists from structs — primitives emit direct IR ops (`AddI`, `SubF`, etc.), lists emit `GetIndex`/`SetIndex` IR ops, while structs emit trait method calls. This is the right separation: the type checker validates uniformly via method lookup, but codegen emits intrinsics for primitives and lists.
+3. **Code generation:** The IR builder still distinguishes primitives from structs/lists/maps — primitives emit direct IR ops (`AddI`, `SubF`, etc.), while structs emit trait method calls and lists/maps emit `CallNative` to their registered `index`/`index_mut` native functions. The type checker validates uniformly via method lookup, but codegen emits intrinsics for primitives.
 
 The shared operator-to-method-name mappings live in `include/roxy/compiler/operator_traits.hpp` (`binary_op_to_trait_method()`, `unary_op_to_trait_method()`, `assign_op_to_trait_method()`), used by both semantic analysis and IR generation.
 

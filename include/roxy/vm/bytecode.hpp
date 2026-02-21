@@ -122,10 +122,6 @@ enum class Opcode : u8 {
     STRUCT_COPY       = 0xB6, // [dst_ptr src_ptr slot_count] - memory copy
     RET_STRUCT_SMALL  = 0xB7, // return small struct (≤4 slots) in registers
 
-    // 0xC0-0xCF: Index Access
-    GET_INDEX   = 0xC0,     // dst = src1[src2]
-    SET_INDEX   = 0xC1,     // dst[src1] = src2
-
     // 0xD0-0xDF: Object Lifecycle
     NEW_OBJ     = 0xD0,     // dst = new type[imm16]
     DEL_OBJ     = 0xD1,     // delete reg

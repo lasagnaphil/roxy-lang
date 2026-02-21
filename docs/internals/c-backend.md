@@ -309,13 +309,6 @@ ref_dec v0    →  roxy_ref_dec(v0);
 weak_check v0 →  bool v1 = roxy_weak_valid(v0.ptr, v0.generation);
 ```
 
-### Index Operations (Lists)
-
-```
-v2 = get_index v0, v1    →  int64_t v2 = roxy_list_get(v0, v1);
-set_index v0, v1, v2     →  roxy_list_set(v0, v1, v2);
-```
-
 ### Pointer Operations
 
 ```
@@ -544,7 +537,6 @@ Functions without `pub` are emitted as `static`. Functions with `pub` get extern
 - [ ] Implement print functions
 - [ ] Handle `New`/`Delete` IR ops → `roxy_alloc`/`roxy_free` + constructor/destructor calls
 - [ ] Handle `RefInc`/`RefDec`/`WeakCheck` IR ops
-- [ ] Handle `GetIndex`/`SetIndex` → `roxy_list_get`/`roxy_list_set`
 - [ ] Handle `ConstString` → `roxy_string_from_literal`
 - [ ] Handle `CallNative` → dispatch to runtime functions
 - [ ] E2E tests for strings, lists, heap allocation, ref counting

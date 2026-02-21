@@ -708,21 +708,6 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             break;
         }
 
-        case IROp::GetIndex: {
-            u8 obj = get_register(inst->index.object);
-            u8 idx = get_register(inst->index.index);
-            emit_abc(Opcode::GET_INDEX, dst, obj, idx);
-            break;
-        }
-
-        case IROp::SetIndex: {
-            u8 obj = get_register(inst->index.object);
-            u8 idx = get_register(inst->index.index);
-            u8 val = get_register(inst->store_value);
-            emit_abc(Opcode::SET_INDEX, obj, idx, val);
-            break;
-        }
-
         case IROp::RefInc: {
             u8 ptr = get_register(inst->unary);
             emit_abc(Opcode::REF_INC, ptr, 0, 0);

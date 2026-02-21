@@ -405,6 +405,40 @@ static void native_string_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = static_cast<u64>(static_cast<i64>(h));
 }
 
+// ===== List index native functions =====
+
+// Native function: list index (get element by index)
+static void native_list_index(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (!lst_ptr) {
+        vm->error = "list index: null list reference";
+        return;
+    }
+    i64 index = static_cast<i64>(regs[first_arg + 1]);
+    Value result;
+    if (!list_get(lst_ptr, index, result, &vm->error)) {
+        return;
+    }
+    regs[dst] = result.as_u64();
+}
+
+// Native function: list index_mut (set element by index)
+static void native_list_index_mut(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (!lst_ptr) {
+        vm->error = "list index_mut: null list reference";
+        return;
+    }
+    i64 index = static_cast<i64>(regs[first_arg + 1]);
+    Value value = Value::from_u64(regs[first_arg + 2]);
+    if (!list_set(lst_ptr, index, value, &vm->error)) {
+        return;
+    }
+    regs[dst] = 0;
+}
+
 // ===== Map native functions =====
 
 // Determine MapKeyKind from type kind constant passed as i32
@@ -597,6 +631,36 @@ static void native_map_values(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = reinterpret_cast<u64>(values_list);
 }
 
+// Native function: map index (get value by key)
+static void native_map_index(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (!map_ptr) {
+        vm->error = "map index: null map reference";
+        return;
+    }
+    u64 key = regs[first_arg + 1];
+    u64 value;
+    if (!map_get(map_ptr, key, value, &vm->error)) {
+        return;
+    }
+    regs[dst] = value;
+}
+
+// Native function: map index_mut (insert/update key-value pair)
+static void native_map_index_mut(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (!map_ptr) {
+        vm->error = "map index_mut: null map reference";
+        return;
+    }
+    u64 key = regs[first_arg + 1];
+    u64 value = regs[first_arg + 2];
+    map_insert(map_ptr, key, value);
+    regs[dst] = 0;
+}
+
 void register_builtin_natives(NativeRegistry& registry) {
     using TK = NativeTypeKind;
 
@@ -614,6 +678,10 @@ void register_builtin_natives(NativeRegistry& registry) {
                                  {type_param(0)}, concrete_param(TK::Void));
     registry.bind_generic_method("List", "pop",  native_list_pop,
                                  {}, type_param(0));
+    registry.bind_generic_method("List", "index", native_list_index,
+                                 {concrete_param(TK::I32)}, type_param(0));
+    registry.bind_generic_method("List", "index_mut", native_list_index_mut,
+                                 {concrete_param(TK::I32), type_param(0)}, concrete_param(TK::Void));
 
     // Register print(s: string) -> void
     registry.bind_native("print", native_print,
@@ -695,6 +763,10 @@ void register_builtin_natives(NativeRegistry& registry) {
                                  {}, list_of_type_param(0));
     registry.bind_generic_method("Map", "values",   native_map_values,
                                  {}, list_of_type_param(1));
+    registry.bind_generic_method("Map", "index",    native_map_index,
+                                 {type_param(0)}, type_param(1));
+    registry.bind_generic_method("Map", "index_mut", native_map_index_mut,
+                                 {type_param(0), type_param(1)}, concrete_param(TK::Void));
 }
 
 }

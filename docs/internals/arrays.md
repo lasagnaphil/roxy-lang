@@ -40,14 +40,9 @@ var lst: List<i32> = List<i32>(10);
 | `push(val)` | `(T) -> void` | Append element (grows if needed) |
 | `pop()` | `() -> T` | Remove and return last element |
 
-## Indexing Opcodes
+## Indexing
 
-| Opcode | Format | Description |
-|--------|--------|-------------|
-| `GET_INDEX` (0xC0) | ABC | `dst = src1[src2]` - Load list element |
-| `SET_INDEX` (0xC1) | ABC | `dst[src1] = src2` - Store list element |
-
-Both opcodes perform null checks and bounds checking, setting `vm->error` on failure.
+List indexing (`list[i]` and `list[i] = val`) is handled via native `index` and `index_mut` methods registered through `NativeRegistry::bind_generic_method`. The compiler resolves these through `TypeCache::lookup_method()` and emits `CallNative` IR ops, the same path used by all other list methods (`.len()`, `.push()`, etc.). Both perform null checks and bounds checking, setting `vm->error` on failure.
 
 ## Growth Strategy
 

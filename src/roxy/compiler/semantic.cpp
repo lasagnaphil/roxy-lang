@@ -2839,45 +2839,7 @@ void SemanticAnalyzer::populate_list_methods(Type* type) {
     type->list_info.alloc_native_name = registry->get_generic_alloc_name("List");
     type->list_info.copy_native_name = registry->get_generic_copy_name("List");
 
-    // Append index(i: i32): T and index_mut(i: i32, val: T): void
-    Type* elem_type = type->list_info.element_type;
-    u32 total = native_methods.size() + 2;
-    MethodInfo* combined = reinterpret_cast<MethodInfo*>(
-        m_allocator.alloc_bytes(sizeof(MethodInfo) * total, alignof(MethodInfo)));
-
-    // Copy existing methods
-    for (u32 i = 0; i < native_methods.size(); i++) {
-        combined[i] = native_methods[i];
-    }
-
-    // index(i: i32): T
-    {
-        Type** idx_param = reinterpret_cast<Type**>(
-            m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
-        idx_param[0] = m_types.i32_type();
-        MethodInfo& method_info = combined[native_methods.size()];
-        method_info.name = StringView("index", 5);
-        method_info.param_types = Span<Type*>(idx_param, 1);
-        method_info.return_type = elem_type;
-        method_info.decl = nullptr;
-        method_info.native_name = StringView();
-    }
-
-    // index_mut(i: i32, val: T): void
-    {
-        Type** mut_params = reinterpret_cast<Type**>(
-            m_allocator.alloc_bytes(sizeof(Type*) * 2, alignof(Type*)));
-        mut_params[0] = m_types.i32_type();
-        mut_params[1] = elem_type;
-        MethodInfo& method_info = combined[native_methods.size() + 1];
-        method_info.name = StringView("index_mut", 9);
-        method_info.param_types = Span<Type*>(mut_params, 2);
-        method_info.return_type = m_types.void_type();
-        method_info.decl = nullptr;
-        method_info.native_name = StringView();
-    }
-
-    type->list_info.methods = Span<MethodInfo>(combined, total);
+    type->list_info.methods = native_methods;
 }
 
 Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) {
@@ -2950,45 +2912,7 @@ void SemanticAnalyzer::populate_map_methods(Type* type) {
     type->map_info.alloc_native_name = registry->get_generic_alloc_name("Map");
     type->map_info.copy_native_name = registry->get_generic_copy_name("Map");
 
-    // Append index(key: K): V and index_mut(key: K, val: V): void
-    Type* key_type = type->map_info.key_type;
-    Type* val_type = type->map_info.value_type;
-    u32 total = native_methods.size() + 2;
-    MethodInfo* combined = reinterpret_cast<MethodInfo*>(
-        m_allocator.alloc_bytes(sizeof(MethodInfo) * total, alignof(MethodInfo)));
-
-    for (u32 i = 0; i < native_methods.size(); i++) {
-        combined[i] = native_methods[i];
-    }
-
-    // index(key: K): V
-    {
-        Type** idx_param = reinterpret_cast<Type**>(
-            m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
-        idx_param[0] = key_type;
-        MethodInfo& method_info = combined[native_methods.size()];
-        method_info.name = StringView("index", 5);
-        method_info.param_types = Span<Type*>(idx_param, 1);
-        method_info.return_type = val_type;
-        method_info.decl = nullptr;
-        method_info.native_name = StringView();
-    }
-
-    // index_mut(key: K, val: V): void
-    {
-        Type** mut_params = reinterpret_cast<Type**>(
-            m_allocator.alloc_bytes(sizeof(Type*) * 2, alignof(Type*)));
-        mut_params[0] = key_type;
-        mut_params[1] = val_type;
-        MethodInfo& method_info = combined[native_methods.size() + 1];
-        method_info.name = StringView("index_mut", 9);
-        method_info.param_types = Span<Type*>(mut_params, 2);
-        method_info.return_type = m_types.void_type();
-        method_info.decl = nullptr;
-        method_info.native_name = StringView();
-    }
-
-    type->map_info.methods = Span<MethodInfo>(combined, total);
+    type->map_info.methods = native_methods;
 }
 
 Type* SemanticAnalyzer::analyze_map_constructor_call(Expr* expr, CallExpr& ce) {

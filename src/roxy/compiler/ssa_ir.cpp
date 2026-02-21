@@ -74,9 +74,6 @@ const char* ir_op_to_string(IROp op) {
         case IROp::GetField: return "get_field";
         case IROp::GetFieldAddr: return "get_field_addr";
         case IROp::SetField: return "set_field";
-        case IROp::GetIndex: return "get_index";
-        case IROp::SetIndex: return "set_index";
-
         case IROp::RefInc:    return "ref_inc";
         case IROp::RefDec:    return "ref_dec";
         case IROp::WeakCheck: return "weak_check";
@@ -273,23 +270,6 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
                 out.push_back(c);
             }
             append_str(out, " <- ");
-            append_value_id(out, inst->store_value);
-            break;
-
-        case IROp::GetIndex:
-            append_str(out, " ");
-            append_value_id(out, inst->index.object);
-            append_str(out, "[");
-            append_value_id(out, inst->index.index);
-            append_str(out, "]");
-            break;
-
-        case IROp::SetIndex:
-            append_str(out, " ");
-            append_value_id(out, inst->index.object);
-            append_str(out, "[");
-            append_value_id(out, inst->index.index);
-            append_str(out, "] <- ");
             append_value_id(out, inst->store_value);
             break;
 

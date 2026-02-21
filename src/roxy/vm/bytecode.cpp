@@ -111,10 +111,6 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::STRUCT_COPY:       return "STRUCT_COPY";
         case Opcode::RET_STRUCT_SMALL:  return "RET_STRUCT_SMALL";
 
-        // Index Access
-        case Opcode::GET_INDEX:     return "GET_INDEX";
-        case Opcode::SET_INDEX:     return "SET_INDEX";
-
         // Object Lifecycle
         case Opcode::NEW_OBJ:       return "NEW_OBJ";
         case Opcode::DEL_OBJ:       return "DEL_OBJ";
@@ -237,8 +233,6 @@ void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out) {
         case Opcode::GE_F:
         case Opcode::AND:
         case Opcode::OR:
-        case Opcode::GET_INDEX:
-        case Opcode::SET_INDEX:
             buf.format("R{}, R{}, R{}", a, b, c);
             break;
 

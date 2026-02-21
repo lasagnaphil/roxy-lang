@@ -678,26 +678,6 @@ ValueId IRBuilder::emit_set_field(ValueId object, StringView field_name, u32 slo
     return ValueId::invalid();
 }
 
-ValueId IRBuilder::emit_get_index(ValueId object, ValueId index, Type* result_type) {
-    IRInst* inst = emit_inst(IROp::GetIndex, result_type);
-    if (inst) {
-        inst->index.object = object;
-        inst->index.index = index;
-        return inst->result;
-    }
-    return ValueId::invalid();
-}
-
-ValueId IRBuilder::emit_set_index(ValueId object, ValueId index, ValueId value, Type* result_type) {
-    IRInst* inst = emit_inst(IROp::SetIndex, result_type);
-    if (inst) {
-        inst->index.object = object;
-        inst->index.index = index;
-        inst->store_value = value;
-        return inst->result;
-    }
-    return ValueId::invalid();
-}
 
 ValueId IRBuilder::emit_load_ptr(ValueId ptr, u32 slot_count, Type* result_type) {
     IRInst* inst = emit_inst(IROp::LoadPtr, result_type);
@@ -2015,11 +1995,22 @@ ValueId IRBuilder::gen_index_expr(Expr* expr) {
         }
     }
 
-    // List indexing (and fallback): use built-in GetIndex IR op
-    ValueId obj = gen_expr(index_expr.object);
-    ValueId index = gen_expr(index_expr.index);
+    // List/Map indexing: dispatch to native "index" method
+    if (base_type && (base_type->is_list() || base_type->is_map())) {
+        const MethodInfo* method_info = m_types.lookup_method(base_type, StringView("index", 5));
+        if (method_info && !method_info->native_name.empty()) {
+            ValueId obj = gen_expr(index_expr.object);
+            ValueId index_val = gen_expr(index_expr.index);
+            i32 native_idx = m_registry.get_index(method_info->native_name);
+            Span<ValueId> args = alloc_span<ValueId>(2);
+            args[0] = obj;
+            args[1] = index_val;
+            return emit_call_native(method_info->native_name, args, expr->resolved_type,
+                                    static_cast<u8>(native_idx));
+        }
+    }
 
-    return emit_get_index(obj, index, expr->resolved_type);
+    return ValueId::invalid();
 }
 
 ValueId IRBuilder::gen_get_expr(Expr* expr) {
@@ -2276,10 +2267,23 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
             }
         }
 
-        // List indexing (and fallback): use built-in SetIndex IR op
-        ValueId obj = gen_expr(index_expr.object);
-        ValueId index = gen_expr(index_expr.index);
-        return emit_set_index(obj, index, value, expr->resolved_type);
+        // List/Map indexing: dispatch to native "index_mut" method
+        Type* container_base = container_type;
+        if (container_base && (container_base->is_list() || container_base->is_map())) {
+            const MethodInfo* method_info = m_types.lookup_method(container_base, StringView("index_mut", 9));
+            if (method_info && !method_info->native_name.empty()) {
+                ValueId obj = gen_expr(index_expr.object);
+                ValueId index_val = gen_expr(index_expr.index);
+                i32 native_idx = m_registry.get_index(method_info->native_name);
+                Span<ValueId> args = alloc_span<ValueId>(3);
+                args[0] = obj;
+                args[1] = index_val;
+                args[2] = value;
+                emit_call_native(method_info->native_name, args, m_types.void_type(),
+                                 static_cast<u8>(native_idx));
+                return value;
+            }
+        }
     }
 
     return value;
