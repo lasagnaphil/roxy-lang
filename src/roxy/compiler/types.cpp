@@ -207,7 +207,7 @@ Type* TypeCache::struct_type(StringView name, Decl* decl, StringView module_name
     type->struct_info.decl = decl;
     type->struct_info.parent = nullptr;
     type->struct_info.fields = Span<FieldInfo>();
-    type->struct_info.implemented_traits = Span<Type*>();
+    type->struct_info.implemented_traits = Span<TraitImplRecord>();
     type->struct_info.slot_count = 0;
     // Named types are not interned - each declaration creates a unique type
     return type;
@@ -335,8 +335,8 @@ const MethodInfo* TypeCache::lookup_method(Type* type, StringView name, Type** f
 bool TypeCache::implements_trait(Type* type, Type* trait) const {
     if (type->is_struct()) {
         StructTypeInfo& struct_type_info = type->struct_info;
-        for (auto* impl_trait : struct_type_info.implemented_traits) {
-            if (impl_trait == trait) return true;
+        for (const auto& impl : struct_type_info.implemented_traits) {
+            if (impl.trait == trait) return true;
         }
         return false;
     }
@@ -346,6 +346,39 @@ bool TypeCache::implements_trait(Type* type, Type* trait) const {
     if (type->is_enum()) {
         // Enums can implement traits through their underlying type (i32)
         return primitive_implements_trait(TypeKind::I32, trait);
+    }
+    return false;
+}
+
+bool TypeCache::implements_trait(Type* type, Type* trait, Span<Type*> type_args) const {
+    // If no type args, delegate to the simple overload
+    if (type_args.size() == 0) {
+        return implements_trait(type, trait);
+    }
+
+    if (type->is_struct()) {
+        StructTypeInfo& struct_type_info = type->struct_info;
+        for (const auto& impl : struct_type_info.implemented_traits) {
+            if (impl.trait != trait) continue;
+            // Check type args match element-wise
+            if (impl.type_args.size() != type_args.size()) continue;
+            bool match = true;
+            for (u32 i = 0; i < type_args.size(); i++) {
+                if (impl.type_args[i] != type_args[i]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) return true;
+        }
+        return false;
+    }
+    if (type->is_primitive()) {
+        // Primitives don't support generic trait impls, only non-generic
+        return type_args.size() == 0 && primitive_implements_trait(type->kind, trait);
+    }
+    if (type->is_enum()) {
+        return type_args.size() == 0 && primitive_implements_trait(TypeKind::I32, trait);
     }
     return false;
 }

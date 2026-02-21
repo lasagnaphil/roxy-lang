@@ -237,6 +237,12 @@ private:
     void append_constructor(StructTypeInfo& info, ConstructorInfo ctor);
     void append_destructor(StructTypeInfo& info, DestructorInfo dtor);
 
+    // Generic trait bound resolution and checking
+    Span<TraitBound> resolve_type_param_bounds(Span<TypeExpr*> bound_exprs, SourceLocation loc);
+    void resolve_generic_bounds();
+    bool check_type_arg_bounds(StringView template_name, Span<Type*> type_args,
+                               const ResolvedTypeParams* bounds, SourceLocation loc);
+
     // Trait analysis helpers
     Type* resolve_trait_type_expr(TypeExpr* type_expr, const TraitTypeInfo& trait_info);
     void analyze_trait_method_decl(Decl* decl, Type* trait_type);

@@ -128,6 +128,18 @@ struct TraitMethodInfo {
 // Forward declaration
 struct TypeParam;
 
+// Resolved trait bound on a type parameter
+struct TraitBound {
+    Type* trait;            // Resolved trait type
+    Span<Type*> type_args;  // Resolved type args (e.g., {i32} for Add<i32>). Empty for non-generic.
+};
+
+// Record of a trait implementation on a struct (includes type args for generic traits)
+struct TraitImplRecord {
+    Type* trait;
+    Span<Type*> type_args;  // Empty for non-generic traits
+};
+
 // Type info for trait types
 struct TraitTypeInfo {
     StringView name;
@@ -148,7 +160,7 @@ struct StructTypeInfo {
     Span<DestructorInfo> destructors;    // Destructors for this struct
     Span<MethodInfo> methods;            // Methods for this struct
     Span<WhenClauseInfo> when_clauses;   // Tagged union discriminants
-    Span<Type*> implemented_traits;      // Trait types this struct implements
+    Span<TraitImplRecord> implemented_traits;  // Trait implementations (with type args for generic traits)
     u32 slot_count;                // Total u32 slots needed for this struct
 
     // Find a field by name, returns nullptr if not found
@@ -383,6 +395,7 @@ public:
     // Unified lookup: works for structs (via hierarchy) AND primitives
     const MethodInfo* lookup_method(Type* type, StringView name, Type** found_in = nullptr) const;
     bool implements_trait(Type* type, Type* trait) const;
+    bool implements_trait(Type* type, Type* trait, Span<Type*> type_args) const;
 
     // Lookup primitive type by name
     Type* primitive_by_name(StringView name);

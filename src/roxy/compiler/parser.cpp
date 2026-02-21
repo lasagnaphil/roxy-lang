@@ -1871,6 +1871,19 @@ Span<TypeParam> Parser::parse_type_params() {
         TypeParam type_param;
         type_param.name = name_token.text();
         type_param.loc = name_token.loc;
+        type_param.bounds = {};
+
+        // Parse optional trait bounds: <T: Trait1 + Trait2<Args>>
+        if (match(TokenKind::Colon)) {
+            Vector<TypeExpr*> bounds;
+            do {
+                TypeExpr* bound = type_expression();
+                if (m_has_error) return {};
+                bounds.push_back(bound);
+            } while (match(TokenKind::Plus));
+            type_param.bounds = alloc_span(bounds);
+        }
+
         params.push_back(type_param);
     } while (match(TokenKind::Comma));
 

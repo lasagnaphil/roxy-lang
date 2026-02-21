@@ -315,6 +315,26 @@ GenericStructInstance* GenericInstantiator::find_struct_instance(StringView mang
     return nullptr;
 }
 
+void GenericInstantiator::set_fun_bounds(StringView name, ResolvedTypeParams bounds) {
+    m_fun_bounds[name] = bounds;
+}
+
+void GenericInstantiator::set_struct_bounds(StringView name, ResolvedTypeParams bounds) {
+    m_struct_bounds[name] = bounds;
+}
+
+const ResolvedTypeParams* GenericInstantiator::get_fun_bounds(StringView name) const {
+    auto it = m_fun_bounds.find(name);
+    if (it != m_fun_bounds.end()) return &it->second;
+    return nullptr;
+}
+
+const ResolvedTypeParams* GenericInstantiator::get_struct_bounds(StringView name) const {
+    auto it = m_struct_bounds.find(name);
+    if (it != m_struct_bounds.end()) return &it->second;
+    return nullptr;
+}
+
 GenericStructInstance* GenericInstantiator::find_struct_instance_by_type(Type* concrete_type) const {
     for (auto* inst : m_all_struct_instances) {
         if (inst->concrete_type == concrete_type) {

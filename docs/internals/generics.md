@@ -4,7 +4,7 @@ Generics enable writing code that works with multiple types while maintaining st
 
 ## Implementation Status
 
-**Implemented (Phase 1 + 2 + 3 + 4):**
+**Implemented (Phase 1 + 2 + 3 + 4 + 5):**
 - Generic functions with explicit type arguments
 - Generic structs with explicit type arguments
 - Monomorphization with AST cloning and type substitution
@@ -15,9 +15,10 @@ Generics enable writing code that works with multiple types while maintaining st
 - Synthesized default constructors for generic struct instances
 - Generic traits with type parameters (`trait Add<Rhs>`, see `traits.md`)
 - Local type inference for generic type arguments (function calls and struct literals)
+- Trait bounds on type parameters (Phase A: instantiation-site checking)
 
 **Not yet implemented:**
-- Trait bounds on type parameters
+- Trait bounds body checking (Phase B: checking generic bodies against bounds at definition time)
 - User-defined generic methods on generic structs
 - User-defined generic constructors/destructors
 - Higher-kinded types, associated types, specialization, const generics
@@ -224,12 +225,57 @@ After cloning, `resolve_type_expr` updates TypeExpr names to mangled names (e.g.
 
 When a generic struct is first instantiated via `resolve_type_expr`, its fields are resolved **immediately inline** rather than deferred to the worklist. This ensures that functions using the struct (in the same or later analysis passes) can access field information.
 
+## Trait Bounds
+
+Type parameters can be constrained with trait bounds using the `<T: Trait>` syntax. The compiler checks that concrete type arguments satisfy all bounds at every instantiation site (function calls, struct literals, constructor calls).
+
+### Syntax
+
+```roxy
+// Single bound
+fun identity_printable<T: Printable>(value: T): T { return value; }
+
+// Multiple bounds with +
+fun identity_both<T: Printable + Hash>(value: T): T { return value; }
+
+// Generic trait bound
+fun apply_scale<T: Scalable<Vec2>>(v: T): i32 { return 1; }
+
+// Bounds on generic structs
+struct HashBox<T: Hash> { value: T; }
+
+// Bounds with multiple type params
+fun process<T: Printable, U: Hash>(a: T, b: U): i32 { return 0; }
+```
+
+### Instantiation-Site Checking (Phase A)
+
+Bounds are resolved after all types and traits are registered. At each instantiation site, the compiler verifies that the concrete type satisfies every bound:
+
+```roxy
+identity_printable<i32>(42);     // OK: i32 implements Printable
+identity_printable<MyStruct>(s); // ERROR if MyStruct doesn't implement Printable
+
+HashBox<i32> { value = 42 };    // OK: i32 implements Hash
+HashBox<MyStruct> { value = s }; // ERROR if MyStruct doesn't implement Hash
+```
+
+Self-referential bounds like `<T: Add<T>>` are supported — `T` in `Add<T>` is substituted with the concrete type during checking.
+
+### Implementation
+
+- **Parsing:** `parse_type_params()` parses `: Trait1 + Trait2<Args>` after each type param name
+- **Resolution:** `resolve_generic_bounds()` (Pass 1.9) resolves bound expressions to `TraitBound` records stored in `GenericInstantiator`
+- **Checking:** `check_type_arg_bounds()` called at all 5 instantiation sites: explicit/inferred generic function calls, explicit generic struct constructor calls, explicit/inferred generic struct literals
+
 ## Grammar
 
 ```
 generic_params  -> "<" type_param_list ">" ;
 type_param_list -> type_param ( "," type_param )* ;
-type_param      -> Identifier ;
+type_param      -> Identifier ( ":" trait_bounds )? ;
+trait_bounds    -> trait_bound ( "+" trait_bound )* ;
+trait_bound     -> Identifier generic_args? ;
 
 generic_args    -> "<" type_list ">" ;
 type_list       -> type_expr ( "," type_expr )* ;
@@ -256,12 +302,12 @@ type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ;
 | `include/roxy/shared/lexer.hpp` | save_position()/restore_position() for parser backtracking |
 | `src/roxy/compiler/semantic.cpp` | Generic template registration, instantiation, type resolution |
 | `src/roxy/compiler/ir_builder.cpp` | IR generation for generic instances |
-| `tests/e2e/test_generics.cpp` | E2E tests (25 test cases) |
+| `tests/e2e/test_generics.cpp` | E2E tests (37 test cases including trait bound tests) |
 
 ## Limitations
 
 1. **Limited type inference**: Type arguments can be inferred from function args and struct fields, but not from return type context alone
-2. **No trait bounds**: `<T: Printable>` syntax is not yet supported
+2. **Trait bounds: instantiation-site only (Phase A)**: Bounds are checked when concrete types are provided, but generic bodies are not checked against bounds at definition time
 3. **No user-defined generic methods**: Methods on user-defined generic structs are not yet supported (native generic types like `List<T>` have methods via the `NativeRegistry` API)
 4. **No user-defined generic constructors/destructors**: Same as above — native types support these via `bind_generic_constructor`/`bind_generic_destructor`
 5. **No higher-kinded types**: Can't abstract over type constructors
@@ -271,6 +317,6 @@ type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ;
 
 ## Future Work
 
-1. **Trait bounds** — `<T: Printable>` for constrained polymorphism
-3. **User-defined generic methods** — Methods on generic structs (`fun Box.get<T>(): T`)
-4. **User-defined generic constructors** — `fun new Box<T>(value: T)`
+1. **Trait bounds body checking (Phase B)** — Check generic bodies against bounds at definition time, enabling safe method calls on bounded type parameters
+2. **User-defined generic methods** — Methods on generic structs (`fun Box.get<T>(): T`)
+3. **User-defined generic constructors** — `fun new Box<T>(value: T)`

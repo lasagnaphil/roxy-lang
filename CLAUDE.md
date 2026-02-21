@@ -173,7 +173,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Details:** `docs/internals/traits.md`, `docs/internals/operator-overloading.md` | **Tests:** `tests/e2e/test_traits.cpp`
 
 ### Generics
-**Generics** - Parametric polymorphism with monomorphization. Generic functions (`fun identity<T>(v: T): T`) and generic structs (`struct Box<T> { value: T; }`). Supports local type inference from function arguments and struct field values (`identity(42)` infers T=i32, `Box { value = 42 }` infers T=i32). Explicit type arguments also supported. Angle bracket syntax with trial-parse disambiguation.
+**Generics** - Parametric polymorphism with monomorphization. Generic functions (`fun identity<T>(v: T): T`) and generic structs (`struct Box<T> { value: T; }`). Supports local type inference from function arguments and struct field values (`identity(42)` infers T=i32, `Box { value = 42 }` infers T=i32). Explicit type arguments also supported. Angle bracket syntax with trial-parse disambiguation. Trait bounds on type parameters (`<T: Printable>`, `<T: Add<i32> + Hash>`) with Phase A instantiation-site checking.
 **Details:** `docs/internals/generics.md` | **Tests:** `tests/e2e/test_generics.cpp`
 
 ## Planned Components (Not Yet Implemented)

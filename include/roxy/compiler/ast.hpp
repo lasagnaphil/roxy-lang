@@ -126,10 +126,11 @@ enum class RefKind : u8 {
     Weak,   // weak<T> - weak reference
 };
 
-// Type parameter for generic declarations: <T, U>
+// Type parameter for generic declarations: <T, U> or <T: Trait1 + Trait2>
 struct TypeParam {
     StringView name;
     SourceLocation loc;
+    Span<TypeExpr*> bounds;  // Trait bounds (empty if unconstrained)
 };
 
 // Type expression for type annotations

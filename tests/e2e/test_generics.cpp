@@ -618,3 +618,234 @@ TEST_CASE("E2E - Generic inference: error uninferrable param") {
     TestResult result = run_and_capture(source, "main");
     CHECK_FALSE(result.success);
 }
+
+// ============================================================================
+// Trait Bound Tests (Bounded Quantification - Phase A)
+// Phase A: checks bounds at instantiation sites only (not in generic bodies)
+// ============================================================================
+
+TEST_CASE("E2E - Generic bound: single bound Printable") {
+    const char* source = R"(
+        fun identity_printable<T: Printable>(value: T): T {
+            return value;
+        }
+
+        fun main(): i32 {
+            return identity_printable<i32>(42);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic bound: Hash bound") {
+    const char* source = R"(
+        fun identity_hash<T: Hash>(value: T): T {
+            return value;
+        }
+
+        fun main(): i32 {
+            return identity_hash<i32>(42);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic bound: multiple bounds Printable + Hash") {
+    const char* source = R"(
+        fun identity_both<T: Printable + Hash>(value: T): T {
+            return value;
+        }
+
+        fun main(): i32 {
+            return identity_both<i32>(42);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic bound: bound on generic struct") {
+    const char* source = R"(
+        struct HashBox<T: Hash> {
+            value: T;
+        }
+
+        fun main(): i32 {
+            var b: HashBox<i32> = HashBox<i32> { value = 42 };
+            return b.value;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic bound: inferred type args with bound") {
+    const char* source = R"(
+        fun identity_printable<T: Printable>(value: T): T {
+            return value;
+        }
+
+        fun main(): i32 {
+            return identity_printable(42);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic bound: inferred struct literal with bound") {
+    const char* source = R"(
+        struct HashBox<T: Hash> {
+            value: T;
+        }
+
+        fun main(): i32 {
+            var b: HashBox<i32> = HashBox { value = 42 };
+            return b.value;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic bound: bound not satisfied (negative)") {
+    const char* source = R"(
+        trait Flyable;
+
+        fun require_fly<T: Flyable>(value: T): i32 {
+            return 0;
+        }
+
+        fun main(): i32 {
+            return require_fly<i32>(42);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK_FALSE(result.success);
+}
+
+TEST_CASE("E2E - Generic bound: generic trait bound with type args") {
+    const char* source = R"(
+        trait Scalable<T>;
+
+        fun Scalable.scale(factor: T): Self;
+
+        struct Vec2 {
+            x: i32;
+            y: i32;
+        }
+
+        fun Vec2.scale(factor: Vec2): Vec2 for Scalable<Vec2> {
+            return Vec2 { x = self.x + factor.x, y = self.y + factor.y };
+        }
+
+        fun apply_scale<T: Scalable<Vec2>>(v: T): i32 {
+            return 1;
+        }
+
+        fun main(): i32 {
+            var v: Vec2 = Vec2 { x = 1, y = 2 };
+            return apply_scale<Vec2>(v);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 1);
+}
+
+TEST_CASE("E2E - Generic bound: generic trait bound mismatch (negative)") {
+    const char* source = R"(
+        trait Scalable<T>;
+
+        fun Scalable.scale(factor: T): Self;
+
+        struct Vec2 {
+            x: i32;
+            y: i32;
+        }
+
+        fun Vec2.scale(factor: Vec2): Vec2 for Scalable<Vec2> {
+            return Vec2 { x = self.x + factor.x, y = self.y + factor.y };
+        }
+
+        fun apply_scale<T: Scalable<i32>>(v: T): i32 {
+            return 1;
+        }
+
+        fun main(): i32 {
+            var v: Vec2 = Vec2 { x = 1, y = 2 };
+            return apply_scale<Vec2>(v);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK_FALSE(result.success);
+}
+
+TEST_CASE("E2E - Generic bound: one of multiple bounds not satisfied (negative)") {
+    const char* source = R"(
+        trait Flyable;
+
+        fun needs_both<T: Printable + Flyable>(value: T): i32 {
+            return 0;
+        }
+
+        fun main(): i32 {
+            return needs_both<i32>(42);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK_FALSE(result.success);
+}
+
+TEST_CASE("E2E - Generic bound: bound not satisfied on struct (negative)") {
+    const char* source = R"(
+        trait Flyable;
+
+        struct FlyBox<T: Flyable> {
+            value: T;
+        }
+
+        fun main(): i32 {
+            var b: FlyBox<i32> = FlyBox<i32> { value = 42 };
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK_FALSE(result.success);
+}
+
+TEST_CASE("E2E - Generic bound: inferred type args violate bound (negative)") {
+    const char* source = R"(
+        trait Flyable;
+
+        fun require_fly<T: Flyable>(value: T): i32 {
+            return 0;
+        }
+
+        fun main(): i32 {
+            return require_fly(42);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK_FALSE(result.success);
+}

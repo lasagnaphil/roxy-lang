@@ -12,6 +12,11 @@
 
 namespace rx {
 
+// Resolved bounds for all type params of one generic template
+struct ResolvedTypeParams {
+    Span<Span<TraitBound>> param_bounds;  // param_bounds[i] = bounds for i-th type param
+};
+
 // Maps type parameter names to concrete types for substitution
 struct TypeSubstitution {
     Span<StringView> param_names;    // ["T", "U"]
@@ -83,6 +88,16 @@ public:
     // Name mangling
     StringView mangle_name(StringView base_name, Span<Type*> type_args);
 
+    // Trait bounds storage for generic templates
+    void set_fun_bounds(StringView name, ResolvedTypeParams bounds);
+    void set_struct_bounds(StringView name, ResolvedTypeParams bounds);
+    const ResolvedTypeParams* get_fun_bounds(StringView name) const;
+    const ResolvedTypeParams* get_struct_bounds(StringView name) const;
+
+    // Accessors for iterating all generic templates
+    const tsl::robin_map<StringView, Decl*>& generic_funs_map() const { return m_generic_funs; }
+    const tsl::robin_map<StringView, Decl*>& generic_structs_map() const { return m_generic_structs; }
+
     // Public AST cloning with type substitution (used by trait default method injection)
     Stmt* clone_stmt(Stmt* stmt, const TypeSubstitution& subst);
     TypeExpr* substitute_type_expr(TypeExpr* type_expr, const TypeSubstitution& subst);
@@ -125,6 +140,10 @@ private:
     // Cache: mangled_name -> instance (to avoid duplicate instantiation)
     tsl::robin_map<StringView, GenericFunInstance*> m_fun_instance_cache;
     tsl::robin_map<StringView, GenericStructInstance*> m_struct_instance_cache;
+
+    // Resolved trait bounds for generic templates
+    tsl::robin_map<StringView, ResolvedTypeParams> m_fun_bounds;
+    tsl::robin_map<StringView, ResolvedTypeParams> m_struct_bounds;
 };
 
 }

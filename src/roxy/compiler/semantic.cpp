@@ -220,6 +220,11 @@ bool SemanticAnalyzer::analyze(Program* program) {
 
     // Pass 1.8: Register built-in operator trait methods for primitive types
     register_primitive_operator_methods();
+
+    // Pass 1.9: Resolve trait bounds on generic type parameters
+    resolve_generic_bounds();
+    if (too_many_errors()) return false;
+
     resolve_type_members(program);
     if (too_many_errors()) return false;
 
@@ -1593,6 +1598,155 @@ static Span<Decl*> clone_decl_list(BumpAllocator& alloc, Span<Decl*> decls) {
     return Span<Decl*>(data, decls.size());
 }
 
+// ===== Generic Trait Bound Resolution =====
+
+Span<TraitBound> SemanticAnalyzer::resolve_type_param_bounds(Span<TypeExpr*> bound_exprs, SourceLocation loc) {
+    if (bound_exprs.size() == 0) return {};
+
+    Vector<TraitBound> bounds;
+    for (auto* bound_expr : bound_exprs) {
+        // Reject reference kinds on bounds
+        if (bound_expr->ref_kind != RefKind::None) {
+            error(bound_expr->loc, "trait bounds cannot have reference qualifiers");
+            continue;
+        }
+
+        // Look up the trait by name
+        Type* trait_type = m_type_env.trait_type_by_name(bound_expr->name);
+        if (!trait_type) {
+            error_fmt(bound_expr->loc, "unknown trait '{}' in type parameter bound", bound_expr->name);
+            continue;
+        }
+
+        // Resolve type args for generic trait bounds (e.g., Add<i32>)
+        Vector<Type*> resolved_type_args;
+        for (auto* type_arg_expr : bound_expr->type_args) {
+            Type* arg_type = resolve_type_expr(type_arg_expr);
+            if (!arg_type || arg_type->is_error()) {
+                // Already reported
+                continue;
+            }
+            resolved_type_args.push_back(arg_type);
+        }
+
+        // Validate type arg count against trait's type params
+        u32 expected_count = trait_type->trait_info.type_params.size();
+        if (resolved_type_args.size() != expected_count) {
+            error_fmt(bound_expr->loc, "trait '{}' expects {} type arguments but got {}",
+                     bound_expr->name, expected_count, (u32)resolved_type_args.size());
+            continue;
+        }
+
+        TraitBound bound;
+        bound.trait = trait_type;
+        bound.type_args = m_allocator.alloc_span(resolved_type_args);
+        bounds.push_back(bound);
+    }
+
+    return m_allocator.alloc_span(bounds);
+}
+
+void SemanticAnalyzer::resolve_generic_bounds() {
+    // Resolve bounds for all generic function templates
+    for (const auto& entry : m_type_env.generics().generic_funs_map()) {
+        StringView name = entry.first;
+        Decl* decl = entry.second;
+        FunDecl& fun_decl = decl->fun_decl;
+
+        bool has_bounds = false;
+        for (const auto& type_param : fun_decl.type_params) {
+            if (type_param.bounds.size() > 0) { has_bounds = true; break; }
+        }
+        if (!has_bounds) continue;
+
+        Vector<Span<TraitBound>> all_param_bounds;
+        for (const auto& type_param : fun_decl.type_params) {
+            Span<TraitBound> bounds = resolve_type_param_bounds(type_param.bounds, type_param.loc);
+            all_param_bounds.push_back(bounds);
+        }
+
+        ResolvedTypeParams resolved;
+        resolved.param_bounds = m_allocator.alloc_span(all_param_bounds);
+        m_type_env.generics().set_fun_bounds(name, resolved);
+    }
+
+    // Resolve bounds for all generic struct templates
+    for (const auto& entry : m_type_env.generics().generic_structs_map()) {
+        StringView name = entry.first;
+        Decl* decl = entry.second;
+        StructDecl& struct_decl = decl->struct_decl;
+
+        bool has_bounds = false;
+        for (const auto& type_param : struct_decl.type_params) {
+            if (type_param.bounds.size() > 0) { has_bounds = true; break; }
+        }
+        if (!has_bounds) continue;
+
+        Vector<Span<TraitBound>> all_param_bounds;
+        for (const auto& type_param : struct_decl.type_params) {
+            Span<TraitBound> bounds = resolve_type_param_bounds(type_param.bounds, type_param.loc);
+            all_param_bounds.push_back(bounds);
+        }
+
+        ResolvedTypeParams resolved;
+        resolved.param_bounds = m_allocator.alloc_span(all_param_bounds);
+        m_type_env.generics().set_struct_bounds(name, resolved);
+    }
+}
+
+bool SemanticAnalyzer::check_type_arg_bounds(StringView template_name, Span<Type*> type_args,
+                                              const ResolvedTypeParams* bounds, SourceLocation loc) {
+    if (!bounds) return true;  // No bounds to check
+
+    bool all_ok = true;
+    for (u32 i = 0; i < type_args.size() && i < bounds->param_bounds.size(); i++) {
+        Type* concrete_type = type_args[i];
+        for (const auto& bound : bounds->param_bounds[i]) {
+            // Substitute TypeParam types in bound.type_args with concrete type args
+            Vector<Type*> substituted_type_args;
+            for (auto* bound_type_arg : bound.type_args) {
+                if (bound_type_arg->is_type_param()) {
+                    u32 param_index = bound_type_arg->type_param_info.index;
+                    if (param_index < type_args.size()) {
+                        substituted_type_args.push_back(type_args[param_index]);
+                    } else {
+                        substituted_type_args.push_back(bound_type_arg);
+                    }
+                } else {
+                    substituted_type_args.push_back(bound_type_arg);
+                }
+            }
+
+            Span<Type*> subst_args = m_allocator.alloc_span(substituted_type_args);
+            bool satisfies = m_types.implements_trait(concrete_type, bound.trait, subst_args);
+
+            if (!satisfies) {
+                auto concrete_str = type_string(concrete_type);
+                // Build trait name with type args for error message
+                Vector<char> trait_str;
+                auto append_sv = [&](StringView sv) { for (char c : sv) trait_str.push_back(c); };
+                auto append_cs = [&](const char* cs) { while (*cs) trait_str.push_back(*cs++); };
+                append_sv(bound.trait->trait_info.name);
+                if (subst_args.size() > 0) {
+                    append_cs("<");
+                    for (u32 j = 0; j < subst_args.size(); j++) {
+                        if (j > 0) append_cs(", ");
+                        type_to_string(subst_args[j], trait_str);
+                    }
+                    append_cs(">");
+                }
+                trait_str.push_back('\0');
+
+                error_fmt(loc,
+                    "type '{}' does not implement trait '{}' required by type parameter bound on '{}'",
+                    concrete_str.data(), trait_str.data(), template_name);
+                all_ok = false;
+            }
+        }
+    }
+    return all_ok;
+}
+
 void SemanticAnalyzer::validate_trait_implementations() {
     // Group pending impls by (struct, trait, type_args)
     struct TraitImplGroup {
@@ -1645,8 +1799,8 @@ void SemanticAnalyzer::validate_trait_implementations() {
         if (trait_type_info.parent) {
             // Check that struct also implements parent trait
             bool has_parent = false;
-            for (auto* trait : struct_type_info.implemented_traits) {
-                if (trait == trait_type_info.parent) {
+            for (const auto& impl : struct_type_info.implemented_traits) {
+                if (impl.trait == trait_type_info.parent) {
                     has_parent = true;
                     break;
                 }
@@ -1774,13 +1928,13 @@ void SemanticAnalyzer::validate_trait_implementations() {
         }
 
         // Update struct's implemented_traits list
-        Vector<Type*> traits;
-        for (auto* trait : struct_type_info.implemented_traits) {
-            traits.push_back(trait);
+        Vector<TraitImplRecord> trait_records;
+        for (const auto& impl : struct_type_info.implemented_traits) {
+            trait_records.push_back(impl);
         }
-        traits.push_back(trait_type);
+        trait_records.push_back(TraitImplRecord{trait_type, trait_type_args});
 
-        struct_type_info.implemented_traits = m_allocator.alloc_span(traits);
+        struct_type_info.implemented_traits = m_allocator.alloc_span(trait_records);
     }
 }
 
@@ -2752,8 +2906,14 @@ Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, Strin
         type_arg_types.push_back(arg_type);
     }
 
-    // Instantiate the generic function
+    // Check trait bounds on type args
     Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
+    const ResolvedTypeParams* bounds = m_type_env.generics().get_fun_bounds(func_name);
+    if (!check_type_arg_bounds(func_name, type_args, bounds, expr->loc)) {
+        return m_types.error_type();
+    }
+
+    // Instantiate the generic function
     StringView mangled = m_type_env.generics().instantiate_fun(func_name, type_args);
     ce.mangled_name = mangled;
 
@@ -2980,8 +3140,14 @@ Type* SemanticAnalyzer::analyze_generic_struct_constructor_call(Expr* expr, Call
         type_arg_types.push_back(arg_type);
     }
 
-    // Instantiate the struct
+    // Check trait bounds on type args
     Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
+    const ResolvedTypeParams* bounds = m_type_env.generics().get_struct_bounds(func_name);
+    if (!check_type_arg_bounds(func_name, type_args, bounds, expr->loc)) {
+        return m_types.error_type();
+    }
+
+    // Instantiate the struct
     StringView mangled = m_type_env.generics().instantiate_struct(func_name, type_args);
     GenericStructInstance* inst = m_type_env.generics().find_struct_instance(mangled);
     Type* struct_type = inst->concrete_type;
@@ -3222,6 +3388,13 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
 
             if (inferred.success) {
                 Span<Type*> type_args = m_allocator.alloc_span(inferred.type_args);
+
+                // Check trait bounds on inferred type args
+                const ResolvedTypeParams* bounds = m_type_env.generics().get_fun_bounds(func_name);
+                if (!check_type_arg_bounds(func_name, type_args, bounds, expr->loc)) {
+                    return m_types.error_type();
+                }
+
                 StringView mangled = m_type_env.generics().instantiate_fun(func_name, type_args);
                 call_expr.mangled_name = mangled;
 
@@ -3699,6 +3872,13 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
         }
 
         Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
+
+        // Check trait bounds on type args
+        const ResolvedTypeParams* bounds = m_type_env.generics().get_struct_bounds(sl.type_name);
+        if (!check_type_arg_bounds(sl.type_name, type_args, bounds, expr->loc)) {
+            return m_types.error_type();
+        }
+
         StringView mangled = m_type_env.generics().instantiate_struct(sl.type_name, type_args);
         GenericStructInstance* inst = m_type_env.generics().find_struct_instance(mangled);
         resolve_generic_struct_fields(inst);
@@ -3718,6 +3898,13 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
 
         if (inferred.success) {
             Span<Type*> type_args = m_allocator.alloc_span(inferred.type_args);
+
+            // Check trait bounds on inferred type args
+            const ResolvedTypeParams* bounds = m_type_env.generics().get_struct_bounds(sl.type_name);
+            if (!check_type_arg_bounds(sl.type_name, type_args, bounds, expr->loc)) {
+                return m_types.error_type();
+            }
+
             StringView mangled = m_type_env.generics().instantiate_struct(sl.type_name, type_args);
             GenericStructInstance* inst = m_type_env.generics().find_struct_instance(mangled);
             resolve_generic_struct_fields(inst);

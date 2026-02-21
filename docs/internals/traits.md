@@ -208,30 +208,35 @@ The compiler validates generic trait usage:
 - A struct can implement a given generic trait only once per set of type arguments
 - No default type arguments (must always specify `for Add<Vec2>`, not `for Add`)
 - Generic trait inheritance is not yet supported (e.g., `trait AddAssign<Rhs> : Add<Rhs>`)
-- No trait bounds on type parameters
+## Trait Bounds on Type Parameters (Bounded Quantification)
 
-## Generic Functions with Trait Bounds
-
-Functions can require types to implement specific traits:
+Type parameters can be constrained with trait bounds, requiring concrete types to implement specified traits at every instantiation site:
 
 ```roxy
-fun debug<T: Printable>(value: T) {
-    print("[DEBUG] ");
-    value.print();
-    print("\n");
+// Single bound
+fun identity_printable<T: Printable>(value: T): T {
+    return value;
 }
 
-// Multiple trait bounds
-fun compare_and_print<T: Printable + Comparable>(a: T, b: T) {
-    a.print();
-    if (a.lt(b)) {
-        print(" < ");
-    } else {
-        print(" >= ");
-    }
-    b.print();
+// Multiple bounds with +
+fun identity_both<T: Printable + Hash>(value: T): T {
+    return value;
+}
+
+// Generic trait bound
+fun apply_scale<T: Scalable<Vec2>>(v: T): i32 {
+    return 1;
+}
+
+// Bounds on generic structs
+struct HashBox<T: Hash> {
+    value: T;
 }
 ```
+
+**Phase A (current):** Bounds are checked at instantiation sites only. If a concrete type does not implement the required trait(s), a semantic error is reported. Generic function/struct bodies are NOT checked against bounds at definition time.
+
+**Phase B (planned):** Bodies will be checked against bounds at definition time, enabling safe method calls on bounded type parameters.
 
 ## The Universal `print()` Function
 
@@ -397,7 +402,8 @@ impl_method     -> "fun" Identifier "." Identifier
 
 generic_params  -> "<" type_param ( "," type_param )* ">" ;
 type_param      -> Identifier ( ":" trait_bounds )? ;
-trait_bounds    -> Identifier ( "+" Identifier )* ;
+trait_bounds    -> trait_bound ( "+" trait_bound )* ;
+trait_bound     -> Identifier generic_args? ;
 generic_args    -> "<" type_expr ( "," type_expr )* ">" ;
 ```
 
