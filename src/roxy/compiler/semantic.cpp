@@ -4049,7 +4049,6 @@ bool SemanticAnalyzer::check_assignable(Type* target, Type* source, SourceLocati
 
     // nil is assignable to reference types
     if (source->is_nil() && target->is_reference()) return true;
-    if (source->is_nil() && target->kind == TypeKind::Weak) return true;
 
     // Struct subtyping: Child assignable to Parent (value slicing for values)
     if (target->is_struct() && source->is_struct()) {

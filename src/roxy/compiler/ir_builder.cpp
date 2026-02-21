@@ -2315,9 +2315,12 @@ ValueId IRBuilder::gen_primitive_cast(Expr* expr) {
 
     // Emit Cast instruction
     IRInst* inst = emit_inst(IROp::Cast, target_type);
-    inst->cast.source = source;
-    inst->cast.source_type = source_type;
-    return inst->result;
+    if (inst) {
+        inst->cast.source = source;
+        inst->cast.source_type = source_type;
+        return inst->result;
+    }
+    return ValueId::invalid();
 }
 
 ValueId IRBuilder::gen_constructor_call(Expr* expr) {
