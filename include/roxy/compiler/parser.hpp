@@ -81,7 +81,8 @@ private:
     Decl* declaration();
     Decl* var_declaration(bool is_pub);
     Decl* fun_declaration(bool is_pub, bool is_native);
-    Decl* method_declaration(bool is_pub, Token struct_token);
+    Decl* method_declaration(bool is_pub, bool is_native,
+                              Token struct_token, Span<TypeParam> type_params);
     Decl* constructor_declaration(bool is_pub);
     Decl* destructor_declaration(bool is_pub);
     Decl* struct_declaration(bool is_pub);

@@ -502,10 +502,12 @@ struct DestructorDecl {
 struct MethodDecl {
     StringView struct_name;
     StringView name;
+    Span<TypeParam> type_params;   // Struct type params: <T> in fun List<T>.push(...)
     Span<Param> params;        // Does NOT include implicit self
     TypeExpr* return_type;     // nullptr if void
     Stmt* body;                // nullptr for required trait methods (no body)
     bool is_pub;
+    bool is_native;            // true for native method declarations
     StringView trait_name;     // Non-empty for "fun Type.method() for Trait"
     Span<TypeExpr*> trait_type_args;   // Type args in "for Trait<Args>"
 };

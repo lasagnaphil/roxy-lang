@@ -76,33 +76,31 @@ public:
     template<auto FnPtr>
     void bind(const char* name);
 
-    // Manual binding - for functions needing VM access
-    void bind_native(const char* name, NativeFunction func,
-                     std::initializer_list<NativeTypeKind> params,
-                     NativeTypeKind return_type);
+    // String-based binding - uses Roxy signature strings
+    void bind_native(NativeFunction func, const char* signature);
+    void bind_native(const char* override_name, NativeFunction func, const char* signature);
 
-    // Struct registration and method binding
+    // Struct registration
     void register_struct(const char* name, std::initializer_list<NativeFieldEntry> fields);
+
+    // Auto-bind method (C++ function with wrapper generation)
     template<auto FnPtr>
     void bind_method(const char* struct_name, const char* method_name);
-    void bind_method_native(const char* struct_name, const char* method_name,
-                            NativeFunction func, ...);
 
-    // Generic native type registration (e.g., List<T>)
-    void register_generic_type(const char* name, u32 type_param_count,
+    // String-based method binding (concrete or generic types)
+    void bind_method(NativeFunction func, const char* signature);
+    void bind_constructor(NativeFunction func, const char* signature, u32 min_args = 0);
+
+    // Generic native type registration
+    void register_generic_type(const char* type_decl,
                                const char* alloc_name, NativeFunction alloc_func);
-    void bind_generic_method(const char* type_name, const char* method_name,
-                             NativeFunction func,
-                             std::initializer_list<NativeParamDesc> params,
-                             NativeParamDesc return_desc);
-    void bind_generic_constructor(const char* type_name, NativeFunction func,
-                                  u32 min_args,
-                                  std::initializer_list<NativeParamDesc> params);
     void bind_generic_destructor(const char* type_name, NativeFunction func);
+    void bind_generic_copy_constructor(const char* type_name,
+                                       const char* copy_func_name, NativeFunction func);
 
     // Apply to compiler (semantic analysis)
-    void apply_structs_to_types(TypeCache& types, BumpAllocator& alloc, SymbolTable& syms);
-    void apply_methods_to_types(TypeCache& types, BumpAllocator& alloc);
+    void apply_structs_to_types(TypeEnv& type_env, BumpAllocator& alloc, SymbolTable& syms);
+    void apply_methods_to_types(TypeEnv& type_env, BumpAllocator& alloc);
     void apply_to_symbols(SymbolTable& symbols);
 
     // Apply to runtime (VM execution)
@@ -112,6 +110,61 @@ public:
     i32 get_index(StringView name) const;
     bool is_native(StringView name) const;
 };
+```
+
+## String-Based Binding API
+
+The primary way to register native functions is using Roxy signature strings. The registry parses these using the actual Roxy parser (Lexer + Parser), so they support the full type syntax.
+
+### Free Functions
+
+```cpp
+// Simple binding - name extracted from signature
+registry.bind_native(native_print, "fun print(s: string)");
+registry.bind_native(native_str_concat, "fun str_concat(a: string, b: string): string");
+
+// Name override - for $$-mangled trait method names
+registry.bind_native("bool$$to_string", native_bool_to_string,
+                     "fun to_string(val: bool): string");
+registry.bind_native("i32$$hash", native_i32_hash,
+                     "fun hash(val: i32): i64");
+```
+
+### Methods on Concrete Types
+
+```cpp
+// Method with no parameters
+registry.bind_method(native_product, "fun Point.product(): i32");
+```
+
+### Methods on Generic Types
+
+```cpp
+// Type parameters in the struct name are resolved at instantiation time
+registry.bind_method(native_list_push, "fun List<T>.push(val: T)");
+registry.bind_method(native_list_pop,  "fun List<T>.pop(): T");
+registry.bind_method(native_map_keys,  "fun Map<K, V>.keys(): List<K>");
+```
+
+### Constructors
+
+```cpp
+// min_args controls optional parameters
+registry.bind_constructor(native_list_init, "fun List<T>.new(cap: i32)", 0);
+registry.bind_constructor(native_map_init,
+    "fun Map<K, V>.new(key_kind: i32, capacity: i32)", 1);
+```
+
+### Generic Type Registration
+
+```cpp
+// Type declaration string includes type parameter names
+registry.register_generic_type("List<T>", "list_alloc", native_list_alloc);
+registry.register_generic_type("Map<K, V>", "map_alloc", native_map_alloc);
+
+// Destructors and copy constructors use the base type name
+registry.bind_generic_destructor("List", native_list_delete);
+registry.bind_generic_copy_constructor("List", "list_copy", native_list_copy);
 ```
 
 ## Usage Example
@@ -144,39 +197,40 @@ IRBuilder ir_builder(allocator, types, registry, analyzer.symbols(), modules);
 registry.apply_to_module(module);
 ```
 
-## NativeTypeKind
-
-For functions needing VM access (like list operations), use `bind_native` with type kinds:
-
-```cpp
-enum class NativeTypeKind : u8 {
-    Void, Bool,
-    I8, I16, I32, I64,
-    U8, U16, U32, U64,
-    F32, F64,
-    String,    // string
-};
-
-// Example: list_new(cap?: i64) -> List<T>
-registry.bind_native("list_new", native_list_new,
-                     {NativeTypeKind::I64}, NativeTypeKind::I64);
-```
-
 ## Built-in Native Functions
 
 ### List Methods (Generic Native Type)
 
-`List<T>` is registered as a generic native type via `register_generic_type`. Its methods use `NativeParamDesc` with `type_param(0)` for the element type `T`, allowing monomorphized type resolution at instantiation time.
+`List<T>` is registered as a generic native type via `register_generic_type("List<T>", ...)`. Its methods use Roxy signature strings with type parameter `T`, which gets resolved to concrete types at instantiation time.
 
-| Registration | Native Name | Roxy Signature | Description |
-|--------------|-------------|----------------|-------------|
-| `register_generic_type` | `list_alloc` | (internal) | Allocate empty list object |
-| `bind_generic_constructor` | `List$$new` | `List<T>(cap?: i32)` | Initialize with optional capacity |
-| `bind_generic_destructor` | `List$$delete` | (auto) | Free element buffer |
-| `bind_generic_method` | `List$$len` | `.len() -> i32` | Return list length |
-| `bind_generic_method` | `List$$cap` | `.cap() -> i32` | Return list capacity |
-| `bind_generic_method` | `List$$push` | `.push(val: T) -> void` | Append element |
-| `bind_generic_method` | `List$$pop` | `.pop() -> T` | Remove and return last element |
+| Registration | Signature | Description |
+|---|---|---|
+| `register_generic_type` | `"List<T>"` | Allocate empty list object |
+| `bind_constructor` | `"fun List<T>.new(cap: i32)"` | Initialize with optional capacity |
+| `bind_generic_destructor` | `"List"` | Free element buffer |
+| `bind_method` | `"fun List<T>.len(): i32"` | Return list length |
+| `bind_method` | `"fun List<T>.cap(): i32"` | Return list capacity |
+| `bind_method` | `"fun List<T>.push(val: T)"` | Append element |
+| `bind_method` | `"fun List<T>.pop(): T"` | Remove and return last element |
+| `bind_method` | `"fun List<T>.index(idx: i32): T"` | Get element by index |
+| `bind_method` | `"fun List<T>.index_mut(idx: i32, val: T)"` | Set element by index |
+
+### Map Methods (Generic Native Type)
+
+`Map<K, V>` is registered with 2 type parameters.
+
+| Registration | Signature | Description |
+|---|---|---|
+| `register_generic_type` | `"Map<K, V>"` | Allocate empty map object |
+| `bind_constructor` | `"fun Map<K, V>.new(key_kind: i32, capacity: i32)"` | Initialize (min_args=1) |
+| `bind_method` | `"fun Map<K, V>.len(): i32"` | Return map length |
+| `bind_method` | `"fun Map<K, V>.contains(key: K): bool"` | Check if key exists |
+| `bind_method` | `"fun Map<K, V>.get(key: K): V"` | Get value by key |
+| `bind_method` | `"fun Map<K, V>.insert(key: K, val: V)"` | Insert key-value pair |
+| `bind_method` | `"fun Map<K, V>.remove(key: K): bool"` | Remove by key |
+| `bind_method` | `"fun Map<K, V>.clear()"` | Clear all entries |
+| `bind_method` | `"fun Map<K, V>.keys(): List<K>"` | Get all keys as list |
+| `bind_method` | `"fun Map<K, V>.values(): List<V>"` | Get all values as list |
 
 ### String Functions
 
@@ -201,7 +255,7 @@ registry.register_struct("Point", {
 });
 ```
 
-This creates a Roxy struct type with the given fields. Native structs behave like regular Roxy structs — they support field access and struct literal initialization:
+This creates a Roxy struct type with the given fields. Native structs behave like regular Roxy structs -- they support field access and struct literal initialization:
 
 ```roxy
 var p = Point { x = 3, y = 4 };
@@ -230,7 +284,7 @@ registry.bind_method<point_scaled>("Point", "scaled");
 registry.bind_method<point_is_origin>("Point", "is_origin");
 ```
 
-The `RoxyVM*` parameter is provided automatically by the binding system. The `RoxyType<T*>` specialization handles pointer extraction from registers automatically. Both `RoxyVM*` and the self parameter are excluded from the Roxy-visible parameter count — `point_scaled` appears as a 1-parameter method in Roxy:
+The `RoxyVM*` parameter is provided automatically by the binding system. The `RoxyType<T*>` specialization handles pointer extraction from registers automatically. Both `RoxyVM*` and the self parameter are excluded from the Roxy-visible parameter count -- `point_scaled` appears as a 1-parameter method in Roxy:
 
 ```roxy
 fun test(): i32 {
@@ -239,15 +293,12 @@ fun test(): i32 {
 }
 ```
 
-### Manual Method Binding
+### Manual Method Binding (Signature-Based)
 
 For methods that need direct VM access (e.g., for allocation or complex register manipulation):
 
 ```cpp
-// With type kinds (portable across TypeCache instances)
-registry.bind_method_native("Point", "product", native_product_fn,
-                            {NativeTypeKind::I32},  // extra params after self
-                            NativeTypeKind::I32);   // return type
+registry.bind_method(native_product_fn, "fun Point.product(): i32");
 ```
 
 Manual method wrappers receive self as `regs[first_arg]` (a pointer to the struct on the stack), followed by any additional arguments.
@@ -262,10 +313,10 @@ Native structs and methods are integrated into the semantic analysis passes:
 
 | Pass | Action |
 |------|--------|
-| 0c | `apply_to_symbols()` — registers non-method native functions in the symbol table |
+| 0c | `apply_to_symbols()` -- registers non-method native functions in the symbol table |
 | 1 | Collect user-defined type declarations |
-| 1.5 | `apply_structs_to_types()` — creates struct types, registers in TypeCache and SymbolTable |
-| 1.6 | `apply_methods_to_types()` — looks up struct types, attaches `MethodInfo` entries |
+| 1.5 | `apply_structs_to_types()` -- creates struct types, registers in TypeCache and SymbolTable |
+| 1.6 | `apply_methods_to_types()` -- looks up struct types, attaches `MethodInfo` entries |
 | 2 | Resolve type members (user-defined structs) |
 | 3 | Analyze function bodies (method calls resolved via normal type hierarchy lookup) |
 
@@ -337,48 +388,41 @@ For the `Point` example above:
 
 ## Generic Native Types
 
-The `NativeRegistry` supports registering generic native types (e.g., `List<T>`) that participate in the compiler's monomorphization pipeline. Unlike user-defined generic structs (which use AST cloning), generic native types use `NativeParamDesc` to describe parameter types that reference type parameters.
-
-### NativeParamDesc
-
-```cpp
-struct NativeParamDesc {
-    bool is_type_param;
-    NativeTypeKind kind;          // when !is_type_param (concrete type)
-    u32 type_param_index;         // when is_type_param (0=T, 1=U, ...)
-};
-
-// Helpers
-NativeParamDesc concrete_param(NativeTypeKind k);  // e.g., concrete_param(TK::I32)
-NativeParamDesc type_param(u32 index);              // e.g., type_param(0) for T
-```
+The `NativeRegistry` supports registering generic native types (e.g., `List<T>`) that participate in the compiler's monomorphization pipeline. Unlike user-defined generic structs (which use AST cloning), generic native types use parsed Roxy signature strings to describe parameter types that reference type parameters.
 
 ### Registration Example
 
 ```cpp
-using TK = NativeTypeKind;
-
-// Register List<T> with 1 type parameter and its allocator
-registry.register_generic_type("List", 1, "list_alloc", native_list_alloc);
+// Register List<T> with its type parameters and allocator
+registry.register_generic_type("List<T>", "list_alloc", native_list_alloc);
 
 // Constructor: List<T>(cap?: i32)  (min_args=0, so cap is optional)
-registry.bind_generic_constructor("List", native_list_init,
-                                  0, {concrete_param(TK::I32)});
+registry.bind_constructor(native_list_init, "fun List<T>.new(cap: i32)", 0);
 
 // Destructor
 registry.bind_generic_destructor("List", native_list_delete);
 
-// Methods — type_param(0) resolves to the concrete T at instantiation
-registry.bind_generic_method("List", "push", native_list_push,
-                             {type_param(0)}, concrete_param(TK::Void));
-registry.bind_generic_method("List", "pop",  native_list_pop,
-                             {}, type_param(0));
+// Methods -- type parameter T is resolved to the concrete type at instantiation
+registry.bind_method(native_list_push, "fun List<T>.push(val: T)");
+registry.bind_method(native_list_pop,  "fun List<T>.pop(): T");
+registry.bind_method(native_list_len,  "fun List<T>.len(): i32");
 ```
+
+### How Signature Parsing Works
+
+When `bind_native`, `bind_method`, or `bind_constructor` is called with a signature string:
+
+1. The registry prepends `"native "` and appends `";"` to the signature
+2. The string is fed through the actual Roxy Lexer and Parser
+3. The resulting AST (DeclFun or DeclMethod) provides TypeExpr nodes for all parameter/return types
+4. These TypeExpr nodes are stored on the NativeFunctionEntry and resolved to concrete Type* later
+
+For generic types, `register_generic_type("List<T>", ...)` parses the type declaration to extract the type name (`"List"`) and type parameter names (`["T"]`). When methods are instantiated, the TypeExpr nodes are resolved with concrete type arguments substituted for the named parameters.
 
 ### Integration with Monomorphization
 
 When the semantic analyzer encounters `List<i32>`, it:
-1. Checks `NativeRegistry::has_generic_type("List")` — finds it
+1. Checks `NativeRegistry::has_generic_type("List")` -- finds it
 2. Calls `instantiate_generic_methods("List", {i32_type}, ...)` to get concrete `MethodInfo` entries (e.g., `push(val: i32) -> void`)
 3. Calls `instantiate_generic_constructor("List", {i32_type}, ...)` to get the constructor signature
 4. Attaches the resolved methods/constructor to the monomorphized struct type (`List$i32`)
@@ -389,7 +433,7 @@ The runtime native functions are type-erased (all Roxy Values are 64-bit), so a 
 
 Built-in functions are registered during semantic analysis initialization. The IR builder detects calls to these functions and emits `CallNative` IR instead of regular `Call` IR.
 
-## RoxyList<T> — List Interop
+## RoxyList<T> -- List Interop
 
 `RoxyList<T>` is a thin non-owning typed wrapper around a Roxy list data pointer. It allows C++ bound functions to read, modify, and create lists.
 
@@ -432,10 +476,10 @@ registry.bind<list_push_42>("list_push_42");
 ### RoxyType Specialization
 
 The `RoxyType<RoxyList<T>>` specialization enables automatic type resolution:
-- `get(tc)` returns `tc.list_type(RoxyType<T>::get(tc))` — resolves to `List<i32>`, `List<f64>`, etc.
-- `from_reg(u64)` / `to_reg(RoxyList<T>)` handle register ↔ wrapper conversion
+- `get(tc)` returns `tc.list_type(RoxyType<T>::get(tc))` -- resolves to `List<i32>`, `List<f64>`, etc.
+- `from_reg(u64)` / `to_reg(RoxyList<T>)` handle register <-> wrapper conversion
 
-## RoxyString — String Interop
+## RoxyString -- String Interop
 
 `RoxyString` is a thin non-owning wrapper around a Roxy string data pointer. It allows C++ bound functions to read, create, compare, and concatenate Roxy strings.
 
@@ -480,175 +524,7 @@ registry.bind<str_join>("str_join");
 
 The `RoxyType<RoxyString>` specialization enables automatic type resolution:
 - `get(tc)` returns `tc.string_type()`
-- `from_reg(u64)` / `to_reg(RoxyString)` handle register ↔ wrapper conversion
-
-## Roxy-Native C++ Containers
-
-> **Note:** This feature is planned but not yet implemented.
-
-Roxy provides its own C++ container library designed for zero-cost interop with the VM. These containers share the exact same memory layout as Roxy's runtime representations, eliminating conversion overhead.
-
-### Design Philosophy
-
-Roxy provides native C++ containers that:
-
-- Have identical memory layout to Roxy runtime containers
-- Can be passed to/from Roxy without conversion
-- Use the Roxy VM allocator for memory management
-- Provide C++ compile-time type safety
-
-### Container Types
-
-```cpp
-namespace rx {
-
-template<typename T>
-class Array {
-    ListHeader* m_header;
-public:
-    // Element access
-    T& operator[](u32 i) { return data()[i]; }
-    const T& operator[](u32 i) const { return data()[i]; }
-    T* data() { return reinterpret_cast<T*>(m_header + 1); }
-
-    // Size
-    u32 length() const { return m_header->length; }
-    u32 capacity() const { return m_header->capacity; }
-    bool empty() const { return length() == 0; }
-
-    // Iteration (range-for compatible)
-    T* begin() { return data(); }
-    T* end() { return data() + length(); }
-    const T* begin() const { return data(); }
-    const T* end() const { return data() + length(); }
-
-    // Modification (requires VM for allocation)
-    void push(VM* vm, T value);
-    T pop();
-    void clear();
-};
-
-template<typename K, typename V>
-class Dict {
-    DictHeader* m_header;
-public:
-    V* get(const K& key);
-    const V* get(const K& key) const;
-    void set(VM* vm, K key, V value);
-    bool contains(const K& key) const;
-    void remove(const K& key);
-    u32 size() const;
-
-    // Iteration
-    struct Iterator { /* ... */ };
-    Iterator begin();
-    Iterator end();
-};
-
-template<typename T>
-class Option {
-    bool m_has_value;
-    T m_value;
-public:
-    bool has_value() const { return m_has_value; }
-    T& value() { return m_value; }
-    const T& value() const { return m_value; }
-    T value_or(T default_val) const;
-
-    static Option some(T v) { return Option{true, v}; }
-    static Option none() { return Option{false, T{}}; }
-};
-
-template<typename T, typename E>
-class Result {
-    bool m_is_ok;
-    union { T m_value; E m_error; };
-public:
-    bool is_ok() const { return m_is_ok; }
-    bool is_err() const { return !m_is_ok; }
-    T& value() { return m_value; }
-    E& error() { return m_error; }
-
-    static Result ok(T v);
-    static Result err(E e);
-};
-
-template<typename T, typename U>
-class Pair {
-public:
-    T first;
-    U second;
-
-    Pair(T f, U s) : first(f), second(s) {}
-};
-
-} // namespace rx
-```
-
-### Zero-Cost Interop
-
-Since Roxy containers have the same layout on both sides, no conversion is needed:
-
-```cpp
-// C++ function operating directly on Roxy array
-void damage_all_enemies(rx::Array<Enemy>& enemies, i32 damage) {
-    for (Enemy& e : enemies) {
-        e.hp -= damage;
-    }
-}
-
-// Lookup in Roxy dict
-rx::Option<Item> find_in_inventory(rx::Dict<rx::String, Item>& inv, rx::String name) {
-    if (Item* item = inv.get(name)) {
-        return rx::Option<Item>::some(*item);
-    }
-    return rx::Option<Item>::none();
-}
-
-// Bind directly - array/dict pass through unchanged
-registry.bind<damage_all_enemies>("damage_all_enemies");
-registry.bind<find_in_inventory>("find_in_inventory");
-```
-
-### RoxyType Specializations
-
-The binding system recognizes Roxy containers automatically:
-
-```cpp
-template<typename T>
-struct RoxyType<rx::Array<T>> {
-    static Type* get(TypeCache& tc) {
-        return tc.list_type(RoxyType<T>::get(tc));
-    }
-    static rx::Array<T> from_reg(u64 reg) {
-        return rx::Array<T>::from_ptr(reinterpret_cast<void*>(reg));
-    }
-    static u64 to_reg(rx::Array<T> arr) {
-        return reinterpret_cast<u64>(arr.header());
-    }
-};
-
-template<typename T>
-struct RoxyType<rx::Option<T>> {
-    static Type* get(TypeCache& tc) {
-        return tc.option_type(RoxyType<T>::get(tc));
-    }
-    // ...
-};
-```
-
-### File Structure (Planned)
-
-```
-include/roxy/
-├── containers/
-│   ├── list.hpp        # rx::List<T>
-│   ├── dict.hpp        # rx::Dict<K,V>
-│   ├── option.hpp      # rx::Option<T>
-│   ├── result.hpp      # rx::Result<T,E>
-│   ├── pair.hpp        # rx::Pair<T,U>
-│   └── containers.hpp  # Convenience include-all
-```
+- `from_reg(u64)` / `to_reg(RoxyString)` handle register <-> wrapper conversion
 
 ## Files
 
@@ -660,5 +536,4 @@ include/roxy/
 - `include/roxy/vm/binding/roxy_string.hpp` - RoxyString wrapper + RoxyType specialization
 - `include/roxy/vm/binding/interop.hpp` - Convenience header
 - `include/roxy/vm/natives.hpp` - Built-in native functions
-- `src/roxy/vm/natives.cpp` - Native function implementations (incl. List<T> generic type registration)
-- `include/roxy/containers/` - Roxy-native C++ containers (planned)
+- `src/roxy/vm/natives.cpp` - Native function implementations (incl. List<T> and Map<K, V> registration)

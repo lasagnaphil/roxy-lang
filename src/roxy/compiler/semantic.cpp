@@ -1806,7 +1806,9 @@ void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type
     synth->loc = trait_decl->loc;
     synth->method_decl.struct_name = struct_type->struct_info.name;
     synth->method_decl.name = trait_method_info.name;
+    synth->method_decl.type_params = Span<TypeParam>();
     synth->method_decl.is_pub = trait_md.is_pub;
+    synth->method_decl.is_native = false;
     synth->method_decl.trait_name = trait_type->trait_info.name;
     synth->method_decl.trait_type_args = Span<TypeExpr*>();
 

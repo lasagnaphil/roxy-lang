@@ -662,111 +662,65 @@ static void native_map_index_mut(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 void register_builtin_natives(NativeRegistry& registry) {
-    using TK = NativeTypeKind;
-
     // List<T> - registered as a generic native type
-    registry.register_generic_type("List", 1, "list_alloc", native_list_alloc);
-    registry.bind_generic_constructor("List", native_list_init,
-                                      0, {concrete_param(TK::I32)});
+    registry.register_generic_type("List<T>", "list_alloc", native_list_alloc);
+    registry.bind_constructor(native_list_init, "fun List<T>.new(cap: i32)", 0);
     registry.bind_generic_destructor("List", native_list_delete);
     registry.bind_generic_copy_constructor("List", "list_copy", native_list_copy);
-    registry.bind_generic_method("List", "len",  native_list_len,
-                                 {}, concrete_param(TK::I32));
-    registry.bind_generic_method("List", "cap",  native_list_cap,
-                                 {}, concrete_param(TK::I32));
-    registry.bind_generic_method("List", "push", native_list_push,
-                                 {type_param(0)}, concrete_param(TK::Void));
-    registry.bind_generic_method("List", "pop",  native_list_pop,
-                                 {}, type_param(0));
-    registry.bind_generic_method("List", "index", native_list_index,
-                                 {concrete_param(TK::I32)}, type_param(0));
-    registry.bind_generic_method("List", "index_mut", native_list_index_mut,
-                                 {concrete_param(TK::I32), type_param(0)}, concrete_param(TK::Void));
+    registry.bind_method(native_list_len,       "fun List<T>.len(): i32");
+    registry.bind_method(native_list_cap,       "fun List<T>.cap(): i32");
+    registry.bind_method(native_list_push,      "fun List<T>.push(val: T)");
+    registry.bind_method(native_list_pop,       "fun List<T>.pop(): T");
+    registry.bind_method(native_list_index,     "fun List<T>.index(idx: i32): T");
+    registry.bind_method(native_list_index_mut, "fun List<T>.index_mut(idx: i32, val: T)");
 
-    // Register print(s: string) -> void
-    registry.bind_native("print", native_print,
-                         {TK::String}, TK::Void);
+    // Free functions
+    registry.bind_native(native_print, "fun print(s: string)");
 
     // String functions
-    registry.bind_native("str_concat", native_str_concat,
-                         {TK::String, TK::String}, TK::String);
+    registry.bind_native(native_str_concat, "fun str_concat(a: string, b: string): string");
+    registry.bind_native(native_str_eq, "fun str_eq(a: string, b: string): bool");
+    registry.bind_native(native_str_ne, "fun str_ne(a: string, b: string): bool");
+    registry.bind_native(native_str_len, "fun str_len(s: string): i32");
 
-    registry.bind_native("str_eq", native_str_eq,
-                         {TK::String, TK::String}, TK::Bool);
-
-    registry.bind_native("str_ne", native_str_ne,
-                         {TK::String, TK::String}, TK::Bool);
-
-    registry.bind_native("str_len", native_str_len,
-                         {TK::String}, TK::I32);
-
-    // to_string natives for primitive types
-    registry.bind_native("bool$$to_string", native_bool_to_string,
-                         {TK::Bool}, TK::String);
-    registry.bind_native("i32$$to_string", native_i32_to_string,
-                         {TK::I32}, TK::String);
-    registry.bind_native("i64$$to_string", native_i64_to_string,
-                         {TK::I64}, TK::String);
-    registry.bind_native("f32$$to_string", native_f32_to_string,
-                         {TK::F32}, TK::String);
-    registry.bind_native("f64$$to_string", native_f64_to_string,
-                         {TK::F64}, TK::String);
-    registry.bind_native("string$$to_string", native_string_to_string,
-                         {TK::String}, TK::String);
+    // to_string natives for primitive types ($$-mangled name override)
+    registry.bind_native("bool$$to_string",   native_bool_to_string,   "fun to_string(val: bool): string");
+    registry.bind_native("i32$$to_string",    native_i32_to_string,    "fun to_string(val: i32): string");
+    registry.bind_native("i64$$to_string",    native_i64_to_string,    "fun to_string(val: i64): string");
+    registry.bind_native("f32$$to_string",    native_f32_to_string,    "fun to_string(val: f32): string");
+    registry.bind_native("f64$$to_string",    native_f64_to_string,    "fun to_string(val: f64): string");
+    registry.bind_native("string$$to_string", native_string_to_string, "fun to_string(val: string): string");
 
     // Hash natives for primitive types
-    registry.bind_native("bool$$hash", native_bool_hash,
-                         {TK::Bool}, TK::I64);
-    registry.bind_native("i8$$hash", native_i8_hash,
-                         {TK::I8}, TK::I64);
-    registry.bind_native("i16$$hash", native_i16_hash,
-                         {TK::I16}, TK::I64);
-    registry.bind_native("i32$$hash", native_i32_hash,
-                         {TK::I32}, TK::I64);
-    registry.bind_native("i64$$hash", native_i64_hash,
-                         {TK::I64}, TK::I64);
-    registry.bind_native("u8$$hash", native_u8_hash,
-                         {TK::U8}, TK::I64);
-    registry.bind_native("u16$$hash", native_u16_hash,
-                         {TK::U16}, TK::I64);
-    registry.bind_native("u32$$hash", native_u32_hash,
-                         {TK::U32}, TK::I64);
-    registry.bind_native("u64$$hash", native_u64_hash,
-                         {TK::U64}, TK::I64);
-    registry.bind_native("f32$$hash", native_f32_hash,
-                         {TK::F32}, TK::I64);
-    registry.bind_native("f64$$hash", native_f64_hash,
-                         {TK::F64}, TK::I64);
-    registry.bind_native("string$$hash", native_string_hash,
-                         {TK::String}, TK::I64);
+    registry.bind_native("bool$$hash",   native_bool_hash,   "fun hash(val: bool): i64");
+    registry.bind_native("i8$$hash",     native_i8_hash,     "fun hash(val: i8): i64");
+    registry.bind_native("i16$$hash",    native_i16_hash,    "fun hash(val: i16): i64");
+    registry.bind_native("i32$$hash",    native_i32_hash,    "fun hash(val: i32): i64");
+    registry.bind_native("i64$$hash",    native_i64_hash,    "fun hash(val: i64): i64");
+    registry.bind_native("u8$$hash",     native_u8_hash,     "fun hash(val: u8): i64");
+    registry.bind_native("u16$$hash",    native_u16_hash,    "fun hash(val: u16): i64");
+    registry.bind_native("u32$$hash",    native_u32_hash,    "fun hash(val: u32): i64");
+    registry.bind_native("u64$$hash",    native_u64_hash,    "fun hash(val: u64): i64");
+    registry.bind_native("f32$$hash",    native_f32_hash,    "fun hash(val: f32): i64");
+    registry.bind_native("f64$$hash",    native_f64_hash,    "fun hash(val: f64): i64");
+    registry.bind_native("string$$hash", native_string_hash, "fun hash(val: string): i64");
 
     // Map<K, V> - registered as a generic native type with 2 type params
-    registry.register_generic_type("Map", 2, "map_alloc", native_map_alloc);
+    registry.register_generic_type("Map<K, V>", "map_alloc", native_map_alloc);
     // Constructor receives: key_kind (i32, hidden), capacity (i32, optional)
-    registry.bind_generic_constructor("Map", native_map_init,
-                                      1, {concrete_param(TK::I32), concrete_param(TK::I32)});
+    registry.bind_constructor(native_map_init, "fun Map<K, V>.new(key_kind: i32, capacity: i32)", 1);
     registry.bind_generic_destructor("Map", native_map_delete);
     registry.bind_generic_copy_constructor("Map", "map_copy", native_map_copy);
-    registry.bind_generic_method("Map", "len",      native_map_len,
-                                 {}, concrete_param(TK::I32));
-    registry.bind_generic_method("Map", "contains", native_map_contains,
-                                 {type_param(0)}, concrete_param(TK::Bool));
-    registry.bind_generic_method("Map", "get",      native_map_get,
-                                 {type_param(0)}, type_param(1));
-    registry.bind_generic_method("Map", "insert",   native_map_insert,
-                                 {type_param(0), type_param(1)}, concrete_param(TK::Void));
-    registry.bind_generic_method("Map", "remove",   native_map_remove,
-                                 {type_param(0)}, concrete_param(TK::Bool));
-    registry.bind_generic_method("Map", "clear",    native_map_clear,
-                                 {}, concrete_param(TK::Void));
-    registry.bind_generic_method("Map", "keys",     native_map_keys,
-                                 {}, list_of_type_param(0));
-    registry.bind_generic_method("Map", "values",   native_map_values,
-                                 {}, list_of_type_param(1));
-    registry.bind_generic_method("Map", "index",    native_map_index,
-                                 {type_param(0)}, type_param(1));
-    registry.bind_generic_method("Map", "index_mut", native_map_index_mut,
-                                 {type_param(0), type_param(1)}, concrete_param(TK::Void));
+    registry.bind_method(native_map_len,       "fun Map<K, V>.len(): i32");
+    registry.bind_method(native_map_contains,  "fun Map<K, V>.contains(key: K): bool");
+    registry.bind_method(native_map_get,       "fun Map<K, V>.get(key: K): V");
+    registry.bind_method(native_map_insert,    "fun Map<K, V>.insert(key: K, val: V)");
+    registry.bind_method(native_map_remove,    "fun Map<K, V>.remove(key: K): bool");
+    registry.bind_method(native_map_clear,     "fun Map<K, V>.clear()");
+    registry.bind_method(native_map_keys,      "fun Map<K, V>.keys(): List<K>");
+    registry.bind_method(native_map_values,    "fun Map<K, V>.values(): List<V>");
+    registry.bind_method(native_map_index,     "fun Map<K, V>.index(key: K): V");
+    registry.bind_method(native_map_index_mut, "fun Map<K, V>.index_mut(key: K, val: V)");
 }
 
 }

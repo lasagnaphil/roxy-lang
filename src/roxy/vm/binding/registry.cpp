@@ -1,11 +1,15 @@
 #include "roxy/vm/binding/registry.hpp"
 #include "roxy/compiler/type_env.hpp"
+#include "roxy/compiler/ast.hpp"
+#include "roxy/shared/lexer.hpp"
+#include "roxy/compiler/parser.hpp"
 
+#include <cassert>
 #include <cstring>
 
 namespace rx {
 
-// File-local helpers (were private statics on NativeRegistry)
+// File-local helpers
 
 static u32 slot_count_for_kind(NativeTypeKind kind) {
     switch (kind) {
@@ -37,31 +41,14 @@ static Type* type_from_kind(NativeTypeKind kind, TypeCache& types) {
     }
 }
 
-static Type* resolve_param_desc(const NativeParamDesc& desc, Span<Type*> type_args, TypeCache& types) {
-    Type* inner;
-    if (desc.is_type_param) {
-        if (desc.type_param_index < type_args.size()) {
-            inner = type_args[desc.type_param_index];
-        } else {
-            return types.error_type();
-        }
-    } else {
-        inner = type_from_kind(desc.kind, types);
-    }
-    if (desc.wrapper == NativeParamWrapper::List) {
-        return types.list_type(inner);
-    }
-    return inner;
-}
-
 // NativeFunctionEntry type resolution methods
 
 Type* NativeFunctionEntry::resolve_return_type(TypeCache& types) const {
     switch (type_info_mode) {
-        case NativeTypeInfoMode::Desc:
-            return type_from_kind(return_desc.kind, types);
         case NativeTypeInfoMode::Resolver:
             return return_resolver(types);
+        case NativeTypeInfoMode::Parsed:
+            return NativeRegistry::resolve_type_expr(return_type_expr, {}, {}, types);
         default:
             return types.error_type();
     }
@@ -70,34 +57,168 @@ Type* NativeFunctionEntry::resolve_return_type(TypeCache& types) const {
 void NativeFunctionEntry::resolve_param_types(TypeCache& types, Type** out_params) const {
     for (u32 i = 0; i < param_count; i++) {
         switch (type_info_mode) {
-            case NativeTypeInfoMode::Desc:
-                out_params[i] = type_from_kind(param_descs[i].kind, types);
-                break;
             case NativeTypeInfoMode::Resolver:
                 out_params[i] = param_resolvers[i](types);
+                break;
+            case NativeTypeInfoMode::Parsed:
+                out_params[i] = NativeRegistry::resolve_type_expr(
+                    param_type_exprs[i], {}, {}, types);
                 break;
         }
     }
 }
 
+// NativeRegistry: signature parsing
+
+Decl* NativeRegistry::parse_signature(const char* signature) {
+    // Build "native <signature>;" in the allocator so AST StringViews remain valid
+    u32 sig_len = static_cast<u32>(strlen(signature));
+    u32 total_len = 7 + sig_len + 1; // "native " + sig + ";"
+    char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(total_len + 1, 1));
+    memcpy(buf, "native ", 7);
+    memcpy(buf + 7, signature, sig_len);
+    buf[7 + sig_len] = ';';
+    buf[total_len] = '\0';
+
+    Lexer lexer(buf, total_len);
+    Parser parser(lexer, m_allocator);
+    Program* program = parser.parse();
+    assert(!parser.has_error() && "Failed to parse native signature");
+    assert(program->declarations.size() == 1);
+    return program->declarations[0];
+}
+
+void NativeRegistry::parse_type_decl(const char* type_decl, StringView& out_name,
+                                     Vector<StringView>& out_param_names) {
+    // Find '<' to split "List<T>" → "List", ["T"]
+    const char* angle = strchr(type_decl, '<');
+    if (!angle) {
+        // No type params — just a name
+        out_name = make_string_view(type_decl);
+        return;
+    }
+
+    u32 name_len = static_cast<u32>(angle - type_decl);
+    // Copy name into allocator
+    char* name_buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(name_len + 1, 1));
+    memcpy(name_buf, type_decl, name_len);
+    name_buf[name_len] = '\0';
+    out_name = StringView(name_buf, name_len);
+
+    // Parse comma-separated identifiers between < and >
+    const char* p = angle + 1;
+    while (*p && *p != '>') {
+        // Skip whitespace
+        while (*p == ' ' || *p == ',') p++;
+        if (*p == '>' || *p == '\0') break;
+
+        const char* start = p;
+        while (*p && *p != ',' && *p != '>' && *p != ' ') p++;
+        u32 param_len = static_cast<u32>(p - start);
+        char* param_buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(param_len + 1, 1));
+        memcpy(param_buf, start, param_len);
+        param_buf[param_len] = '\0';
+        out_param_names.push_back(StringView(param_buf, param_len));
+    }
+}
+
+Type* NativeRegistry::resolve_type_expr(TypeExpr* expr,
+                                        Span<StringView> type_param_names,
+                                        Span<Type*> type_args,
+                                        TypeCache& types) {
+    if (!expr) return types.void_type();
+
+    StringView name = expr->name;
+
+    // Check if it's a type parameter name
+    for (u32 i = 0; i < type_param_names.size(); i++) {
+        if (name == type_param_names[i]) {
+            if (i < type_args.size()) {
+                return type_args[i];
+            }
+            // No concrete arg — return a type param placeholder
+            return types.type_param(name, i);
+        }
+    }
+
+    // Primitive types
+    Type* primitive = types.primitive_by_name(name);
+    if (primitive) return primitive;
+
+    // Generic type application: List<T>, Map<K, V>
+    if (expr->type_args.size() > 0) {
+        // Resolve type args recursively
+        if (name == StringView("List", 4) && expr->type_args.size() == 1) {
+            Type* elem = resolve_type_expr(expr->type_args[0], type_param_names, type_args, types);
+            return types.list_type(elem);
+        }
+        if (name == StringView("Map", 3) && expr->type_args.size() == 2) {
+            Type* key = resolve_type_expr(expr->type_args[0], type_param_names, type_args, types);
+            Type* val = resolve_type_expr(expr->type_args[1], type_param_names, type_args, types);
+            return types.map_type(key, val);
+        }
+    }
+
+    return types.error_type();
+}
+
 // NativeRegistry method implementations
 
-void NativeRegistry::bind_native(const char* name, NativeFunction func,
-                                 std::initializer_list<NativeTypeKind> param_type_kinds,
-                                 NativeTypeKind return_type_kind) {
+void NativeRegistry::bind_native(NativeFunction func, const char* signature) {
+    Decl* decl = parse_signature(signature);
+    assert(decl->kind == AstKind::DeclFun);
+    FunDecl& fun = decl->fun_decl;
+
     NativeFunctionEntry entry;
-    entry.name = make_string_view(name);
+    entry.name = fun.name;
     entry.func = func;
-    entry.return_desc = concrete_param(return_type_kind);
-    entry.param_count = static_cast<u32>(param_type_kinds.size());
+    entry.type_info_mode = NativeTypeInfoMode::Parsed;
+    entry.param_count = fun.params.size();
     entry.min_args = entry.param_count;
-    entry.type_info_mode = NativeTypeInfoMode::Desc;
     entry.is_method = false;
     entry.method_kind = GenericMethodKind::Method;
+    entry.return_type_expr = fun.return_type;
 
-    for (NativeTypeKind k : param_type_kinds) {
-        entry.param_descs.push_back(concrete_param(k));
+    // Store param TypeExprs
+    TypeExpr** param_exprs = nullptr;
+    if (entry.param_count > 0) {
+        param_exprs = reinterpret_cast<TypeExpr**>(
+            m_allocator.alloc_bytes(sizeof(TypeExpr*) * entry.param_count, alignof(TypeExpr*)));
+        for (u32 i = 0; i < entry.param_count; i++) {
+            param_exprs[i] = fun.params[i].type;
+        }
     }
+    entry.param_type_exprs = Span<TypeExpr*>(param_exprs, entry.param_count);
+
+    m_function_entries.push_back(entry);
+    m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
+}
+
+void NativeRegistry::bind_native(const char* override_name, NativeFunction func,
+                                 const char* signature) {
+    Decl* decl = parse_signature(signature);
+    assert(decl->kind == AstKind::DeclFun);
+    FunDecl& fun = decl->fun_decl;
+
+    NativeFunctionEntry entry;
+    entry.name = make_string_view(override_name);
+    entry.func = func;
+    entry.type_info_mode = NativeTypeInfoMode::Parsed;
+    entry.param_count = fun.params.size();
+    entry.min_args = entry.param_count;
+    entry.is_method = false;
+    entry.method_kind = GenericMethodKind::Method;
+    entry.return_type_expr = fun.return_type;
+
+    TypeExpr** param_exprs = nullptr;
+    if (entry.param_count > 0) {
+        param_exprs = reinterpret_cast<TypeExpr**>(
+            m_allocator.alloc_bytes(sizeof(TypeExpr*) * entry.param_count, alignof(TypeExpr*)));
+        for (u32 i = 0; i < entry.param_count; i++) {
+            param_exprs[i] = fun.params[i].type;
+        }
+    }
+    entry.param_type_exprs = Span<TypeExpr*>(param_exprs, entry.param_count);
 
     m_function_entries.push_back(entry);
     m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
@@ -112,92 +233,80 @@ void NativeRegistry::register_struct(const char* name, std::initializer_list<Nat
     m_struct_entries.push_back(entry);
 }
 
-void NativeRegistry::bind_method_native(const char* struct_name, const char* method_name,
-                                        NativeFunction func,
-                                        std::initializer_list<NativeTypeKind> param_type_kinds,
-                                        NativeTypeKind return_type_kind) {
+void NativeRegistry::bind_method(NativeFunction func, const char* signature) {
+    Decl* decl = parse_signature(signature);
+    assert(decl->kind == AstKind::DeclMethod);
+    MethodDecl& method = decl->method_decl;
+
     NativeFunctionEntry entry;
-    entry.struct_name = make_string_view(struct_name);
-    entry.method_name = make_string_view(method_name);
+    entry.struct_name = method.struct_name;
+    entry.method_name = method.name;
     entry.name = mangle_method_name(entry.struct_name, entry.method_name);
     entry.func = func;
-    entry.return_desc = concrete_param(return_type_kind);
-    entry.param_count = static_cast<u32>(param_type_kinds.size());
+    entry.type_info_mode = NativeTypeInfoMode::Parsed;
+    entry.param_count = method.params.size();
     entry.min_args = entry.param_count;
-    entry.type_info_mode = NativeTypeInfoMode::Desc;
     entry.is_method = true;
     entry.method_kind = GenericMethodKind::Method;
+    entry.return_type_expr = method.return_type;
 
-    for (NativeTypeKind k : param_type_kinds) {
-        entry.param_descs.push_back(concrete_param(k));
+    TypeExpr** param_exprs = nullptr;
+    if (entry.param_count > 0) {
+        param_exprs = reinterpret_cast<TypeExpr**>(
+            m_allocator.alloc_bytes(sizeof(TypeExpr*) * entry.param_count, alignof(TypeExpr*)));
+        for (u32 i = 0; i < entry.param_count; i++) {
+            param_exprs[i] = method.params[i].type;
+        }
     }
+    entry.param_type_exprs = Span<TypeExpr*>(param_exprs, entry.param_count);
 
     m_function_entries.push_back(entry);
     m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
 }
 
-void NativeRegistry::register_generic_type(const char* name, u32 type_param_count,
+void NativeRegistry::bind_constructor(NativeFunction func, const char* signature, u32 min_args) {
+    Decl* decl = parse_signature(signature);
+    assert(decl->kind == AstKind::DeclMethod);
+    MethodDecl& method = decl->method_decl;
+
+    NativeFunctionEntry entry;
+    entry.struct_name = method.struct_name;
+    entry.method_name = method.name;
+    entry.name = mangle_method_name(entry.struct_name, entry.method_name);
+    entry.func = func;
+    entry.type_info_mode = NativeTypeInfoMode::Parsed;
+    entry.param_count = method.params.size();
+    entry.min_args = min_args;
+    entry.is_method = true;
+    entry.method_kind = GenericMethodKind::Constructor;
+    entry.return_type_expr = nullptr; // constructors return void
+
+    TypeExpr** param_exprs = nullptr;
+    if (entry.param_count > 0) {
+        param_exprs = reinterpret_cast<TypeExpr**>(
+            m_allocator.alloc_bytes(sizeof(TypeExpr*) * entry.param_count, alignof(TypeExpr*)));
+        for (u32 i = 0; i < entry.param_count; i++) {
+            param_exprs[i] = method.params[i].type;
+        }
+    }
+    entry.param_type_exprs = Span<TypeExpr*>(param_exprs, entry.param_count);
+
+    m_function_entries.push_back(entry);
+    m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
+}
+
+void NativeRegistry::register_generic_type(const char* type_decl,
                                            const char* alloc_name, NativeFunction alloc_func) {
     NativeGenericTypeEntry entry;
-    entry.name = make_string_view(name);
-    entry.type_param_count = type_param_count;
+    parse_type_decl(type_decl, entry.name, entry.type_param_names);
+    entry.type_param_count = static_cast<u32>(entry.type_param_names.size());
     entry.alloc_native_name = make_string_view(alloc_name);
 
     m_generic_types[entry.name] = std::move(entry);
 
     // Register the alloc function as a regular non-method native
-    bind_native(alloc_name, alloc_func, {}, NativeTypeKind::I64);
-}
-
-void NativeRegistry::bind_generic_method(const char* type_name, const char* method_name,
-                                         NativeFunction func,
-                                         std::initializer_list<NativeParamDesc> params,
-                                         NativeParamDesc return_desc) {
-    StringView sn = make_string_view(type_name);
-    StringView mn = make_string_view(method_name);
-    StringView mangled = mangle_method_name(sn, mn);
-
-    NativeFunctionEntry ne;
-    ne.name = mangled;
-    ne.func = func;
-    ne.param_count = static_cast<u32>(params.size());
-    ne.min_args = ne.param_count;
-    ne.type_info_mode = NativeTypeInfoMode::Desc;
-    ne.is_method = true;
-    ne.method_kind = GenericMethodKind::Method;
-    ne.struct_name = sn;
-    ne.method_name = mn;
-    ne.return_desc = return_desc;
-
-    for (auto& p : params) ne.param_descs.push_back(p);
-
-    m_function_entries.push_back(ne);
-    m_name_to_index[mangled] = static_cast<i32>(m_function_entries.size() - 1);
-}
-
-void NativeRegistry::bind_generic_constructor(const char* type_name, NativeFunction func,
-                                              u32 min_args,
-                                              std::initializer_list<NativeParamDesc> params) {
-    StringView sn = make_string_view(type_name);
-    StringView mn = make_string_view("new");
-    StringView mangled = mangle_method_name(sn, mn);
-
-    NativeFunctionEntry ne;
-    ne.name = mangled;
-    ne.func = func;
-    ne.param_count = static_cast<u32>(params.size());
-    ne.min_args = min_args;
-    ne.type_info_mode = NativeTypeInfoMode::Desc;
-    ne.is_method = true;
-    ne.method_kind = GenericMethodKind::Constructor;
-    ne.struct_name = sn;
-    ne.method_name = mn;
-    ne.return_desc = concrete_param(NativeTypeKind::Void);
-
-    for (auto& p : params) ne.param_descs.push_back(p);
-
-    m_function_entries.push_back(ne);
-    m_name_to_index[mangled] = static_cast<i32>(m_function_entries.size() - 1);
+    // Alloc functions take no params and return i64 (pointer)
+    bind_native(alloc_name, alloc_func, "fun alloc(): i64");
 }
 
 void NativeRegistry::bind_generic_destructor(const char* type_name, NativeFunction func) {
@@ -205,20 +314,19 @@ void NativeRegistry::bind_generic_destructor(const char* type_name, NativeFuncti
     StringView mn = make_string_view("delete");
     StringView mangled = mangle_method_name(sn, mn);
 
-    NativeFunctionEntry ne;
-    ne.name = mangled;
-    ne.func = func;
-    ne.param_count = 0;
-    ne.min_args = 0;
-    ne.type_info_mode = NativeTypeInfoMode::Desc;
-    ne.is_method = true;
-    ne.method_kind = GenericMethodKind::Destructor;
-    ne.struct_name = sn;
-    ne.method_name = mn;
-    ne.return_desc = concrete_param(NativeTypeKind::Void);
+    NativeFunctionEntry entry;
+    entry.name = mangled;
+    entry.func = func;
+    entry.param_count = 0;
+    entry.min_args = 0;
+    entry.type_info_mode = NativeTypeInfoMode::Parsed;
+    entry.is_method = true;
+    entry.method_kind = GenericMethodKind::Destructor;
+    entry.struct_name = sn;
+    entry.method_name = mn;
+    entry.return_type_expr = nullptr;
 
-
-    m_function_entries.push_back(ne);
+    m_function_entries.push_back(entry);
     m_name_to_index[mangled] = static_cast<i32>(m_function_entries.size() - 1);
 }
 
@@ -232,7 +340,7 @@ void NativeRegistry::bind_generic_copy_constructor(const char* type_name,
     it.value().copy_native_name = copy_name;
 
     // Register as a regular native function (takes 1 pointer arg, returns pointer)
-    bind_native(copy_func_name, func, {NativeTypeKind::I64}, NativeTypeKind::I64);
+    bind_native(copy_func_name, func, "fun copy(src: i64): i64");
 }
 
 bool NativeRegistry::has_generic_type(StringView name) const {
@@ -257,6 +365,16 @@ StringView NativeRegistry::get_generic_copy_name(StringView name) const {
 
 Span<MethodInfo> NativeRegistry::instantiate_generic_methods(StringView name, Span<Type*> type_args,
                                                               BumpAllocator& allocator, TypeCache& types) const {
+    // Look up type param names for this generic type
+    auto gen_it = m_generic_types.find(name);
+    Span<StringView> type_param_names;
+    if (gen_it != m_generic_types.end()) {
+        const auto& param_names = gen_it->second.type_param_names;
+        type_param_names = Span<StringView>(
+            const_cast<StringView*>(param_names.data()),
+            static_cast<u32>(param_names.size()));
+    }
+
     // Count method entries for this struct
     u32 count = 0;
     for (const auto& entry : m_function_entries) {
@@ -275,22 +393,39 @@ Span<MethodInfo> NativeRegistry::instantiate_generic_methods(StringView name, Sp
         if (!entry.is_method || entry.struct_name != name ||
             entry.method_kind != GenericMethodKind::Method) continue;
 
-        MethodInfo& mi = methods[idx++];
-        mi.name = entry.method_name;
-        mi.native_name = entry.name;
-        mi.decl = nullptr;
+        MethodInfo& method_info = methods[idx++];
+        method_info.name = entry.method_name;
+        method_info.native_name = entry.name;
+        method_info.decl = nullptr;
 
-        u32 pc = entry.param_count;
-        Type** ptypes = nullptr;
-        if (pc > 0) {
-            ptypes = reinterpret_cast<Type**>(
-                allocator.alloc_bytes(sizeof(Type*) * pc, alignof(Type*)));
-            for (u32 j = 0; j < pc; j++) {
-                ptypes[j] = resolve_param_desc(entry.param_descs[j], type_args, types);
+        u32 param_count = entry.param_count;
+        Type** param_types = nullptr;
+        if (param_count > 0) {
+            param_types = reinterpret_cast<Type**>(
+                allocator.alloc_bytes(sizeof(Type*) * param_count, alignof(Type*)));
+            for (u32 j = 0; j < param_count; j++) {
+                switch (entry.type_info_mode) {
+                    case NativeTypeInfoMode::Parsed:
+                        param_types[j] = resolve_type_expr(
+                            entry.param_type_exprs[j], type_param_names, type_args, types);
+                        break;
+                    case NativeTypeInfoMode::Resolver:
+                        param_types[j] = entry.param_resolvers[j](types);
+                        break;
+                }
             }
         }
-        mi.param_types = Span<Type*>(ptypes, pc);
-        mi.return_type = resolve_param_desc(entry.return_desc, type_args, types);
+        method_info.param_types = Span<Type*>(param_types, param_count);
+
+        switch (entry.type_info_mode) {
+            case NativeTypeInfoMode::Parsed:
+                method_info.return_type = resolve_type_expr(
+                    entry.return_type_expr, type_param_names, type_args, types);
+                break;
+            case NativeTypeInfoMode::Resolver:
+                method_info.return_type = entry.return_resolver(types);
+                break;
+        }
     }
 
     return Span<MethodInfo>(methods, count);
@@ -299,20 +434,38 @@ Span<MethodInfo> NativeRegistry::instantiate_generic_methods(StringView name, Sp
 ResolvedConstructor NativeRegistry::instantiate_generic_constructor(StringView name, Span<Type*> type_args,
                                                                      BumpAllocator& allocator,
                                                                      TypeCache& types) const {
+    // Look up type param names for this generic type
+    auto gen_it = m_generic_types.find(name);
+    Span<StringView> type_param_names;
+    if (gen_it != m_generic_types.end()) {
+        const auto& param_names = gen_it->second.type_param_names;
+        type_param_names = Span<StringView>(
+            const_cast<StringView*>(param_names.data()),
+            static_cast<u32>(param_names.size()));
+    }
+
     for (const auto& entry : m_function_entries) {
         if (!entry.is_method || entry.struct_name != name ||
             entry.method_kind != GenericMethodKind::Constructor) continue;
 
-        u32 pc = entry.param_count;
-        Type** ptypes = nullptr;
-        if (pc > 0) {
-            ptypes = reinterpret_cast<Type**>(
-                allocator.alloc_bytes(sizeof(Type*) * pc, alignof(Type*)));
-            for (u32 j = 0; j < pc; j++) {
-                ptypes[j] = resolve_param_desc(entry.param_descs[j], type_args, types);
+        u32 param_count = entry.param_count;
+        Type** param_types = nullptr;
+        if (param_count > 0) {
+            param_types = reinterpret_cast<Type**>(
+                allocator.alloc_bytes(sizeof(Type*) * param_count, alignof(Type*)));
+            for (u32 j = 0; j < param_count; j++) {
+                switch (entry.type_info_mode) {
+                    case NativeTypeInfoMode::Parsed:
+                        param_types[j] = resolve_type_expr(
+                            entry.param_type_exprs[j], type_param_names, type_args, types);
+                        break;
+                    case NativeTypeInfoMode::Resolver:
+                        param_types[j] = entry.param_resolvers[j](types);
+                        break;
+                }
             }
         }
-        return {entry.name, Span<Type*>(ptypes, pc), entry.min_args};
+        return {entry.name, Span<Type*>(param_types, param_count), entry.min_args};
     }
 
     return {StringView(nullptr, 0), Span<Type*>(), 0};
@@ -371,34 +524,34 @@ void NativeRegistry::apply_methods_to_types(TypeEnv& type_env, BumpAllocator& al
 
         u32 existing = struct_type->struct_info.methods.size();
         u32 total = existing + static_cast<u32>(methods.size());
-        MethodInfo* mi_array = reinterpret_cast<MethodInfo*>(
+        MethodInfo* method_info_array = reinterpret_cast<MethodInfo*>(
             allocator.alloc_bytes(sizeof(MethodInfo) * total, alignof(MethodInfo)));
 
         // Copy existing methods
         for (u32 i = 0; i < existing; i++) {
-            mi_array[i] = struct_type->struct_info.methods[i];
+            method_info_array[i] = struct_type->struct_info.methods[i];
         }
 
         // Add new native methods
         for (u32 i = 0; i < methods.size(); i++) {
             const NativeFunctionEntry* e = methods[i];
-            MethodInfo& mi = mi_array[existing + i];
-            mi.name = e->method_name;
-            mi.decl = nullptr;  // Native methods have no AST
+            MethodInfo& method_info = method_info_array[existing + i];
+            method_info.name = e->method_name;
+            method_info.decl = nullptr;  // Native methods have no AST
 
             // Build param types (excluding self)
-            u32 pc = e->param_count;
-            Type** ptypes = nullptr;
-            if (pc > 0) {
-                ptypes = reinterpret_cast<Type**>(
-                    allocator.alloc_bytes(sizeof(Type*) * pc, alignof(Type*)));
-                e->resolve_param_types(types, ptypes);
+            u32 param_count = e->param_count;
+            Type** param_types = nullptr;
+            if (param_count > 0) {
+                param_types = reinterpret_cast<Type**>(
+                    allocator.alloc_bytes(sizeof(Type*) * param_count, alignof(Type*)));
+                e->resolve_param_types(types, param_types);
             }
-            mi.param_types = Span<Type*>(ptypes, pc);
-            mi.return_type = e->resolve_return_type(types);
+            method_info.param_types = Span<Type*>(param_types, param_count);
+            method_info.return_type = e->resolve_return_type(types);
         }
 
-        struct_type->struct_info.methods = Span<MethodInfo>(mi_array, total);
+        struct_type->struct_info.methods = Span<MethodInfo>(method_info_array, total);
     }
 }
 

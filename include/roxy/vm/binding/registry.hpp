@@ -20,10 +20,11 @@
 
 namespace rx {
 
-// Forward declaration
+// Forward declarations
 class TypeEnv;
+struct TypeExpr;
 
-// Type kind enum for deferred type creation
+// Type kind enum for deferred type creation (used by NativeFieldEntry for struct field registration)
 enum class NativeTypeKind : u8 {
     Void, Bool,
     I8, I16, I32, I64,
@@ -31,25 +32,6 @@ enum class NativeTypeKind : u8 {
     F32, F64,
     String,    // string
 };
-
-// Wrapper for container return types (e.g., List<K> from keys())
-enum class NativeParamWrapper : u8 {
-    None,   // Raw type (current behavior)
-    List,   // List<inner_type>
-};
-
-// Parameter descriptor for native type methods/constructors/destructors.
-// Also used as the unified parameter description in NativeFunctionEntry (concrete_param wraps NativeTypeKind).
-struct NativeParamDesc {
-    bool is_type_param;
-    NativeTypeKind kind;          // when !is_type_param
-    u32 type_param_index;         // when is_type_param (0=T, 1=U, ...)
-    NativeParamWrapper wrapper = NativeParamWrapper::None;
-};
-
-inline NativeParamDesc concrete_param(NativeTypeKind k) { return {false, k, 0, NativeParamWrapper::None}; }
-inline NativeParamDesc type_param(u32 index) { return {true, NativeTypeKind::Void, index, NativeParamWrapper::None}; }
-inline NativeParamDesc list_of_type_param(u32 index) { return {true, NativeTypeKind::Void, index, NativeParamWrapper::List}; }
 
 // What kind of method entry this is
 enum class GenericMethodKind : u8 {
@@ -76,21 +58,21 @@ using TypeResolverFn = Type* (*)(TypeCache&);
 
 // How a native function's parameter/return types are described
 enum class NativeTypeInfoMode : u8 {
-    Desc,       // NativeParamDesc-based (NativeTypeKind or type_param) — bind_native, bind_method_native
     Resolver,   // TypeResolverFn deferred resolution — bind<>, bind_method<>
+    Parsed,     // TypeExpr AST from string signature — bind_native(func, sig), bind_method(func, sig)
 };
 
 // Entry for a registered native function (unified for both concrete and generic types)
 struct NativeFunctionEntry {
     StringView name;                           // Mangled name for methods (e.g., "Point$$sum")
     NativeFunction func;
-    NativeTypeInfoMode type_info_mode = NativeTypeInfoMode::Desc;
-    // Type info path: Desc
-    Vector<NativeParamDesc> param_descs;       // Replaces param_type_kinds; supports type params for generics
-    NativeParamDesc return_desc;               // Replaces return_type_kind
+    NativeTypeInfoMode type_info_mode = NativeTypeInfoMode::Parsed;
     // Type info path: Resolver (deferred type resolution for cross-TypeCache compatibility)
     Vector<TypeResolverFn> param_resolvers;
     TypeResolverFn return_resolver = nullptr;
+    // Type info path: Parsed (TypeExpr AST from string signature)
+    Span<TypeExpr*> param_type_exprs;          // TypeExpr for each parameter
+    TypeExpr* return_type_expr = nullptr;      // TypeExpr for return type (nullptr = void)
     u32 param_count;
     u32 min_args;                              // = param_count normally; < param_count for optional params
     bool is_method;                            // True if this is a struct method
@@ -98,8 +80,7 @@ struct NativeFunctionEntry {
     StringView struct_name;                    // Non-empty for methods
     StringView method_name;                    // Original unmangled method name
 
-    // Resolve parameter/return types using the given TypeCache.
-    // Works for both modes: Desc and Resolver.
+    // Resolve parameter/return types using the given TypeCache (for Resolver mode).
     Type* resolve_return_type(TypeCache& types) const;
     void resolve_param_types(TypeCache& types, Type** out_params) const;
 };
@@ -115,6 +96,7 @@ struct ResolvedConstructor {
 struct NativeGenericTypeEntry {
     StringView name;                               // "List"
     u32 type_param_count;                          // 1
+    Vector<StringView> type_param_names;           // ["T"] for List, ["K", "V"] for Map
     StringView alloc_native_name;                  // "list_alloc" (non-method allocator)
     StringView copy_native_name;                   // "list_copy" (copy constructor for value params)
 };
@@ -155,15 +137,18 @@ public:
         m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
     }
 
-    // Register a native function with type kinds (for functions needing VM access)
-    void bind_native(const char* name, NativeFunction func,
-                     std::initializer_list<NativeTypeKind> param_type_kinds,
-                     NativeTypeKind return_type_kind);
+    // Register a native function from a Roxy signature string.
+    // Usage: registry.bind_native(func, "fun print(s: string)")
+    void bind_native(NativeFunction func, const char* signature);
+
+    // Register a native function with a name override (for $$-mangled names).
+    // Usage: registry.bind_native("bool$$to_string", func, "fun to_string(val: bool): string")
+    void bind_native(const char* override_name, NativeFunction func, const char* signature);
 
     // Register a native struct type
     void register_struct(const char* name, std::initializer_list<NativeFieldEntry> fields);
 
-    // Auto-bind a method on a native struct.
+    // Auto-bind a method on a native struct (C++ function with automatic wrapper).
     // The C++ function must take (RoxyVM*, SelfPtr*, ...) as its first two parameters.
     // Usage: registry.bind_method<point_sum>("Point", "sum")
     template<auto FnPtr>
@@ -192,26 +177,19 @@ public:
         m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
     }
 
-    // Manual-bind a method with type kinds (for methods needing VM access)
-    void bind_method_native(const char* struct_name, const char* method_name,
-                            NativeFunction func,
-                            std::initializer_list<NativeTypeKind> param_type_kinds,
-                            NativeTypeKind return_type_kind);
+    // Bind a method from a Roxy signature string (concrete or generic types).
+    // Usage: registry.bind_method(func, "fun Point.product(): i32")
+    //        registry.bind_method(func, "fun List<T>.push(val: T)")
+    void bind_method(NativeFunction func, const char* signature);
 
-    // Register a generic native type with its allocation function.
-    void register_generic_type(const char* name, u32 type_param_count,
+    // Bind a constructor from a Roxy signature string.
+    // Usage: registry.bind_constructor(func, "fun List<T>.new(cap: i32)", 0)
+    void bind_constructor(NativeFunction func, const char* signature, u32 min_args = 0);
+
+    // Register a generic native type from a type declaration string.
+    // Usage: registry.register_generic_type("List<T>", "list_alloc", func)
+    void register_generic_type(const char* type_decl,
                                const char* alloc_name, NativeFunction alloc_func);
-
-    // Bind a method on a generic native type (receives self as first arg)
-    void bind_generic_method(const char* type_name, const char* method_name,
-                             NativeFunction func,
-                             std::initializer_list<NativeParamDesc> params,
-                             NativeParamDesc return_desc);
-
-    // Bind a constructor on a generic native type (receives self as first arg)
-    void bind_generic_constructor(const char* type_name, NativeFunction func,
-                                  u32 min_args,
-                                  std::initializer_list<NativeParamDesc> params);
 
     // Bind a destructor on a generic native type (receives self as first arg, no other params)
     void bind_generic_destructor(const char* type_name, NativeFunction func);
@@ -304,6 +282,23 @@ private:
         (resolvers.push_back(&RoxyType<std::tuple_element_t<Is + 2, Tuple>>::get), ...);
         return resolvers;
     }
+
+    // Parse a Roxy function/method signature string into a Decl AST node.
+    // Prepends "native " and appends ";" then runs Lexer+Parser.
+    Decl* parse_signature(const char* signature);
+
+    // Parse "List<T>" or "Map<K, V>" → extract type name and param names.
+    void parse_type_decl(const char* type_decl, StringView& out_name,
+                         Vector<StringView>& out_param_names);
+
+    // Resolve a TypeExpr to a Type*, substituting type param names with concrete type_args.
+    // Also called from NativeFunctionEntry methods, so declared as a public static.
+public:
+    static Type* resolve_type_expr(TypeExpr* expr,
+                                   Span<StringView> type_param_names,
+                                   Span<Type*> type_args,
+                                   TypeCache& types);
+private:
 
     BumpAllocator& m_allocator;
     TypeCache& m_types;

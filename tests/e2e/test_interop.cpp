@@ -670,8 +670,7 @@ TEST_CASE("Interop - Native struct with manual method") {
         regs[dst] = static_cast<u64>(static_cast<i64>(result));
     };
 
-    registry.bind_method_native("Point", "product", native_product,
-                                {}, NativeTypeKind::I32);
+    registry.bind_method(native_product, "fun Point.product(): i32");
 
     const char* source = R"(
         fun test(): i32 {

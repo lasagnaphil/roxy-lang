@@ -1280,22 +1280,19 @@ Decl* Parser::fun_declaration(bool is_pub, bool is_native) {
     Token name_token = consume(TokenKind::Identifier, "Expected function name");
     if (m_has_error) return nullptr;
 
-    // Check for method syntax: fun StructName.method_name(...)
-    if (match(TokenKind::Dot)) {
-        if (is_native) {
-            report_error("methods cannot be 'native'");
-            return nullptr;
-        }
-        return method_declaration(is_pub, name_token);
-    }
-
-    // Check for generic type params: fun name<T, U>(...)
+    // Parse optional type params: fun Name<T, U>
     Span<TypeParam> type_params;
     if (check(TokenKind::Less)) {
         type_params = parse_type_params();
         if (m_has_error) return nullptr;
     }
 
+    // Check for method syntax: fun Name.method() or fun Name<T>.method()
+    if (match(TokenKind::Dot)) {
+        return method_declaration(is_pub, is_native, name_token, type_params);
+    }
+
+    // Regular function — type_params are the function's own generic params
     consume(TokenKind::LeftParen, "Expected '(' after function name");
     if (m_has_error) return nullptr;
 
@@ -1336,12 +1333,19 @@ Decl* Parser::fun_declaration(bool is_pub, bool is_native) {
     return decl;
 }
 
-Decl* Parser::method_declaration(bool is_pub, Token struct_token) {
+Decl* Parser::method_declaration(bool is_pub, bool is_native,
+                                  Token struct_token, Span<TypeParam> type_params) {
     SourceLocation loc = struct_token.loc;
 
-    // Parse method name (after the dot)
-    Token method_token = consume(TokenKind::Identifier, "Expected method name after '.'");
-    if (m_has_error) return nullptr;
+    // Parse method name (after the dot).
+    // Allow 'new' and 'delete' keywords as method names for constructor/destructor syntax.
+    Token method_token;
+    if (match(TokenKind::KwNew) || match(TokenKind::KwDelete)) {
+        method_token = m_previous;
+    } else {
+        method_token = consume(TokenKind::Identifier, "Expected method name after '.'");
+        if (m_has_error) return nullptr;
+    }
 
     consume(TokenKind::LeftParen, "Expected '(' after method name");
     if (m_has_error) return nullptr;
@@ -1373,9 +1377,12 @@ Decl* Parser::method_declaration(bool is_pub, Token struct_token) {
         }
     }
 
-    // Allow body-less methods (for required trait methods): ends with ';'
+    // Handle body: native ends with ';', non-native may have body or ';'
     Stmt* body = nullptr;
-    if (match(TokenKind::Semicolon)) {
+    if (is_native) {
+        consume(TokenKind::Semicolon, "Expected ';' after native method declaration");
+        if (m_has_error) return nullptr;
+    } else if (match(TokenKind::Semicolon)) {
         // No body - required trait method declaration
     } else {
         consume(TokenKind::LeftBrace, "Expected '{' before method body");
@@ -1390,10 +1397,12 @@ Decl* Parser::method_declaration(bool is_pub, Token struct_token) {
     decl->loc = loc;
     decl->method_decl.struct_name = struct_token.text();
     decl->method_decl.name = method_token.text();
+    decl->method_decl.type_params = type_params;
     decl->method_decl.params = alloc_span(params);
     decl->method_decl.return_type = return_type;
     decl->method_decl.body = body;
     decl->method_decl.is_pub = is_pub;
+    decl->method_decl.is_native = is_native;
     decl->method_decl.trait_name = trait_name;
     decl->method_decl.trait_type_args = trait_type_args;
     return decl;
