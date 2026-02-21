@@ -90,6 +90,22 @@ StringView GenericInstantiator::type_name_for_mangling(Type* type) {
             buf[pos] = '\0';
             return StringView(buf, total_len);
         }
+        case TypeKind::Map: {
+            // Map$<key>$<value>
+            StringView prefix = "Map";
+            StringView key_name = type_name_for_mangling(type->map_info.key_type);
+            StringView val_name = type_name_for_mangling(type->map_info.value_type);
+            u32 total_len = prefix.size() + 1 + key_name.size() + 1 + val_name.size();
+            char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(total_len + 1, 1));
+            u32 pos = 0;
+            memcpy(buf + pos, prefix.data(), prefix.size()); pos += prefix.size();
+            buf[pos++] = '$';
+            memcpy(buf + pos, key_name.data(), key_name.size()); pos += key_name.size();
+            buf[pos++] = '$';
+            memcpy(buf + pos, val_name.data(), val_name.size()); pos += val_name.size();
+            buf[pos] = '\0';
+            return StringView(buf, total_len);
+        }
         case TypeKind::Uniq:
         case TypeKind::Ref:
         case TypeKind::Weak: {
@@ -346,6 +362,16 @@ TypeExpr* GenericInstantiator::type_to_type_expr(Type* type, SourceLocation loc)
                 m_allocator.alloc_bytes(sizeof(TypeExpr*), alignof(TypeExpr*)));
             args[0] = type_to_type_expr(type->list_info.element_type, loc);
             result->type_args = Span<TypeExpr*>(args, 1);
+            break;
+        }
+
+        case TypeKind::Map: {
+            result->name = "Map";
+            TypeExpr** args = reinterpret_cast<TypeExpr**>(
+                m_allocator.alloc_bytes(sizeof(TypeExpr*) * 2, alignof(TypeExpr*)));
+            args[0] = type_to_type_expr(type->map_info.key_type, loc);
+            args[1] = type_to_type_expr(type->map_info.value_type, loc);
+            result->type_args = Span<TypeExpr*>(args, 2);
             break;
         }
 

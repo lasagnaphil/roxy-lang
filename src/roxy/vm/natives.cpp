@@ -1,6 +1,7 @@
 #include "roxy/vm/natives.hpp"
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/list.hpp"
+#include "roxy/vm/map.hpp"
 #include "roxy/vm/string.hpp"
 #include "roxy/vm/value.hpp"
 #include "roxy/vm/binding/registry.hpp"
@@ -309,6 +310,293 @@ static void native_string_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = regs[first_arg];
 }
 
+// ===== Hash native functions =====
+
+// SplitMix64 bit mixer
+static u64 splitmix64(u64 x) {
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9ULL;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebULL;
+    x ^= x >> 31;
+    return x;
+}
+
+static void native_bool_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    regs[dst] = static_cast<i64>(regs[first_arg] != 0 ? 1 : 0);
+}
+
+static void native_i8_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+}
+
+static void native_i16_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+}
+
+static void native_i32_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+}
+
+static void native_i64_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+}
+
+static void native_u8_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+}
+
+static void native_u16_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+}
+
+static void native_u32_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+}
+
+static void native_u64_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+}
+
+static void native_f32_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    f32 val;
+    memcpy(&val, &regs[first_arg], sizeof(f32));
+    if (val == 0.0f) val = 0.0f; // Normalize -0
+    u32 bits;
+    memcpy(&bits, &val, sizeof(u32));
+    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(static_cast<u64>(bits))));
+}
+
+static void native_f64_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    f64 val;
+    memcpy(&val, &regs[first_arg], sizeof(f64));
+    if (val == 0.0) val = 0.0; // Normalize -0
+    u64 bits;
+    memcpy(&bits, &val, sizeof(u64));
+    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(bits)));
+}
+
+static void native_string_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* str = reinterpret_cast<void*>(regs[first_arg]);
+    if (!str) {
+        regs[dst] = 0;
+        return;
+    }
+    // FNV-1a
+    u64 h = 14695981039346656037ULL;
+    const char* data = string_chars(str);
+    u32 len = string_length(str);
+    for (u32 i = 0; i < len; i++) {
+        h ^= static_cast<u64>(static_cast<u8>(data[i]));
+        h *= 1099511628211ULL;
+    }
+    regs[dst] = static_cast<u64>(static_cast<i64>(h));
+}
+
+// ===== Map native functions =====
+
+// Determine MapKeyKind from type kind constant passed as i32
+static MapKeyKind key_kind_from_i32(i32 val) {
+    return static_cast<MapKeyKind>(static_cast<u8>(val));
+}
+
+static void native_map_alloc(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    // Allocate with Integer key kind by default; constructor sets the real key_kind
+    void* map = map_alloc(vm, MapKeyKind::Integer, 0);
+    if (!map) {
+        vm->error = "failed to allocate map";
+        return;
+    }
+    regs[dst] = reinterpret_cast<u64>(map);
+}
+
+// Constructor: receives self, key_kind, optional capacity
+static void native_map_init(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]); // self
+    if (!map_ptr) {
+        vm->error = "map init: null self";
+        return;
+    }
+
+    MapHeader* header = get_map_header(map_ptr);
+
+    // First arg after self is key_kind
+    if (argc >= 2) {
+        i32 kind_val = static_cast<i32>(regs[first_arg + 1]);
+        header->key_kind = key_kind_from_i32(kind_val);
+    }
+
+    // Second arg after self is optional capacity
+    if (argc >= 3) {
+        i64 cap = static_cast<i64>(regs[first_arg + 2]);
+        if (cap < 0) {
+            vm->error = "map capacity cannot be negative";
+            return;
+        }
+        if (cap > 1000000) {
+            vm->error = "map capacity too large";
+            return;
+        }
+        if (cap > 0) {
+            u32 actual = 8;
+            while (actual < static_cast<u32>(cap)) actual *= 2;
+            // Allocate buckets
+            header->capacity = actual;
+            header->distances = static_cast<u8*>(calloc(actual, sizeof(u8)));
+            header->keys = static_cast<u64*>(calloc(actual, sizeof(u64)));
+            header->values = static_cast<u64*>(calloc(actual, sizeof(u64)));
+        }
+    }
+    regs[dst] = 0;
+}
+
+static void native_map_delete(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (map_ptr) {
+        MapHeader* header = get_map_header(map_ptr);
+        free(header->distances);
+        free(header->keys);
+        free(header->values);
+        header->distances = nullptr;
+        header->keys = nullptr;
+        header->values = nullptr;
+        header->length = 0;
+        header->capacity = 0;
+    }
+    regs[dst] = 0;
+}
+
+static void native_map_copy(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* src = reinterpret_cast<void*>(regs[first_arg]);
+    if (!src) {
+        vm->error = "map_copy: null source";
+        return;
+    }
+    void* copy = map_copy(vm, src);
+    if (!copy) {
+        vm->error = "map_copy: allocation failed";
+        return;
+    }
+    regs[dst] = reinterpret_cast<u64>(copy);
+}
+
+static void native_map_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (!map_ptr) {
+        vm->error = "map_len: null map reference";
+        return;
+    }
+    regs[dst] = static_cast<u64>(map_length(map_ptr));
+}
+
+static void native_map_contains(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (!map_ptr) {
+        vm->error = "map_contains: null map reference";
+        return;
+    }
+    u64 key = regs[first_arg + 1];
+    regs[dst] = map_contains(map_ptr, key) ? 1 : 0;
+}
+
+static void native_map_get(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (!map_ptr) {
+        vm->error = "map_get: null map reference";
+        return;
+    }
+    u64 key = regs[first_arg + 1];
+    u64 value;
+    if (!map_get(map_ptr, key, value, &vm->error)) {
+        return;
+    }
+    regs[dst] = value;
+}
+
+static void native_map_insert(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (!map_ptr) {
+        vm->error = "map_insert: null map reference";
+        return;
+    }
+    u64 key = regs[first_arg + 1];
+    u64 value = regs[first_arg + 2];
+    map_insert(map_ptr, key, value);
+    regs[dst] = 0;
+}
+
+static void native_map_remove(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (!map_ptr) {
+        vm->error = "map_remove: null map reference";
+        return;
+    }
+    u64 key = regs[first_arg + 1];
+    regs[dst] = map_remove(map_ptr, key) ? 1 : 0;
+}
+
+static void native_map_clear(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (!map_ptr) {
+        vm->error = "map_clear: null map reference";
+        return;
+    }
+    map_clear(map_ptr);
+    regs[dst] = 0;
+}
+
+static void native_map_keys(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (!map_ptr) {
+        vm->error = "map_keys: null map reference";
+        return;
+    }
+    void* keys_list = map_keys(vm, map_ptr);
+    if (!keys_list) {
+        vm->error = "map_keys: allocation failed";
+        return;
+    }
+    regs[dst] = reinterpret_cast<u64>(keys_list);
+}
+
+static void native_map_values(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (!map_ptr) {
+        vm->error = "map_values: null map reference";
+        return;
+    }
+    void* values_list = map_values(vm, map_ptr);
+    if (!values_list) {
+        vm->error = "map_values: allocation failed";
+        return;
+    }
+    regs[dst] = reinterpret_cast<u64>(values_list);
+}
+
 void register_builtin_natives(NativeRegistry& registry) {
     using TK = NativeTypeKind;
 
@@ -357,6 +645,56 @@ void register_builtin_natives(NativeRegistry& registry) {
                          {TK::F64}, TK::String);
     registry.bind_native("string$$to_string", native_string_to_string,
                          {TK::String}, TK::String);
+
+    // Hash natives for primitive types
+    registry.bind_native("bool$$hash", native_bool_hash,
+                         {TK::Bool}, TK::I64);
+    registry.bind_native("i8$$hash", native_i8_hash,
+                         {TK::I8}, TK::I64);
+    registry.bind_native("i16$$hash", native_i16_hash,
+                         {TK::I16}, TK::I64);
+    registry.bind_native("i32$$hash", native_i32_hash,
+                         {TK::I32}, TK::I64);
+    registry.bind_native("i64$$hash", native_i64_hash,
+                         {TK::I64}, TK::I64);
+    registry.bind_native("u8$$hash", native_u8_hash,
+                         {TK::U8}, TK::I64);
+    registry.bind_native("u16$$hash", native_u16_hash,
+                         {TK::U16}, TK::I64);
+    registry.bind_native("u32$$hash", native_u32_hash,
+                         {TK::U32}, TK::I64);
+    registry.bind_native("u64$$hash", native_u64_hash,
+                         {TK::U64}, TK::I64);
+    registry.bind_native("f32$$hash", native_f32_hash,
+                         {TK::F32}, TK::I64);
+    registry.bind_native("f64$$hash", native_f64_hash,
+                         {TK::F64}, TK::I64);
+    registry.bind_native("string$$hash", native_string_hash,
+                         {TK::String}, TK::I64);
+
+    // Map<K, V> - registered as a generic native type with 2 type params
+    registry.register_generic_type("Map", 2, "map_alloc", native_map_alloc);
+    // Constructor receives: key_kind (i32, hidden), capacity (i32, optional)
+    registry.bind_generic_constructor("Map", native_map_init,
+                                      1, {concrete_param(TK::I32), concrete_param(TK::I32)});
+    registry.bind_generic_destructor("Map", native_map_delete);
+    registry.bind_generic_copy_constructor("Map", "map_copy", native_map_copy);
+    registry.bind_generic_method("Map", "len",      native_map_len,
+                                 {}, concrete_param(TK::I32));
+    registry.bind_generic_method("Map", "contains", native_map_contains,
+                                 {type_param(0)}, concrete_param(TK::Bool));
+    registry.bind_generic_method("Map", "get",      native_map_get,
+                                 {type_param(0)}, type_param(1));
+    registry.bind_generic_method("Map", "insert",   native_map_insert,
+                                 {type_param(0), type_param(1)}, concrete_param(TK::Void));
+    registry.bind_generic_method("Map", "remove",   native_map_remove,
+                                 {type_param(0)}, concrete_param(TK::Bool));
+    registry.bind_generic_method("Map", "clear",    native_map_clear,
+                                 {}, concrete_param(TK::Void));
+    registry.bind_generic_method("Map", "keys",     native_map_keys,
+                                 {}, list_of_type_param(0));
+    registry.bind_generic_method("Map", "values",   native_map_values,
+                                 {}, list_of_type_param(1));
 }
 
 }

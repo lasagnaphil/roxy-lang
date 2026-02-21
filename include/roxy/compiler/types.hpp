@@ -32,6 +32,7 @@ enum class TypeKind : u8 {
 
     // Compound types
     List,
+    Map,
     Function,
     Struct,
     Enum,
@@ -176,6 +177,15 @@ struct ListTypeInfo {
     StringView copy_native_name;       // "list_copy" — deep-copy for value parameter passing
 };
 
+// Type info for map types
+struct MapTypeInfo {
+    Type* key_type;
+    Type* value_type;
+    Span<MethodInfo> methods;          // Builtin methods with concrete types
+    StringView alloc_native_name;      // "map_alloc" — set by SemanticAnalyzer
+    StringView copy_native_name;       // "map_copy" — deep-copy for value parameter passing
+};
+
 // Type info for function types
 struct FunctionTypeInfo {
     Span<Type*> param_types;
@@ -202,6 +212,7 @@ struct Type {
         EnumTypeInfo enum_info;
         TraitTypeInfo trait_info;
         ListTypeInfo list_info;
+        MapTypeInfo map_info;
         FunctionTypeInfo func_info;
         RefTypeInfo ref_info;
         TypeParamInfo type_param_info;
@@ -268,6 +279,10 @@ struct Type {
 
     bool is_list() const {
         return kind == TypeKind::List;
+    }
+
+    bool is_map() const {
+        return kind == TypeKind::Map;
     }
 
     bool is_function() const {
@@ -345,6 +360,7 @@ public:
 
     // Factory methods for compound types (with interning)
     Type* list_type(Type* element_type);
+    Type* map_type(Type* key_type, Type* value_type);
     Type* function_type(Span<Type*> param_types, Type* return_type);
     Type* uniq_type(Type* inner_type);
     Type* ref_type(Type* inner_type);
@@ -417,5 +433,8 @@ bool is_subtype_of(Type* child, Type* parent);
 
 // Look up a method in a list type's builtin methods
 const MethodInfo* lookup_list_method(const ListTypeInfo& info, StringView name);
+
+// Look up a method in a map type's builtin methods
+const MethodInfo* lookup_map_method(const MapTypeInfo& info, StringView name);
 
 }

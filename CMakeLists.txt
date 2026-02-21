@@ -68,6 +68,7 @@ add_library(roxy_vm
     src/roxy/vm/vm.cpp
     src/roxy/vm/interpreter.cpp
     src/roxy/vm/list.cpp
+    src/roxy/vm/map.cpp
     src/roxy/vm/string.cpp
     src/roxy/vm/natives.cpp
     src/roxy/vm/slab_allocator.cpp
@@ -108,6 +109,7 @@ add_executable(roxy_tests
     tests/e2e/recursion_test.cpp
     tests/e2e/algorithms_test.cpp
     tests/e2e/lists_test.cpp
+    tests/e2e/maps_test.cpp
     tests/e2e/structs_test.cpp
     tests/e2e/params_test.cpp
     tests/e2e/interop_test.cpp

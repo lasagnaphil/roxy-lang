@@ -38,13 +38,20 @@ static Type* type_from_kind(NativeTypeKind kind, TypeCache& types) {
 }
 
 static Type* resolve_param_desc(const NativeParamDesc& desc, Span<Type*> type_args, TypeCache& types) {
+    Type* inner;
     if (desc.is_type_param) {
         if (desc.type_param_index < type_args.size()) {
-            return type_args[desc.type_param_index];
+            inner = type_args[desc.type_param_index];
+        } else {
+            return types.error_type();
         }
-        return types.error_type();
+    } else {
+        inner = type_from_kind(desc.kind, types);
     }
-    return type_from_kind(desc.kind, types);
+    if (desc.wrapper == NativeParamWrapper::List) {
+        return types.list_type(inner);
+    }
+    return inner;
 }
 
 // NativeFunctionEntry type resolution methods

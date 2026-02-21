@@ -33,6 +33,9 @@ public:
     Type* printable_type() const { return m_printable_type; }
     void set_printable_type(Type* type) { m_printable_type = type; }
 
+    Type* hash_type() const { return m_hash_type; }
+    void set_hash_type(Type* type) { m_hash_type = type; }
+
     GenericInstantiator& generics() { return m_generics; }
     const GenericInstantiator& generics() const { return m_generics; }
 
@@ -42,6 +45,7 @@ private:
     tsl::robin_map<StringView, Type*> m_named_types;
     tsl::robin_map<StringView, Type*> m_trait_types;
     Type* m_printable_type = nullptr;
+    Type* m_hash_type = nullptr;
 };
 
 }

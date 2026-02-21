@@ -46,10 +46,11 @@ static u32 get_type_slot_count(Type* type) {
         case TypeKind::Struct:
             return type->struct_info.slot_count;
         
-        // Lists are pointers (2 slots)
+        // Lists and Maps are pointers (2 slots)
         case TypeKind::List:
+        case TypeKind::Map:
             return 2;
-        
+
         default:
             return 0;
     }
@@ -177,6 +178,44 @@ bool SemanticAnalyzer::analyze(Program* program) {
             m_types.register_primitive_method(tk, method_info);
             m_types.register_primitive_trait(tk, printable_type);
          }
+    }
+
+    // Pass 1.7b: Register builtin Hash trait and primitive implementations
+    if (!m_type_env.hash_type()) {
+        Type* hash_trait_type = m_types.trait_type(StringView("Hash", 4), nullptr);
+        m_type_env.set_hash_type(hash_trait_type);
+        m_type_env.register_trait_type(StringView("Hash", 4), hash_trait_type);
+
+        // Add hash() as the required trait method
+        TraitMethodInfo trait_method_info;
+        trait_method_info.name = StringView("hash", 4);
+        trait_method_info.param_types = Span<Type*>(nullptr, 0);
+        trait_method_info.return_type = m_types.i64_type();
+        trait_method_info.decl = nullptr;
+        trait_method_info.has_default = false;
+
+        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
+            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
+        tmi_data[0] = trait_method_info;
+        hash_trait_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
+
+        // Register hash() method and Hash trait for hashable primitive types
+        TypeKind hashable_kinds[] = {
+            TypeKind::Bool,
+            TypeKind::I8, TypeKind::I16, TypeKind::I32, TypeKind::I64,
+            TypeKind::U8, TypeKind::U16, TypeKind::U32, TypeKind::U64,
+            TypeKind::F32, TypeKind::F64,
+            TypeKind::String
+        };
+        for (TypeKind tk : hashable_kinds) {
+            MethodInfo method_info;
+            method_info.name = StringView("hash", 4);
+            method_info.param_types = Span<Type*>(nullptr, 0);
+            method_info.return_type = m_types.i64_type();
+            method_info.decl = nullptr;
+            m_types.register_primitive_method(tk, method_info);
+            m_types.register_primitive_trait(tk, hash_trait_type);
+        }
     }
 
     // Pass 1.8: Register built-in operator trait methods for primitive types
@@ -815,6 +854,24 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             if (!elem || elem->is_error()) return m_types.error_type();
             base_type = m_types.list_type(elem);
             populate_list_methods(base_type);
+        }
+
+        // Check for built-in Map<K, V> type
+        if (!base_type && type_expr->name == "Map") {
+            if (type_expr->type_args.size() != 2) {
+                error(type_expr->loc, "Map requires exactly 2 type arguments");
+                return m_types.error_type();
+            }
+            Type* key_type = resolve_type_expr(type_expr->type_args[0]);
+            Type* val_type = resolve_type_expr(type_expr->type_args[1]);
+            if (!key_type || key_type->is_error()) return m_types.error_type();
+            if (!val_type || val_type->is_error()) return m_types.error_type();
+            if (!is_hashable_key_type(key_type)) {
+                error(type_expr->loc, "Map key type must implement Hash");
+                return m_types.error_type();
+            }
+            base_type = m_types.map_type(key_type, val_type);
+            populate_map_methods(base_type);
         }
 
         // Check for generic struct instantiation: Box<i32>
@@ -2868,6 +2925,126 @@ Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) 
     return list_type;
 }
 
+bool SemanticAnalyzer::is_hashable_key_type(Type* type) {
+    if (!type) return false;
+    // Primitives with Hash trait
+    if (type->is_primitive()) return true;
+    // Enums use i32 underlying, always hashable
+    if (type->is_enum()) return true;
+    // Structs implementing Hash trait (not yet supported at runtime)
+    // if (type->is_struct() && m_types.implements_trait(type, m_type_env.hash_type())) return true;
+    return false;
+}
+
+void SemanticAnalyzer::populate_map_methods(Type* type) {
+    assert(type && type->is_map());
+    if (type->map_info.methods.size() > 0) return;
+
+    NativeRegistry* registry = get_builtin_registry();
+    if (!registry) return;
+
+    Type* type_args[] = { type->map_info.key_type, type->map_info.value_type };
+    Span<Type*> ta(type_args, 2);
+    Span<MethodInfo> native_methods = registry->instantiate_generic_methods(
+        "Map", ta, m_allocator, m_types);
+    type->map_info.alloc_native_name = registry->get_generic_alloc_name("Map");
+    type->map_info.copy_native_name = registry->get_generic_copy_name("Map");
+
+    // Append index(key: K): V and index_mut(key: K, val: V): void
+    Type* key_type = type->map_info.key_type;
+    Type* val_type = type->map_info.value_type;
+    u32 total = native_methods.size() + 2;
+    MethodInfo* combined = reinterpret_cast<MethodInfo*>(
+        m_allocator.alloc_bytes(sizeof(MethodInfo) * total, alignof(MethodInfo)));
+
+    for (u32 i = 0; i < native_methods.size(); i++) {
+        combined[i] = native_methods[i];
+    }
+
+    // index(key: K): V
+    {
+        Type** idx_param = reinterpret_cast<Type**>(
+            m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
+        idx_param[0] = key_type;
+        MethodInfo& method_info = combined[native_methods.size()];
+        method_info.name = StringView("index", 5);
+        method_info.param_types = Span<Type*>(idx_param, 1);
+        method_info.return_type = val_type;
+        method_info.decl = nullptr;
+        method_info.native_name = StringView();
+    }
+
+    // index_mut(key: K, val: V): void
+    {
+        Type** mut_params = reinterpret_cast<Type**>(
+            m_allocator.alloc_bytes(sizeof(Type*) * 2, alignof(Type*)));
+        mut_params[0] = key_type;
+        mut_params[1] = val_type;
+        MethodInfo& method_info = combined[native_methods.size() + 1];
+        method_info.name = StringView("index_mut", 9);
+        method_info.param_types = Span<Type*>(mut_params, 2);
+        method_info.return_type = m_types.void_type();
+        method_info.decl = nullptr;
+        method_info.native_name = StringView();
+    }
+
+    type->map_info.methods = Span<MethodInfo>(combined, total);
+}
+
+Type* SemanticAnalyzer::analyze_map_constructor_call(Expr* expr, CallExpr& ce) {
+    if (ce.type_args.size() != 2) {
+        error(expr->loc, "Map requires exactly 2 type arguments");
+        return m_types.error_type();
+    }
+    Type* key_type = resolve_type_expr(ce.type_args[0]);
+    Type* val_type = resolve_type_expr(ce.type_args[1]);
+    if (!key_type || key_type->is_error()) return m_types.error_type();
+    if (!val_type || val_type->is_error()) return m_types.error_type();
+
+    if (!is_hashable_key_type(key_type)) {
+        error(expr->loc, "Map key type must implement Hash");
+        return m_types.error_type();
+    }
+
+    Type* map_type = m_types.map_type(key_type, val_type);
+    populate_map_methods(map_type);
+
+    NativeRegistry* registry = get_builtin_registry();
+    if (!registry) {
+        error(expr->loc, "no native registry available for Map constructor");
+        return m_types.error_type();
+    }
+
+    Type* type_arg_array[] = { key_type, val_type };
+    ResolvedConstructor ctor = registry->instantiate_generic_constructor(
+        "Map", Span<Type*>(type_arg_array, 2), m_allocator, m_types);
+
+    if (ctor.native_name.empty()) {
+        error(expr->loc, "Map has no registered constructor");
+        return m_types.error_type();
+    }
+
+    // Map constructor accepts: Map<K,V>() or Map<K,V>(capacity)
+    // The semantic layer passes user arguments directly (0 or 1 capacity arg).
+    // The hidden key_kind argument is injected at IR generation time.
+    if (ce.arguments.size() > 1) {
+        error_fmt(expr->loc, "Map constructor takes 0 to 1 arguments but got {}",
+                  ce.arguments.size());
+        return m_types.error_type();
+    }
+
+    for (u32 i = 0; i < ce.arguments.size(); i++) {
+        Type* arg_type = analyze_expr(ce.arguments[i].expr);
+        if (arg_type && !arg_type->is_error()) {
+            check_assignable(m_types.i32_type(), arg_type, ce.arguments[i].expr->loc);
+        }
+    }
+
+    ce.mangled_name = ctor.native_name;
+    ce.callee->resolved_type = map_type;
+    return map_type;
+}
+
 Type* SemanticAnalyzer::analyze_generic_struct_constructor_call(Expr* expr, CallExpr& ce, StringView func_name) {
     // Resolve type args
     Vector<Type*> type_arg_types;
@@ -3098,6 +3275,9 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         if (func_name == "List") {
             return analyze_list_constructor_call(expr, call_expr);
         }
+        if (func_name == "Map") {
+            return analyze_map_constructor_call(expr, call_expr);
+        }
         if (m_type_env.generics().is_generic_struct(func_name)) {
             return analyze_generic_struct_constructor_call(expr, call_expr, func_name);
         }
@@ -3196,6 +3376,12 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                 const MethodInfo* mi = lookup_list_method(base_type->list_info, get_expr.name);
                 if (mi) return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
                 error_fmt(expr->loc, "List has no method '{}'", get_expr.name);
+                return m_types.error_type();
+            }
+            if (base_type && base_type->is_map()) {
+                const MethodInfo* mi = lookup_map_method(base_type->map_info, get_expr.name);
+                if (mi) return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
+                error_fmt(expr->loc, "Map has no method '{}'", get_expr.name);
                 return m_types.error_type();
             }
             if (base_type && base_type->is_struct()) {
@@ -3384,6 +3570,11 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
 
     if (base_type->is_list()) {
         error(get_expr.object->loc, "cannot access fields of List type; use methods like .len(), .push(), .pop()");
+        return m_types.error_type();
+    }
+
+    if (base_type->is_map()) {
+        error(get_expr.object->loc, "cannot access fields of Map type; use methods like .get(), .insert(), .len()");
         return m_types.error_type();
     }
 

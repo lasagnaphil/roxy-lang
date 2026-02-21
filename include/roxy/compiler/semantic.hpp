@@ -142,6 +142,7 @@ private:
     // Call expression sub-helpers (extracted from analyze_call_expr)
     Type* analyze_generic_fun_call(Expr* expr, CallExpr& ce, StringView func_name);
     Type* analyze_list_constructor_call(Expr* expr, CallExpr& ce);
+    Type* analyze_map_constructor_call(Expr* expr, CallExpr& ce);
     Type* analyze_generic_struct_constructor_call(Expr* expr, CallExpr& ce, StringView func_name);
     Type* analyze_super_call(Expr* expr, CallExpr& ce);
     Type* analyze_builtin_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, const MethodInfo* mi);
@@ -224,9 +225,11 @@ private:
                                                   Span<FieldInit> literal_fields,
                                                   SourceLocation loc);
 
-    // List/enum method population
+    // List/Map/enum method population
     void populate_list_methods(Type* list_type);
+    void populate_map_methods(Type* map_type);
     void populate_enum_methods(Type* enum_type);
+    bool is_hashable_key_type(Type* type);
     NativeRegistry* get_builtin_registry();
 
     // Helpers for appending to bump-allocated Span lists on StructTypeInfo

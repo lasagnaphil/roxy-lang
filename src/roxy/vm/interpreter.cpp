@@ -1,6 +1,7 @@
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/object.hpp"
 #include "roxy/vm/list.hpp"
+#include "roxy/vm/map.hpp"
 #include "roxy/vm/string.hpp"
 
 #include <cmath>
@@ -722,26 +723,53 @@ bool interpret(RoxyVM* vm) {
 
             // Index Access
             case Opcode::GET_INDEX: {
-                // Format: GET_INDEX dst, lst, idx
-                // dst = lst[idx]
-                void* lst = reg_as_ptr(regs[b]);
-                i64 index = reg_as_i64(regs[c]);
-                Value result;
-                if (!list_get(lst, index, result, &vm->error)) {
+                // Format: GET_INDEX dst, obj, key
+                void* obj = reg_as_ptr(regs[b]);
+                if (!obj) {
+                    vm->error = "Null reference in index access";
                     return false;
                 }
-                regs[a] = result.as_u64();
+                ObjectHeader* header = get_header_from_data(obj);
+                if (header->type_id == get_map_type_id()) {
+                    // Map indexing: key is u64
+                    u64 key = regs[c];
+                    u64 value;
+                    if (!map_get(obj, key, value, &vm->error)) {
+                        return false;
+                    }
+                    regs[a] = value;
+                } else {
+                    // List indexing: key is i64 index
+                    i64 index = reg_as_i64(regs[c]);
+                    Value result;
+                    if (!list_get(obj, index, result, &vm->error)) {
+                        return false;
+                    }
+                    regs[a] = result.as_u64();
+                }
                 break;
             }
 
             case Opcode::SET_INDEX: {
-                // Format: SET_INDEX lst, idx, val
-                // lst[idx] = val
-                void* lst = reg_as_ptr(regs[a]);
-                i64 index = reg_as_i64(regs[b]);
-                Value value = Value::from_u64(regs[c]);
-                if (!list_set(lst, index, value, &vm->error)) {
+                // Format: SET_INDEX obj, key, val
+                void* obj = reg_as_ptr(regs[a]);
+                if (!obj) {
+                    vm->error = "Null reference in index assignment";
                     return false;
+                }
+                ObjectHeader* header = get_header_from_data(obj);
+                if (header->type_id == get_map_type_id()) {
+                    // Map indexing: insert/update key-value
+                    u64 key = regs[b];
+                    u64 value = regs[c];
+                    map_insert(obj, key, value);
+                } else {
+                    // List indexing
+                    i64 index = reg_as_i64(regs[b]);
+                    Value value = Value::from_u64(regs[c]);
+                    if (!list_set(obj, index, value, &vm->error)) {
+                        return false;
+                    }
                 }
                 break;
             }

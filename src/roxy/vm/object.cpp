@@ -2,6 +2,7 @@
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/slab_allocator.hpp"
 #include "roxy/vm/list.hpp"
+#include "roxy/vm/map.hpp"
 #include "roxy/vm/string.hpp"
 #include "roxy/core/vector.hpp"
 
@@ -36,6 +37,7 @@ void init_type_registry() {
     if (initialized) return;
     register_list_type();
     register_string_type();
+    register_map_type();
     initialized = true;
 }
 

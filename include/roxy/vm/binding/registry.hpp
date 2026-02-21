@@ -32,16 +32,24 @@ enum class NativeTypeKind : u8 {
     String,    // string
 };
 
+// Wrapper for container return types (e.g., List<K> from keys())
+enum class NativeParamWrapper : u8 {
+    None,   // Raw type (current behavior)
+    List,   // List<inner_type>
+};
+
 // Parameter descriptor for native type methods/constructors/destructors.
 // Also used as the unified parameter description in NativeFunctionEntry (concrete_param wraps NativeTypeKind).
 struct NativeParamDesc {
     bool is_type_param;
     NativeTypeKind kind;          // when !is_type_param
     u32 type_param_index;         // when is_type_param (0=T, 1=U, ...)
+    NativeParamWrapper wrapper = NativeParamWrapper::None;
 };
 
-inline NativeParamDesc concrete_param(NativeTypeKind k) { return {false, k, 0}; }
-inline NativeParamDesc type_param(u32 index) { return {true, NativeTypeKind::Void, index}; }
+inline NativeParamDesc concrete_param(NativeTypeKind k) { return {false, k, 0, NativeParamWrapper::None}; }
+inline NativeParamDesc type_param(u32 index) { return {true, NativeTypeKind::Void, index, NativeParamWrapper::None}; }
+inline NativeParamDesc list_of_type_param(u32 index) { return {true, NativeTypeKind::Void, index, NativeParamWrapper::List}; }
 
 // What kind of method entry this is
 enum class GenericMethodKind : u8 {

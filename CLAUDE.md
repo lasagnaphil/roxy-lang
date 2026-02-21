@@ -148,6 +148,9 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Lists** - Dynamic lists (`List<T>`) with bounds checking, push/pop/len/cap methods.
 **Details:** `docs/internals/arrays.md` | **Files:** `vm/list.hpp`
 
+**Maps** - Hash tables (`Map<K, V>`) with Robin Hood open addressing, backward-shift deletion, insert/get/remove/contains/clear/keys/values methods, index operator support. Builtin `Hash` trait for primitives.
+**Details:** `docs/internals/maps.md` | **Files:** `vm/map.hpp`, `vm/map.cpp`
+
 **Strings** - Heap-allocated string objects. Operations via native functions (`str_concat`, `str_eq`, `str_len`). F-string interpolation (`f"hello {expr}"`) with automatic `to_string` conversion via builtin `Printable` trait.
 **Details:** `docs/internals/strings.md` | **Files:** `vm/string.hpp`
 
@@ -212,6 +215,7 @@ On Windows, use `.exe` extension.
   - `memory.md` - Reference types, object header, slab allocator
   - `structs.md` - Stack-allocated structs, slot-based layout, struct parameters/returns
   - `arrays.md` - Dynamic lists (`List<T>`), bounds checking
+  - `maps.md` - Hash tables (`Map<K, V>`), Robin Hood open addressing
   - `strings.md` - String objects, concatenation, comparison
   - `interop.md` - Native functions, automatic C++ binding
   - `frontend.md` - Lexer, parser, semantic analysis

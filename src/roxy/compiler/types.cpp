@@ -16,6 +16,12 @@ u64 TypeHash::operator()(const Type* t) const {
             hash ^= reinterpret_cast<u64>(t->list_info.element_type) * 31;
             break;
 
+        case TypeKind::Map:
+            // Hash based on key and value type pointers
+            hash ^= reinterpret_cast<u64>(t->map_info.key_type) * 31;
+            hash ^= reinterpret_cast<u64>(t->map_info.value_type) * 37;
+            break;
+
         case TypeKind::Function: {
             // Hash based on return type and parameter types
             hash ^= reinterpret_cast<u64>(t->func_info.return_type) * 31;
@@ -61,6 +67,10 @@ bool TypeEqual::operator()(const Type* a, const Type* b) const {
     switch (a->kind) {
         case TypeKind::List:
             return a->list_info.element_type == b->list_info.element_type;
+
+        case TypeKind::Map:
+            return a->map_info.key_type == b->map_info.key_type &&
+                   a->map_info.value_type == b->map_info.value_type;
 
         case TypeKind::Function: {
             if (a->func_info.return_type != b->func_info.return_type) return false;
@@ -136,6 +146,17 @@ Type* TypeCache::list_type(Type* element_type) {
     type->list_info.element_type = element_type;
     type->list_info.methods = Span<MethodInfo>();
     type->list_info.alloc_native_name = StringView(nullptr, 0);
+
+    return intern_type(type);
+}
+
+Type* TypeCache::map_type(Type* key_type, Type* value_type) {
+    Type* type = m_allocator.emplace<Type>();
+    type->kind = TypeKind::Map;
+    type->map_info.key_type = key_type;
+    type->map_info.value_type = value_type;
+    type->map_info.methods = Span<MethodInfo>();
+    type->map_info.alloc_native_name = StringView(nullptr, 0);
 
     return intern_type(type);
 }
@@ -300,6 +321,9 @@ const MethodInfo* TypeCache::lookup_method(Type* type, StringView name, Type** f
     if (type->is_list()) {
         return lookup_list_method(type->list_info, name);
     }
+    if (type->is_map()) {
+        return lookup_map_method(type->map_info, name);
+    }
     if (type->is_enum()) {
         for (const auto& method : type->enum_info.methods) {
             if (method.name == name) return &method;
@@ -348,6 +372,13 @@ const MethodInfo* lookup_list_method(const ListTypeInfo& info, StringView name) 
     return nullptr;
 }
 
+const MethodInfo* lookup_map_method(const MapTypeInfo& info, StringView name) {
+    for (const auto& method : info.methods) {
+        if (method.name == name) return &method;
+    }
+    return nullptr;
+}
+
 bool is_subtype_of(Type* child, Type* parent) {
     if (child == parent) return true;
     if (!child || !parent) return false;
@@ -377,6 +408,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TypeKind::F64: return "f64";
         case TypeKind::String: return "string";
         case TypeKind::List: return "list";
+        case TypeKind::Map: return "map";
         case TypeKind::Function: return "function";
         case TypeKind::Struct: return "struct";
         case TypeKind::Enum: return "enum";
@@ -435,6 +467,14 @@ void type_to_string(const Type* type, Vector<char>& out) {
         case TypeKind::List:
             append_string(out, "List<");
             type_to_string(type->list_info.element_type, out);
+            append_string(out, ">");
+            break;
+
+        case TypeKind::Map:
+            append_string(out, "Map<");
+            type_to_string(type->map_info.key_type, out);
+            append_string(out, ", ");
+            type_to_string(type->map_info.value_type, out);
             append_string(out, ">");
             break;
 

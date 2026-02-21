@@ -4,6 +4,7 @@
 #include "roxy/compiler/module_registry.hpp"
 #include "roxy/core/format.hpp"
 #include "roxy/vm/binding/registry.hpp"
+#include "roxy/vm/map.hpp"
 
 #include <cassert>
 #include <cstring>
@@ -1477,7 +1478,7 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
         u32 slot_count = 1;
         if (type && (type->kind == TypeKind::I64 || type->kind == TypeKind::U64 ||
                     type->kind == TypeKind::F64 || type->kind == TypeKind::List ||
-                    type->kind == TypeKind::String)) {
+                    type->kind == TypeKind::Map || type->kind == TypeKind::String)) {
             slot_count = 2;
         }
         return emit_load_ptr(val, slot_count, type);
@@ -1721,6 +1722,56 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         return list_ptr;
     }
 
+    // Check if this is a Map constructor call: Map<K, V>() or Map<K, V>(cap)
+    // Similar to List but injects a hidden key_kind argument
+    if (call_expr.callee->kind == AstKind::ExprIdentifier &&
+        call_expr.callee->resolved_type && call_expr.callee->resolved_type->is_map()) {
+        Type* map_resolved_type = call_expr.callee->resolved_type;
+
+        // Generate user arguments first (0 or 1 capacity arg)
+        u32 user_argc = static_cast<u32>(call_expr.arguments.size());
+        Span<ValueId> user_args = alloc_span<ValueId>(user_argc);
+        for (u32 i = 0; i < user_argc; i++) {
+            user_args[i] = gen_expr(call_expr.arguments[i].expr);
+        }
+
+        // Step 1: Allocate empty map (non-method native, 0 args)
+        StringView alloc_name = map_resolved_type->map_info.alloc_native_name;
+        i32 alloc_idx = m_registry.get_index(alloc_name);
+        Span<ValueId> empty = alloc_span<ValueId>(0);
+        ValueId map_ptr = emit_call_native(alloc_name, empty, expr->resolved_type,
+                                            static_cast<u8>(alloc_idx));
+
+        // Step 2: Call constructor with [self, key_kind, user_args...]
+        // Determine MapKeyKind from key type
+        Type* key_type = map_resolved_type->map_info.key_type;
+        i32 key_kind_val = static_cast<i32>(MapKeyKind::Integer); // default
+        if (key_type->kind == TypeKind::F32) {
+            key_kind_val = static_cast<i32>(MapKeyKind::Float32);
+        } else if (key_type->kind == TypeKind::F64) {
+            key_kind_val = static_cast<i32>(MapKeyKind::Float64);
+        } else if (key_type->kind == TypeKind::String) {
+            key_kind_val = static_cast<i32>(MapKeyKind::String);
+        }
+
+        ValueId key_kind_const = emit_const_int(static_cast<i64>(key_kind_val), m_types.i32_type());
+
+        StringView ctor_name = call_expr.mangled_name;  // "Map$$new"
+        i32 ctor_idx = m_registry.get_index(ctor_name);
+        // Constructor args: [self, key_kind, optional_capacity]
+        u32 ctor_argc = 1 + user_argc; // key_kind + user args
+        Span<ValueId> ctor_args = alloc_span<ValueId>(ctor_argc + 1);
+        ctor_args[0] = map_ptr;           // self
+        ctor_args[1] = key_kind_const;    // key_kind (hidden)
+        for (u32 i = 0; i < user_argc; i++) {
+            ctor_args[i + 2] = user_args[i];
+        }
+        emit_call_native(ctor_name, ctor_args, m_types.void_type(),
+                         static_cast<u8>(ctor_idx));
+
+        return map_ptr;
+    }
+
     // Check if this is a named constructor call: Type.ctor_name(...)
     // The callee is a GetExpr where the object is a type name (not a variable)
     // For named constructors: ge.object is an identifier that resolves to a STRUCT TYPE (not a variable of struct type)
@@ -1786,7 +1837,7 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
                     u32 slot_count = 1;
                     if (type && (type->kind == TypeKind::I64 || type->kind == TypeKind::U64 ||
                                 type->kind == TypeKind::F64 || type->kind == TypeKind::List ||
-                                type->kind == TypeKind::String)) {
+                                type->kind == TypeKind::Map || type->kind == TypeKind::String)) {
                         slot_count = 2;
                     }
                     inout_args.push_back({arg.expr->identifier.name, args[i], type, slot_count});
@@ -1870,8 +1921,8 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             Type* obj_type = get_expr.object->resolved_type;
             Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
 
-            // Check for List method call (builtin native methods)
-            if (struct_type && struct_type->is_list()) {
+            // Check for List or Map method call (builtin native methods)
+            if (struct_type && (struct_type->is_list() || struct_type->is_map())) {
                 StringView native_name = call_expr.mangled_name;
                 i32 native_idx = m_registry.get_index(native_name);
 
@@ -2610,7 +2661,7 @@ ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {
             u32 slot_count = 1;
             if (type && (type->kind == TypeKind::I64 || type->kind == TypeKind::U64 ||
                         type->kind == TypeKind::F64 || type->kind == TypeKind::List ||
-                        type->kind == TypeKind::String)) {
+                        type->kind == TypeKind::Map || type->kind == TypeKind::String)) {
                 slot_count = 2;
             }
 
