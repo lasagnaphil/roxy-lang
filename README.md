@@ -1,6 +1,8 @@
 # The Roxy scripting language
 
-<img src="assets/images/roxy-lang.png" alt="Roxy language example" width="400">
+<p align="center">
+  <img src="assets/images/roxy-lang.png" alt="Roxy language example" width="400">
+</p>
 
 This is Roxy, an embeddable scripting language targeted towards game development.
 
