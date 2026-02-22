@@ -101,6 +101,10 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_jump_patches.clear();
     m_free_regs.clear();
     m_active.clear();
+    m_spill_slots.clear();
+    m_reg_to_value.clear();
+    m_has_spilling = false;
+    m_scratch_regs[0] = m_scratch_regs[1] = 0xFF;
     m_next_reg = 0;
     m_next_stack_slot = 0;
 
@@ -115,6 +119,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
 
         // Map this parameter value to its starting register
         m_value_to_reg[param.value.id] = param_reg_offset;
+        m_reg_to_value[param_reg_offset] = param.value.id;
         if (param.type) {
             m_value_types[param.value.id] = param.type;
         }
@@ -183,6 +188,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                         // A free-list register could have live values in subsequent slots.
                         u8 reg = bump_register();
                         m_value_to_reg[inst->result.id] = reg;
+                        m_reg_to_value[reg] = inst->result.id;
                     } else {
                         allocate_register(inst->result);
                     }
@@ -427,10 +433,43 @@ u8 BytecodeBuilder::allocate_register(ValueId value) {
         m_free_regs[min_idx] = m_free_regs.back();
         m_free_regs.pop_back();
     } else {
-        reg = bump_register();
+        // Check if we need to spill before bumping
+        u16 reg_limit = m_has_spilling ? static_cast<u16>(m_scratch_regs[0]) : 255;
+        if (m_next_reg >= reg_limit && !m_free_regs.empty()) {
+            // Free list has entries (from spilling cross-block values we can't normally reuse)
+            u32 min_idx = 0;
+            for (u32 i = 1; i < m_free_regs.size(); i++) {
+                if (m_free_regs[i] < m_free_regs[min_idx]) {
+                    min_idx = i;
+                }
+            }
+            reg = m_free_regs[min_idx];
+            m_free_regs[min_idx] = m_free_regs.back();
+            m_free_regs.pop_back();
+        } else if (m_next_reg >= reg_limit) {
+            // No free registers and at the limit — spill to free one
+            spill_furthest();
+            // After spilling, there should be a register in the free list
+            if (m_free_regs.empty()) {
+                report_error("Internal error: spilling failed to free a register");
+                return 0xFF;
+            }
+            u32 min_idx = 0;
+            for (u32 i = 1; i < m_free_regs.size(); i++) {
+                if (m_free_regs[i] < m_free_regs[min_idx]) {
+                    min_idx = i;
+                }
+            }
+            reg = m_free_regs[min_idx];
+            m_free_regs[min_idx] = m_free_regs.back();
+            m_free_regs.pop_back();
+        } else {
+            reg = bump_register();
+        }
     }
 
     m_value_to_reg[value.id] = reg;
+    m_reg_to_value[reg] = value.id;
 
     // Add to active set for expiry tracking.
     // With RPO ordering, liveness is correct for all values including block params.
@@ -464,6 +503,102 @@ u8 BytecodeBuilder::get_register(ValueId value) {
 bool BytecodeBuilder::has_register(ValueId value) const {
     if (!value.is_valid()) return false;
     return m_value_to_reg.find(value.id) != m_value_to_reg.end();
+}
+
+void BytecodeBuilder::spill_furthest() {
+    // First time: reserve 2 scratch registers by spilling the 2 furthest-living values
+    if (!m_has_spilling) {
+        m_has_spilling = true;
+        for (int s = 0; s < 2; s++) {
+            if (m_active.empty()) {
+                report_error("Internal error: no active values to spill for scratch registers");
+                return;
+            }
+            // m_active sorted ascending by last_use — back() is the furthest
+            ActiveAlloc furthest = m_active.back();
+            m_active.pop_back();
+
+            u32 spill_slot = m_next_stack_slot;
+            m_next_stack_slot += 2;
+
+            auto reg_it = m_reg_to_value.find(furthest.reg);
+            if (reg_it != m_reg_to_value.end()) {
+                u32 spilled_value_id = reg_it->second;
+                m_spill_slots[spilled_value_id] = spill_slot;
+                m_value_to_reg.erase(spilled_value_id);
+                m_reg_to_value.erase(furthest.reg);
+            }
+
+            m_scratch_regs[s] = furthest.reg;
+            // Scratch regs are NOT added to free list — they're permanently reserved
+        }
+        // Ensure scratch_regs[0] < scratch_regs[1] for consistent ordering
+        if (m_scratch_regs[0] > m_scratch_regs[1]) {
+            u8 tmp = m_scratch_regs[0];
+            m_scratch_regs[0] = m_scratch_regs[1];
+            m_scratch_regs[1] = tmp;
+        }
+    }
+
+    // Spill one more value to free a register for the caller
+    if (m_active.empty()) {
+        report_error("Internal error: no active values to spill");
+        return;
+    }
+    ActiveAlloc furthest = m_active.back();
+    m_active.pop_back();
+
+    u32 spill_slot = m_next_stack_slot;
+    m_next_stack_slot += 2;
+
+    auto reg_it = m_reg_to_value.find(furthest.reg);
+    if (reg_it != m_reg_to_value.end()) {
+        u32 spilled_value_id = reg_it->second;
+        m_spill_slots[spilled_value_id] = spill_slot;
+        m_value_to_reg.erase(spilled_value_id);
+        m_reg_to_value.erase(furthest.reg);
+    }
+
+    m_free_regs.push_back(furthest.reg);
+}
+
+u8 BytecodeBuilder::get_result_register(ValueId value) {
+    if (!value.is_valid()) return 0xFF;
+
+    auto reg_it = m_value_to_reg.find(value.id);
+    if (reg_it != m_value_to_reg.end()) return reg_it->second;
+
+    // Spilled result: compute into scratch[0], will be spilled after
+    if (m_spill_slots.count(value.id)) return m_scratch_regs[0];
+
+    report_error("Internal error: SSA value has no register or spill slot");
+    return 0xFF;
+}
+
+u8 BytecodeBuilder::ensure_in_register(ValueId value, u8 scratch_index) {
+    if (!value.is_valid()) return 0xFF;
+
+    auto reg_it = m_value_to_reg.find(value.id);
+    if (reg_it != m_value_to_reg.end()) return reg_it->second;
+
+    auto spill_it = m_spill_slots.find(value.id);
+    if (spill_it != m_spill_slots.end()) {
+        u8 scratch = m_scratch_regs[scratch_index];
+        emit_abi(Opcode::RELOAD_REG, scratch, static_cast<u16>(spill_it->second));
+        return scratch;
+    }
+
+    report_error("Internal error: SSA value used before allocation");
+    return 0xFF;
+}
+
+void BytecodeBuilder::spill_if_needed(ValueId value, u8 reg) {
+    if (!value.is_valid()) return;
+
+    auto spill_it = m_spill_slots.find(value.id);
+    if (spill_it != m_spill_slots.end()) {
+        emit_abi(Opcode::SPILL_REG, reg, static_cast<u16>(spill_it->second));
+    }
 }
 
 // Helper to update last_use_point for a value
@@ -782,7 +917,10 @@ void BytecodeBuilder::expire_before(u32 current_point) {
     // and return their registers to the free list
     while (!m_active.empty() && m_active.front().last_use < current_point) {
         u8 freed_reg = m_active.front().reg;
-        m_free_regs.push_back(freed_reg);
+        // Don't return scratch registers to the free list — they're permanently reserved
+        if (!m_has_spilling || (freed_reg != m_scratch_regs[0] && freed_reg != m_scratch_regs[1])) {
+            m_free_regs.push_back(freed_reg);
+        }
         // Remove front by shifting (m_active is sorted, so we remove from front)
         for (u32 i = 1; i < m_active.size(); i++) {
             m_active[i - 1] = m_active[i];
@@ -834,11 +972,12 @@ void BytecodeBuilder::lower_block(IRBlock* block) {
 }
 
 void BytecodeBuilder::lower_instruction(IRInst* inst) {
-    u8 dst = get_register(inst->result);
+    u8 dst = get_result_register(inst->result);
 
     switch (inst->op) {
         case IROp::ConstNull:
             emit_abi(Opcode::LOAD_NULL, dst, 0);
+            spill_if_needed(inst->result, dst);
             break;
 
         case IROp::ConstBool:
@@ -847,6 +986,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             } else {
                 emit_abi(Opcode::LOAD_FALSE, dst, 0);
             }
+            spill_if_needed(inst->result, dst);
             break;
 
         case IROp::ConstInt: {
@@ -857,6 +997,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 u16 const_idx = add_constant(BCConstant::make_int(value));
                 emit_abi(Opcode::LOAD_CONST, dst, const_idx);
             }
+            spill_if_needed(inst->result, dst);
             break;
         }
 
@@ -873,12 +1014,14 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 u16 const_idx = add_constant(BCConstant::make_int(static_cast<i64>(bits)));
                 emit_abi(Opcode::LOAD_CONST, dst, const_idx);
             }
+            spill_if_needed(inst->result, dst);
             break;
         }
 
         case IROp::ConstD: {
             u16 const_idx = add_constant(BCConstant::make_float(inst->const_data.f64_val));
             emit_abi(Opcode::LOAD_CONST, dst, const_idx);
+            spill_if_needed(inst->result, dst);
             break;
         }
 
@@ -886,6 +1029,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             StringView sv = inst->const_data.string_val;
             u16 const_idx = add_constant(BCConstant::make_string(sv.data(), sv.size()));
             emit_abi(Opcode::LOAD_CONST, dst, const_idx);
+            spill_if_needed(inst->result, dst);
             break;
         }
 
@@ -928,9 +1072,13 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::GeD:
         case IROp::And:
         case IROp::Or: {
-            u8 left = get_register(inst->binary.left);
-            u8 right = get_register(inst->binary.right);
+            // Reload operands first (scratch[1] for right, then scratch[0] for left)
+            // Order matters: if dst is spilled, it uses scratch[0], so load right into
+            // scratch[1] first, then left into scratch[0] which becomes the dst.
+            u8 right = ensure_in_register(inst->binary.right, 1);
+            u8 left = ensure_in_register(inst->binary.left, 0);
             emit_abc(get_opcode(inst->op), dst, left, right);
+            spill_if_needed(inst->result, dst);
             break;
         }
 
@@ -944,22 +1092,24 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::F64_TO_I:
         case IROp::I_TO_B:
         case IROp::B_TO_I: {
-            u8 src = get_register(inst->unary);
+            u8 src = ensure_in_register(inst->unary, 1);
             emit_abc(get_opcode(inst->op), dst, src, 0);
+            spill_if_needed(inst->result, dst);
             break;
         }
 
         case IROp::Copy: {
-            u8 src = get_register(inst->unary);
+            u8 src = ensure_in_register(inst->unary, 1);
             if (dst != src) {
                 emit_abc(Opcode::MOV, dst, src, 0);
             }
+            spill_if_needed(inst->result, dst);
             break;
         }
 
         case IROp::BlockArg:
             // Block arguments are handled by MOV instructions at jump sites
-            // The value should already be in the register
+            // The value should already be in the register (or spill slot)
             break;
 
         case IROp::Call: {
@@ -988,7 +1138,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             u8 arg_reg_offset = 0;
             for (u32 i = 0; i < inst->call.args.size(); i++) {
                 ValueId arg_val = inst->call.args[i];
-                u8 arg_src = get_register(arg_val);
+                u8 arg_src = ensure_in_register(arg_val, 0);
 
                 // Check if this parameter is a pointer (out/inout)
                 bool param_is_ptr = (i < callee_func->param_is_ptr.size() && callee_func->param_is_ptr[i]);
@@ -1038,19 +1188,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 m_next_stack_slot += ret_slot_count;
                 m_value_to_stack_slot[inst->result.id] = stack_offset;
 
-                // Get address of stack space
-                u8 stack_ptr_reg = dst;  // Reuse dst as stack pointer since we're about to overwrite
-                // Actually, we need a temp register. Let's use dst after storing the packed data.
-                // The struct data is in dst, dst+1, so we need to:
-                // 1. Get stack address into another register
-                // 2. Store packed data to stack
-                // But we're running out of registers... Let's allocate a temp.
-
-                // For simplicity, use the first return register (dst) as the stack pointer
-                // after we've unpacked. We need to:
-                // 1. Store packed data from registers to stack
-                // First, get the stack address
-                u8 temp_reg = bump_register();  // Allocate temp register for stack address
+                u8 temp_reg = bump_register();
                 emit_abi(Opcode::STACK_ADDR, temp_reg, static_cast<u16>(stack_offset));
                 emit_abc(Opcode::STRUCT_STORE_REGS, temp_reg, dst, static_cast<u8>(ret_slot_count));
                 emit(0);  // Padding word
@@ -1068,7 +1206,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             // Copy arguments to consecutive registers starting from dst+1
             u8 first_arg_reg = dst + 1;
             for (u32 i = 0; i < inst->call.args.size(); i++) {
-                u8 arg_src = get_register(inst->call.args[i]);
+                u8 arg_src = ensure_in_register(inst->call.args[i], 0);
                 if (arg_src != first_arg_reg + i) {
                     emit_abc(Opcode::MOV, first_arg_reg + i, arg_src, 0);
                 }
@@ -1106,7 +1244,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             u8 arg_reg_offset = 0;
             for (u32 i = 0; i < inst->call_external.args.size(); i++) {
                 ValueId arg_val = inst->call_external.args[i];
-                u8 arg_src = get_register(arg_val);
+                u8 arg_src = ensure_in_register(arg_val, 0);
 
                 // Check if this parameter is a pointer (out/inout)
                 bool param_is_ptr = (i < callee_func->param_is_ptr.size() && callee_func->param_is_ptr[i]);
@@ -1165,30 +1303,30 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
 
         case IROp::GetField: {
             // Format: [GET_FIELD dst obj slot_count] + [slot_offset:16 padding:16]
-            u8 obj = get_register(inst->field.object);
+            u8 obj = ensure_in_register(inst->field.object, 1);
             u8 slot_count = static_cast<u8>(inst->field.slot_count);
             u16 slot_offset = static_cast<u16>(inst->field.slot_offset);
             emit_abc(Opcode::GET_FIELD, dst, obj, slot_count);
             emit(static_cast<u32>(slot_offset));  // Second instruction word with slot offset
-            // f32 fields are loaded as their 32-bit pattern and stay that way
-            // They'll be processed by f32-specific opcodes (ADD_F, etc.)
+            spill_if_needed(inst->result, dst);
             break;
         }
 
         case IROp::GetFieldAddr: {
             // Format: [GET_FIELD_ADDR dst obj 0] + [slot_offset:16 padding:16]
             // Computes: dst = obj_ptr + slot_offset * 4 (pointer arithmetic)
-            u8 obj = get_register(inst->field.object);
+            u8 obj = ensure_in_register(inst->field.object, 1);
             u16 slot_offset = static_cast<u16>(inst->field.slot_offset);
             emit_abc(Opcode::GET_FIELD_ADDR, dst, obj, 0);
             emit(static_cast<u32>(slot_offset));  // Second instruction word with slot offset
+            spill_if_needed(inst->result, dst);
             break;
         }
 
         case IROp::SetField: {
             // Format: [SET_FIELD obj val slot_count] + [slot_offset:16 padding:16]
-            u8 obj = get_register(inst->field.object);
-            u8 val = get_register(inst->store_value);
+            u8 obj = ensure_in_register(inst->field.object, 0);
+            u8 val = ensure_in_register(inst->store_value, 1);
             u8 slot_count = static_cast<u8>(inst->field.slot_count);
             u16 slot_offset = static_cast<u16>(inst->field.slot_offset);
             emit_abc(Opcode::SET_FIELD, obj, val, slot_count);
@@ -1197,20 +1335,21 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         }
 
         case IROp::RefInc: {
-            u8 ptr = get_register(inst->unary);
+            u8 ptr = ensure_in_register(inst->unary, 0);
             emit_abc(Opcode::REF_INC, ptr, 0, 0);
             break;
         }
 
         case IROp::RefDec: {
-            u8 ptr = get_register(inst->unary);
+            u8 ptr = ensure_in_register(inst->unary, 0);
             emit_abc(Opcode::REF_DEC, ptr, 0, 0);
             break;
         }
 
         case IROp::WeakCheck: {
-            u8 weak = get_register(inst->unary);
+            u8 weak = ensure_in_register(inst->unary, 1);
             emit_abc(Opcode::WEAK_CHECK, dst, weak, 0);
+            spill_if_needed(inst->result, dst);
             break;
         }
 
@@ -1233,11 +1372,12 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             }
 
             emit_abi(Opcode::NEW_OBJ, dst, type_idx);
+            spill_if_needed(inst->result, dst);
             break;
         }
 
         case IROp::Delete: {
-            u8 ptr_reg = get_register(inst->unary);
+            u8 ptr_reg = ensure_in_register(inst->unary, 0);
             // In constraint reference mode, interpreter will check ref_count == 0
             emit_abc(Opcode::DEL_OBJ, ptr_reg, 0, 0);
             break;
@@ -1254,13 +1394,14 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
 
             // Emit STACK_ADDR to get a pointer to the allocated space
             emit_abi(Opcode::STACK_ADDR, dst, static_cast<u16>(slot_offset));
+            spill_if_needed(inst->result, dst);
             break;
         }
 
         case IROp::StructCopy: {
             // Memory-to-memory struct copy
-            u8 dest_ptr = get_register(inst->struct_copy.dest_ptr);
-            u8 src_ptr = get_register(inst->struct_copy.source_ptr);
+            u8 dest_ptr = ensure_in_register(inst->struct_copy.dest_ptr, 0);
+            u8 src_ptr = ensure_in_register(inst->struct_copy.source_ptr, 1);
             u8 slot_count = static_cast<u8>(inst->struct_copy.slot_count);
             emit_abc(Opcode::STRUCT_COPY, dest_ptr, src_ptr, slot_count);
             break;
@@ -1268,17 +1409,18 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
 
         case IROp::LoadPtr: {
             // Load value through pointer - reuse GET_FIELD with offset 0
-            u8 ptr_reg = get_register(inst->load_ptr.ptr);
+            u8 ptr_reg = ensure_in_register(inst->load_ptr.ptr, 1);
             u8 slot_count = static_cast<u8>(inst->load_ptr.slot_count);
             emit_abc(Opcode::GET_FIELD, dst, ptr_reg, slot_count);
             emit(0);  // offset = 0
+            spill_if_needed(inst->result, dst);
             break;
         }
 
         case IROp::StorePtr: {
             // Store value through pointer - reuse SET_FIELD with offset 0
-            u8 ptr_reg = get_register(inst->store_ptr.ptr);
-            u8 val_reg = get_register(inst->store_ptr.value);
+            u8 ptr_reg = ensure_in_register(inst->store_ptr.ptr, 0);
+            u8 val_reg = ensure_in_register(inst->store_ptr.value, 1);
             u8 slot_count = static_cast<u8>(inst->store_ptr.slot_count);
             emit_abc(Opcode::SET_FIELD, ptr_reg, val_reg, slot_count);
             emit(0);  // offset = 0
@@ -1288,11 +1430,6 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::VarAddr: {
             // Get address of local variable - lookup its stack slot and emit STACK_ADDR
             StringView name = inst->var_addr.name;
-            // Look up the variable's value ID to find its stack slot
-            // For now, we need to find if it has a corresponding StackAlloc
-            // or if it's just a regular value.
-            // Since variables passed as out/inout need to be stack-allocated,
-            // we should track this. For now, let's allocate a new slot.
 
             // Check if this variable already has a stack slot from StackAlloc
             // If not, we need to allocate one on-demand
@@ -1306,15 +1443,17 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 m_var_name_to_stack_slot[name] = slot_offset;
                 emit_abi(Opcode::STACK_ADDR, dst, static_cast<u16>(slot_offset));
             }
+            spill_if_needed(inst->result, dst);
             break;
         }
 
         case IROp::Cast: {
-            u8 src = get_register(inst->cast.source);
+            u8 src = ensure_in_register(inst->cast.source, 1);
             Type* source_type = inst->cast.source_type;
             Type* target_type = inst->type;
 
             emit_cast_bytecode(dst, src, source_type, target_type);
+            spill_if_needed(inst->result, dst);
             break;
         }
     }
@@ -1326,11 +1465,12 @@ void BytecodeBuilder::emit_block_args(const JumpTarget& target) {
 
     // Emit MOV instructions for each block argument
     for (u32 i = 0; i < target.args.size() && i < target_block->params.size(); i++) {
-        u8 src = get_register(target.args[i].value);
-        u8 dst = get_register(target_block->params[i].value);
-        if (src != dst) {
-            emit_abc(Opcode::MOV, dst, src, 0);
+        u8 src = ensure_in_register(target.args[i].value, 0);
+        u8 param_dst = get_result_register(target_block->params[i].value);
+        if (src != param_dst) {
+            emit_abc(Opcode::MOV, param_dst, src, 0);
         }
+        spill_if_needed(target_block->params[i].value, param_dst);
     }
 }
 
@@ -1357,7 +1497,7 @@ void BytecodeBuilder::lower_terminator(IRBlock* block) {
         }
 
         case TerminatorKind::Branch: {
-            u8 cond = get_register(term.branch.condition);
+            u8 cond = ensure_in_register(term.branch.condition, 0);
 
             // Emit JMP_IF_NOT to skip past the then-path MOVs + JMP
             u32 jmp_if_not_idx = m_current_func->code.size();
@@ -1394,7 +1534,7 @@ void BytecodeBuilder::lower_terminator(IRBlock* block) {
             Type* ret_type = m_current_ir_func->return_type;
 
             if (term.return_value.is_valid()) {
-                u8 ret = get_register(term.return_value);
+                u8 ret = ensure_in_register(term.return_value, 0);
 
                 // Check if we're returning a struct
                 u32 slot_count = get_struct_slot_count(ret_type);

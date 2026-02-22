@@ -56,6 +56,12 @@ private:
     bool has_register(ValueId value) const;
     u8 bump_register();  // Allocate next fresh register with bounds check
 
+    // Register spilling
+    void spill_furthest();
+    u8 get_result_register(ValueId value);
+    u8 ensure_in_register(ValueId value, u8 scratch_index);
+    void spill_if_needed(ValueId value, u8 reg);
+
     // Liveness analysis
     void compute_liveness(IRFunction* ir_func);
 
@@ -122,6 +128,12 @@ private:
     // Free-list allocator state
     Vector<u8> m_free_regs;            // pool of available register numbers
     Vector<ActiveAlloc> m_active;      // sorted by last_use ascending
+
+    // Register spilling state
+    tsl::robin_map<u32, u32> m_spill_slots;   // ValueId.id -> spill stack slot offset
+    tsl::robin_map<u8, u32> m_reg_to_value;   // reverse map: register -> ValueId.id
+    bool m_has_spilling;
+    u8 m_scratch_regs[2];                     // two scratch registers for reload/spill
 
     // Local stack allocation: maps ValueId.id -> stack slot offset
     tsl::robin_map<u32, u32> m_value_to_stack_slot;

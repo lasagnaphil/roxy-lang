@@ -346,11 +346,22 @@ TEST_CASE("E2E - Many local variables (near register limit)") {
         CHECK(result.value == 32131);  // 253*254/2
     }
 
-    SUBCASE("254 locals with summation - overflow") {
+    SUBCASE("254 locals with summation - spilling") {
         // 254 locals + sum + add temp = 256 peak. Exceeds 255 register limit.
+        // Register spilling evicts long-lived values to the local stack.
         std::string src = generate_many_locals(254);
         TestResult result = run_and_capture(src.c_str(), "main");
-        CHECK_FALSE(result.success);
+        CHECK(result.success);
+        CHECK(result.value == 32385);  // 254*255/2
+    }
+
+    SUBCASE("400 locals with summation - heavy spilling") {
+        // 400 locals require heavy spilling. Tests that spilling works
+        // correctly for many values with long live ranges.
+        std::string src = generate_many_locals(400);
+        TestResult result = run_and_capture(src.c_str(), "main");
+        CHECK(result.success);
+        CHECK(result.value == 80200);  // 400*401/2
     }
 
     SUBCASE("500 locals return-last - register reuse") {

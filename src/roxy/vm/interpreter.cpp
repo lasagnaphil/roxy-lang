@@ -799,6 +799,23 @@ bool interpret(RoxyVM* vm) {
                 break;
             }
 
+            // Spill/Reload
+            case Opcode::SPILL_REG: {
+                u16 slot_offset = imm;
+                u32* addr = vm->local_stack.get() + frame->local_stack_base + slot_offset;
+                u64 val = regs[a];
+                addr[0] = static_cast<u32>(val);
+                addr[1] = static_cast<u32>(val >> 32);
+                break;
+            }
+
+            case Opcode::RELOAD_REG: {
+                u16 slot_offset = imm;
+                u32* addr = vm->local_stack.get() + frame->local_stack_base + slot_offset;
+                regs[a] = static_cast<u64>(addr[0]) | (static_cast<u64>(addr[1]) << 32);
+                break;
+            }
+
             // Debug
             case Opcode::NOP:
                 break;

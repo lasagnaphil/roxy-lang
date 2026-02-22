@@ -121,6 +121,8 @@ enum class Opcode : u8 {
     STRUCT_STORE_REGS = 0xB5, // *dst = src (store consecutive registers to struct)
     STRUCT_COPY       = 0xB6, // [dst_ptr src_ptr slot_count] - memory copy
     RET_STRUCT_SMALL  = 0xB7, // return small struct (≤4 slots) in registers
+    SPILL_REG         = 0xB8, // spill regs[reg] to local_stack[base + imm16] (2 u32 slots)
+    RELOAD_REG        = 0xB9, // reload regs[reg] from local_stack[base + imm16] (2 u32 slots)
 
     // 0xD0-0xDF: Object Lifecycle
     NEW_OBJ     = 0xD0,     // dst = new type[imm16]
