@@ -19,10 +19,9 @@ Last updated: 2026-02-22
   - Issue: `ref<Child>` is assignable to `ref<Parent>`, but `ref` is mutable — allows writing a `Parent` value through a reference that actually points to a `Child`, corrupting layout
   - Fix: Make reference subtyping invariant, or split into read-only `ref` (covariant) and mutable `mut_ref` (invariant)
 
-- [ ] **Ternary expression reports spurious errors**
+- [x] **Ternary expression reports spurious errors** *(fixed)*
   - File: `src/roxy/compiler/semantic.cpp` (`analyze_ternary_expr`)
-  - Issue: Bidirectional `check_assignable` tries `then_type <: else_type` first; if it fails, an error is reported before trying the reverse direction — succeeding in the reverse still leaves the spurious error
-  - Fix: Add a non-error-reporting "probe" version of `check_assignable`
+  - Fix: Added `is_assignable()` probe method that checks type compatibility without reporting errors; `analyze_ternary_expr` now uses it for bidirectional probing
 
 ---
 

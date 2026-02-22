@@ -2667,11 +2667,11 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
         return then_type;
     }
 
-    // Check if one can be converted to the other
-    if (check_assignable(then_type, else_type, ternary_expr.else_expr->loc)) {
+    // Check if one can be converted to the other (probe without errors)
+    if (is_assignable(then_type, else_type)) {
         return then_type;
     }
-    if (check_assignable(else_type, then_type, ternary_expr.then_expr->loc)) {
+    if (is_assignable(else_type, then_type)) {
         return else_type;
     }
 
@@ -4039,6 +4039,26 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
 }
 
 // ===== Type Checking Helpers =====
+
+bool SemanticAnalyzer::is_assignable(Type* target, Type* source) const {
+    if (!target || !source) return false;
+    if (target->is_error() || source->is_error()) return true;
+    if (target == source) return true;
+    if (source->is_nil() && target->is_reference()) return true;
+    if (target->is_struct() && source->is_struct()) {
+        if (is_subtype_of(source, target)) return true;
+    }
+    if (target->is_reference() && source->is_reference()) {
+        if (target->kind == source->kind) {
+            Type* target_inner = target->ref_info.inner_type;
+            Type* source_inner = source->ref_info.inner_type;
+            if (is_subtype_of(source_inner, target_inner)) return true;
+        }
+    }
+    if (can_convert_ref(source, target)) return true;
+    if (source->is_int_literal() && target->is_integer()) return true;
+    return false;
+}
 
 bool SemanticAnalyzer::check_assignable(Type* target, Type* source, SourceLocation loc) {
     if (!target || !source) return false;

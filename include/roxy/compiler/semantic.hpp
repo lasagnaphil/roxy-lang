@@ -172,6 +172,7 @@ private:
     void coerce_int_literal(Expr* expr, Type* target);
 
     // Type checking helpers
+    bool is_assignable(Type* target, Type* source) const;
     bool check_assignable(Type* target, Type* source, SourceLocation loc);
     bool check_numeric(Type* type, SourceLocation loc);
     bool check_integer(Type* type, SourceLocation loc);
