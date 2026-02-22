@@ -546,38 +546,36 @@ void IRFunction::reorder_blocks_rpo() {
         }
     }
 
-    // Build RPO order (reverse of post_order), then append unreachable blocks
+    // Build RPO order (reverse of post_order), dropping unreachable blocks
     Vector<u32> rpo_order;
     rpo_order.reserve(num_blocks);
     for (i32 i = static_cast<i32>(post_order.size()) - 1; i >= 0; i--) {
         rpo_order.push_back(post_order[i]);
     }
-    for (u32 i = 0; i < num_blocks; i++) {
-        if (!visited[i]) {
-            rpo_order.push_back(i);
-        }
-    }
+
+    u32 new_block_count = rpo_order.size();
 
     // --- B. Build remap table: old_to_new[old_id] = new_rpo_position ---
     Vector<u32> old_to_new;
     old_to_new.reserve(num_blocks);
     for (u32 i = 0; i < num_blocks; i++) old_to_new.push_back(0);
-    for (u32 new_pos = 0; new_pos < rpo_order.size(); new_pos++) {
+    for (u32 new_pos = 0; new_pos < new_block_count; new_pos++) {
         old_to_new[rpo_order[new_pos]] = new_pos;
     }
 
-    // Check if already in RPO order (skip reorder + remap if so)
-    bool already_rpo = true;
-    for (u32 i = 0; i < num_blocks; i++) {
-        if (old_to_new[i] != i) { already_rpo = false; break; }
+    // Check if already in RPO order with no unreachable blocks
+    if (new_block_count == num_blocks) {
+        bool already_rpo = true;
+        for (u32 i = 0; i < num_blocks; i++) {
+            if (old_to_new[i] != i) { already_rpo = false; break; }
+        }
+        if (already_rpo) return;
     }
-    if (already_rpo) return;
 
-    // --- C. Reorder blocks vector and remap all BlockId references ---
-    // Build reordered blocks vector
+    // --- C. Reorder blocks vector, remove unreachable, and remap BlockId references ---
     Vector<IRBlock*> new_blocks;
-    new_blocks.reserve(num_blocks);
-    for (u32 i = 0; i < rpo_order.size(); i++) {
+    new_blocks.reserve(new_block_count);
+    for (u32 i = 0; i < new_block_count; i++) {
         new_blocks.push_back(blocks[rpo_order[i]]);
     }
     blocks = static_cast<Vector<IRBlock*>&&>(new_blocks);

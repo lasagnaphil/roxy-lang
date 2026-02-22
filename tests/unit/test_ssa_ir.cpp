@@ -200,8 +200,8 @@ TEST_CASE("SSA IR - If-else statement") {
 
     IRFunction* func = module->functions[0];
 
-    // Should have: entry, then, else, endif blocks
-    CHECK(func->blocks.size() >= 4);
+    // Should have: entry, then, else blocks (merge block is unreachable since both branches return)
+    CHECK(func->blocks.size() >= 3);
 
     // Both then and else blocks should have return terminators
     bool found_then_return = false;
@@ -547,8 +547,8 @@ TEST_CASE("SSA IR - Nested if statements") {
 
     IRFunction* func = module->functions[0];
 
-    // Should have multiple blocks for nested if-else
-    CHECK(func->blocks.size() >= 6);
+    // Should have multiple blocks for nested if-else (merge blocks are unreachable since all branches return)
+    CHECK(func->blocks.size() >= 5);
 
     // Count return terminators
     int return_count = 0;
