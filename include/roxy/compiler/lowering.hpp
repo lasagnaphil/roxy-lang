@@ -57,6 +57,7 @@ private:
     u8 bump_register();  // Allocate next fresh register with bounds check
 
     // Liveness analysis
+    void compute_rpo(IRFunction* ir_func);
     void compute_liveness(IRFunction* ir_func);
 
     // Free-list register allocation support
@@ -115,9 +116,12 @@ private:
     tsl::robin_map<u32, u8> m_value_to_reg;
     u16 m_next_reg;  // u16 to prevent silent wraparound; capped at 255
 
+    // RPO block ordering (indices into ir_func->blocks)
+    Vector<u32> m_rpo_order;
+
     // Liveness data (computed per function)
     Vector<LiveRange> m_live_ranges;
-    Vector<bool> m_value_same_block;   // true if value's def and last use are in the same block
+    Vector<bool> m_value_same_block;    // true if value's def and last use are in the same block
 
     // Free-list allocator state
     Vector<u8> m_free_regs;            // pool of available register numbers
