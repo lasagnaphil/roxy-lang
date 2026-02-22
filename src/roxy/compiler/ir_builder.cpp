@@ -3082,6 +3082,8 @@ void IRBuilder::end_function_body() {
     }
 
     pop_scope();
+
+    m_current_func->reorder_blocks_rpo();
 }
 
 void IRBuilder::setup_parameters(Span<Param> params, Type* self_type) {

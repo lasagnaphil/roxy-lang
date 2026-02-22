@@ -101,12 +101,11 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_jump_patches.clear();
     m_free_regs.clear();
     m_active.clear();
-    m_rpo_order.clear();
     m_next_reg = 0;
     m_next_stack_slot = 0;
 
-    // Step 1: Compute RPO ordering and liveness intervals for all SSA values
-    compute_rpo(ir_func);
+    // Step 1: Compute liveness intervals for all SSA values
+    // (blocks are already in RPO order from IR building)
     compute_liveness(ir_func);
 
     // Step 2: Allocate registers for function parameters (pre-colored)
@@ -153,11 +152,10 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_next_reg = param_reg_offset;
     m_current_func->param_register_count = param_reg_offset;
 
-    // Step 3: Liveness-aware pre-allocation of all SSA values (RPO order)
+    // Step 3: Liveness-aware pre-allocation of all SSA values
     {
         u32 alloc_point = 0;
-        for (u32 rpo_idx : m_rpo_order) {
-            IRBlock* block = ir_func->blocks[rpo_idx];
+        for (IRBlock* block : ir_func->blocks) {
 
             // Block parameters
             for (const auto& param : block->params) {
@@ -370,9 +368,8 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         prologue_param_reg_offset += reg_count;
     }
 
-    // Second pass: emit bytecode in RPO order
-    for (u32 rpo_idx : m_rpo_order) {
-        IRBlock* block = ir_func->blocks[rpo_idx];
+    // Second pass: emit bytecode
+    for (IRBlock* block : ir_func->blocks) {
 
         // Record block offset
         m_block_offsets[block->id.id] = m_current_func->code.size();
@@ -479,73 +476,6 @@ static void mark_use(Vector<LiveRange>& live_ranges, ValueId value, u32 point) {
     }
 }
 
-void BytecodeBuilder::compute_rpo(IRFunction* ir_func) {
-    u32 num_blocks = ir_func->blocks.size();
-    m_rpo_order.clear();
-    if (num_blocks == 0) return;
-
-    // Iterative DFS to compute reverse postorder.
-    // Phase 0 = visit children, phase 1 = emit to post-order.
-    Vector<bool> visited;
-    visited.reserve(num_blocks);
-    for (u32 i = 0; i < num_blocks; i++) visited.push_back(false);
-
-    struct StackEntry { u32 block_idx; u8 phase; };
-    Vector<StackEntry> stack;
-    stack.push_back({0, 0});
-    visited[0] = true;
-
-    Vector<u32> post_order;
-
-    while (!stack.empty()) {
-        auto& entry = stack.back();
-        if (entry.phase == 1) {
-            post_order.push_back(entry.block_idx);
-            stack.pop_back();
-            continue;
-        }
-        // Phase 0: mark for emit, then push successors
-        entry.phase = 1;
-
-        IRBlock* block = ir_func->blocks[entry.block_idx];
-        const Terminator& term = block->terminator;
-
-        // Push successors in reverse order so they come out in forward order
-        auto push_successor = [&](BlockId target_id) {
-            if (!target_id.is_valid() || target_id.id >= num_blocks) return;
-            if (!visited[target_id.id]) {
-                visited[target_id.id] = true;
-                stack.push_back({target_id.id, 0});
-            }
-        };
-
-        switch (term.kind) {
-            case TerminatorKind::Goto:
-                push_successor(term.goto_target.block);
-                break;
-            case TerminatorKind::Branch:
-                // Push else first, then then — so then is processed first (top of stack)
-                push_successor(term.branch.else_target.block);
-                push_successor(term.branch.then_target.block);
-                break;
-            default:
-                break;
-        }
-    }
-
-    // Reverse for RPO
-    for (i32 i = static_cast<i32>(post_order.size()) - 1; i >= 0; i--) {
-        m_rpo_order.push_back(post_order[i]);
-    }
-
-    // Append any unreachable blocks defensively
-    for (u32 i = 0; i < num_blocks; i++) {
-        if (!visited[i]) {
-            m_rpo_order.push_back(i);
-        }
-    }
-}
-
 void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     // Allocate live ranges for all SSA values in this function
     u32 num_values = ir_func->next_value_id;
@@ -555,10 +485,9 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
         m_live_ranges.push_back(LiveRange{0, 0});
     }
 
-    // Pass 1: assign definition points (RPO order)
+    // Pass 1: assign definition points
     u32 point = 0;
-    for (u32 rpo_idx : m_rpo_order) {
-        IRBlock* block = ir_func->blocks[rpo_idx];
+    for (IRBlock* block : ir_func->blocks) {
         for (const auto& param : block->params) {
             if (param.value.is_valid() && param.value.id < num_values) {
                 m_live_ranges[param.value.id].def_point = point;
@@ -576,10 +505,9 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
         point++;  // terminator slot
     }
 
-    // Pass 2: scan operands to find last uses (RPO order)
+    // Pass 2: scan operands to find last uses
     point = 0;
-    for (u32 rpo_idx : m_rpo_order) {
-        IRBlock* block = ir_func->blocks[rpo_idx];
+    for (IRBlock* block : ir_func->blocks) {
         // Skip block param slots (they are definitions, not uses)
         point += block->params.size();
 
@@ -708,8 +636,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     // For each jump target with args, find the target block's params and extend
     // their live range to include the predecessor's terminator point.
     point = 0;
-    for (u32 rpo_idx : m_rpo_order) {
-        IRBlock* block = ir_func->blocks[rpo_idx];
+    for (IRBlock* block : ir_func->blocks) {
         point += block->params.size();
         point += block->instructions.size();
         u32 terminator_point = point;
@@ -751,24 +678,21 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     // stay live for the entire loop, since the register would be read again
     // when the loop iterates.
     // Build block info: first program point and terminator point for each block
-    // (indexed by RPO position, using RPO ordering for back-edge detection)
+    // (indexed by block index, which equals RPO position since blocks are in RPO order)
     struct BlockPointInfo {
         u32 first_point;
         u32 term_point;
     };
     Vector<BlockPointInfo> block_points;
-    tsl::robin_map<u32, u32> block_id_to_rpo;  // BlockId.id -> RPO position
     {
         u32 bp = 0;
-        for (u32 rpo_pos = 0; rpo_pos < m_rpo_order.size(); rpo_pos++) {
-            IRBlock* blk = ir_func->blocks[m_rpo_order[rpo_pos]];
+        for (IRBlock* blk : ir_func->blocks) {
             u32 first = bp;
             bp += blk->params.size();
             bp += blk->instructions.size();
             u32 term = bp;
             bp++;
             block_points.push_back({first, term});
-            block_id_to_rpo[blk->id.id] = rpo_pos;
         }
     }
 
@@ -776,18 +700,17 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     bool changed = true;
     while (changed) {
         changed = false;
-        for (u32 rpo_pos = 0; rpo_pos < m_rpo_order.size(); rpo_pos++) {
-            IRBlock* blk = ir_func->blocks[m_rpo_order[rpo_pos]];
+        for (u32 bi = 0; bi < ir_func->blocks.size(); bi++) {
+            IRBlock* blk = ir_func->blocks[bi];
 
             auto check_back_edge = [&](BlockId target_id) {
-                auto it = block_id_to_rpo.find(target_id.id);
-                if (it == block_id_to_rpo.end()) return;
-                u32 target_rpo_pos = it->second;
-                if (target_rpo_pos >= rpo_pos) return;  // Not a back edge
+                if (!target_id.is_valid() || target_id.id >= ir_func->blocks.size()) return;
+                u32 target_idx = target_id.id;
+                if (target_idx >= bi) return;  // Not a back edge
 
-                // Back edge from rpo_pos to target_rpo_pos
-                u32 loop_start = block_points[target_rpo_pos].first_point;
-                u32 loop_end = block_points[rpo_pos].term_point;
+                // Back edge from bi to target_idx
+                u32 loop_start = block_points[target_idx].first_point;
+                u32 loop_end = block_points[bi].term_point;
 
                 // Extend values defined before the loop but used inside it
                 for (u32 vi = 0; vi < num_values; vi++) {
@@ -828,9 +751,9 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     for (u32 vi = 0; vi < num_values; vi++) {
         m_value_same_block.push_back(false);
     }
-    for (u32 rpo_pos = 0; rpo_pos < m_rpo_order.size(); rpo_pos++) {
-        u32 block_start = block_points[rpo_pos].first_point;
-        u32 block_end = block_points[rpo_pos].term_point;
+    for (u32 bi = 0; bi < ir_func->blocks.size(); bi++) {
+        u32 block_start = block_points[bi].first_point;
+        u32 block_end = block_points[bi].term_point;
         for (u32 vi = 0; vi < num_values; vi++) {
             auto& lr = m_live_ranges[vi];
             if (lr.def_point >= block_start && lr.def_point <= block_end &&
@@ -845,8 +768,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     // reuse freed registers (need fresh zero-initialized regs).
     // With RPO ordering, their liveness is now correct, so they CAN be freed
     // after their last use (unlike before where they were permanently pinned).
-    for (u32 rpo_idx : m_rpo_order) {
-        IRBlock* block = ir_func->blocks[rpo_idx];
+    for (IRBlock* block : ir_func->blocks) {
         for (const auto& param : block->params) {
             if (param.value.is_valid() && param.value.id < num_values) {
                 m_value_same_block[param.value.id] = false;

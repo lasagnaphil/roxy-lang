@@ -342,6 +342,10 @@ struct IRFunction {
         return return_type && return_type->is_struct() &&
                return_type->struct_info.slot_count > 4;
     }
+
+    /// Reorder blocks to reverse postorder and remap all BlockId references.
+    /// Entry block is always first in RPO. Preserves BlockId.id == array index.
+    void reorder_blocks_rpo();
 };
 
 // IR Module - collection of functions

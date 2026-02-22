@@ -497,6 +497,124 @@ void ir_function_to_string(const IRFunction* func, Vector<char>& out) {
     append_str(out, "}\n");
 }
 
+void IRFunction::reorder_blocks_rpo() {
+    u32 num_blocks = blocks.size();
+    if (num_blocks <= 1) return;
+
+    // --- A. Compute RPO via iterative DFS ---
+    Vector<bool> visited;
+    visited.reserve(num_blocks);
+    for (u32 i = 0; i < num_blocks; i++) visited.push_back(false);
+
+    struct StackEntry { u32 block_idx; u8 phase; };
+    Vector<StackEntry> stack;
+    stack.push_back({0, 0});
+    visited[0] = true;
+
+    Vector<u32> post_order;
+
+    while (!stack.empty()) {
+        auto& entry = stack.back();
+        if (entry.phase == 1) {
+            post_order.push_back(entry.block_idx);
+            stack.pop_back();
+            continue;
+        }
+        entry.phase = 1;
+
+        IRBlock* block = blocks[entry.block_idx];
+        const Terminator& term = block->terminator;
+
+        auto push_successor = [&](BlockId target_id) {
+            if (!target_id.is_valid() || target_id.id >= num_blocks) return;
+            if (!visited[target_id.id]) {
+                visited[target_id.id] = true;
+                stack.push_back({target_id.id, 0});
+            }
+        };
+
+        switch (term.kind) {
+            case TerminatorKind::Goto:
+                push_successor(term.goto_target.block);
+                break;
+            case TerminatorKind::Branch:
+                push_successor(term.branch.else_target.block);
+                push_successor(term.branch.then_target.block);
+                break;
+            default:
+                break;
+        }
+    }
+
+    // Build RPO order (reverse of post_order), then append unreachable blocks
+    Vector<u32> rpo_order;
+    rpo_order.reserve(num_blocks);
+    for (i32 i = static_cast<i32>(post_order.size()) - 1; i >= 0; i--) {
+        rpo_order.push_back(post_order[i]);
+    }
+    for (u32 i = 0; i < num_blocks; i++) {
+        if (!visited[i]) {
+            rpo_order.push_back(i);
+        }
+    }
+
+    // --- B. Build remap table: old_to_new[old_id] = new_rpo_position ---
+    Vector<u32> old_to_new;
+    old_to_new.reserve(num_blocks);
+    for (u32 i = 0; i < num_blocks; i++) old_to_new.push_back(0);
+    for (u32 new_pos = 0; new_pos < rpo_order.size(); new_pos++) {
+        old_to_new[rpo_order[new_pos]] = new_pos;
+    }
+
+    // Check if already in RPO order (skip reorder + remap if so)
+    bool already_rpo = true;
+    for (u32 i = 0; i < num_blocks; i++) {
+        if (old_to_new[i] != i) { already_rpo = false; break; }
+    }
+    if (already_rpo) return;
+
+    // --- C. Reorder blocks vector and remap all BlockId references ---
+    // Build reordered blocks vector
+    Vector<IRBlock*> new_blocks;
+    new_blocks.reserve(num_blocks);
+    for (u32 i = 0; i < rpo_order.size(); i++) {
+        new_blocks.push_back(blocks[rpo_order[i]]);
+    }
+    blocks = static_cast<Vector<IRBlock*>&&>(new_blocks);
+
+    // Remap helper
+    auto remap = [&](BlockId& block_id) {
+        if (block_id.is_valid() && block_id.id < num_blocks) {
+            block_id.id = old_to_new[block_id.id];
+        }
+    };
+
+    // Remap all BlockId references in every block
+    for (IRBlock* block : blocks) {
+        // Block's own id
+        remap(block->id);
+
+        // Predecessors
+        for (BlockId& pred : block->predecessors) {
+            remap(pred);
+        }
+
+        // Terminator targets
+        Terminator& term = block->terminator;
+        switch (term.kind) {
+            case TerminatorKind::Goto:
+                remap(term.goto_target.block);
+                break;
+            case TerminatorKind::Branch:
+                remap(term.branch.then_target.block);
+                remap(term.branch.else_target.block);
+                break;
+            default:
+                break;
+        }
+    }
+}
+
 void ir_module_to_string(const IRModule* module, Vector<char>& out) {
     if (!module->name.empty()) {
         append_str(out, "// Module: ");
