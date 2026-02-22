@@ -1,6 +1,8 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
 
+#include <string>
+
 using namespace rx;
 
 // ============================================================================
@@ -279,4 +281,84 @@ TEST_CASE("E2E - Comparison operators") {
     CHECK(result.success);
     // ==: 1,0; !=: 1,0; <: 1,0; <=: 1; >: 0,1; >=: 1
     CHECK(result.stdout_output == "1\n0\n1\n0\n1\n0\n1\n0\n1\n1\n");
+}
+
+// ============================================================================
+// Register Limit Tests
+// ============================================================================
+
+// Helper: generate a Roxy function with N local i32 variables, sum them, and return the sum.
+// Each variable v_i is assigned the value (i + 1).
+// The function returns v_0 + v_1 + ... + v_{N-1} = N*(N+1)/2.
+static std::string generate_many_locals(int count) {
+    std::string src = "fun main(): i32 {\n";
+    for (int i = 0; i < count; i++) {
+        src += "    var v_" + std::to_string(i) + ": i32 = " + std::to_string(i + 1) + ";\n";
+    }
+    // Sum all variables into an accumulator
+    src += "    var sum: i32 = 0;\n";
+    for (int i = 0; i < count; i++) {
+        src += "    sum = sum + v_" + std::to_string(i) + ";\n";
+    }
+    src += "    return sum;\n";
+    src += "}\n";
+    return src;
+}
+
+// Helper: generate a function with N locals that just returns the last one (no summing).
+// This uses approximately N+1 registers (N locals + return value).
+static std::string generate_locals_return_last(int count) {
+    std::string src = "fun main(): i32 {\n";
+    for (int i = 0; i < count; i++) {
+        src += "    var v_" + std::to_string(i) + ": i32 = " + std::to_string(i + 1) + ";\n";
+    }
+    src += "    return v_" + std::to_string(count - 1) + ";\n";
+    src += "}\n";
+    return src;
+}
+
+TEST_CASE("E2E - Many local variables (near register limit)") {
+    // The VM uses 8-bit register indices (0-254, with 0xFF as sentinel).
+    // With liveness-based register allocation, temporaries from expressions
+    // are reused once they're dead, so the effective limit is "peak
+    // simultaneously-live values" rather than "total SSA values."
+
+    SUBCASE("100 locals with summation") {
+        std::string src = generate_many_locals(100);
+        TestResult result = run_and_capture(src.c_str(), "main");
+        CHECK(result.success);
+        CHECK(result.value == 5050);  // 100*101/2
+    }
+
+    SUBCASE("200 locals with summation") {
+        // With register reuse, add temporaries are recycled. Fits easily.
+        std::string src = generate_many_locals(200);
+        TestResult result = run_and_capture(src.c_str(), "main");
+        CHECK(result.success);
+        CHECK(result.value == 20100);  // 200*201/2
+    }
+
+    SUBCASE("253 locals with summation - at boundary") {
+        // 253 locals + sum + 1 reused add temp = 255 peak. Just fits.
+        std::string src = generate_many_locals(253);
+        TestResult result = run_and_capture(src.c_str(), "main");
+        CHECK(result.success);
+        CHECK(result.value == 32131);  // 253*254/2
+    }
+
+    SUBCASE("254 locals with summation - overflow") {
+        // 254 locals + sum + add temp = 256 peak. Exceeds 255 register limit.
+        std::string src = generate_many_locals(254);
+        TestResult result = run_and_capture(src.c_str(), "main");
+        CHECK_FALSE(result.success);
+    }
+
+    SUBCASE("500 locals return-last - register reuse") {
+        // Only the last local is used at the return; dead locals' registers
+        // are recycled. Succeeds despite >255 total SSA values.
+        std::string src = generate_locals_return_last(500);
+        TestResult result = run_and_capture(src.c_str(), "main");
+        CHECK(result.success);
+        CHECK(result.value == 500);
+    }
 }

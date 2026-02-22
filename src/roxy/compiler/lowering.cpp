@@ -57,6 +57,35 @@ BCModule* BytecodeBuilder::build(IRModule* ir_module) {
     return module.release();  // Transfer ownership to caller
 }
 
+// Helper to compute the number of contiguous arg registers needed for a call instruction
+template <typename F>
+static u32 compute_call_arg_reg_count(IRInst* inst, IRFunction* callee_func,
+                                       const tsl::robin_map<u32, Type*>& value_types,
+                                       F get_struct_slot_count_fn) {
+    u32 arg_reg_count = 0;
+    bool is_external = (inst->op == IROp::CallExternal);
+    u32 num_args = is_external ? inst->call_external.args.size() : inst->call.args.size();
+
+    for (u32 i = 0; i < num_args; i++) {
+        ValueId arg_val = is_external ? inst->call_external.args[i] : inst->call.args[i];
+        bool param_is_ptr = (callee_func && i < callee_func->param_is_ptr.size() && callee_func->param_is_ptr[i]);
+
+        if (param_is_ptr) {
+            arg_reg_count += 1;
+        } else {
+            auto type_it = value_types.find(arg_val.id);
+            Type* arg_type = (type_it != value_types.end()) ? type_it->second : nullptr;
+            u32 arg_slot_count = get_struct_slot_count_fn(arg_type);
+            if (arg_slot_count > 0 && arg_slot_count <= 4) {
+                arg_reg_count += (arg_slot_count + 1) / 2;
+            } else {
+                arg_reg_count += 1;
+            }
+        }
+    }
+    return arg_reg_count;
+}
+
 BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_current_ir_func = ir_func;
     m_current_func = new BCFunction();
@@ -70,11 +99,15 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_value_types.clear();
     m_block_offsets.clear();
     m_jump_patches.clear();
+    m_free_regs.clear();
+    m_active.clear();
     m_next_reg = 0;
     m_next_stack_slot = 0;
 
-    // Allocate registers for function parameters with proper multi-register handling
-    // Track cumulative register offset for parameters that span multiple registers
+    // Step 1: Compute liveness intervals for all SSA values
+    compute_liveness(ir_func);
+
+    // Step 2: Allocate registers for function parameters (pre-colored)
     u8 param_reg_offset = 0;
     for (u32 i = 0; i < ir_func->params.size(); i++) {
         const auto& param = ir_func->params[i];
@@ -93,68 +126,122 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         if (!is_ptr_param) {
             u32 slot_count = get_struct_slot_count(param.type);
             if (slot_count > 0 && slot_count <= 4) {
-                // Small struct: uses (slot_count + 1) / 2 registers
                 reg_count = static_cast<u8>((slot_count + 1) / 2);
             }
-            // Large structs (>4 slots) are passed by pointer, so 1 register
         }
+
+        // Add parameter to active set so it can expire when no longer used
+        if (param.value.id < m_live_ranges.size()) {
+            u32 last_use = m_live_ranges[param.value.id].last_use_point;
+            // Add each register used by this parameter to the active set
+            for (u8 r = 0; r < reg_count; r++) {
+                // Insert into m_active sorted by last_use
+                ActiveAlloc alloc{last_use, static_cast<u8>(param_reg_offset + r)};
+                auto* pos = m_active.find_if([&](const ActiveAlloc& a) { return a.last_use > last_use; });
+                if (pos) {
+                    m_active.insert(pos, alloc);
+                } else {
+                    m_active.push_back(alloc);
+                }
+            }
+        }
+
         param_reg_offset += reg_count;
     }
     m_next_reg = param_reg_offset;
     m_current_func->param_register_count = param_reg_offset;
 
-    // First pass: allocate registers for all values and record block offsets
-    for (IRBlock* block : ir_func->blocks) {
-        // Allocate registers for block parameters and record types
-        for (const auto& param : block->params) {
-            if (!has_register(param.value)) {
-                allocate_register(param.value);
-            }
-            if (param.type) {
-                m_value_types[param.value.id] = param.type;
-            }
-        }
-
-        // Allocate registers for instruction results and record types
-        for (IRInst* inst : block->instructions) {
-            if (inst->result.is_valid() && !has_register(inst->result)) {
-                allocate_register(inst->result);
-            }
-            if (inst->result.is_valid() && inst->type) {
-                m_value_types[inst->result.id] = inst->type;
+    // Step 3: Liveness-aware pre-allocation of all SSA values
+    {
+        u32 alloc_point = 0;
+        for (IRBlock* block : ir_func->blocks) {
+            // Block parameters
+            for (const auto& param : block->params) {
+                expire_before(alloc_point);
+                if (!has_register(param.value)) {
+                    allocate_register(param.value);
+                }
+                if (param.type) {
+                    m_value_types[param.value.id] = param.type;
+                }
+                alloc_point++;
             }
 
-            // For calls, we also need registers for arguments (at dst+1, dst+2, ...)
-            // For struct returns, we need extra registers for the packed struct data
-            if ((inst->op == IROp::Call || inst->op == IROp::CallNative) && inst->result.is_valid()) {
-                u8 dst = get_register(inst->result);
-                u32 extra_regs_for_return = 0;
-                u32 ret_slot_count = get_struct_slot_count(inst->type);
-                if (ret_slot_count > 0 && ret_slot_count <= 4) {
-                    // Small struct return needs (slot_count + 1) / 2 registers
-                    extra_regs_for_return = (ret_slot_count + 1) / 2;
+            // Instructions
+            for (IRInst* inst : block->instructions) {
+                expire_before(alloc_point);
+
+                bool is_call = (inst->op == IROp::Call || inst->op == IROp::CallNative ||
+                                inst->op == IROp::CallExternal);
+
+                if (inst->result.is_valid() && !has_register(inst->result)) {
+                    if (is_call) {
+                        // Call results must use bump (not free list) because the calling
+                        // convention needs a contiguous block [dst, dst+1, ...] for args.
+                        // A free-list register could have live values in subsequent slots.
+                        u8 reg = bump_register();
+                        m_value_to_reg[inst->result.id] = reg;
+                    } else {
+                        allocate_register(inst->result);
+                    }
+                }
+                if (inst->result.is_valid() && inst->type) {
+                    m_value_types[inst->result.id] = inst->type;
                 }
 
-                u8 needed_regs = dst + static_cast<u8>(extra_regs_for_return) + 1 + static_cast<u8>(inst->call.args.size());
-                while (m_next_reg < needed_regs) {
-                    m_next_reg++;
+                // For calls, reserve contiguous registers for args and struct returns
+                if ((inst->op == IROp::Call || inst->op == IROp::CallNative) && inst->result.is_valid()) {
+                    u8 dst = get_register(inst->result);
+                    u32 extra_regs_for_return = 0;
+                    u32 ret_slot_count = get_struct_slot_count(inst->type);
+                    if (ret_slot_count > 0 && ret_slot_count <= 4) {
+                        extra_regs_for_return = (ret_slot_count + 1) / 2;
+                    }
+
+                    // Compute actual arg register count based on types
+                    StringView func_name = inst->call.func_name;
+                    IRFunction* callee_func = nullptr;
+                    auto func_it = m_func_indices.find(func_name);
+                    if (func_it != m_func_indices.end()) {
+                        callee_func = m_ir_module->functions[func_it->second];
+                    }
+                    u32 total_arg_regs = compute_call_arg_reg_count(inst, callee_func, m_value_types,
+                        [this](Type* t) { return get_struct_slot_count(t); });
+
+                    u16 needed_regs = static_cast<u16>(dst) + static_cast<u16>(extra_regs_for_return) + 1 + static_cast<u16>(total_arg_regs);
+                    while (m_next_reg < needed_regs) {
+                        bump_register();
+                    }
                 }
+
+                if (inst->op == IROp::CallExternal && inst->result.is_valid()) {
+                    u8 dst = get_register(inst->result);
+                    u32 extra_regs_for_return = 0;
+                    u32 ret_slot_count = get_struct_slot_count(inst->type);
+                    if (ret_slot_count > 0 && ret_slot_count <= 4) {
+                        extra_regs_for_return = (ret_slot_count + 1) / 2;
+                    }
+
+                    StringView func_name = inst->call_external.func_name;
+                    IRFunction* callee_func = nullptr;
+                    auto func_it = m_func_indices.find(func_name);
+                    if (func_it != m_func_indices.end()) {
+                        callee_func = m_ir_module->functions[func_it->second];
+                    }
+                    u32 total_arg_regs = compute_call_arg_reg_count(inst, callee_func, m_value_types,
+                        [this](Type* t) { return get_struct_slot_count(t); });
+
+                    u16 needed_regs = static_cast<u16>(dst) + static_cast<u16>(extra_regs_for_return) + 1 + static_cast<u16>(total_arg_regs);
+                    while (m_next_reg < needed_regs) {
+                        bump_register();
+                    }
+                }
+
+                alloc_point++;
             }
 
-            // Same for CallExternal (cross-module calls)
-            if (inst->op == IROp::CallExternal && inst->result.is_valid()) {
-                u8 dst = get_register(inst->result);
-                u32 extra_regs_for_return = 0;
-                u32 ret_slot_count = get_struct_slot_count(inst->type);
-                if (ret_slot_count > 0 && ret_slot_count <= 4) {
-                    extra_regs_for_return = (ret_slot_count + 1) / 2;
-                }
-
-                u8 needed_regs = dst + static_cast<u8>(extra_regs_for_return) + 1 + static_cast<u8>(inst->call_external.args.size());
-                while (m_next_reg < needed_regs) {
-                    m_next_reg++;
-                }
-            }
+            // Terminator slot
+            alloc_point++;
         }
     }
 
@@ -192,8 +279,8 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                     // Deep copy via native copy constructor call
                     // CALL_NATIVE convention: args at dst+1, dst+2, ...
                     u8 param_reg = prologue_param_reg_offset;
-                    u8 copy_dst = m_next_reg++;
-                    u8 copy_arg = m_next_reg++;  // = copy_dst + 1
+                    u8 copy_dst = bump_register();
+                    u8 copy_arg = bump_register();  // = copy_dst + 1
                     emit_abc(Opcode::MOV, copy_arg, param_reg, 0);
                     emit_abc(Opcode::CALL_NATIVE, copy_dst, static_cast<u8>(copy_fn_idx), 1);
                     // Remap parameter to the copied value
@@ -215,7 +302,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             u8 param_reg = prologue_param_reg_offset;
 
             // Get stack address into a new register
-            u8 stack_ptr_reg = m_next_reg++;
+            u8 stack_ptr_reg = bump_register();
             emit_abi(Opcode::STACK_ADDR, stack_ptr_reg, static_cast<u16>(stack_offset));
 
             // Unpack registers to stack
@@ -235,7 +322,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             u8 param_reg = prologue_param_reg_offset;  // Source pointer (caller's data)
 
             // Get local stack address into a new register
-            u8 stack_ptr_reg = m_next_reg++;
+            u8 stack_ptr_reg = bump_register();
             emit_abi(Opcode::STACK_ADDR, stack_ptr_reg, static_cast<u16>(stack_offset));
 
             // Copy struct data from caller to local stack (value semantics)
@@ -270,6 +357,14 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     return m_current_func;
 }
 
+u8 BytecodeBuilder::bump_register() {
+    if (m_next_reg >= 255) {
+        report_error("Register overflow: function uses too many values (max 255)");
+        return 0xFF;
+    }
+    return static_cast<u8>(m_next_reg++);
+}
+
 u8 BytecodeBuilder::allocate_register(ValueId value) {
     if (!value.is_valid()) return 0xFF;
 
@@ -278,12 +373,44 @@ u8 BytecodeBuilder::allocate_register(ValueId value) {
         return it->second;
     }
 
-    if (m_next_reg >= 255) {
-        report_error("Register overflow: function uses too many values (max 255)");
-        return 0xFF;
+    // Determine if this value can reuse a freed register.
+    // Cross-block values must always get fresh registers because the IR may have
+    // partially-defined values (e.g., AND/OR short-circuit) where a value is only
+    // defined on one branch. Fresh registers are zero-initialized by the VM.
+    bool can_reuse = (value.id < m_value_same_block.size() && m_value_same_block[value.id]);
+
+    u8 reg;
+    if (can_reuse && !m_free_regs.empty()) {
+        // Find the smallest available register for deterministic allocation
+        u32 min_idx = 0;
+        for (u32 i = 1; i < m_free_regs.size(); i++) {
+            if (m_free_regs[i] < m_free_regs[min_idx]) {
+                min_idx = i;
+            }
+        }
+        reg = m_free_regs[min_idx];
+        // Remove by swapping with last element
+        m_free_regs[min_idx] = m_free_regs.back();
+        m_free_regs.pop_back();
+    } else {
+        reg = bump_register();
     }
-    u8 reg = m_next_reg++;
+
     m_value_to_reg[value.id] = reg;
+
+    // Only add same-block values to the active set for expiry tracking.
+    // Cross-block values' registers are never freed for reuse.
+    if (can_reuse && value.id < m_live_ranges.size()) {
+        u32 last_use = m_live_ranges[value.id].last_use_point;
+        ActiveAlloc alloc{last_use, reg};
+        auto* pos = m_active.find_if([&](const ActiveAlloc& a) { return a.last_use > last_use; });
+        if (pos) {
+            m_active.insert(pos, alloc);
+        } else {
+            m_active.push_back(alloc);
+        }
+    }
+
     return reg;
 }
 
@@ -301,6 +428,340 @@ u8 BytecodeBuilder::get_register(ValueId value) {
 bool BytecodeBuilder::has_register(ValueId value) const {
     if (!value.is_valid()) return false;
     return m_value_to_reg.find(value.id) != m_value_to_reg.end();
+}
+
+// Helper to update last_use_point for a value
+static void mark_use(Vector<LiveRange>& live_ranges, ValueId value, u32 point) {
+    if (!value.is_valid()) return;
+    if (value.id < live_ranges.size()) {
+        if (point > live_ranges[value.id].last_use_point) {
+            live_ranges[value.id].last_use_point = point;
+        }
+    }
+}
+
+void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
+    // Allocate live ranges for all SSA values in this function
+    u32 num_values = ir_func->next_value_id;
+    m_live_ranges.clear();
+    m_live_ranges.reserve(num_values);
+    for (u32 i = 0; i < num_values; i++) {
+        m_live_ranges.push_back(LiveRange{0, 0});
+    }
+
+    // Pass 1: assign definition points
+    u32 point = 0;
+    for (IRBlock* block : ir_func->blocks) {
+        for (const auto& param : block->params) {
+            if (param.value.is_valid() && param.value.id < num_values) {
+                m_live_ranges[param.value.id].def_point = point;
+                m_live_ranges[param.value.id].last_use_point = point;  // at least live at def
+            }
+            point++;
+        }
+        for (IRInst* inst : block->instructions) {
+            if (inst->result.is_valid() && inst->result.id < num_values) {
+                m_live_ranges[inst->result.id].def_point = point;
+                m_live_ranges[inst->result.id].last_use_point = point;  // at least live at def
+            }
+            point++;
+        }
+        point++;  // terminator slot
+    }
+
+    // Pass 2: scan operands to find last uses
+    point = 0;
+    for (IRBlock* block : ir_func->blocks) {
+        // Skip block param slots (they are definitions, not uses)
+        point += block->params.size();
+
+        for (IRInst* inst : block->instructions) {
+            // Extract operands based on op type
+            switch (inst->op) {
+                // Binary ops
+                case IROp::AddI: case IROp::SubI: case IROp::MulI: case IROp::DivI: case IROp::ModI:
+                case IROp::AddF: case IROp::SubF: case IROp::MulF: case IROp::DivF:
+                case IROp::AddD: case IROp::SubD: case IROp::MulD: case IROp::DivD:
+                case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor: case IROp::Shl: case IROp::Shr:
+                case IROp::EqI: case IROp::NeI: case IROp::LtI: case IROp::LeI: case IROp::GtI: case IROp::GeI:
+                case IROp::EqF: case IROp::NeF: case IROp::LtF: case IROp::LeF: case IROp::GtF: case IROp::GeF:
+                case IROp::EqD: case IROp::NeD: case IROp::LtD: case IROp::LeD: case IROp::GtD: case IROp::GeD:
+                case IROp::And: case IROp::Or:
+                    mark_use(m_live_ranges, inst->binary.left, point);
+                    mark_use(m_live_ranges, inst->binary.right, point);
+                    break;
+
+                // Unary ops
+                case IROp::NegI: case IROp::NegF: case IROp::NegD:
+                case IROp::BitNot: case IROp::Not:
+                case IROp::I_TO_F64: case IROp::F64_TO_I: case IROp::I_TO_B: case IROp::B_TO_I:
+                case IROp::Copy:
+                case IROp::RefInc: case IROp::RefDec: case IROp::WeakCheck:
+                case IROp::Delete:
+                    mark_use(m_live_ranges, inst->unary, point);
+                    break;
+
+                // Call / CallNative
+                case IROp::Call:
+                case IROp::CallNative:
+                    for (u32 i = 0; i < inst->call.args.size(); i++) {
+                        mark_use(m_live_ranges, inst->call.args[i], point);
+                    }
+                    break;
+
+                // CallExternal
+                case IROp::CallExternal:
+                    for (u32 i = 0; i < inst->call_external.args.size(); i++) {
+                        mark_use(m_live_ranges, inst->call_external.args[i], point);
+                    }
+                    break;
+
+                // Field access
+                case IROp::GetField:
+                case IROp::GetFieldAddr:
+                    mark_use(m_live_ranges, inst->field.object, point);
+                    break;
+
+                case IROp::SetField:
+                    mark_use(m_live_ranges, inst->field.object, point);
+                    mark_use(m_live_ranges, inst->store_value, point);
+                    break;
+
+                // Struct copy
+                case IROp::StructCopy:
+                    mark_use(m_live_ranges, inst->struct_copy.dest_ptr, point);
+                    mark_use(m_live_ranges, inst->struct_copy.source_ptr, point);
+                    break;
+
+                // Pointer ops
+                case IROp::LoadPtr:
+                    mark_use(m_live_ranges, inst->load_ptr.ptr, point);
+                    break;
+
+                case IROp::StorePtr:
+                    mark_use(m_live_ranges, inst->store_ptr.ptr, point);
+                    mark_use(m_live_ranges, inst->store_ptr.value, point);
+                    break;
+
+                // Cast
+                case IROp::Cast:
+                    mark_use(m_live_ranges, inst->cast.source, point);
+                    break;
+
+                // New (args)
+                case IROp::New:
+                    for (u32 i = 0; i < inst->new_data.args.size(); i++) {
+                        mark_use(m_live_ranges, inst->new_data.args[i], point);
+                    }
+                    break;
+
+                // No operands
+                case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
+                case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
+                case IROp::StackAlloc: case IROp::BlockArg: case IROp::VarAddr:
+                    break;
+            }
+            point++;
+        }
+
+        // Terminator operands
+        const Terminator& term = block->terminator;
+        switch (term.kind) {
+            case TerminatorKind::Goto:
+                for (u32 i = 0; i < term.goto_target.args.size(); i++) {
+                    mark_use(m_live_ranges, term.goto_target.args[i].value, point);
+                }
+                break;
+
+            case TerminatorKind::Branch:
+                mark_use(m_live_ranges, term.branch.condition, point);
+                for (u32 i = 0; i < term.branch.then_target.args.size(); i++) {
+                    mark_use(m_live_ranges, term.branch.then_target.args[i].value, point);
+                }
+                for (u32 i = 0; i < term.branch.else_target.args.size(); i++) {
+                    mark_use(m_live_ranges, term.branch.else_target.args[i].value, point);
+                }
+                break;
+
+            case TerminatorKind::Return:
+                mark_use(m_live_ranges, term.return_value, point);
+                break;
+
+            case TerminatorKind::None:
+            case TerminatorKind::Unreachable:
+                break;
+        }
+        point++;  // terminator slot
+    }
+
+    // Pass 3: extend block param live ranges to cover predecessor terminators
+    // This prevents the register allocator from reusing block param registers
+    // before all MOVs for block args have been emitted (parallel assignment safety).
+    // For each jump target with args, find the target block's params and extend
+    // their live range to include the predecessor's terminator point.
+    point = 0;
+    for (IRBlock* block : ir_func->blocks) {
+        point += block->params.size();
+        point += block->instructions.size();
+        u32 terminator_point = point;
+
+        auto extend_target_params = [&](const JumpTarget& target) {
+            // Find the target block to get its params
+            for (IRBlock* target_block : ir_func->blocks) {
+                if (target_block->id == target.block) {
+                    // Extend each param's live range to cover this terminator
+                    for (u32 i = 0; i < target_block->params.size(); i++) {
+                        mark_use(m_live_ranges, target_block->params[i].value, terminator_point);
+                    }
+                    break;
+                }
+            }
+        };
+
+        const Terminator& term = block->terminator;
+        switch (term.kind) {
+            case TerminatorKind::Goto:
+                if (term.goto_target.args.size() > 0) {
+                    extend_target_params(term.goto_target);
+                }
+                break;
+            case TerminatorKind::Branch:
+                if (term.branch.then_target.args.size() > 0) {
+                    extend_target_params(term.branch.then_target);
+                }
+                if (term.branch.else_target.args.size() > 0) {
+                    extend_target_params(term.branch.else_target);
+                }
+                break;
+            default:
+                break;
+        }
+
+        point++;  // terminator slot
+    }
+
+    // Pass 4: extend live ranges for loop back edges
+    // When a back edge jumps from block B to earlier block H, any value defined
+    // BEFORE the loop (def_point < loop_start) but used INSIDE the loop must
+    // stay live for the entire loop, since the register would be read again
+    // when the loop iterates.
+    // Build block info: first program point and terminator point for each block
+    struct BlockPointInfo {
+        u32 first_point;
+        u32 term_point;
+    };
+    Vector<BlockPointInfo> block_points;
+    tsl::robin_map<u32, u32> block_id_to_idx;
+    {
+        u32 bp = 0;
+        for (u32 bi = 0; bi < ir_func->blocks.size(); bi++) {
+            IRBlock* blk = ir_func->blocks[bi];
+            u32 first = bp;
+            bp += blk->params.size();
+            bp += blk->instructions.size();
+            u32 term = bp;
+            bp++;
+            block_points.push_back({first, term});
+            block_id_to_idx[blk->id.id] = bi;
+        }
+    }
+
+    // Fixed-point iteration for nested loops
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (u32 bi = 0; bi < ir_func->blocks.size(); bi++) {
+            IRBlock* blk = ir_func->blocks[bi];
+
+            auto check_back_edge = [&](BlockId target_id) {
+                auto it = block_id_to_idx.find(target_id.id);
+                if (it == block_id_to_idx.end()) return;
+                u32 target_idx = it->second;
+                if (target_idx >= bi) return;  // Not a back edge
+
+                // Back edge from block bi to target_idx
+                u32 loop_start = block_points[target_idx].first_point;
+                u32 loop_end = block_points[bi].term_point;
+
+                // Extend values defined before the loop but used inside it
+                for (u32 vi = 0; vi < num_values; vi++) {
+                    auto& lr = m_live_ranges[vi];
+                    if (lr.def_point < loop_start &&
+                        lr.last_use_point >= loop_start &&
+                        lr.last_use_point < loop_end) {
+                        lr.last_use_point = loop_end;
+                        changed = true;
+                    }
+                }
+            };
+
+            const Terminator& term = blk->terminator;
+            switch (term.kind) {
+                case TerminatorKind::Goto:
+                    check_back_edge(term.goto_target.block);
+                    break;
+                case TerminatorKind::Branch:
+                    check_back_edge(term.branch.then_target.block);
+                    check_back_edge(term.branch.else_target.block);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    // Compute same-block flags: a value is same-block if its def_point and
+    // last_use_point fall within the same block's range.
+    // Cross-block values (used in a different block than defined) must NOT
+    // have their registers reused from the free list, because the IR may have
+    // partially-defined values (e.g., AND/OR short-circuit patterns where a
+    // value is only defined on one branch). Fresh registers are zero-initialized
+    // by the VM, preserving correct behavior for such patterns.
+    m_value_same_block.clear();
+    m_value_same_block.reserve(num_values);
+    for (u32 vi = 0; vi < num_values; vi++) {
+        m_value_same_block.push_back(false);
+    }
+    for (u32 bi = 0; bi < ir_func->blocks.size(); bi++) {
+        u32 block_start = block_points[bi].first_point;
+        u32 block_end = block_points[bi].term_point;
+        for (u32 vi = 0; vi < num_values; vi++) {
+            auto& lr = m_live_ranges[vi];
+            if (lr.def_point >= block_start && lr.def_point <= block_end &&
+                lr.last_use_point >= block_start && lr.last_use_point <= block_end) {
+                m_value_same_block[vi] = true;
+            }
+        }
+    }
+
+    // Block params are always cross-block: they receive values from predecessor
+    // blocks. When the layout order differs from execution order (e.g., a merge
+    // block appears after the loop body but its param is used in a loop increment
+    // block that's earlier in layout), the linear liveness analysis may compute
+    // a too-narrow live range, causing incorrect same-block classification.
+    // Force all block params to be cross-block so their registers are never
+    // reused from the free list and are never freed.
+    for (IRBlock* block : ir_func->blocks) {
+        for (const auto& param : block->params) {
+            if (param.value.is_valid() && param.value.id < num_values) {
+                m_value_same_block[param.value.id] = false;
+            }
+        }
+    }
+}
+
+void BytecodeBuilder::expire_before(u32 current_point) {
+    // Pop all entries from the front of m_active whose last_use < current_point
+    // and return their registers to the free list
+    while (!m_active.empty() && m_active.front().last_use < current_point) {
+        u8 freed_reg = m_active.front().reg;
+        m_free_regs.push_back(freed_reg);
+        // Remove front by shifting (m_active is sorted, so we remove from front)
+        for (u32 i = 1; i < m_active.size(); i++) {
+            m_active[i - 1] = m_active[i];
+        }
+        m_active.pop_back();
+    }
 }
 
 u16 BytecodeBuilder::add_constant(const BCConstant& c) {
@@ -562,7 +1023,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 // after we've unpacked. We need to:
                 // 1. Store packed data from registers to stack
                 // First, get the stack address
-                u8 temp_reg = m_next_reg++;  // Allocate temp register for stack address
+                u8 temp_reg = bump_register();  // Allocate temp register for stack address
                 emit_abi(Opcode::STACK_ADDR, temp_reg, static_cast<u16>(stack_offset));
                 emit_abc(Opcode::STRUCT_STORE_REGS, temp_reg, dst, static_cast<u8>(ret_slot_count));
                 emit(0);  // Padding word
@@ -666,7 +1127,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 m_next_stack_slot += ret_slot_count;
                 m_value_to_stack_slot[inst->result.id] = stack_offset;
 
-                u8 temp_reg = m_next_reg++;
+                u8 temp_reg = bump_register();
                 emit_abi(Opcode::STACK_ADDR, temp_reg, static_cast<u16>(stack_offset));
                 emit_abc(Opcode::STRUCT_STORE_REGS, temp_reg, dst, static_cast<u8>(ret_slot_count));
                 emit(0);  // Padding word
@@ -879,28 +1340,33 @@ void BytecodeBuilder::lower_terminator(IRBlock* block) {
         case TerminatorKind::Branch: {
             u8 cond = get_register(term.branch.condition);
 
-            // Emit then-branch arguments
+            // Emit JMP_IF_NOT to skip past the then-path MOVs + JMP
+            u32 jmp_if_not_idx = m_current_func->code.size();
+            emit_aoff(Opcode::JMP_IF_NOT, cond, 0);  // placeholder offset
+
+            // Emit then-branch arguments (only executes when cond is true)
             emit_block_args(term.branch.then_target);
 
-            // Record conditional jump for patching
+            // Jump to then-block
             JumpPatch then_patch;
             then_patch.instruction_index = m_current_func->code.size();
             then_patch.target_block = term.branch.then_target.block;
             m_jump_patches.push_back(then_patch);
+            emit_aoff(Opcode::JMP, 0, 0);
 
-            // Emit conditional jump with placeholder offset
-            emit_aoff(Opcode::JMP_IF, cond, 0);
+            // Patch JMP_IF_NOT to jump here (else label)
+            u32 else_label = m_current_func->code.size();
+            i16 skip_offset = static_cast<i16>(else_label - jmp_if_not_idx - 1);
+            m_current_func->code[jmp_if_not_idx] = encode_aoff(Opcode::JMP_IF_NOT, cond, skip_offset);
 
-            // Emit else-branch arguments
+            // Emit else-branch arguments (only executes when cond is false)
             emit_block_args(term.branch.else_target);
 
-            // Record unconditional jump for patching
+            // Jump to else-block
             JumpPatch else_patch;
             else_patch.instruction_index = m_current_func->code.size();
             else_patch.target_block = term.branch.else_target.block;
             m_jump_patches.push_back(else_patch);
-
-            // Emit unconditional jump with placeholder offset
             emit_aoff(Opcode::JMP, 0, 0);
             break;
         }

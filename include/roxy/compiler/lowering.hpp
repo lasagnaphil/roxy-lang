@@ -16,6 +16,18 @@ constexpr i64 IMM16_MAX = 32767;
 
 class NativeRegistry;
 
+// Liveness data for register allocation
+struct LiveRange {
+    u32 def_point;       // program point where value is defined
+    u32 last_use_point;  // latest program point where value is read
+};
+
+// Active allocation entry for free-list register allocator
+struct ActiveAlloc {
+    u32 last_use;  // when this value dies
+    u8 reg;        // its allocated register
+};
+
 // BytecodeBuilder lowers SSA IR to bytecode
 class BytecodeBuilder {
 public:
@@ -42,6 +54,13 @@ private:
     u8 allocate_register(ValueId value);
     u8 get_register(ValueId value);
     bool has_register(ValueId value) const;
+    u8 bump_register();  // Allocate next fresh register with bounds check
+
+    // Liveness analysis
+    void compute_liveness(IRFunction* ir_func);
+
+    // Free-list register allocation support
+    void expire_before(u32 current_point);
 
     // Constant pool management
     u16 add_constant(const BCConstant& c);
@@ -94,7 +113,15 @@ private:
 
     // Register allocation map: ValueId.id -> register
     tsl::robin_map<u32, u8> m_value_to_reg;
-    u8 m_next_reg;
+    u16 m_next_reg;  // u16 to prevent silent wraparound; capped at 255
+
+    // Liveness data (computed per function)
+    Vector<LiveRange> m_live_ranges;
+    Vector<bool> m_value_same_block;   // true if value's def and last use are in the same block
+
+    // Free-list allocator state
+    Vector<u8> m_free_regs;            // pool of available register numbers
+    Vector<ActiveAlloc> m_active;      // sorted by last_use ascending
 
     // Local stack allocation: maps ValueId.id -> stack slot offset
     tsl::robin_map<u32, u32> m_value_to_stack_slot;
