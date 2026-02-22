@@ -19,10 +19,6 @@ Last updated: 2026-02-22
   - Issue: `ref<Child>` is assignable to `ref<Parent>`, but `ref` is mutable — allows writing a `Parent` value through a reference that actually points to a `Child`, corrupting layout
   - Fix: Make reference subtyping invariant, or split into read-only `ref` (covariant) and mutable `mut_ref` (invariant)
 
-- [x] **Ternary expression reports spurious errors** *(fixed)*
-  - File: `src/roxy/compiler/semantic.cpp` (`analyze_ternary_expr`)
-  - Fix: Added `is_assignable()` probe method that checks type compatibility without reporting errors; `analyze_ternary_expr` now uses it for bidirectional probing
-
 ---
 
 ## Low Priority
@@ -46,14 +42,12 @@ Last updated: 2026-02-22
 - [ ] Variant constructors (`Type.Variant { ... }` syntax)
 - [ ] Exception handling
 - [ ] LSP server for IDE support
-- [ ] AOT compilation to C
+- [ ] AOT compilation to C (design plan complete in `docs/internals/c-backend.md`)
 
 ---
 
 ## Code Quality Improvements
 
-- [ ] Extract bytecode constants to dedicated header
-- [ ] Add inline comments explaining bytecode instruction formats
 - [ ] Standardize error message formatting across compiler
 - [ ] Consider Result<T, Error> type for fallible operations
 
@@ -63,15 +57,13 @@ Last updated: 2026-02-22
 
 - [ ] Document error type propagation pattern in semantic analysis
 - [ ] Document thread-safety limitations (single VM per thread assumed)
-- [ ] Document register limit (255 values per function)
-- [ ] Add bytecode instruction format reference
 
 ---
 
 ## Testing Gaps
 
-- [ ] Test functions with >200 local variables (near register limit)
-- [ ] Test deeply nested struct field access (>5 levels)
+- [ ] Test deeply nested struct field access (>5 levels; currently only 3 levels tested)
 - [ ] Test error recovery in semantic analysis
 - [ ] Add fuzzing for parser/lexer
-- [ ] Test cross-module imports with complex dependency graphs
+- [ ] Test cross-module imports with complex dependency graphs (diamond dependencies, >3 levels)
+
