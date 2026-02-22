@@ -138,8 +138,8 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **SSA IR** - Block arguments (not phi nodes), 43+ operations for all basic operations.
 **Details:** `docs/internals/ssa-ir.md` | **Files:** `compiler/ssa_ir.hpp`, `compiler/ir_builder.hpp`
 
-**Bytecode** - 32-bit fixed-width register-based, 64+ opcodes, three instruction formats (ABC, ABI, AOFF).
-**Details:** `docs/internals/bytecode.md` | **Files:** `vm/bytecode.hpp`, `compiler/lowering.hpp`
+**Bytecode** - 32-bit fixed-width register-based, 64+ opcodes, three instruction formats (ABC, ABI, AOFF). Liveness-based register allocation with free-list reuse; register spilling via furthest-first eviction when pressure exceeds 255 registers.
+**Details:** `docs/internals/bytecode.md`, `docs/internals/ssa-ir.md` | **Files:** `vm/bytecode.hpp`, `compiler/lowering.hpp`
 
 ### Runtime
 **VM** - Shared register file with windowing, call frame stack, module loading.

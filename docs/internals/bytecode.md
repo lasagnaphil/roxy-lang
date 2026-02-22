@@ -52,7 +52,7 @@ Each function call allocates a new register window from the shared register file
 | 0x80-0x8F | Type Conversions | `I_TO_F64`, `F64_TO_I`, `I_TO_B`, `B_TO_I`, `TRUNC_S`, `TRUNC_U`, `F32_TO_F64`, `F64_TO_F32`, `I_TO_F32`, `F32_TO_I` |
 | 0x90-0x9F | Control Flow | `JMP`, `JMP_IF`, `JMP_IF_NOT`, `RET`, `RET_VOID`, `RET_STRUCT_SMALL` |
 | 0xA0-0xAF | Function Calls | `CALL`, `CALL_NATIVE` |
-| 0xB0-0xBF | Struct Access | `GET_FIELD`, `SET_FIELD`, `STACK_ADDR`, `GET_FIELD_ADDR`, `STRUCT_LOAD_REGS`, `STRUCT_STORE_REGS`, `STRUCT_COPY` |
+| 0xB0-0xBF | Struct/Stack Access | `GET_FIELD`, `SET_FIELD`, `STACK_ADDR`, `GET_FIELD_ADDR`, `STRUCT_LOAD_REGS`, `STRUCT_STORE_REGS`, `STRUCT_COPY`, `RET_STRUCT_SMALL`, `SPILL_REG`, `RELOAD_REG` |
 | 0xD0-0xDF | Object Lifecycle | `NEW_OBJ`, `DEL_OBJ` |
 | 0xE0-0xEF | Reference Counting | `REF_INC`, `REF_DEC`, `WEAK_CHECK` |
 | 0xFE-0xFF | Debug/Special | `NOP`, `HALT` |
@@ -118,6 +118,20 @@ STACK_ADDR: [STACK_ADDR dst][slot_offset:16]
 ```
 
 The `slot_count` (1 or 2) determines whether to read/write 32-bit or 64-bit values.
+
+### Register Spill/Reload
+
+When register pressure exceeds the 255-register limit, the lowering pass spills long-lived values to the local stack. Two single-word ABI-format instructions handle this:
+
+```
+SPILL_REG  (0xB8): [SPILL_REG:8][reg:8][slot_offset:16]
+    local_stack[base + slot_offset] = regs[reg]   (8 bytes → 2 u32 slots)
+
+RELOAD_REG (0xB9): [RELOAD_REG:8][reg:8][slot_offset:16]
+    regs[reg] = local_stack[base + slot_offset]    (2 u32 slots → 8 bytes)
+```
+
+Each spilled value occupies 2 u32 stack slots (one u64 register value). Functions that don't require spilling never emit these instructions.
 
 ## Files
 

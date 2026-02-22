@@ -194,11 +194,20 @@ private:
     u8 allocate_register(ValueId value);
     u8 get_register(ValueId value);
 
+    // Register spilling (when >255 simultaneously-live values)
+    void spill_furthest();
+    u8 get_result_register(ValueId value);
+    u8 ensure_in_register(ValueId value, u8 scratch_index);
+    void spill_if_needed(ValueId value, u8 reg);
+
+    // Liveness analysis
+    void compute_liveness(IRFunction* ir_func);
+    void expire_before(u32 current_point);
+
     // Constant pool management
     u16 add_constant(const BCConstant& c);
 
     // Block lowering
-    void lower_block(IRBlock* block);
     void lower_instruction(IRInst* inst);
     void lower_terminator(IRBlock* block);
 
@@ -211,10 +220,38 @@ private:
 ```
 
 Key lowering decisions:
-- **Simple register allocation**: Uses SSA value ID as register number (max 255 values per function)
 - **Two-pass emission**: First pass records block offsets, second pass patches jump targets
 - **Constant pool**: Values that don't fit in 16-bit immediate go to constant pool
 - **Block arguments**: Lowered to MOV instructions before each jump
+
+### Register Allocation
+
+The register file uses 8-bit indices (0–254, with 0xFF as sentinel), giving a hard cap of 255 registers per function. The allocator uses liveness-based allocation with register reuse:
+
+1. **Liveness analysis** (`compute_liveness`): Computes def/last-use intervals for all SSA values over a linear program-point numbering. Five passes handle definition points, operand uses, block-param extensions for parallel assignment safety, loop back-edge extensions (fixed-point iteration for nested loops), and same-block classification.
+
+2. **Free-list allocation** (`allocate_register`): Values whose def and last-use are within the same block can reuse freed registers from a free list. Cross-block values (including block params) always get fresh registers to preserve zero-initialization semantics for partially-defined values (e.g., AND/OR short-circuit patterns).
+
+3. **Active set expiry** (`expire_before`): Before each allocation point, values whose last-use has passed are expired and their registers returned to the free list, sorted by last-use ascending.
+
+4. **Pre-colored parameters**: Function parameters are assigned to registers R0, R1, ... before the main allocation loop. Call results use bump allocation to guarantee contiguous register blocks for the calling convention.
+
+### Register Spilling
+
+When register pressure exceeds 255, spilling evicts long-lived values to the local stack using a furthest-first eviction strategy:
+
+1. **Trigger**: When `allocate_register()` finds both the bump pointer at the limit and the free list empty, it calls `spill_furthest()`.
+
+2. **Scratch register setup** (first spill only): Two dedicated scratch registers are permanently reserved by evicting the two values with the furthest `last_use_point` from the active set. These scratch registers handle all subsequent reload/spill operations during emission.
+
+3. **Furthest-first eviction**: Each spill evicts the active value with the latest `last_use_point`, freeing its register for the caller.
+
+4. **Emission**: During bytecode emission, spill-aware methods replace the normal register lookup:
+   - `get_result_register(value)` — returns the value's register, or scratch[0] for spilled destinations
+   - `ensure_in_register(value, scratch_index)` — returns the value's register, or emits `RELOAD_REG` into the specified scratch register for spilled operands
+   - `spill_if_needed(value, reg)` — emits `SPILL_REG` after writing a spilled value's result
+
+**Zero overhead**: Functions that don't trigger spilling never reserve scratch registers and never emit `SPILL_REG`/`RELOAD_REG` instructions.
 
 ## Files
 

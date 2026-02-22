@@ -177,6 +177,7 @@ Key implementation notes:
 - Division by zero is checked and returns an error
 - Array bounds checking with error reporting
 - Error messages are stored in `vm->error`
+- `SPILL_REG`/`RELOAD_REG` opcodes transfer register values to/from the local stack for functions that exceed the 255-register limit (see `docs/internals/bytecode.md`)
 
 ## Files
 
