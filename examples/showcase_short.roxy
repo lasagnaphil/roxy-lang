@@ -1,0 +1,41 @@
+struct Vec2 {
+    x: f64;
+    y: f64;
+}
+
+fun new Vec2(x: f64, y: f64) {
+    self.x = x;
+    self.y = y;
+}
+
+fun Vec2.length(): f64 {
+    return sqrt(self.x * self.x + self.y * self.y);
+}
+
+trait Add<Rhs>;
+fun Add.add(other: Rhs): Self;
+
+fun Vec2.add(other: Vec2): Vec2 for Add {
+    return Vec2(self.x + other.x, self.y + other.y);
+}
+
+fun dot<T: HasXY>(a: T, b: T): f64 {
+    return a.x * b.x + a.y * b.y;
+}
+
+fun main(): i32 {
+    var a = Vec2(3.0, 4.0);
+    var b = Vec2(1.0, 2.0);
+    var c = a + b;
+
+    print(f"a + b = ({c.x}, {c.y})");
+    print(f"|a| = {a.length()}");
+
+    var items: List<i32> = List<i32>();
+    for (var i: i32 = 0; i < 5; i = i + 1) {
+        items.push(i * i);
+    }
+    print(f"squares: {items}");
+
+    return 0;
+}
