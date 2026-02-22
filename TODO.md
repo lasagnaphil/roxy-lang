@@ -14,10 +14,7 @@ Last updated: 2026-02-22
 
 ## Medium Priority
 
-- [ ] **Covariant mutable reference subtyping is unsound**
-  - File: `src/roxy/compiler/semantic.cpp` (`check_assignable`)
-  - Issue: `ref<Child>` is assignable to `ref<Parent>`, but `ref` is mutable — allows writing a `Parent` value through a reference that actually points to a `Child`, corrupting layout
-  - Fix: Make reference subtyping invariant, or split into read-only `ref` (covariant) and mutable `mut_ref` (invariant)
+*(No items)*
 
 ---
 

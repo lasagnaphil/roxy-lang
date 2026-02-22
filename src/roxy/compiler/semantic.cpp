@@ -4077,7 +4077,9 @@ bool SemanticAnalyzer::check_assignable(Type* target, Type* source, SourceLocati
         }
     }
 
-    // Reference subtyping: uniq<Child> -> uniq<Parent>, ref<Child> -> ref<Parent>, etc. (covariant)
+    // Reference subtyping: ref<Child> -> ref<Parent>, etc. (covariant)
+    // Safe because struct inheritance uses prefix layout — parent fields are
+    // at the same offsets in child objects, and dispatch is static.
     if (target->is_reference() && source->is_reference()) {
         if (target->kind == source->kind) {
             Type* target_inner = target->ref_info.inner_type;
