@@ -42,7 +42,13 @@ public:
     // Build synthesized default constructor for a struct type
     IRFunction* build_synthesized_default_constructor(Type* struct_type);
 
+    // Error reporting
+    bool has_error() const { return m_has_error; }
+    const char* error() const { return m_error; }
+
 private:
+    // Report an internal compiler error (stores the first error only)
+    void report_error(const char* message);
     // Block management
     IRBlock* create_block(StringView name = {});
     void set_current_block(IRBlock* block);
@@ -169,6 +175,10 @@ private:
 
     // Track ref-typed parameters for RefInc/RefDec at function boundaries
     Vector<ValueId> m_ref_params;
+
+    // Error state
+    bool m_has_error;
+    const char* m_error;
 
     // Info about a variable that needs a phi at loop header
     struct LoopVarInfo {

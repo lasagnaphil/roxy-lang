@@ -21,10 +21,22 @@ IRBuilder::IRBuilder(BumpAllocator& allocator, TypeEnv& type_env, NativeRegistry
     , m_module_registry(module_registry)
     , m_current_func(nullptr)
     , m_current_block(nullptr)
+    , m_has_error(false)
+    , m_error(nullptr)
 {
 }
 
+void IRBuilder::report_error(const char* message) {
+    if (!m_has_error) {
+        m_has_error = true;
+        m_error = message;
+    }
+}
+
 IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
+    m_has_error = false;
+    m_error = nullptr;
+
     IRModule* module = m_allocator.emplace<IRModule>();
 
     // Track which struct types have user-defined default constructors
@@ -86,6 +98,8 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
         }
     }
 
+    if (m_has_error) return nullptr;
+
     // Process synthetic (injected default method) declarations
     for (auto* decl : synthetic_decls) {
         if (decl && decl->kind == AstKind::DeclMethod) {
@@ -98,6 +112,8 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
         }
     }
 
+    if (m_has_error) return nullptr;
+
     // Process generic function instances
     for (auto* instance : m_type_env.generics().all_fun_instances()) {
         if (instance->is_analyzed && instance->instantiated_decl) {
@@ -105,6 +121,8 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             module->functions.push_back(func);
         }
     }
+
+    if (m_has_error) return nullptr;
 
     // Generate synthesized default constructors for structs without user-defined ones
     for (auto* decl : program->declarations) {
@@ -125,6 +143,8 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
         }
     }
 
+    if (m_has_error) return nullptr;
+
     // Generate synthesized default constructors for generic struct instances
     for (auto* instance : m_type_env.generics().all_struct_instances()) {
         if (instance->is_analyzed && instance->concrete_type) {
@@ -135,6 +155,8 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             }
         }
     }
+
+    if (m_has_error) return nullptr;
 
     return module;
 }
@@ -1408,6 +1430,7 @@ ValueId IRBuilder::gen_expr(Expr* expr) {
         case AstKind::ExprStringInterp:
             return gen_string_interp_expr(expr);
         default:
+            report_error("Internal error: unknown expression kind in IR generation");
             return ValueId::invalid();
     }
 }
@@ -1437,6 +1460,7 @@ ValueId IRBuilder::gen_literal_expr(Expr* expr) {
         case LiteralKind::String:
             return emit_const_string(lit.string_value);
     }
+    report_error("Internal error: unknown literal kind in IR generation");
     return ValueId::invalid();
 }
 
@@ -1961,6 +1985,7 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         } // end outer else (method call)
     }
     else {
+        report_error("Internal error: unhandled call expression kind");
         return ValueId::invalid();
     }
 
@@ -2010,6 +2035,7 @@ ValueId IRBuilder::gen_index_expr(Expr* expr) {
         }
     }
 
+    report_error("Internal error: index operation not supported");
     return ValueId::invalid();
 }
 
@@ -2388,6 +2414,7 @@ ValueId IRBuilder::gen_super_call(Expr* expr) {
     }
 
     if (!target_type || !target_type->is_struct()) {
+        report_error("Internal error: invalid super call target");
         return ValueId::invalid();
     }
 
@@ -2547,6 +2574,7 @@ ValueId IRBuilder::gen_static_get_expr(Expr* expr) {
     }
 
     // Should not reach here if semantic analysis passed
+    report_error("Internal error: unexpected state in static get expression");
     return ValueId::invalid();
 }
 
@@ -2703,6 +2731,7 @@ ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {
             return gen_lvalue_addr(expr->grouping.expr);
         default:
             // Should not happen - semantic analysis validated lvalues
+            report_error("Internal error: expression is not a valid lvalue");
             return ValueId::invalid();
     }
 }
@@ -2792,6 +2821,7 @@ ValueId IRBuilder::lookup_local(StringView name) {
             return it->second.value;
         }
     }
+    report_error("Internal error: undefined variable in IR generation");
     return ValueId::invalid();
 }
 

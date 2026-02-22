@@ -247,8 +247,13 @@ bool Compiler::build_ir_all() {
         IRModule* ir_module = ir_builder.build(program, synthetic_decls);
 
         if (!ir_module) {
-            add_error_fmt("IR generation failed for module '{}'",
-                         src.name);
+            if (ir_builder.has_error()) {
+                add_error_fmt("IR generation failed for module '{}': {}",
+                             src.name, ir_builder.error());
+            } else {
+                add_error_fmt("IR generation failed for module '{}'",
+                             src.name);
+            }
             return false;
         }
 

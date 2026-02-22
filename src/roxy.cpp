@@ -98,7 +98,11 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len,
     IRBuilder ir_builder(allocator, type_env, registry, analyzer.symbols(), modules);
     IRModule* ir_module = ir_builder.build(program);
     if (!ir_module) {
-        fprintf(stderr, "IR generation failed\n");
+        if (ir_builder.has_error()) {
+            fprintf(stderr, "IR generation failed: %s\n", ir_builder.error());
+        } else {
+            fprintf(stderr, "IR generation failed\n");
+        }
         return nullptr;
     }
 
