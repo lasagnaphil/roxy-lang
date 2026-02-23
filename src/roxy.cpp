@@ -11,6 +11,7 @@
 #include "roxy/compiler/type_env.hpp"
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
+#include "roxy/compiler/ir_validator.hpp"
 #include "roxy/compiler/lowering.hpp"
 #include "roxy/compiler/module_registry.hpp"
 #include "roxy/vm/vm.hpp"
@@ -111,6 +112,12 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len,
         ir_module_to_string(ir_module, ir_str);
         ir_str.push_back('\0');
         printf("=== SSA IR ===\n%s\n", ir_str.data());
+    }
+
+    IRValidator validator;
+    if (!validator.validate(ir_module)) {
+        fprintf(stderr, "IR validation failed: %s\n", validator.error());
+        return nullptr;
     }
 
     BytecodeBuilder bc_builder;

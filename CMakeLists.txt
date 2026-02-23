@@ -53,6 +53,7 @@ add_library(roxy_compiler
     src/roxy/compiler/semantic.cpp
     src/roxy/compiler/ssa_ir.cpp
     src/roxy/compiler/ir_builder.cpp
+    src/roxy/compiler/ir_validator.cpp
     src/roxy/compiler/generics.cpp
     src/roxy/compiler/module_registry.cpp
     src/roxy/compiler/compiler.cpp
@@ -98,6 +99,7 @@ add_executable(roxy_tests
     tests/unit/test_bytecode.cpp
     tests/unit/test_vm.cpp
     tests/unit/test_lowering.cpp
+    tests/unit/test_ir_validator.cpp
     tests/unit/test_slab_allocator.cpp
     tests/unit/test_format.cpp
     tests/unit/test_string.cpp

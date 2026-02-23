@@ -20,9 +20,7 @@ Last updated: 2026-02-22
 
 ## Low Priority
 
-- [ ] **Add IR validation pass**
-  - Issue: Invalid IR can reach lowering and cause cryptic errors
-  - Fix: Add validation pass between IR builder and lowering
+*(No items)*
 
 ---
 

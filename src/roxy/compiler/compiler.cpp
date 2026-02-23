@@ -5,6 +5,7 @@
 #include "roxy/compiler/semantic.hpp"
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
+#include "roxy/compiler/ir_validator.hpp"
 #include "roxy/compiler/lowering.hpp"
 #include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/natives.hpp"
@@ -286,6 +287,13 @@ BCModule* Compiler::link_modules() {
             func_name_to_global_idx[func->name] = global_idx;
             merged_ir.functions.push_back(func);
         }
+    }
+
+    // Validate merged IR before lowering
+    IRValidator validator;
+    if (!validator.validate(&merged_ir)) {
+        add_error_fmt("IR validation failed: {}", validator.error());
+        return nullptr;
     }
 
     // Build bytecode from merged IR
