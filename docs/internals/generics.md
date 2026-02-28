@@ -4,7 +4,7 @@ Generics enable writing code that works with multiple types while maintaining st
 
 ## Implementation Status
 
-**Implemented (Phase 1 + 2 + 3 + 4 + 5 + 6):**
+**Implemented (Phase 1 + 2 + 3 + 4 + 5 + 6 + 7):**
 - Generic functions with explicit type arguments
 - Generic structs with explicit type arguments
 - Monomorphization with AST cloning and type substitution
@@ -17,9 +17,9 @@ Generics enable writing code that works with multiple types while maintaining st
 - Local type inference for generic type arguments (function calls and struct literals)
 - Trait bounds on type parameters (Phase A: instantiation-site checking)
 - Trait bounds body checking (Phase B: definition-site checking of generic template bodies)
+- User-defined external methods on generic structs (`fun Box<T>.get(): T`)
 
 **Not yet implemented:**
-- User-defined generic methods on generic structs
 - User-defined generic constructors/destructors
 - Higher-kinded types, associated types, specialization, const generics
 
@@ -74,6 +74,35 @@ fun make_box(v: i32): Box<i32> { return Box<i32> { value = v }; }
 fun wrap<T>(v: T): Box<T> { return Box<T> { value = v }; }
 
 var b: Box<i32> = wrap(42);   // inferred: T = i32
+```
+
+### Methods on Generic Structs
+
+External methods can be defined on generic structs using the `fun StructName<T>.method()` syntax. Methods are monomorphized along with the struct — each concrete instantiation gets its own copy:
+
+```roxy
+struct Box<T> { value: T; }
+
+fun Box<T>.get(): T { return self.value; }
+fun Box<T>.set(v: T) { self.value = v; }
+
+// Usage
+var b: Box<i32> = Box<i32> { value = 0 };
+b.set(42);
+var v: i32 = b.get();  // v = 42
+
+// Multiple instantiations generate separate methods
+var b2: Box<f64> = Box<f64> { value = 3.14 };
+var v2: f64 = b2.get();  // calls Box$f64$$get, not Box$i32$$get
+```
+
+Methods can call other methods on the same generic struct:
+
+```roxy
+struct Counter<T> { value: T; count: i32; }
+
+fun Counter<T>.get_count(): i32 { return self.count; }
+fun Counter<T>.is_empty(): bool { return self.get_count() == 0; }
 ```
 
 ## Type Inference
@@ -212,6 +241,7 @@ struct GenericStructInstance {
     Decl* instantiated_decl;
     Type* concrete_type;             // The concrete struct Type*
     bool is_analyzed;
+    Vector<Decl*> instantiated_methods;  // Cloned external method DeclMethod nodes
 };
 ```
 
@@ -221,9 +251,11 @@ When instantiating `identity<i32>`, the entire function AST is deep-cloned. Duri
 
 After cloning, `resolve_type_expr` updates TypeExpr names to mangled names (e.g., `Box<i32>` TypeExpr gets `name = "Box$i32"`) so the IR builder can look up the correct type.
 
-### Generic Struct Field Resolution
+### Generic Struct Field and Method Resolution
 
-When a generic struct is first instantiated via `resolve_type_expr`, its fields are resolved **immediately inline** rather than deferred to the worklist. This ensures that functions using the struct (in the same or later analysis passes) can access field information.
+When a generic struct is first instantiated via `resolve_type_expr`, its fields and method signatures are resolved **immediately inline** via `resolve_generic_struct_fields()` rather than deferred to the worklist. This ensures that functions using the struct (in the same or later analysis passes) can access field information and call methods.
+
+External method templates (`fun Box<T>.get(): T`) are registered during `resolve_type_members` and cloned with type substitution during `instantiate_struct()`. The cloned method declarations are stored in `GenericStructInstance::instantiated_methods`. Method **bodies** are analyzed later in the worklist loop.
 
 ## Trait Bounds
 
@@ -332,19 +364,18 @@ type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ;
 | `include/roxy/shared/lexer.hpp` | save_position()/restore_position() for parser backtracking |
 | `src/roxy/compiler/semantic.cpp` | Generic template registration, instantiation, type resolution |
 | `src/roxy/compiler/ir_builder.cpp` | IR generation for generic instances |
-| `tests/e2e/test_generics.cpp` | E2E tests (60 test cases including Phase A + Phase B trait bound tests) |
+| `tests/e2e/test_generics.cpp` | E2E tests (66 test cases including Phase A + Phase B trait bounds and generic struct methods) |
 
 ## Limitations
 
 1. **Limited type inference**: Type arguments can be inferred from function args and struct fields, but not from return type context alone
-2. **No user-defined generic methods**: Methods on user-defined generic structs are not yet supported (native generic types like `List<T>` have methods via the `NativeRegistry` API)
-4. **No user-defined generic constructors/destructors**: Same as above — native types support these via `bind_generic_constructor`/`bind_generic_destructor`
-5. **No higher-kinded types**: Can't abstract over type constructors
-6. **No associated types**: Traits can't define type members
-7. **No specialization**: Can't provide different implementations for specific types
-8. **No const generics**: Can't parameterize by values
+2. **No user-defined generic constructors/destructors**: Native types support these via `bind_generic_constructor`/`bind_generic_destructor`, but user-defined ones are not yet supported
+3. **No higher-kinded types**: Can't abstract over type constructors
+4. **No associated types**: Traits can't define type members
+5. **No specialization**: Can't provide different implementations for specific types
+6. **No const generics**: Can't parameterize by values
 
 ## Future Work
 
-1. **User-defined generic methods** — Methods on generic structs (`fun Box.get<T>(): T`)
-3. **User-defined generic constructors** — `fun new Box<T>(value: T)`
+1. **User-defined generic constructors** — `fun new Box<T>(value: T)`
+2. **Trait implementations on generic structs** — `fun Box<T>.print() for Printable`

@@ -42,6 +42,7 @@ struct GenericStructInstance {
     Decl* instantiated_decl;         // Cloned + substituted StructDecl
     Type* concrete_type;             // The concrete struct Type*
     bool is_analyzed;
+    Vector<Decl*> instantiated_methods;  // Cloned external method DeclMethod nodes
 };
 
 // Manages generic templates and their instantiations
@@ -52,6 +53,10 @@ public:
     // Register generic templates
     void register_generic_fun(StringView name, Decl* decl);
     void register_generic_struct(StringView name, Decl* decl);
+
+    // Register/query external method templates for generic structs
+    void register_generic_struct_method(StringView struct_name, Decl* method_decl);
+    const Vector<Decl*>* get_generic_struct_methods(StringView struct_name) const;
 
     // Query
     bool is_generic_fun(StringView name) const;
@@ -106,6 +111,7 @@ private:
     // Clone AST with type substitution
     Decl* clone_fun_decl(Decl* original, const TypeSubstitution& subst, StringView new_name);
     Decl* clone_struct_decl(Decl* original, const TypeSubstitution& subst, StringView new_name);
+    Decl* clone_method_decl(Decl* original, const TypeSubstitution& subst, StringView mangled_struct_name);
     Expr* clone_expr(Expr* expr, const TypeSubstitution& subst);
     Decl* clone_decl(Decl* decl, const TypeSubstitution& subst);
     Span<Decl*> clone_decl_list(Span<Decl*> decls, const TypeSubstitution& subst);
@@ -126,6 +132,9 @@ private:
 
     // Generic struct templates
     tsl::robin_map<StringView, Decl*> m_generic_structs;
+
+    // External method templates for generic structs (struct_name -> list of DeclMethod)
+    tsl::robin_map<StringView, Vector<Decl*>> m_generic_struct_methods;
 
     // All function instances (including already analyzed ones)
     Vector<GenericFunInstance*> m_all_fun_instances;

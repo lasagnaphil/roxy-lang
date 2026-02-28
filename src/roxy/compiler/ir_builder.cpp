@@ -90,6 +90,8 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
         else if (decl->kind == AstKind::DeclMethod) {
             // Build method - skip trait method declarations (struct_name is a trait, not a struct)
             MethodDecl& method_decl = decl->method_decl;
+            // Skip generic struct method templates (handled below with instances)
+            if (method_decl.type_params.size() > 0) continue;
             Type* struct_type = m_type_env.named_type_by_name(method_decl.struct_name);
             if (struct_type && struct_type->is_struct() && method_decl.body) {
                 IRFunction* func = build_method(&method_decl, struct_type);
@@ -151,6 +153,21 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             // Check if there's a user-defined default constructor for this instance
             if (has_default_ctor.find(instance->mangled_name) == has_default_ctor.end()) {
                 IRFunction* func = build_synthesized_default_constructor(instance->concrete_type);
+                module->functions.push_back(func);
+            }
+        }
+    }
+
+    if (m_has_error) return nullptr;
+
+    // Generate external methods for generic struct instances
+    for (auto* instance : m_type_env.generics().all_struct_instances()) {
+        if (!instance->is_analyzed || !instance->concrete_type) continue;
+
+        for (Decl* method_decl : instance->instantiated_methods) {
+            MethodDecl& method = method_decl->method_decl;
+            if (method.body) {
+                IRFunction* func = build_method(&method, instance->concrete_type);
                 module->functions.push_back(func);
             }
         }

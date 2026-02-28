@@ -32,6 +32,16 @@ void GenericInstantiator::register_generic_struct(StringView name, Decl* decl) {
     m_generic_structs[name] = decl;
 }
 
+void GenericInstantiator::register_generic_struct_method(StringView struct_name, Decl* method_decl) {
+    m_generic_struct_methods[struct_name].push_back(method_decl);
+}
+
+const Vector<Decl*>* GenericInstantiator::get_generic_struct_methods(StringView struct_name) const {
+    auto it = m_generic_struct_methods.find(struct_name);
+    if (it != m_generic_struct_methods.end()) return &it->second;
+    return nullptr;
+}
+
 bool GenericInstantiator::is_generic_fun(StringView name) const {
     return m_generic_funs.find(name) != m_generic_funs.end();
 }
@@ -272,6 +282,15 @@ StringView GenericInstantiator::instantiate_struct(StringView name, Span<Type*> 
     instance->instantiated_decl = instantiated;
     instance->concrete_type = concrete_type;
     instance->is_analyzed = false;
+
+    // Clone external method templates for this instantiation
+    const Vector<Decl*>* ext_methods = get_generic_struct_methods(name);
+    if (ext_methods) {
+        for (Decl* method_template : *ext_methods) {
+            Decl* cloned = clone_method_decl(method_template, subst, mangled);
+            instance->instantiated_methods.push_back(cloned);
+        }
+    }
 
     m_all_struct_instances.push_back(instance);
     m_pending_structs.push_back(instance);
@@ -666,6 +685,34 @@ Decl* GenericInstantiator::clone_fun_decl(Decl* original, const TypeSubstitution
 
     // Clone body with substitution
     fun_decl.body = clone_stmt(original->fun_decl.body, subst);
+
+    return d;
+}
+
+Decl* GenericInstantiator::clone_method_decl(Decl* original, const TypeSubstitution& subst, StringView mangled_struct_name) {
+    Decl* d = m_allocator.emplace<Decl>();
+    *d = *original;
+
+    MethodDecl& method_decl = d->method_decl;
+    method_decl.struct_name = mangled_struct_name;
+    method_decl.type_params = Span<TypeParam>(); // Clear type params - concrete instantiation
+
+    // Substitute parameter types
+    if (method_decl.params.size() > 0) {
+        Param* params = reinterpret_cast<Param*>(
+            m_allocator.alloc_bytes(sizeof(Param) * method_decl.params.size(), alignof(Param)));
+        for (u32 i = 0; i < method_decl.params.size(); i++) {
+            params[i] = original->method_decl.params[i];
+            params[i].type = substitute_type_expr(original->method_decl.params[i].type, subst);
+        }
+        method_decl.params = Span<Param>(params, method_decl.params.size());
+    }
+
+    // Substitute return type
+    method_decl.return_type = substitute_type_expr(original->method_decl.return_type, subst);
+
+    // Clone body with substitution
+    method_decl.body = clone_stmt(original->method_decl.body, subst);
 
     return d;
 }

@@ -1033,3 +1033,149 @@ TEST_CASE("E2E - Generic Phase B: unbounded template body not checked") {
     CHECK(result.success);
     CHECK(result.value == 42);
 }
+
+// ============================================================================
+// Generic Struct Methods Tests
+// ============================================================================
+
+TEST_CASE("E2E - Generic struct method: basic external getter") {
+    const char* source = R"(
+        struct Box<T> {
+            value: T;
+        }
+
+        fun Box<T>.get(): T {
+            return self.value;
+        }
+
+        fun main(): i32 {
+            var b: Box<i32> = Box<i32> { value = 42 };
+            return b.get();
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic struct method: setter and getter") {
+    const char* source = R"(
+        struct Box<T> {
+            value: T;
+        }
+
+        fun Box<T>.get(): T {
+            return self.value;
+        }
+
+        fun Box<T>.set(v: T) {
+            self.value = v;
+        }
+
+        fun main(): i32 {
+            var b: Box<i32> = Box<i32> { value = 0 };
+            b.set(42);
+            return b.get();
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic struct method: multiple instantiations") {
+    const char* source = R"(
+        struct Wrapper<T> {
+            val: T;
+        }
+
+        fun Wrapper<T>.unwrap(): T {
+            return self.val;
+        }
+
+        fun main(): i32 {
+            var a: Wrapper<i32> = Wrapper<i32> { val = 10 };
+            var b: Wrapper<f64> = Wrapper<f64> { val = 5.5 };
+            return a.unwrap() + i32(b.unwrap());
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 15);
+}
+
+TEST_CASE("E2E - Generic struct method: cross-method calls") {
+    const char* source = R"(
+        struct Counter<T> {
+            value: T;
+            count: i32;
+        }
+
+        fun Counter<T>.get_count(): i32 {
+            return self.count;
+        }
+
+        fun Counter<T>.is_empty(): bool {
+            return self.get_count() == 0;
+        }
+
+        fun main(): i32 {
+            var c: Counter<i32> = Counter<i32> { value = 99, count = 0 };
+            if (c.is_empty()) {
+                return 42;
+            }
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic struct method: return struct type") {
+    const char* source = R"(
+        struct Pair<T> {
+            first: T;
+            second: T;
+        }
+
+        fun Pair<T>.swap(): Pair<T> {
+            return Pair<T> { first = self.second, second = self.first };
+        }
+
+        fun main(): i32 {
+            var p: Pair<i32> = Pair<i32> { first = 10, second = 32 };
+            var q: Pair<i32> = p.swap();
+            return q.first + q.second;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic struct method: with additional parameters") {
+    const char* source = R"(
+        struct Box<T> {
+            value: T;
+        }
+
+        fun Box<T>.add(other: T): T {
+            return self.value + other;
+        }
+
+        fun main(): i32 {
+            var b: Box<i32> = Box<i32> { value = 10 };
+            return b.add(32);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}

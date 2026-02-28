@@ -595,6 +595,11 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             }
             else {
                 // Regular method (no trait involvement)
+                // Check if struct_name is a generic struct template
+                if (generics().is_generic_struct(method_decl.struct_name)) {
+                    generics().register_generic_struct_method(method_decl.struct_name, decl);
+                    continue;  // Skip normal method analysis; handled in worklist
+                }
                 analyze_method_decl(decl);
             }
         }
@@ -775,6 +780,10 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
             if (m_type_env.trait_type_by_name(method_decl.struct_name) && method_decl.trait_name.empty()) {
                 continue;
             }
+            // Skip generic struct method templates (handled in worklist)
+            if (generics().is_generic_struct(method_decl.struct_name)) {
+                continue;
+            }
             Type* method_struct = m_type_env.named_type_by_name(method_decl.struct_name);
             if (method_struct) {
                 analyze_method_body(decl, method_struct);
@@ -801,37 +810,19 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
         if (m_type_env.generics().has_pending_structs()) {
             auto pending_structs = m_type_env.generics().take_pending_structs();
             for (auto* inst : pending_structs) {
-                // Register the concrete struct type
-                m_type_env.register_named_type(inst->mangled_name, inst->concrete_type);
-
-                // Resolve members (fields, slot layout) — mirrors resolve_type_members logic
-                StructDecl& struct_decl = inst->instantiated_decl->struct_decl;
-                StructTypeInfo& struct_type_info = inst->concrete_type->struct_info;
-
-                Vector<FieldInfo> fields;
-                u32 slot_offset = 0;
-                for (u32 j = 0; j < struct_decl.fields.size(); j++) {
-                    Type* field_type = resolve_type_expr(struct_decl.fields[j].type);
-                    if (!field_type) field_type = m_types.error_type();
-
-                    u32 slot_count = get_type_slot_count(field_type);
-
-                    FieldInfo field_info;
-                    field_info.name = struct_decl.fields[j].name;
-                    field_info.type = field_type;
-                    field_info.is_pub = struct_decl.fields[j].is_pub;
-                    field_info.index = j;
-                    field_info.slot_offset = slot_offset;
-                    field_info.slot_count = slot_count;
-                    fields.push_back(field_info);
-                    slot_offset += slot_count;
+                // Fields and MethodInfo may already be resolved eagerly
+                // (via resolve_generic_struct_fields). Only resolve if not yet done.
+                if (!inst->is_analyzed) {
+                    resolve_generic_struct_fields(inst);
                 }
+            }
 
-                // Allocate field info in bump allocator
-                struct_type_info.fields = m_allocator.alloc_span(fields);
-                struct_type_info.slot_count = slot_offset;
-
-                inst->is_analyzed = true;
+            // Analyze method bodies (after ALL struct types and method infos are registered)
+            for (auto* inst : pending_structs) {
+                // Analyze external method bodies
+                for (Decl* method_decl : inst->instantiated_methods) {
+                    analyze_method_body(method_decl, inst->concrete_type);
+                }
             }
         }
 
@@ -877,6 +868,34 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
 
     struct_type_info.fields = m_allocator.alloc_span(fields);
     struct_type_info.slot_count = slot_offset;
+
+    // Initialize empty constructor/destructor/method lists
+    struct_type_info.constructors = Span<ConstructorInfo>(nullptr, 0);
+    struct_type_info.destructors = Span<DestructorInfo>(nullptr, 0);
+    struct_type_info.methods = Span<MethodInfo>(nullptr, 0);
+
+    // Register MethodInfo for external methods so call sites can resolve them
+    for (Decl* method_decl : inst->instantiated_methods) {
+        MethodDecl& method = method_decl->method_decl;
+
+        Vector<Type*> param_types;
+        for (const auto& param : method.params) {
+            Type* ptype = resolve_type_expr(param.type);
+            if (!ptype) ptype = m_types.error_type();
+            param_types.push_back(ptype);
+        }
+
+        Type* return_type = method.return_type ? resolve_type_expr(method.return_type) : m_types.void_type();
+        if (!return_type) return_type = m_types.error_type();
+
+        MethodInfo method_info;
+        method_info.name = method.name;
+        method_info.param_types = m_allocator.alloc_span(param_types);
+        method_info.return_type = return_type;
+        method_info.decl = method_decl;
+        append_method(struct_type_info, method_info);
+    }
+
     inst->is_analyzed = true;
 }
 
