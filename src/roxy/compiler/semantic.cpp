@@ -3000,6 +3000,10 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
     // Track which enum variants have been covered (for duplicate detection)
     tsl::robin_map<StringView, bool> covered_variants;
 
+    // Save move states before branching
+    MoveStateSnapshot pre_when_states = save_move_states();
+    std::vector<MoveStateSnapshot> case_snapshots;
+
     // Analyze each case
     for (auto& wc : ws.cases) {
         // Validate case names are valid enum variants
@@ -3029,6 +3033,9 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
             covered_variants[case_name] = true;
         }
 
+        // Restore pre-when state so each case starts fresh
+        restore_move_states(pre_when_states);
+
         // Analyze case body in a new scope
         m_symbols.push_scope(ScopeKind::Block);
         for (auto& decl : wc.body) {
@@ -3040,10 +3047,14 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
             }
         }
         m_symbols.pop_scope();
+
+        case_snapshots.push_back(save_move_states());
     }
 
     // Analyze else body if present
     if (ws.else_body.size() > 0) {
+        restore_move_states(pre_when_states);
+
         m_symbols.push_scope(ScopeKind::Block);
         for (auto& decl : ws.else_body) {
             if (!decl) continue;
@@ -3054,6 +3065,20 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
             }
         }
         m_symbols.pop_scope();
+
+        case_snapshots.push_back(save_move_states());
+    } else {
+        // No else — when might not match, so include pre-when as fall-through path
+        case_snapshots.push_back(pre_when_states);
+    }
+
+    // Pairwise-merge all case snapshots
+    if (!case_snapshots.empty()) {
+        restore_move_states(case_snapshots[0]);
+        for (size_t i = 1; i < case_snapshots.size(); i++) {
+            MoveStateSnapshot current = save_move_states();
+            merge_move_states(current, case_snapshots[i]);
+        }
     }
 }
 

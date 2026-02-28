@@ -370,3 +370,127 @@ TEST_CASE("E2E - When phi partial coverage") {
     // Low falls through to merge with original value (10)
     CHECK(result.stdout_output == "10\n20\n30\n");
 }
+
+// ============================================================================
+// When Statement Move State Tracking Tests
+// ============================================================================
+
+TEST_CASE("E2E - When move in all branches with else") {
+    // Moving uniq in every case + else → Moved after when → use is compile error
+    const char* source = R"(
+        struct Resource { value: i32; }
+
+        enum Action { Start, Stop }
+
+        fun consume(r: uniq Resource): i32 { return r.value; }
+
+        fun test(a: Action): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.value = 42;
+            when a {
+                case Start:
+                    consume(r);
+                case Stop:
+                    consume(r);
+                else:
+                    consume(r);
+            }
+            return r.value;
+        }
+
+        fun main(): i32 { return test(Action::Start); }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail: use of moved value
+}
+
+TEST_CASE("E2E - When move in some branches") {
+    // Moving uniq in one case but not others → MaybeValid → use is compile error
+    const char* source = R"(
+        struct Resource { value: i32; }
+
+        enum Action { Start, Stop }
+
+        fun consume(r: uniq Resource): i32 { return r.value; }
+
+        fun test(a: Action): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.value = 42;
+            when a {
+                case Start:
+                    consume(r);
+                case Stop:
+                    var x: i32 = 0;
+                else:
+                    var y: i32 = 0;
+            }
+            return r.value;
+        }
+
+        fun main(): i32 { return test(Action::Start); }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail: use of possibly moved value
+}
+
+TEST_CASE("E2E - When no move in any branch") {
+    // uniq untouched in all branches → Live after when → use is fine
+    const char* source = R"(
+        struct Resource { value: i32; }
+
+        enum Action { Start, Stop }
+
+        fun test(a: Action): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.value = 42;
+            when a {
+                case Start:
+                    var x: i32 = 1;
+                case Stop:
+                    var x: i32 = 2;
+                else:
+                    var x: i32 = 3;
+            }
+            return r.value;
+        }
+
+        fun main(): i32 { return test(Action::Start); }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module != nullptr);  // Should compile successfully
+}
+
+TEST_CASE("E2E - When move in case without else") {
+    // Moving in a case with no else → merge with pre-when fall-through → MaybeValid
+    const char* source = R"(
+        struct Resource { value: i32; }
+
+        enum Action { Start, Stop }
+
+        fun consume(r: uniq Resource): i32 { return r.value; }
+
+        fun test(a: Action): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.value = 42;
+            when a {
+                case Start:
+                    consume(r);
+                case Stop:
+                    var x: i32 = 0;
+            }
+            return r.value;
+        }
+
+        fun main(): i32 { return test(Action::Start); }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail: use of possibly moved value
+}
