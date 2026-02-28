@@ -197,8 +197,27 @@ private:
         IRBlock* exit_block;         // Exit block (for break)
         IRBlock* continue_block;     // Continue target (same as header for while, increment for for)
         Vector<LoopVarInfo> loop_vars;  // Variables modified in loop
+        u32 scope_depth;             // Scope depth when loop was entered (for RAII cleanup)
     };
     Vector<LoopInfo> m_loop_stack;
+
+    // Ownership tracking for uniq locals (RAII / implicit destruction)
+    struct UniqLocalInfo {
+        StringView name;
+        Type* struct_type;     // Inner type (for destructor lookup), nullptr if not a struct
+        u32 scope_depth;       // Scope level where declared
+        bool is_moved;         // Ownership transferred (pass, return, explicit delete)
+    };
+    Vector<UniqLocalInfo> m_uniq_locals;
+
+    // RAII helpers: emit destructor + Delete for a uniq local
+    void emit_implicit_delete(UniqLocalInfo& info);
+
+    // Emit cleanup (implicit deletes) for all live uniqs at or above min_scope_depth
+    void emit_scope_cleanup(u32 min_scope_depth);
+
+    // Find a uniq local by name
+    UniqLocalInfo* find_uniq_local(StringView name);
 
     // Variable management (declared after LocalVar struct)
     void define_local(StringView name, ValueId value, Type* type);

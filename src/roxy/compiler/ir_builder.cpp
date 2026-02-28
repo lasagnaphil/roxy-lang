@@ -996,7 +996,8 @@ void IRBuilder::gen_while_stmt(Stmt* stmt) {
     finish_block_branch(cond, body_block->id, exit_block->id);
 
     // 7. Push loop info for break/continue
-    m_loop_stack.push_back({header_block, exit_block, header_block, loop_vars});
+    u32 while_scope_depth = static_cast<u32>(m_local_scopes.size());
+    m_loop_stack.push_back({header_block, exit_block, header_block, loop_vars, while_scope_depth});
 
     // 8. Generate body
     set_current_block(body_block);
@@ -1073,7 +1074,8 @@ void IRBuilder::gen_for_stmt(Stmt* stmt) {
 
     // 8. Push loop info for break/continue
     // continue goes to increment block, but we need to pass args to header after increment
-    m_loop_stack.push_back({header_block, exit_block, incr_block, loop_vars});
+    u32 for_scope_depth = static_cast<u32>(m_local_scopes.size());
+    m_loop_stack.push_back({header_block, exit_block, incr_block, loop_vars, for_scope_depth});
 
     // 9. Generate body
     set_current_block(body_block);
@@ -1109,6 +1111,20 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
     if (rs.value) {
         ValueId val = gen_expr(rs.value);
 
+        // If returning a uniq identifier, mark it as moved (don't delete what we're returning)
+        if (rs.value->kind == AstKind::ExprIdentifier) {
+            Type* return_type = rs.value->resolved_type;
+            if (return_type && return_type->kind == TypeKind::Uniq) {
+                UniqLocalInfo* uniq_info = find_uniq_local(rs.value->identifier.name);
+                if (uniq_info) {
+                    uniq_info->is_moved = true;
+                }
+            }
+        }
+
+        // Emit cleanup for all scopes (return exits entire function)
+        emit_scope_cleanup(1);
+
         // Check if returning a large struct
         if (m_current_func->returns_large_struct()) {
             // Large struct: copy to hidden output pointer (last parameter)
@@ -1120,6 +1136,8 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
             finish_block_return(val);
         }
     } else {
+        // Emit cleanup for all scopes before void return
+        emit_scope_cleanup(1);
         finish_block_return(ValueId::invalid());
     }
 }
@@ -1128,6 +1146,10 @@ void IRBuilder::gen_break_stmt(Stmt*) {
     if (m_loop_stack.empty()) return;  // Should be caught by semantic analysis
 
     LoopInfo& loop = m_loop_stack.back();
+
+    // Emit cleanup for scopes inside the loop
+    emit_scope_cleanup(loop.scope_depth + 1);
+
     // Exit block doesn't have parameters - it uses header params
     finish_block_goto(loop.exit_block->id);
 }
@@ -1136,6 +1158,10 @@ void IRBuilder::gen_continue_stmt(Stmt*) {
     if (m_loop_stack.empty()) return;  // Should be caught by semantic analysis
 
     LoopInfo& loop = m_loop_stack.back();
+
+    // Emit cleanup for scopes inside the loop body
+    emit_scope_cleanup(loop.scope_depth + 1);
+
     // For while loops: continue_block == header_block, needs args
     // For for loops: continue_block == incr_block, no args needed
     if (loop.continue_block == loop.header_block) {
@@ -1209,6 +1235,14 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
     IRInst* inst = emit_inst(IROp::Delete, m_types.void_type());
     if (inst) {
         inst->unary = val;
+    }
+
+    // Mark the variable as moved so scope cleanup doesn't double-delete
+    if (ds.expr->kind == AstKind::ExprIdentifier) {
+        UniqLocalInfo* uniq_info = find_uniq_local(ds.expr->identifier.name);
+        if (uniq_info) {
+            uniq_info->is_moved = true;
+        }
     }
 }
 
@@ -2251,6 +2285,26 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         define_local(ia.name, new_val, ia.type);
     }
 
+    // Move semantics: null-ify uniq args that were passed to uniq params
+    // Get the function's parameter types from the callee's resolved type
+    Type* callee_func_type = call_expr.callee->resolved_type;
+    if (callee_func_type && callee_func_type->is_function()) {
+        Span<Type*> param_types = callee_func_type->func_info.param_types;
+        for (u32 i = 0; i < call_expr.arguments.size() && i < param_types.size(); i++) {
+            if (param_types[i] && param_types[i]->kind == TypeKind::Uniq &&
+                call_expr.arguments[i].expr->kind == AstKind::ExprIdentifier) {
+                StringView arg_name = call_expr.arguments[i].expr->identifier.name;
+                UniqLocalInfo* uniq_info = find_uniq_local(arg_name);
+                if (uniq_info && !uniq_info->is_moved) {
+                    // Null-ify the variable so DEL_OBJ on scope exit is a safe no-op
+                    ValueId null_val = emit_const_null();
+                    define_local(arg_name, null_val, call_expr.arguments[i].expr->resolved_type);
+                    uniq_info->is_moved = true;
+                }
+            }
+        }
+    }
+
     return result;
 }
 
@@ -2456,6 +2510,19 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
                 slot_count = 2;
             }
             return emit_store_ptr(ptr, value, slot_count, type);
+        }
+
+        // Auto-delete old uniq value before reassignment
+        Type* target_type = assign_expr.target->resolved_type;
+        if (target_type && target_type->kind == TypeKind::Uniq) {
+            UniqLocalInfo* uniq_info = find_uniq_local(name);
+            if (uniq_info && !uniq_info->is_moved) {
+                emit_implicit_delete(*uniq_info);
+                uniq_info->is_moved = false;  // Reset — new value is now live
+            } else if (uniq_info && uniq_info->is_moved) {
+                // Variable was moved but now being reassigned — make it live again
+                uniq_info->is_moved = false;
+            }
         }
 
         // Normal variable assignment - in SSA, we create a new value
@@ -3048,6 +3115,13 @@ void IRBuilder::gen_var_decl(Decl* decl) {
     }
 
     define_local(var_decl.name, value, type);
+
+    // Track uniq locals for implicit destruction
+    if (type && type->kind == TypeKind::Uniq) {
+        Type* inner_type = type->ref_info.inner_type;
+        u32 scope_depth = static_cast<u32>(m_local_scopes.size());
+        m_uniq_locals.push_back({var_decl.name, inner_type, scope_depth, false});
+    }
 }
 
 // Variable management
@@ -3086,9 +3160,18 @@ void IRBuilder::push_scope() {
 }
 
 void IRBuilder::pop_scope() {
-    if (!m_local_scopes.empty()) {
-        m_local_scopes.pop_back();
+    if (m_local_scopes.empty()) return;
+    u32 depth = static_cast<u32>(m_local_scopes.size());
+
+    // Emit cleanup for live uniqs in this scope
+    emit_scope_cleanup(depth);
+
+    // Remove uniq tracking for this scope
+    while (!m_uniq_locals.empty() && m_uniq_locals.back().scope_depth >= depth) {
+        m_uniq_locals.pop_back();
     }
+
+    m_local_scopes.pop_back();
 }
 
 IRBuilder::LocalVar* IRBuilder::find_local(StringView name) {
@@ -3100,6 +3183,57 @@ IRBuilder::LocalVar* IRBuilder::find_local(StringView name) {
         }
     }
     return nullptr;
+}
+
+IRBuilder::UniqLocalInfo* IRBuilder::find_uniq_local(StringView name) {
+    for (auto& info : m_uniq_locals) {
+        if (info.name == name) {
+            return &info;
+        }
+    }
+    return nullptr;
+}
+
+void IRBuilder::emit_implicit_delete(UniqLocalInfo& info) {
+    if (info.is_moved) return;
+    if (!m_current_block) return;  // Block already terminated
+
+    ValueId current_value = lookup_local(info.name);
+
+    // Call default destructor if the inner type is a struct with one
+    if (info.struct_type && info.struct_type->is_struct()) {
+        StructTypeInfo& struct_type_info = info.struct_type->struct_info;
+        for (const auto& dtor : struct_type_info.destructors) {
+            if (dtor.name.empty()) {
+                // Found default destructor — call it
+                StringView dtor_name = mangle_destructor(struct_type_info.name);
+                Vector<ValueId> call_args;
+                call_args.push_back(current_value);
+                emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
+                break;
+            }
+        }
+    }
+
+    // Emit Delete IR instruction
+    IRInst* inst = emit_inst(IROp::Delete, m_types.void_type());
+    if (inst) {
+        inst->unary = current_value;
+    }
+
+    info.is_moved = true;  // Prevent double-delete
+}
+
+void IRBuilder::emit_scope_cleanup(u32 min_scope_depth) {
+    if (!m_current_block) return;  // Block already terminated
+
+    // LIFO order (reverse declaration order, like C++ destructors)
+    for (i32 i = static_cast<i32>(m_uniq_locals.size()) - 1; i >= 0; i--) {
+        auto& info = m_uniq_locals[i];
+        if (info.scope_depth >= min_scope_depth && !info.is_moved) {
+            emit_implicit_delete(info);
+        }
+    }
 }
 
 void IRBuilder::collect_assigned_vars(Stmt* stmt, Vector<StringView>& out) {
@@ -3350,8 +3484,9 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
     IRBlock* entry = create_block("entry");
     set_current_block(entry);
 
-    // Initialize local variable scopes
+    // Initialize local variable scopes and uniq tracking
     m_local_scopes.clear();
+    m_uniq_locals.clear();
     push_scope();
 
     // Add function parameters to local scope
@@ -3362,6 +3497,13 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
     for (u32 i = 0; i < param_count; i++) {
         BlockParam& bp = m_current_func->params[i];
         define_local(bp.name, bp.value, bp.type);
+
+        // Track uniq parameters — callee now owns them
+        if (bp.type && bp.type->kind == TypeKind::Uniq) {
+            Type* inner_type = bp.type->ref_info.inner_type;
+            u32 scope_depth = static_cast<u32>(m_local_scopes.size());
+            m_uniq_locals.push_back({bp.name, inner_type, scope_depth, false});
+        }
     }
 
     // Emit RefInc for ref-typed parameters at function entry
@@ -3374,6 +3516,9 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
 void IRBuilder::end_function_body() {
     // If current block doesn't have a terminator, add implicit return
     if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+        // Emit cleanup for all scopes before implicit return
+        emit_scope_cleanup(1);
+
         if (m_current_func->return_type->is_void()) {
             finish_block_return(ValueId::invalid());
         } else {
@@ -3384,7 +3529,15 @@ void IRBuilder::end_function_body() {
         }
     }
 
-    pop_scope();
+    // pop_scope without cleanup (already emitted above, or block is terminated)
+    // Remove uniq tracking
+    if (!m_local_scopes.empty()) {
+        u32 depth = static_cast<u32>(m_local_scopes.size());
+        while (!m_uniq_locals.empty() && m_uniq_locals.back().scope_depth >= depth) {
+            m_uniq_locals.pop_back();
+        }
+        m_local_scopes.pop_back();
+    }
 
     m_current_func->reorder_blocks_rpo();
 }

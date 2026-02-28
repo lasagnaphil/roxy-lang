@@ -158,6 +158,90 @@ Roxy uses a "constraint reference" model where:
 3. `delete` fails at runtime if `ref_count > 0`
 4. This prevents use-after-free while allowing flexible borrowing
 
+## Implicit Destruction (RAII)
+
+`uniq` variables are automatically cleaned up when they go out of scope. This eliminates the need for manual `delete` in most cases.
+
+### Scope Exit Cleanup
+
+At every scope exit point, the compiler emits implicit `Delete` instructions for all live `uniq` locals declared in that scope, in LIFO (reverse declaration) order:
+
+| Exit Point | What's Cleaned Up |
+|------------|-------------------|
+| End of block `{ ... }` | Uniqs declared in that block |
+| `return` | All uniqs in all enclosing scopes |
+| `break` | Uniqs in scopes inside the loop |
+| `continue` | Uniqs in scopes inside the loop body |
+| End of function (implicit return) | All uniqs in function scope |
+
+If the struct type has a default destructor (`fun delete StructName()`), it is called before freeing memory.
+
+### Null Safety
+
+`DEL_OBJ` on a null pointer is a safe no-op. This means:
+- `var x: uniq T = nil;` → scope cleanup is safe
+- Moved variables are null-ified after move → no double-free
+
+### Example
+
+```roxy
+fun process(): i32 {
+    var p: uniq Point = uniq Point();
+    p.x = 42;
+    var result: i32 = p.x;
+    return result;
+    // p is implicitly deleted here (before the function actually returns)
+}
+```
+
+## Move Semantics
+
+Passing a `uniq` variable to a function parameter typed `uniq` **moves** ownership to the callee. The caller's variable becomes invalid.
+
+### Rules
+
+- Passing `uniq` to a `uniq` parameter → ownership transferred, caller's variable consumed
+- Returning a `uniq` value → ownership transferred to caller, variable not deleted at scope exit
+- Explicit `delete` → variable consumed
+- Reassigning a `uniq` variable → old value is implicitly deleted before new value is assigned
+
+### Use-After-Move Detection
+
+The semantic analyzer tracks move state for each `uniq` local variable:
+
+| State | Meaning |
+|-------|---------|
+| `Live` | Variable owns a valid value |
+| `Moved` | Ownership transferred — use is a compile error |
+| `MaybeValid` | Conditionally moved (e.g., moved in one `if` branch but not the other) |
+
+Using a `Moved` or `MaybeValid` variable is a compile-time error.
+
+### Example
+
+```roxy
+fun consume(p: uniq Point): i32 {
+    return p.x;
+    // p is implicitly deleted at scope exit
+}
+
+fun main(): i32 {
+    var p: uniq Point = uniq Point();
+    p.x = 42;
+    var result: i32 = consume(p);  // p is moved
+    // p.x here would be a compile error: "use of moved value 'p'"
+    return result;
+}
+```
+
+### Auto-Delete on Reassignment
+
+```roxy
+var p: uniq Point = uniq Point();  // p owns Point A
+p = uniq Point();                   // Point A is implicitly deleted, p now owns Point B
+// Point B is implicitly deleted at scope exit
+```
+
 ## Files
 
 - `include/roxy/vm/object.hpp` - Object header and ref counting declarations

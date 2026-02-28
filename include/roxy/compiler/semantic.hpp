@@ -35,6 +35,13 @@ struct SemanticError {
 // Maximum number of errors to collect before stopping
 constexpr u32 MAX_SEMANTIC_ERRORS = 20;
 
+// Move state for uniq ownership tracking
+enum class MoveState : u8 {
+    Live,         // Variable owns a valid value
+    Moved,        // Ownership has been transferred (use is an error)
+    MaybeValid,   // Conditionally moved (e.g., moved in one branch of if/else)
+};
+
 // SemanticAnalyzer performs type checking and symbol resolution
 class SemanticAnalyzer {
 public:
@@ -268,6 +275,26 @@ private:
         Span<Type*> trait_type_args;   // Resolved type args for generic traits
     };
     Vector<PendingTraitImpl> m_pending_trait_impls;
+
+    // Move-state tracking for uniq variables (per-function)
+    tsl::robin_map<StringView, MoveState> m_move_states;
+
+    // Save/restore move states for branching (if/else)
+    using MoveStateSnapshot = tsl::robin_map<StringView, MoveState>;
+    MoveStateSnapshot save_move_states() const { return m_move_states; }
+    void restore_move_states(const MoveStateSnapshot& snapshot) { m_move_states = snapshot; }
+
+    // Merge move states from two branches (e.g., if/else)
+    void merge_move_states(const MoveStateSnapshot& then_states, const MoveStateSnapshot& else_states);
+
+    // Check if a uniq variable is in a moved state and report an error
+    bool check_not_moved(StringView name, SourceLocation loc);
+
+    // Mark a uniq variable as moved
+    void mark_moved(StringView name);
+
+    // Mark a uniq variable as live (for reassignment)
+    void mark_live(StringView name);
 
 public:
     const Vector<Decl*>& synthetic_decls() const { return m_synthetic_decls; }

@@ -196,6 +196,20 @@ delete obj.save_to(args)
 2. emit_delete (free memory)
 ```
 
+### Implicit Destruction at Scope Exit
+
+When a `uniq` variable goes out of scope without being explicitly deleted or moved, the compiler automatically emits cleanup:
+
+```
+scope exit with live uniq 'obj' of type Point (has default destructor)
+    ↓
+1. Call default destructor: Point$$delete(obj)
+2. emit_delete (free memory)
+3. Mark obj as moved (prevent double-delete)
+```
+
+If no default destructor exists, only `emit_delete` is emitted. Cleanup proceeds in LIFO order (last declared, first destroyed). See [memory.md](memory.md) for details on RAII semantics.
+
 ## Type System Integration
 
 Constructor and destructor information is stored in `StructTypeInfo`:

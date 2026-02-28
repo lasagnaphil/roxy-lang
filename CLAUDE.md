@@ -88,11 +88,13 @@ Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA
 
 ### Reference Types
 
-| Type | Owns? | Nullable? | On dangling |
-|------|-------|-----------|-------------|
-| `uniq` | Yes | No | N/A (is owner) |
-| `ref` | No | No | Assert/crash |
-| `weak` | No | Yes | Returns null or asserts |
+| Type | Owns? | Nullable? | On dangling | Move semantics |
+|------|-------|-----------|-------------|----------------|
+| `uniq` | Yes | No | N/A (is owner) | Passed to `uniq` param = move (caller consumed) |
+| `ref` | No | No | Assert/crash | Borrows from owner |
+| `weak` | No | Yes | Returns null or asserts | N/A |
+
+`uniq` variables are implicitly deleted at scope exit (RAII). Passing `uniq` to a function moves ownership; using the variable after move is a compile error.
 
 ### Keywords
 
@@ -118,7 +120,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **AST** - 15 expression types, 9 statement types, 7 declaration types.
 **Files:** `compiler/ast.hpp`
 
-**Semantic Analysis** - Multi-pass analyzer with symbol resolution, type inference, type checking.
+**Semantic Analysis** - Multi-pass analyzer with symbol resolution, type inference, type checking, and move-state tracking for `uniq` variables (use-after-move detection).
 **Details:** `docs/internals/frontend.md` | **Files:** `compiler/semantic.hpp`, `compiler/semantic.cpp`
 
 ### Type System

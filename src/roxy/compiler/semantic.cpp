@@ -1055,6 +1055,62 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
 
     var_decl.resolved_type = var_type;
     m_symbols.define(SymbolKind::Variable, var_decl.name, var_type, decl->loc, decl);
+
+    // Track uniq variables for move semantics
+    if (var_type && var_type->kind == TypeKind::Uniq) {
+        m_move_states[var_decl.name] = MoveState::Live;
+    }
+}
+
+// ===== Move-State Tracking for Uniq Variables =====
+
+void SemanticAnalyzer::merge_move_states(const MoveStateSnapshot& then_states,
+                                          const MoveStateSnapshot& else_states) {
+    // For each tracked variable, merge states from both branches
+    for (auto it = m_move_states.begin(); it != m_move_states.end(); ++it) {
+        StringView name = it->first;
+        auto then_it = then_states.find(name);
+        auto else_it = else_states.find(name);
+
+        MoveState then_state = (then_it != then_states.end()) ? then_it->second : it->second;
+        MoveState else_state = (else_it != else_states.end()) ? else_it->second : it->second;
+
+        if (then_state == else_state) {
+            it.value() = then_state;
+        } else {
+            // Branches disagree — variable may or may not be valid
+            it.value() = MoveState::MaybeValid;
+        }
+    }
+}
+
+bool SemanticAnalyzer::check_not_moved(StringView name, SourceLocation loc) {
+    auto it = m_move_states.find(name);
+    if (it == m_move_states.end()) return true;  // Not tracked (not uniq)
+
+    if (it->second == MoveState::Moved) {
+        error_fmt(loc, "use of moved value '{}'", name);
+        return false;
+    }
+    if (it->second == MoveState::MaybeValid) {
+        error_fmt(loc, "use of possibly moved value '{}'", name);
+        return false;
+    }
+    return true;
+}
+
+void SemanticAnalyzer::mark_moved(StringView name) {
+    auto it = m_move_states.find(name);
+    if (it != m_move_states.end()) {
+        it.value() = MoveState::Moved;
+    }
+}
+
+void SemanticAnalyzer::mark_live(StringView name) {
+    auto it = m_move_states.find(name);
+    if (it != m_move_states.end()) {
+        it.value() = MoveState::Live;
+    }
 }
 
 void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
@@ -1077,6 +1133,10 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
         m_coro_yield_type = return_type->coro_info.yield_type;
     }
 
+    // Save and reset move states for this function body
+    MoveStateSnapshot saved_move_states = save_move_states();
+    m_move_states.clear();
+
     // Push function scope
     m_symbols.push_function_scope(return_type);
 
@@ -1092,6 +1152,11 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
             error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
         } else {
             m_symbols.define_parameter(p.name, ptype, p.loc, i);
+        }
+
+        // Track uniq parameters as Live
+        if (ptype && ptype->kind == TypeKind::Uniq) {
+            m_move_states[p.name] = MoveState::Live;
         }
     }
 
@@ -1110,6 +1175,9 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
     // Restore coroutine state
     m_in_coroutine = prev_in_coroutine;
     m_coro_yield_type = prev_coro_yield_type;
+
+    // Restore outer function's move states
+    m_move_states = saved_move_states;
 }
 
 void SemanticAnalyzer::analyze_struct_decl(Decl* decl) {
@@ -1348,6 +1416,10 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
                                             Type* return_type) {
     if (!body) return;
 
+    // Save and reset move states for this function body
+    MoveStateSnapshot saved_move_states = save_move_states();
+    m_move_states.clear();
+
     // Push struct scope so 'self' and fields are accessible
     m_symbols.push_struct_scope(struct_type);
 
@@ -1370,6 +1442,11 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
         } else {
             m_symbols.define_parameter(p.name, ptype, p.loc, i);
         }
+
+        // Track uniq parameters as Live
+        if (ptype && ptype->kind == TypeKind::Uniq) {
+            m_move_states[p.name] = MoveState::Live;
+        }
     }
 
     // Analyze body
@@ -1377,6 +1454,9 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
 
     m_symbols.pop_scope();  // function scope
     m_symbols.pop_scope();  // struct scope
+
+    // Restore outer function's move states
+    m_move_states = saved_move_states;
 }
 
 void SemanticAnalyzer::analyze_constructor_body(Decl* decl, Type* struct_type) {
@@ -2300,9 +2380,25 @@ void SemanticAnalyzer::analyze_if_stmt(Stmt* stmt) {
         check_boolean(cond_type, is.condition->loc);
     }
 
+    // Save move states before branching
+    MoveStateSnapshot pre_branch_states = save_move_states();
+
     analyze_stmt(is.then_branch);
+    MoveStateSnapshot then_states = save_move_states();
+
     if (is.else_branch) {
+        // Restore to pre-branch state for else analysis
+        restore_move_states(pre_branch_states);
         analyze_stmt(is.else_branch);
+        MoveStateSnapshot else_states = save_move_states();
+
+        // Merge both branches
+        restore_move_states(pre_branch_states);
+        merge_move_states(then_states, else_states);
+    } else {
+        // No else branch — merge then-branch with pre-branch (else is identity)
+        restore_move_states(pre_branch_states);
+        merge_move_states(then_states, pre_branch_states);
     }
 }
 
@@ -2377,6 +2473,11 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
         } else {
             coerce_int_literal(rs.value, expected);
         }
+
+        // Mark returned uniq variable as moved (ownership transferred to caller)
+        if (rs.value->kind == AstKind::ExprIdentifier && actual && actual->kind == TypeKind::Uniq) {
+            mark_moved(rs.value->identifier.name);
+        }
     } else {
         if (!expected->is_void()) {
             error(stmt->loc, "non-void function must return a value");
@@ -2412,55 +2513,57 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
 
     // Get the inner struct type
     Type* inner_type = type->ref_info.inner_type;
-    if (!inner_type || !inner_type->is_struct()) {
-        // No destructor validation needed for non-struct types
-        return;
-    }
+    if (inner_type && inner_type->is_struct()) {
+        StructTypeInfo& struct_type_info = inner_type->struct_info;
 
-    StructTypeInfo& struct_type_info = inner_type->struct_info;
-
-    // Look up destructor by name
-    const DestructorInfo* dtor = nullptr;
-    for (const auto& destructor : struct_type_info.destructors) {
-        if (destructor.name == ds.destructor_name) {
-            dtor = &destructor;
-            break;
-        }
-    }
-
-    // If a destructor name was specified but not found
-    if (!ds.destructor_name.empty() && !dtor) {
-        error_fmt(stmt->loc, "struct '{}' has no destructor '{}'",
-                 struct_type_info.name, ds.destructor_name);
-        return;
-    }
-
-    // If we have a destructor, type-check the arguments
-    if (dtor) {
-        // Check argument count
-        if (ds.arguments.size() != dtor->param_types.size()) {
-            error_fmt(stmt->loc, "destructor expects {} arguments but got {}",
-                     dtor->param_types.size(), ds.arguments.size());
-            return;
+        // Look up destructor by name
+        const DestructorInfo* dtor = nullptr;
+        for (const auto& destructor : struct_type_info.destructors) {
+            if (destructor.name == ds.destructor_name) {
+                dtor = &destructor;
+                break;
+            }
         }
 
-        // Check argument types and modifiers
-        DestructorDecl* dtor_decl = &dtor->decl->destructor_decl;
-        check_call_args(ds.arguments, dtor->param_types, dtor_decl->params, stmt->loc);
-    } else {
-        // No destructor defined with this name
-        if (!ds.destructor_name.empty()) {
+        // If a destructor name was specified but not found
+        if (!ds.destructor_name.empty() && !dtor) {
             error_fmt(stmt->loc, "struct '{}' has no destructor '{}'",
                      struct_type_info.name, ds.destructor_name);
             return;
         }
 
-        // Named destructor arguments without a destructor is an error
-        if (ds.arguments.size() > 0) {
-            error_fmt(stmt->loc, "struct '{}' has no destructor to call",
-                     struct_type_info.name);
-            return;
+        // If we have a destructor, type-check the arguments
+        if (dtor) {
+            // Check argument count
+            if (ds.arguments.size() != dtor->param_types.size()) {
+                error_fmt(stmt->loc, "destructor expects {} arguments but got {}",
+                         dtor->param_types.size(), ds.arguments.size());
+                return;
+            }
+
+            // Check argument types and modifiers
+            DestructorDecl* dtor_decl = &dtor->decl->destructor_decl;
+            check_call_args(ds.arguments, dtor->param_types, dtor_decl->params, stmt->loc);
+        } else {
+            // No destructor defined with this name
+            if (!ds.destructor_name.empty()) {
+                error_fmt(stmt->loc, "struct '{}' has no destructor '{}'",
+                         struct_type_info.name, ds.destructor_name);
+                return;
+            }
+
+            // Named destructor arguments without a destructor is an error
+            if (ds.arguments.size() > 0) {
+                error_fmt(stmt->loc, "struct '{}' has no destructor to call",
+                         struct_type_info.name);
+                return;
+            }
         }
+    }
+
+    // Mark the deleted variable as moved
+    if (ds.expr->kind == AstKind::ExprIdentifier) {
+        mark_moved(ds.expr->identifier.name);
     }
 }
 
@@ -2758,6 +2861,12 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
         return m_types.error_type();
     }
 
+    // Check move state for uniq variables
+    // Note: we check here but the actual move marking happens at call sites, return, delete
+    if (sym->type && sym->type->kind == TypeKind::Uniq) {
+        check_not_moved(id.name, expr->loc);
+    }
+
     return sym->type;
 }
 
@@ -2900,6 +3009,12 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
         if (arg.modifier != ParamModifier::Out) {
             check_assignable(param_types[i], arg_type, arg.expr->loc);
             coerce_int_literal(arg.expr, param_types[i]);
+        }
+
+        // Move semantics: passing uniq arg to uniq param transfers ownership
+        if (param_types[i] && param_types[i]->kind == TypeKind::Uniq &&
+            arg.expr->kind == AstKind::ExprIdentifier) {
+            mark_moved(arg.expr->identifier.name);
         }
     }
 }
@@ -3980,7 +4095,30 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
         return m_types.error_type();
     }
 
+    // For plain assignment to a uniq identifier, temporarily mark it Live
+    // so the move check in analyze_expr doesn't fire (we're reassigning, not using)
+    bool restored_for_assign = false;
+    MoveState saved_state = MoveState::Live;
+    if (assign_expr.op == AssignOp::Assign &&
+        assign_expr.target->kind == AstKind::ExprIdentifier) {
+        auto it = m_move_states.find(assign_expr.target->identifier.name);
+        if (it != m_move_states.end() && it->second != MoveState::Live) {
+            saved_state = it->second;
+            it.value() = MoveState::Live;
+            restored_for_assign = true;
+        }
+    }
+
     Type* target_type = analyze_expr(assign_expr.target);
+
+    // Restore the state so auto-delete logic in IR builder knows the old value was moved
+    if (restored_for_assign) {
+        auto it = m_move_states.find(assign_expr.target->identifier.name);
+        if (it != m_move_states.end()) {
+            it.value() = saved_state;
+        }
+    }
+
     Type* value_type = analyze_expr(assign_expr.value);
 
     if (target_type->is_error() || value_type->is_error()) {
@@ -4022,6 +4160,12 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
     } else {
         check_assignable(target_type, value_type, assign_expr.value->loc);
         coerce_int_literal(assign_expr.value, target_type);
+    }
+
+    // Reassignment to uniq variable: mark it live again (auto-delete of old value happens in IR)
+    if (assign_expr.target->kind == AstKind::ExprIdentifier &&
+        target_type && target_type->kind == TypeKind::Uniq) {
+        mark_live(assign_expr.target->identifier.name);
     }
 
     // Validate index_mut exists for index assignment targets

@@ -164,7 +164,7 @@ TEST_CASE("E2E - Heap allocation in loop") {
 // Heap Allocation Tests - Constraint Reference Model
 // ============================================================================
 
-TEST_CASE("E2E - Uniq passed to function") {
+TEST_CASE("E2E - Uniq passed to function (move semantics)") {
     const char* source = R"(
         struct Point {
             x: i32;
@@ -173,6 +173,7 @@ TEST_CASE("E2E - Uniq passed to function") {
 
         fun sum_point(p: uniq Point): i32 {
             return p.x + p.y;
+            // p is implicitly deleted at scope exit
         }
 
         fun main(): i32 {
@@ -180,8 +181,8 @@ TEST_CASE("E2E - Uniq passed to function") {
             p.x = 10;
             p.y = 20;
             var result: i32 = sum_point(p);
+            // p is now consumed — no delete needed
             print(f"{result}");
-            delete p;
             return 0;
         }
     )";
@@ -226,7 +227,7 @@ TEST_CASE("E2E - Heap allocation nested struct") {
 // ============================================================================
 
 TEST_CASE("E2E - Constraint reference borrow check success") {
-    // Test that delete with no active borrows succeeds
+    // Test that passing uniq to uniq param moves ownership; callee cleans up
     const char* source = R"(
         struct Point {
             x: i32;
@@ -235,6 +236,7 @@ TEST_CASE("E2E - Constraint reference borrow check success") {
 
         fun read_point(p: uniq Point): i32 {
             return p.x + p.y;
+            // p is implicitly deleted at scope exit
         }
 
         fun main(): i32 {
@@ -242,7 +244,7 @@ TEST_CASE("E2E - Constraint reference borrow check success") {
             p.x = 42;
             p.y = 8;
             var result: i32 = read_point(p);
-            delete p;
+            // p is consumed — no delete needed
             print(f"{result}");
             return 0;
         }
