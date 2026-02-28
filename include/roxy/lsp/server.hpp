@@ -53,6 +53,8 @@ private:
     void handle_definition(const JsonValue& params, i64 id);
     void handle_completion(const JsonValue& params, i64 id);
     void handle_hover(const JsonValue& params, i64 id);
+    void handle_references(const JsonValue& params, i64 id);
+    void handle_rename(const JsonValue& params, i64 id);
 
     // Core logic
     void parse_and_publish_diagnostics(OpenDocument& doc);

@@ -188,21 +188,21 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Coroutines** - Generator-style stackless coroutines via `Coro<T>` built-in type. Compile-time state machine transformation producing init/resume/done functions. Yield in straight-line code and if/else branches. Graph-preserving block cloning for correct control flow.
 **Details:** `docs/internals/coroutines.md` | **Tests:** `tests/e2e/test_coroutines.cpp`
 
-### LSP Server (Phase 1)
+### LSP Server (Phases 1–7)
 **LSP Parser** - Error-recovering parser producing a lossless CST. Three recovery strategies: synthetic token insertion, statement boundary synchronization, bracket-aware skipping. Handles all grammar productions from the compiler parser.
 **Details:** `docs/internals/lsp-server.md` | **Files:** `lsp/syntax_tree.hpp`, `lsp/lsp_parser.hpp`, `lsp/lsp_parser.cpp`
 
 **LSP Transport** - JSON-RPC over stdin/stdout with Content-Length framing.
 **Files:** `lsp/transport.hpp`, `lsp/transport.cpp`
 
-**LSP Server** - Request dispatch, document management, syntax diagnostic publishing. Supports initialize/shutdown/exit lifecycle, full document sync, `textDocument/didOpen`/`didChange`/`didClose`.
+**LSP Server** - Request dispatch, document management, diagnostics, go-to-definition, completions, hover, find references, rename. Supports initialize/shutdown/exit lifecycle, full document sync.
 **Files:** `lsp/server.hpp`, `lsp/server.cpp`, `lsp/protocol.hpp`
 
 ## Planned Components (Not Yet Implemented)
 
 - C backend (AOT compilation via SSA IR → C transpilation, see `docs/internals/c-backend.md`)
-- LSP Phase 2: per-file indexing, document symbols
-- LSP Phase 3+: go-to-definition, completions, hover, semantic diagnostics
+- LSP Phase 8: Full semantic analysis (TypeCache/TypeEnv integration)
+- LSP Phase 9: Polish (signature help, code actions, workspace symbols, semantic tokens)
 - Optimizations
 
 ## Testing

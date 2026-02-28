@@ -98,6 +98,10 @@ void LspServer::dispatch(char* message_buf, u32 message_length) {
         handle_completion(params, request_id);
     } else if (method == StringView("textDocument/hover")) {
         handle_hover(params, request_id);
+    } else if (method == StringView("textDocument/references")) {
+        handle_references(params, request_id);
+    } else if (method == StringView("textDocument/rename")) {
+        handle_rename(params, request_id);
     } else {
         // Unknown method
         if (has_id) {
@@ -141,6 +145,8 @@ void LspServer::handle_initialize(const JsonValue& params, i64 id) {
             writer.write_key_bool("documentSymbolProvider", true);
             writer.write_key_bool("definitionProvider", true);
             writer.write_key_bool("hoverProvider", true);
+            writer.write_key_bool("referencesProvider", true);
+            writer.write_key_bool("renameProvider", true);
 
             writer.write_key("completionProvider");
             writer.write_start_object();
@@ -1797,6 +1803,1171 @@ OpenDocument* LspServer::find_document(StringView uri) {
         }
     }
     return nullptr;
+}
+
+// --- Find References + Rename support ---
+
+// Symbol category for reference searching
+enum class SymbolCategory : u8 {
+    Function,
+    Struct,
+    Enum,
+    Trait,
+    Global,
+    Method,
+    Field,
+    Constructor,
+    Local,
+    Parameter,
+};
+
+// Describes the canonical identity of a symbol for reference matching
+struct SymbolIdentity {
+    SymbolCategory category;
+    String name;                // Primary name (function, struct, enum, trait, global, local, param, or member name)
+    String qualifier;           // For methods/fields/constructors: the struct name
+    TextRange enclosing_range;  // For locals/params: the byte range of the enclosing function
+    String enclosing_uri;       // For locals/params: the URI of the file containing them
+};
+
+// Collect all identifier tokens (and optionally self tokens) matching a name via DFS
+static void collect_identifiers(SyntaxNode* root, StringView name, Vector<SyntaxNode*>& out) {
+    if (!root) return;
+
+    if (root->kind == SyntaxKind::TokenIdentifier && root->token.text() == name) {
+        out.push_back(root);
+    } else if (root->kind == SyntaxKind::TokenKwSelf && name == StringView("self")) {
+        out.push_back(root);
+    }
+
+    for (u32 i = 0; i < root->children.size(); i++) {
+        collect_identifiers(root->children[i], name, out);
+    }
+}
+
+// Identify what symbol the cursor is on, producing a SymbolIdentity
+static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index,
+                                       StringView uri, SymbolIdentity& out_identity) {
+    if (!node) return false;
+
+    // Handle self keyword
+    if (node->kind == SyntaxKind::TokenKwSelf) {
+        SyntaxNode* enclosing_fn = find_enclosing_function(node);
+        if (!enclosing_fn) return false;
+
+        // Find struct name from enclosing method/constructor/destructor
+        for (u32 i = 0; i < enclosing_fn->children.size(); i++) {
+            if (enclosing_fn->children[i]->kind == SyntaxKind::TokenIdentifier) {
+                out_identity.category = SymbolCategory::Struct;
+                out_identity.name = String(enclosing_fn->children[i]->token.text());
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (node->kind != SyntaxKind::TokenIdentifier) return false;
+
+    StringView identifier = node->token.text();
+    SyntaxNode* parent = node->parent;
+
+    if (parent) {
+        // Field/method access: NodeGetExpr
+        if (parent->kind == SyntaxKind::NodeGetExpr) {
+            bool is_member_name = parent->children.size() >= 3 &&
+                parent->children[parent->children.size() - 1] == node;
+
+            if (is_member_name) {
+                // Resolve receiver type to determine qualifier
+                SyntaxNode* object_expr = parent->children[0];
+                String receiver_type;
+
+                SyntaxNode* enclosing_fn = find_enclosing_function(parent);
+                if (enclosing_fn) {
+                    BumpAllocator ast_allocator(8192);
+                    CstLowering lowering(ast_allocator);
+                    Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+
+                    LspTypeResolver resolver(index);
+                    resolver.analyze_function(ast_decl);
+                    receiver_type = resolver.resolve_cst_expr_type(object_expr);
+                }
+
+                if (!receiver_type.empty()) {
+                    // Walk inheritance chain to find which struct owns this field/method
+                    StringView current_type(receiver_type.data(), receiver_type.size());
+                    u32 depth = 0;
+                    while (!current_type.empty() && depth < 16) {
+                        if (index.find_field(current_type, identifier)) {
+                            out_identity.category = SymbolCategory::Field;
+                            out_identity.name = String(identifier);
+                            out_identity.qualifier = String(current_type);
+                            return true;
+                        }
+                        if (index.find_method(current_type, identifier)) {
+                            out_identity.category = SymbolCategory::Method;
+                            out_identity.name = String(identifier);
+                            out_identity.qualifier = String(current_type);
+                            return true;
+                        }
+                        current_type = index.find_struct_parent(current_type);
+                        depth++;
+                    }
+                }
+                // Fallback: if we can't resolve receiver type, don't return references
+                return false;
+            }
+            // Cursor on receiver expression — fall through to general identifier handling
+        }
+
+        // Type annotation: NodeTypeExpr
+        if (parent->kind == SyntaxKind::NodeTypeExpr) {
+            if (index.find_struct(identifier)) {
+                out_identity.category = SymbolCategory::Struct;
+                out_identity.name = String(identifier);
+                return true;
+            }
+            if (index.find_enum(identifier)) {
+                out_identity.category = SymbolCategory::Enum;
+                out_identity.name = String(identifier);
+                return true;
+            }
+            if (index.find_trait(identifier)) {
+                out_identity.category = SymbolCategory::Trait;
+                out_identity.name = String(identifier);
+                return true;
+            }
+            return false;
+        }
+
+        // Function call: NodeCallExpr
+        if (parent->kind == SyntaxKind::NodeCallExpr) {
+            bool is_callee = parent->children.size() > 0 && parent->children[0] == node;
+            if (is_callee) {
+                if (index.find_function(identifier)) {
+                    out_identity.category = SymbolCategory::Function;
+                    out_identity.name = String(identifier);
+                    return true;
+                }
+                // Could be constructor call
+                if (index.find_struct(identifier)) {
+                    out_identity.category = SymbolCategory::Struct;
+                    out_identity.name = String(identifier);
+                    return true;
+                }
+            }
+        }
+
+        // Static access: NodeStaticGetExpr (Enum::Variant or Type::Constructor)
+        if (parent->kind == SyntaxKind::NodeStaticGetExpr) {
+            bool is_member_child = parent->children.size() >= 3 &&
+                parent->children[parent->children.size() - 1] == node;
+
+            if (!is_member_child) {
+                // This is the type name (first identifier)
+                if (index.find_enum(identifier)) {
+                    out_identity.category = SymbolCategory::Enum;
+                    out_identity.name = String(identifier);
+                    return true;
+                }
+                if (index.find_struct(identifier)) {
+                    out_identity.category = SymbolCategory::Struct;
+                    out_identity.name = String(identifier);
+                    return true;
+                }
+            }
+            // Member child of static access — could be enum variant or constructor name
+            // For now, don't handle these as referable symbols
+            return false;
+        }
+
+        // Struct literal: NodeStructLiteralExpr
+        if (parent->kind == SyntaxKind::NodeStructLiteralExpr) {
+            bool is_struct_name = parent->children.size() > 0 && parent->children[0] == node;
+            if (is_struct_name && index.find_struct(identifier)) {
+                out_identity.category = SymbolCategory::Struct;
+                out_identity.name = String(identifier);
+                return true;
+            }
+        }
+
+        // Field initializer name in struct literal: NodeFieldInit
+        if (parent->kind == SyntaxKind::NodeFieldInit) {
+            bool is_field_name = parent->children.size() > 0 && parent->children[0] == node;
+            if (is_field_name) {
+                // Walk up to find struct literal
+                SyntaxNode* struct_literal = parent->parent;
+                if (struct_literal && struct_literal->kind == SyntaxKind::NodeStructLiteralExpr) {
+                    for (u32 i = 0; i < struct_literal->children.size(); i++) {
+                        if (struct_literal->children[i]->kind == SyntaxKind::TokenIdentifier) {
+                            StringView struct_name = struct_literal->children[i]->token.text();
+                            // Walk inheritance chain
+                            StringView current_type = struct_name;
+                            u32 depth = 0;
+                            while (!current_type.empty() && depth < 16) {
+                                if (index.find_field(current_type, identifier)) {
+                                    out_identity.category = SymbolCategory::Field;
+                                    out_identity.name = String(identifier);
+                                    out_identity.qualifier = String(current_type);
+                                    return true;
+                                }
+                                current_type = index.find_struct_parent(current_type);
+                                depth++;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Var declaration name: NodeVarDecl
+        if (parent->kind == SyntaxKind::NodeVarDecl) {
+            // Check if this is the name token of the var decl
+            // NodeVarDecl children: [var, name, ...]
+            for (u32 i = 0; i < parent->children.size(); i++) {
+                if (parent->children[i]->kind == SyntaxKind::TokenIdentifier &&
+                    parent->children[i] == node) {
+                    // Check if it's a global variable
+                    if (index.find_global(identifier)) {
+                        out_identity.category = SymbolCategory::Global;
+                        out_identity.name = String(identifier);
+                        return true;
+                    }
+                    // It's a local variable
+                    SyntaxNode* enclosing_fn = find_enclosing_function(node);
+                    if (enclosing_fn) {
+                        out_identity.category = SymbolCategory::Local;
+                        out_identity.name = String(identifier);
+                        out_identity.enclosing_range = enclosing_fn->range;
+                        out_identity.enclosing_uri = String(uri);
+                        return true;
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Parameter in param list
+        if (parent->kind == SyntaxKind::NodeParam) {
+            SyntaxNode* enclosing_fn = find_enclosing_function(node);
+            if (enclosing_fn) {
+                out_identity.category = SymbolCategory::Parameter;
+                out_identity.name = String(identifier);
+                out_identity.enclosing_range = enclosing_fn->range;
+                out_identity.enclosing_uri = String(uri);
+                return true;
+            }
+        }
+
+        // Function declaration name
+        if (parent->kind == SyntaxKind::NodeFunDecl) {
+            out_identity.category = SymbolCategory::Function;
+            out_identity.name = String(identifier);
+            return true;
+        }
+
+        // Method declaration name — find the struct qualifier
+        if (parent->kind == SyntaxKind::NodeMethodDecl) {
+            // NodeMethodDecl children: [StructName, '.', MethodName, ...]
+            // Find which child is this node — if it's the struct name or method name
+            bool found_dot = false;
+            StringView struct_name;
+            for (u32 i = 0; i < parent->children.size(); i++) {
+                if (parent->children[i]->kind == SyntaxKind::TokenDot) {
+                    found_dot = true;
+                }
+                if (parent->children[i] == node) {
+                    if (found_dot) {
+                        // This is the method name
+                        // Find struct name (first identifier before dot)
+                        for (u32 j = 0; j < i; j++) {
+                            if (parent->children[j]->kind == SyntaxKind::TokenIdentifier) {
+                                struct_name = parent->children[j]->token.text();
+                                break;
+                            }
+                        }
+                        if (!struct_name.empty()) {
+                            out_identity.category = SymbolCategory::Method;
+                            out_identity.name = String(identifier);
+                            out_identity.qualifier = String(struct_name);
+                            return true;
+                        }
+                    } else {
+                        // This is the struct name in the method declaration
+                        out_identity.category = SymbolCategory::Struct;
+                        out_identity.name = String(identifier);
+                        return true;
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Constructor declaration name
+        if (parent->kind == SyntaxKind::NodeConstructorDecl) {
+            // First identifier is struct name
+            for (u32 i = 0; i < parent->children.size(); i++) {
+                if (parent->children[i] == node) {
+                    // Determine if this is struct name or constructor name
+                    // First identifier = struct name
+                    bool is_first_ident = true;
+                    for (u32 j = 0; j < i; j++) {
+                        if (parent->children[j]->kind == SyntaxKind::TokenIdentifier) {
+                            is_first_ident = false;
+                            break;
+                        }
+                    }
+                    if (is_first_ident) {
+                        out_identity.category = SymbolCategory::Struct;
+                        out_identity.name = String(identifier);
+                        return true;
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Destructor declaration — struct name
+        if (parent->kind == SyntaxKind::NodeDestructorDecl) {
+            out_identity.category = SymbolCategory::Struct;
+            out_identity.name = String(identifier);
+            return true;
+        }
+
+        // Struct declaration name
+        if (parent->kind == SyntaxKind::NodeStructDecl) {
+            out_identity.category = SymbolCategory::Struct;
+            out_identity.name = String(identifier);
+            return true;
+        }
+
+        // Enum declaration name
+        if (parent->kind == SyntaxKind::NodeEnumDecl) {
+            out_identity.category = SymbolCategory::Enum;
+            out_identity.name = String(identifier);
+            return true;
+        }
+
+        // Trait declaration name
+        if (parent->kind == SyntaxKind::NodeTraitDecl) {
+            out_identity.category = SymbolCategory::Trait;
+            out_identity.name = String(identifier);
+            return true;
+        }
+
+        // Field declaration in struct body
+        if (parent->kind == SyntaxKind::NodeFieldDecl) {
+            // Find enclosing struct
+            SyntaxNode* struct_node = parent->parent;
+            if (struct_node && struct_node->kind == SyntaxKind::NodeStructDecl) {
+                for (u32 i = 0; i < struct_node->children.size(); i++) {
+                    if (struct_node->children[i]->kind == SyntaxKind::TokenIdentifier) {
+                        out_identity.category = SymbolCategory::Field;
+                        out_identity.name = String(identifier);
+                        out_identity.qualifier = String(struct_node->children[i]->token.text());
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    // General identifier — try to resolve what it refers to
+    // Check if it's a local variable in the enclosing function
+    SyntaxNode* enclosing_fn = find_enclosing_function(node);
+    if (enclosing_fn) {
+        BumpAllocator ast_allocator(8192);
+        CstLowering lowering(ast_allocator);
+        Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+
+        LspTypeResolver resolver(index);
+        resolver.analyze_function(ast_decl);
+
+        auto var_it = resolver.var_types().find(String(identifier));
+        if (var_it != resolver.var_types().end()) {
+            out_identity.category = SymbolCategory::Local;
+            out_identity.name = String(identifier);
+            out_identity.enclosing_range = enclosing_fn->range;
+            out_identity.enclosing_uri = String(uri);
+            return true;
+        }
+    }
+
+    // Try global lookups
+    if (index.find_function(identifier)) {
+        out_identity.category = SymbolCategory::Function;
+        out_identity.name = String(identifier);
+        return true;
+    }
+    if (index.find_struct(identifier)) {
+        out_identity.category = SymbolCategory::Struct;
+        out_identity.name = String(identifier);
+        return true;
+    }
+    if (index.find_enum(identifier)) {
+        out_identity.category = SymbolCategory::Enum;
+        out_identity.name = String(identifier);
+        return true;
+    }
+    if (index.find_trait(identifier)) {
+        out_identity.category = SymbolCategory::Trait;
+        out_identity.name = String(identifier);
+        return true;
+    }
+    if (index.find_global(identifier)) {
+        out_identity.category = SymbolCategory::Global;
+        out_identity.name = String(identifier);
+        return true;
+    }
+
+    return false;
+}
+
+// Check if a candidate identifier node refers to the same symbol described by the identity
+static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& target,
+                                    const GlobalIndex& index, SyntaxNode* file_root,
+                                    StringView file_uri) {
+    if (!candidate) return false;
+
+    StringView candidate_text;
+    if (candidate->kind == SyntaxKind::TokenIdentifier) {
+        candidate_text = candidate->token.text();
+    } else if (candidate->kind == SyntaxKind::TokenKwSelf) {
+        candidate_text = StringView("self");
+    } else {
+        return false;
+    }
+
+    SyntaxNode* parent = candidate->parent;
+
+    switch (target.category) {
+    case SymbolCategory::Function: {
+        // Function reference: the candidate must be in a call context or a bare reference
+        // and must NOT be a local variable that shadows the function name
+        if (!parent) return false;
+
+        // Skip if candidate is a field/method name after dot
+        if (parent->kind == SyntaxKind::NodeGetExpr) {
+            bool is_member_name = parent->children.size() >= 3 &&
+                parent->children[parent->children.size() - 1] == candidate;
+            if (is_member_name) return false;
+        }
+
+        // Skip if candidate is in a type annotation
+        if (parent->kind == SyntaxKind::NodeTypeExpr) return false;
+
+        // Skip if it's a field name in a field init
+        if (parent->kind == SyntaxKind::NodeFieldInit &&
+            parent->children.size() > 0 && parent->children[0] == candidate) return false;
+
+        // Skip struct/enum/trait decl names
+        if (parent->kind == SyntaxKind::NodeStructDecl ||
+            parent->kind == SyntaxKind::NodeEnumDecl ||
+            parent->kind == SyntaxKind::NodeTraitDecl) return false;
+
+        // Skip field declarations
+        if (parent->kind == SyntaxKind::NodeFieldDecl) return false;
+
+        // Check if shadowed by a local variable
+        SyntaxNode* enclosing_fn = find_enclosing_function(candidate);
+        if (enclosing_fn) {
+            BumpAllocator ast_allocator(4096);
+            CstLowering lowering(ast_allocator);
+            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+
+            LspTypeResolver resolver(index);
+            resolver.analyze_function(ast_decl);
+
+            auto var_it = resolver.var_types().find(String(candidate_text));
+            if (var_it != resolver.var_types().end()) return false;
+        }
+
+        // It's a fun decl name if parent is NodeFunDecl
+        if (parent->kind == SyntaxKind::NodeFunDecl) return true;
+
+        // Or it's a reference to the function
+        return index.find_function(candidate_text) != nullptr;
+    }
+
+    case SymbolCategory::Struct: {
+        if (!parent) return false;
+
+        // Skip field/method names after dot
+        if (parent->kind == SyntaxKind::NodeGetExpr) {
+            bool is_member_name = parent->children.size() >= 3 &&
+                parent->children[parent->children.size() - 1] == candidate;
+            if (is_member_name) return false;
+        }
+
+        // Skip field init names
+        if (parent->kind == SyntaxKind::NodeFieldInit &&
+            parent->children.size() > 0 && parent->children[0] == candidate) return false;
+
+        // Skip field declarations
+        if (parent->kind == SyntaxKind::NodeFieldDecl) return false;
+
+        // Skip parameter names
+        if (parent->kind == SyntaxKind::NodeParam) {
+            // NodeParam children: [name, ':', type]
+            // If this is the first identifier (before ':'), it's the param name
+            for (u32 i = 0; i < parent->children.size(); i++) {
+                if (parent->children[i] == candidate) {
+                    // Check if this precedes a colon
+                    if (i + 1 < parent->children.size() &&
+                        parent->children[i + 1]->kind == SyntaxKind::TokenColon) {
+                        return false;  // This is a parameter name, not a type ref
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Skip if shadowed by a local variable
+        SyntaxNode* enclosing_fn = find_enclosing_function(candidate);
+        if (enclosing_fn) {
+            BumpAllocator ast_allocator(4096);
+            CstLowering lowering(ast_allocator);
+            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+
+            LspTypeResolver resolver(index);
+            resolver.analyze_function(ast_decl);
+
+            auto var_it = resolver.var_types().find(String(candidate_text));
+            if (var_it != resolver.var_types().end()) return false;
+        }
+
+        // Valid contexts: type annotations, struct literal, call expr, struct decl,
+        // method/constructor/destructor decl, static get expr
+        return true;
+    }
+
+    case SymbolCategory::Enum: {
+        if (!parent) return false;
+
+        // Skip field/method names after dot
+        if (parent->kind == SyntaxKind::NodeGetExpr) {
+            bool is_member_name = parent->children.size() >= 3 &&
+                parent->children[parent->children.size() - 1] == candidate;
+            if (is_member_name) return false;
+        }
+
+        // Skip field init names
+        if (parent->kind == SyntaxKind::NodeFieldInit &&
+            parent->children.size() > 0 && parent->children[0] == candidate) return false;
+
+        // Skip field declarations
+        if (parent->kind == SyntaxKind::NodeFieldDecl) return false;
+
+        // Skip if shadowed by local
+        SyntaxNode* enclosing_fn = find_enclosing_function(candidate);
+        if (enclosing_fn) {
+            BumpAllocator ast_allocator(4096);
+            CstLowering lowering(ast_allocator);
+            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+
+            LspTypeResolver resolver(index);
+            resolver.analyze_function(ast_decl);
+
+            auto var_it = resolver.var_types().find(String(candidate_text));
+            if (var_it != resolver.var_types().end()) return false;
+        }
+
+        return true;
+    }
+
+    case SymbolCategory::Trait: {
+        if (!parent) return false;
+
+        // Skip field/method names after dot
+        if (parent->kind == SyntaxKind::NodeGetExpr) {
+            bool is_member_name = parent->children.size() >= 3 &&
+                parent->children[parent->children.size() - 1] == candidate;
+            if (is_member_name) return false;
+        }
+
+        return true;
+    }
+
+    case SymbolCategory::Global: {
+        if (!parent) return false;
+
+        // Skip field/method names after dot
+        if (parent->kind == SyntaxKind::NodeGetExpr) {
+            bool is_member_name = parent->children.size() >= 3 &&
+                parent->children[parent->children.size() - 1] == candidate;
+            if (is_member_name) return false;
+        }
+
+        // Skip type annotations
+        if (parent->kind == SyntaxKind::NodeTypeExpr) return false;
+
+        // Skip field init names
+        if (parent->kind == SyntaxKind::NodeFieldInit &&
+            parent->children.size() > 0 && parent->children[0] == candidate) return false;
+
+        // Skip field declarations
+        if (parent->kind == SyntaxKind::NodeFieldDecl) return false;
+
+        // Skip struct/enum/trait/fun decl names
+        if (parent->kind == SyntaxKind::NodeStructDecl ||
+            parent->kind == SyntaxKind::NodeEnumDecl ||
+            parent->kind == SyntaxKind::NodeTraitDecl ||
+            parent->kind == SyntaxKind::NodeFunDecl) return false;
+
+        // Check if shadowed by a local variable
+        SyntaxNode* enclosing_fn = find_enclosing_function(candidate);
+        if (enclosing_fn) {
+            BumpAllocator ast_allocator(4096);
+            CstLowering lowering(ast_allocator);
+            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+
+            LspTypeResolver resolver(index);
+            resolver.analyze_function(ast_decl);
+
+            auto var_it = resolver.var_types().find(String(candidate_text));
+            if (var_it != resolver.var_types().end()) return false;
+        }
+
+        return true;
+    }
+
+    case SymbolCategory::Method: {
+        if (!parent) return false;
+
+        // For method references, check that the candidate is the member-name
+        // child of a GetExpr whose receiver resolves to the target struct
+        if (parent->kind == SyntaxKind::NodeGetExpr) {
+            bool is_member_name = parent->children.size() >= 3 &&
+                parent->children[parent->children.size() - 1] == candidate;
+            if (!is_member_name) return false;
+
+            SyntaxNode* object_expr = parent->children[0];
+            SyntaxNode* enclosing_fn = find_enclosing_function(parent);
+            if (!enclosing_fn) return false;
+
+            BumpAllocator ast_allocator(8192);
+            CstLowering lowering(ast_allocator);
+            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+
+            LspTypeResolver resolver(index);
+            resolver.analyze_function(ast_decl);
+            String receiver_type = resolver.resolve_cst_expr_type(object_expr);
+
+            if (receiver_type.empty()) return false;
+
+            // Walk inheritance chain to check if the method is on the target struct
+            StringView current_type(receiver_type.data(), receiver_type.size());
+            u32 depth = 0;
+            while (!current_type.empty() && depth < 16) {
+                if (current_type == StringView(target.qualifier.data(), target.qualifier.size()) &&
+                    index.find_method(current_type, candidate_text)) {
+                    return true;
+                }
+                current_type = index.find_struct_parent(current_type);
+                depth++;
+            }
+            return false;
+        }
+
+        // Method declaration: NodeMethodDecl — check struct name matches
+        if (parent->kind == SyntaxKind::NodeMethodDecl) {
+            // Check if this identifier is the method name (after the dot)
+            bool found_dot = false;
+            StringView struct_name;
+            for (u32 i = 0; i < parent->children.size(); i++) {
+                if (parent->children[i]->kind == SyntaxKind::TokenDot) {
+                    found_dot = true;
+                }
+                if (parent->children[i] == candidate) {
+                    if (found_dot) {
+                        // This is the method name — find struct name
+                        for (u32 j = 0; j < i; j++) {
+                            if (parent->children[j]->kind == SyntaxKind::TokenIdentifier) {
+                                struct_name = parent->children[j]->token.text();
+                                break;
+                            }
+                        }
+                        return struct_name == StringView(target.qualifier.data(), target.qualifier.size());
+                    }
+                    break;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    case SymbolCategory::Field: {
+        if (!parent) return false;
+
+        // Field access: NodeGetExpr
+        if (parent->kind == SyntaxKind::NodeGetExpr) {
+            bool is_member_name = parent->children.size() >= 3 &&
+                parent->children[parent->children.size() - 1] == candidate;
+            if (!is_member_name) return false;
+
+            SyntaxNode* object_expr = parent->children[0];
+            SyntaxNode* enclosing_fn = find_enclosing_function(parent);
+            if (!enclosing_fn) return false;
+
+            BumpAllocator ast_allocator(8192);
+            CstLowering lowering(ast_allocator);
+            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+
+            LspTypeResolver resolver(index);
+            resolver.analyze_function(ast_decl);
+            String receiver_type = resolver.resolve_cst_expr_type(object_expr);
+
+            if (receiver_type.empty()) return false;
+
+            // Walk inheritance chain
+            StringView current_type(receiver_type.data(), receiver_type.size());
+            u32 depth = 0;
+            while (!current_type.empty() && depth < 16) {
+                if (current_type == StringView(target.qualifier.data(), target.qualifier.size()) &&
+                    index.find_field(current_type, candidate_text)) {
+                    return true;
+                }
+                current_type = index.find_struct_parent(current_type);
+                depth++;
+            }
+            return false;
+        }
+
+        // Field declaration in struct body: NodeFieldDecl
+        if (parent->kind == SyntaxKind::NodeFieldDecl) {
+            // Check if this is the field name (before ':')
+            bool is_name = false;
+            for (u32 i = 0; i < parent->children.size(); i++) {
+                if (parent->children[i] == candidate) {
+                    is_name = true;
+                    break;
+                }
+                if (parent->children[i]->kind == SyntaxKind::TokenColon) break;
+            }
+            if (!is_name) return false;
+
+            // Find enclosing struct
+            SyntaxNode* struct_node = parent->parent;
+            if (struct_node && struct_node->kind == SyntaxKind::NodeStructDecl) {
+                for (u32 i = 0; i < struct_node->children.size(); i++) {
+                    if (struct_node->children[i]->kind == SyntaxKind::TokenIdentifier) {
+                        StringView struct_name = struct_node->children[i]->token.text();
+                        return struct_name == StringView(target.qualifier.data(), target.qualifier.size());
+                    }
+                }
+            }
+            return false;
+        }
+
+        // Field initializer in struct literal: NodeFieldInit
+        if (parent->kind == SyntaxKind::NodeFieldInit) {
+            bool is_field_name = parent->children.size() > 0 && parent->children[0] == candidate;
+            if (!is_field_name) return false;
+
+            // Walk up to struct literal
+            SyntaxNode* struct_literal = parent->parent;
+            if (struct_literal && struct_literal->kind == SyntaxKind::NodeStructLiteralExpr) {
+                for (u32 i = 0; i < struct_literal->children.size(); i++) {
+                    if (struct_literal->children[i]->kind == SyntaxKind::TokenIdentifier) {
+                        StringView struct_name = struct_literal->children[i]->token.text();
+                        // Walk inheritance chain
+                        StringView current_type = struct_name;
+                        u32 depth = 0;
+                        while (!current_type.empty() && depth < 16) {
+                            if (current_type == StringView(target.qualifier.data(), target.qualifier.size()) &&
+                                index.find_field(current_type, candidate_text)) {
+                                return true;
+                            }
+                            current_type = index.find_struct_parent(current_type);
+                            depth++;
+                        }
+                        break;
+                    }
+                }
+            }
+            return false;
+        }
+
+        return false;
+    }
+
+    case SymbolCategory::Local:
+    case SymbolCategory::Parameter: {
+        // Locals/params: must be in the same enclosing function in the same file
+        if (file_uri != StringView(target.enclosing_uri.data(), target.enclosing_uri.size())) {
+            return false;
+        }
+
+        SyntaxNode* enclosing_fn = find_enclosing_function(candidate);
+        if (!enclosing_fn) return false;
+
+        // Compare enclosing function range
+        if (enclosing_fn->range.start != target.enclosing_range.start ||
+            enclosing_fn->range.end != target.enclosing_range.end) {
+            return false;
+        }
+
+        // Make sure candidate is not in a type annotation or field init name context
+        if (parent && parent->kind == SyntaxKind::NodeTypeExpr) return false;
+        if (parent && parent->kind == SyntaxKind::NodeFieldInit &&
+            parent->children.size() > 0 && parent->children[0] == candidate) return false;
+        if (parent && parent->kind == SyntaxKind::NodeFieldDecl) return false;
+
+        // Skip struct/enum/trait/fun decl names
+        if (parent && (parent->kind == SyntaxKind::NodeStructDecl ||
+                       parent->kind == SyntaxKind::NodeEnumDecl ||
+                       parent->kind == SyntaxKind::NodeTraitDecl ||
+                       parent->kind == SyntaxKind::NodeFunDecl)) return false;
+
+        return true;
+    }
+
+    case SymbolCategory::Constructor:
+        // Not yet handled
+        return false;
+    }
+
+    return false;
+}
+
+// A found reference location
+struct ReferenceLocation {
+    String uri;
+    TextRange name_range;
+};
+
+// Find all references to a symbol across all files
+static void find_all_references(const SymbolIdentity& target, const GlobalIndex& index,
+                                 bool include_declaration,
+                                 const Vector<OpenDocument>& open_documents,
+                                 const tsl::robin_map<String, WorkspaceFile>& workspace_files,
+                                 Vector<ReferenceLocation>& out_locations) {
+    // Collect all file URIs and their content
+    // Use a map to avoid duplicates (open docs override workspace files)
+    struct FileInfo {
+        StringView uri;
+        const char* content;
+        u32 length;
+    };
+    tsl::robin_map<String, FileInfo> all_files;
+
+    for (auto it = workspace_files.begin(); it != workspace_files.end(); ++it) {
+        FileInfo info;
+        info.uri = StringView(it->second.uri.data(), it->second.uri.size());
+        info.content = it->second.content.data();
+        info.length = it->second.content.size();
+        all_files[it->first] = info;
+    }
+    for (u32 i = 0; i < open_documents.size(); i++) {
+        String key(open_documents[i].uri.data(), open_documents[i].uri.size());
+        FileInfo info;
+        info.uri = StringView(open_documents[i].uri.data(), open_documents[i].uri.size());
+        info.content = open_documents[i].content.data();
+        info.length = open_documents[i].content.size();
+        all_files[key] = info;
+    }
+
+    // For locals/params, only search the file containing the definition
+    bool locals_only = (target.category == SymbolCategory::Local ||
+                        target.category == SymbolCategory::Parameter);
+
+    StringView target_name(target.name.data(), target.name.size());
+
+    for (auto it = all_files.begin(); it != all_files.end(); ++it) {
+        const FileInfo& file_info = it->second;
+
+        // For locals, skip files that don't match
+        if (locals_only &&
+            file_info.uri != StringView(target.enclosing_uri.data(), target.enclosing_uri.size())) {
+            continue;
+        }
+
+        // Parse the file
+        BumpAllocator allocator(8192);
+        Lexer lexer(file_info.content, file_info.length);
+        LspParser parser(lexer, allocator);
+        SyntaxTree tree = parser.parse();
+
+        // Collect all identifier nodes matching the name
+        Vector<SyntaxNode*> candidates;
+        collect_identifiers(tree.root, target_name, candidates);
+
+        // Filter candidates
+        for (u32 j = 0; j < candidates.size(); j++) {
+            if (is_reference_to_symbol(candidates[j], target, index, tree.root, file_info.uri)) {
+                // Check if this is the declaration and if we should skip it
+                if (!include_declaration) {
+                    // Check if candidate is at a declaration site
+                    SyntaxNode* parent = candidates[j]->parent;
+                    bool is_decl = false;
+                    if (parent) {
+                        switch (target.category) {
+                        case SymbolCategory::Function:
+                            is_decl = (parent->kind == SyntaxKind::NodeFunDecl);
+                            break;
+                        case SymbolCategory::Struct:
+                            is_decl = (parent->kind == SyntaxKind::NodeStructDecl);
+                            break;
+                        case SymbolCategory::Enum:
+                            is_decl = (parent->kind == SyntaxKind::NodeEnumDecl);
+                            break;
+                        case SymbolCategory::Trait:
+                            is_decl = (parent->kind == SyntaxKind::NodeTraitDecl);
+                            break;
+                        case SymbolCategory::Global:
+                            is_decl = (parent->kind == SyntaxKind::NodeVarDecl &&
+                                       find_enclosing_function(candidates[j]) == nullptr);
+                            break;
+                        case SymbolCategory::Method:
+                            is_decl = (parent->kind == SyntaxKind::NodeMethodDecl);
+                            break;
+                        case SymbolCategory::Field:
+                            is_decl = (parent->kind == SyntaxKind::NodeFieldDecl);
+                            break;
+                        case SymbolCategory::Local:
+                            is_decl = (parent->kind == SyntaxKind::NodeVarDecl);
+                            break;
+                        case SymbolCategory::Parameter:
+                            is_decl = (parent->kind == SyntaxKind::NodeParam);
+                            break;
+                        case SymbolCategory::Constructor:
+                            is_decl = (parent->kind == SyntaxKind::NodeConstructorDecl);
+                            break;
+                        }
+                    }
+                    if (is_decl) continue;
+                }
+
+                ReferenceLocation loc;
+                loc.uri = String(file_info.uri);
+                loc.name_range = candidates[j]->range;
+                out_locations.push_back(std::move(loc));
+            }
+        }
+    }
+}
+
+void LspServer::handle_references(const JsonValue& params, i64 id) {
+    const JsonValue* text_document = params.find("textDocument");
+    if (!text_document || !text_document->is_object()) {
+        m_transport.write_response(id, "[]");
+        return;
+    }
+
+    const JsonValue* uri_val = text_document->find("uri");
+    if (!uri_val || !uri_val->is_string()) {
+        m_transport.write_response(id, "[]");
+        return;
+    }
+
+    const JsonValue* position_val = params.find("position");
+    if (!position_val || !position_val->is_object()) {
+        m_transport.write_response(id, "[]");
+        return;
+    }
+
+    StringView uri = uri_val->as_string();
+
+    // Get the source content for this file (open doc or workspace file)
+    u32 source_length = 0;
+    const char* source = get_file_content(uri, source_length);
+    if (!source) {
+        m_transport.write_response(id, "[]");
+        return;
+    }
+
+    const JsonValue* line_val = position_val->find("line");
+    const JsonValue* char_val = position_val->find("character");
+    if (!line_val || !line_val->is_int() || !char_val || !char_val->is_int()) {
+        m_transport.write_response(id, "[]");
+        return;
+    }
+
+    LspPosition cursor_pos;
+    cursor_pos.line = static_cast<u32>(line_val->as_int());
+    cursor_pos.character = static_cast<u32>(char_val->as_int());
+
+    u32 byte_offset = lsp_position_to_offset(source, source_length, cursor_pos);
+
+    // Re-parse to get fresh CST
+    BumpAllocator allocator(8192);
+    Lexer lexer(source, source_length);
+    LspParser parser(lexer, allocator);
+    SyntaxTree tree = parser.parse();
+
+    SyntaxNode* node = find_node_at_offset(tree.root, byte_offset);
+    if (!node) {
+        m_transport.write_response(id, "[]");
+        return;
+    }
+
+    // Identify the symbol at cursor
+    SymbolIdentity identity;
+    if (!identify_symbol_at_cursor(node, m_global_index, uri, identity)) {
+        m_transport.write_response(id, "[]");
+        return;
+    }
+
+    // Check includeDeclaration from context
+    bool include_declaration = true;
+    const JsonValue* context_val = params.find("context");
+    if (context_val && context_val->is_object()) {
+        const JsonValue* include_decl_val = context_val->find("includeDeclaration");
+        if (include_decl_val && include_decl_val->is_bool()) {
+            include_declaration = include_decl_val->as_bool();
+        }
+    }
+
+    // Find all references
+    Vector<ReferenceLocation> locations;
+    find_all_references(identity, m_global_index, include_declaration,
+                         m_open_documents, m_workspace_files, locations);
+
+    // Build Location[] response
+    String result;
+    JsonWriter writer(result);
+    writer.write_start_array();
+
+    for (u32 i = 0; i < locations.size(); i++) {
+        const ReferenceLocation& loc = locations[i];
+
+        // Get source for this file to convert byte offsets to LSP positions
+        u32 file_length = 0;
+        const char* file_source = get_file_content(
+            StringView(loc.uri.data(), loc.uri.size()), file_length);
+        if (!file_source) continue;
+
+        LspRange lsp_range = text_range_to_lsp_range(file_source, file_length, loc.name_range);
+
+        writer.write_start_object();
+        writer.write_key_string("uri", StringView(loc.uri.data(), loc.uri.size()));
+        writer.write_key("range");
+        write_lsp_range(writer, lsp_range);
+        writer.write_end_object();
+    }
+
+    writer.write_end_array();
+    m_transport.write_response(id, StringView(result.data(), result.size()));
+}
+
+void LspServer::handle_rename(const JsonValue& params, i64 id) {
+    const JsonValue* text_document = params.find("textDocument");
+    if (!text_document || !text_document->is_object()) {
+        m_transport.write_error_response(id, -32602, "Invalid params");
+        return;
+    }
+
+    const JsonValue* uri_val = text_document->find("uri");
+    if (!uri_val || !uri_val->is_string()) {
+        m_transport.write_error_response(id, -32602, "Missing URI");
+        return;
+    }
+
+    const JsonValue* position_val = params.find("position");
+    if (!position_val || !position_val->is_object()) {
+        m_transport.write_error_response(id, -32602, "Missing position");
+        return;
+    }
+
+    const JsonValue* new_name_val = params.find("newName");
+    if (!new_name_val || !new_name_val->is_string()) {
+        m_transport.write_error_response(id, -32602, "Missing newName");
+        return;
+    }
+
+    StringView uri = uri_val->as_string();
+    StringView new_name = new_name_val->as_string();
+
+    u32 source_length = 0;
+    const char* source = get_file_content(uri, source_length);
+    if (!source) {
+        m_transport.write_error_response(id, -32602, "File not found");
+        return;
+    }
+
+    const JsonValue* line_val = position_val->find("line");
+    const JsonValue* char_val = position_val->find("character");
+    if (!line_val || !line_val->is_int() || !char_val || !char_val->is_int()) {
+        m_transport.write_error_response(id, -32602, "Invalid position");
+        return;
+    }
+
+    LspPosition cursor_pos;
+    cursor_pos.line = static_cast<u32>(line_val->as_int());
+    cursor_pos.character = static_cast<u32>(char_val->as_int());
+
+    u32 byte_offset = lsp_position_to_offset(source, source_length, cursor_pos);
+
+    BumpAllocator allocator(8192);
+    Lexer lexer(source, source_length);
+    LspParser parser(lexer, allocator);
+    SyntaxTree tree = parser.parse();
+
+    SyntaxNode* node = find_node_at_offset(tree.root, byte_offset);
+    if (!node) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    SymbolIdentity identity;
+    if (!identify_symbol_at_cursor(node, m_global_index, uri, identity)) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    // Find all references (always include declaration for rename)
+    Vector<ReferenceLocation> locations;
+    find_all_references(identity, m_global_index, true,
+                         m_open_documents, m_workspace_files, locations);
+
+    if (locations.empty()) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    // Group locations by URI
+    tsl::robin_map<String, Vector<ReferenceLocation*>> by_uri;
+    for (u32 i = 0; i < locations.size(); i++) {
+        by_uri[locations[i].uri].push_back(&locations[i]);
+    }
+
+    // Build WorkspaceEdit response
+    String result;
+    JsonWriter writer(result);
+    writer.write_start_object();
+    writer.write_key("changes");
+    writer.write_start_object();
+
+    for (auto it = by_uri.begin(); it != by_uri.end(); ++it) {
+        // Get source for this file
+        u32 file_length = 0;
+        const char* file_source = get_file_content(
+            StringView(it->first.data(), it->first.size()), file_length);
+        if (!file_source) continue;
+
+        writer.write_key(StringView(it->first.data(), it->first.size()));
+        writer.write_start_array();
+
+        for (u32 j = 0; j < it->second.size(); j++) {
+            LspRange lsp_range = text_range_to_lsp_range(
+                file_source, file_length, it->second[j]->name_range);
+
+            writer.write_start_object();
+            writer.write_key("range");
+            write_lsp_range(writer, lsp_range);
+            writer.write_key_string("newText", new_name);
+            writer.write_end_object();
+        }
+
+        writer.write_end_array();
+    }
+
+    writer.write_end_object();
+    writer.write_end_object();
+
+    m_transport.write_response(id, StringView(result.data(), result.size()));
 }
 
 } // namespace rx

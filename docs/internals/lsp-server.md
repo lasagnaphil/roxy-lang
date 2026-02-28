@@ -1,6 +1,6 @@
 # LSP Server
 
-> **Status:** Phases 1–5b implemented (CST, indexing, go-to-definition, completion, hover, semantic diagnostics). Phase 6 (expanded semantic diagnostics) implemented. Phases 7–8 pending.
+> **Status:** Phases 1–7 implemented (CST, indexing, go-to-definition, completion, hover, semantic diagnostics, find references, rename). Phases 8–9 pending.
 
 This document describes the architecture for the Roxy LSP server, which provides IDE features: diagnostics, completions, hover, go-to-definition, and more.
 
@@ -570,6 +570,7 @@ tests/unit/
     test_lsp_completion.cpp          # 16 cases: dot, ::, bare, type completions
     test_lsp_hover.cpp               # 14 cases: hover on vars, functions, fields, types
     test_lsp_semantic_diagnostics.cpp # 31 cases: unresolved symbols, type mismatches, missing fields
+    test_lsp_references.cpp          # 15 cases: find references, rename, symbol categories
 ```
 
 CMake adds a `roxy_lsp` library depending on `roxy_shared` (lexer, tokens) and `roxy_compiler` (AST types for CST-to-AST lowering).
@@ -682,15 +683,32 @@ Split into two sub-phases:
 **Files:** `lsp_type_resolver.hpp/.cpp`, `global_index.hpp/.cpp`
 **Tests:** `test_lsp_semantic_diagnostics.cpp` (17 new cases, 31 total)
 
-### Phase 7: Find References + Rename
+### Phase 7: Find References + Rename ✓
 
 **Goal:** Find all usages, rename symbols.
 
-- [ ] Implement `textDocument/references` (lazy approach: search + filter)
-- [ ] Implement `textDocument/rename` with cross-file edits
-- [ ] Test: find all references to a struct, rename a method
+- [x] Implement `textDocument/references` (lazy approach: search all file CSTs for matching identifiers, filter by semantic context)
+- [x] Symbol identity system (`SymbolCategory` enum + `SymbolIdentity` struct) for canonical symbol identification
+- [x] Reference filtering: context-aware checking per symbol category (function, struct, enum, trait, global, method, field, local, parameter)
+- [x] Method/field disambiguation: resolve receiver type via `LspTypeResolver` to match references to the correct struct
+- [x] Local/parameter scoping: only search within the enclosing function in the same file
+- [x] `includeDeclaration` support: optionally exclude definition from results
+- [x] Implement `textDocument/rename` with cross-file `WorkspaceEdit` generation
+- [x] Test: 15 cases covering functions, types, fields/methods, locals/params, and edge cases
 
-### Phase 8: Polish
+**Files:** `server.hpp` (handler declarations), `server.cpp` (implementation)
+**Tests:** `test_lsp_references.cpp` (15 cases)
+
+### Phase 8: Full Semantic Analysis
+
+**Goal:** Hook up the compiler's `Semantic` pass for precise type resolution.
+
+- [ ] Use TypeCache/TypeEnv for full type inference (generic type inference, trait method dispatch)
+- [ ] Cross-type inference chains, precise type mismatch diagnostics
+- [ ] Completions after complex expressions (chained method calls, generic instantiations)
+- [ ] Replace lightweight string-based LspTypeResolver with proper type-aware analyzer
+
+### Phase 9: Polish
 
 - [ ] Signature help (`textDocument/signatureHelp`) for function calls
 - [ ] Code actions (quick fixes for common errors)
@@ -718,7 +736,7 @@ The LSP server requires:
 | `include/roxy/lsp/cst_lowering.hpp` | CST-to-AST lowering |
 | `include/roxy/lsp/lsp_type_resolver.hpp` | Lazy type resolution + semantic diagnostics |
 | `include/roxy/lsp/transport.hpp` | JSON-RPC transport |
-| `include/roxy/lsp/server.hpp` | LSP server (definition, completion, hover, diagnostics) |
+| `include/roxy/lsp/server.hpp` | LSP server (definition, completion, hover, diagnostics, references, rename) |
 | `include/roxy/lsp/protocol.hpp` | LSP protocol types |
 | `src/roxy/lsp/*.cpp` | Implementations |
 | `docs/internals/lsp-server.md` | This document |
