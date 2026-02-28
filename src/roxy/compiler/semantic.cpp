@@ -1203,6 +1203,50 @@ void SemanticAnalyzer::mark_live(StringView name) {
     }
 }
 
+void SemanticAnalyzer::check_scope_exit_uniq_destructors(const Scope* scope, SourceLocation loc) {
+    for (Symbol* sym : scope->symbols) {
+        if (sym->kind != SymbolKind::Variable && sym->kind != SymbolKind::Parameter) continue;
+
+        Type* type = sym->type;
+        if (!type || type->kind != TypeKind::Uniq) continue;
+
+        // Check if the variable is still live (not moved/deleted)
+        auto it = m_move_states.find(sym->name);
+        if (it == m_move_states.end() || it->second != MoveState::Live) continue;
+
+        // Get the inner struct type
+        Type* inner = type->inner_type();
+        if (!inner || inner->kind != TypeKind::Struct) continue;
+
+        // Check if struct has destructors but no default (unnamed) destructor
+        const StructTypeInfo& struct_info = inner->struct_info;
+        if (struct_info.destructors.size() == 0) continue;
+
+        bool has_default = false;
+        for (const DestructorInfo& dtor : struct_info.destructors) {
+            if (dtor.name.empty()) {
+                has_default = true;
+                break;
+            }
+        }
+
+        if (!has_default) {
+            error_fmt(loc, "variable '{}' of type 'uniq {}' has only named destructors; "
+                          "must be explicitly deleted with 'delete {}.name(args)' before scope exit",
+                      sym->name, struct_info.name, sym->name);
+        }
+    }
+}
+
+void SemanticAnalyzer::check_all_scopes_uniq_destructors(SourceLocation loc, ScopeKind stop_kind) {
+    Scope* scope = m_symbols.current_scope();
+    while (scope) {
+        check_scope_exit_uniq_destructors(scope, loc);
+        if (scope->kind == stop_kind) break;
+        scope = scope->parent;
+    }
+}
+
 void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
     FunDecl& fun_decl = decl->fun_decl;
 
@@ -1260,6 +1304,7 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
         // A full implementation would check all paths
     }
 
+    check_scope_exit_uniq_destructors(m_symbols.current_scope(), decl->loc);
     m_symbols.pop_scope();
 
     // Restore coroutine state
@@ -1542,6 +1587,7 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
     // Analyze body
     analyze_stmt(body);
 
+    check_scope_exit_uniq_destructors(m_symbols.current_scope(), decl->loc);
     m_symbols.pop_scope();  // function scope
     m_symbols.pop_scope();  // struct scope
 
@@ -2619,6 +2665,7 @@ void SemanticAnalyzer::analyze_block_stmt(Stmt* stmt) {
         }
     }
 
+    check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
     m_symbols.pop_scope();
 }
 
@@ -2662,6 +2709,7 @@ void SemanticAnalyzer::analyze_while_stmt(Stmt* stmt) {
 
     m_symbols.push_loop_scope();
     analyze_stmt(ws.body);
+    check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
     m_symbols.pop_scope();
 }
 
@@ -2692,8 +2740,10 @@ void SemanticAnalyzer::analyze_for_stmt(Stmt* stmt) {
 
     m_symbols.push_loop_scope();
     analyze_stmt(fs.body);
+    check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
     m_symbols.pop_scope();
 
+    check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
     m_symbols.pop_scope();
 }
 
@@ -2734,18 +2784,23 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
         }
     }
 
+    check_all_scopes_uniq_destructors(stmt->loc, ScopeKind::Function);
     m_symbols.mark_return();
 }
 
 void SemanticAnalyzer::analyze_break_stmt(Stmt* stmt) {
     if (!m_symbols.is_in_loop()) {
         error(stmt->loc, "'break' statement outside of loop");
+    } else {
+        check_all_scopes_uniq_destructors(stmt->loc, ScopeKind::Loop);
     }
 }
 
 void SemanticAnalyzer::analyze_continue_stmt(Stmt* stmt) {
     if (!m_symbols.is_in_loop()) {
         error(stmt->loc, "'continue' statement outside of loop");
+    } else {
+        check_all_scopes_uniq_destructors(stmt->loc, ScopeKind::Loop);
     }
 }
 

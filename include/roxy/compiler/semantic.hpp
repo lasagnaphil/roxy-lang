@@ -305,6 +305,10 @@ private:
     // Merge move states from two branches (e.g., if/else)
     void merge_move_states(const MoveStateSnapshot& then_states, const MoveStateSnapshot& else_states);
 
+    // Check live uniq variables at scope exit for named-only destructors
+    void check_scope_exit_uniq_destructors(const Scope* scope, SourceLocation loc);
+    void check_all_scopes_uniq_destructors(SourceLocation loc, ScopeKind stop_kind);
+
     // Check if a uniq variable is in a moved state and report an error
     bool check_not_moved(StringView name, SourceLocation loc);
 

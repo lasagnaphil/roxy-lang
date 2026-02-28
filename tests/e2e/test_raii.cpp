@@ -424,3 +424,115 @@ TEST_CASE("E2E - RAII: multiple uniqs in nested scopes") {
     CHECK(result.success);
     CHECK(result.value == 1);
 }
+
+// ============================================================================
+// RAII Tests - Named-Only Destructor Compile Errors
+// ============================================================================
+
+TEST_CASE("E2E - RAII: named-only destructor requires explicit delete") {
+    // Struct with only named destructors (no default) left live at scope exit → compile error
+    const char* source = R"(
+        struct Resource {
+            value: i32;
+        }
+
+        fun delete Resource.save_to(path: string) {
+            print(f"saving to {path}");
+        }
+
+        fun main(): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.value = 42;
+            return r.value;
+            // r is live but has only named destructors → compile error
+        }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail to compile
+}
+
+TEST_CASE("E2E - RAII: named-only destructor with explicit delete OK") {
+    // Same struct but variable is explicitly deleted before scope exit → OK
+    const char* source = R"(
+        struct Resource {
+            value: i32;
+        }
+
+        fun delete Resource.save_to(path: string) {
+            print(f"saving to {path}");
+        }
+
+        fun main(): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.value = 42;
+            var result: i32 = r.value;
+            delete r.save_to("output.txt");
+            return result;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "saving to output.txt\n");
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - RAII: default + named destructor uses implicit delete") {
+    // Struct with both default and named destructors → RAII uses default, no error
+    const char* source = R"(
+        struct Resource {
+            value: i32;
+        }
+
+        fun delete Resource() {
+            print(f"{"default dtor"}");
+        }
+
+        fun delete Resource.save_to(path: string) {
+            print(f"saving to {path}");
+        }
+
+        fun main(): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.value = 42;
+            return r.value;
+            // r is implicitly deleted via default destructor
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "default dtor\n");
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - RAII: named-only destructor with break is compile error") {
+    // Variable in loop body with only named destructors + break → compile error
+    const char* source = R"(
+        struct Resource {
+            value: i32;
+        }
+
+        fun delete Resource.close() {
+            print(f"{"closing"}");
+        }
+
+        fun main(): i32 {
+            for (var i: i32 = 0; i < 5; i = i + 1) {
+                var r: uniq Resource = uniq Resource();
+                r.value = i;
+                if (i == 2) {
+                    break;
+                    // r is live with only named destructors → compile error
+                }
+            }
+            return 0;
+        }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail to compile
+}
