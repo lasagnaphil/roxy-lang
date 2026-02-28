@@ -60,6 +60,9 @@ public:
     i32 find_method_param_count(StringView struct_name, StringView method_name) const;
     i32 find_constructor_param_count(StringView struct_name, StringView ctor_name) const;
 
+    // Field default queries (for missing required field diagnostics)
+    bool field_has_default(StringView struct_name, StringView field_name) const;
+
     // Iterate all names in a category (for bare identifier / type completions)
     template<typename Callback> void for_each_struct(Callback&& cb) const {
         for (auto it = m_structs.begin(); it != m_structs.end(); ++it) {
@@ -112,6 +115,9 @@ private:
     tsl::robin_map<String, i32> m_method_param_counts;       // "Point.length" → 0
     tsl::robin_map<String, i32> m_constructor_param_counts;  // "Point.new" → 2
 
+    // Field default tracking (for missing required field diagnostics)
+    tsl::robin_map<String, bool> m_field_has_defaults;       // "Point.x" → false
+
     // Completion secondary indexes
     tsl::robin_map<String, Vector<String>> m_struct_field_names;   // "Point" → ["x", "y"]
     tsl::robin_map<String, Vector<String>> m_struct_method_names;  // "Point" → ["length", "sum"]
@@ -142,6 +148,7 @@ private:
         Vector<String> function_param_count_keys;
         Vector<String> method_param_count_keys;
         Vector<String> constructor_param_count_keys;
+        Vector<String> field_has_default_keys;
     };
     tsl::robin_map<String, FileNameSet> m_file_names;
 

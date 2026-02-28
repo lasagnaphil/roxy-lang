@@ -136,6 +136,23 @@ String LspTypeResolver::resolve_ast_expr_type(Expr* expr) const {
     if (!expr) return String();
 
     switch (expr->kind) {
+        case AstKind::ExprLiteral: {
+            switch (expr->literal.literal_kind) {
+                case LiteralKind::I32:    return String("i32");
+                case LiteralKind::I64:    return String("i64");
+                case LiteralKind::U32:    return String("u32");
+                case LiteralKind::U64:    return String("u64");
+                case LiteralKind::F32:    return String("f32");
+                case LiteralKind::F64:    return String("f64");
+                case LiteralKind::Bool:   return String("bool");
+                case LiteralKind::String: return String("string");
+                case LiteralKind::Nil:    return String("nil");
+                default:                  return String();
+            }
+        }
+        case AstKind::ExprStringInterp: {
+            return String("string");
+        }
         case AstKind::ExprIdentifier: {
             // Look up in scope
             auto it = m_var_types.find(String(expr->identifier.name));
@@ -321,6 +338,7 @@ String LspTypeResolver::resolve_field_type_in_hierarchy(
 
 void LspTypeResolver::analyze_function_with_diagnostics(Decl* fun_decl) {
     m_diagnostics.clear();
+    m_return_type.clear();
 
     // First run normal analysis to populate variable scope
     analyze_function(fun_decl);
@@ -330,12 +348,22 @@ void LspTypeResolver::analyze_function_with_diagnostics(Decl* fun_decl) {
 
     Stmt* body = nullptr;
     if (fun_decl->kind == AstKind::DeclFun) {
+        check_duplicate_params(fun_decl->fun_decl.params);
+        if (fun_decl->fun_decl.return_type && !fun_decl->fun_decl.return_type->name.empty()) {
+            m_return_type = String(fun_decl->fun_decl.return_type->name);
+        }
         body = fun_decl->fun_decl.body;
     } else if (fun_decl->kind == AstKind::DeclMethod) {
+        check_duplicate_params(fun_decl->method_decl.params);
+        if (fun_decl->method_decl.return_type && !fun_decl->method_decl.return_type->name.empty()) {
+            m_return_type = String(fun_decl->method_decl.return_type->name);
+        }
         body = fun_decl->method_decl.body;
     } else if (fun_decl->kind == AstKind::DeclConstructor) {
+        check_duplicate_params(fun_decl->constructor_decl.params);
         body = fun_decl->constructor_decl.body;
     } else if (fun_decl->kind == AstKind::DeclDestructor) {
+        check_duplicate_params(fun_decl->destructor_decl.params);
         body = fun_decl->destructor_decl.body;
     }
 
@@ -350,6 +378,58 @@ void LspTypeResolver::add_diagnostic(TextRange range, DiagnosticSeverity severit
     diag.severity = severity;
     diag.message = std::move(message);
     m_diagnostics.push_back(std::move(diag));
+}
+
+void LspTypeResolver::check_duplicate_params(const Span<Param>& params) {
+    for (u32 i = 0; i < params.size(); i++) {
+        if (params[i].name.empty()) continue;
+        for (u32 j = 0; j < i; j++) {
+            if (params[j].name == params[i].name) {
+                TextRange range{params[i].loc.offset, params[i].loc.end_offset};
+                if (range.end <= range.start) {
+                    range.end = range.start + static_cast<u32>(params[i].name.size());
+                }
+                String msg("Duplicate parameter name '");
+                msg.append(params[i].name);
+                msg.push_back('\'');
+                add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                break; // One diagnostic per duplicate
+            }
+        }
+    }
+}
+
+static bool is_numeric_type(StringView name) {
+    return name == "i8" || name == "i16" || name == "i32" || name == "i64" ||
+           name == "u8" || name == "u16" || name == "u32" || name == "u64" ||
+           name == "f32" || name == "f64";
+}
+
+static bool contains_angle_bracket(StringView s) {
+    for (u32 i = 0; i < s.size(); i++) {
+        if (s[i] == '<') return true;
+    }
+    return false;
+}
+
+void LspTypeResolver::check_type_mismatch(TextRange range, StringView expected, StringView actual) {
+    // Skip if either type is empty (cascade prevention)
+    if (expected.empty() || actual.empty()) return;
+    // Skip if types are equal
+    if (expected == actual) return;
+    // Skip if actual is "nil" (allowed for reference types)
+    if (actual == "nil") return;
+    // Skip parameterized types (contains '<')
+    if (contains_angle_bracket(expected) || contains_angle_bracket(actual)) return;
+    // Skip numeric-to-numeric (avoids false positives on `var x: i64 = 42`)
+    if (is_numeric_type(expected) && is_numeric_type(actual)) return;
+
+    String msg("Type mismatch: expected '");
+    msg.append(expected);
+    msg.append("', got '");
+    msg.append(actual);
+    msg.push_back('\'');
+    add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
 }
 
 bool LspTypeResolver::is_known_type(StringView name) const {
@@ -425,6 +505,16 @@ void LspTypeResolver::check_decl(Decl* decl) {
         if (decl->var_decl.initializer) {
             check_expr(decl->var_decl.initializer);
         }
+        // Check var type mismatch: annotation vs initializer type
+        if (decl->var_decl.type && !decl->var_decl.type->name.empty() && decl->var_decl.initializer) {
+            String init_type = resolve_ast_expr_type(decl->var_decl.initializer);
+            if (!init_type.empty()) {
+                TextRange range{decl->var_decl.initializer->loc.offset, decl->var_decl.initializer->loc.end_offset};
+                if (range.end <= range.start) range.end = range.start + 1;
+                check_type_mismatch(range, decl->var_decl.type->name,
+                                    StringView(init_type.data(), init_type.size()));
+            }
+        }
     }
 
     // Walk into nested statements
@@ -461,7 +551,21 @@ void LspTypeResolver::check_stmt(Stmt* stmt) {
             if (stmt->for_stmt.body) check_stmt(stmt->for_stmt.body);
             break;
         case AstKind::StmtReturn:
-            if (stmt->return_stmt.value) check_expr(stmt->return_stmt.value);
+            if (stmt->return_stmt.value) {
+                check_expr(stmt->return_stmt.value);
+                // Check return type mismatch
+                if (!m_return_type.empty()) {
+                    String actual_type = resolve_ast_expr_type(stmt->return_stmt.value);
+                    if (!actual_type.empty()) {
+                        TextRange range{stmt->return_stmt.value->loc.offset,
+                                       stmt->return_stmt.value->loc.end_offset};
+                        if (range.end <= range.start) range.end = range.start + 1;
+                        check_type_mismatch(range,
+                            StringView(m_return_type.data(), m_return_type.size()),
+                            StringView(actual_type.data(), actual_type.size()));
+                    }
+                }
+            }
             break;
         case AstKind::StmtThrow:
             if (stmt->throw_stmt.expr) check_expr(stmt->throw_stmt.expr);
@@ -574,53 +678,96 @@ void LspTypeResolver::check_expr(Expr* expr) {
                     }
                 }
             } else if (callee->kind == AstKind::ExprGet) {
-                // Method call: obj.method()
-                String receiver_type = resolve_ast_expr_type(callee->get.object);
-                if (!receiver_type.empty()) {
-                    StringView method_name = callee->get.name;
-                    StringView recv_sv(receiver_type.data(), receiver_type.size());
-
-                    // Skip method checks when receiver type is unknown (cascade prevention)
-                    if (!m_index.find_struct(recv_sv) && !m_index.find_trait(recv_sv)) {
-                        // Unknown receiver type — skip
-                    } else if (!has_method_in_hierarchy(recv_sv, method_name)) {
-                        TextRange range{callee->loc.offset, callee->loc.end_offset};
-                        if (range.end <= range.start) {
-                            range.end = range.start + static_cast<u32>(method_name.size());
-                        }
-                        String msg("No method '");
-                        msg.append(method_name);
-                        msg.append("' on type '");
-                        msg.append(recv_sv);
-                        msg.push_back('\'');
-                        add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
-                    } else {
-                        // Method found — check arg count
-                        i32 expected = m_index.find_method_param_count(recv_sv, method_name);
-                        // Walk hierarchy if not found at this level
-                        StringView current = recv_sv;
-                        u32 depth = 0;
-                        while (expected < 0 && !current.empty() && depth < 16) {
-                            current = m_index.find_struct_parent(current);
-                            if (!current.empty()) {
-                                expected = m_index.find_method_param_count(current, method_name);
+                // Check for named constructor: StructName.ctor_name(args)
+                // This must come BEFORE the method-call path, because
+                // resolve_ast_expr_type("StructName") returns empty for struct names
+                // (they are types, not variables), so the method path silently skips them.
+                bool is_named_constructor = false;
+                if (callee->get.object && callee->get.object->kind == AstKind::ExprIdentifier) {
+                    StringView object_name = callee->get.object->identifier.name;
+                    // It's a named constructor if the object is a known struct name
+                    // AND not a local variable (local variables shadow struct names)
+                    auto var_it = m_var_types.find(String(object_name));
+                    if (var_it == m_var_types.end() && m_index.find_struct(object_name)) {
+                        is_named_constructor = true;
+                        StringView ctor_name = callee->get.name;
+                        if (!m_index.find_constructor(object_name, ctor_name)) {
+                            TextRange range{callee->loc.offset, callee->loc.end_offset};
+                            if (range.end <= range.start) {
+                                range.end = range.start + static_cast<u32>(object_name.size()) + 1 + static_cast<u32>(ctor_name.size());
                             }
-                            depth++;
-                        }
-                        i32 actual = static_cast<i32>(expr->call.arguments.size());
-                        if (expected >= 0 && actual != expected) {
-                            TextRange range{expr->loc.offset, expr->loc.end_offset};
-                            if (range.end <= range.start) range.end = range.start + 1;
-                            String msg("Expected ");
-                            msg.append(std::to_string(expected).c_str());
-                            msg.append(" arguments, got ");
-                            msg.append(std::to_string(actual).c_str());
+                            String msg("No constructor '");
+                            msg.append(ctor_name);
+                            msg.append("' on struct '");
+                            msg.append(object_name);
+                            msg.push_back('\'');
                             add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                        } else {
+                            // Constructor found — check arg count
+                            i32 expected = m_index.find_constructor_param_count(object_name, ctor_name);
+                            i32 actual = static_cast<i32>(expr->call.arguments.size());
+                            if (expected >= 0 && actual != expected) {
+                                TextRange range{expr->loc.offset, expr->loc.end_offset};
+                                if (range.end <= range.start) range.end = range.start + 1;
+                                String msg("Expected ");
+                                msg.append(std::to_string(expected).c_str());
+                                msg.append(" arguments, got ");
+                                msg.append(std::to_string(actual).c_str());
+                                add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                            }
                         }
                     }
                 }
-                // Recurse into receiver
-                check_expr(callee->get.object);
+
+                if (!is_named_constructor) {
+                    // Method call: obj.method()
+                    String receiver_type = resolve_ast_expr_type(callee->get.object);
+                    if (!receiver_type.empty()) {
+                        StringView method_name = callee->get.name;
+                        StringView recv_sv(receiver_type.data(), receiver_type.size());
+
+                        // Skip method checks when receiver type is unknown (cascade prevention)
+                        if (!m_index.find_struct(recv_sv) && !m_index.find_trait(recv_sv)) {
+                            // Unknown receiver type — skip
+                        } else if (!has_method_in_hierarchy(recv_sv, method_name)) {
+                            TextRange range{callee->loc.offset, callee->loc.end_offset};
+                            if (range.end <= range.start) {
+                                range.end = range.start + static_cast<u32>(method_name.size());
+                            }
+                            String msg("No method '");
+                            msg.append(method_name);
+                            msg.append("' on type '");
+                            msg.append(recv_sv);
+                            msg.push_back('\'');
+                            add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                        } else {
+                            // Method found — check arg count
+                            i32 expected = m_index.find_method_param_count(recv_sv, method_name);
+                            // Walk hierarchy if not found at this level
+                            StringView current = recv_sv;
+                            u32 depth = 0;
+                            while (expected < 0 && !current.empty() && depth < 16) {
+                                current = m_index.find_struct_parent(current);
+                                if (!current.empty()) {
+                                    expected = m_index.find_method_param_count(current, method_name);
+                                }
+                                depth++;
+                            }
+                            i32 actual = static_cast<i32>(expr->call.arguments.size());
+                            if (expected >= 0 && actual != expected) {
+                                TextRange range{expr->loc.offset, expr->loc.end_offset};
+                                if (range.end <= range.start) range.end = range.start + 1;
+                                String msg("Expected ");
+                                msg.append(std::to_string(expected).c_str());
+                                msg.append(" arguments, got ");
+                                msg.append(std::to_string(actual).c_str());
+                                add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                            }
+                        }
+                    }
+                    // Recurse into receiver
+                    check_expr(callee->get.object);
+                }
             } else {
                 // Other callee types: just recurse
                 check_expr(callee);
@@ -732,6 +879,36 @@ void LspTypeResolver::check_expr(Expr* expr) {
                             msg.append(type_name);
                             msg.push_back('\'');
                             add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                        }
+                    }
+
+                    // Check missing required fields (direct fields only, not inherited)
+                    const Vector<String>* all_fields = m_index.get_struct_fields(type_name);
+                    if (all_fields) {
+                        for (u32 i = 0; i < all_fields->size(); i++) {
+                            StringView field_name((*all_fields)[i].data(), (*all_fields)[i].size());
+                            // Skip fields with defaults
+                            if (m_index.field_has_default(type_name, field_name)) continue;
+                            // Check if provided in literal
+                            bool provided = false;
+                            for (u32 j = 0; j < expr->struct_literal.fields.size(); j++) {
+                                if (expr->struct_literal.fields[j].name == field_name) {
+                                    provided = true;
+                                    break;
+                                }
+                            }
+                            if (!provided) {
+                                TextRange range{expr->loc.offset, expr->loc.end_offset};
+                                if (range.end <= range.start) {
+                                    range.end = range.start + static_cast<u32>(type_name.size());
+                                }
+                                String msg("Missing required field '");
+                                msg.append(field_name);
+                                msg.append("' in struct literal '");
+                                msg.append(type_name);
+                                msg.push_back('\'');
+                                add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                            }
                         }
                     }
                 }

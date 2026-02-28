@@ -187,8 +187,11 @@ TEST_CASE("SemanticDiagnostic: struct literal with bad field") {
     ctx.add_types("struct Point { x: f32; y: f32; }");
 
     const auto& diags = ctx.analyze("fun main() { var p = Point { z = 1 }; }");
-    REQUIRE(diags.size() == 1);
+    REQUIRE(diags.size() == 3);
     CHECK(diags[0].message == String("No field 'z' on type 'Point'"));
+    // Also reports missing required fields x and y
+    CHECK(diags[1].message == String("Missing required field 'x' in struct literal 'Point'"));
+    CHECK(diags[2].message == String("Missing required field 'y' in struct literal 'Point'"));
 }
 
 TEST_CASE("SemanticDiagnostic: primitives do not trigger unknown type") {
@@ -196,4 +199,153 @@ TEST_CASE("SemanticDiagnostic: primitives do not trigger unknown type") {
 
     const auto& diags = ctx.analyze("fun main() { var a: i32; var b: f64; var c: bool; var d: string; }");
     CHECK(diags.size() == 0);
+}
+
+// --- Phase 6: Literal type resolution + type mismatch ---
+
+TEST_CASE("SemanticDiagnostic: var type mismatch - string assigned to i32") {
+    DiagTestContext ctx;
+
+    const auto& diags = ctx.analyze("fun main() { var x: i32 = \"hello\"; }");
+    REQUIRE(diags.size() == 1);
+    CHECK(diags[0].message == String("Type mismatch: expected 'i32', got 'string'"));
+}
+
+TEST_CASE("SemanticDiagnostic: var type mismatch - no error for matching types") {
+    DiagTestContext ctx;
+
+    const auto& diags = ctx.analyze("fun main() { var x: i32 = 42; }");
+    CHECK(diags.size() == 0);
+}
+
+TEST_CASE("SemanticDiagnostic: var type mismatch - bool assigned to string") {
+    DiagTestContext ctx;
+
+    const auto& diags = ctx.analyze("fun main() { var x: string = true; }");
+    REQUIRE(diags.size() == 1);
+    CHECK(diags[0].message == String("Type mismatch: expected 'string', got 'bool'"));
+}
+
+// --- Phase 6: Duplicate parameters ---
+
+TEST_CASE("SemanticDiagnostic: duplicate parameter name") {
+    DiagTestContext ctx;
+
+    const auto& diags = ctx.analyze("fun add(x: i32, x: i32): i32 { return x + x; }");
+    REQUIRE(diags.size() == 1);
+    CHECK(diags[0].message == String("Duplicate parameter name 'x'"));
+}
+
+TEST_CASE("SemanticDiagnostic: no duplicate parameter - distinct names") {
+    DiagTestContext ctx;
+
+    const auto& diags = ctx.analyze("fun add(a: i32, b: i32): i32 { return a + b; }");
+    CHECK(diags.size() == 0);
+}
+
+TEST_CASE("SemanticDiagnostic: duplicate parameter in method") {
+    DiagTestContext ctx;
+    ctx.add_types("struct Point { x: f32; y: f32; }");
+
+    const auto& diags = ctx.analyze("fun Point.set(v: f32, v: f32) { }");
+    REQUIRE(diags.size() == 1);
+    CHECK(diags[0].message == String("Duplicate parameter name 'v'"));
+}
+
+// --- Phase 6: Missing required fields ---
+
+TEST_CASE("SemanticDiagnostic: missing required field") {
+    DiagTestContext ctx;
+    ctx.add_types("struct Point { x: f32; y: f32; }");
+
+    const auto& diags = ctx.analyze("fun main() { var p = Point { x = 1.0 }; }");
+    REQUIRE(diags.size() == 1);
+    CHECK(diags[0].message == String("Missing required field 'y' in struct literal 'Point'"));
+}
+
+TEST_CASE("SemanticDiagnostic: no error when all fields provided") {
+    DiagTestContext ctx;
+    ctx.add_types("struct Point { x: f32; y: f32; }");
+
+    const auto& diags = ctx.analyze("fun main() { var p = Point { x = 1.0, y = 2.0 }; }");
+    CHECK(diags.size() == 0);
+}
+
+TEST_CASE("SemanticDiagnostic: field with default not required") {
+    DiagTestContext ctx;
+    ctx.add_types("struct Config { name: string; debug: bool = false; }");
+
+    const auto& diags = ctx.analyze("fun main() { var c = Config { name = \"test\" }; }");
+    CHECK(diags.size() == 0);
+}
+
+TEST_CASE("SemanticDiagnostic: multiple missing required fields") {
+    DiagTestContext ctx;
+    ctx.add_types("struct Point { x: f32; y: f32; }");
+
+    const auto& diags = ctx.analyze("fun main() { var p = Point { }; }");
+    REQUIRE(diags.size() == 2);
+    CHECK(diags[0].message == String("Missing required field 'x' in struct literal 'Point'"));
+    CHECK(diags[1].message == String("Missing required field 'y' in struct literal 'Point'"));
+}
+
+// --- Phase 6: Return type mismatch ---
+
+TEST_CASE("SemanticDiagnostic: return type mismatch") {
+    DiagTestContext ctx;
+
+    const auto& diags = ctx.analyze("fun f(): i32 { return \"hello\"; }");
+    REQUIRE(diags.size() == 1);
+    CHECK(diags[0].message == String("Type mismatch: expected 'i32', got 'string'"));
+}
+
+TEST_CASE("SemanticDiagnostic: return type no error for matching type") {
+    DiagTestContext ctx;
+
+    const auto& diags = ctx.analyze("fun f(): i32 { return 42; }");
+    CHECK(diags.size() == 0);
+}
+
+TEST_CASE("SemanticDiagnostic: no type mismatch when initializer is unresolved") {
+    DiagTestContext ctx;
+
+    const auto& diags = ctx.analyze("fun main() { var x: i32 = foo; }");
+    // Should only get "Unresolved identifier 'foo'", not also a type mismatch
+    REQUIRE(diags.size() == 1);
+    CHECK(diags[0].message == String("Unresolved identifier 'foo'"));
+}
+
+TEST_CASE("SemanticDiagnostic: nil does not trigger type mismatch") {
+    DiagTestContext ctx;
+
+    const auto& diags = ctx.analyze("fun main() { var x: i32 = nil; }");
+    CHECK(diags.size() == 0);
+}
+
+// --- Phase 6: Named constructor ---
+
+TEST_CASE("SemanticDiagnostic: unresolved named constructor") {
+    DiagTestContext ctx;
+    ctx.add_types("struct Point { x: f32; y: f32; }");
+
+    const auto& diags = ctx.analyze("fun main() { Point.from_polar(1.0, 2.0); }");
+    REQUIRE(diags.size() == 1);
+    CHECK(diags[0].message == String("No constructor 'from_polar' on struct 'Point'"));
+}
+
+TEST_CASE("SemanticDiagnostic: named constructor exists - no error") {
+    DiagTestContext ctx;
+    ctx.add_types("struct Point { x: f32; y: f32; }\nfun new Point.from_polar(r: f32, theta: f32) { }");
+
+    const auto& diags = ctx.analyze("fun main() { Point.from_polar(1.0, 2.0); }");
+    CHECK(diags.size() == 0);
+}
+
+TEST_CASE("SemanticDiagnostic: named constructor wrong arg count") {
+    DiagTestContext ctx;
+    ctx.add_types("struct Point { x: f32; y: f32; }\nfun new Point.from_polar(r: f32, theta: f32) { }");
+
+    const auto& diags = ctx.analyze("fun main() { Point.from_polar(1.0); }");
+    REQUIRE(diags.size() == 1);
+    CHECK(diags[0].message == String("Expected 2 arguments, got 1"));
 }

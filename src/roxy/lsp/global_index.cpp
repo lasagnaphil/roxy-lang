@@ -71,6 +71,10 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
                 name_set.field_type_keys.push_back(field_key);
             }
 
+            // Index field default
+            m_field_has_defaults[field_key] = field.has_default;
+            name_set.field_has_default_keys.push_back(field_key);
+
             field_names.push_back(String(field.name));
         }
         if (!field_names.empty()) {
@@ -284,6 +288,9 @@ void GlobalIndex::remove_file(StringView uri) {
     for (u32 i = 0; i < name_set.constructor_param_count_keys.size(); i++) {
         m_constructor_param_counts.erase(name_set.constructor_param_count_keys[i]);
     }
+    for (u32 i = 0; i < name_set.field_has_default_keys.size(); i++) {
+        m_field_has_defaults.erase(name_set.field_has_default_keys[i]);
+    }
 
     m_file_names.erase(file_it);
 }
@@ -434,6 +441,13 @@ i32 GlobalIndex::find_constructor_param_count(StringView struct_name, StringView
     auto it = m_constructor_param_counts.find(key);
     if (it != m_constructor_param_counts.end()) return it->second;
     return -1;
+}
+
+bool GlobalIndex::field_has_default(StringView struct_name, StringView field_name) const {
+    String key = make_qualified_key(struct_name, field_name);
+    auto it = m_field_has_defaults.find(key);
+    if (it != m_field_has_defaults.end()) return it->second;
+    return false;
 }
 
 Vector<SymbolLocation> GlobalIndex::find_any(StringView name) const {

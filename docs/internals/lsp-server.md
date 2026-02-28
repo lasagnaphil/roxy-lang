@@ -1,6 +1,6 @@
 # LSP Server
 
-> **Status:** Phase 1 (CST Infrastructure + Diagnostics) implemented. Phases 2–7 pending.
+> **Status:** Phases 1–5b implemented (CST, indexing, go-to-definition, completion, hover, semantic diagnostics). Phase 6 (expanded semantic diagnostics) implemented. Phases 7–8 pending.
 
 This document describes the architecture for the Roxy LSP server, which provides IDE features: diagnostics, completions, hover, go-to-definition, and more.
 
@@ -534,8 +534,9 @@ High-priority requests preempt low-priority background work.
 | **LSP Parser** (`lsp/lsp_parser.hpp`) | Error-recovering parser producing CST |
 | **CST nodes** (`lsp/syntax_tree.hpp`) | Lossless syntax tree with NodeId for incremental updates |
 | **File Indexer** (`lsp/indexer.hpp`) | Extracts stubs from CST |
-| **Global Index** (`lsp/global_index.hpp`) | Merges stubs, provides qualified lookups |
-| **Lazy Analyzer** (`lsp/lazy_analyzer.hpp`) | On-demand per-function semantic analysis |
+| **Global Index** (`lsp/global_index.hpp`) | Merges stubs, provides qualified lookups, type info, field defaults |
+| **CST Lowering** (`lsp/cst_lowering.hpp`) | Lowers CST to compiler AST for function bodies |
+| **LspTypeResolver** (`lsp/lsp_type_resolver.hpp`) | Lazy per-function type resolution, variable scoping, semantic diagnostics |
 | **LSP Transport** (`lsp/transport.hpp`) | JSON-RPC over stdin/stdout |
 | **LSP Server** (`lsp/server.hpp`) | Request dispatch, state management |
 
@@ -547,7 +548,8 @@ include/roxy/lsp/
     lsp_parser.hpp           # Error-recovering parser
     indexer.hpp              # Per-file stub extraction
     global_index.hpp         # Merged index with qualified lookups
-    lazy_analyzer.hpp        # On-demand function analysis
+    cst_lowering.hpp         # CST-to-AST lowering for function bodies
+    lsp_type_resolver.hpp    # Lazy per-function type resolution + semantic diagnostics
     transport.hpp            # JSON-RPC stdin/stdout transport
     server.hpp               # LSP server main class
     protocol.hpp             # LSP protocol types (Position, Range, etc.)
@@ -556,12 +558,21 @@ src/roxy/lsp/
     lsp_parser.cpp
     indexer.cpp
     global_index.cpp
-    lazy_analyzer.cpp
+    cst_lowering.cpp
+    lsp_type_resolver.cpp
     transport.cpp
     server.cpp
+
+tests/unit/
+    test_lsp_parser.cpp              # 15 cases: CST parsing, error recovery
+    test_global_index.cpp            # 21 cases: index CRUD, qualified lookups
+    test_lsp_type_resolver.cpp       # 15 cases: variable scope, type resolution
+    test_lsp_completion.cpp          # 16 cases: dot, ::, bare, type completions
+    test_lsp_hover.cpp               # 14 cases: hover on vars, functions, fields, types
+    test_lsp_semantic_diagnostics.cpp # 31 cases: unresolved symbols, type mismatches, missing fields
 ```
 
-CMake adds a `roxy_lsp` library depending on `roxy_shared` (lexer, tokens). Phase 3+ will add a `roxy_compiler` dependency for type resolution and semantic analysis.
+CMake adds a `roxy_lsp` library depending on `roxy_shared` (lexer, tokens) and `roxy_compiler` (AST types for CST-to-AST lowering).
 
 ## Implementation Phases
 
@@ -575,50 +586,103 @@ CMake adds a `roxy_lsp` library depending on `roxy_shared` (lexer, tokens). Phas
 - [x] Implement LSP transport (JSON-RPC over stdin/stdout)
 - [x] Implement `textDocument/didOpen`, `textDocument/didChange`, `textDocument/didClose` handlers
 - [x] Publish syntax diagnostics on file open/change
-- [x] Test: 15 test cases (87 assertions) covering clean source, error recovery, CST structure, and source ranges
+- [x] Test: 15 test cases covering clean source, error recovery, CST structure, and source ranges
 
-### Phase 2: Per-File Indexing + Document Symbols
+**Files:** `syntax_tree.hpp`, `lsp_parser.hpp/.cpp`, `transport.hpp/.cpp`, `server.hpp/.cpp`, `protocol.hpp`
+**Tests:** `test_lsp_parser.cpp` (15 cases)
+
+### Phase 2: Per-File Indexing + Document Symbols ✓
 
 **Goal:** See document outline, navigate by symbol.
 
-- [ ] Implement stub types (`StructStub`, `FunctionStub`, `MethodStub`, etc.)
-- [ ] Implement file indexer (CST → stubs)
-- [ ] Implement `textDocument/documentSymbol` from stubs
-- [ ] Test: open a file, verify document symbols list shows structs, functions, methods
+- [x] Implement stub types (`StructStub`, `FunctionStub`, `MethodStub`, `ConstructorStub`, `DestructorStub`, `TraitStub`, `EnumStub`, `GlobalVarStub`, etc.)
+- [x] Implement file indexer (CST → stubs)
+- [x] Implement `textDocument/documentSymbol` from stubs
+- [x] Test: document symbols list shows structs, functions, methods
 
-### Phase 3: Global Index + Go-to-Definition
+**Files:** `indexer.hpp/.cpp`
+**Tests:** `test_global_index.cpp` (21 cases, also covers Phase 3)
+
+### Phase 3: Global Index + Go-to-Definition ✓
 
 **Goal:** Navigate across files with go-to-definition.
 
-- [ ] Implement `GlobalIndex` with qualified name lookups
-- [ ] Build index on workspace open (index all `.roxy` files)
-- [ ] Implement incremental index update on file change
-- [ ] Implement CST-to-AST lowering for function bodies
-- [ ] Implement lazy type resolution (stubs → `Type*` via TypeCache)
-- [ ] Implement `textDocument/definition` for types, functions, fields
-- [ ] Test: go-to-definition on a struct name, function call, field access
+Split into two sub-phases:
 
-### Phase 4: Completions
+**Phase 3a:** Global index and identifier-based go-to-definition
+- [x] Implement `GlobalIndex` with qualified name lookups (structs, enums, functions, traits, globals, methods, constructors, fields)
+- [x] Build index on workspace open (index all `.roxy` files)
+- [x] Implement incremental index update on file change (remove old entries, re-index)
+- [x] Implement `textDocument/definition` for types, functions, global variables
+
+**Phase 3b:** CST-to-AST lowering and field-access go-to-definition
+- [x] Implement CST-to-AST lowering for function bodies (`CstLowering`)
+- [x] Implement `LspTypeResolver` for lazy per-function type resolution using `GlobalIndex`
+- [x] Implement go-to-definition for field access (`obj.field`), method calls, `self`, `self.field`
+- [x] Type information maps in `GlobalIndex`: struct parents, field types, function/method return types
+
+**Files:** `global_index.hpp/.cpp`, `cst_lowering.hpp/.cpp`, `lsp_type_resolver.hpp/.cpp`
+**Tests:** `test_global_index.cpp` (21 cases), `test_lsp_type_resolver.cpp` (15 cases)
+
+### Phase 4: Completions ✓
 
 **Goal:** Dot-completion for struct fields and methods.
 
-- [ ] Implement lazy function body analysis (partial analysis up to cursor)
-- [ ] Implement `.` completions: fields, methods (including inherited and trait methods)
-- [ ] Implement `::` completions: enum variants
-- [ ] Implement bare identifier completions: locals, globals, imports
-- [ ] Implement type annotation completions: primitives, structs, enums, generics
-- [ ] Test: type `point.` and verify field/method suggestions appear
+- [x] Implement lazy function body analysis (LspTypeResolver builds variable scope from AST)
+- [x] Implement `.` completions: fields and methods (including inherited via hierarchy walk)
+- [x] Implement `::` completions: enum variants
+- [x] Implement bare identifier completions: locals, globals, functions, structs, enums, traits
+- [x] Implement type annotation completions: primitives, structs, enums
+- [x] Completion detail strings with signatures and type info
 
-### Phase 5: Hover + Semantic Diagnostics
+**Files:** `server.cpp` (completion handler), `global_index.hpp/.cpp` (completion indexes, signatures)
+**Tests:** `test_lsp_completion.cpp` (16 cases)
 
-**Goal:** Hover for type info. Semantic error reporting.
+### Phase 5: Hover ✓
 
-- [ ] Implement `textDocument/hover` with type signatures
-- [ ] Implement debounced semantic diagnostics (type errors, unresolved symbols)
-- [ ] Implement semantic diagnostics for imports (missing module, non-public symbol)
-- [ ] Test: hover over a variable to see its type, see type errors highlighted
+**Goal:** Hover for type info.
 
-### Phase 6: Find References + Rename
+- [x] Implement `textDocument/hover` with type signatures
+- [x] Hover on variables (show type), functions (show signature), struct fields, methods, types, enum variants, globals
+- [x] CST-based expression type resolution (`resolve_cst_expr_type`) for hover on chained expressions
+
+**Files:** `server.cpp` (hover handler), `lsp_type_resolver.hpp/.cpp` (CST expression resolver)
+**Tests:** `test_lsp_hover.cpp` (14 cases)
+
+### Phase 5b: Semantic Diagnostics ✓
+
+**Goal:** Semantic error reporting beyond syntax errors.
+
+- [x] Unresolved identifiers, functions, types
+- [x] Unknown type annotations
+- [x] Unresolved field access on known struct types
+- [x] Unresolved method calls on known struct types
+- [x] Unresolved enum variants
+- [x] Wrong argument count for functions, methods, constructors
+- [x] Struct literal field validation (unknown field on struct)
+- [x] Cascade prevention (unknown type doesn't cascade to field/method errors)
+- [x] Param count checking through inheritance hierarchy
+
+**Files:** `lsp_type_resolver.hpp/.cpp` (diagnostic collection), `server.cpp` (publishing)
+**Tests:** `test_lsp_semantic_diagnostics.cpp` (14 cases in Phase 5b)
+
+### Phase 6: Expanded Semantic Diagnostics ✓
+
+**Goal:** Additional lightweight diagnostics using string-based type comparison.
+
+- [x] **Literal type resolution:** `ExprLiteral` and `ExprStringInterp` resolve to type names (i32, f64, string, bool, nil, etc.)
+- [x] **Duplicate parameter names:** O(n²) scan across all function/method/constructor/destructor declarations
+- [x] **Var type mismatch:** `var x: i32 = "hello"` detects annotation vs initializer type mismatch
+- [x] **Return type mismatch:** `return "hello"` in `fun f(): i32` detects return value vs declared return type mismatch
+- [x] **Missing required fields:** `Point { x = 1.0 }` reports missing field `y` when it has no default; fields with defaults are skipped
+- [x] **Named constructor validation:** `Point.from_polar(1.0, 2.0)` checks constructor existence and argument count
+- [x] **Type mismatch safety:** Skip empty types (cascade prevention), nil (allowed for references), parameterized types (contains `<`), numeric-to-numeric (avoids false positives like `var x: i64 = 42`)
+- [x] **GlobalIndex field default tracking:** `field_has_default()` query backed by `m_field_has_defaults` map
+
+**Files:** `lsp_type_resolver.hpp/.cpp`, `global_index.hpp/.cpp`
+**Tests:** `test_lsp_semantic_diagnostics.cpp` (17 new cases, 31 total)
+
+### Phase 7: Find References + Rename
 
 **Goal:** Find all usages, rename symbols.
 
@@ -626,7 +690,7 @@ CMake adds a `roxy_lsp` library depending on `roxy_shared` (lexer, tokens). Phas
 - [ ] Implement `textDocument/rename` with cross-file edits
 - [ ] Test: find all references to a struct, rename a method
 
-### Phase 7: Polish
+### Phase 8: Polish
 
 - [ ] Signature help (`textDocument/signatureHelp`) for function calls
 - [ ] Code actions (quick fixes for common errors)
@@ -647,13 +711,14 @@ The LSP server requires:
 
 | File | Purpose |
 |------|---------|
-| `include/roxy/lsp/syntax_tree.hpp` | CST node types |
+| `include/roxy/lsp/syntax_tree.hpp` | CST node types, SyntaxKind, TextRange |
 | `include/roxy/lsp/lsp_parser.hpp` | Error-recovering parser |
 | `include/roxy/lsp/indexer.hpp` | Per-file stub extraction |
-| `include/roxy/lsp/global_index.hpp` | Merged index |
-| `include/roxy/lsp/lazy_analyzer.hpp` | On-demand analysis |
+| `include/roxy/lsp/global_index.hpp` | Merged index with type info, field defaults, param counts |
+| `include/roxy/lsp/cst_lowering.hpp` | CST-to-AST lowering |
+| `include/roxy/lsp/lsp_type_resolver.hpp` | Lazy type resolution + semantic diagnostics |
 | `include/roxy/lsp/transport.hpp` | JSON-RPC transport |
-| `include/roxy/lsp/server.hpp` | LSP server |
+| `include/roxy/lsp/server.hpp` | LSP server (definition, completion, hover, diagnostics) |
 | `include/roxy/lsp/protocol.hpp` | LSP protocol types |
 | `src/roxy/lsp/*.cpp` | Implementations |
 | `docs/internals/lsp-server.md` | This document |

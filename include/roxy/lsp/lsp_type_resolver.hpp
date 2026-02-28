@@ -46,6 +46,9 @@ private:
     // Enclosing struct name (for self resolution in methods)
     String m_self_type;
 
+    // Expected return type of current function (for return type mismatch)
+    String m_return_type;
+
     // Collected semantic diagnostics
     Vector<SemanticDiagnostic> m_diagnostics;
 
@@ -62,6 +65,12 @@ private:
     void check_type_annotation(TypeExpr* type_expr);
     bool is_known_type(StringView name) const;
     void add_diagnostic(TextRange range, DiagnosticSeverity severity, String message);
+
+    // Duplicate parameter detection
+    void check_duplicate_params(const Span<Param>& params);
+
+    // Type mismatch checking (skip empty, nil, parameterized, numeric-to-numeric)
+    void check_type_mismatch(TextRange range, StringView expected, StringView actual);
 
     // Field/method existence checking in hierarchy
     bool has_field_in_hierarchy(StringView struct_name, StringView field_name) const;
