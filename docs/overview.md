@@ -26,6 +26,7 @@
 - `super` keyword for parent method/constructor calls
 - Constructor and destructor chaining
 - Generic functions and structs with monomorphization (explicit type args)
+- Generator-style stackless coroutines (`Coro<T>` with `yield`, `.resume()`, `.done()`)
 
 **Planned:**
 - LSP server for IDE support

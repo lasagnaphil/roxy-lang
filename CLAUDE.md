@@ -97,7 +97,7 @@ Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA
 ### Keywords
 
 - Types/modifiers: `true false nil var fun struct enum pub native`
-- Control flow: `if else for while break continue return when case try catch throw finally`
+- Control flow: `if else for while break continue return when case try catch throw finally yield`
 - OOP: `self super new delete`
 - References: `uniq ref weak out inout`
 - Imports: `import from`
@@ -180,6 +180,10 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Exceptions** - Structured error recovery via `try`/`catch`/`throw`/`finally`. Built-in `Exception` trait with required `message(): string` method. Concrete-type catch matching via `type_id` comparison, catch-all with opaque `ExceptionRef` type. Handler tables for zero-overhead on non-exception path. Stack unwinding with frame cleanup.
 **Details:** `docs/internals/exceptions.md` | **Tests:** `tests/e2e/test_exceptions.cpp`
 
+### Coroutines
+**Coroutines** - Generator-style stackless coroutines via `Coro<T>` built-in type. Compile-time state machine transformation producing init/resume/done functions. Yield in straight-line code and if/else branches. Graph-preserving block cloning for correct control flow.
+**Details:** `docs/internals/coroutines.md` | **Tests:** `tests/e2e/test_coroutines.cpp`
+
 ## Planned Components (Not Yet Implemented)
 
 - C backend (AOT compilation via SSA IR → C transpilation, see `docs/internals/c-backend.md`)
@@ -232,4 +236,5 @@ On Windows, use `.exe` extension.
   - `operator-overloading.md` - Operator traits (arithmetic, comparison, bitwise, unary) with unified primitive/struct dispatch
   - `generics.md` - Generic functions and structs with monomorphization
   - `exceptions.md` - Exception handling: try/catch/throw/finally, Exception trait, handler tables
+  - `coroutines.md` - Coroutines: Coro<T>, yield, state machine transformation, graph-preserving block cloning
   - `c-backend.md` - C backend design plan (AOT compilation via SSA IR → C)
