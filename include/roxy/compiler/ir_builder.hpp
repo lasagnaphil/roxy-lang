@@ -88,6 +88,10 @@ private:
     void emit_ref_dec(ValueId ptr);
     void emit_ref_param_decrements();  // Emit RefDec for all ref-typed parameters
 
+    // Weak reference creation
+    ValueId emit_weak_create(ValueId ptr, Type* weak_type);
+    ValueId maybe_wrap_weak(ValueId value, Type* source_type, Type* target_type);
+
     // Generate address of an lvalue expression (for out/inout arguments)
     ValueId gen_lvalue_addr(Expr* expr);
 

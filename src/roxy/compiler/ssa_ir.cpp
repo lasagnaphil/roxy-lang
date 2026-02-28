@@ -78,6 +78,7 @@ const char* ir_op_to_string(IROp op) {
         case IROp::RefInc:    return "ref_inc";
         case IROp::RefDec:    return "ref_dec";
         case IROp::WeakCheck: return "weak_check";
+        case IROp::WeakCreate: return "weak_create";
 
         case IROp::New:    return "new";
         case IROp::Delete: return "delete";
@@ -236,6 +237,7 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         case IROp::RefInc:
         case IROp::RefDec:
         case IROp::WeakCheck:
+        case IROp::WeakCreate:
         case IROp::Delete:
         case IROp::Copy:
         case IROp::Throw:

@@ -819,6 +819,19 @@ void IRBuilder::emit_ref_param_decrements() {
     }
 }
 
+ValueId IRBuilder::emit_weak_create(ValueId ptr, Type* weak_type) {
+    return emit_unary(IROp::WeakCreate, ptr, weak_type);
+}
+
+ValueId IRBuilder::maybe_wrap_weak(ValueId value, Type* source_type, Type* target_type) {
+    if (!source_type || !target_type) return value;
+    if (target_type->kind == TypeKind::Weak &&
+        (source_type->kind == TypeKind::Uniq || source_type->kind == TypeKind::Ref)) {
+        return emit_weak_create(value, target_type);
+    }
+    return value;
+}
+
 // Statement generation
 
 void IRBuilder::gen_stmt(Stmt* stmt) {
@@ -2173,6 +2186,14 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             }
         } else {
             args[i] = gen_expr(arg.expr);
+
+            // Wrap uniq/ref → weak conversion for call arguments
+            Type* callee_func_type = call_expr.callee->resolved_type;
+            if (callee_func_type && callee_func_type->is_function() &&
+                i < callee_func_type->func_info.param_types.size()) {
+                Type* param_type = callee_func_type->func_info.param_types[i];
+                args[i] = maybe_wrap_weak(args[i], arg.expr->resolved_type, param_type);
+            }
         }
     }
 
@@ -2572,6 +2593,9 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
             }
         }
 
+        // Wrap uniq/ref → weak conversion for local assignment
+        value = maybe_wrap_weak(value, assign_expr.value->resolved_type, assign_expr.target->resolved_type);
+
         // Normal variable assignment - in SSA, we create a new value
         define_local(name, value, expr->resolved_type);
         return value;
@@ -2587,6 +2611,7 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
 
         u32 slot_offset = 0;
         u32 slot_count = 1;
+        Type* field_type = nullptr;
         bool is_variant_field = false;
         const WhenClauseInfo* when_clause = nullptr;
         const VariantInfo* variant = nullptr;
@@ -2596,6 +2621,7 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
             if (field_info) {
                 slot_offset = field_info->slot_offset;
                 slot_count = field_info->slot_count;
+                field_type = field_info->type;
             } else {
                 // Check for variant field in when clauses
                 const VariantFieldInfo* variant_field_info = struct_type->struct_info.find_variant_field(
@@ -2636,6 +2662,9 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
             // Continue in pass block
             set_current_block(pass_block);
         }
+
+        // Wrap uniq/ref → weak conversion for field assignment
+        value = maybe_wrap_weak(value, assign_expr.value->resolved_type, field_type);
 
         return emit_set_field(obj, get_expr.name, slot_offset, slot_count, value, expr->resolved_type);
     }
@@ -2889,6 +2918,11 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         }
 
         ValueId value = gen_expr(value_expr);
+
+        // Wrap uniq/ref → weak conversion for struct literal field
+        if (value_expr) {
+            value = maybe_wrap_weak(value, value_expr->resolved_type, field_info.type);
+        }
 
         // For struct-typed fields, use StructCopy since the value is a pointer
         if (field_info.type && field_info.type->is_struct()) {
@@ -3155,6 +3189,8 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         // Non-struct types: use register storage
         if (var_decl.initializer) {
             value = gen_expr(var_decl.initializer);
+            // Wrap uniq/ref → weak conversion
+            value = maybe_wrap_weak(value, var_decl.initializer->resolved_type, type);
         } else {
             // Default initialization
             value = emit_const_null();

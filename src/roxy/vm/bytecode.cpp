@@ -125,6 +125,7 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::REF_INC:       return "REF_INC";
         case Opcode::REF_DEC:       return "REF_DEC";
         case Opcode::WEAK_CHECK:    return "WEAK_CHECK";
+        case Opcode::WEAK_CREATE:   return "WEAK_CREATE";
 
         // Debug/Error
         case Opcode::TRAP:          return "TRAP";
@@ -185,6 +186,7 @@ void disassemble_instruction(u32 instr, u32 offset, String& out) {
         case Opcode::REF_INC:
         case Opcode::REF_DEC:
         case Opcode::WEAK_CHECK:
+        case Opcode::WEAK_CREATE:
         case Opcode::DEL_OBJ:
             buf.format("R{}, R{}", a, b);
             break;

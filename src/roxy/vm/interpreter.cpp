@@ -585,9 +585,15 @@ bool interpret(RoxyVM* vm) {
                 if (slot_count == 1) {
                     // 32-bit field: zero-extend to 64-bit
                     regs[a] = static_cast<u64>(*field);
-                } else {
+                } else if (slot_count == 2) {
                     // 64-bit field: read two consecutive slots (little-endian)
                     regs[a] = static_cast<u64>(field[0]) | (static_cast<u64>(field[1]) << 32);
+                } else {
+                    // 3-4 slots: read into 2 consecutive registers (for weak refs)
+                    regs[a] = static_cast<u64>(field[0]) | (static_cast<u64>(field[1]) << 32);
+                    regs[a + 1] = (slot_count >= 4)
+                        ? (static_cast<u64>(field[2]) | (static_cast<u64>(field[3]) << 32))
+                        : static_cast<u64>(field[2]);
                 }
                 break;
             }
@@ -616,10 +622,17 @@ bool interpret(RoxyVM* vm) {
                 if (slot_count == 1) {
                     // 32-bit field
                     *field = static_cast<u32>(val);
-                } else {
+                } else if (slot_count == 2) {
                     // 64-bit field: write two consecutive slots (little-endian)
                     field[0] = static_cast<u32>(val);
                     field[1] = static_cast<u32>(val >> 32);
+                } else {
+                    // 3-4 slots from 2 consecutive registers (for weak refs)
+                    field[0] = static_cast<u32>(val);
+                    field[1] = static_cast<u32>(val >> 32);
+                    u64 val2 = regs[b + 1];
+                    field[2] = static_cast<u32>(val2);
+                    if (slot_count >= 4) field[3] = static_cast<u32>(val2 >> 32);
                 }
                 break;
             }
@@ -783,10 +796,11 @@ bool interpret(RoxyVM* vm) {
             }
 
             case Opcode::WEAK_CHECK: {
-                // Format: WEAK_CHECK dst, ptr_reg, gen_reg
+                // Format: WEAK_CHECK dst, ptr_reg, 0
                 // Check if weak reference is still valid using 64-bit generation
+                // Weak ref occupies 2 consecutive registers: ptr in regs[b], generation in regs[b+1]
                 void* ptr = reg_as_ptr(regs[b]);
-                u64 gen = regs[c];
+                u64 gen = regs[b + 1];
 
                 if (ptr == nullptr) {
                     regs[a] = 0;  // false - null pointer
@@ -796,6 +810,15 @@ bool interpret(RoxyVM* vm) {
                     bool valid = weak_ref_valid(ptr, gen);
                     regs[a] = reg_from_bool(valid);
                 }
+                break;
+            }
+
+            case Opcode::WEAK_CREATE: {
+                // Format: WEAK_CREATE dst, src, 0
+                // Create weak ref: dst = pointer, dst+1 = generation
+                void* ptr = reg_as_ptr(regs[b]);
+                regs[a] = regs[b];  // Copy pointer
+                regs[a + 1] = (ptr != nullptr) ? weak_ref_create(ptr) : 0;
                 break;
             }
 

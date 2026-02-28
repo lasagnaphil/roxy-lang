@@ -211,7 +211,7 @@ bool IRValidator::validate_instruction(IRFunction* func, IRBlock* block, IRInst*
         case IROp::NegI: case IROp::NegF: case IROp::NegD:
         case IROp::Not: case IROp::BitNot:
         case IROp::Copy: case IROp::Delete:
-        case IROp::RefInc: case IROp::RefDec: case IROp::WeakCheck:
+        case IROp::RefInc: case IROp::RefDec: case IROp::WeakCheck: case IROp::WeakCreate:
         case IROp::I_TO_F64: case IROp::F64_TO_I: case IROp::I_TO_B: case IROp::B_TO_I:
         case IROp::Throw:
         {

@@ -133,6 +133,7 @@ enum class Opcode : u8 {
     REF_INC     = 0xE0,     // ref_inc(reg)
     REF_DEC     = 0xE1,     // ref_dec(reg)
     WEAK_CHECK  = 0xE2,     // dst = weak_valid(src1)
+    WEAK_CREATE = 0xE3,     // dst,dst+1 = weak_create(src) — extracts generation
 
     // 0xD2-0xD3: Exception Handling
     THROW       = 0xD2,     // throw regs[a] (exception object pointer)

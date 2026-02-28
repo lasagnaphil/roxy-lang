@@ -544,3 +544,134 @@ TEST_CASE("E2E - Valid: nil to uniq assignment") {
     CHECK(result.success);
     CHECK(result.stdout_output == "42\n");
 }
+
+// ============================================================================
+// Weak Reference Tests
+// ============================================================================
+
+TEST_CASE("E2E - Weak field assignment and read") {
+    const char* source = R"(
+        struct Node {
+            value: i32;
+        }
+
+        struct Observer {
+            target: weak Node;
+        }
+
+        fun main(): i32 {
+            var n: uniq Node = uniq Node();
+            n.value = 42;
+            var obs: uniq Observer = uniq Observer();
+            obs.target = n;
+            // Read through weak ref field
+            var w: weak Node = obs.target;
+            print(f"{n.value}");
+            delete obs;
+            delete n;
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "42\n");
+}
+
+TEST_CASE("E2E - Weak local variable from uniq") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            p.x = 10;
+            p.y = 20;
+            var w: weak Point = p;
+            // Access through the original uniq
+            var result: i32 = p.x + p.y;
+            delete p;
+            return result;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 30);
+}
+
+TEST_CASE("E2E - Weak nil assignment") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var w: weak Point = nil;
+            print(f"{42}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "42\n");
+}
+
+TEST_CASE("E2E - Weak field in struct with other fields") {
+    const char* source = R"(
+        struct Node {
+            value: i32;
+        }
+
+        struct Observer {
+            target: weak Node;
+            id: i32;
+        }
+
+        fun main(): i32 {
+            var n: uniq Node = uniq Node();
+            n.value = 99;
+            var obs: uniq Observer = uniq Observer();
+            obs.target = n;
+            obs.id = 1;
+            print(f"{obs.id}");
+            print(f"{n.value}");
+            delete obs;
+            delete n;
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "1\n99\n");
+}
+
+TEST_CASE("E2E - Weak parameter passing") {
+    const char* source = R"(
+        struct Node {
+            value: i32;
+        }
+
+        fun read_weak(w: weak Node): i32 {
+            return 1;
+        }
+
+        fun main(): i32 {
+            var n: uniq Node = uniq Node();
+            n.value = 42;
+            var w: weak Node = n;
+            var result: i32 = read_weak(w);
+            delete n;
+            return result;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 1);
+}

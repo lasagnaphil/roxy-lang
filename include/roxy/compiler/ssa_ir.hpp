@@ -123,6 +123,7 @@ enum class IROp : u8 {
     RefInc,         // increment ref count
     RefDec,         // decrement ref count
     WeakCheck,      // check if weak ref is valid
+    WeakCreate,     // create weak ref from pointer (extracts generation)
 
     // Object lifecycle
     New,            // allocate new object

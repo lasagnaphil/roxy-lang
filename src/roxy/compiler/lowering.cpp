@@ -76,11 +76,16 @@ static u32 compute_call_arg_reg_count(IRInst* inst, IRFunction* callee_func,
         } else {
             auto type_it = value_types.find(arg_val.id);
             Type* arg_type = (type_it != value_types.end()) ? type_it->second : nullptr;
-            u32 arg_slot_count = get_struct_slot_count_fn(arg_type);
-            if (arg_slot_count > 0 && arg_slot_count <= 4) {
-                arg_reg_count += (arg_slot_count + 1) / 2;
+            // Weak refs need 2 registers (pointer + generation)
+            if (arg_type && arg_type->kind == TypeKind::Weak) {
+                arg_reg_count += 2;
             } else {
-                arg_reg_count += 1;
+                u32 arg_slot_count = get_struct_slot_count_fn(arg_type);
+                if (arg_slot_count > 0 && arg_slot_count <= 4) {
+                    arg_reg_count += (arg_slot_count + 1) / 2;
+                } else {
+                    arg_reg_count += 1;
+                }
             }
         }
     }
@@ -131,10 +136,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         // Calculate how many registers this parameter uses
         u8 reg_count = 1;
         if (!is_ptr_param) {
-            u32 slot_count = get_struct_slot_count(param.type);
-            if (slot_count > 0 && slot_count <= 4) {
-                reg_count = static_cast<u8>((slot_count + 1) / 2);
-            }
+            reg_count = static_cast<u8>(get_value_reg_count(param.type));
         }
 
         // Add parameter to active set so it can expire when no longer used
@@ -167,7 +169,16 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             for (const auto& param : block->params) {
                 expire_before(alloc_point);
                 if (!has_register(param.value)) {
-                    allocate_register(param.value);
+                    u32 reg_count = get_value_reg_count(param.type);
+                    if (reg_count > 1) {
+                        // Multi-register values (weak refs) need bump allocation
+                        u8 reg = bump_register();
+                        m_value_to_reg[param.value.id] = reg;
+                        m_reg_to_value[reg] = param.value.id;
+                        for (u32 r = 1; r < reg_count; r++) bump_register();
+                    } else {
+                        allocate_register(param.value);
+                    }
                 }
                 if (param.type) {
                     m_value_types[param.value.id] = param.type;
@@ -183,13 +194,15 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                                 inst->op == IROp::CallExternal);
 
                 if (inst->result.is_valid() && !has_register(inst->result)) {
-                    if (is_call) {
-                        // Call results must use bump (not free list) because the calling
-                        // convention needs a contiguous block [dst, dst+1, ...] for args.
-                        // A free-list register could have live values in subsequent slots.
+                    u32 reg_count = get_value_reg_count(inst->type);
+                    bool needs_bump = is_call || reg_count > 1;
+                    if (needs_bump) {
+                        // Calls and multi-register values (weak refs) must use bump
+                        // to ensure contiguous register allocation.
                         u8 reg = bump_register();
                         m_value_to_reg[inst->result.id] = reg;
                         m_reg_to_value[reg] = inst->result.id;
+                        for (u32 r = 1; r < reg_count; r++) bump_register();
                     } else {
                         allocate_register(inst->result);
                     }
@@ -198,13 +211,18 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                     m_value_types[inst->result.id] = inst->type;
                 }
 
-                // For calls, reserve contiguous registers for args and struct returns
+                // For calls, reserve contiguous registers for args and struct/weak returns
                 if ((inst->op == IROp::Call || inst->op == IROp::CallNative) && inst->result.is_valid()) {
                     u8 dst = get_register(inst->result);
                     u32 extra_regs_for_return = 0;
-                    u32 ret_slot_count = get_struct_slot_count(inst->type);
-                    if (ret_slot_count > 0 && ret_slot_count <= 4) {
-                        extra_regs_for_return = (ret_slot_count + 1) / 2;
+                    u32 ret_reg_count = get_value_reg_count(inst->type);
+                    if (ret_reg_count > 1) {
+                        extra_regs_for_return = ret_reg_count;
+                    } else {
+                        u32 ret_slot_count = get_struct_slot_count(inst->type);
+                        if (ret_slot_count > 0 && ret_slot_count <= 4) {
+                            extra_regs_for_return = (ret_slot_count + 1) / 2;
+                        }
                     }
 
                     // Compute actual arg register count based on types
@@ -226,9 +244,14 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                 if (inst->op == IROp::CallExternal && inst->result.is_valid()) {
                     u8 dst = get_register(inst->result);
                     u32 extra_regs_for_return = 0;
-                    u32 ret_slot_count = get_struct_slot_count(inst->type);
-                    if (ret_slot_count > 0 && ret_slot_count <= 4) {
-                        extra_regs_for_return = (ret_slot_count + 1) / 2;
+                    u32 ret_reg_count = get_value_reg_count(inst->type);
+                    if (ret_reg_count > 1) {
+                        extra_regs_for_return = ret_reg_count;
+                    } else {
+                        u32 ret_slot_count = get_struct_slot_count(inst->type);
+                        if (ret_slot_count > 0 && ret_slot_count <= 4) {
+                            extra_regs_for_return = (ret_slot_count + 1) / 2;
+                        }
                     }
 
                     StringView func_name = inst->call_external.func_name;
@@ -261,7 +284,15 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                 IRBlock* target_block = ir_func->blocks[target.block.id];
                 for (const auto& param : target_block->params) {
                     if (!has_register(param.value)) {
-                        allocate_register(param.value);
+                        u32 reg_count = get_value_reg_count(param.type);
+                        if (reg_count > 1) {
+                            u8 reg = bump_register();
+                            m_value_to_reg[param.value.id] = reg;
+                            m_reg_to_value[reg] = param.value.id;
+                            for (u32 r = 1; r < reg_count; r++) bump_register();
+                        } else {
+                            allocate_register(param.value);
+                        }
                     }
                     if (param.type) {
                         m_value_types[param.value.id] = param.type;
@@ -575,6 +606,13 @@ bool BytecodeBuilder::has_register(ValueId value) const {
 }
 
 void BytecodeBuilder::spill_furthest() {
+    // Helper to compute spill slot size for a value
+    auto spill_slot_size = [this](u32 value_id) -> u32 {
+        auto type_it = m_value_types.find(value_id);
+        Type* value_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+        return (value_type && value_type->kind == TypeKind::Weak) ? 4 : 2;
+    };
+
     // First time: reserve 2 scratch registers by spilling the 2 furthest-living values
     if (!m_has_spilling) {
         m_has_spilling = true;
@@ -587,15 +625,17 @@ void BytecodeBuilder::spill_furthest() {
             ActiveAlloc furthest = m_active.back();
             m_active.pop_back();
 
-            u32 spill_slot = m_next_stack_slot;
-            m_next_stack_slot += 2;
-
             auto reg_it = m_reg_to_value.find(furthest.reg);
+            u32 slot_size = 2;
             if (reg_it != m_reg_to_value.end()) {
-                u32 spilled_value_id = reg_it->second;
-                m_spill_slots[spilled_value_id] = spill_slot;
-                m_value_to_reg.erase(spilled_value_id);
+                slot_size = spill_slot_size(reg_it->second);
+                u32 spill_slot = m_next_stack_slot;
+                m_next_stack_slot += slot_size;
+                m_spill_slots[reg_it->second] = spill_slot;
+                m_value_to_reg.erase(reg_it->second);
                 m_reg_to_value.erase(furthest.reg);
+            } else {
+                m_next_stack_slot += 2;
             }
 
             m_scratch_regs[s] = furthest.reg;
@@ -617,15 +657,16 @@ void BytecodeBuilder::spill_furthest() {
     ActiveAlloc furthest = m_active.back();
     m_active.pop_back();
 
-    u32 spill_slot = m_next_stack_slot;
-    m_next_stack_slot += 2;
-
     auto reg_it = m_reg_to_value.find(furthest.reg);
     if (reg_it != m_reg_to_value.end()) {
-        u32 spilled_value_id = reg_it->second;
-        m_spill_slots[spilled_value_id] = spill_slot;
-        m_value_to_reg.erase(spilled_value_id);
+        u32 slot_size = spill_slot_size(reg_it->second);
+        u32 spill_slot = m_next_stack_slot;
+        m_next_stack_slot += slot_size;
+        m_spill_slots[reg_it->second] = spill_slot;
+        m_value_to_reg.erase(reg_it->second);
         m_reg_to_value.erase(furthest.reg);
+    } else {
+        m_next_stack_slot += 2;
     }
 
     m_free_regs.push_back(furthest.reg);
@@ -654,6 +695,14 @@ u8 BytecodeBuilder::ensure_in_register(ValueId value, u8 scratch_index) {
     if (spill_it != m_spill_slots.end()) {
         u8 scratch = m_scratch_regs[scratch_index];
         emit_abi(Opcode::RELOAD_REG, scratch, static_cast<u16>(spill_it->second));
+
+        // If this is a weak value (2 registers), also reload the second register
+        auto type_it = m_value_types.find(value.id);
+        Type* value_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+        if (value_type && value_type->kind == TypeKind::Weak) {
+            emit_abi(Opcode::RELOAD_REG, scratch + 1, static_cast<u16>(spill_it->second + 2));
+        }
+
         return scratch;
     }
 
@@ -667,6 +716,13 @@ void BytecodeBuilder::spill_if_needed(ValueId value, u8 reg) {
     auto spill_it = m_spill_slots.find(value.id);
     if (spill_it != m_spill_slots.end()) {
         emit_abi(Opcode::SPILL_REG, reg, static_cast<u16>(spill_it->second));
+
+        // If this is a weak value (2 registers), also spill the second register
+        auto type_it = m_value_types.find(value.id);
+        Type* value_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+        if (value_type && value_type->kind == TypeKind::Weak) {
+            emit_abi(Opcode::SPILL_REG, reg + 1, static_cast<u16>(spill_it->second + 2));
+        }
     }
 }
 
@@ -736,7 +792,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                 case IROp::BitNot: case IROp::Not:
                 case IROp::I_TO_F64: case IROp::F64_TO_I: case IROp::I_TO_B: case IROp::B_TO_I:
                 case IROp::Copy:
-                case IROp::RefInc: case IROp::RefDec: case IROp::WeakCheck:
+                case IROp::RefInc: case IROp::RefDec: case IROp::WeakCheck: case IROp::WeakCreate:
                 case IROp::Delete:
                 case IROp::Throw:
                     mark_use(m_live_ranges, inst->unary, point);
@@ -1196,10 +1252,12 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             // Get callee function to check for pointer parameters
             IRFunction* callee_func = m_ir_module->functions[func_idx];
 
-            // Check if return type is a struct
+            // Check if return type is a struct or weak ref
+            u8 ret_reg_count = static_cast<u8>(get_value_reg_count(inst->type));
             u32 ret_slot_count = get_struct_slot_count(inst->type);
-            bool returns_small_struct = (ret_slot_count > 0 && ret_slot_count <= 4);
-            u8 ret_reg_count = returns_small_struct ? static_cast<u8>((ret_slot_count + 1) / 2) : 1;
+            if (ret_slot_count > 0 && ret_slot_count <= 4) {
+                ret_reg_count = static_cast<u8>((ret_slot_count + 1) / 2);
+            }
 
             // Copy arguments to consecutive registers starting from dst+ret_reg_count
             // (calling convention: arguments follow the destination/return registers)
@@ -1220,29 +1278,41 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                     }
                     arg_reg_offset += 1;
                 } else {
-                    // Check if argument is a struct
+                    // Check if argument is a struct or weak ref
                     auto type_it = m_value_types.find(arg_val.id);
                     Type* arg_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
-                    u32 arg_slot_count = get_struct_slot_count(arg_type);
 
-                    if (arg_slot_count > 0 && arg_slot_count <= 4) {
-                        // Small struct: load struct data from memory to consecutive registers
-                        u8 arg_reg_count = static_cast<u8>((arg_slot_count + 1) / 2);
-                        emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + arg_reg_offset, arg_src, static_cast<u8>(arg_slot_count));
-                        emit(0);  // Padding word
-                        arg_reg_offset += arg_reg_count;
-                    } else if (arg_slot_count > 4) {
-                        // Large struct: pass pointer
+                    if (arg_type && arg_type->kind == TypeKind::Weak) {
+                        // Weak ref: copy 2 consecutive registers (pointer + generation)
                         if (arg_src != first_arg_reg + arg_reg_offset) {
                             emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
                         }
-                        arg_reg_offset += 1;
+                        if ((arg_src + 1) != (first_arg_reg + arg_reg_offset + 1)) {
+                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset + 1, arg_src + 1, 0);
+                        }
+                        arg_reg_offset += 2;
                     } else {
-                        // Regular value
-                        if (arg_src != first_arg_reg + arg_reg_offset) {
-                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                        u32 arg_slot_count = get_struct_slot_count(arg_type);
+
+                        if (arg_slot_count > 0 && arg_slot_count <= 4) {
+                            // Small struct: load struct data from memory to consecutive registers
+                            u8 arg_reg_count = static_cast<u8>((arg_slot_count + 1) / 2);
+                            emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + arg_reg_offset, arg_src, static_cast<u8>(arg_slot_count));
+                            emit(0);  // Padding word
+                            arg_reg_offset += arg_reg_count;
+                        } else if (arg_slot_count > 4) {
+                            // Large struct: pass pointer
+                            if (arg_src != first_arg_reg + arg_reg_offset) {
+                                emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                            }
+                            arg_reg_offset += 1;
+                        } else {
+                            // Regular value
+                            if (arg_src != first_arg_reg + arg_reg_offset) {
+                                emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                            }
+                            arg_reg_offset += 1;
                         }
-                        arg_reg_offset += 1;
                     }
                 }
             }
@@ -1253,7 +1323,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
 
             // For small struct returns, dst now contains packed struct data in consecutive registers
             // Allocate stack space and unpack
-            if (returns_small_struct) {
+            if (ret_slot_count > 0 && ret_slot_count <= 4) {
                 u32 stack_offset = m_next_stack_slot;
                 m_next_stack_slot += ret_slot_count;
                 m_value_to_stack_slot[inst->result.id] = stack_offset;
@@ -1304,10 +1374,12 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             // Get callee function to check for pointer parameters
             IRFunction* callee_func = m_ir_module->functions[func_idx];
 
-            // Check if return type is a struct
+            // Check if return type is a struct or weak ref
+            u8 ret_reg_count = static_cast<u8>(get_value_reg_count(inst->type));
             u32 ret_slot_count = get_struct_slot_count(inst->type);
-            bool returns_small_struct = (ret_slot_count > 0 && ret_slot_count <= 4);
-            u8 ret_reg_count = returns_small_struct ? static_cast<u8>((ret_slot_count + 1) / 2) : 1;
+            if (ret_slot_count > 0 && ret_slot_count <= 4) {
+                ret_reg_count = static_cast<u8>((ret_slot_count + 1) / 2);
+            }
 
             // Copy arguments to consecutive registers starting from dst+ret_reg_count
             u8 first_arg_reg = dst + ret_reg_count;
@@ -1326,29 +1398,41 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                     }
                     arg_reg_offset += 1;
                 } else {
-                    // Check if argument is a struct
+                    // Check if argument is a struct or weak ref
                     auto type_it = m_value_types.find(arg_val.id);
                     Type* arg_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
-                    u32 arg_slot_count = get_struct_slot_count(arg_type);
 
-                    if (arg_slot_count > 0 && arg_slot_count <= 4) {
-                        // Small struct: load struct data from memory to consecutive registers
-                        u8 arg_reg_count = static_cast<u8>((arg_slot_count + 1) / 2);
-                        emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + arg_reg_offset, arg_src, static_cast<u8>(arg_slot_count));
-                        emit(0);  // Padding word
-                        arg_reg_offset += arg_reg_count;
-                    } else if (arg_slot_count > 4) {
-                        // Large struct: pass pointer
+                    if (arg_type && arg_type->kind == TypeKind::Weak) {
+                        // Weak ref: copy 2 consecutive registers (pointer + generation)
                         if (arg_src != first_arg_reg + arg_reg_offset) {
                             emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
                         }
-                        arg_reg_offset += 1;
+                        if ((arg_src + 1) != (first_arg_reg + arg_reg_offset + 1)) {
+                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset + 1, arg_src + 1, 0);
+                        }
+                        arg_reg_offset += 2;
                     } else {
-                        // Regular value
-                        if (arg_src != first_arg_reg + arg_reg_offset) {
-                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                        u32 arg_slot_count = get_struct_slot_count(arg_type);
+
+                        if (arg_slot_count > 0 && arg_slot_count <= 4) {
+                            // Small struct: load struct data from memory to consecutive registers
+                            u8 arg_reg_count = static_cast<u8>((arg_slot_count + 1) / 2);
+                            emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + arg_reg_offset, arg_src, static_cast<u8>(arg_slot_count));
+                            emit(0);  // Padding word
+                            arg_reg_offset += arg_reg_count;
+                        } else if (arg_slot_count > 4) {
+                            // Large struct: pass pointer
+                            if (arg_src != first_arg_reg + arg_reg_offset) {
+                                emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                            }
+                            arg_reg_offset += 1;
+                        } else {
+                            // Regular value
+                            if (arg_src != first_arg_reg + arg_reg_offset) {
+                                emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                            }
+                            arg_reg_offset += 1;
                         }
-                        arg_reg_offset += 1;
                     }
                 }
             }
@@ -1357,7 +1441,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             emit_abc(Opcode::CALL, dst, func_idx, arg_count);
 
             // For small struct returns, handle unpacking
-            if (returns_small_struct) {
+            if (ret_slot_count > 0 && ret_slot_count <= 4) {
                 u32 stack_offset = m_next_stack_slot;
                 m_next_stack_slot += ret_slot_count;
                 m_value_to_stack_slot[inst->result.id] = stack_offset;
@@ -1419,6 +1503,13 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::WeakCheck: {
             u8 weak = ensure_in_register(inst->unary, 1);
             emit_abc(Opcode::WEAK_CHECK, dst, weak, 0);
+            spill_if_needed(inst->result, dst);
+            break;
+        }
+
+        case IROp::WeakCreate: {
+            u8 src = ensure_in_register(inst->unary, 1);
+            emit_abc(Opcode::WEAK_CREATE, dst, src, 0);
             spill_if_needed(inst->result, dst);
             break;
         }
@@ -1549,8 +1640,16 @@ void BytecodeBuilder::emit_block_args(const JumpTarget& target) {
     for (u32 i = 0; i < target.args.size() && i < target_block->params.size(); i++) {
         u8 src = ensure_in_register(target.args[i].value, 0);
         u8 param_dst = get_result_register(target_block->params[i].value);
+
+        // Check if this is a weak-typed block param (needs 2 MOVs)
+        Type* param_type = target_block->params[i].type;
+        u32 reg_count = get_value_reg_count(param_type);
+
         if (src != param_dst) {
             emit_abc(Opcode::MOV, param_dst, src, 0);
+        }
+        if (reg_count > 1 && (src + 1) != (param_dst + 1)) {
+            emit_abc(Opcode::MOV, param_dst + 1, src + 1, 0);
         }
         spill_if_needed(target_block->params[i].value, param_dst);
     }
@@ -1618,18 +1717,23 @@ void BytecodeBuilder::lower_terminator(IRBlock* block) {
             if (term.return_value.is_valid()) {
                 u8 ret = ensure_in_register(term.return_value, 0);
 
-                // Check if we're returning a struct
-                u32 slot_count = get_struct_slot_count(ret_type);
-                if (slot_count > 0 && slot_count <= 4) {
-                    // Small struct: return in registers
-                    emit_abc(Opcode::RET_STRUCT_SMALL, ret, static_cast<u8>(slot_count), 0);
-                } else if (slot_count > 4) {
-                    // Large struct: already written to hidden out-ptr (first param)
-                    // Just return void
-                    emit_abc(Opcode::RET_VOID, 0, 0, 0);
+                // Check if we're returning a weak ref (4 slots = 2 registers)
+                if (ret_type && ret_type->kind == TypeKind::Weak) {
+                    emit_abc(Opcode::RET_STRUCT_SMALL, ret, 4, 0);
                 } else {
-                    // Regular return
-                    emit_abc(Opcode::RET, ret, 0, 0);
+                    // Check if we're returning a struct
+                    u32 slot_count = get_struct_slot_count(ret_type);
+                    if (slot_count > 0 && slot_count <= 4) {
+                        // Small struct: return in registers
+                        emit_abc(Opcode::RET_STRUCT_SMALL, ret, static_cast<u8>(slot_count), 0);
+                    } else if (slot_count > 4) {
+                        // Large struct: already written to hidden out-ptr (first param)
+                        // Just return void
+                        emit_abc(Opcode::RET_VOID, 0, 0, 0);
+                    } else {
+                        // Regular return
+                        emit_abc(Opcode::RET, ret, 0, 0);
+                    }
                 }
             } else {
                 emit_abc(Opcode::RET_VOID, 0, 0, 0);
@@ -1671,6 +1775,13 @@ bool BytecodeBuilder::is_large_struct(Type* type) const {
 u32 BytecodeBuilder::get_struct_slot_count(Type* type) const {
     if (!type || !type->is_struct()) return 0;
     return type->struct_info.slot_count;
+}
+
+u32 BytecodeBuilder::get_value_reg_count(Type* type) const {
+    if (!type) return 1;
+    if (type->kind == TypeKind::Weak) return 2;  // 128-bit: pointer + generation
+    u32 slot_count = get_struct_slot_count(type);
+    return (slot_count > 0 && slot_count <= 4) ? (slot_count + 1) / 2 : 1;
 }
 
 Opcode BytecodeBuilder::get_opcode(IROp op) const {

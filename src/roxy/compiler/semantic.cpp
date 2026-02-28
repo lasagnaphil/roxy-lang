@@ -46,8 +46,9 @@ static u32 get_type_slot_count(Type* type) {
         case TypeKind::F64:
         case TypeKind::Uniq:
         case TypeKind::Ref:
-        case TypeKind::Weak:
             return 2;
+        case TypeKind::Weak:
+            return 4;  // 64-bit pointer + 64-bit generation
         
         // Structs: use computed slot_count
         case TypeKind::Struct:

@@ -117,6 +117,10 @@ private:
     // Get slot count for a struct type, or 0 if not a struct
     u32 get_struct_slot_count(Type* type) const;
 
+    // Get the number of registers needed for a value of the given type
+    // Returns 2 for weak refs (128-bit), struct-based counts for structs, 1 for everything else
+    u32 get_value_reg_count(Type* type) const;
+
     // Current function being built
     BCFunction* m_current_func;
     IRFunction* m_current_ir_func;
