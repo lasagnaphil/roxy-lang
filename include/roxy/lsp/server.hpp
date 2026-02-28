@@ -51,6 +51,7 @@ private:
     void handle_did_close(const JsonValue& params);
     void handle_document_symbol(const JsonValue& params, i64 id);
     void handle_definition(const JsonValue& params, i64 id);
+    void handle_completion(const JsonValue& params, i64 id);
 
     // Core logic
     void parse_and_publish_diagnostics(OpenDocument& doc);

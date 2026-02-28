@@ -42,6 +42,42 @@ public:
     StringView find_function_return_type(StringView function_name) const;
     StringView find_method_return_type(StringView struct_name, StringView method_name) const;
 
+    // Completion enumeration — lists of names by category
+    const Vector<String>* get_struct_fields(StringView struct_name) const;
+    const Vector<String>* get_struct_methods(StringView struct_name) const;
+    const Vector<String>* get_enum_variants(StringView enum_name) const;
+
+    // Signature queries for completion detail
+    StringView find_method_signature(StringView struct_name, StringView method_name) const;
+    StringView find_function_signature(StringView function_name) const;
+
+    // Iterate all names in a category (for bare identifier / type completions)
+    template<typename Callback> void for_each_struct(Callback&& cb) const {
+        for (auto it = m_structs.begin(); it != m_structs.end(); ++it) {
+            cb(it->first);
+        }
+    }
+    template<typename Callback> void for_each_enum(Callback&& cb) const {
+        for (auto it = m_enums.begin(); it != m_enums.end(); ++it) {
+            cb(it->first);
+        }
+    }
+    template<typename Callback> void for_each_function(Callback&& cb) const {
+        for (auto it = m_functions.begin(); it != m_functions.end(); ++it) {
+            cb(it->first);
+        }
+    }
+    template<typename Callback> void for_each_trait(Callback&& cb) const {
+        for (auto it = m_traits.begin(); it != m_traits.end(); ++it) {
+            cb(it->first);
+        }
+    }
+    template<typename Callback> void for_each_global(Callback&& cb) const {
+        for (auto it = m_globals.begin(); it != m_globals.end(); ++it) {
+            cb(it->first);
+        }
+    }
+
 private:
     // Owned string keys -> SymbolLocation
     tsl::robin_map<String, SymbolLocation> m_structs;
@@ -59,6 +95,13 @@ private:
     tsl::robin_map<String, String> m_function_return_types;   // "get_point" → "Point"
     tsl::robin_map<String, String> m_method_return_types;     // "Point.length" → "f32"
 
+    // Completion secondary indexes
+    tsl::robin_map<String, Vector<String>> m_struct_field_names;   // "Point" → ["x", "y"]
+    tsl::robin_map<String, Vector<String>> m_struct_method_names;  // "Point" → ["length", "sum"]
+    tsl::robin_map<String, Vector<String>> m_enum_variant_names;   // "Color" → ["Red", "Green", "Blue"]
+    tsl::robin_map<String, String> m_function_signatures;          // "add" → "(a: i32, b: i32): i32"
+    tsl::robin_map<String, String> m_method_signatures;            // "Point.length" → "(): f32"
+
     // Track which names each file contributed (for remove_file)
     struct FileNameSet {
         Vector<String> struct_names;
@@ -73,6 +116,11 @@ private:
         Vector<String> field_type_keys;
         Vector<String> function_return_type_keys;
         Vector<String> method_return_type_keys;
+        Vector<String> struct_field_name_keys;     // struct names with field lists
+        Vector<String> struct_method_name_keys;    // struct names with method lists
+        Vector<String> enum_variant_name_keys;     // enum names with variant lists
+        Vector<String> function_signature_keys;    // function names with signatures
+        Vector<String> method_signature_keys;      // "Struct.method" keys with signatures
     };
     tsl::robin_map<String, FileNameSet> m_file_names;
 

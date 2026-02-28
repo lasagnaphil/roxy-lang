@@ -19,6 +19,10 @@ public:
     // Returns empty string if unresolvable
     String resolve_cst_expr_type(SyntaxNode* expr_node) const;
 
+    // Accessors for completion support
+    const tsl::robin_map<String, String>& var_types() const { return m_var_types; }
+    const String& self_type() const { return m_self_type; }
+
 private:
     const GlobalIndex& m_index;
 

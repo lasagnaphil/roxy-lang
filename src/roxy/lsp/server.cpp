@@ -94,6 +94,8 @@ void LspServer::dispatch(char* message_buf, u32 message_length) {
         handle_document_symbol(params, request_id);
     } else if (method == StringView("textDocument/definition")) {
         handle_definition(params, request_id);
+    } else if (method == StringView("textDocument/completion")) {
+        handle_completion(params, request_id);
     } else {
         // Unknown method
         if (has_id) {
@@ -136,6 +138,17 @@ void LspServer::handle_initialize(const JsonValue& params, i64 id) {
 
             writer.write_key_bool("documentSymbolProvider", true);
             writer.write_key_bool("definitionProvider", true);
+
+            writer.write_key("completionProvider");
+            writer.write_start_object();
+            {
+                writer.write_key("triggerCharacters");
+                writer.write_start_array();
+                writer.write_string(".");
+                writer.write_string(":");
+                writer.write_end_array();
+            }
+            writer.write_end_object();
         }
         writer.write_end_object();
 
@@ -793,6 +806,385 @@ void LspServer::handle_definition(const JsonValue& params, i64 id) {
     } else {
         m_transport.write_response(id, "null");
     }
+}
+
+// --- Completion support ---
+
+enum class CompletionContext { DotAccess, StaticAccess, TypeAnnotation, BareIdentifier, None };
+
+// Detect completion context from source text and cursor position
+static CompletionContext detect_completion_context(const char* source, u32 source_length,
+                                                    u32 byte_offset, SyntaxNode* root) {
+    if (byte_offset == 0) return CompletionContext::BareIdentifier;
+
+    // Check character(s) immediately before cursor
+    char prev_char = source[byte_offset - 1];
+
+    if (prev_char == '.') {
+        return CompletionContext::DotAccess;
+    }
+
+    if (prev_char == ':' && byte_offset >= 2 && source[byte_offset - 2] == ':') {
+        return CompletionContext::StaticAccess;
+    }
+
+    // Check if we're in a type annotation position:
+    // Walk backwards skipping whitespace to find ':'
+    u32 scan = byte_offset;
+    while (scan > 0 && (source[scan - 1] == ' ' || source[scan - 1] == '\t')) {
+        scan--;
+    }
+
+    // Check if preceding non-whitespace context suggests type annotation
+    // Case 1: cursor right after ':' (e.g., "var p: |")
+    if (scan > 0 && source[scan - 1] == ':') {
+        // Make sure it's not '::'
+        if (scan < 2 || source[scan - 2] != ':') {
+            return CompletionContext::TypeAnnotation;
+        }
+    }
+
+    // Case 2: partially typed name after ':' (e.g., "var p: Po|")
+    // Walk backwards over identifier chars, then check for ':'
+    u32 ident_end = scan;
+    while (scan > 0 && (
+        (source[scan - 1] >= 'a' && source[scan - 1] <= 'z') ||
+        (source[scan - 1] >= 'A' && source[scan - 1] <= 'Z') ||
+        (source[scan - 1] >= '0' && source[scan - 1] <= '9') ||
+        source[scan - 1] == '_')) {
+        scan--;
+    }
+    if (scan < ident_end && scan > 0) {
+        // Skip whitespace before the identifier
+        u32 pre_ident = scan;
+        while (pre_ident > 0 && (source[pre_ident - 1] == ' ' || source[pre_ident - 1] == '\t')) {
+            pre_ident--;
+        }
+        if (pre_ident > 0 && source[pre_ident - 1] == ':') {
+            if (pre_ident < 2 || source[pre_ident - 2] != ':') {
+                return CompletionContext::TypeAnnotation;
+            }
+        }
+    }
+
+    // Also check if cursor is right after '.' + partial identifier (e.g., "p.le|")
+    // Walk back over identifier chars, then check for '.'
+    scan = byte_offset;
+    while (scan > 0 && (
+        (source[scan - 1] >= 'a' && source[scan - 1] <= 'z') ||
+        (source[scan - 1] >= 'A' && source[scan - 1] <= 'Z') ||
+        (source[scan - 1] >= '0' && source[scan - 1] <= '9') ||
+        source[scan - 1] == '_')) {
+        scan--;
+    }
+    if (scan > 0 && source[scan - 1] == '.') {
+        return CompletionContext::DotAccess;
+    }
+    // Check for '::' + partial identifier (e.g., "Color::Re|")
+    if (scan >= 2 && source[scan - 1] == ':' && source[scan - 2] == ':') {
+        return CompletionContext::StaticAccess;
+    }
+
+    return CompletionContext::BareIdentifier;
+}
+
+// Find the receiver text for dot-access completion
+// Walks backwards from the '.' to extract the receiver identifier
+static StringView find_dot_receiver(const char* source, u32 source_length, u32 byte_offset) {
+    // byte_offset should be at or after the '.'
+    // Walk backwards to find the '.'
+    u32 pos = byte_offset;
+    // Skip any partial identifier after '.'
+    while (pos > 0 && source[pos - 1] != '.') {
+        pos--;
+    }
+    if (pos == 0) return StringView();
+    // Now pos-1 is '.', walk backwards over whitespace
+    u32 dot_pos = pos - 1;
+    u32 end = dot_pos;
+    // Walk backwards over identifier characters to get receiver name
+    while (end > 0 && (
+        (source[end - 1] >= 'a' && source[end - 1] <= 'z') ||
+        (source[end - 1] >= 'A' && source[end - 1] <= 'Z') ||
+        (source[end - 1] >= '0' && source[end - 1] <= '9') ||
+        source[end - 1] == '_')) {
+        end--;
+    }
+    if (end == dot_pos) return StringView();
+    return StringView(source + end, dot_pos - end);
+}
+
+// Find the type name before '::' for static-access completion
+static StringView find_static_receiver(const char* source, u32 source_length, u32 byte_offset) {
+    u32 pos = byte_offset;
+    // Skip any partial identifier after '::'
+    while (pos > 0 && source[pos - 1] != ':') {
+        pos--;
+    }
+    // pos-1 should be second ':', check for first ':'
+    if (pos < 2 || source[pos - 2] != ':') return StringView();
+    u32 colon_pos = pos - 2;
+    // Walk backwards over identifier characters to get type name
+    u32 end = colon_pos;
+    while (end > 0 && (
+        (source[end - 1] >= 'a' && source[end - 1] <= 'z') ||
+        (source[end - 1] >= 'A' && source[end - 1] <= 'Z') ||
+        (source[end - 1] >= '0' && source[end - 1] <= '9') ||
+        source[end - 1] == '_')) {
+        end--;
+    }
+    if (end == colon_pos) return StringView();
+    return StringView(source + end, colon_pos - end);
+}
+
+// Write a single CompletionItem as JSON
+static void write_completion_item(JsonWriter& writer, StringView label, i64 kind,
+                                   StringView detail = StringView()) {
+    writer.write_start_object();
+    writer.write_key_string("label", label);
+    writer.write_key_int("kind", kind);
+    if (!detail.empty()) {
+        writer.write_key_string("detail", detail);
+    }
+    writer.write_end_object();
+}
+
+void LspServer::handle_completion(const JsonValue& params, i64 id) {
+    const JsonValue* text_document = params.find("textDocument");
+    if (!text_document || !text_document->is_object()) {
+        m_transport.write_response(id, "{\"isIncomplete\":false,\"items\":[]}");
+        return;
+    }
+
+    const JsonValue* uri_val = text_document->find("uri");
+    if (!uri_val || !uri_val->is_string()) {
+        m_transport.write_response(id, "{\"isIncomplete\":false,\"items\":[]}");
+        return;
+    }
+
+    const JsonValue* position_val = params.find("position");
+    if (!position_val || !position_val->is_object()) {
+        m_transport.write_response(id, "{\"isIncomplete\":false,\"items\":[]}");
+        return;
+    }
+
+    StringView uri = uri_val->as_string();
+    OpenDocument* doc = find_document(uri);
+    if (!doc) {
+        m_transport.write_response(id, "{\"isIncomplete\":false,\"items\":[]}");
+        return;
+    }
+
+    const JsonValue* line_val = position_val->find("line");
+    const JsonValue* char_val = position_val->find("character");
+    if (!line_val || !line_val->is_int() || !char_val || !char_val->is_int()) {
+        m_transport.write_response(id, "{\"isIncomplete\":false,\"items\":[]}");
+        return;
+    }
+
+    LspPosition cursor_pos;
+    cursor_pos.line = static_cast<u32>(line_val->as_int());
+    cursor_pos.character = static_cast<u32>(char_val->as_int());
+
+    u32 byte_offset = lsp_position_to_offset(
+        doc->content.data(), doc->content.size(), cursor_pos);
+
+    // Re-parse to get fresh CST
+    BumpAllocator allocator(8192);
+    Lexer lexer(doc->content.data(), doc->content.size());
+    LspParser parser(lexer, allocator);
+    SyntaxTree tree = parser.parse();
+
+    CompletionContext context = detect_completion_context(
+        doc->content.data(), doc->content.size(), byte_offset, tree.root);
+
+    String result;
+    JsonWriter writer(result);
+    writer.write_start_object();
+    writer.write_key_bool("isIncomplete", false);
+    writer.write_key("items");
+    writer.write_start_array();
+
+    if (context == CompletionContext::DotAccess) {
+        // Resolve receiver type
+        StringView receiver_ident = find_dot_receiver(
+            doc->content.data(), doc->content.size(), byte_offset);
+
+        String receiver_type;
+        if (!receiver_ident.empty()) {
+            // Try to resolve receiver type via CstLowering + LspTypeResolver
+            SyntaxNode* cursor_node = find_node_at_offset(tree.root, byte_offset > 0 ? byte_offset - 1 : 0);
+            SyntaxNode* enclosing_fn = cursor_node ? find_enclosing_function(cursor_node) : nullptr;
+
+            if (enclosing_fn) {
+                BumpAllocator ast_allocator(8192);
+                CstLowering lowering(ast_allocator);
+                Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+
+                LspTypeResolver resolver(m_global_index);
+                resolver.analyze_function(ast_decl);
+
+                // Check if receiver is "self"
+                if (receiver_ident == StringView("self")) {
+                    receiver_type = resolver.self_type();
+                } else {
+                    // Look up variable type
+                    auto var_it = resolver.var_types().find(String(receiver_ident));
+                    if (var_it != resolver.var_types().end()) {
+                        receiver_type = var_it->second;
+                    }
+                }
+            }
+        }
+
+        if (!receiver_type.empty()) {
+            // Walk inheritance chain collecting fields and methods
+            StringView current_type(receiver_type.data(), receiver_type.size());
+            u32 depth = 0;
+            while (!current_type.empty() && depth < 16) {
+                // Fields
+                const Vector<String>* fields = m_global_index.get_struct_fields(current_type);
+                if (fields) {
+                    for (u32 i = 0; i < fields->size(); i++) {
+                        StringView field_name((*fields)[i].data(), (*fields)[i].size());
+                        StringView field_type = m_global_index.find_field_type(current_type, field_name);
+                        write_completion_item(writer, field_name, CompletionItemKind::Field, field_type);
+                    }
+                }
+
+                // Methods
+                const Vector<String>* methods = m_global_index.get_struct_methods(current_type);
+                if (methods) {
+                    for (u32 i = 0; i < methods->size(); i++) {
+                        StringView method_name((*methods)[i].data(), (*methods)[i].size());
+                        StringView signature = m_global_index.find_method_signature(current_type, method_name);
+                        write_completion_item(writer, method_name, CompletionItemKind::Method, signature);
+                    }
+                }
+
+                current_type = m_global_index.find_struct_parent(current_type);
+                depth++;
+            }
+        }
+    } else if (context == CompletionContext::StaticAccess) {
+        // Enum variant completion
+        StringView type_name = find_static_receiver(
+            doc->content.data(), doc->content.size(), byte_offset);
+
+        if (!type_name.empty()) {
+            const Vector<String>* variants = m_global_index.get_enum_variants(type_name);
+            if (variants) {
+                for (u32 i = 0; i < variants->size(); i++) {
+                    StringView variant_name((*variants)[i].data(), (*variants)[i].size());
+                    write_completion_item(writer, variant_name, CompletionItemKind::EnumMember);
+                }
+            }
+        }
+    } else if (context == CompletionContext::TypeAnnotation) {
+        // Primitive types
+        static const char* primitive_types[] = {
+            "i32", "i64", "f32", "f64", "bool", "string", "void",
+            "u8", "u16", "u32", "u64", "i8", "i16"
+        };
+        for (u32 i = 0; i < sizeof(primitive_types) / sizeof(primitive_types[0]); i++) {
+            write_completion_item(writer, StringView(primitive_types[i]),
+                                  CompletionItemKind::Keyword);
+        }
+
+        // All struct names
+        m_global_index.for_each_struct([&](const String& name) {
+            write_completion_item(writer, StringView(name.data(), name.size()),
+                                  CompletionItemKind::Struct);
+        });
+
+        // All enum names
+        m_global_index.for_each_enum([&](const String& name) {
+            write_completion_item(writer, StringView(name.data(), name.size()),
+                                  CompletionItemKind::Enum);
+        });
+
+        // All trait names
+        m_global_index.for_each_trait([&](const String& name) {
+            write_completion_item(writer, StringView(name.data(), name.size()),
+                                  CompletionItemKind::Interface);
+        });
+
+        // Reference keywords
+        write_completion_item(writer, StringView("uniq"), CompletionItemKind::Keyword);
+        write_completion_item(writer, StringView("ref"), CompletionItemKind::Keyword);
+        write_completion_item(writer, StringView("weak"), CompletionItemKind::Keyword);
+        write_completion_item(writer, StringView("List"), CompletionItemKind::Struct);
+        write_completion_item(writer, StringView("Map"), CompletionItemKind::Struct);
+    } else if (context == CompletionContext::BareIdentifier) {
+        // Local variables from resolver
+        SyntaxNode* cursor_node = find_node_at_offset(tree.root, byte_offset > 0 ? byte_offset - 1 : 0);
+        SyntaxNode* enclosing_fn = cursor_node ? find_enclosing_function(cursor_node) : nullptr;
+
+        if (enclosing_fn) {
+            BumpAllocator ast_allocator(8192);
+            CstLowering lowering(ast_allocator);
+            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+
+            LspTypeResolver resolver(m_global_index);
+            resolver.analyze_function(ast_decl);
+
+            // Emit locals
+            for (auto it = resolver.var_types().begin(); it != resolver.var_types().end(); ++it) {
+                StringView var_name(it->first.data(), it->first.size());
+                StringView var_type(it->second.data(), it->second.size());
+                write_completion_item(writer, var_name, CompletionItemKind::Variable, var_type);
+            }
+
+            // Emit self if in method
+            if (!resolver.self_type().empty()) {
+                StringView self_type(resolver.self_type().data(), resolver.self_type().size());
+                write_completion_item(writer, StringView("self"), CompletionItemKind::Variable, self_type);
+            }
+        }
+
+        // All functions
+        m_global_index.for_each_function([&](const String& name) {
+            StringView func_name(name.data(), name.size());
+            StringView signature = m_global_index.find_function_signature(func_name);
+            write_completion_item(writer, func_name, CompletionItemKind::Function, signature);
+        });
+
+        // All globals
+        m_global_index.for_each_global([&](const String& name) {
+            write_completion_item(writer, StringView(name.data(), name.size()),
+                                  CompletionItemKind::Variable);
+        });
+
+        // Struct and enum names (usable as constructors / type names)
+        m_global_index.for_each_struct([&](const String& name) {
+            write_completion_item(writer, StringView(name.data(), name.size()),
+                                  CompletionItemKind::Struct);
+        });
+        m_global_index.for_each_enum([&](const String& name) {
+            write_completion_item(writer, StringView(name.data(), name.size()),
+                                  CompletionItemKind::Enum);
+        });
+
+        // Control flow and declaration keywords
+        static const char* keywords[] = {
+            "var", "fun", "struct", "enum", "trait", "if", "else",
+            "for", "while", "break", "continue", "return",
+            "when", "case", "true", "false", "nil",
+            "pub", "native", "import", "from",
+            "try", "catch", "throw", "finally",
+            "new", "delete", "self", "super",
+            "uniq", "ref", "weak"
+        };
+        for (u32 i = 0; i < sizeof(keywords) / sizeof(keywords[0]); i++) {
+            write_completion_item(writer, StringView(keywords[i]),
+                                  CompletionItemKind::Keyword);
+        }
+    }
+
+    writer.write_end_array();
+    writer.write_end_object();
+
+    m_transport.write_response(id, StringView(result.data(), result.size()));
 }
 
 // --- Workspace helpers ---

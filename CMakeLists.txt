@@ -128,6 +128,7 @@ add_executable(roxy_tests
     tests/unit/test_global_index.cpp
     tests/unit/test_cst_lowering.cpp
     tests/unit/test_lsp_type_resolver.cpp
+    tests/unit/test_lsp_completion.cpp
 
     # E2E tests
     tests/e2e/test_helpers.cpp

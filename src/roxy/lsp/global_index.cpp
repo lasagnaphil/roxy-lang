@@ -2,6 +2,25 @@
 
 namespace rx {
 
+// Build a signature string like "(a: i32, b: i32): i32" from params and return type
+static String build_signature(const Vector<ParamStub>& params, const TypeRef& return_type) {
+    String sig("(");
+    for (u32 i = 0; i < params.size(); i++) {
+        if (i > 0) sig.append(", ", 2);
+        sig.append(params[i].name.data(), params[i].name.size());
+        if (!params[i].type.name.empty()) {
+            sig.append(": ", 2);
+            sig.append(params[i].type.name.data(), params[i].type.name.size());
+        }
+    }
+    sig.push_back(')');
+    if (!return_type.name.empty()) {
+        sig.append(": ", 2);
+        sig.append(return_type.name.data(), return_type.name.size());
+    }
+    return sig;
+}
+
 String GlobalIndex::make_qualified_key(StringView struct_name, StringView member_name) {
     String key;
     key.reserve(struct_name.size() + 1 + member_name.size());
@@ -34,7 +53,8 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
             name_set.struct_parent_keys.push_back(name);
         }
 
-        // Index fields
+        // Index fields and build field name list for completions
+        Vector<String> field_names;
         for (u32 j = 0; j < stub.fields.size(); j++) {
             const FieldStub& field = stub.fields[j];
             String field_key = make_qualified_key(stub.name, field.name);
@@ -50,6 +70,12 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
                 m_field_types[field_key] = String(field.type.name);
                 name_set.field_type_keys.push_back(field_key);
             }
+
+            field_names.push_back(String(field.name));
+        }
+        if (!field_names.empty()) {
+            m_struct_field_names[name] = std::move(field_names);
+            name_set.struct_field_name_keys.push_back(name);
         }
     }
 
@@ -63,6 +89,16 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
         location.name_range = stub.name_range;
         m_enums[name] = location;
         name_set.enum_names.push_back(name);
+
+        // Build variant name list for completions
+        if (!stub.variants.empty()) {
+            Vector<String> variant_names;
+            for (u32 j = 0; j < stub.variants.size(); j++) {
+                variant_names.push_back(String(stub.variants[j].name));
+            }
+            m_enum_variant_names[name] = std::move(variant_names);
+            name_set.enum_variant_name_keys.push_back(name);
+        }
     }
 
     // Index functions
@@ -81,6 +117,10 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
             m_function_return_types[name] = String(stub.return_type.name);
             name_set.function_return_type_keys.push_back(name);
         }
+
+        // Build signature for completions
+        m_function_signatures[name] = build_signature(stub.params, stub.return_type);
+        name_set.function_signature_keys.push_back(name);
     }
 
     // Index methods
@@ -99,6 +139,22 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
             m_method_return_types[key] = String(stub.return_type.name);
             name_set.method_return_type_keys.push_back(key);
         }
+
+        // Build method name list per struct for completions
+        String struct_name_str(stub.struct_name);
+        auto method_list_it = m_struct_method_names.find(struct_name_str);
+        if (method_list_it == m_struct_method_names.end()) {
+            Vector<String> method_names;
+            method_names.push_back(String(stub.method_name));
+            m_struct_method_names[struct_name_str] = std::move(method_names);
+            name_set.struct_method_name_keys.push_back(struct_name_str);
+        } else {
+            method_list_it.value().push_back(String(stub.method_name));
+        }
+
+        // Build method signature for completions
+        m_method_signatures[key] = build_signature(stub.params, stub.return_type);
+        name_set.method_signature_keys.push_back(key);
     }
 
     // Index constructors
@@ -182,6 +238,21 @@ void GlobalIndex::remove_file(StringView uri) {
     }
     for (u32 i = 0; i < name_set.method_return_type_keys.size(); i++) {
         m_method_return_types.erase(name_set.method_return_type_keys[i]);
+    }
+    for (u32 i = 0; i < name_set.struct_field_name_keys.size(); i++) {
+        m_struct_field_names.erase(name_set.struct_field_name_keys[i]);
+    }
+    for (u32 i = 0; i < name_set.struct_method_name_keys.size(); i++) {
+        m_struct_method_names.erase(name_set.struct_method_name_keys[i]);
+    }
+    for (u32 i = 0; i < name_set.enum_variant_name_keys.size(); i++) {
+        m_enum_variant_names.erase(name_set.enum_variant_name_keys[i]);
+    }
+    for (u32 i = 0; i < name_set.function_signature_keys.size(); i++) {
+        m_function_signatures.erase(name_set.function_signature_keys[i]);
+    }
+    for (u32 i = 0; i < name_set.method_signature_keys.size(); i++) {
+        m_method_signatures.erase(name_set.method_signature_keys[i]);
     }
 
     m_file_names.erase(file_it);
@@ -267,6 +338,41 @@ StringView GlobalIndex::find_method_return_type(StringView struct_name, StringVi
     String key = make_qualified_key(struct_name, method_name);
     auto it = m_method_return_types.find(key);
     if (it != m_method_return_types.end()) {
+        return StringView(it->second.data(), it->second.size());
+    }
+    return StringView();
+}
+
+const Vector<String>* GlobalIndex::get_struct_fields(StringView struct_name) const {
+    auto it = m_struct_field_names.find(String(struct_name));
+    if (it != m_struct_field_names.end()) return &it->second;
+    return nullptr;
+}
+
+const Vector<String>* GlobalIndex::get_struct_methods(StringView struct_name) const {
+    auto it = m_struct_method_names.find(String(struct_name));
+    if (it != m_struct_method_names.end()) return &it->second;
+    return nullptr;
+}
+
+const Vector<String>* GlobalIndex::get_enum_variants(StringView enum_name) const {
+    auto it = m_enum_variant_names.find(String(enum_name));
+    if (it != m_enum_variant_names.end()) return &it->second;
+    return nullptr;
+}
+
+StringView GlobalIndex::find_method_signature(StringView struct_name, StringView method_name) const {
+    String key = make_qualified_key(struct_name, method_name);
+    auto it = m_method_signatures.find(key);
+    if (it != m_method_signatures.end()) {
+        return StringView(it->second.data(), it->second.size());
+    }
+    return StringView();
+}
+
+StringView GlobalIndex::find_function_signature(StringView function_name) const {
+    auto it = m_function_signatures.find(String(function_name));
+    if (it != m_function_signatures.end()) {
         return StringView(it->second.data(), it->second.size());
     }
     return StringView();
