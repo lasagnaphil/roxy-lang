@@ -96,6 +96,8 @@ void LspServer::dispatch(char* message_buf, u32 message_length) {
         handle_definition(params, request_id);
     } else if (method == StringView("textDocument/completion")) {
         handle_completion(params, request_id);
+    } else if (method == StringView("textDocument/hover")) {
+        handle_hover(params, request_id);
     } else {
         // Unknown method
         if (has_id) {
@@ -138,6 +140,7 @@ void LspServer::handle_initialize(const JsonValue& params, i64 id) {
 
             writer.write_key_bool("documentSymbolProvider", true);
             writer.write_key_bool("definitionProvider", true);
+            writer.write_key_bool("hoverProvider", true);
 
             writer.write_key("completionProvider");
             writer.write_start_object();
@@ -1185,6 +1188,439 @@ void LspServer::handle_completion(const JsonValue& params, i64 id) {
     writer.write_end_object();
 
     m_transport.write_response(id, StringView(result.data(), result.size()));
+}
+
+// --- Hover support ---
+
+static String build_hover_markdown(StringView content) {
+    String result;
+    result.append("```roxy\n", 8);
+    result.append(content.data(), content.size());
+    result.append("\n```", 4);
+    return result;
+}
+
+static void write_hover_response(LspTransport& transport, i64 id,
+                                  StringView hover_text, const char* source, u32 source_length,
+                                  TextRange range) {
+    String markdown = build_hover_markdown(hover_text);
+    LspRange lsp_range = text_range_to_lsp_range(source, source_length, range);
+
+    String result;
+    JsonWriter writer(result);
+    writer.write_start_object();
+    {
+        writer.write_key("contents");
+        writer.write_start_object();
+        writer.write_key_string("kind", "markdown");
+        writer.write_key_string("value", StringView(markdown.data(), markdown.size()));
+        writer.write_end_object();
+
+        writer.write_key("range");
+        write_lsp_range(writer, lsp_range);
+    }
+    writer.write_end_object();
+
+    transport.write_response(id, StringView(result.data(), result.size()));
+}
+
+void LspServer::handle_hover(const JsonValue& params, i64 id) {
+    const JsonValue* text_document = params.find("textDocument");
+    if (!text_document || !text_document->is_object()) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    const JsonValue* uri_val = text_document->find("uri");
+    if (!uri_val || !uri_val->is_string()) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    const JsonValue* position_val = params.find("position");
+    if (!position_val || !position_val->is_object()) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    StringView uri = uri_val->as_string();
+    OpenDocument* doc = find_document(uri);
+    if (!doc) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    const JsonValue* line_val = position_val->find("line");
+    const JsonValue* char_val = position_val->find("character");
+    if (!line_val || !line_val->is_int() || !char_val || !char_val->is_int()) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    LspPosition cursor_pos;
+    cursor_pos.line = static_cast<u32>(line_val->as_int());
+    cursor_pos.character = static_cast<u32>(char_val->as_int());
+
+    u32 byte_offset = lsp_position_to_offset(
+        doc->content.data(), doc->content.size(), cursor_pos);
+
+    // Re-parse to get fresh CST
+    BumpAllocator allocator(8192);
+    Lexer lexer(doc->content.data(), doc->content.size());
+    LspParser parser(lexer, allocator);
+    SyntaxTree tree = parser.parse();
+
+    SyntaxNode* node = find_node_at_offset(tree.root, byte_offset);
+    if (!node) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    const char* source = doc->content.data();
+    u32 source_length = doc->content.size();
+
+    // --- Keyword literals ---
+    if (node->kind == SyntaxKind::TokenKwTrue || node->kind == SyntaxKind::TokenKwFalse) {
+        write_hover_response(m_transport, id, "bool", source, source_length, node->range);
+        return;
+    }
+
+    if (node->kind == SyntaxKind::TokenKwNil) {
+        write_hover_response(m_transport, id, "nil", source, source_length, node->range);
+        return;
+    }
+
+    // --- Self keyword ---
+    if (node->kind == SyntaxKind::TokenKwSelf) {
+        SyntaxNode* enclosing_fn = find_enclosing_function(node);
+        if (enclosing_fn) {
+            SyntaxNode* struct_ident = nullptr;
+            for (u32 i = 0; i < enclosing_fn->children.size(); i++) {
+                if (enclosing_fn->children[i]->kind == SyntaxKind::TokenIdentifier) {
+                    struct_ident = enclosing_fn->children[i];
+                    break;
+                }
+            }
+            if (struct_ident) {
+                String hover_text("self: ");
+                hover_text.append(struct_ident->token.text().data(), struct_ident->token.text().size());
+                write_hover_response(m_transport, id,
+                    StringView(hover_text.data(), hover_text.size()),
+                    source, source_length, node->range);
+                return;
+            }
+        }
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    // Only handle identifiers from here on
+    if (node->kind != SyntaxKind::TokenIdentifier) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    StringView identifier = node->token.text();
+    SyntaxNode* parent = node->parent;
+
+    // --- Field/method access (NodeGetExpr) ---
+    if (parent && parent->kind == SyntaxKind::NodeGetExpr) {
+        bool is_member_name = parent->children.size() >= 3 &&
+            parent->children[parent->children.size() - 1] == node;
+
+        if (is_member_name) {
+            // Resolve receiver type
+            SyntaxNode* object_expr = parent->children[0];
+            String receiver_type;
+
+            SyntaxNode* enclosing_fn = find_enclosing_function(parent);
+            if (enclosing_fn) {
+                BumpAllocator ast_allocator(8192);
+                CstLowering lowering(ast_allocator);
+                Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+
+                LspTypeResolver resolver(m_global_index);
+                resolver.analyze_function(ast_decl);
+                receiver_type = resolver.resolve_cst_expr_type(object_expr);
+            }
+
+            if (!receiver_type.empty()) {
+                // Walk inheritance chain looking for field or method
+                StringView current_type(receiver_type.data(), receiver_type.size());
+                u32 depth = 0;
+                while (!current_type.empty() && depth < 16) {
+                    // Check field
+                    StringView field_type = m_global_index.find_field_type(current_type, identifier);
+                    if (!field_type.empty()) {
+                        String hover_text("(field) ");
+                        hover_text.append(current_type.data(), current_type.size());
+                        hover_text.push_back('.');
+                        hover_text.append(identifier.data(), identifier.size());
+                        hover_text.append(": ", 2);
+                        hover_text.append(field_type.data(), field_type.size());
+                        write_hover_response(m_transport, id,
+                            StringView(hover_text.data(), hover_text.size()),
+                            source, source_length, node->range);
+                        return;
+                    }
+
+                    // Check method
+                    StringView method_sig = m_global_index.find_method_signature(current_type, identifier);
+                    if (!method_sig.empty()) {
+                        String hover_text("fun ");
+                        hover_text.append(current_type.data(), current_type.size());
+                        hover_text.push_back('.');
+                        hover_text.append(identifier.data(), identifier.size());
+                        hover_text.append(method_sig.data(), method_sig.size());
+                        write_hover_response(m_transport, id,
+                            StringView(hover_text.data(), hover_text.size()),
+                            source, source_length, node->range);
+                        return;
+                    }
+
+                    current_type = m_global_index.find_struct_parent(current_type);
+                    depth++;
+                }
+            }
+
+            m_transport.write_response(id, "null");
+            return;
+        }
+    }
+
+    // --- Static access (NodeStaticGetExpr): Enum::Variant or Type ---
+    if (parent && parent->kind == SyntaxKind::NodeStaticGetExpr) {
+        // Determine if this is the type child (first identifier) or member child (after ::)
+        bool is_member_child = false;
+        if (parent->children.size() >= 3) {
+            is_member_child = (parent->children[parent->children.size() - 1] == node);
+        }
+
+        if (is_member_child) {
+            // This is the variant name (e.g., Red in Color::Red)
+            // Find the type name (first identifier child)
+            StringView type_name;
+            for (u32 i = 0; i < parent->children.size(); i++) {
+                if (parent->children[i]->kind == SyntaxKind::TokenIdentifier &&
+                    parent->children[i] != node) {
+                    type_name = parent->children[i]->token.text();
+                    break;
+                }
+            }
+
+            if (!type_name.empty()) {
+                String hover_text("(variant) ");
+                hover_text.append(type_name.data(), type_name.size());
+                hover_text.append("::", 2);
+                hover_text.append(identifier.data(), identifier.size());
+                write_hover_response(m_transport, id,
+                    StringView(hover_text.data(), hover_text.size()),
+                    source, source_length, node->range);
+                return;
+            }
+        } else {
+            // This is the type name (e.g., Color in Color::Red)
+            if (m_global_index.find_enum(identifier)) {
+                String hover_text("enum ");
+                hover_text.append(identifier.data(), identifier.size());
+                write_hover_response(m_transport, id,
+                    StringView(hover_text.data(), hover_text.size()),
+                    source, source_length, node->range);
+                return;
+            }
+            if (m_global_index.find_struct(identifier)) {
+                String hover_text("struct ");
+                hover_text.append(identifier.data(), identifier.size());
+                write_hover_response(m_transport, id,
+                    StringView(hover_text.data(), hover_text.size()),
+                    source, source_length, node->range);
+                return;
+            }
+        }
+
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    // --- Type annotation (NodeTypeExpr) ---
+    if (parent && parent->kind == SyntaxKind::NodeTypeExpr) {
+        if (m_global_index.find_struct(identifier)) {
+            String hover_text("struct ");
+            hover_text.append(identifier.data(), identifier.size());
+            write_hover_response(m_transport, id,
+                StringView(hover_text.data(), hover_text.size()),
+                source, source_length, node->range);
+            return;
+        }
+        if (m_global_index.find_enum(identifier)) {
+            String hover_text("enum ");
+            hover_text.append(identifier.data(), identifier.size());
+            write_hover_response(m_transport, id,
+                StringView(hover_text.data(), hover_text.size()),
+                source, source_length, node->range);
+            return;
+        }
+        if (m_global_index.find_trait(identifier)) {
+            String hover_text("trait ");
+            hover_text.append(identifier.data(), identifier.size());
+            write_hover_response(m_transport, id,
+                StringView(hover_text.data(), hover_text.size()),
+                source, source_length, node->range);
+            return;
+        }
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    // --- Function call (NodeCallExpr) ---
+    if (parent && parent->kind == SyntaxKind::NodeCallExpr) {
+        // Check if this is the callee (first child)
+        bool is_callee = parent->children.size() > 0 && parent->children[0] == node;
+        if (is_callee) {
+            StringView func_sig = m_global_index.find_function_signature(identifier);
+            if (!func_sig.empty()) {
+                String hover_text("fun ");
+                hover_text.append(identifier.data(), identifier.size());
+                hover_text.append(func_sig.data(), func_sig.size());
+                write_hover_response(m_transport, id,
+                    StringView(hover_text.data(), hover_text.size()),
+                    source, source_length, node->range);
+                return;
+            }
+        }
+    }
+
+    // --- Struct literal (NodeStructLiteralExpr) ---
+    if (parent && parent->kind == SyntaxKind::NodeStructLiteralExpr) {
+        // Check if this is the struct name (first child)
+        bool is_struct_name = parent->children.size() > 0 && parent->children[0] == node;
+        if (is_struct_name && m_global_index.find_struct(identifier)) {
+            String hover_text("struct ");
+            hover_text.append(identifier.data(), identifier.size());
+            write_hover_response(m_transport, id,
+                StringView(hover_text.data(), hover_text.size()),
+                source, source_length, node->range);
+            return;
+        }
+    }
+
+    // --- Field initializer (NodeFieldInit) ---
+    if (parent && parent->kind == SyntaxKind::NodeFieldInit) {
+        // Check if this is the field name (first child)
+        bool is_field_name = parent->children.size() > 0 && parent->children[0] == node;
+        if (is_field_name) {
+            // Walk up to find the enclosing struct literal
+            SyntaxNode* struct_literal = parent->parent;
+            if (struct_literal && struct_literal->kind == SyntaxKind::NodeStructLiteralExpr) {
+                // Get struct name from first identifier child
+                for (u32 i = 0; i < struct_literal->children.size(); i++) {
+                    if (struct_literal->children[i]->kind == SyntaxKind::TokenIdentifier) {
+                        StringView struct_name = struct_literal->children[i]->token.text();
+
+                        // Walk inheritance chain for field type
+                        StringView current_type = struct_name;
+                        u32 depth = 0;
+                        while (!current_type.empty() && depth < 16) {
+                            StringView field_type = m_global_index.find_field_type(current_type, identifier);
+                            if (!field_type.empty()) {
+                                String hover_text("(field) ");
+                                hover_text.append(current_type.data(), current_type.size());
+                                hover_text.push_back('.');
+                                hover_text.append(identifier.data(), identifier.size());
+                                hover_text.append(": ", 2);
+                                hover_text.append(field_type.data(), field_type.size());
+                                write_hover_response(m_transport, id,
+                                    StringView(hover_text.data(), hover_text.size()),
+                                    source, source_length, node->range);
+                                return;
+                            }
+                            current_type = m_global_index.find_struct_parent(current_type);
+                            depth++;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Local variable resolution (expression context) ---
+    {
+        SyntaxNode* enclosing_fn = find_enclosing_function(node);
+        if (enclosing_fn) {
+            BumpAllocator ast_allocator(8192);
+            CstLowering lowering(ast_allocator);
+            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+
+            LspTypeResolver resolver(m_global_index);
+            resolver.analyze_function(ast_decl);
+
+            auto var_it = resolver.var_types().find(String(identifier));
+            if (var_it != resolver.var_types().end()) {
+                String hover_text("(variable) ");
+                hover_text.append(identifier.data(), identifier.size());
+                hover_text.append(": ", 2);
+                hover_text.append(var_it->second.data(), var_it->second.size());
+                write_hover_response(m_transport, id,
+                    StringView(hover_text.data(), hover_text.size()),
+                    source, source_length, node->range);
+                return;
+            }
+        }
+    }
+
+    // --- Fallback: GlobalIndex lookup ---
+    if (m_global_index.find_function(identifier)) {
+        StringView func_sig = m_global_index.find_function_signature(identifier);
+        if (!func_sig.empty()) {
+            String hover_text("fun ");
+            hover_text.append(identifier.data(), identifier.size());
+            hover_text.append(func_sig.data(), func_sig.size());
+            write_hover_response(m_transport, id,
+                StringView(hover_text.data(), hover_text.size()),
+                source, source_length, node->range);
+            return;
+        }
+    }
+    if (m_global_index.find_struct(identifier)) {
+        String hover_text("struct ");
+        hover_text.append(identifier.data(), identifier.size());
+        write_hover_response(m_transport, id,
+            StringView(hover_text.data(), hover_text.size()),
+            source, source_length, node->range);
+        return;
+    }
+    if (m_global_index.find_enum(identifier)) {
+        String hover_text("enum ");
+        hover_text.append(identifier.data(), identifier.size());
+        write_hover_response(m_transport, id,
+            StringView(hover_text.data(), hover_text.size()),
+            source, source_length, node->range);
+        return;
+    }
+    if (m_global_index.find_trait(identifier)) {
+        String hover_text("trait ");
+        hover_text.append(identifier.data(), identifier.size());
+        write_hover_response(m_transport, id,
+            StringView(hover_text.data(), hover_text.size()),
+            source, source_length, node->range);
+        return;
+    }
+    if (m_global_index.find_global(identifier)) {
+        StringView global_type = m_global_index.find_global_type(identifier);
+        String hover_text("(global) ");
+        hover_text.append(identifier.data(), identifier.size());
+        if (!global_type.empty()) {
+            hover_text.append(": ", 2);
+            hover_text.append(global_type.data(), global_type.size());
+        }
+        write_hover_response(m_transport, id,
+            StringView(hover_text.data(), hover_text.size()),
+            source, source_length, node->range);
+        return;
+    }
+
+    m_transport.write_response(id, "null");
 }
 
 // --- Workspace helpers ---

@@ -51,6 +51,9 @@ public:
     StringView find_method_signature(StringView struct_name, StringView method_name) const;
     StringView find_function_signature(StringView function_name) const;
 
+    // Global variable type lookup (for hover)
+    StringView find_global_type(StringView name) const;
+
     // Iterate all names in a category (for bare identifier / type completions)
     template<typename Callback> void for_each_struct(Callback&& cb) const {
         for (auto it = m_structs.begin(); it != m_structs.end(); ++it) {
@@ -95,6 +98,9 @@ private:
     tsl::robin_map<String, String> m_function_return_types;   // "get_point" → "Point"
     tsl::robin_map<String, String> m_method_return_types;     // "Point.length" → "f32"
 
+    // Global variable types
+    tsl::robin_map<String, String> m_global_types;           // "count" → "i32"
+
     // Completion secondary indexes
     tsl::robin_map<String, Vector<String>> m_struct_field_names;   // "Point" → ["x", "y"]
     tsl::robin_map<String, Vector<String>> m_struct_method_names;  // "Point" → ["length", "sum"]
@@ -116,6 +122,7 @@ private:
         Vector<String> field_type_keys;
         Vector<String> function_return_type_keys;
         Vector<String> method_return_type_keys;
+        Vector<String> global_type_keys;             // global names with types
         Vector<String> struct_field_name_keys;     // struct names with field lists
         Vector<String> struct_method_name_keys;    // struct names with method lists
         Vector<String> enum_variant_name_keys;     // enum names with variant lists

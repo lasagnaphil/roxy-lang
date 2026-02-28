@@ -1527,6 +1527,7 @@ SyntaxNode* LspParser::parse_primary() {
     // self
     if (match(TokenKind::KwSelf)) {
         auto builder = begin_node(SyntaxKind::NodeSelfExpr);
+        builder.start_offset = m_previous.loc.offset;
         builder.children.push_back(make_token_node(m_previous));
         return finish_node(builder);
     }
@@ -1534,6 +1535,7 @@ SyntaxNode* LspParser::parse_primary() {
     // super
     if (match(TokenKind::KwSuper)) {
         auto builder = begin_node(SyntaxKind::NodeSuperExpr);
+        builder.start_offset = m_previous.loc.offset;
         builder.children.push_back(make_token_node(m_previous)); // 'super'
 
         if (!check(TokenKind::LeftParen)) {

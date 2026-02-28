@@ -191,6 +191,12 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
         location.name_range = stub.name_range;
         m_globals[name] = location;
         name_set.global_names.push_back(name);
+
+        // Index global variable type
+        if (!stub.type.name.empty()) {
+            m_global_types[name] = String(stub.type.name);
+            name_set.global_type_keys.push_back(name);
+        }
     }
 
     m_file_names[uri] = std::move(name_set);
@@ -238,6 +244,9 @@ void GlobalIndex::remove_file(StringView uri) {
     }
     for (u32 i = 0; i < name_set.method_return_type_keys.size(); i++) {
         m_method_return_types.erase(name_set.method_return_type_keys[i]);
+    }
+    for (u32 i = 0; i < name_set.global_type_keys.size(); i++) {
+        m_global_types.erase(name_set.global_type_keys[i]);
     }
     for (u32 i = 0; i < name_set.struct_field_name_keys.size(); i++) {
         m_struct_field_names.erase(name_set.struct_field_name_keys[i]);
@@ -338,6 +347,14 @@ StringView GlobalIndex::find_method_return_type(StringView struct_name, StringVi
     String key = make_qualified_key(struct_name, method_name);
     auto it = m_method_return_types.find(key);
     if (it != m_method_return_types.end()) {
+        return StringView(it->second.data(), it->second.size());
+    }
+    return StringView();
+}
+
+StringView GlobalIndex::find_global_type(StringView name) const {
+    auto it = m_global_types.find(String(name));
+    if (it != m_global_types.end()) {
         return StringView(it->second.data(), it->second.size());
     }
     return StringView();
