@@ -195,6 +195,7 @@ void FileIndexer::index_method_decl(SyntaxNode* node, FileStubs& stubs) {
     stub.is_pub = has_child(node, SyntaxKind::TokenKwPub);
     stub.is_native = has_child(node, SyntaxKind::TokenKwNative);
     stub.has_body = has_child(node, SyntaxKind::NodeBlockStmt);
+    stub.trait_name = StringView("", 0);
 
     // Structure: [?pub, ?native, struct_name, ?type_params, '.', method_name, '(', params, ')', ...]
     // Find struct_name = first identifier
@@ -263,6 +264,7 @@ void FileIndexer::index_constructor_decl(SyntaxNode* node, FileStubs& stubs) {
     ConstructorStub stub;
     stub.range = node->range;
     stub.is_pub = has_child(node, SyntaxKind::TokenKwPub);
+    stub.constructor_name = StringView("", 0);
 
     // Structure: [?pub, struct_name, ?'.', ?constructor_name, '(', params, ')', ...]
     SyntaxNode* struct_name_node = find_child(node, SyntaxKind::TokenIdentifier);

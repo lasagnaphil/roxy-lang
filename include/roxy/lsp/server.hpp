@@ -4,9 +4,11 @@
 #include "roxy/core/string.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/core/json.hpp"
+#include "roxy/core/tsl/robin_map.h"
 #include "roxy/lsp/transport.hpp"
 #include "roxy/lsp/protocol.hpp"
 #include "roxy/lsp/indexer.hpp"
+#include "roxy/lsp/global_index.hpp"
 
 namespace rx {
 
@@ -17,6 +19,13 @@ struct OpenDocument {
     FileStubs stubs;
 };
 
+struct WorkspaceFile {
+    String uri;
+    String file_path;
+    String content;
+    FileStubs stubs;
+};
+
 class LspServer {
 public:
     void run();
@@ -24,6 +33,9 @@ public:
 private:
     LspTransport m_transport;
     Vector<OpenDocument> m_open_documents;
+    GlobalIndex m_global_index;
+    String m_workspace_root;
+    tsl::robin_map<String, WorkspaceFile> m_workspace_files;
     bool m_initialized = false;
     bool m_shutdown_requested = false;
 
@@ -38,10 +50,20 @@ private:
     void handle_did_change(const JsonValue& params);
     void handle_did_close(const JsonValue& params);
     void handle_document_symbol(const JsonValue& params, i64 id);
+    void handle_definition(const JsonValue& params, i64 id);
 
     // Core logic
     void parse_and_publish_diagnostics(OpenDocument& doc);
     void publish_diagnostics(StringView uri, const Vector<LspDiagnostic>& diagnostics);
+
+    // Workspace helpers
+    void scan_workspace();
+    void index_workspace_file(const String& file_path);
+    String file_path_to_uri(StringView file_path);
+    String uri_to_file_path(StringView uri);
+
+    // Get source text for any file (open doc or workspace file)
+    const char* get_file_content(StringView uri, u32& out_length);
 
     // Document management
     OpenDocument* find_document(StringView uri);

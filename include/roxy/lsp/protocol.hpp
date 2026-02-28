@@ -56,4 +56,18 @@ inline LspRange text_range_to_lsp_range(const char* source, u32 length, TextRang
     };
 }
 
+// Convert an LspPosition to a byte offset in source text
+inline u32 lsp_position_to_offset(const char* source, u32 length, LspPosition pos) {
+    u32 line = 0;
+    u32 offset = 0;
+    while (offset < length && line < pos.line) {
+        if (source[offset] == '\n') line++;
+        offset++;
+    }
+    // Now at start of target line, advance by character count
+    offset += pos.character;
+    if (offset > length) offset = length;
+    return offset;
+}
+
 } // namespace rx

@@ -218,4 +218,16 @@ struct SyntaxTree {
     u32 source_length;
 };
 
+// Find the deepest (most specific) node containing the given byte offset
+inline SyntaxNode* find_node_at_offset(SyntaxNode* root, u32 offset) {
+    if (!root) return nullptr;
+    if (offset < root->range.start || offset >= root->range.end) return nullptr;
+
+    for (u32 i = 0; i < root->children.size(); i++) {
+        SyntaxNode* result = find_node_at_offset(root->children[i], offset);
+        if (result) return result;
+    }
+    return root;
+}
+
 } // namespace rx

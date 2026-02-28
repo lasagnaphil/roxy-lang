@@ -92,6 +92,7 @@ target_link_libraries(roxy_vm roxy_compiler)
 add_library(roxy_lsp
     src/roxy/lsp/lsp_parser.cpp
     src/roxy/lsp/indexer.cpp
+    src/roxy/lsp/global_index.cpp
     src/roxy/lsp/transport.cpp
     src/roxy/lsp/server.cpp
 )
@@ -122,6 +123,7 @@ add_executable(roxy_tests
     tests/unit/test_json.cpp
     tests/unit/test_lsp_parser.cpp
     tests/unit/test_indexer.cpp
+    tests/unit/test_global_index.cpp
 
     # E2E tests
     tests/e2e/test_helpers.cpp

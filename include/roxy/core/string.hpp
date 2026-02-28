@@ -127,3 +127,19 @@ public:
 };
 
 } // namespace rx
+
+// Specialization of std::hash for rx::String so that
+// tsl::robin_map<String, ...> works without explicit hash/equal args.
+namespace std {
+template<>
+struct hash<rx::String> {
+    size_t operator()(const rx::String& s) const noexcept {
+        rx::u64 h = 14695981039346656037ULL;
+        for (rx::u32 i = 0; i < s.size(); i++) {
+            h ^= static_cast<rx::u64>(s[i]);
+            h *= 1099511628211ULL;
+        }
+        return static_cast<size_t>(h);
+    }
+};
+}

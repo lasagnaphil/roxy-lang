@@ -3,8 +3,19 @@
 #include "roxy/lsp/indexer.hpp"
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/format.hpp"
+#include "roxy/core/file.hpp"
 
 #include <cstring>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Windows.h>
+#else
+#include <dirent.h>
+#include <sys/stat.h>
+#endif
 
 namespace rx {
 
@@ -79,6 +90,8 @@ void LspServer::dispatch(char* message_buf, u32 message_length) {
         handle_did_close(params);
     } else if (method == StringView("textDocument/documentSymbol")) {
         handle_document_symbol(params, request_id);
+    } else if (method == StringView("textDocument/definition")) {
+        handle_definition(params, request_id);
     } else {
         // Unknown method
         if (has_id) {
@@ -90,6 +103,17 @@ void LspServer::dispatch(char* message_buf, u32 message_length) {
 
 void LspServer::handle_initialize(const JsonValue& params, i64 id) {
     m_initialized = true;
+
+    // Extract workspace root from rootUri or rootPath
+    const JsonValue* root_uri = params.find("rootUri");
+    if (root_uri && root_uri->is_string()) {
+        m_workspace_root = uri_to_file_path(root_uri->as_string());
+    } else {
+        const JsonValue* root_path = params.find("rootPath");
+        if (root_path && root_path->is_string()) {
+            m_workspace_root = String(root_path->as_string());
+        }
+    }
 
     // Build capabilities response using JsonWriter
     String result;
@@ -109,6 +133,7 @@ void LspServer::handle_initialize(const JsonValue& params, i64 id) {
             writer.write_end_object();
 
             writer.write_key_bool("documentSymbolProvider", true);
+            writer.write_key_bool("definitionProvider", true);
         }
         writer.write_end_object();
 
@@ -116,13 +141,18 @@ void LspServer::handle_initialize(const JsonValue& params, i64 id) {
         writer.write_start_object();
         {
             writer.write_key_string("name", "roxy-lsp");
-            writer.write_key_string("version", "0.1.0");
+            writer.write_key_string("version", "0.2.0");
         }
         writer.write_end_object();
     }
     writer.write_end_object();
 
     m_transport.write_response(id, StringView(result.data(), result.size()));
+
+    // Scan workspace after responding
+    if (!m_workspace_root.empty()) {
+        scan_workspace();
+    }
 }
 
 void LspServer::handle_initialized() {
@@ -158,6 +188,7 @@ void LspServer::handle_did_open(const JsonValue& params) {
     m_open_documents.push_back(std::move(doc));
 
     parse_and_publish_diagnostics(m_open_documents.back());
+    m_global_index.update_file(m_open_documents.back().uri, m_open_documents.back().stubs);
 }
 
 void LspServer::handle_did_change(const JsonValue& params) {
@@ -188,6 +219,7 @@ void LspServer::handle_did_change(const JsonValue& params) {
     doc->content = String(text_val->as_string());
 
     parse_and_publish_diagnostics(*doc);
+    m_global_index.update_file(doc->uri, doc->stubs);
 }
 
 void LspServer::handle_did_close(const JsonValue& params) {
@@ -214,6 +246,29 @@ void LspServer::handle_did_close(const JsonValue& params) {
     // Clear diagnostics for closed document
     Vector<LspDiagnostic> empty;
     publish_diagnostics(uri, empty);
+
+    // If file is in workspace, re-read from disk and re-index
+    String file_path = uri_to_file_path(uri);
+    String uri_str(uri);
+    auto workspace_it = m_workspace_files.find(uri_str);
+    if (workspace_it != m_workspace_files.end()) {
+        // Re-read from disk
+        Vector<u8> file_buf;
+        if (read_file_to_buf(file_path.c_str(), file_buf)) {
+            workspace_it.value().content = String(reinterpret_cast<const char*>(file_buf.data()),
+                                                  file_buf.size() > 0 ? static_cast<u32>(file_buf.size() - 1) : 0);
+
+            // Re-parse and re-index
+            BumpAllocator allocator(8192);
+            Lexer lexer(workspace_it.value().content.data(), workspace_it.value().content.size());
+            LspParser parser(lexer, allocator);
+            SyntaxTree tree = parser.parse();
+
+            FileIndexer indexer;
+            workspace_it.value().stubs = indexer.index(tree.root);
+            m_global_index.update_file(uri_str, workspace_it.value().stubs);
+        }
+    }
 }
 
 void LspServer::parse_and_publish_diagnostics(OpenDocument& doc) {
@@ -475,6 +530,306 @@ void LspServer::handle_document_symbol(const JsonValue& params, i64 id) {
     writer.write_end_array();
 
     m_transport.write_response(id, StringView(result.data(), result.size()));
+}
+
+void LspServer::handle_definition(const JsonValue& params, i64 id) {
+    const JsonValue* text_document = params.find("textDocument");
+    if (!text_document || !text_document->is_object()) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    const JsonValue* uri_val = text_document->find("uri");
+    if (!uri_val || !uri_val->is_string()) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    const JsonValue* position_val = params.find("position");
+    if (!position_val || !position_val->is_object()) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    StringView uri = uri_val->as_string();
+
+    // Find the document
+    OpenDocument* doc = find_document(uri);
+    if (!doc) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    // Extract position
+    const JsonValue* line_val = position_val->find("line");
+    const JsonValue* char_val = position_val->find("character");
+    if (!line_val || !line_val->is_int() || !char_val || !char_val->is_int()) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    LspPosition cursor_pos;
+    cursor_pos.line = static_cast<u32>(line_val->as_int());
+    cursor_pos.character = static_cast<u32>(char_val->as_int());
+
+    // Convert to byte offset
+    u32 byte_offset = lsp_position_to_offset(
+        doc->content.data(), doc->content.size(), cursor_pos);
+
+    // Re-parse to get fresh CST
+    BumpAllocator allocator(8192);
+    Lexer lexer(doc->content.data(), doc->content.size());
+    LspParser parser(lexer, allocator);
+    SyntaxTree tree = parser.parse();
+
+    // Find deepest node at cursor
+    SyntaxNode* node = find_node_at_offset(tree.root, byte_offset);
+    if (!node || node->kind != SyntaxKind::TokenIdentifier) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    // Extract the identifier text
+    StringView identifier = node->token.text();
+
+    // Determine context by walking up parent chain
+    const SymbolLocation* match = nullptr;
+    Vector<SymbolLocation> matches;
+
+    SyntaxNode* parent = node->parent;
+    if (parent) {
+        if (parent->kind == SyntaxKind::NodeTypeExpr) {
+            // Type reference — search structs, enums, traits
+            match = m_global_index.find_struct(identifier);
+            if (!match) match = m_global_index.find_enum(identifier);
+            if (!match) match = m_global_index.find_trait(identifier);
+        } else if (parent->kind == SyntaxKind::NodeCallExpr) {
+            // Function call — search functions first, then constructors
+            match = m_global_index.find_function(identifier);
+            if (!match) {
+                // Could be a constructor call (e.g., Point(...))
+                match = m_global_index.find_struct(identifier);
+            }
+        } else if (parent->kind == SyntaxKind::NodeStaticGetExpr) {
+            // Enum::Variant or static access — skip for Phase 3a
+            // Fall through to find_any
+            matches = m_global_index.find_any(identifier);
+        } else {
+            // Default — search all categories
+            matches = m_global_index.find_any(identifier);
+        }
+    } else {
+        matches = m_global_index.find_any(identifier);
+    }
+
+    // Build response
+    if (match) {
+        // Single match — return Location
+        u32 target_length = 0;
+        const char* target_source = get_file_content(
+            StringView(match->uri.data(), match->uri.size()), target_length);
+
+        if (!target_source) {
+            m_transport.write_response(id, "null");
+            return;
+        }
+
+        LspRange target_range = text_range_to_lsp_range(
+            target_source, target_length, match->name_range);
+
+        String result;
+        JsonWriter writer(result);
+        writer.write_start_object();
+        writer.write_key_string("uri", StringView(match->uri.data(), match->uri.size()));
+        writer.write_key("range");
+        write_lsp_range(writer, target_range);
+        writer.write_end_object();
+
+        m_transport.write_response(id, StringView(result.data(), result.size()));
+    } else if (!matches.empty()) {
+        if (matches.size() == 1) {
+            // Single match from find_any
+            const SymbolLocation& loc = matches[0];
+            u32 target_length = 0;
+            const char* target_source = get_file_content(
+                StringView(loc.uri.data(), loc.uri.size()), target_length);
+
+            if (!target_source) {
+                m_transport.write_response(id, "null");
+                return;
+            }
+
+            LspRange target_range = text_range_to_lsp_range(
+                target_source, target_length, loc.name_range);
+
+            String result;
+            JsonWriter writer(result);
+            writer.write_start_object();
+            writer.write_key_string("uri", StringView(loc.uri.data(), loc.uri.size()));
+            writer.write_key("range");
+            write_lsp_range(writer, target_range);
+            writer.write_end_object();
+
+            m_transport.write_response(id, StringView(result.data(), result.size()));
+        } else {
+            // Multiple matches — return Location[]
+            String result;
+            JsonWriter writer(result);
+            writer.write_start_array();
+
+            for (u32 i = 0; i < matches.size(); i++) {
+                const SymbolLocation& loc = matches[i];
+                u32 target_length = 0;
+                const char* target_source = get_file_content(
+                    StringView(loc.uri.data(), loc.uri.size()), target_length);
+
+                if (!target_source) continue;
+
+                LspRange target_range = text_range_to_lsp_range(
+                    target_source, target_length, loc.name_range);
+
+                writer.write_start_object();
+                writer.write_key_string("uri", StringView(loc.uri.data(), loc.uri.size()));
+                writer.write_key("range");
+                write_lsp_range(writer, target_range);
+                writer.write_end_object();
+            }
+
+            writer.write_end_array();
+            m_transport.write_response(id, StringView(result.data(), result.size()));
+        }
+    } else {
+        m_transport.write_response(id, "null");
+    }
+}
+
+// --- Workspace helpers ---
+
+void LspServer::scan_workspace() {
+    if (m_workspace_root.empty()) return;
+
+    // Recursive directory walk collecting .roxy files
+    Vector<String> directories;
+    directories.push_back(m_workspace_root);
+
+    while (!directories.empty()) {
+        String dir_path = std::move(directories.back());
+        directories.pop_back();
+
+#ifdef _WIN32
+        String search_path = dir_path;
+        search_path.append("\\*", 2);
+
+        WIN32_FIND_DATAA find_data;
+        HANDLE find_handle = FindFirstFileA(search_path.c_str(), &find_data);
+        if (find_handle == INVALID_HANDLE_VALUE) continue;
+
+        do {
+            if (find_data.cFileName[0] == '.') continue;
+
+            String full_path = dir_path;
+            full_path.push_back('\\');
+            full_path.append(find_data.cFileName, static_cast<u32>(strlen(find_data.cFileName)));
+
+            if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                directories.push_back(std::move(full_path));
+            } else {
+                u32 name_len = static_cast<u32>(strlen(find_data.cFileName));
+                if (name_len > 5 && memcmp(find_data.cFileName + name_len - 5, ".roxy", 5) == 0) {
+                    index_workspace_file(full_path);
+                }
+            }
+        } while (FindNextFileA(find_handle, &find_data));
+
+        FindClose(find_handle);
+#else
+        DIR* dir = opendir(dir_path.c_str());
+        if (!dir) continue;
+
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            if (entry->d_name[0] == '.') continue;
+
+            String full_path = dir_path;
+            full_path.push_back('/');
+            full_path.append(entry->d_name, static_cast<u32>(strlen(entry->d_name)));
+
+            struct stat st;
+            if (stat(full_path.c_str(), &st) != 0) continue;
+
+            if (S_ISDIR(st.st_mode)) {
+                directories.push_back(std::move(full_path));
+            } else if (S_ISREG(st.st_mode)) {
+                u32 name_len = static_cast<u32>(strlen(entry->d_name));
+                if (name_len > 5 && memcmp(entry->d_name + name_len - 5, ".roxy", 5) == 0) {
+                    index_workspace_file(full_path);
+                }
+            }
+        }
+
+        closedir(dir);
+#endif
+    }
+}
+
+void LspServer::index_workspace_file(const String& file_path) {
+    Vector<u8> file_buf;
+    if (!read_file_to_buf(file_path.c_str(), file_buf)) return;
+
+    String uri = file_path_to_uri(StringView(file_path.data(), file_path.size()));
+    u32 content_length = file_buf.size() > 0 ? static_cast<u32>(file_buf.size() - 1) : 0;
+
+    WorkspaceFile workspace_file;
+    workspace_file.uri = uri;
+    workspace_file.file_path = file_path;
+    workspace_file.content = String(reinterpret_cast<const char*>(file_buf.data()), content_length);
+
+    // Parse and index
+    BumpAllocator allocator(8192);
+    Lexer lexer(workspace_file.content.data(), workspace_file.content.size());
+    LspParser parser(lexer, allocator);
+    SyntaxTree tree = parser.parse();
+
+    FileIndexer indexer;
+    workspace_file.stubs = indexer.index(tree.root);
+
+    m_global_index.update_file(workspace_file.uri, workspace_file.stubs);
+    m_workspace_files[uri] = std::move(workspace_file);
+}
+
+String LspServer::file_path_to_uri(StringView path) {
+    String result("file://");
+    result.append(path.data(), path.size());
+    return result;
+}
+
+String LspServer::uri_to_file_path(StringView uri) {
+    // Strip "file://" prefix
+    if (uri.size() > 7 && memcmp(uri.data(), "file://", 7) == 0) {
+        return String(StringView(uri.data() + 7, uri.size() - 7));
+    }
+    return String(uri);
+}
+
+const char* LspServer::get_file_content(StringView uri, u32& out_length) {
+    // Check open documents first
+    for (u32 i = 0; i < m_open_documents.size(); i++) {
+        if (StringView(m_open_documents[i].uri.data(), m_open_documents[i].uri.size()) == uri) {
+            out_length = m_open_documents[i].content.size();
+            return m_open_documents[i].content.data();
+        }
+    }
+
+    // Check workspace files
+    String uri_str(uri);
+    auto it = m_workspace_files.find(uri_str);
+    if (it != m_workspace_files.end()) {
+        out_length = it->second.content.size();
+        return it->second.content.data();
+    }
+
+    out_length = 0;
+    return nullptr;
 }
 
 OpenDocument* LspServer::find_document(StringView uri) {
