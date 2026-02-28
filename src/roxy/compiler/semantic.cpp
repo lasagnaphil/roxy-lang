@@ -632,6 +632,65 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
         }
     }
 
+    // Generate synthetic default destructors for structs that have fields
+    // needing cleanup. A field needs cleanup if:
+    //   - It is a uniq reference (needs destructor call + memory free)
+    //   - It is a value-type struct whose type has a default destructor
+    // Use a fixpoint loop because adding a synthetic destructor to Inner
+    // may cause Outer (which embeds Inner) to also need one.
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto* decl : program->declarations) {
+            if (!decl || decl->kind != AstKind::DeclStruct) continue;
+            if (decl->struct_decl.type_params.size() > 0) continue;
+
+            Type* struct_type = m_type_env.named_type_by_name(decl->struct_decl.name);
+            if (!struct_type || !struct_type->is_struct()) continue;
+
+            StructTypeInfo& struct_info = struct_type->struct_info;
+
+            // Check if struct already has a default destructor
+            bool has_default_dtor = false;
+            for (const auto& dtor : struct_info.destructors) {
+                if (dtor.name.empty()) {
+                    has_default_dtor = true;
+                    break;
+                }
+            }
+            if (has_default_dtor) continue;
+
+            // Check if any field needs cleanup
+            bool needs_cleanup = false;
+            for (const auto& field : struct_info.fields) {
+                if (!field.type) continue;
+                if (field.type->kind == TypeKind::Uniq) {
+                    needs_cleanup = true;
+                    break;
+                }
+                if (field.type->is_struct()) {
+                    // Check if field's struct type has a default destructor
+                    for (const auto& dtor : field.type->struct_info.destructors) {
+                        if (dtor.name.empty()) {
+                            needs_cleanup = true;
+                            break;
+                        }
+                    }
+                    if (needs_cleanup) break;
+                }
+            }
+            if (!needs_cleanup) continue;
+
+            // Add synthetic default destructor (decl = nullptr marks it as synthetic)
+            DestructorInfo synthetic_dtor;
+            synthetic_dtor.name = StringView();
+            synthetic_dtor.param_types = Span<Type*>();
+            synthetic_dtor.decl = nullptr;
+            append_destructor(struct_info, synthetic_dtor);
+            changed = true;
+        }
+    }
+
     // Now validate all trait implementations
     validate_trait_implementations();
 }
@@ -848,6 +907,30 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                 for (Decl* dtor_decl : inst->instantiated_destructors) {
                     analyze_destructor_body(dtor_decl, inst->concrete_type);
                 }
+
+                // Generate synthetic default destructor if struct has fields needing cleanup
+                StructTypeInfo& concrete_info = inst->concrete_type->struct_info;
+                bool needs_cleanup = false;
+                for (const auto& field : concrete_info.fields) {
+                    if (!field.type) continue;
+                    if (field.type->kind == TypeKind::Uniq) {
+                        needs_cleanup = true;
+                        break;
+                    }
+                    if (field.type->is_struct()) {
+                        for (const auto& dtor : field.type->struct_info.destructors) {
+                            if (dtor.name.empty()) { needs_cleanup = true; break; }
+                        }
+                        if (needs_cleanup) break;
+                    }
+                }
+                if (needs_cleanup) {
+                    DestructorInfo synthetic_dtor;
+                    synthetic_dtor.name = StringView();
+                    synthetic_dtor.param_types = Span<Type*>();
+                    synthetic_dtor.decl = nullptr;
+                    append_destructor(concrete_info, synthetic_dtor);
+                }
             }
         }
 
@@ -953,6 +1036,29 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         method_info.return_type = return_type;
         method_info.decl = method_decl;
         append_method(struct_type_info, method_info);
+    }
+
+    // Generate synthetic default destructor if struct has fields needing cleanup
+    bool needs_cleanup = false;
+    for (const auto& field : struct_type_info.fields) {
+        if (!field.type) continue;
+        if (field.type->kind == TypeKind::Uniq) {
+            needs_cleanup = true;
+            break;
+        }
+        if (field.type->is_struct()) {
+            for (const auto& dtor : field.type->struct_info.destructors) {
+                if (dtor.name.empty()) { needs_cleanup = true; break; }
+            }
+            if (needs_cleanup) break;
+        }
+    }
+    if (needs_cleanup) {
+        DestructorInfo synthetic_dtor;
+        synthetic_dtor.name = StringView();
+        synthetic_dtor.param_types = Span<Type*>();
+        synthetic_dtor.decl = nullptr;
+        append_destructor(struct_type_info, synthetic_dtor);
     }
 
     inst->is_analyzed = true;
@@ -2847,9 +2953,11 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
                 return;
             }
 
-            // Check argument types and modifiers
-            DestructorDecl* dtor_decl = &dtor->decl->destructor_decl;
-            check_call_args(ds.arguments, dtor->param_types, dtor_decl->params, stmt->loc);
+            // Check argument types and modifiers (skip for synthetic destructors with no decl)
+            if (dtor->decl) {
+                DestructorDecl* dtor_decl = &dtor->decl->destructor_decl;
+                check_call_args(ds.arguments, dtor->param_types, dtor_decl->params, stmt->loc);
+            }
         } else {
             // No destructor defined with this name
             if (!ds.destructor_name.empty()) {

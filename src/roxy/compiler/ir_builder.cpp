@@ -205,6 +205,48 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
 
     if (m_has_error) return nullptr;
 
+    // Generate synthesized default destructors for structs with uniq fields
+    for (auto* decl : program->declarations) {
+        if (!decl) continue;
+
+        if (decl->kind == AstKind::DeclStruct) {
+            // Skip generic struct templates
+            if (decl->struct_decl.type_params.size() > 0) continue;
+            Type* struct_type = m_type_env.named_type_by_name(decl->struct_decl.name);
+            if (!struct_type || !struct_type->is_struct()) continue;
+
+            // Check for synthetic default destructor (decl == nullptr)
+            for (const auto& dtor : struct_type->struct_info.destructors) {
+                if (dtor.name.empty() && dtor.decl == nullptr) {
+                    IRFunction* func = build_synthesized_default_destructor(struct_type);
+                    module->functions.push_back(func);
+                    break;
+                }
+            }
+        }
+    }
+
+    if (m_has_error) return nullptr;
+
+    // Generate synthesized default destructors for generic struct instances with uniq fields
+    for (auto* instance : m_type_env.generics().all_struct_instances()) {
+        if (instance->is_analyzed && instance->concrete_type) {
+            Type* concrete_type = instance->concrete_type;
+            if (!concrete_type->is_struct()) continue;
+
+            // Check for synthetic default destructor (decl == nullptr)
+            for (const auto& dtor : concrete_type->struct_info.destructors) {
+                if (dtor.name.empty() && dtor.decl == nullptr) {
+                    IRFunction* func = build_synthesized_default_destructor(concrete_type);
+                    module->functions.push_back(func);
+                    break;
+                }
+            }
+        }
+    }
+
+    if (m_has_error) return nullptr;
+
     return module;
 }
 
@@ -358,6 +400,11 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
         Span<ValueId> dtor_args = alloc_span<ValueId>(1);
         dtor_args[0] = m_current_func->params[0].value;  // 'self' is first parameter
         emit_call(parent_dtor_name, dtor_args, m_types.void_type());
+    }
+
+    // For default destructors, clean up uniq fields after user body and parent chain
+    if (decl->name.empty()) {
+        emit_field_cleanup(m_current_func->params[0].value, struct_type);
     }
 
     // End function body
@@ -521,6 +568,49 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
     }
 
     // End function body (will add implicit return)
+    end_function_body();
+
+    IRFunction* result = m_current_func;
+    m_current_func = nullptr;
+    m_current_block = nullptr;
+    return result;
+}
+
+IRFunction* IRBuilder::build_synthesized_default_destructor(Type* struct_type) {
+    m_current_func = m_allocator.emplace<IRFunction>();
+
+    StructTypeInfo& struct_type_info = struct_type->struct_info;
+    m_current_func->name = mangle_destructor(struct_type_info.name);
+
+    // Set up parameters - only 'self'
+    setup_parameters({}, struct_type);
+
+    // Destructor returns void
+    m_current_func->return_type = m_types.void_type();
+
+    // Begin function body
+    begin_function_body(false);
+
+    ValueId self_ptr = m_current_func->params[0].value;
+
+    // Chain to parent's default destructor if present
+    Type* parent_type = struct_type->struct_info.parent;
+    if (parent_type) {
+        for (const auto& dtor : parent_type->struct_info.destructors) {
+            if (dtor.name.empty()) {
+                StringView parent_dtor_name = mangle_destructor(parent_type->struct_info.name);
+                Span<ValueId> dtor_args = alloc_span<ValueId>(1);
+                dtor_args[0] = self_ptr;
+                emit_call(parent_dtor_name, dtor_args, m_types.void_type());
+                break;
+            }
+        }
+    }
+
+    // Clean up uniq fields
+    emit_field_cleanup(self_ptr, struct_type);
+
+    // End function body
     end_function_body();
 
     IRFunction* result = m_current_func;
@@ -3305,6 +3395,73 @@ void IRBuilder::emit_implicit_delete(UniqLocalInfo& info) {
     }
 
     info.is_moved = true;  // Prevent double-delete
+}
+
+void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
+    StructTypeInfo& struct_info = struct_type->struct_info;
+    // Process fields in reverse order (LIFO, like C++ member destruction)
+    for (i32 i = static_cast<i32>(struct_info.fields.size()) - 1; i >= 0; i--) {
+        const FieldInfo& field = struct_info.fields[i];
+        if (!field.type) continue;
+
+        if (field.type->kind == TypeKind::Uniq) {
+            // Uniq field: null check → call destructor → Delete (free heap memory)
+            Type* inner_type = field.type->ref_info.inner_type;
+
+            ValueId field_val = emit_get_field(self_ptr, field.name,
+                field.slot_offset, field.slot_count, field.type);
+
+            // Uniq fields may be null (uninitialized or already moved)
+            ValueId null_val = emit_const_null();
+            ValueId is_null = emit_binary(IROp::EqI, field_val, null_val, m_types.bool_type());
+
+            IRBlock* cleanup_block = create_block("field_cleanup");
+            IRBlock* skip_block = create_block("field_skip");
+
+            finish_block_branch(is_null, skip_block->id, cleanup_block->id);
+
+            set_current_block(cleanup_block);
+
+            if (inner_type && inner_type->is_struct()) {
+                for (const auto& dtor : inner_type->struct_info.destructors) {
+                    if (dtor.name.empty()) {
+                        StringView dtor_name = mangle_destructor(inner_type->struct_info.name);
+                        Vector<ValueId> call_args;
+                        call_args.push_back(field_val);
+                        emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
+                        break;
+                    }
+                }
+            }
+
+            IRInst* inst = emit_inst(IROp::Delete, m_types.void_type());
+            if (inst) {
+                inst->unary = field_val;
+            }
+
+            finish_block_goto(skip_block->id);
+            set_current_block(skip_block);
+
+        } else if (field.type->is_struct()) {
+            // Value-type struct field: call its default destructor if it has one.
+            // No null check needed (embedded, always valid). No Delete (not heap-allocated).
+            bool has_default_dtor = false;
+            for (const auto& dtor : field.type->struct_info.destructors) {
+                if (dtor.name.empty()) {
+                    has_default_dtor = true;
+                    break;
+                }
+            }
+            if (has_default_dtor) {
+                ValueId field_addr = emit_get_field_addr(self_ptr, field.name,
+                    field.slot_offset, field.type);
+                StringView dtor_name = mangle_destructor(field.type->struct_info.name);
+                Vector<ValueId> call_args;
+                call_args.push_back(field_addr);
+                emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
+            }
+        }
+    }
 }
 
 void IRBuilder::emit_scope_cleanup(u32 min_scope_depth) {

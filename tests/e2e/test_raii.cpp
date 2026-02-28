@@ -536,3 +536,279 @@ TEST_CASE("E2E - RAII: named-only destructor with break is compile error") {
     BCModule* module = compile(allocator, source);
     CHECK(module == nullptr);  // Should fail to compile
 }
+
+// ============================================================================
+// Recursive Uniq Field Cleanup (Synthetic Destructors)
+// ============================================================================
+
+TEST_CASE("E2E - RAII: uniq field auto-cleanup at scope exit") {
+    // When a struct with a uniq field goes out of scope,
+    // the uniq field should be automatically deleted
+    const char* source = R"(
+        struct Inner {
+            value: i32;
+        }
+
+        fun delete Inner() {
+            print(f"{"~Inner"}");
+        }
+
+        struct Outer {
+            child: uniq Inner;
+        }
+
+        fun main(): i32 {
+            var o: uniq Outer = uniq Outer();
+            o.child = uniq Inner();
+            o.child.value = 42;
+            var result: i32 = o.child.value;
+            return result;
+            // o is implicitly deleted, which should also delete o.child
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+    CHECK(result.stdout_output == "~Inner\n");
+}
+
+TEST_CASE("E2E - RAII: uniq field cleanup with explicit delete") {
+    // Explicit delete of a struct with uniq fields should clean up the fields
+    const char* source = R"CODE(
+        struct Node {
+            value: i32;
+        }
+
+        fun delete Node() {
+            print(f"~Node({self.value})");
+        }
+
+        struct Container {
+            item: uniq Node;
+        }
+
+        fun main(): i32 {
+            var c: uniq Container = uniq Container();
+            c.item = uniq Node();
+            c.item.value = 99;
+            delete c;
+            return 0;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "~Node(99)\n");
+}
+
+TEST_CASE("E2E - RAII: recursive uniq field cleanup (tree structure)") {
+    // A tree with uniq children should recursively clean up all nodes
+    const char* source = R"CODE(
+        struct Node {
+            value: i32;
+            left: uniq Node;
+            right: uniq Node;
+        }
+
+        fun delete Node() {
+            print(f"~Node({self.value})");
+        }
+
+        fun main(): i32 {
+            var root: uniq Node = uniq Node();
+            root.value = 1;
+
+            root.left = uniq Node();
+            root.left.value = 2;
+
+            root.right = uniq Node();
+            root.right.value = 3;
+
+            return 0;
+            // root deleted → calls ~Node(1), then deletes right(3), left(2)
+            // Exact order: user dtor runs first, then fields in reverse order
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    // Root's dtor runs first, then right field (reverse order), then left field
+    // Each child's dtor runs before the child is deleted
+    CHECK(result.stdout_output == "~Node(1)\n~Node(3)\n~Node(2)\n");
+}
+
+TEST_CASE("E2E - RAII: user-defined dtor + auto field cleanup") {
+    // When a struct has BOTH a user-defined destructor AND uniq fields,
+    // the user destructor runs first, then fields are cleaned up
+    const char* source = R"CODE(
+        struct Child {
+            name: string;
+        }
+
+        fun delete Child() {
+            print(f"~Child({self.name})");
+        }
+
+        struct Parent {
+            child: uniq Child;
+            label: string;
+        }
+
+        fun delete Parent() {
+            print(f"~Parent({self.label})");
+        }
+
+        fun main(): i32 {
+            var p: uniq Parent = uniq Parent();
+            p.label = "root";
+            p.child = uniq Child();
+            p.child.name = "kid";
+            return 0;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    // Parent's user dtor runs first, then child field cleanup
+    CHECK(result.stdout_output == "~Parent(root)\n~Child(kid)\n");
+}
+
+TEST_CASE("E2E - RAII: multiple uniq fields cleanup order") {
+    // Multiple uniq fields should be cleaned up in reverse declaration order
+    const char* source = R"CODE(
+        struct Item {
+            id: i32;
+        }
+
+        fun delete Item() {
+            print(f"~Item({self.id})");
+        }
+
+        struct Holder {
+            first: uniq Item;
+            second: uniq Item;
+            third: uniq Item;
+        }
+
+        fun main(): i32 {
+            var h: uniq Holder = uniq Holder();
+            h.first = uniq Item();
+            h.first.id = 1;
+            h.second = uniq Item();
+            h.second.id = 2;
+            h.third = uniq Item();
+            h.third.id = 3;
+            return 0;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    // Reverse declaration order: third, second, first
+    CHECK(result.stdout_output == "~Item(3)\n~Item(2)\n~Item(1)\n");
+}
+
+TEST_CASE("E2E - RAII: uniq field without destructor (no struct inner type)") {
+    // A struct with a uniq field pointing to a struct without any destructor
+    // should still free the memory (no crash, no leak)
+    const char* source = R"(
+        struct Simple {
+            value: i32;
+        }
+
+        struct Wrapper {
+            item: uniq Simple;
+        }
+
+        fun main(): i32 {
+            var w: uniq Wrapper = uniq Wrapper();
+            w.item = uniq Simple();
+            w.item.value = 42;
+            var result: i32 = w.item.value;
+            return result;
+            // w is deleted, which should also delete w.item (no dtor, just free)
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - RAII: value-type struct field with destructor") {
+    // When a struct embeds a value-type struct field whose type has a
+    // destructor (due to owning uniq fields), the field's destructor
+    // should be called automatically.
+    const char* source = R"CODE(
+        struct Leaf {
+            value: i32;
+        }
+
+        fun delete Leaf() {
+            print(f"~Leaf({self.value})");
+        }
+
+        struct Inner {
+            child: uniq Leaf;
+        }
+
+        // Inner gets a synthetic destructor because it has a uniq field.
+        // Outer gets a synthetic destructor because it has a value-type
+        // struct field (inner) whose type has a default destructor.
+
+        struct Outer {
+            inner: Inner;
+        }
+
+        fun main(): i32 {
+            var o: uniq Outer = uniq Outer();
+            o.inner.child = uniq Leaf();
+            o.inner.child.value = 77;
+            return 0;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    // Outer's synthetic dtor calls Inner's synthetic dtor on the embedded field,
+    // which in turn cleans up the uniq Leaf child.
+    CHECK(result.stdout_output == "~Leaf(77)\n");
+}
+
+TEST_CASE("E2E - RAII: deeply nested value-type fields with destructors") {
+    // Three levels of nesting: C embeds B embeds A, where A has a uniq field.
+    // All three should get synthetic destructors via the fixpoint loop.
+    const char* source = R"CODE(
+        struct Resource {
+            id: i32;
+        }
+
+        fun delete Resource() {
+            print(f"~Resource({self.id})");
+        }
+
+        struct A {
+            res: uniq Resource;
+        }
+
+        struct B {
+            a: A;
+        }
+
+        struct C {
+            b: B;
+        }
+
+        fun main(): i32 {
+            var c: uniq C = uniq C();
+            c.b.a.res = uniq Resource();
+            c.b.a.res.id = 42;
+            return 0;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "~Resource(42)\n");
+}

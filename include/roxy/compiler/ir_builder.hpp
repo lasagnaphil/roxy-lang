@@ -42,6 +42,9 @@ public:
     // Build synthesized default constructor for a struct type
     IRFunction* build_synthesized_default_constructor(Type* struct_type);
 
+    // Build synthesized default destructor for a struct type (cleans up uniq fields)
+    IRFunction* build_synthesized_default_destructor(Type* struct_type);
+
     // Error reporting
     bool has_error() const { return m_has_error; }
     const char* error() const { return m_error; }
@@ -216,6 +219,9 @@ private:
 
     // RAII helpers: emit destructor + Delete for a uniq local
     void emit_implicit_delete(UniqLocalInfo& info);
+
+    // Emit cleanup code for uniq fields of a struct (called from destructors)
+    void emit_field_cleanup(ValueId self_ptr, Type* struct_type);
 
     // Emit cleanup (implicit deletes) for all live uniqs at or above min_scope_depth
     void emit_scope_cleanup(u32 min_scope_depth);
