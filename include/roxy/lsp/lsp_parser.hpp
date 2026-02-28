@@ -55,20 +55,31 @@ private:
     template <typename T>
     Span<T> alloc_span(const Vector<T>& vec);
 
+    // Modifier tokens captured before dispatching to sub-parsers
+    struct DeclModifiers {
+        Token pub_token;
+        Token native_token;
+        bool has_pub = false;
+        bool has_native = false;
+    };
+
     // Grammar productions — declarations
     SyntaxNode* parse_program();
     SyntaxNode* parse_declaration();
-    SyntaxNode* parse_var_decl(bool has_pub);
-    SyntaxNode* parse_fun_decl(bool has_pub, bool has_native);
-    SyntaxNode* parse_method_decl(NodeBuilder& builder, bool has_pub, bool has_native);
-    SyntaxNode* parse_constructor_decl(bool has_pub);
-    SyntaxNode* parse_destructor_decl(bool has_pub);
-    SyntaxNode* parse_struct_decl(bool has_pub);
-    SyntaxNode* parse_enum_decl(bool has_pub);
-    SyntaxNode* parse_trait_decl(bool has_pub);
+    SyntaxNode* parse_var_decl(const DeclModifiers& mods);
+    SyntaxNode* parse_fun_decl(const DeclModifiers& mods);
+    SyntaxNode* parse_method_decl(NodeBuilder& builder, const DeclModifiers& mods);
+    SyntaxNode* parse_constructor_decl(const DeclModifiers& mods);
+    SyntaxNode* parse_destructor_decl(const DeclModifiers& mods);
+    SyntaxNode* parse_struct_decl(const DeclModifiers& mods);
+    SyntaxNode* parse_enum_decl(const DeclModifiers& mods);
+    SyntaxNode* parse_trait_decl(const DeclModifiers& mods);
     SyntaxNode* parse_import_decl();
-    SyntaxNode* parse_field_decl(bool has_pub);
+    SyntaxNode* parse_field_decl(const DeclModifiers& mods);
     SyntaxNode* parse_when_field_decl();
+
+    // Helper: insert pub/native modifier tokens as leading children
+    void insert_modifier_children(NodeBuilder& builder, const DeclModifiers& mods);
 
     // Grammar productions — statements
     SyntaxNode* parse_statement();

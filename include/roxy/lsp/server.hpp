@@ -6,6 +6,7 @@
 #include "roxy/core/json.hpp"
 #include "roxy/lsp/transport.hpp"
 #include "roxy/lsp/protocol.hpp"
+#include "roxy/lsp/indexer.hpp"
 
 namespace rx {
 
@@ -13,6 +14,7 @@ struct OpenDocument {
     String uri;
     String content;
     i32 version;
+    FileStubs stubs;
 };
 
 class LspServer {
@@ -35,6 +37,7 @@ private:
     void handle_did_open(const JsonValue& params);
     void handle_did_change(const JsonValue& params);
     void handle_did_close(const JsonValue& params);
+    void handle_document_symbol(const JsonValue& params, i64 id);
 
     // Core logic
     void parse_and_publish_diagnostics(OpenDocument& doc);

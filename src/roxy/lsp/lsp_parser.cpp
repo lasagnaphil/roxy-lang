@@ -296,57 +296,44 @@ SyntaxNode* LspParser::parse_program() {
 // --- Declaration parsing ---
 
 SyntaxNode* LspParser::parse_declaration() {
-    bool has_pub = false;
-    bool has_native = false;
-
-    // Try pub modifier
-    if (check(TokenKind::KwPub)) {
-        has_pub = true;
-    }
-
-    // Look ahead to determine which declaration type
-    if (has_pub && check(TokenKind::KwPub)) {
-        // We'll consume pub inside each declaration handler
-    }
-
-    if (check(TokenKind::KwVar) || (has_pub && check(TokenKind::KwPub))) {
-        // Need more lookahead for pub + var
-    }
+    DeclModifiers mods;
 
     // Consume pub if present
     if (match(TokenKind::KwPub)) {
-        has_pub = true;
+        mods.has_pub = true;
+        mods.pub_token = m_previous;
     }
 
     if (match(TokenKind::KwVar)) {
-        return parse_var_decl(has_pub);
+        return parse_var_decl(mods);
     }
 
     if (match(TokenKind::KwNative)) {
-        has_native = true;
+        mods.has_native = true;
+        mods.native_token = m_previous;
     }
 
     if (match(TokenKind::KwFun)) {
         if (match(TokenKind::KwNew)) {
-            if (has_native) {
+            if (mods.has_native) {
                 add_diagnostic(
                     TextRange{m_previous.loc.offset, m_previous.loc.offset + m_previous.length},
                     "constructors cannot be 'native'");
             }
-            return parse_constructor_decl(has_pub);
+            return parse_constructor_decl(mods);
         }
         if (match(TokenKind::KwDelete)) {
-            if (has_native) {
+            if (mods.has_native) {
                 add_diagnostic(
                     TextRange{m_previous.loc.offset, m_previous.loc.offset + m_previous.length},
                     "destructors cannot be 'native'");
             }
-            return parse_destructor_decl(has_pub);
+            return parse_destructor_decl(mods);
         }
-        return parse_fun_decl(has_pub, has_native);
+        return parse_fun_decl(mods);
     }
 
-    if (has_native) {
+    if (mods.has_native) {
         add_diagnostic(
             TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
             "'native' can only precede 'fun'");
@@ -355,18 +342,18 @@ SyntaxNode* LspParser::parse_declaration() {
     }
 
     if (match(TokenKind::KwStruct)) {
-        return parse_struct_decl(has_pub);
+        return parse_struct_decl(mods);
     }
 
     if (match(TokenKind::KwEnum)) {
-        return parse_enum_decl(has_pub);
+        return parse_enum_decl(mods);
     }
 
     if (match(TokenKind::KwTrait)) {
-        return parse_trait_decl(has_pub);
+        return parse_trait_decl(mods);
     }
 
-    if (has_pub) {
+    if (mods.has_pub) {
         add_diagnostic(
             TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
             "'pub' can only precede declarations");
@@ -382,10 +369,24 @@ SyntaxNode* LspParser::parse_declaration() {
     return parse_statement();
 }
 
-SyntaxNode* LspParser::parse_var_decl(bool has_pub) {
+void LspParser::insert_modifier_children(NodeBuilder& builder, const DeclModifiers& mods) {
+    if (mods.has_pub) {
+        builder.children.push_back(make_token_node(mods.pub_token));
+        builder.start_offset = mods.pub_token.loc.offset;
+    }
+    if (mods.has_native) {
+        builder.children.push_back(make_token_node(mods.native_token));
+        if (!mods.has_pub) {
+            builder.start_offset = mods.native_token.loc.offset;
+        }
+    }
+}
+
+SyntaxNode* LspParser::parse_var_decl(const DeclModifiers& mods) {
     // 'var' already consumed
     auto builder = begin_node(SyntaxKind::NodeVarDecl);
     builder.start_offset = m_previous.loc.offset; // start from 'var' keyword
+    insert_modifier_children(builder, mods);
 
     // Name
     Token name_token = consume_or_synthetic(TokenKind::Identifier, "Expected variable name");
@@ -411,10 +412,11 @@ SyntaxNode* LspParser::parse_var_decl(bool has_pub) {
     return finish_node(builder);
 }
 
-SyntaxNode* LspParser::parse_fun_decl(bool has_pub, bool has_native) {
+SyntaxNode* LspParser::parse_fun_decl(const DeclModifiers& mods) {
     // 'fun' already consumed
     auto builder = begin_node(SyntaxKind::NodeFunDecl);
     builder.start_offset = m_previous.loc.offset;
+    insert_modifier_children(builder, mods);
 
     Token name_token = consume_or_synthetic(TokenKind::Identifier, "Expected function name");
     builder.children.push_back(make_token_node(name_token));
@@ -428,7 +430,7 @@ SyntaxNode* LspParser::parse_fun_decl(bool has_pub, bool has_native) {
     // Check for method syntax: fun Name.method() or fun Name<T>.method()
     if (match(TokenKind::Dot)) {
         builder.children.push_back(make_token_node(m_previous)); // '.'
-        return parse_method_decl(builder, has_pub, has_native);
+        return parse_method_decl(builder, mods);
     }
 
     // Regular function
@@ -449,7 +451,7 @@ SyntaxNode* LspParser::parse_fun_decl(bool has_pub, bool has_native) {
     }
 
     // Body or semicolon
-    if (has_native) {
+    if (mods.has_native) {
         Token semi = consume_or_synthetic(TokenKind::Semicolon, "Expected ';' after native function declaration");
         builder.children.push_back(make_token_node(semi));
     } else {
@@ -467,8 +469,8 @@ SyntaxNode* LspParser::parse_fun_decl(bool has_pub, bool has_native) {
     return finish_node(builder);
 }
 
-SyntaxNode* LspParser::parse_method_decl(NodeBuilder& builder, bool has_pub, bool has_native) {
-    // Already in the builder: struct_name, optional type_params, '.'
+SyntaxNode* LspParser::parse_method_decl(NodeBuilder& builder, const DeclModifiers& mods) {
+    // Already in the builder: modifier tokens, struct_name, optional type_params, '.'
     builder.kind = SyntaxKind::NodeMethodDecl;
 
     // Method name - allow 'new' and 'delete' as method names
@@ -508,7 +510,7 @@ SyntaxNode* LspParser::parse_method_decl(NodeBuilder& builder, bool has_pub, boo
     }
 
     // Body, semicolon, or nothing (required trait method)
-    if (has_native) {
+    if (mods.has_native) {
         Token semi = consume_or_synthetic(TokenKind::Semicolon, "Expected ';' after native method declaration");
         builder.children.push_back(make_token_node(semi));
     } else if (match(TokenKind::Semicolon)) {
@@ -526,10 +528,11 @@ SyntaxNode* LspParser::parse_method_decl(NodeBuilder& builder, bool has_pub, boo
     return finish_node(builder);
 }
 
-SyntaxNode* LspParser::parse_constructor_decl(bool has_pub) {
+SyntaxNode* LspParser::parse_constructor_decl(const DeclModifiers& mods) {
     // 'new' already consumed
     auto builder = begin_node(SyntaxKind::NodeConstructorDecl);
     builder.start_offset = m_previous.loc.offset;
+    insert_modifier_children(builder, mods);
 
     Token struct_name = consume_or_synthetic(TokenKind::Identifier, "Expected struct name");
     builder.children.push_back(make_token_node(struct_name));
@@ -563,10 +566,11 @@ SyntaxNode* LspParser::parse_constructor_decl(bool has_pub) {
     return finish_node(builder);
 }
 
-SyntaxNode* LspParser::parse_destructor_decl(bool has_pub) {
+SyntaxNode* LspParser::parse_destructor_decl(const DeclModifiers& mods) {
     // 'delete' already consumed
     auto builder = begin_node(SyntaxKind::NodeDestructorDecl);
     builder.start_offset = m_previous.loc.offset;
+    insert_modifier_children(builder, mods);
 
     Token struct_name = consume_or_synthetic(TokenKind::Identifier, "Expected struct name");
     builder.children.push_back(make_token_node(struct_name));
@@ -600,10 +604,11 @@ SyntaxNode* LspParser::parse_destructor_decl(bool has_pub) {
     return finish_node(builder);
 }
 
-SyntaxNode* LspParser::parse_struct_decl(bool has_pub) {
+SyntaxNode* LspParser::parse_struct_decl(const DeclModifiers& mods) {
     // 'struct' already consumed
     auto builder = begin_node(SyntaxKind::NodeStructDecl);
     builder.start_offset = m_previous.loc.offset;
+    insert_modifier_children(builder, mods);
 
     Token name_token = consume_or_synthetic(TokenKind::Identifier, "Expected struct name");
     builder.children.push_back(make_token_node(name_token));
@@ -626,14 +631,21 @@ SyntaxNode* LspParser::parse_struct_decl(bool has_pub) {
 
     // Parse struct body: fields, when clauses, methods
     while (!check(TokenKind::RightBrace) && !is_at_end()) {
-        bool member_has_pub = match(TokenKind::KwPub);
-        bool member_has_native = match(TokenKind::KwNative);
+        DeclModifiers member_mods;
+        if (match(TokenKind::KwPub)) {
+            member_mods.has_pub = true;
+            member_mods.pub_token = m_previous;
+        }
+        if (match(TokenKind::KwNative)) {
+            member_mods.has_native = true;
+            member_mods.native_token = m_previous;
+        }
 
         if (match(TokenKind::KwFun)) {
-            SyntaxNode* method = parse_fun_decl(member_has_pub, member_has_native);
+            SyntaxNode* method = parse_fun_decl(member_mods);
             builder.children.push_back(method);
         } else if (match(TokenKind::KwWhen)) {
-            if (member_has_native || member_has_pub) {
+            if (member_mods.has_native || member_mods.has_pub) {
                 add_diagnostic(
                     TextRange{m_previous.loc.offset, m_previous.loc.offset + m_previous.length},
                     "'when' cannot have 'pub' or 'native' modifiers");
@@ -641,12 +653,12 @@ SyntaxNode* LspParser::parse_struct_decl(bool has_pub) {
             SyntaxNode* when_decl = parse_when_field_decl();
             builder.children.push_back(when_decl);
         } else if (check(TokenKind::Identifier)) {
-            if (member_has_native) {
+            if (member_mods.has_native) {
                 add_diagnostic(
                     TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
                     "'native' can only precede 'fun'");
             }
-            SyntaxNode* field = parse_field_decl(member_has_pub);
+            SyntaxNode* field = parse_field_decl(member_mods);
             builder.children.push_back(field);
         } else {
             // Unrecognized token in struct body — skip and report error
@@ -661,8 +673,9 @@ SyntaxNode* LspParser::parse_struct_decl(bool has_pub) {
     return finish_node(builder);
 }
 
-SyntaxNode* LspParser::parse_field_decl(bool has_pub) {
+SyntaxNode* LspParser::parse_field_decl(const DeclModifiers& mods) {
     auto builder = begin_node(SyntaxKind::NodeFieldDecl);
+    insert_modifier_children(builder, mods);
 
     Token field_name = consume_or_synthetic(TokenKind::Identifier, "Expected field name");
     builder.children.push_back(make_token_node(field_name));
@@ -728,7 +741,8 @@ SyntaxNode* LspParser::parse_when_field_decl() {
         // Parse fields until next case or end
         while (!check(TokenKind::KwCase) && !check(TokenKind::RightBrace) && !is_at_end()) {
             if (check(TokenKind::Identifier)) {
-                SyntaxNode* field = parse_field_decl(false);
+                DeclModifiers no_mods;
+                SyntaxNode* field = parse_field_decl(no_mods);
                 case_builder.children.push_back(field);
             } else {
                 case_builder.children.push_back(make_error_node("Expected field declaration"));
@@ -745,10 +759,11 @@ SyntaxNode* LspParser::parse_when_field_decl() {
     return finish_node(builder);
 }
 
-SyntaxNode* LspParser::parse_enum_decl(bool has_pub) {
+SyntaxNode* LspParser::parse_enum_decl(const DeclModifiers& mods) {
     // 'enum' already consumed
     auto builder = begin_node(SyntaxKind::NodeEnumDecl);
     builder.start_offset = m_previous.loc.offset;
+    insert_modifier_children(builder, mods);
 
     Token name_token = consume_or_synthetic(TokenKind::Identifier, "Expected enum name");
     builder.children.push_back(make_token_node(name_token));
@@ -780,10 +795,11 @@ SyntaxNode* LspParser::parse_enum_decl(bool has_pub) {
     return finish_node(builder);
 }
 
-SyntaxNode* LspParser::parse_trait_decl(bool has_pub) {
+SyntaxNode* LspParser::parse_trait_decl(const DeclModifiers& mods) {
     // 'trait' already consumed
     auto builder = begin_node(SyntaxKind::NodeTraitDecl);
     builder.start_offset = m_previous.loc.offset;
+    insert_modifier_children(builder, mods);
 
     Token name_token = consume_or_synthetic(TokenKind::Identifier, "Expected trait name");
     builder.children.push_back(make_token_node(name_token));
@@ -958,7 +974,8 @@ SyntaxNode* LspParser::parse_for_stmt() {
     if (match(TokenKind::Semicolon)) {
         builder.children.push_back(make_token_node(m_previous)); // ';'
     } else if (match(TokenKind::KwVar)) {
-        SyntaxNode* var_decl = parse_var_decl(false);
+        DeclModifiers no_mods;
+        SyntaxNode* var_decl = parse_var_decl(no_mods);
         builder.children.push_back(var_decl);
     } else {
         SyntaxNode* init_expr = parse_expr_stmt();

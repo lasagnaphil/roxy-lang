@@ -97,6 +97,8 @@ enum class SyntaxKind : u16 {
     TokenKwThrow,
     TokenKwFinally,
 
+    TokenKwYield,
+
     TokenKwSelf,
     TokenKwSuper,
     TokenKwNew,
