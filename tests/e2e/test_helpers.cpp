@@ -157,7 +157,9 @@ public:
         GetTempPathA(MAX_PATH, temp_path);
         GetTempFileNameA(temp_path, "roxy", 0, m_temp_path);
 #else
-        strcpy(m_temp_path, "/tmp/roxy_test_XXXXXX");
+        const char* tmpdir = getenv("TMPDIR");
+        if (!tmpdir) tmpdir = "/tmp";
+        snprintf(m_temp_path, sizeof(m_temp_path), "%s/roxy_test_XXXXXX", tmpdir);
         int fd = mkstemp(m_temp_path);
         if (fd >= 0) close(fd);
 #endif
