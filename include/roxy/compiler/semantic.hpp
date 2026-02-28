@@ -127,6 +127,8 @@ private:
     void analyze_continue_stmt(Stmt* stmt);
     void analyze_delete_stmt(Stmt* stmt);
     void analyze_when_stmt(Stmt* stmt);
+    void analyze_throw_stmt(Stmt* stmt);
+    void analyze_try_stmt(Stmt* stmt);
 
     // Expression analysis - returns the type of the expression
     Type* analyze_expr(Expr* expr);

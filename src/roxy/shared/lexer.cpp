@@ -179,7 +179,14 @@ TokenKind Lexer::identifier_type() {
         case 'c':
             if (m_current - m_start > 1) {
                 switch (m_source[m_start + 1]) {
-                    case 'a': return check_keyword(2, 2, "se", TokenKind::KwCase);
+                    case 'a':
+                        if (m_current - m_start > 2) {
+                            switch (m_source[m_start + 2]) {
+                                case 's': return check_keyword(3, 1, "e", TokenKind::KwCase);
+                                case 't': return check_keyword(3, 2, "ch", TokenKind::KwCatch);
+                            }
+                        }
+                        break;
                     case 'o': return check_keyword(2, 6, "ntinue", TokenKind::KwContinue);
                 }
             }
@@ -197,6 +204,7 @@ TokenKind Lexer::identifier_type() {
             if (m_current - m_start > 1) {
                 switch (m_source[m_start + 1]) {
                     case 'a': return check_keyword(2, 3, "lse", TokenKind::KwFalse);
+                    case 'i': return check_keyword(2, 5, "nally", TokenKind::KwFinally);
                     case 'o': return check_keyword(2, 1, "r", TokenKind::KwFor);
                     case 'r': return check_keyword(2, 2, "om", TokenKind::KwFrom);
                     case 'u': return check_keyword(2, 1, "n", TokenKind::KwFun);
@@ -249,11 +257,13 @@ TokenKind Lexer::identifier_type() {
         case 't':
             if (m_current - m_start > 1) {
                 switch (m_source[m_start + 1]) {
+                    case 'h': return check_keyword(2, 3, "row", TokenKind::KwThrow);
                     case 'r':
                         if (m_current - m_start > 2) {
                             switch (m_source[m_start + 2]) {
                                 case 'u': return check_keyword(3, 1, "e", TokenKind::KwTrue);
                                 case 'a': return check_keyword(3, 2, "it", TokenKind::KwTrait);
+                                case 'y': return check_keyword(3, 0, "", TokenKind::KwTry);
                             }
                         }
                         break;

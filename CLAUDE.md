@@ -97,7 +97,7 @@ Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA
 ### Keywords
 
 - Types/modifiers: `true false nil var fun struct enum pub native`
-- Control flow: `if else for while break continue return when case`
+- Control flow: `if else for while break continue return when case try catch throw finally`
 - OOP: `self super new delete`
 - References: `uniq ref weak out inout`
 - Imports: `import from`
@@ -176,6 +176,10 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Generics** - Parametric polymorphism with monomorphization. Generic functions (`fun identity<T>(v: T): T`) and generic structs (`struct Box<T> { value: T; }`). Supports local type inference from function arguments and struct field values (`identity(42)` infers T=i32, `Box { value = 42 }` infers T=i32). Explicit type arguments also supported. Angle bracket syntax with trial-parse disambiguation. Trait bounds on type parameters (`<T: Printable>`, `<T: Add<i32> + Hash>`) with Phase A instantiation-site checking.
 **Details:** `docs/internals/generics.md` | **Tests:** `tests/e2e/test_generics.cpp`
 
+### Exception Handling
+**Exceptions** - Structured error recovery via `try`/`catch`/`throw`/`finally`. Built-in `Exception` trait with required `message(): string` method. Concrete-type catch matching via `type_id` comparison, catch-all with opaque `ExceptionRef` type. Handler tables for zero-overhead on non-exception path. Stack unwinding with frame cleanup.
+**Details:** `docs/internals/exceptions.md` | **Tests:** `tests/e2e/test_exceptions.cpp`
+
 ## Planned Components (Not Yet Implemented)
 
 - C backend (AOT compilation via SSA IR → C transpilation, see `docs/internals/c-backend.md`)
@@ -227,4 +231,5 @@ On Windows, use `.exe` extension.
   - `traits.md` - Traits: declarations, required/default methods, trait inheritance, operator dispatch
   - `operator-overloading.md` - Operator traits (arithmetic, comparison, bitwise, unary) with unified primitive/struct dispatch
   - `generics.md` - Generic functions and structs with monomorphization
+  - `exceptions.md` - Exception handling: try/catch/throw/finally, Exception trait, handler tables
   - `c-backend.md` - C backend design plan (AOT compilation via SSA IR → C)

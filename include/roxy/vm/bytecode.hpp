@@ -133,6 +133,10 @@ enum class Opcode : u8 {
     REF_DEC     = 0xE1,     // ref_dec(reg)
     WEAK_CHECK  = 0xE2,     // dst = weak_valid(src1)
 
+    // 0xD2-0xD3: Exception Handling
+    THROW       = 0xD2,     // throw regs[a] (exception object pointer)
+    CALL_EXC_MSG = 0xD3,    // dst = exception_message(regs[src]) - call stored message fn ptr
+
     // 0xF0-0xFD: Debug/Error
     TRAP        = 0xF0,     // runtime error trap (for variant field access checks)
 
@@ -253,6 +257,15 @@ struct BCTypeInfo {
     u32 slot_count;       // For field access
 };
 
+// Exception handler entry in bytecode
+struct BCExceptionHandler {
+    u32 try_start_pc;     // Protected range start (inclusive, offset into code[])
+    u32 try_end_pc;       // Protected range end (exclusive)
+    u32 handler_pc;       // Catch handler entry point
+    u32 type_id;          // Concrete type_id to match (0 = catch-all)
+    u8 exception_reg;     // Register to store exception ptr in handler
+};
+
 // Bytecode function
 struct BCFunction {
     StringView name;            // Function name
@@ -262,6 +275,7 @@ struct BCFunction {
     u32 local_stack_slots;      // Local stack slots needed for struct data
     Vector<u32> code;           // Bytecode instructions
     Vector<BCConstant> constants; // Constant pool
+    Vector<BCExceptionHandler> exception_handlers; // Exception handler table
 
     BCFunction() : param_count(0), param_register_count(0), register_count(0), local_stack_slots(0) {}
 };

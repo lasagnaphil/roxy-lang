@@ -15,6 +15,7 @@ constexpr i64 IMM16_MIN = -32768;
 constexpr i64 IMM16_MAX = 32767;
 
 class NativeRegistry;
+class TypeEnv;
 
 // Liveness data for register allocation
 struct LiveRange {
@@ -35,6 +36,9 @@ public:
 
     // Set native registry (needed for copy constructor emission)
     void set_registry(NativeRegistry* registry) { m_registry = registry; }
+
+    // Set type environment (needed for exception handler type resolution)
+    void set_type_env(TypeEnv* type_env) { m_type_env = type_env; }
 
     // Build bytecode module from IR module
     // Returns nullptr if an internal error occurred
@@ -158,6 +162,9 @@ private:
 
     // Native registry for copy constructor lookup
     NativeRegistry* m_registry = nullptr;
+
+    // Type environment for exception type resolution
+    TypeEnv* m_type_env = nullptr;
 
     // Error state
     bool m_has_error;

@@ -83,6 +83,12 @@ const char* token_kind_to_string(TokenKind kind) {
         case TokenKind::KwWhen:         return "when";
         case TokenKind::KwCase:         return "case";
 
+        // Keywords - Exception handling
+        case TokenKind::KwTry:          return "try";
+        case TokenKind::KwCatch:        return "catch";
+        case TokenKind::KwThrow:        return "throw";
+        case TokenKind::KwFinally:      return "finally";
+
         // Keywords - OOP
         case TokenKind::KwSelf:         return "self";
         case TokenKind::KwSuper:        return "super";

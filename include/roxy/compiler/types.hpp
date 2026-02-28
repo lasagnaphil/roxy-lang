@@ -52,6 +52,9 @@ enum class TypeKind : u8 {
     // Unsuffixed integer literal type (polymorphic, defaults to i32)
     IntLiteral,
 
+    // Exception handling
+    ExceptionRef,  // Opaque handle in catch-all blocks, only message() callable
+
     // Special types
     Nil,    // Type of nil literal, assignable to reference types
     Error,  // Sentinel for type errors, allows analysis to continue
@@ -317,6 +320,10 @@ struct Type {
         return kind == TypeKind::IntLiteral;
     }
 
+    bool is_exception_ref() const {
+        return kind == TypeKind::ExceptionRef;
+    }
+
     // Get the inner type for reference types
     Type* inner_type() const {
         if (is_reference()) {
@@ -369,6 +376,7 @@ public:
     Type* error_type() { return m_error; }
     Type* self_type() { return m_self; }
     Type* int_literal_type() { return m_int_literal; }
+    Type* exception_ref_type() { return m_exception_ref; }
 
     // Factory methods for compound types (with interning)
     Type* list_type(Type* element_type);
@@ -424,6 +432,7 @@ private:
     Type* m_error;
     Type* m_self;
     Type* m_int_literal;
+    Type* m_exception_ref;
 
     // Type interning cache for compound types
     tsl::robin_map<Type*, Type*, TypeHash, TypeEqual> m_interned;

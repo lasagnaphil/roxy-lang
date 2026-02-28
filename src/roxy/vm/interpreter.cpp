@@ -824,6 +824,87 @@ bool interpret(RoxyVM* vm) {
                 vm->error = "Runtime error: variant field access with wrong discriminant";
                 return false;
 
+            case Opcode::THROW: {
+                void* exception_ptr = reg_as_ptr(regs[a]);
+                if (!exception_ptr) {
+                    vm->error = "throw: null exception";
+                    return false;
+                }
+
+                ObjectHeader* header = get_header_from_data(exception_ptr);
+                u32 exception_type_id = header->type_id;
+
+                // Stack unwinding: search for a matching exception handler
+                // Save PC for current frame before searching
+                frame->pc = pc;
+
+                while (true) {
+                    // Compute current PC offset within the function
+                    u32 current_pc = static_cast<u32>(frame->pc - func->code.data());
+
+                    // Search exception handlers in current function
+                    bool handler_found = false;
+                    for (const auto& handler : func->exception_handlers) {
+                        if (current_pc >= handler.try_start_pc && current_pc < handler.try_end_pc) {
+                            // Check type match
+                            bool type_matches = false;
+                            if (handler.type_id == 0) {
+                                // Catch-all
+                                type_matches = true;
+                            } else {
+                                // Typed catch: compare global type_ids
+                                u32 handler_global_type_id = vm->module->type_ids[handler.type_id - 1];
+                                type_matches = (exception_type_id == handler_global_type_id);
+                            }
+
+                            if (type_matches) {
+                                // Found a matching handler - jump to it
+                                regs[handler.exception_reg] = reg_from_ptr(exception_ptr);
+                                pc = func->code.data() + handler.handler_pc;
+                                handler_found = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (handler_found) break;
+
+                    // No handler in this frame - pop frame and continue unwinding
+                    u32 local_stack_base = frame->local_stack_base;
+                    vm->call_stack.pop_back();
+                    vm->register_top -= func->register_count;
+                    vm->local_stack_top = local_stack_base;
+
+                    if (vm->call_stack.empty()) {
+                        // Unhandled exception - free exception object and set error
+                        object_free(vm, exception_ptr);
+                        vm->error = "Unhandled exception";
+                        vm->running = false;
+                        return false;
+                    }
+
+                    // Restore caller frame
+                    frame = &vm->call_stack.back();
+                    func = frame->func;
+                    regs = frame->registers;
+                    // frame->pc already contains the right PC from saved state
+                }
+
+                break;
+            }
+
+            case Opcode::CALL_EXC_MSG: {
+                // For now, a simple stub - will be implemented when ExceptionRef.message() is needed
+                void* exception_ptr = reg_as_ptr(regs[b]);
+                if (exception_ptr) {
+                    // Call the stored message function for this exception type
+                    // For now, return a generic message
+                    void* msg = string_alloc(vm, "exception", 9);
+                    regs[a] = reg_from_ptr(msg);
+                }
+                break;
+            }
+
             case Opcode::HALT:
                 vm->running = false;
                 return true;

@@ -148,6 +148,9 @@ enum class IROp : u8 {
 
     // Type casting
     Cast,           // Generic cast - uses source_type in CastData
+
+    // Exception handling
+    Throw,          // Throw exception: unary = exception object pointer. Block terminator.
 };
 
 // Constant data for ConstXxx instructions
@@ -321,6 +324,23 @@ struct IRBlock {
     IRBlock() : id(BlockId::invalid()) {}
 };
 
+// Exception handler metadata for IR
+struct IRExceptionHandler {
+    BlockId try_entry;       // First block of try body
+    BlockId try_exit;        // Last block of try body (inclusive)
+    BlockId handler_block;   // Catch handler entry block
+    u32 type_id = 0;         // Concrete type_id to match (0 = catch-all)
+    StringView type_name = StringView(nullptr, 0);  // Struct name for the catch type (empty for catch-all)
+};
+
+// Finally handler metadata for IR
+struct IRFinallyInfo {
+    BlockId try_entry;
+    BlockId try_exit;
+    BlockId finally_block;
+    BlockId finally_end_block;  // Block after finally (for normal flow)
+};
+
 // IR Function
 struct IRFunction {
     StringView name;
@@ -329,6 +349,10 @@ struct IRFunction {
     Vector<bool> param_is_ptr;          // True if param is a pointer (out/inout parameter)
     Vector<IRBlock*> blocks;            // Basic blocks, blocks[0] is entry
     u32 next_value_id;                  // Counter for generating unique value IDs
+
+    // Exception handling metadata
+    Vector<IRExceptionHandler> exception_handlers;
+    Vector<IRFinallyInfo> finally_handlers;
 
     IRFunction() : return_type(nullptr), next_value_id(0) {}
 

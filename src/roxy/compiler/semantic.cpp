@@ -218,6 +218,34 @@ bool SemanticAnalyzer::analyze(Program* program) {
         }
     }
 
+    // Pass 1.7c: Register builtin Exception trait
+    if (!m_type_env.exception_type()) {
+        Type* exception_trait_type = m_types.trait_type(StringView("Exception", 9), nullptr);
+        m_type_env.set_exception_type(exception_trait_type);
+        m_type_env.register_trait_type(StringView("Exception", 9), exception_trait_type);
+
+        // Add message() as the required trait method
+        TraitMethodInfo trait_method_info;
+        trait_method_info.name = StringView("message", 7);
+        trait_method_info.param_types = Span<Type*>(nullptr, 0);  // no params besides self
+        trait_method_info.return_type = m_types.string_type();
+        trait_method_info.decl = nullptr;
+        trait_method_info.has_default = false;
+
+        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
+            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
+        tmi_data[0] = trait_method_info;
+        exception_trait_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
+
+        // Register message() method on ExceptionRef built-in type
+        MethodInfo method_info;
+        method_info.name = StringView("message", 7);
+        method_info.param_types = Span<Type*>(nullptr, 0);
+        method_info.return_type = m_types.string_type();
+        method_info.decl = nullptr;
+        m_types.register_primitive_method(TypeKind::ExceptionRef, method_info);
+    }
+
     // Pass 1.8: Register built-in operator trait methods for primitive types
     register_primitive_operator_methods();
 
@@ -1580,7 +1608,7 @@ static Decl* clone_decl(BumpAllocator& alloc, Decl* decl) {
             break;
         default:
             // For statement declarations embedded in Decl, clone the statement
-            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtWhen) {
+            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtTry) {
                 Stmt* cloned = clone_stmt(alloc, &decl->stmt);
                 if (cloned) d->stmt = *cloned;
             }
@@ -2182,6 +2210,12 @@ void SemanticAnalyzer::analyze_stmt(Stmt* stmt) {
         case AstKind::StmtWhen:
             analyze_when_stmt(stmt);
             break;
+        case AstKind::StmtThrow:
+            analyze_throw_stmt(stmt);
+            break;
+        case AstKind::StmtTry:
+            analyze_try_stmt(stmt);
+            break;
         default:
             break;
     }
@@ -2448,6 +2482,84 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
             }
         }
         m_symbols.pop_scope();
+    }
+}
+
+void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
+    ThrowStmt& ts = stmt->throw_stmt;
+
+    Type* expr_type = analyze_expr(ts.expr);
+    if (!expr_type || expr_type->is_error()) return;
+
+    // The thrown expression must be a struct type that implements Exception trait
+    Type* base = expr_type->base_type();
+    if (!base->is_struct()) {
+        error(stmt->loc, "throw expression must be a struct type that implements Exception");
+        return;
+    }
+
+    Type* exception_trait = m_type_env.exception_type();
+    if (!m_types.implements_trait(base, exception_trait)) {
+        error_fmt(stmt->loc, "thrown type '{}' does not implement the Exception trait",
+                  base->struct_info.name);
+    }
+}
+
+void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
+    TryStmt& ts = stmt->try_stmt;
+
+    // Analyze try body
+    analyze_stmt(ts.try_body);
+
+    bool has_catch_all = false;
+
+    // Analyze each catch clause
+    for (u32 i = 0; i < ts.catches.size(); i++) {
+        CatchClause& clause = ts.catches[i];
+
+        if (has_catch_all) {
+            error(clause.loc, "catch clause after catch-all is unreachable");
+            continue;
+        }
+
+        m_symbols.push_scope(ScopeKind::Block);
+
+        if (clause.exception_type) {
+            // Typed catch: catch (e: Type)
+            Type* catch_type = resolve_type_expr(clause.exception_type);
+            if (catch_type && !catch_type->is_error()) {
+                Type* base = catch_type->base_type();
+                if (!base->is_struct()) {
+                    error(clause.loc, "catch type must be a struct type that implements Exception");
+                } else {
+                    Type* exception_trait = m_type_env.exception_type();
+                    if (!m_types.implements_trait(base, exception_trait)) {
+                        error_fmt(clause.loc, "catch type '{}' does not implement the Exception trait",
+                                  base->struct_info.name);
+                    }
+                }
+                clause.resolved_type = catch_type;
+                // Define as ref<Type> in catch scope
+                Type* ref_catch_type = m_types.ref_type(catch_type);
+                m_symbols.define(SymbolKind::Variable, clause.var_name, ref_catch_type,
+                                 clause.loc);
+            }
+        } else {
+            // Catch-all: catch (e)
+            has_catch_all = true;
+            clause.resolved_type = nullptr;
+            // Define as ExceptionRef (opaque handle, only message() callable)
+            m_symbols.define(SymbolKind::Variable, clause.var_name,
+                             m_types.exception_ref_type(), clause.loc);
+        }
+
+        analyze_stmt(clause.body);
+        m_symbols.pop_scope();
+    }
+
+    // Analyze finally body if present
+    if (ts.finally_body) {
+        analyze_stmt(ts.finally_body);
     }
 }
 

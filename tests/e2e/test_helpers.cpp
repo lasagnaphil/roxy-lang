@@ -102,6 +102,7 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
 
     BytecodeBuilder bc_builder;
     bc_builder.set_registry(&registry);
+    bc_builder.set_type_env(&type_env);
     BCModule* module = bc_builder.build(ir_module);
     if (module) {
         // Register native functions with the module for runtime

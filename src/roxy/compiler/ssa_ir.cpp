@@ -95,6 +95,8 @@ const char* ir_op_to_string(IROp op) {
         case IROp::VarAddr:  return "var_addr";
 
         case IROp::Cast:     return "cast";
+
+        case IROp::Throw:    return "throw";
     }
     return "unknown";
 }
@@ -233,6 +235,7 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
         case IROp::WeakCheck:
         case IROp::Delete:
         case IROp::Copy:
+        case IROp::Throw:
             append_str(out, " ");
             append_value_id(out, inst->unary);
             break;
@@ -511,6 +514,15 @@ void IRFunction::reorder_blocks_rpo() {
     stack.push_back({0, 0});
     visited[0] = true;
 
+    // Also seed DFS with exception handler blocks (reachable via exception dispatch)
+    for (const auto& handler : exception_handlers) {
+        if (handler.handler_block.is_valid() && handler.handler_block.id < num_blocks &&
+            !visited[handler.handler_block.id]) {
+            visited[handler.handler_block.id] = true;
+            stack.push_back({handler.handler_block.id, 0});
+        }
+    }
+
     Vector<u32> post_order;
 
     while (!stack.empty()) {
@@ -610,6 +622,21 @@ void IRFunction::reorder_blocks_rpo() {
             default:
                 break;
         }
+    }
+
+    // Remap exception handler block IDs
+    for (auto& handler : exception_handlers) {
+        remap(handler.try_entry);
+        remap(handler.try_exit);
+        remap(handler.handler_block);
+    }
+
+    // Remap finally handler block IDs
+    for (auto& finally_info : finally_handlers) {
+        remap(finally_info.try_entry);
+        remap(finally_info.try_exit);
+        remap(finally_info.finally_block);
+        remap(finally_info.finally_end_block);
     }
 }
 

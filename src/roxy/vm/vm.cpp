@@ -18,6 +18,9 @@ RoxyVM::RoxyVM()
     , local_stack_top(0)
     , running(false)
     , error(nullptr)
+    , in_flight_exception(nullptr)
+    , in_flight_exception_type_id(0)
+    , in_flight_message_fn_idx(UINT32_MAX)
 {}
 
 RoxyVM::~RoxyVM() {

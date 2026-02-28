@@ -82,6 +82,12 @@ enum class TokenKind {
     KwWhen,
     KwCase,
 
+    // Keywords - Exception handling
+    KwTry,
+    KwCatch,
+    KwThrow,
+    KwFinally,
+
     // Keywords - OOP
     KwSelf,
     KwSuper,

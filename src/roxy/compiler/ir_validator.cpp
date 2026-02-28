@@ -76,6 +76,47 @@ bool IRValidator::validate_function(IRFunction* func) {
         if (!validate_block(func, block)) return false;
     }
 
+    // Validate exception handlers
+    u32 num_blocks = static_cast<u32>(func->blocks.size());
+    for (u32 i = 0; i < func->exception_handlers.size(); i++) {
+        const auto& handler = func->exception_handlers[i];
+        if (!handler.try_entry.is_valid() || handler.try_entry.id >= num_blocks) {
+            report_error_fmt("function '{}': exception_handler[{}] try_entry block {} out of range",
+                             func->name, i, handler.try_entry.id);
+            return false;
+        }
+        if (!handler.try_exit.is_valid() || handler.try_exit.id >= num_blocks) {
+            report_error_fmt("function '{}': exception_handler[{}] try_exit block {} out of range",
+                             func->name, i, handler.try_exit.id);
+            return false;
+        }
+        if (!handler.handler_block.is_valid() || handler.handler_block.id >= num_blocks) {
+            report_error_fmt("function '{}': exception_handler[{}] handler_block {} out of range",
+                             func->name, i, handler.handler_block.id);
+            return false;
+        }
+    }
+
+    // Validate finally handlers
+    for (u32 i = 0; i < func->finally_handlers.size(); i++) {
+        const auto& finally_info = func->finally_handlers[i];
+        if (!finally_info.try_entry.is_valid() || finally_info.try_entry.id >= num_blocks) {
+            report_error_fmt("function '{}': finally_handler[{}] try_entry block {} out of range",
+                             func->name, i, finally_info.try_entry.id);
+            return false;
+        }
+        if (!finally_info.try_exit.is_valid() || finally_info.try_exit.id >= num_blocks) {
+            report_error_fmt("function '{}': finally_handler[{}] try_exit block {} out of range",
+                             func->name, i, finally_info.try_exit.id);
+            return false;
+        }
+        if (!finally_info.finally_block.is_valid() || finally_info.finally_block.id >= num_blocks) {
+            report_error_fmt("function '{}': finally_handler[{}] finally_block {} out of range",
+                             func->name, i, finally_info.finally_block.id);
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -96,8 +137,17 @@ bool IRValidator::validate_block(IRFunction* func, IRBlock* block) {
     }
 
     // Validate instructions
+    bool has_throw = false;
     for (IRInst* inst : block->instructions) {
         if (!validate_instruction(func, block, inst)) return false;
+        if (inst->op == IROp::Throw) has_throw = true;
+    }
+
+    // Validate that blocks with Throw have Unreachable terminator
+    if (has_throw && block->terminator.kind != TerminatorKind::Unreachable) {
+        report_error_fmt("function '{}' block {}: block contains Throw but terminator is not Unreachable",
+                         func->name, block->id.id);
+        return false;
     }
 
     // Validate terminator
@@ -163,6 +213,7 @@ bool IRValidator::validate_instruction(IRFunction* func, IRBlock* block, IRInst*
         case IROp::Copy: case IROp::Delete:
         case IROp::RefInc: case IROp::RefDec: case IROp::WeakCheck:
         case IROp::I_TO_F64: case IROp::F64_TO_I: case IROp::I_TO_B: case IROp::B_TO_I:
+        case IROp::Throw:
         {
             if (!value_in_range(inst->unary, next_id)) {
                 report_error_fmt("function '{}' block {}: unary op operand v{} invalid",

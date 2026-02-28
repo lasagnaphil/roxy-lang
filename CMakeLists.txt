@@ -36,6 +36,7 @@ include_directories(include)
 add_library(roxy_core
     src/roxy/core/file.cpp
     src/roxy/core/string.cpp
+    src/roxy/core/json.cpp
 )
 
 # Shared library (lexer, tokens)
@@ -104,6 +105,7 @@ add_executable(roxy_tests
     tests/unit/test_format.cpp
     tests/unit/test_string.cpp
     tests/unit/test_static_string.cpp
+    tests/unit/test_json.cpp
 
     # E2E tests
     tests/e2e/test_helpers.cpp
@@ -129,6 +131,7 @@ add_executable(roxy_tests
     tests/e2e/test_traits.cpp
     tests/e2e/test_generics.cpp
     tests/e2e/test_int_literal.cpp
+    tests/e2e/test_exceptions.cpp
 )
 target_link_libraries(roxy_tests roxy_vm)
 

@@ -36,6 +36,9 @@ public:
     Type* hash_type() const { return m_hash_type; }
     void set_hash_type(Type* type) { m_hash_type = type; }
 
+    Type* exception_type() const { return m_exception_type; }
+    void set_exception_type(Type* type) { m_exception_type = type; }
+
     GenericInstantiator& generics() { return m_generics; }
     const GenericInstantiator& generics() const { return m_generics; }
 
@@ -46,6 +49,7 @@ private:
     tsl::robin_map<StringView, Type*> m_trait_types;
     Type* m_printable_type = nullptr;
     Type* m_hash_type = nullptr;
+    Type* m_exception_type = nullptr;
 };
 
 }

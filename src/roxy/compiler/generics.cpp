@@ -75,6 +75,7 @@ StringView GenericInstantiator::type_name_for_mangling(Type* type) {
         case TypeKind::Nil:    return "nil";
         case TypeKind::Self:   return "Self";
         case TypeKind::IntLiteral: return "i32";
+        case TypeKind::ExceptionRef: return "ExceptionRef";
         case TypeKind::Error:  return "error";
         case TypeKind::TypeParam: return type->type_param_info.name;
         case TypeKind::List: {
@@ -374,6 +375,7 @@ TypeExpr* GenericInstantiator::type_to_type_expr(Type* type, SourceLocation loc)
         case TypeKind::Nil:    result->name = "nil"; break;
         case TypeKind::Self:   result->name = "Self"; break;
         case TypeKind::IntLiteral: result->name = "i32"; break;
+        case TypeKind::ExceptionRef: result->name = "ExceptionRef"; break;
         case TypeKind::Error:  result->name = "error"; break;
 
         case TypeKind::List: {
@@ -631,7 +633,7 @@ Decl* GenericInstantiator::clone_decl(Decl* decl, const TypeSubstitution& subst)
             break;
         default:
             // For statement declarations embedded in Decl, clone the statement
-            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtWhen) {
+            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtTry) {
                 Stmt* cloned = clone_stmt(&decl->stmt, subst);
                 if (cloned) d->stmt = *cloned;
             }

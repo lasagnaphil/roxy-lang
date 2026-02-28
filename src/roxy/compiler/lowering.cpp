@@ -1,4 +1,5 @@
 #include "roxy/compiler/lowering.hpp"
+#include "roxy/compiler/type_env.hpp"
 #include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/natives.hpp"
 
@@ -392,6 +393,74 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     // Patch jump offsets
     patch_jumps();
 
+    // Build exception handler table from IR exception handlers
+    for (const auto& ir_handler : ir_func->exception_handlers) {
+        BCExceptionHandler bc_handler;
+
+        // Convert IR block IDs to PC offsets
+        auto try_entry_it = m_block_offsets.find(ir_handler.try_entry.id);
+        auto try_exit_it = m_block_offsets.find(ir_handler.try_exit.id);
+        auto handler_it = m_block_offsets.find(ir_handler.handler_block.id);
+
+        if (try_entry_it == m_block_offsets.end() ||
+            try_exit_it == m_block_offsets.end() ||
+            handler_it == m_block_offsets.end()) {
+            continue;
+        }
+
+        bc_handler.try_start_pc = try_entry_it->second;
+
+        // try_end_pc is the offset AFTER the last instruction of the try_exit block
+        // Find the next block's offset or end of code
+        BlockId try_exit_id = ir_handler.try_exit;
+        if (try_exit_id.id + 1 < ir_func->blocks.size()) {
+            auto next_block_it = m_block_offsets.find(try_exit_id.id + 1);
+            if (next_block_it != m_block_offsets.end()) {
+                bc_handler.try_end_pc = next_block_it->second;
+            } else {
+                bc_handler.try_end_pc = m_current_func->code.size();
+            }
+        } else {
+            bc_handler.try_end_pc = m_current_func->code.size();
+        }
+
+        bc_handler.handler_pc = handler_it->second;
+
+        // Resolve type_id for typed catches
+        bc_handler.type_id = 0;  // 0 = catch-all
+        if (!ir_handler.type_name.empty()) {
+            // Look up type_id from module's type table
+            auto type_it = m_type_indices.find(ir_handler.type_name);
+            if (type_it != m_type_indices.end()) {
+                // type_indices stores local index; we need the global type_id
+                // which is assigned at module load time. Store the local index + 1
+                // (0 is reserved for catch-all). The VM will resolve using type_ids[].
+                bc_handler.type_id = type_it->second + 1;
+            } else {
+                // Type not yet in type table - register it
+                // Look up the struct type from the type env
+                Type* exc_type = m_type_env ? m_type_env->type_by_name(ir_handler.type_name) : nullptr;
+                if (exc_type && exc_type->is_struct()) {
+                    u16 type_idx = m_module->types.size();
+                    u32 size_bytes = exc_type->struct_info.slot_count * 4;
+                    m_module->types.push_back({ir_handler.type_name, size_bytes, exc_type->struct_info.slot_count});
+                    m_type_indices[ir_handler.type_name] = type_idx;
+                    bc_handler.type_id = type_idx + 1;
+                }
+            }
+        }
+
+        // Get the exception register for the handler block
+        IRBlock* handler_block = ir_func->blocks[ir_handler.handler_block.id];
+        if (!handler_block->params.empty()) {
+            bc_handler.exception_reg = get_result_register(handler_block->params[0].value);
+        } else {
+            bc_handler.exception_reg = 0;
+        }
+
+        m_current_func->exception_handlers.push_back(bc_handler);
+    }
+
     m_current_func->register_count = m_next_reg;
     m_current_func->local_stack_slots = m_next_stack_slot;
     return m_current_func;
@@ -669,6 +738,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                 case IROp::Copy:
                 case IROp::RefInc: case IROp::RefDec: case IROp::WeakCheck:
                 case IROp::Delete:
+                case IROp::Throw:
                     mark_use(m_live_ranges, inst->unary, point);
                     break;
 
@@ -1454,6 +1524,12 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
 
             emit_cast_bytecode(dst, src, source_type, target_type);
             spill_if_needed(inst->result, dst);
+            break;
+        }
+
+        case IROp::Throw: {
+            u8 exc_reg = ensure_in_register(inst->unary, 0);
+            emit_abc(Opcode::THROW, exc_reg, 0, 0);
             break;
         }
     }

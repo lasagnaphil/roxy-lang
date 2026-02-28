@@ -803,6 +803,12 @@ Stmt* Parser::statement() {
     if (match(TokenKind::KwWhen)) {
         return when_statement();
     }
+    if (match(TokenKind::KwThrow)) {
+        return throw_statement();
+    }
+    if (match(TokenKind::KwTry)) {
+        return try_statement();
+    }
 
     return expression_statement();
 }
@@ -1118,6 +1124,91 @@ Stmt* Parser::when_statement() {
     stmt->when_stmt.cases = alloc_span(cases);
     stmt->when_stmt.else_body = else_body;
     stmt->when_stmt.else_loc = else_loc;
+    return stmt;
+}
+
+Stmt* Parser::throw_statement() {
+    SourceLocation loc = m_previous.loc;
+
+    Expr* expr = expression();
+    if (m_has_error) return nullptr;
+
+    consume(TokenKind::Semicolon, "Expected ';' after throw expression");
+    if (m_has_error) return nullptr;
+
+    Stmt* stmt = alloc<Stmt>();
+    stmt->kind = AstKind::StmtThrow;
+    stmt->loc = loc;
+    stmt->throw_stmt.expr = expr;
+    return stmt;
+}
+
+Stmt* Parser::try_statement() {
+    SourceLocation loc = m_previous.loc;
+
+    // Parse try body
+    consume(TokenKind::LeftBrace, "Expected '{' after 'try'");
+    if (m_has_error) return nullptr;
+
+    Stmt* try_body = block_statement();
+    if (m_has_error) return nullptr;
+
+    // Parse catch clauses
+    Vector<CatchClause> catches;
+    while (match(TokenKind::KwCatch)) {
+        CatchClause clause;
+        clause.loc = m_previous.loc;
+        clause.resolved_type = nullptr;
+
+        consume(TokenKind::LeftParen, "Expected '(' after 'catch'");
+        if (m_has_error) return nullptr;
+
+        Token var_token = consume(TokenKind::Identifier, "Expected variable name in catch clause");
+        if (m_has_error) return nullptr;
+        clause.var_name = var_token.text();
+
+        // Optional type annotation
+        if (match(TokenKind::Colon)) {
+            clause.exception_type = type_expression();
+            if (m_has_error) return nullptr;
+        } else {
+            clause.exception_type = nullptr;  // catch-all
+        }
+
+        consume(TokenKind::RightParen, "Expected ')' after catch variable");
+        if (m_has_error) return nullptr;
+
+        consume(TokenKind::LeftBrace, "Expected '{' after catch clause");
+        if (m_has_error) return nullptr;
+
+        clause.body = block_statement();
+        if (m_has_error) return nullptr;
+
+        catches.push_back(clause);
+    }
+
+    // Parse optional finally
+    Stmt* finally_body = nullptr;
+    if (match(TokenKind::KwFinally)) {
+        consume(TokenKind::LeftBrace, "Expected '{' after 'finally'");
+        if (m_has_error) return nullptr;
+
+        finally_body = block_statement();
+        if (m_has_error) return nullptr;
+    }
+
+    // Validate: at least one catch or a finally
+    if (catches.empty() && !finally_body) {
+        report_error("'try' requires at least one 'catch' or a 'finally' block");
+        return nullptr;
+    }
+
+    Stmt* stmt = alloc<Stmt>();
+    stmt->kind = AstKind::StmtTry;
+    stmt->loc = loc;
+    stmt->try_stmt.try_body = try_body;
+    stmt->try_stmt.catches = alloc_span(catches);
+    stmt->try_stmt.finally_body = finally_body;
     return stmt;
 }
 

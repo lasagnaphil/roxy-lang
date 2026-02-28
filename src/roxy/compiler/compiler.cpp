@@ -301,6 +301,7 @@ BCModule* Compiler::link_modules() {
     // since m_func_indices contains all functions from all modules
     BytecodeBuilder bc_builder;
     bc_builder.set_registry(m_combined_registry.get());
+    bc_builder.set_type_env(&m_type_env);
     BCModule* module = bc_builder.build(&merged_ir);
 
     if (!module) {

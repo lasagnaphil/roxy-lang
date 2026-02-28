@@ -44,6 +44,8 @@ enum class AstKind : u8 {
     StmtContinue,
     StmtDelete,
     StmtWhen,
+    StmtThrow,
+    StmtTry,
 
     // Declarations
     DeclVar,
@@ -357,6 +359,27 @@ struct WhenStmt {
     SourceLocation else_loc;      // Location of else keyword
 };
 
+// Throw statement: throw expr;
+struct ThrowStmt {
+    Expr* expr;                   // Expression implementing Exception trait
+};
+
+// Catch clause: catch (e: Type) { ... } or catch (e) { ... }
+struct CatchClause {
+    StringView var_name;          // Catch variable name
+    TypeExpr* exception_type;     // Type annotation (nullptr for catch-all)
+    Stmt* body;                   // Block statement
+    SourceLocation loc;
+    Type* resolved_type;          // Set by semantic analysis
+};
+
+// Try statement: try { ... } catch (e: Type) { ... } finally { ... }
+struct TryStmt {
+    Stmt* try_body;               // Block statement
+    Span<CatchClause> catches;
+    Stmt* finally_body;           // nullptr if no finally
+};
+
 // Statement node
 struct Stmt {
     AstKind kind;
@@ -372,6 +395,8 @@ struct Stmt {
         ContinueStmt continue_stmt;
         DeleteStmt delete_stmt;
         WhenStmt when_stmt;
+        ThrowStmt throw_stmt;
+        TryStmt try_stmt;
     };
 
     Stmt() : kind(AstKind::StmtExpr), loc{0, 0, 0} {

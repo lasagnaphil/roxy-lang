@@ -117,6 +117,10 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::NEW_OBJ:       return "NEW_OBJ";
         case Opcode::DEL_OBJ:       return "DEL_OBJ";
 
+        // Exception Handling
+        case Opcode::THROW:         return "THROW";
+        case Opcode::CALL_EXC_MSG:  return "CALL_EXC_MSG";
+
         // Reference Counting
         case Opcode::REF_INC:       return "REF_INC";
         case Opcode::REF_DEC:       return "REF_DEC";

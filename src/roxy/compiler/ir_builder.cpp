@@ -513,6 +513,7 @@ void IRBuilder::finish_block_return(ValueId value) {
 void IRBuilder::finish_block_unreachable() {
     if (!m_current_block) return;
     m_current_block->terminator.kind = TerminatorKind::Unreachable;
+    m_current_block = nullptr;  // Dead code after unreachable
 }
 
 // Instruction emission
@@ -792,6 +793,12 @@ void IRBuilder::gen_stmt(Stmt* stmt) {
             break;
         case AstKind::StmtWhen:
             gen_when_stmt(stmt);
+            break;
+        case AstKind::StmtThrow:
+            gen_throw_stmt(stmt);
+            break;
+        case AstKind::StmtTry:
+            gen_try_stmt(stmt);
             break;
         default:
             break;
@@ -1195,13 +1202,13 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
     Vector<StringView> modified_in_cases;
     for (auto& wc : ws.cases) {
         for (auto* d : wc.body) {
-            if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtWhen) {
+            if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtTry) {
                 collect_assigned_vars(&d->stmt, modified_in_cases);
             }
         }
     }
     for (auto* d : ws.else_body) {
-        if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtWhen) {
+        if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtTry) {
             collect_assigned_vars(&d->stmt, modified_in_cases);
         }
     }
@@ -1390,6 +1397,172 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
 
     // 9. Continue from merge block, bind phi results
     set_current_block(merge_block);
+    for (const auto& pi : phi_info) {
+        define_local(pi.name, pi.merge_param, pi.type);
+    }
+}
+
+void IRBuilder::gen_throw_stmt(Stmt* stmt) {
+    ThrowStmt& ts = stmt->throw_stmt;
+
+    ValueId exception_val = gen_expr(ts.expr);
+    Type* expr_type = ts.expr->resolved_type;
+
+    // If the expression is a value type (struct on stack), heap-allocate it
+    // Struct literal expressions with is_heap=false are stack-allocated
+    Type* base_type = expr_type->base_type();
+    if (base_type->is_struct() && !expr_type->is_reference()) {
+        // Wrap in heap allocation via New
+        Span<ValueId> empty_args = {};
+        Type* uniq_type = m_types.uniq_type(base_type);
+        ValueId heap_ptr = emit_new(base_type->struct_info.name, empty_args, uniq_type);
+
+        // Copy struct data to heap object
+        u32 slot_count = base_type->struct_info.slot_count;
+        emit_struct_copy(heap_ptr, exception_val, slot_count);
+        exception_val = heap_ptr;
+    }
+
+    // Emit Throw instruction
+    IRInst* inst = emit_inst(IROp::Throw, m_types.void_type());
+    if (inst) {
+        inst->unary = exception_val;
+    }
+
+    // Code after throw is unreachable
+    finish_block_unreachable();
+}
+
+void IRBuilder::gen_try_stmt(Stmt* stmt) {
+    TryStmt& ts = stmt->try_stmt;
+
+    // Collect variables modified in try/catch/finally bodies for phi nodes
+    Vector<StringView> modified_vars;
+    collect_assigned_vars(ts.try_body, modified_vars);
+    for (u32 i = 0; i < ts.catches.size(); i++) {
+        collect_assigned_vars(ts.catches[i].body, modified_vars);
+    }
+    if (ts.finally_body) {
+        collect_assigned_vars(ts.finally_body, modified_vars);
+    }
+
+    // Deduplicate and filter to existing variables
+    struct PhiInfo {
+        StringView name;
+        Type* type;
+        ValueId merge_param;
+    };
+    Vector<PhiInfo> phi_info;
+    for (const auto& name : modified_vars) {
+        LocalVar* local_var = find_local(name);
+        if (!local_var || !local_var->value.is_valid()) continue;
+        bool found = false;
+        for (const auto& pi : phi_info) {
+            if (pi.name == name) { found = true; break; }
+        }
+        if (!found) {
+            phi_info.push_back({name, local_var->type, ValueId::invalid()});
+        }
+    }
+
+    // Create after block with phi params
+    IRBlock* after_block = create_block("try.after");
+    for (auto& pi : phi_info) {
+        pi.merge_param = m_current_func->new_value();
+        after_block->params.push_back({pi.merge_param, pi.type, pi.name});
+    }
+
+    // Helper to build block args for jumping to after_block
+    auto build_after_args = [&]() -> Span<BlockArgPair> {
+        Vector<BlockArgPair> args;
+        for (const auto& pi : phi_info) {
+            ValueId val = lookup_local(pi.name);
+            args.push_back({val});
+        }
+        return alloc_span(args);
+    };
+
+    // Record the first block of the try body
+    IRBlock* try_entry_block = create_block("try.body");
+    finish_block_goto(try_entry_block->id);
+    set_current_block(try_entry_block);
+
+    // Generate try body
+    push_scope();
+    gen_stmt(ts.try_body);
+    pop_scope();
+
+    // Record the last block of try body (the current block after generating body)
+    BlockId try_exit_block_id = m_current_block ? m_current_block->id : try_entry_block->id;
+
+    // If try body didn't terminate (no throw/return/break), jump to after block
+    // (or finally block if present)
+    if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+        if (ts.finally_body) {
+            // Generate inline finally for normal exit
+            push_scope();
+            gen_stmt(ts.finally_body);
+            pop_scope();
+        }
+        if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+            finish_block_goto(after_block->id, build_after_args());
+        }
+    }
+
+    // Generate catch handler blocks
+    for (u32 i = 0; i < ts.catches.size(); i++) {
+        CatchClause& clause = ts.catches[i];
+
+        IRBlock* catch_block = create_block("catch");
+
+        // Add block parameter for exception pointer
+        BlockParam exc_param;
+        exc_param.value = m_current_func->new_value();
+        if (clause.resolved_type) {
+            exc_param.type = m_types.ref_type(clause.resolved_type);
+        } else {
+            exc_param.type = m_types.exception_ref_type();
+        }
+        exc_param.name = clause.var_name;
+        catch_block->params.push_back(exc_param);
+
+        set_current_block(catch_block);
+
+        // Define catch variable in scope
+        push_scope();
+        define_local(clause.var_name, exc_param.value, exc_param.type);
+
+        gen_stmt(clause.body);
+        pop_scope();
+
+        // If catch body didn't terminate, jump to after
+        if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+            if (ts.finally_body) {
+                // Generate inline finally for catch exit
+                push_scope();
+                gen_stmt(ts.finally_body);
+                pop_scope();
+            }
+            if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+                finish_block_goto(after_block->id, build_after_args());
+            }
+        }
+
+        // Record exception handler
+        IRExceptionHandler handler;
+        handler.try_entry = try_entry_block->id;
+        handler.try_exit = try_exit_block_id;
+        handler.handler_block = catch_block->id;
+        handler.type_id = 0;  // Will be filled by lowering
+        handler.type_name = StringView(nullptr, 0);  // Catch-all by default
+        if (clause.resolved_type) {
+            handler.type_name = clause.resolved_type->struct_info.name;
+        }
+        m_current_func->exception_handlers.push_back(handler);
+    }
+
+    // Continue after try/catch - bind phi variables to merge params
+    set_current_block(after_block);
     for (const auto& pi : phi_info) {
         define_local(pi.name, pi.merge_param, pi.type);
     }
@@ -2747,7 +2920,7 @@ void IRBuilder::gen_decl(Decl* decl) {
             break;
         default:
             // Statement wrapped in declaration
-            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtWhen) {
+            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtTry) {
                 gen_stmt(&decl->stmt);
             }
             break;
@@ -2858,7 +3031,7 @@ void IRBuilder::collect_assigned_vars(Stmt* stmt, Vector<StringView>& out) {
             for (auto* d : block.declarations) {
                 if (!d) continue;
                 // Recurse into statements (not var decls - those are new vars)
-                if (d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtDelete) {
+                if (d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtTry) {
                     collect_assigned_vars(&d->stmt, out);
                 }
             }
@@ -2879,15 +3052,29 @@ void IRBuilder::collect_assigned_vars(Stmt* stmt, Vector<StringView>& out) {
             WhenStmt& ws = stmt->when_stmt;
             for (auto& when_case : ws.cases) {
                 for (auto* d : when_case.body) {
-                    if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtWhen) {
+                    if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtTry) {
                         collect_assigned_vars(&d->stmt, out);
                     }
                 }
             }
             for (auto* d : ws.else_body) {
-                if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtWhen) {
+                if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtTry) {
                     collect_assigned_vars(&d->stmt, out);
                 }
+            }
+            break;
+        }
+        case AstKind::StmtThrow:
+            collect_assigned_vars_expr(stmt->throw_stmt.expr, out);
+            break;
+        case AstKind::StmtTry: {
+            TryStmt& ts = stmt->try_stmt;
+            collect_assigned_vars(ts.try_body, out);
+            for (u32 i = 0; i < ts.catches.size(); i++) {
+                collect_assigned_vars(ts.catches[i].body, out);
+            }
+            if (ts.finally_body) {
+                collect_assigned_vars(ts.finally_body, out);
             }
             break;
         }

@@ -30,7 +30,7 @@ Last updated: 2026-02-22
 - [ ] Flow-sensitive typing for tagged union variant fields
 - [ ] Exhaustiveness checking for when statements
 - [ ] Variant constructors (`Type.Variant { ... }` syntax)
-- [ ] Exception handling
+- [x] Exception handling
 - [ ] LSP server for IDE support
 - [ ] AOT compilation to C (design plan complete in `docs/internals/c-backend.md`)
 
