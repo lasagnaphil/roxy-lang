@@ -87,6 +87,18 @@ endif()
 
 target_link_libraries(roxy_vm roxy_compiler)
 
+# LSP library
+add_library(roxy_lsp
+    src/roxy/lsp/lsp_parser.cpp
+    src/roxy/lsp/transport.cpp
+    src/roxy/lsp/server.cpp
+)
+target_link_libraries(roxy_lsp roxy_shared)
+
+# LSP server executable
+add_executable(roxy_lsp_server src/roxy_lsp_server.cpp)
+target_link_libraries(roxy_lsp_server roxy_lsp)
+
 # Single unified test executable
 add_executable(roxy_tests
     # Main entry point
@@ -106,6 +118,7 @@ add_executable(roxy_tests
     tests/unit/test_string.cpp
     tests/unit/test_static_string.cpp
     tests/unit/test_json.cpp
+    tests/unit/test_lsp_parser.cpp
 
     # E2E tests
     tests/e2e/test_helpers.cpp
@@ -133,7 +146,7 @@ add_executable(roxy_tests
     tests/e2e/test_int_literal.cpp
     tests/e2e/test_exceptions.cpp
 )
-target_link_libraries(roxy_tests roxy_vm)
+target_link_libraries(roxy_tests roxy_vm roxy_lsp)
 
 # Standalone interpreter executable
 add_executable(roxy src/roxy.cpp)
