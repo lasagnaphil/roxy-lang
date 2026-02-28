@@ -38,11 +38,12 @@ cmake .. -G Ninja -DENABLE_ASAN=ON
 
 ### CMake Libraries
 
-The project is organized into 4 libraries:
-- `roxy_core` - File utilities, rx::String, rx::format_to
+The project is organized into 5 libraries:
+- `roxy_core` - File utilities, rx::String, rx::format_to, JSON parser/writer
 - `roxy_shared` - Lexer and tokens
 - `roxy_compiler` - Parser, AST, semantic analysis, SSA IR, IR builder
 - `roxy_vm` - Bytecode, value, object, VM, interpreter, lowering
+- `roxy_lsp` - Error-recovering parser, LSP transport, LSP server
 
 ## Code Conventions
 
@@ -64,6 +65,7 @@ roxy-v2/
 │   ├── core/           # Core utilities (types.hpp, span.hpp, vector.hpp, allocators)
 │   ├── shared/         # Lexer and tokens
 │   ├── compiler/       # Parser, AST, types, semantic, SSA IR, IR builder, lowering
+│   ├── lsp/            # LSP server (syntax_tree, lsp_parser, protocol, transport, server)
 │   └── vm/             # Bytecode, value, object, VM, interpreter, binding/
 ├── src/roxy/           # Implementation files matching include/ structure
 ├── tests/
@@ -186,11 +188,21 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Coroutines** - Generator-style stackless coroutines via `Coro<T>` built-in type. Compile-time state machine transformation producing init/resume/done functions. Yield in straight-line code and if/else branches. Graph-preserving block cloning for correct control flow.
 **Details:** `docs/internals/coroutines.md` | **Tests:** `tests/e2e/test_coroutines.cpp`
 
+### LSP Server (Phase 1)
+**LSP Parser** - Error-recovering parser producing a lossless CST. Three recovery strategies: synthetic token insertion, statement boundary synchronization, bracket-aware skipping. Handles all grammar productions from the compiler parser.
+**Details:** `docs/internals/lsp-server.md` | **Files:** `lsp/syntax_tree.hpp`, `lsp/lsp_parser.hpp`, `lsp/lsp_parser.cpp`
+
+**LSP Transport** - JSON-RPC over stdin/stdout with Content-Length framing.
+**Files:** `lsp/transport.hpp`, `lsp/transport.cpp`
+
+**LSP Server** - Request dispatch, document management, syntax diagnostic publishing. Supports initialize/shutdown/exit lifecycle, full document sync, `textDocument/didOpen`/`didChange`/`didClose`.
+**Files:** `lsp/server.hpp`, `lsp/server.cpp`, `lsp/protocol.hpp`
+
 ## Planned Components (Not Yet Implemented)
 
 - C backend (AOT compilation via SSA IR → C transpilation, see `docs/internals/c-backend.md`)
-- LSP parser (error recovery, lossless CST)
-- LSP server features (completion, hover, go-to-definition)
+- LSP Phase 2: per-file indexing, document symbols
+- LSP Phase 3+: go-to-definition, completions, hover, semantic diagnostics
 - Optimizations
 
 ## Testing
@@ -240,3 +252,4 @@ On Windows, use `.exe` extension.
   - `exceptions.md` - Exception handling: try/catch/throw/finally, Exception trait, handler tables
   - `coroutines.md` - Coroutines: Coro<T>, yield, state machine transformation, graph-preserving block cloning
   - `c-backend.md` - C backend design plan (AOT compilation via SSA IR → C)
+  - `lsp-server.md` - LSP server architecture: map-reduce design, error-recovering parser, indexing, lazy analysis
