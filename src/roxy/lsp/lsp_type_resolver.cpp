@@ -119,7 +119,9 @@ void LspTypeResolver::analyze_decl(Decl* decl) {
             type_name = resolve_ast_expr_type(decl->var_decl.initializer);
         }
 
-        if (!type_name.empty() && !decl->var_decl.name.empty()) {
+        // Always register variable in scope (even with empty type) to prevent
+        // cascade diagnostics — "unresolved identifier" for declared variables
+        if (!decl->var_decl.name.empty()) {
             m_var_types[String(decl->var_decl.name)] = std::move(type_name);
         }
     }
@@ -313,6 +315,464 @@ String LspTypeResolver::resolve_field_type_in_hierarchy(
     }
 
     return String();
+}
+
+// --- Diagnostic collection ---
+
+void LspTypeResolver::analyze_function_with_diagnostics(Decl* fun_decl) {
+    m_diagnostics.clear();
+
+    // First run normal analysis to populate variable scope
+    analyze_function(fun_decl);
+
+    // Then walk the AST to check for semantic issues
+    if (!fun_decl) return;
+
+    Stmt* body = nullptr;
+    if (fun_decl->kind == AstKind::DeclFun) {
+        body = fun_decl->fun_decl.body;
+    } else if (fun_decl->kind == AstKind::DeclMethod) {
+        body = fun_decl->method_decl.body;
+    } else if (fun_decl->kind == AstKind::DeclConstructor) {
+        body = fun_decl->constructor_decl.body;
+    } else if (fun_decl->kind == AstKind::DeclDestructor) {
+        body = fun_decl->destructor_decl.body;
+    }
+
+    if (body) {
+        check_stmt(body);
+    }
+}
+
+void LspTypeResolver::add_diagnostic(TextRange range, DiagnosticSeverity severity, String message) {
+    SemanticDiagnostic diag;
+    diag.range = range;
+    diag.severity = severity;
+    diag.message = std::move(message);
+    m_diagnostics.push_back(std::move(diag));
+}
+
+bool LspTypeResolver::is_known_type(StringView name) const {
+    // Primitives
+    if (name == "i8" || name == "i16" || name == "i32" || name == "i64" ||
+        name == "u8" || name == "u16" || name == "u32" || name == "u64" ||
+        name == "f32" || name == "f64" || name == "bool" || name == "string" || name == "void") {
+        return true;
+    }
+    // Builtins
+    if (name == "List" || name == "Map" || name == "Coro" || name == "ExceptionRef") {
+        return true;
+    }
+    // GlobalIndex-known types
+    if (m_index.find_struct(name) || m_index.find_enum(name) || m_index.find_trait(name)) {
+        return true;
+    }
+    return false;
+}
+
+bool LspTypeResolver::has_field_in_hierarchy(StringView struct_name, StringView field_name) const {
+    StringView current = struct_name;
+    u32 depth = 0;
+    while (!current.empty() && depth < 16) {
+        if (m_index.find_field(current, field_name)) return true;
+        current = m_index.find_struct_parent(current);
+        depth++;
+    }
+    return false;
+}
+
+bool LspTypeResolver::has_method_in_hierarchy(StringView struct_name, StringView method_name) const {
+    StringView current = struct_name;
+    u32 depth = 0;
+    while (!current.empty() && depth < 16) {
+        if (m_index.find_method(current, method_name)) return true;
+        current = m_index.find_struct_parent(current);
+        depth++;
+    }
+    return false;
+}
+
+void LspTypeResolver::check_type_annotation(TypeExpr* type_expr) {
+    if (!type_expr || type_expr->name.empty()) return;
+
+    if (!is_known_type(type_expr->name)) {
+        TextRange range{type_expr->loc.offset, type_expr->loc.end_offset};
+        // Use name length as fallback if end_offset is 0
+        if (range.end <= range.start) {
+            range.end = range.start + static_cast<u32>(type_expr->name.size());
+        }
+        String msg("Unknown type '");
+        msg.append(type_expr->name);
+        msg.push_back('\'');
+        add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+    }
+
+    // Check type args recursively
+    for (u32 i = 0; i < type_expr->type_args.size(); i++) {
+        check_type_annotation(type_expr->type_args[i]);
+    }
+}
+
+void LspTypeResolver::check_decl(Decl* decl) {
+    if (!decl) return;
+
+    if (decl->kind == AstKind::DeclVar) {
+        // Check type annotation
+        if (decl->var_decl.type) {
+            check_type_annotation(decl->var_decl.type);
+        }
+        // Check initializer
+        if (decl->var_decl.initializer) {
+            check_expr(decl->var_decl.initializer);
+        }
+    }
+
+    // Walk into nested statements
+    if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtYield) {
+        check_stmt(&decl->stmt);
+    }
+}
+
+void LspTypeResolver::check_stmt(Stmt* stmt) {
+    if (!stmt) return;
+
+    switch (stmt->kind) {
+        case AstKind::StmtBlock:
+            for (u32 i = 0; i < stmt->block.declarations.size(); i++) {
+                check_decl(stmt->block.declarations[i]);
+            }
+            break;
+        case AstKind::StmtExpr:
+            if (stmt->expr_stmt.expr) check_expr(stmt->expr_stmt.expr);
+            break;
+        case AstKind::StmtIf:
+            if (stmt->if_stmt.condition) check_expr(stmt->if_stmt.condition);
+            if (stmt->if_stmt.then_branch) check_stmt(stmt->if_stmt.then_branch);
+            if (stmt->if_stmt.else_branch) check_stmt(stmt->if_stmt.else_branch);
+            break;
+        case AstKind::StmtWhile:
+            if (stmt->while_stmt.condition) check_expr(stmt->while_stmt.condition);
+            if (stmt->while_stmt.body) check_stmt(stmt->while_stmt.body);
+            break;
+        case AstKind::StmtFor:
+            if (stmt->for_stmt.initializer) check_decl(stmt->for_stmt.initializer);
+            if (stmt->for_stmt.condition) check_expr(stmt->for_stmt.condition);
+            if (stmt->for_stmt.increment) check_expr(stmt->for_stmt.increment);
+            if (stmt->for_stmt.body) check_stmt(stmt->for_stmt.body);
+            break;
+        case AstKind::StmtReturn:
+            if (stmt->return_stmt.value) check_expr(stmt->return_stmt.value);
+            break;
+        case AstKind::StmtThrow:
+            if (stmt->throw_stmt.expr) check_expr(stmt->throw_stmt.expr);
+            break;
+        case AstKind::StmtTry:
+            if (stmt->try_stmt.try_body) check_stmt(stmt->try_stmt.try_body);
+            for (u32 i = 0; i < stmt->try_stmt.catches.size(); i++) {
+                if (stmt->try_stmt.catches[i].body) {
+                    check_stmt(stmt->try_stmt.catches[i].body);
+                }
+            }
+            if (stmt->try_stmt.finally_body) check_stmt(stmt->try_stmt.finally_body);
+            break;
+        case AstKind::StmtDelete:
+            if (stmt->delete_stmt.expr) check_expr(stmt->delete_stmt.expr);
+            break;
+        case AstKind::StmtYield:
+            if (stmt->yield_stmt.value) check_expr(stmt->yield_stmt.value);
+            break;
+        default:
+            break;
+    }
+}
+
+void LspTypeResolver::check_expr(Expr* expr) {
+    if (!expr) return;
+
+    switch (expr->kind) {
+        case AstKind::ExprIdentifier: {
+            StringView name = expr->identifier.name;
+            if (name.empty()) break;
+
+            // Check if known: local var, global symbol, or type name
+            auto var_it = m_var_types.find(String(name));
+            if (var_it != m_var_types.end()) break; // known local
+
+            if (m_index.find_function(name) || m_index.find_struct(name) ||
+                m_index.find_enum(name) || m_index.find_trait(name) ||
+                m_index.find_global(name)) {
+                break; // known global
+            }
+
+            // Also accept: true, false, nil are literals (not identifiers)
+            // But just in case the lowering creates them as identifiers:
+            if (name == "true" || name == "false" || name == "nil") break;
+
+            TextRange range{expr->loc.offset, expr->loc.end_offset};
+            if (range.end <= range.start) {
+                range.end = range.start + static_cast<u32>(name.size());
+            }
+            String msg("Unresolved identifier '");
+            msg.append(name);
+            msg.push_back('\'');
+            add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+            break;
+        }
+        case AstKind::ExprCall: {
+            Expr* callee = expr->call.callee;
+            if (!callee) break;
+
+            if (callee->kind == AstKind::ExprIdentifier) {
+                StringView callee_name = callee->identifier.name;
+
+                // Check if function/constructor exists
+                bool callee_found = false;
+                if (m_index.find_function(callee_name)) {
+                    callee_found = true;
+
+                    // Check argument count
+                    i32 expected = m_index.find_function_param_count(callee_name);
+                    i32 actual = static_cast<i32>(expr->call.arguments.size());
+                    if (expected >= 0 && actual != expected) {
+                        TextRange range{expr->loc.offset, expr->loc.end_offset};
+                        if (range.end <= range.start) range.end = range.start + 1;
+                        String msg("Expected ");
+                        msg.append(std::to_string(expected).c_str());
+                        msg.append(" arguments, got ");
+                        msg.append(std::to_string(actual).c_str());
+                        add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                    }
+                } else if (m_index.find_struct(callee_name)) {
+                    callee_found = true;
+                    // Constructor call — check constructor param count
+                    // Default constructor name is "new"
+                    i32 expected = m_index.find_constructor_param_count(callee_name, "new");
+                    i32 actual = static_cast<i32>(expr->call.arguments.size());
+                    if (expected >= 0 && actual != expected) {
+                        TextRange range{expr->loc.offset, expr->loc.end_offset};
+                        if (range.end <= range.start) range.end = range.start + 1;
+                        String msg("Expected ");
+                        msg.append(std::to_string(expected).c_str());
+                        msg.append(" arguments, got ");
+                        msg.append(std::to_string(actual).c_str());
+                        add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                    }
+                }
+
+                if (!callee_found) {
+                    // Also check if it's a local variable (callable)
+                    auto var_it = m_var_types.find(String(callee_name));
+                    if (var_it == m_var_types.end()) {
+                        TextRange range{callee->loc.offset, callee->loc.end_offset};
+                        if (range.end <= range.start) {
+                            range.end = range.start + static_cast<u32>(callee_name.size());
+                        }
+                        String msg("Unresolved function '");
+                        msg.append(callee_name);
+                        msg.push_back('\'');
+                        add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                    }
+                }
+            } else if (callee->kind == AstKind::ExprGet) {
+                // Method call: obj.method()
+                String receiver_type = resolve_ast_expr_type(callee->get.object);
+                if (!receiver_type.empty()) {
+                    StringView method_name = callee->get.name;
+                    StringView recv_sv(receiver_type.data(), receiver_type.size());
+
+                    // Skip method checks when receiver type is unknown (cascade prevention)
+                    if (!m_index.find_struct(recv_sv) && !m_index.find_trait(recv_sv)) {
+                        // Unknown receiver type — skip
+                    } else if (!has_method_in_hierarchy(recv_sv, method_name)) {
+                        TextRange range{callee->loc.offset, callee->loc.end_offset};
+                        if (range.end <= range.start) {
+                            range.end = range.start + static_cast<u32>(method_name.size());
+                        }
+                        String msg("No method '");
+                        msg.append(method_name);
+                        msg.append("' on type '");
+                        msg.append(recv_sv);
+                        msg.push_back('\'');
+                        add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                    } else {
+                        // Method found — check arg count
+                        i32 expected = m_index.find_method_param_count(recv_sv, method_name);
+                        // Walk hierarchy if not found at this level
+                        StringView current = recv_sv;
+                        u32 depth = 0;
+                        while (expected < 0 && !current.empty() && depth < 16) {
+                            current = m_index.find_struct_parent(current);
+                            if (!current.empty()) {
+                                expected = m_index.find_method_param_count(current, method_name);
+                            }
+                            depth++;
+                        }
+                        i32 actual = static_cast<i32>(expr->call.arguments.size());
+                        if (expected >= 0 && actual != expected) {
+                            TextRange range{expr->loc.offset, expr->loc.end_offset};
+                            if (range.end <= range.start) range.end = range.start + 1;
+                            String msg("Expected ");
+                            msg.append(std::to_string(expected).c_str());
+                            msg.append(" arguments, got ");
+                            msg.append(std::to_string(actual).c_str());
+                            add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                        }
+                    }
+                }
+                // Recurse into receiver
+                check_expr(callee->get.object);
+            } else {
+                // Other callee types: just recurse
+                check_expr(callee);
+            }
+
+            // Recurse into arguments
+            for (u32 i = 0; i < expr->call.arguments.size(); i++) {
+                check_expr(expr->call.arguments[i].expr);
+            }
+            break;
+        }
+        case AstKind::ExprGet: {
+            // Field access: obj.field
+            String receiver_type = resolve_ast_expr_type(expr->get.object);
+            if (!receiver_type.empty()) {
+                StringView recv_sv(receiver_type.data(), receiver_type.size());
+
+                // Skip field/method checks when receiver type is unknown (cascade prevention)
+                if (m_index.find_struct(recv_sv) || m_index.find_trait(recv_sv)) {
+                    StringView field_name = expr->get.name;
+
+                    // Check field OR method exists
+                    if (!has_field_in_hierarchy(recv_sv, field_name) &&
+                        !has_method_in_hierarchy(recv_sv, field_name)) {
+                        TextRange range{expr->loc.offset, expr->loc.end_offset};
+                        if (range.end <= range.start) {
+                            range.end = range.start + static_cast<u32>(field_name.size());
+                        }
+                        String msg("No field '");
+                        msg.append(field_name);
+                        msg.append("' on type '");
+                        msg.append(recv_sv);
+                        msg.push_back('\'');
+                        add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                    }
+                }
+            }
+            // Recurse into object
+            check_expr(expr->get.object);
+            break;
+        }
+        case AstKind::ExprStaticGet: {
+            StringView type_name = expr->static_get.type_name;
+            StringView member_name = expr->static_get.member_name;
+
+            if (!type_name.empty() && !member_name.empty()) {
+                if (m_index.find_enum(type_name)) {
+                    // Check enum variant exists
+                    const Vector<String>* variants = m_index.get_enum_variants(type_name);
+                    bool found = false;
+                    if (variants) {
+                        for (u32 i = 0; i < variants->size(); i++) {
+                            if (StringView((*variants)[i].data(), (*variants)[i].size()) == member_name) {
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!found) {
+                        TextRange range{expr->loc.offset, expr->loc.end_offset};
+                        if (range.end <= range.start) {
+                            range.end = range.start + static_cast<u32>(type_name.size()) + 2 + static_cast<u32>(member_name.size());
+                        }
+                        String msg("No variant '");
+                        msg.append(member_name);
+                        msg.append("' on enum '");
+                        msg.append(type_name);
+                        msg.push_back('\'');
+                        add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                    }
+                } else if (!m_index.find_struct(type_name) && !m_index.find_trait(type_name)) {
+                    TextRange range{expr->loc.offset, expr->loc.end_offset};
+                    if (range.end <= range.start) {
+                        range.end = range.start + static_cast<u32>(type_name.size());
+                    }
+                    String msg("Unknown type '");
+                    msg.append(type_name);
+                    msg.push_back('\'');
+                    add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                }
+            }
+            break;
+        }
+        case AstKind::ExprStructLiteral: {
+            StringView type_name = expr->struct_literal.type_name;
+            if (!type_name.empty()) {
+                if (!m_index.find_struct(type_name)) {
+                    TextRange range{expr->loc.offset, expr->loc.end_offset};
+                    if (range.end <= range.start) {
+                        range.end = range.start + static_cast<u32>(type_name.size());
+                    }
+                    String msg("Unknown type '");
+                    msg.append(type_name);
+                    msg.push_back('\'');
+                    add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                } else {
+                    // Check each field name
+                    for (u32 i = 0; i < expr->struct_literal.fields.size(); i++) {
+                        StringView field_name = expr->struct_literal.fields[i].name;
+                        if (!field_name.empty() && !has_field_in_hierarchy(type_name, field_name)) {
+                            TextRange range{expr->struct_literal.fields[i].loc.offset,
+                                          expr->struct_literal.fields[i].loc.end_offset};
+                            if (range.end <= range.start) {
+                                range.end = range.start + static_cast<u32>(field_name.size());
+                            }
+                            String msg("No field '");
+                            msg.append(field_name);
+                            msg.append("' on type '");
+                            msg.append(type_name);
+                            msg.push_back('\'');
+                            add_diagnostic(range, DiagnosticSeverity::Error, std::move(msg));
+                        }
+                    }
+                }
+            }
+            // Recurse into field initializer expressions
+            for (u32 i = 0; i < expr->struct_literal.fields.size(); i++) {
+                check_expr(expr->struct_literal.fields[i].value);
+            }
+            break;
+        }
+        case AstKind::ExprUnary:
+            check_expr(expr->unary.operand);
+            break;
+        case AstKind::ExprBinary:
+            check_expr(expr->binary.left);
+            check_expr(expr->binary.right);
+            break;
+        case AstKind::ExprTernary:
+            check_expr(expr->ternary.condition);
+            check_expr(expr->ternary.then_expr);
+            check_expr(expr->ternary.else_expr);
+            break;
+        case AstKind::ExprIndex:
+            check_expr(expr->index.object);
+            check_expr(expr->index.index);
+            break;
+        case AstKind::ExprAssign:
+            check_expr(expr->assign.target);
+            check_expr(expr->assign.value);
+            break;
+        case AstKind::ExprGrouping:
+            check_expr(expr->grouping.expr);
+            break;
+        case AstKind::ExprStringInterp:
+            for (u32 i = 0; i < expr->string_interp.expressions.size(); i++) {
+                check_expr(expr->string_interp.expressions[i]);
+            }
+            break;
+        default:
+            break;
+    }
 }
 
 } // namespace rx

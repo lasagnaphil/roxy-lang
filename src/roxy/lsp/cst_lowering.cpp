@@ -37,12 +37,12 @@ bool CstLowering::has_child(SyntaxNode* node, SyntaxKind kind) {
 }
 
 SourceLocation CstLowering::make_loc(SyntaxNode* node) {
-    if (!node) return SourceLocation{0, 0, 0};
-    return SourceLocation{node->range.start, 0, 0};
+    if (!node) return SourceLocation{0, 0, 0, 0};
+    return SourceLocation{node->range.start, node->range.end, 0, 0};
 }
 
 SourceLocation CstLowering::make_loc(TextRange range) {
-    return SourceLocation{range.start, 0, 0};
+    return SourceLocation{range.start, range.end, 0, 0};
 }
 
 // --- Binary/Unary/Assign operator mapping ---
@@ -770,7 +770,7 @@ Stmt* CstLowering::lower_when_stmt(SyntaxNode* node) {
     stmt->loc = make_loc(node);
     stmt->when_stmt.discriminant = nullptr;
     stmt->when_stmt.else_body = Span<Decl*>();
-    stmt->when_stmt.else_loc = SourceLocation{0, 0, 0};
+    stmt->when_stmt.else_loc = SourceLocation{0, 0, 0, 0};
 
     // Find discriminant: identifier(s) after 'when'
     bool past_when = false;
@@ -1179,7 +1179,7 @@ Expr* CstLowering::lower_call_expr(SyntaxNode* node) {
         CallArg arg;
         arg.expr = nullptr;
         arg.modifier = ParamModifier::None;
-        arg.modifier_loc = SourceLocation{0, 0, 0};
+        arg.modifier_loc = SourceLocation{0, 0, 0, 0};
 
         for (u32 j = 0; j < arg_node->children.size(); j++) {
             SyntaxNode* arg_child = arg_node->children[j];

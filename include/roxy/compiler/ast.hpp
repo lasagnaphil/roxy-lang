@@ -286,7 +286,7 @@ struct Expr {
         StringInterpExpr string_interp;
     };
 
-    Expr() : kind(AstKind::ExprLiteral), loc{0, 0, 0}, resolved_type(nullptr) {
+    Expr() : kind(AstKind::ExprLiteral), loc{0, 0, 0, 0}, resolved_type(nullptr) {
         memset(&literal, 0, sizeof(literal));
     }
     ~Expr() {}
@@ -406,7 +406,7 @@ struct Stmt {
         YieldStmt yield_stmt;
     };
 
-    Stmt() : kind(AstKind::StmtExpr), loc{0, 0, 0} {
+    Stmt() : kind(AstKind::StmtExpr), loc{0, 0, 0, 0} {
         memset(&expr_stmt, 0, sizeof(expr_stmt));
     }
     ~Stmt() {}
@@ -571,7 +571,7 @@ struct Decl {
         Stmt stmt;  // For statement declarations (like expression statements)
     };
 
-    Decl() : kind(AstKind::DeclVar), loc{0, 0, 0} {
+    Decl() : kind(AstKind::DeclVar), loc{0, 0, 0, 0} {
         memset(&var_decl, 0, sizeof(var_decl));
     }
     ~Decl() {}

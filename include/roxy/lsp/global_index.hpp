@@ -54,6 +54,12 @@ public:
     // Global variable type lookup (for hover)
     StringView find_global_type(StringView name) const;
 
+    // Param count queries (for argument count checking in semantic diagnostics)
+    // Returns -1 if not found
+    i32 find_function_param_count(StringView name) const;
+    i32 find_method_param_count(StringView struct_name, StringView method_name) const;
+    i32 find_constructor_param_count(StringView struct_name, StringView ctor_name) const;
+
     // Iterate all names in a category (for bare identifier / type completions)
     template<typename Callback> void for_each_struct(Callback&& cb) const {
         for (auto it = m_structs.begin(); it != m_structs.end(); ++it) {
@@ -101,6 +107,11 @@ private:
     // Global variable types
     tsl::robin_map<String, String> m_global_types;           // "count" → "i32"
 
+    // Param count maps (for semantic diagnostics)
+    tsl::robin_map<String, i32> m_function_param_counts;     // "add" → 2
+    tsl::robin_map<String, i32> m_method_param_counts;       // "Point.length" → 0
+    tsl::robin_map<String, i32> m_constructor_param_counts;  // "Point.new" → 2
+
     // Completion secondary indexes
     tsl::robin_map<String, Vector<String>> m_struct_field_names;   // "Point" → ["x", "y"]
     tsl::robin_map<String, Vector<String>> m_struct_method_names;  // "Point" → ["length", "sum"]
@@ -128,6 +139,9 @@ private:
         Vector<String> enum_variant_name_keys;     // enum names with variant lists
         Vector<String> function_signature_keys;    // function names with signatures
         Vector<String> method_signature_keys;      // "Struct.method" keys with signatures
+        Vector<String> function_param_count_keys;
+        Vector<String> method_param_count_keys;
+        Vector<String> constructor_param_count_keys;
     };
     tsl::robin_map<String, FileNameSet> m_file_names;
 

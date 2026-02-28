@@ -7,9 +7,10 @@
 namespace rx {
 
 struct SourceLocation {
-    u32 offset;     // Byte offset in source
-    u32 line;       // 1-indexed line number
-    u32 column;     // 1-indexed column number
+    u32 offset;       // Byte offset in source (start)
+    u32 end_offset;   // Byte offset in source (end, for LSP diagnostic ranges)
+    u32 line;         // 1-indexed line number
+    u32 column;       // 1-indexed column number
 };
 
 struct Token {

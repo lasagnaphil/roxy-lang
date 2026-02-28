@@ -57,6 +57,9 @@ private:
     // Core logic
     void parse_and_publish_diagnostics(OpenDocument& doc);
     void publish_diagnostics(StringView uri, const Vector<LspDiagnostic>& diagnostics);
+    void collect_semantic_diagnostics(SyntaxNode* root, BumpAllocator& allocator,
+                                      const char* source, u32 source_length,
+                                      Vector<LspDiagnostic>& out_diagnostics);
 
     // Workspace helpers
     void scan_workspace();

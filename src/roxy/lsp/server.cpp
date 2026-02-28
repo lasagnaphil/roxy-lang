@@ -315,9 +315,47 @@ void LspServer::parse_and_publish_diagnostics(OpenDocument& doc) {
         lsp_diagnostics.push_back(std::move(lsp_diag));
     }
 
+    // Collect semantic diagnostics if no parse errors
+    if (tree.diagnostics.empty()) {
+        collect_semantic_diagnostics(tree.root, allocator,
+                                     tree.source, tree.source_length,
+                                     lsp_diagnostics);
+    }
+
     publish_diagnostics(
         StringView(doc.uri.data(), doc.uri.size()),
         lsp_diagnostics);
+}
+
+void LspServer::collect_semantic_diagnostics(SyntaxNode* root, BumpAllocator& allocator,
+                                              const char* source, u32 source_length,
+                                              Vector<LspDiagnostic>& out_diagnostics) {
+    if (!root) return;
+
+    for (u32 i = 0; i < root->children.size(); i++) {
+        SyntaxKind kind = root->children[i]->kind;
+        if (kind != SyntaxKind::NodeFunDecl && kind != SyntaxKind::NodeMethodDecl &&
+            kind != SyntaxKind::NodeConstructorDecl && kind != SyntaxKind::NodeDestructorDecl) {
+            continue;
+        }
+
+        BumpAllocator ast_allocator(4096);
+        CstLowering lowering(ast_allocator);
+        Decl* ast_decl = lowering.lower_decl(root->children[i]);
+        if (!ast_decl) continue;
+
+        LspTypeResolver resolver(m_global_index);
+        resolver.analyze_function_with_diagnostics(ast_decl);
+
+        const Vector<SemanticDiagnostic>& sem_diags = resolver.diagnostics();
+        for (u32 j = 0; j < sem_diags.size(); j++) {
+            LspDiagnostic lsp_diag;
+            lsp_diag.range = text_range_to_lsp_range(source, source_length, sem_diags[j].range);
+            lsp_diag.severity = sem_diags[j].severity;
+            lsp_diag.message = sem_diags[j].message;
+            out_diagnostics.push_back(std::move(lsp_diag));
+        }
+    }
 }
 
 void LspServer::publish_diagnostics(StringView uri, const Vector<LspDiagnostic>& diagnostics) {

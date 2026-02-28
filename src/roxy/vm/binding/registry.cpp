@@ -505,7 +505,7 @@ void NativeRegistry::apply_structs_to_types(TypeEnv& type_env, BumpAllocator& al
         type->struct_info.slot_count = slot_offset;
 
         // Define in symbol table
-        symbols.define(SymbolKind::Struct, se.name, type, SourceLocation{0, 0}, nullptr);
+        symbols.define(SymbolKind::Struct, se.name, type, SourceLocation{0, 0, 0, 0}, nullptr);
     }
 }
 
@@ -577,7 +577,7 @@ void NativeRegistry::apply_to_symbols(SymbolTable& symbols, TypeCache& types, Bu
 
         // Define in symbol table
         symbols.define(SymbolKind::Function, entry.name, func_type,
-                      SourceLocation{0, 0}, nullptr);
+                      SourceLocation{0, 0, 0, 0}, nullptr);
     }
 }
 

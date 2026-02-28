@@ -121,6 +121,10 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
         // Build signature for completions
         m_function_signatures[name] = build_signature(stub.params, stub.return_type);
         name_set.function_signature_keys.push_back(name);
+
+        // Index param count
+        m_function_param_counts[name] = static_cast<i32>(stub.params.size());
+        name_set.function_param_count_keys.push_back(name);
     }
 
     // Index methods
@@ -155,6 +159,10 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
         // Build method signature for completions
         m_method_signatures[key] = build_signature(stub.params, stub.return_type);
         name_set.method_signature_keys.push_back(key);
+
+        // Index method param count
+        m_method_param_counts[key] = static_cast<i32>(stub.params.size());
+        name_set.method_param_count_keys.push_back(key);
     }
 
     // Index constructors
@@ -167,6 +175,10 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
         location.name_range = stub.name_range;
         m_constructors[key] = location;
         name_set.constructor_keys.push_back(key);
+
+        // Index constructor param count
+        m_constructor_param_counts[key] = static_cast<i32>(stub.params.size());
+        name_set.constructor_param_count_keys.push_back(key);
     }
 
     // Index traits
@@ -262,6 +274,15 @@ void GlobalIndex::remove_file(StringView uri) {
     }
     for (u32 i = 0; i < name_set.method_signature_keys.size(); i++) {
         m_method_signatures.erase(name_set.method_signature_keys[i]);
+    }
+    for (u32 i = 0; i < name_set.function_param_count_keys.size(); i++) {
+        m_function_param_counts.erase(name_set.function_param_count_keys[i]);
+    }
+    for (u32 i = 0; i < name_set.method_param_count_keys.size(); i++) {
+        m_method_param_counts.erase(name_set.method_param_count_keys[i]);
+    }
+    for (u32 i = 0; i < name_set.constructor_param_count_keys.size(); i++) {
+        m_constructor_param_counts.erase(name_set.constructor_param_count_keys[i]);
     }
 
     m_file_names.erase(file_it);
@@ -393,6 +414,26 @@ StringView GlobalIndex::find_function_signature(StringView function_name) const 
         return StringView(it->second.data(), it->second.size());
     }
     return StringView();
+}
+
+i32 GlobalIndex::find_function_param_count(StringView name) const {
+    auto it = m_function_param_counts.find(String(name));
+    if (it != m_function_param_counts.end()) return it->second;
+    return -1;
+}
+
+i32 GlobalIndex::find_method_param_count(StringView struct_name, StringView method_name) const {
+    String key = make_qualified_key(struct_name, method_name);
+    auto it = m_method_param_counts.find(key);
+    if (it != m_method_param_counts.end()) return it->second;
+    return -1;
+}
+
+i32 GlobalIndex::find_constructor_param_count(StringView struct_name, StringView ctor_name) const {
+    String key = make_qualified_key(struct_name, ctor_name);
+    auto it = m_constructor_param_counts.find(key);
+    if (it != m_constructor_param_counts.end()) return it->second;
+    return -1;
 }
 
 Vector<SymbolLocation> GlobalIndex::find_any(StringView name) const {

@@ -105,14 +105,14 @@ void SemanticAnalyzer::import_builtin_prelude() {
         // Register the imported symbol based on its kind
         if (exp.kind == ExportKind::Function) {
             m_symbols.define_imported_function(
-                exp.name, exp.type, SourceLocation{0, 0},
+                exp.name, exp.type, SourceLocation{0, 0, 0, 0},
                 BUILTIN_MODULE_NAME,
                 exp.name, exp.index, exp.is_native);
         } else {
             // For structs/enums, define as regular types
             m_symbols.define(static_cast<SymbolKind>(
                 exp.kind == ExportKind::Struct ? SymbolKind::Struct : SymbolKind::Enum),
-                exp.name, exp.type, SourceLocation{0, 0}, exp.decl);
+                exp.name, exp.type, SourceLocation{0, 0, 0, 0}, exp.decl);
         }
     }
 }
