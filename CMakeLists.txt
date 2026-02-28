@@ -93,6 +93,8 @@ add_library(roxy_lsp
     src/roxy/lsp/lsp_parser.cpp
     src/roxy/lsp/indexer.cpp
     src/roxy/lsp/global_index.cpp
+    src/roxy/lsp/cst_lowering.cpp
+    src/roxy/lsp/lsp_type_resolver.cpp
     src/roxy/lsp/transport.cpp
     src/roxy/lsp/server.cpp
 )
@@ -124,6 +126,8 @@ add_executable(roxy_tests
     tests/unit/test_lsp_parser.cpp
     tests/unit/test_indexer.cpp
     tests/unit/test_global_index.cpp
+    tests/unit/test_cst_lowering.cpp
+    tests/unit/test_lsp_type_resolver.cpp
 
     # E2E tests
     tests/e2e/test_helpers.cpp

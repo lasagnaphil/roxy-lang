@@ -1,6 +1,8 @@
 #include "roxy/lsp/server.hpp"
 #include "roxy/lsp/lsp_parser.hpp"
 #include "roxy/lsp/indexer.hpp"
+#include "roxy/lsp/cst_lowering.hpp"
+#include "roxy/lsp/lsp_type_resolver.hpp"
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/format.hpp"
 #include "roxy/core/file.hpp"
@@ -532,6 +534,40 @@ void LspServer::handle_document_symbol(const JsonValue& params, i64 id) {
     m_transport.write_response(id, StringView(result.data(), result.size()));
 }
 
+// Walk up parent chain to find nearest function/method/constructor/destructor
+static SyntaxNode* find_enclosing_function(SyntaxNode* node) {
+    SyntaxNode* current = node ? node->parent : nullptr;
+    while (current) {
+        if (current->kind == SyntaxKind::NodeFunDecl ||
+            current->kind == SyntaxKind::NodeMethodDecl ||
+            current->kind == SyntaxKind::NodeConstructorDecl ||
+            current->kind == SyntaxKind::NodeDestructorDecl) {
+            return current;
+        }
+        current = current->parent;
+    }
+    return nullptr;
+}
+
+// Helper to write a single Location response from a SymbolLocation
+static bool write_location_response(LspTransport& transport, i64 id,
+                                      const SymbolLocation& loc,
+                                      const char* target_source, u32 target_length) {
+    LspRange target_range = text_range_to_lsp_range(
+        target_source, target_length, loc.name_range);
+
+    String result;
+    JsonWriter writer(result);
+    writer.write_start_object();
+    writer.write_key_string("uri", StringView(loc.uri.data(), loc.uri.size()));
+    writer.write_key("range");
+    write_lsp_range(writer, target_range);
+    writer.write_end_object();
+
+    transport.write_response(id, StringView(result.data(), result.size()));
+    return true;
+}
+
 void LspServer::handle_definition(const JsonValue& params, i64 id) {
     const JsonValue* text_document = params.find("textDocument");
     if (!text_document || !text_document->is_object()) {
@@ -584,7 +620,41 @@ void LspServer::handle_definition(const JsonValue& params, i64 id) {
 
     // Find deepest node at cursor
     SyntaxNode* node = find_node_at_offset(tree.root, byte_offset);
-    if (!node || node->kind != SyntaxKind::TokenIdentifier) {
+    if (!node) {
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    // Handle TokenKwSelf — resolve to struct definition
+    if (node->kind == SyntaxKind::TokenKwSelf) {
+        SyntaxNode* enclosing_fn = find_enclosing_function(node);
+        if (enclosing_fn) {
+            // Get struct name from enclosing method/constructor/destructor
+            SyntaxNode* struct_ident = nullptr;
+            for (u32 i = 0; i < enclosing_fn->children.size(); i++) {
+                if (enclosing_fn->children[i]->kind == SyntaxKind::TokenIdentifier) {
+                    struct_ident = enclosing_fn->children[i];
+                    break;
+                }
+            }
+            if (struct_ident) {
+                const SymbolLocation* struct_loc = m_global_index.find_struct(struct_ident->token.text());
+                if (struct_loc) {
+                    u32 target_length = 0;
+                    const char* target_source = get_file_content(
+                        StringView(struct_loc->uri.data(), struct_loc->uri.size()), target_length);
+                    if (target_source) {
+                        write_location_response(m_transport, id, *struct_loc, target_source, target_length);
+                        return;
+                    }
+                }
+            }
+        }
+        m_transport.write_response(id, "null");
+        return;
+    }
+
+    if (node->kind != SyntaxKind::TokenIdentifier) {
         m_transport.write_response(id, "null");
         return;
     }
@@ -598,7 +668,54 @@ void LspServer::handle_definition(const JsonValue& params, i64 id) {
 
     SyntaxNode* parent = node->parent;
     if (parent) {
-        if (parent->kind == SyntaxKind::NodeTypeExpr) {
+        if (parent->kind == SyntaxKind::NodeGetExpr) {
+            // Field/method access: check if this node is the member-name child
+            // NodeGetExpr children: [object, '.', member_name]
+            bool is_member_name = false;
+            if (parent->children.size() >= 3) {
+                is_member_name = (parent->children[parent->children.size() - 1] == node);
+            }
+
+            if (is_member_name) {
+                // Try to resolve the object expression type
+                SyntaxNode* object_expr = parent->children[0];
+                String receiver_type;
+
+                SyntaxNode* enclosing_fn = find_enclosing_function(parent);
+                if (enclosing_fn) {
+                    BumpAllocator ast_allocator(8192);
+                    CstLowering lowering(ast_allocator);
+                    Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+
+                    LspTypeResolver resolver(m_global_index);
+                    resolver.analyze_function(ast_decl);
+
+                    receiver_type = resolver.resolve_cst_expr_type(object_expr);
+                }
+
+                if (!receiver_type.empty()) {
+                    // Walk inheritance chain to find field or method
+                    StringView current_type(receiver_type.data(), receiver_type.size());
+                    u32 depth = 0;
+                    while (!current_type.empty() && depth < 16) {
+                        match = m_global_index.find_field(current_type, identifier);
+                        if (match) break;
+                        match = m_global_index.find_method(current_type, identifier);
+                        if (match) break;
+                        current_type = m_global_index.find_struct_parent(current_type);
+                        depth++;
+                    }
+                }
+
+                // Fallback to find_any if type resolution failed
+                if (!match) {
+                    matches = m_global_index.find_any(identifier);
+                }
+            } else {
+                // Cursor is on the receiver expression (not the member name)
+                matches = m_global_index.find_any(identifier);
+            }
+        } else if (parent->kind == SyntaxKind::NodeTypeExpr) {
             // Type reference — search structs, enums, traits
             match = m_global_index.find_struct(identifier);
             if (!match) match = m_global_index.find_enum(identifier);
@@ -611,8 +728,7 @@ void LspServer::handle_definition(const JsonValue& params, i64 id) {
                 match = m_global_index.find_struct(identifier);
             }
         } else if (parent->kind == SyntaxKind::NodeStaticGetExpr) {
-            // Enum::Variant or static access — skip for Phase 3a
-            // Fall through to find_any
+            // Enum::Variant or static access
             matches = m_global_index.find_any(identifier);
         } else {
             // Default — search all categories
@@ -624,7 +740,6 @@ void LspServer::handle_definition(const JsonValue& params, i64 id) {
 
     // Build response
     if (match) {
-        // Single match — return Location
         u32 target_length = 0;
         const char* target_source = get_file_content(
             StringView(match->uri.data(), match->uri.size()), target_length);
@@ -634,21 +749,9 @@ void LspServer::handle_definition(const JsonValue& params, i64 id) {
             return;
         }
 
-        LspRange target_range = text_range_to_lsp_range(
-            target_source, target_length, match->name_range);
-
-        String result;
-        JsonWriter writer(result);
-        writer.write_start_object();
-        writer.write_key_string("uri", StringView(match->uri.data(), match->uri.size()));
-        writer.write_key("range");
-        write_lsp_range(writer, target_range);
-        writer.write_end_object();
-
-        m_transport.write_response(id, StringView(result.data(), result.size()));
+        write_location_response(m_transport, id, *match, target_source, target_length);
     } else if (!matches.empty()) {
         if (matches.size() == 1) {
-            // Single match from find_any
             const SymbolLocation& loc = matches[0];
             u32 target_length = 0;
             const char* target_source = get_file_content(
@@ -659,18 +762,7 @@ void LspServer::handle_definition(const JsonValue& params, i64 id) {
                 return;
             }
 
-            LspRange target_range = text_range_to_lsp_range(
-                target_source, target_length, loc.name_range);
-
-            String result;
-            JsonWriter writer(result);
-            writer.write_start_object();
-            writer.write_key_string("uri", StringView(loc.uri.data(), loc.uri.size()));
-            writer.write_key("range");
-            write_lsp_range(writer, target_range);
-            writer.write_end_object();
-
-            m_transport.write_response(id, StringView(result.data(), result.size()));
+            write_location_response(m_transport, id, loc, target_source, target_length);
         } else {
             // Multiple matches — return Location[]
             String result;

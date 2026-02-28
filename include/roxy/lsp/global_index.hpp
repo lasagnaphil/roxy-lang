@@ -36,6 +36,12 @@ public:
     // Search all categories for a name, return all matches
     Vector<SymbolLocation> find_any(StringView name) const;
 
+    // Type information queries
+    StringView find_struct_parent(StringView struct_name) const;
+    StringView find_field_type(StringView struct_name, StringView field_name) const;
+    StringView find_function_return_type(StringView function_name) const;
+    StringView find_method_return_type(StringView struct_name, StringView method_name) const;
+
 private:
     // Owned string keys -> SymbolLocation
     tsl::robin_map<String, SymbolLocation> m_structs;
@@ -47,6 +53,12 @@ private:
     tsl::robin_map<String, SymbolLocation> m_constructors;  // "Struct.ctor_name"
     tsl::robin_map<String, SymbolLocation> m_fields;        // "Struct.field"
 
+    // Type information maps
+    tsl::robin_map<String, String> m_struct_parents;          // "Child" → "Base"
+    tsl::robin_map<String, String> m_field_types;             // "Point.x" → "f32"
+    tsl::robin_map<String, String> m_function_return_types;   // "get_point" → "Point"
+    tsl::robin_map<String, String> m_method_return_types;     // "Point.length" → "f32"
+
     // Track which names each file contributed (for remove_file)
     struct FileNameSet {
         Vector<String> struct_names;
@@ -57,6 +69,10 @@ private:
         Vector<String> method_keys;
         Vector<String> constructor_keys;
         Vector<String> field_keys;
+        Vector<String> struct_parent_keys;
+        Vector<String> field_type_keys;
+        Vector<String> function_return_type_keys;
+        Vector<String> method_return_type_keys;
     };
     tsl::robin_map<String, FileNameSet> m_file_names;
 

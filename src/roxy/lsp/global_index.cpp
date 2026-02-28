@@ -28,6 +28,12 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
         m_structs[name] = location;
         name_set.struct_names.push_back(name);
 
+        // Index struct parent
+        if (!stub.parent_name.empty()) {
+            m_struct_parents[name] = String(stub.parent_name);
+            name_set.struct_parent_keys.push_back(name);
+        }
+
         // Index fields
         for (u32 j = 0; j < stub.fields.size(); j++) {
             const FieldStub& field = stub.fields[j];
@@ -38,6 +44,12 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
             field_location.name_range = field.name_range;
             m_fields[field_key] = field_location;
             name_set.field_keys.push_back(field_key);
+
+            // Index field type
+            if (!field.type.name.empty()) {
+                m_field_types[field_key] = String(field.type.name);
+                name_set.field_type_keys.push_back(field_key);
+            }
         }
     }
 
@@ -63,6 +75,12 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
         location.name_range = stub.name_range;
         m_functions[name] = location;
         name_set.function_names.push_back(name);
+
+        // Index return type
+        if (!stub.return_type.name.empty()) {
+            m_function_return_types[name] = String(stub.return_type.name);
+            name_set.function_return_type_keys.push_back(name);
+        }
     }
 
     // Index methods
@@ -75,6 +93,12 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
         location.name_range = stub.name_range;
         m_methods[key] = location;
         name_set.method_keys.push_back(key);
+
+        // Index method return type
+        if (!stub.return_type.name.empty()) {
+            m_method_return_types[key] = String(stub.return_type.name);
+            name_set.method_return_type_keys.push_back(key);
+        }
     }
 
     // Index constructors
@@ -147,6 +171,18 @@ void GlobalIndex::remove_file(StringView uri) {
     for (u32 i = 0; i < name_set.field_keys.size(); i++) {
         m_fields.erase(name_set.field_keys[i]);
     }
+    for (u32 i = 0; i < name_set.struct_parent_keys.size(); i++) {
+        m_struct_parents.erase(name_set.struct_parent_keys[i]);
+    }
+    for (u32 i = 0; i < name_set.field_type_keys.size(); i++) {
+        m_field_types.erase(name_set.field_type_keys[i]);
+    }
+    for (u32 i = 0; i < name_set.function_return_type_keys.size(); i++) {
+        m_function_return_types.erase(name_set.function_return_type_keys[i]);
+    }
+    for (u32 i = 0; i < name_set.method_return_type_keys.size(); i++) {
+        m_method_return_types.erase(name_set.method_return_type_keys[i]);
+    }
 
     m_file_names.erase(file_it);
 }
@@ -200,6 +236,40 @@ const SymbolLocation* GlobalIndex::find_field(StringView struct_name, StringView
     auto it = m_fields.find(key);
     if (it != m_fields.end()) return &it->second;
     return nullptr;
+}
+
+StringView GlobalIndex::find_struct_parent(StringView struct_name) const {
+    auto it = m_struct_parents.find(String(struct_name));
+    if (it != m_struct_parents.end()) {
+        return StringView(it->second.data(), it->second.size());
+    }
+    return StringView();
+}
+
+StringView GlobalIndex::find_field_type(StringView struct_name, StringView field_name) const {
+    String key = make_qualified_key(struct_name, field_name);
+    auto it = m_field_types.find(key);
+    if (it != m_field_types.end()) {
+        return StringView(it->second.data(), it->second.size());
+    }
+    return StringView();
+}
+
+StringView GlobalIndex::find_function_return_type(StringView function_name) const {
+    auto it = m_function_return_types.find(String(function_name));
+    if (it != m_function_return_types.end()) {
+        return StringView(it->second.data(), it->second.size());
+    }
+    return StringView();
+}
+
+StringView GlobalIndex::find_method_return_type(StringView struct_name, StringView method_name) const {
+    String key = make_qualified_key(struct_name, method_name);
+    auto it = m_method_return_types.find(key);
+    if (it != m_method_return_types.end()) {
+        return StringView(it->second.data(), it->second.size());
+    }
+    return StringView();
 }
 
 Vector<SymbolLocation> GlobalIndex::find_any(StringView name) const {

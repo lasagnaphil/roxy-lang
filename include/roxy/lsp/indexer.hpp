@@ -8,8 +8,8 @@
 namespace rx {
 
 struct TypeRef {
-    StringView name;
-    TextRange range;
+    StringView name = {};
+    TextRange range = {0, 0};
 };
 
 struct ParamStub {
@@ -79,7 +79,7 @@ struct StructStub {
     TextRange range;
     TextRange name_range;
     bool is_pub;
-    StringView parent_name;
+    StringView parent_name = {};
     Vector<FieldStub> fields;
 };
 
@@ -96,7 +96,7 @@ struct TraitStub {
     TextRange range;
     TextRange name_range;
     bool is_pub;
-    StringView parent_name;
+    StringView parent_name = {};
 };
 
 struct ImportStub {
