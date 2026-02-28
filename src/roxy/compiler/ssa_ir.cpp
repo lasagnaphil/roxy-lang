@@ -98,6 +98,8 @@ const char* ir_op_to_string(IROp op) {
         case IROp::Cast:     return "cast";
 
         case IROp::Throw:    return "throw";
+
+        case IROp::Yield:    return "yield";
     }
     return "unknown";
 }
@@ -237,6 +239,7 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         case IROp::Delete:
         case IROp::Copy:
         case IROp::Throw:
+        case IROp::Yield:
             append_str(out, " ");
             append_value_id(out, inst->unary);
             break;

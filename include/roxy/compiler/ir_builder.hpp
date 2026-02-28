@@ -105,6 +105,7 @@ private:
     void gen_when_stmt(Stmt* stmt);
     void gen_throw_stmt(Stmt* stmt);
     void gen_try_stmt(Stmt* stmt);
+    void gen_yield_stmt(Stmt* stmt);
 
     // Expression generation - returns the value ID of the result
     ValueId gen_expr(Expr* expr);

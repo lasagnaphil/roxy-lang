@@ -152,6 +152,9 @@ enum class IROp : u8 {
 
     // Exception handling
     Throw,          // Throw exception: unary = exception object pointer. Block terminator.
+
+    // Coroutine
+    Yield,          // Yield a value from coroutine: unary = yielded value. Block terminator.
 };
 
 // Constant data for ConstXxx instructions
@@ -354,6 +357,12 @@ struct IRFunction {
     // Exception handling metadata
     Vector<IRExceptionHandler> exception_handlers;
     Vector<IRFinallyInfo> finally_handlers;
+
+    // Coroutine metadata (set by IR builder for functions returning Coro<T>)
+    bool is_coroutine = false;
+    Type* coro_yield_type = nullptr;     // T in Coro<T>
+    Type* coro_struct_type = nullptr;    // The synthetic struct holding coroutine state
+    Type* coro_type = nullptr;           // The Coro<T> type itself
 
     IRFunction() : return_type(nullptr), next_value_id(0) {}
 

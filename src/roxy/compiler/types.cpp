@@ -24,6 +24,11 @@ u64 TypeHash::operator()(const Type* t) const {
             hash ^= reinterpret_cast<u64>(t->map_info.value_type) * 37;
             break;
 
+        case TypeKind::Coroutine:
+            // Hash based on yield type pointer
+            hash ^= reinterpret_cast<u64>(t->coro_info.yield_type) * 31;
+            break;
+
         case TypeKind::Function: {
             // Hash based on return type and parameter types
             hash ^= reinterpret_cast<u64>(t->func_info.return_type) * 31;
@@ -73,6 +78,9 @@ bool TypeEqual::operator()(const Type* a, const Type* b) const {
         case TypeKind::Map:
             return a->map_info.key_type == b->map_info.key_type &&
                    a->map_info.value_type == b->map_info.value_type;
+
+        case TypeKind::Coroutine:
+            return a->coro_info.yield_type == b->coro_info.yield_type;
 
         case TypeKind::Function: {
             if (a->func_info.return_type != b->func_info.return_type) return false;
@@ -162,6 +170,29 @@ Type* TypeCache::map_type(Type* key_type, Type* value_type) {
     type->map_info.alloc_native_name = StringView(nullptr, 0);
 
     return intern_type(type);
+}
+
+Type* TypeCache::coroutine_type(Type* yield_type) {
+    Type* type = m_allocator.emplace<Type>();
+    type->kind = TypeKind::Coroutine;
+    type->coro_info.yield_type = yield_type;
+    type->coro_info.generated_struct_type = nullptr;
+    type->coro_info.methods = Span<MethodInfo>();
+    type->coro_info.func_name = StringView(nullptr, 0);
+
+    return intern_type(type);
+}
+
+Type* TypeCache::coroutine_type_for_func(Type* yield_type, StringView func_name) {
+    // Each coroutine function gets a unique (non-interned) type so that
+    // method calls can be resolved to the correct mangled function names.
+    Type* type = m_allocator.emplace<Type>();
+    type->kind = TypeKind::Coroutine;
+    type->coro_info.yield_type = yield_type;
+    type->coro_info.generated_struct_type = nullptr;
+    type->coro_info.methods = Span<MethodInfo>();
+    type->coro_info.func_name = func_name;
+    return type;  // Not interned — unique per coroutine function
 }
 
 Type* TypeCache::function_type(Span<Type*> param_types, Type* return_type) {
@@ -327,6 +358,9 @@ const MethodInfo* TypeCache::lookup_method(Type* type, StringView name, Type** f
     if (type->is_map()) {
         return lookup_map_method(type->map_info, name);
     }
+    if (type->is_coroutine()) {
+        return lookup_coro_method(type->coro_info, name);
+    }
     if (type->is_enum()) {
         for (const auto& method : type->enum_info.methods) {
             if (method.name == name) return &method;
@@ -415,6 +449,13 @@ const MethodInfo* lookup_map_method(const MapTypeInfo& info, StringView name) {
     return nullptr;
 }
 
+const MethodInfo* lookup_coro_method(const CoroutineTypeInfo& info, StringView name) {
+    for (const auto& method : info.methods) {
+        if (method.name == name) return &method;
+    }
+    return nullptr;
+}
+
 bool is_subtype_of(Type* child, Type* parent) {
     if (child == parent) return true;
     if (!child || !parent) return false;
@@ -445,6 +486,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TypeKind::String: return "string";
         case TypeKind::List: return "list";
         case TypeKind::Map: return "map";
+        case TypeKind::Coroutine: return "coro";
         case TypeKind::Function: return "function";
         case TypeKind::Struct: return "struct";
         case TypeKind::Enum: return "enum";
@@ -513,6 +555,12 @@ void type_to_string(const Type* type, String& out) {
             type_to_string(type->map_info.key_type, out);
             append_string(out, ", ");
             type_to_string(type->map_info.value_type, out);
+            append_string(out, ">");
+            break;
+
+        case TypeKind::Coroutine:
+            append_string(out, "Coro<");
+            type_to_string(type->coro_info.yield_type, out);
             append_string(out, ">");
             break;
 

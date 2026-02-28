@@ -287,6 +287,7 @@ TokenKind Lexer::identifier_type() {
                 }
             }
             break;
+        case 'y': return check_keyword(1, 4, "ield", TokenKind::KwYield);
     }
     return TokenKind::Identifier;
 }

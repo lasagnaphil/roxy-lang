@@ -59,6 +59,7 @@ add_library(roxy_compiler
     src/roxy/compiler/module_registry.cpp
     src/roxy/compiler/compiler.cpp
     src/roxy/compiler/type_env.cpp
+    src/roxy/compiler/coroutine_lowering.cpp
 )
 target_link_libraries(roxy_compiler roxy_shared)
 
@@ -145,6 +146,7 @@ add_executable(roxy_tests
     tests/e2e/test_generics.cpp
     tests/e2e/test_int_literal.cpp
     tests/e2e/test_exceptions.cpp
+    tests/e2e/test_coroutines.cpp
 )
 target_link_libraries(roxy_tests roxy_vm roxy_lsp)
 

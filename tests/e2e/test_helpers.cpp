@@ -7,6 +7,7 @@
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
 #include "roxy/compiler/ir_validator.hpp"
+#include "roxy/compiler/coroutine_lowering.hpp"
 #include "roxy/compiler/lowering.hpp"
 #include "roxy/compiler/module_registry.hpp"
 #include "roxy/vm/vm.hpp"
@@ -91,7 +92,17 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
         String ir_str;
         ir_module_to_string(ir_module, ir_str);
         ir_str.push_back('\0');
-        printf("=== IR ===\n%s\n", ir_str.data());
+        printf("=== IR (before coroutine lowering) ===\n%s\n", ir_str.data());
+    }
+
+    // Coroutine lowering pass: transform coroutine functions into init/resume/done
+    coroutine_lower(ir_module, allocator, type_env);
+
+    if (debug) {
+        String ir_str;
+        ir_module_to_string(ir_module, ir_str);
+        ir_str.push_back('\0');
+        printf("=== IR (after coroutine lowering) ===\n%s\n", ir_str.data());
     }
 
     IRValidator validator;

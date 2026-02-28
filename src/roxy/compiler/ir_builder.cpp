@@ -168,15 +168,29 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     // Set up parameters
     setup_parameters(decl->params);
 
-    // Resolve return type
+    // Resolve return type - check the symbol table first (semantic analysis already resolved it)
     if (decl->return_type) {
-        m_current_func->return_type = m_type_env.type_by_name(decl->return_type->name);
-        if (!m_current_func->return_type) {
-            m_current_func->return_type = m_types.void_type();
+        // Look up the function's resolved type from the symbol table
+        Symbol* func_sym = m_symbols.lookup(decl->name);
+        if (func_sym && func_sym->type && func_sym->type->is_function()) {
+            m_current_func->return_type = func_sym->type->func_info.return_type;
+        } else {
+            m_current_func->return_type = m_type_env.type_by_name(decl->return_type->name);
+            if (!m_current_func->return_type) {
+                m_current_func->return_type = m_types.void_type();
+            }
+            m_current_func->return_type = apply_ref_kind(m_current_func->return_type, decl->return_type->ref_kind);
         }
-        m_current_func->return_type = apply_ref_kind(m_current_func->return_type, decl->return_type->ref_kind);
     } else {
         m_current_func->return_type = m_types.void_type();
+    }
+
+    // Detect coroutine function (returns Coro<T>)
+    if (m_current_func->return_type && m_current_func->return_type->is_coroutine()) {
+        m_current_func->is_coroutine = true;
+        m_current_func->coro_type = m_current_func->return_type;
+        m_current_func->coro_yield_type = m_current_func->return_type->coro_info.yield_type;
+        m_current_func->coro_struct_type = m_current_func->return_type->coro_info.generated_struct_type;
     }
 
     // Check for large struct return - add hidden output pointer as last parameter
@@ -800,6 +814,9 @@ void IRBuilder::gen_stmt(Stmt* stmt) {
         case AstKind::StmtTry:
             gen_try_stmt(stmt);
             break;
+        case AstKind::StmtYield:
+            gen_yield_stmt(stmt);
+            break;
         default:
             break;
     }
@@ -1202,13 +1219,13 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
     Vector<StringView> modified_in_cases;
     for (auto& wc : ws.cases) {
         for (auto* d : wc.body) {
-            if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtTry) {
+            if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtYield) {
                 collect_assigned_vars(&d->stmt, modified_in_cases);
             }
         }
     }
     for (auto* d : ws.else_body) {
-        if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtTry) {
+        if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtYield) {
             collect_assigned_vars(&d->stmt, modified_in_cases);
         }
     }
@@ -1431,6 +1448,59 @@ void IRBuilder::gen_throw_stmt(Stmt* stmt) {
 
     // Code after throw is unreachable
     finish_block_unreachable();
+}
+
+void IRBuilder::gen_yield_stmt(Stmt* stmt) {
+    YieldStmt& ys = stmt->yield_stmt;
+
+    // Evaluate the yield expression
+    ValueId yield_val = gen_expr(ys.value);
+
+    // Emit Yield instruction (block terminator, like Throw)
+    IRInst* inst = emit_inst(IROp::Yield, m_current_func->coro_yield_type);
+    if (inst) {
+        inst->unary = yield_val;
+    }
+
+    // Collect all currently live local variables to pass as block arguments
+    // to the resume block
+    Vector<StringView> live_names;
+    Vector<ValueId> live_values;
+    Vector<Type*> live_types;
+    for (auto& scope : m_local_scopes) {
+        for (auto& [name, local] : scope) {
+            live_names.push_back(name);
+            live_values.push_back(local.value);
+            live_types.push_back(local.type);
+        }
+    }
+
+    // Create a resume block with block parameters for each live local
+    IRBlock* resume_block = create_block("coro.resume");
+    for (u32 i = 0; i < live_names.size(); i++) {
+        BlockParam param;
+        param.value = m_current_func->new_value();
+        param.type = live_types[i];
+        param.name = live_names[i];
+        resume_block->params.push_back(param);
+    }
+
+    // Build block args to pass current values to the resume block
+    Span<BlockArgPair> args = alloc_span<BlockArgPair>(static_cast<u32>(live_values.size()));
+    for (u32 i = 0; i < live_values.size(); i++) {
+        args[i].value = live_values[i];
+    }
+
+    // Finish current block with Goto to the resume block
+    finish_block_goto(resume_block->id, args);
+
+    // Switch to the resume block
+    set_current_block(resume_block);
+
+    // Update locals to point to the new block parameters
+    for (u32 i = 0; i < live_names.size(); i++) {
+        define_local(live_names[i], resume_block->params[i].value, live_types[i]);
+    }
 }
 
 void IRBuilder::gen_try_stmt(Stmt* stmt) {
@@ -2098,8 +2168,21 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             Type* obj_type = get_expr.object->resolved_type;
             Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
 
+            // Check for Coro method call (resume/done — lowered functions)
+            if (struct_type && struct_type->is_coroutine()) {
+                StringView method_name = call_expr.mangled_name;
+
+                // [obj] + args (self is the coroutine object)
+                Span<ValueId> method_args = alloc_span<ValueId>(args.size() + 1);
+                method_args[0] = obj;
+                for (u32 i = 0; i < args.size(); i++) {
+                    method_args[i + 1] = args[i];
+                }
+
+                result = emit_call(method_name, method_args, expr->resolved_type);
+            }
             // Check for List or Map method call (builtin native methods)
-            if (struct_type && (struct_type->is_list() || struct_type->is_map())) {
+            else if (struct_type && (struct_type->is_list() || struct_type->is_map())) {
                 StringView native_name = call_expr.mangled_name;
                 i32 native_idx = m_registry.get_index(native_name);
 
@@ -2920,7 +3003,7 @@ void IRBuilder::gen_decl(Decl* decl) {
             break;
         default:
             // Statement wrapped in declaration
-            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtTry) {
+            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtYield) {
                 gen_stmt(&decl->stmt);
             }
             break;
@@ -3031,7 +3114,7 @@ void IRBuilder::collect_assigned_vars(Stmt* stmt, Vector<StringView>& out) {
             for (auto* d : block.declarations) {
                 if (!d) continue;
                 // Recurse into statements (not var decls - those are new vars)
-                if (d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtTry) {
+                if (d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtYield) {
                     collect_assigned_vars(&d->stmt, out);
                 }
             }
@@ -3052,13 +3135,13 @@ void IRBuilder::collect_assigned_vars(Stmt* stmt, Vector<StringView>& out) {
             WhenStmt& ws = stmt->when_stmt;
             for (auto& when_case : ws.cases) {
                 for (auto* d : when_case.body) {
-                    if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtTry) {
+                    if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtYield) {
                         collect_assigned_vars(&d->stmt, out);
                     }
                 }
             }
             for (auto* d : ws.else_body) {
-                if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtTry) {
+                if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtYield) {
                     collect_assigned_vars(&d->stmt, out);
                 }
             }
@@ -3066,6 +3149,9 @@ void IRBuilder::collect_assigned_vars(Stmt* stmt, Vector<StringView>& out) {
         }
         case AstKind::StmtThrow:
             collect_assigned_vars_expr(stmt->throw_stmt.expr, out);
+            break;
+        case AstKind::StmtYield:
+            collect_assigned_vars_expr(stmt->yield_stmt.value, out);
             break;
         case AstKind::StmtTry: {
             TryStmt& ts = stmt->try_stmt;

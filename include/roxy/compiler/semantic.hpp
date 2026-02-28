@@ -129,6 +129,7 @@ private:
     void analyze_when_stmt(Stmt* stmt);
     void analyze_throw_stmt(Stmt* stmt);
     void analyze_try_stmt(Stmt* stmt);
+    void analyze_yield_stmt(Stmt* stmt);
 
     // Expression analysis - returns the type of the expression
     Type* analyze_expr(Expr* expr);
@@ -214,6 +215,10 @@ private:
     Vector<SemanticError> m_errors;
     Program* m_program;                   // Current program being analyzed
 
+    // Coroutine tracking (set while analyzing a function returning Coro<T>)
+    bool m_in_coroutine = false;
+    Type* m_coro_yield_type = nullptr;
+
     Vector<Decl*> m_synthetic_decls;  // Injected default method declarations
 
     // Generic type argument inference
@@ -228,9 +233,10 @@ private:
                                                   Span<FieldInit> literal_fields,
                                                   SourceLocation loc);
 
-    // List/Map/enum method population
+    // List/Map/Coro/enum method population
     void populate_list_methods(Type* list_type);
     void populate_map_methods(Type* map_type);
+    void populate_coro_methods(Type* coro_type);
     void populate_enum_methods(Type* enum_type);
     bool is_hashable_key_type(Type* type);
     NativeRegistry* get_builtin_registry();

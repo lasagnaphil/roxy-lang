@@ -8,6 +8,13 @@
 
 namespace rx {
 
+static StringView alloc_string_view(BumpAllocator& allocator, const char* str) {
+    u32 len = static_cast<u32>(strlen(str));
+    char* buf = reinterpret_cast<char*>(allocator.alloc_bytes(len, 1));
+    memcpy(buf, str, len);
+    return StringView(buf, len);
+}
+
 static const ConstructorInfo* find_constructor(Span<ConstructorInfo> constructors, StringView name) {
     for (const auto& constructor : constructors) {
         if (constructor.name == name) {
@@ -46,9 +53,10 @@ static u32 get_type_slot_count(Type* type) {
         case TypeKind::Struct:
             return type->struct_info.slot_count;
         
-        // Lists and Maps are pointers (2 slots)
+        // Lists, Maps, and Coroutines are pointers (2 slots)
         case TypeKind::List:
         case TypeKind::Map:
+        case TypeKind::Coroutine:
             return 2;
 
         default:
@@ -473,6 +481,15 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
             if (!return_type) return_type = m_types.error_type();
 
+            // For coroutine functions, create a function-specific coroutine type
+            // so that method calls (.resume(), .done()) can be resolved to the
+            // correct mangled function names.
+            if (return_type && return_type->is_coroutine()) {
+                return_type = m_types.coroutine_type_for_func(
+                    return_type->coro_info.yield_type, fun_decl.name);
+                populate_coro_methods(return_type);
+            }
+
             // Create function type
             Type* func_type = m_types.function_type(
                 m_allocator.alloc_span(param_types), return_type);
@@ -889,6 +906,18 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             populate_list_methods(base_type);
         }
 
+        // Check for built-in Coro<T> type
+        if (!base_type && type_expr->name == "Coro") {
+            if (type_expr->type_args.size() != 1) {
+                error(type_expr->loc, "Coro requires exactly 1 type argument");
+                return m_types.error_type();
+            }
+            Type* yield_type = resolve_type_expr(type_expr->type_args[0]);
+            if (!yield_type || yield_type->is_error()) return m_types.error_type();
+            base_type = m_types.coroutine_type(yield_type);
+            populate_coro_methods(base_type);
+        }
+
         // Check for built-in Map<K, V> type
         if (!base_type && type_expr->name == "Map") {
             if (type_expr->type_args.size() != 2) {
@@ -1038,6 +1067,16 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
     // Resolve return type
     Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
 
+    // Detect coroutine function (returns Coro<T>)
+    bool is_coroutine = return_type && return_type->is_coroutine();
+    bool prev_in_coroutine = m_in_coroutine;
+    Type* prev_coro_yield_type = m_coro_yield_type;
+
+    if (is_coroutine) {
+        m_in_coroutine = true;
+        m_coro_yield_type = return_type->coro_info.yield_type;
+    }
+
     // Push function scope
     m_symbols.push_function_scope(return_type);
 
@@ -1061,12 +1100,16 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
 
     // Check return paths (simplified - doesn't track all paths)
     // A more complete implementation would track control flow
-    if (!return_type->is_void() && !return_type->is_error()) {
+    if (!is_coroutine && !return_type->is_void() && !return_type->is_error()) {
         // For now, we just warn if there's no return at all
         // A full implementation would check all paths
     }
 
     m_symbols.pop_scope();
+
+    // Restore coroutine state
+    m_in_coroutine = prev_in_coroutine;
+    m_coro_yield_type = prev_coro_yield_type;
 }
 
 void SemanticAnalyzer::analyze_struct_decl(Decl* decl) {
@@ -1608,7 +1651,7 @@ static Decl* clone_decl(BumpAllocator& alloc, Decl* decl) {
             break;
         default:
             // For statement declarations embedded in Decl, clone the statement
-            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtTry) {
+            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtYield) {
                 Stmt* cloned = clone_stmt(alloc, &decl->stmt);
                 if (cloned) d->stmt = *cloned;
             }
@@ -2216,6 +2259,9 @@ void SemanticAnalyzer::analyze_stmt(Stmt* stmt) {
         case AstKind::StmtTry:
             analyze_try_stmt(stmt);
             break;
+        case AstKind::StmtYield:
+            analyze_yield_stmt(stmt);
+            break;
         default:
             break;
     }
@@ -2310,6 +2356,15 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
 
     if (!m_symbols.is_in_function()) {
         error(stmt->loc, "'return' statement outside of function");
+        return;
+    }
+
+    // In coroutine functions, only bare 'return;' is allowed (no return value)
+    if (m_in_coroutine) {
+        if (rs.value) {
+            error(stmt->loc, "coroutine functions cannot return a value; use 'yield' instead");
+        }
+        m_symbols.mark_return();
         return;
     }
 
@@ -2560,6 +2615,24 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
     // Analyze finally body if present
     if (ts.finally_body) {
         analyze_stmt(ts.finally_body);
+    }
+}
+
+void SemanticAnalyzer::analyze_yield_stmt(Stmt* stmt) {
+    YieldStmt& ys = stmt->yield_stmt;
+
+    if (!m_in_coroutine) {
+        error(stmt->loc, "'yield' can only appear inside a coroutine function (one returning Coro<T>)");
+        return;
+    }
+
+    Type* actual = analyze_expr(ys.value);
+    if (!actual || actual->is_error()) return;
+
+    if (!check_assignable(m_coro_yield_type, actual, stmt->loc)) {
+        // Error already reported
+    } else {
+        coerce_int_literal(ys.value, m_coro_yield_type);
     }
 }
 
@@ -3099,6 +3172,44 @@ NativeRegistry* SemanticAnalyzer::get_builtin_registry() {
     return registry;
 }
 
+void SemanticAnalyzer::populate_coro_methods(Type* type) {
+    assert(type && type->is_coroutine());
+    if (type->coro_info.methods.size() > 0) return;
+
+    Type* yield_type = type->coro_info.yield_type;
+    StringView func_name = type->coro_info.func_name;
+
+    // Coroutine has two methods: resume() -> T and done() -> bool
+    MethodInfo* methods = reinterpret_cast<MethodInfo*>(
+        m_allocator.alloc_bytes(sizeof(MethodInfo) * 2, alignof(MethodInfo)));
+
+    // Build mangled names: __coro_<func_name>$$resume, __coro_<func_name>$$done
+    // These match the names generated by the coroutine lowering pass.
+    char resume_buf[256];
+    format_to(resume_buf, sizeof(resume_buf), "__coro_{}$$resume", func_name);
+    StringView resume_native = alloc_string_view(m_allocator, resume_buf);
+
+    char done_buf[256];
+    format_to(done_buf, sizeof(done_buf), "__coro_{}$$done", func_name);
+    StringView done_native = alloc_string_view(m_allocator, done_buf);
+
+    // resume() -> yield_type
+    methods[0].name = StringView("resume", 6);
+    methods[0].param_types = Span<Type*>();  // No params (self is implicit)
+    methods[0].return_type = yield_type;
+    methods[0].decl = nullptr;
+    methods[0].native_name = resume_native;
+
+    // done() -> bool
+    methods[1].name = StringView("done", 4);
+    methods[1].param_types = Span<Type*>();  // No params (self is implicit)
+    methods[1].return_type = m_types.bool_type();
+    methods[1].decl = nullptr;
+    methods[1].native_name = done_native;
+
+    type->coro_info.methods = Span<MethodInfo>(methods, 2);
+}
+
 void SemanticAnalyzer::populate_list_methods(Type* type) {
     assert(type && type->is_list());
     if (type->list_info.methods.size() > 0) return;
@@ -3593,6 +3704,12 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                 const MethodInfo* mi = lookup_map_method(base_type->map_info, get_expr.name);
                 if (mi) return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
                 error_fmt(expr->loc, "Map has no method '{}'", get_expr.name);
+                return m_types.error_type();
+            }
+            if (base_type && base_type->is_coroutine()) {
+                const MethodInfo* mi = lookup_coro_method(base_type->coro_info, get_expr.name);
+                if (mi) return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
+                error_fmt(expr->loc, "Coro has no method '{}'", get_expr.name);
                 return m_types.error_type();
             }
             if (base_type && base_type->is_struct()) {

@@ -77,6 +77,7 @@ private:
     Stmt* when_statement();
     Stmt* throw_statement();
     Stmt* try_statement();
+    Stmt* yield_statement();
     Stmt* expression_statement();
 
     // Declaration parsing

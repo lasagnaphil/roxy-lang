@@ -88,6 +88,9 @@ enum class TokenKind {
     KwThrow,
     KwFinally,
 
+    // Keywords - Coroutines
+    KwYield,
+
     // Keywords - OOP
     KwSelf,
     KwSuper,

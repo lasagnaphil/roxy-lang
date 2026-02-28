@@ -368,6 +368,14 @@ bool IRValidator::validate_instruction(IRFunction* func, IRBlock* block, IRInst*
         case IROp::StackAlloc:
         case IROp::VarAddr:
             break;
+
+        // Yield should never appear after coroutine lowering
+        case IROp::Yield:
+        {
+            report_error_fmt("function '{}' block {}: IROp::Yield found after coroutine lowering",
+                             func->name, block->id.id);
+            return false;
+        }
     }
 
     return true;

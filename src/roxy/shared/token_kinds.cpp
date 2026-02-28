@@ -89,6 +89,9 @@ const char* token_kind_to_string(TokenKind kind) {
         case TokenKind::KwThrow:        return "throw";
         case TokenKind::KwFinally:      return "finally";
 
+        // Keywords - Coroutines
+        case TokenKind::KwYield:        return "yield";
+
         // Keywords - OOP
         case TokenKind::KwSelf:         return "self";
         case TokenKind::KwSuper:        return "super";

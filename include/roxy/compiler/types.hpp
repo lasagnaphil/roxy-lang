@@ -34,6 +34,7 @@ enum class TypeKind : u8 {
     // Compound types
     List,
     Map,
+    Coroutine,
     Function,
     Struct,
     Enum,
@@ -202,6 +203,14 @@ struct MapTypeInfo {
     StringView copy_native_name;       // "map_copy" — deep-copy for value parameter passing
 };
 
+// Type info for coroutine types (Coro<T>)
+struct CoroutineTypeInfo {
+    Type* yield_type;                  // T in Coro<T>
+    Type* generated_struct_type;       // Synthetic struct holding coroutine state
+    Span<MethodInfo> methods;          // resume() and done()
+    StringView func_name;             // Name of the coroutine function (for method mangling)
+};
+
 // Type info for function types
 struct FunctionTypeInfo {
     Span<Type*> param_types;
@@ -229,6 +238,7 @@ struct Type {
         TraitTypeInfo trait_info;
         ListTypeInfo list_info;
         MapTypeInfo map_info;
+        CoroutineTypeInfo coro_info;
         FunctionTypeInfo func_info;
         RefTypeInfo ref_info;
         TypeParamInfo type_param_info;
@@ -299,6 +309,10 @@ struct Type {
 
     bool is_map() const {
         return kind == TypeKind::Map;
+    }
+
+    bool is_coroutine() const {
+        return kind == TypeKind::Coroutine;
     }
 
     bool is_function() const {
@@ -382,6 +396,8 @@ public:
     // Factory methods for compound types (with interning)
     Type* list_type(Type* element_type);
     Type* map_type(Type* key_type, Type* value_type);
+    Type* coroutine_type(Type* yield_type);
+    Type* coroutine_type_for_func(Type* yield_type, StringView func_name);
     Type* function_type(Span<Type*> param_types, Type* return_type);
     Type* uniq_type(Type* inner_type);
     Type* ref_type(Type* inner_type);
@@ -459,5 +475,8 @@ const MethodInfo* lookup_list_method(const ListTypeInfo& info, StringView name);
 
 // Look up a method in a map type's builtin methods
 const MethodInfo* lookup_map_method(const MapTypeInfo& info, StringView name);
+
+// Look up a method in a coroutine type's builtin methods
+const MethodInfo* lookup_coro_method(const CoroutineTypeInfo& info, StringView name);
 
 }

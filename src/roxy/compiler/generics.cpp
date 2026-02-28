@@ -633,7 +633,7 @@ Decl* GenericInstantiator::clone_decl(Decl* decl, const TypeSubstitution& subst)
             break;
         default:
             // For statement declarations embedded in Decl, clone the statement
-            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtTry) {
+            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtYield) {
                 Stmt* cloned = clone_stmt(&decl->stmt, subst);
                 if (cloned) d->stmt = *cloned;
             }

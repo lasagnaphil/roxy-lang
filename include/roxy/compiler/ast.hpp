@@ -46,6 +46,7 @@ enum class AstKind : u8 {
     StmtWhen,
     StmtThrow,
     StmtTry,
+    StmtYield,
 
     // Declarations
     DeclVar,
@@ -380,6 +381,11 @@ struct TryStmt {
     Stmt* finally_body;           // nullptr if no finally
 };
 
+// Yield statement: yield expr;
+struct YieldStmt {
+    Expr* value;                  // Expression to yield
+};
+
 // Statement node
 struct Stmt {
     AstKind kind;
@@ -397,6 +403,7 @@ struct Stmt {
         WhenStmt when_stmt;
         ThrowStmt throw_stmt;
         TryStmt try_stmt;
+        YieldStmt yield_stmt;
     };
 
     Stmt() : kind(AstKind::StmtExpr), loc{0, 0, 0} {

@@ -1532,6 +1532,12 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             emit_abc(Opcode::THROW, exc_reg, 0, 0);
             break;
         }
+
+        case IROp::Yield: {
+            // Should never reach bytecode lowering - coroutine lowering pass removes all Yields
+            assert(false && "IROp::Yield should have been lowered by coroutine_lower()");
+            break;
+        }
     }
 }
 

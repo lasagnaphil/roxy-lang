@@ -809,6 +809,9 @@ Stmt* Parser::statement() {
     if (match(TokenKind::KwTry)) {
         return try_statement();
     }
+    if (match(TokenKind::KwYield)) {
+        return yield_statement();
+    }
 
     return expression_statement();
 }
@@ -1140,6 +1143,22 @@ Stmt* Parser::throw_statement() {
     stmt->kind = AstKind::StmtThrow;
     stmt->loc = loc;
     stmt->throw_stmt.expr = expr;
+    return stmt;
+}
+
+Stmt* Parser::yield_statement() {
+    SourceLocation loc = m_previous.loc;
+
+    Expr* expr = expression();
+    if (m_has_error) return nullptr;
+
+    consume(TokenKind::Semicolon, "Expected ';' after yield expression");
+    if (m_has_error) return nullptr;
+
+    Stmt* stmt = alloc<Stmt>();
+    stmt->kind = AstKind::StmtYield;
+    stmt->loc = loc;
+    stmt->yield_stmt.value = expr;
     return stmt;
 }
 
