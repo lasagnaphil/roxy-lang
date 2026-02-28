@@ -6,6 +6,7 @@
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
 #include "roxy/compiler/ir_validator.hpp"
+#include "roxy/compiler/coroutine_lowering.hpp"
 #include "roxy/compiler/lowering.hpp"
 #include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/natives.hpp"
@@ -288,6 +289,9 @@ BCModule* Compiler::link_modules() {
             merged_ir.functions.push_back(func);
         }
     }
+
+    // Coroutine lowering pass: transform coroutine functions into init/resume/done
+    coroutine_lower(&merged_ir, m_allocator, m_type_env);
 
     // Validate merged IR before lowering
     IRValidator validator;

@@ -2840,7 +2840,9 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
     TryStmt& ts = stmt->try_stmt;
 
     // Analyze try body
+    m_in_try_catch_depth++;
     analyze_stmt(ts.try_body);
+    m_in_try_catch_depth--;
 
     bool has_catch_all = false;
 
@@ -2884,13 +2886,17 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
                              m_types.exception_ref_type(), clause.loc);
         }
 
+        m_in_try_catch_depth++;
         analyze_stmt(clause.body);
+        m_in_try_catch_depth--;
         m_symbols.pop_scope();
     }
 
     // Analyze finally body if present
     if (ts.finally_body) {
+        m_in_try_catch_depth++;
         analyze_stmt(ts.finally_body);
+        m_in_try_catch_depth--;
     }
 }
 
@@ -2899,6 +2905,11 @@ void SemanticAnalyzer::analyze_yield_stmt(Stmt* stmt) {
 
     if (!m_in_coroutine) {
         error(stmt->loc, "'yield' can only appear inside a coroutine function (one returning Coro<T>)");
+        return;
+    }
+
+    if (m_in_try_catch_depth > 0) {
+        error(stmt->loc, "'yield' inside try/catch/finally is not yet supported");
         return;
     }
 

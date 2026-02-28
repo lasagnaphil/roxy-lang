@@ -235,6 +235,9 @@ private:
     // The type params of the current generic template being checked
     Span<TypeParam> m_active_type_params;
 
+    // Try/catch depth tracking (for yield-in-try validation)
+    u32 m_in_try_catch_depth = 0;
+
     Vector<Decl*> m_synthetic_decls;  // Injected default method declarations
 
     // Generic type argument inference

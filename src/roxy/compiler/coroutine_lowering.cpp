@@ -241,6 +241,18 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
         }
     }
 
+    // Build map from promoted var name to ALL original value IDs across all blocks.
+    // A single promoted variable (e.g., loop var 'i') may appear as block params in
+    // multiple blocks (e.g., for-header and resume block), each with different value IDs.
+    tsl::robin_map<StringView, Vector<u32>> promoted_var_value_ids;
+    for (auto* block : original->blocks) {
+        for (auto& param : block->params) {
+            if (promoted_var_index.find(param.name) != promoted_var_index.end()) {
+                promoted_var_value_ids[param.name].push_back(param.value.id);
+            }
+        }
+    }
+
     // Step 3: Build the coroutine struct type
     // Fields: __state (i32), __yield_val (T), params..., promoted locals...
     u32 num_params = static_cast<u32>(original->params.size());
@@ -597,38 +609,103 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
             vm[original->params[i].value.id] = loaded;
         }
 
-        // For states > 0, also load promoted locals from struct
-        if (state_idx > 0) {
-            IRBlock* resume_orig = original->blocks[entry_orig_idx];
-            for (auto& param : resume_orig->params) {
+        // Load promoted locals from struct at the entry block.
+        // Map ALL value IDs for each promoted var (across all blocks in the
+        // original function) to the entry-loaded value. This provides an
+        // initial mapping that's valid before any block param updates.
+        tsl::robin_map<u32, ValueId> entry_promoted_loads; // pv_idx -> loaded value
+        for (auto& yp : yield_points) {
+            IRBlock* resume_block = original->blocks[yp.resume_block_id.id];
+            for (auto& param : resume_block->params) {
                 auto pv_it = promoted_var_index.find(param.name);
                 if (pv_it != promoted_var_index.end()) {
+                    if (entry_promoted_loads.find(pv_it->second) != entry_promoted_loads.end()) continue;
                     PromotedVar& pv = promoted_vars[pv_it->second];
                     ValueId loaded = emit_get_field(allocator, resume_func, entry_new_block,
                                                     self_val, pv.name,
                                                     pv.field_slot_offset, pv.field_slot_count,
                                                     pv.type);
-                    vm[param.value.id] = loaded;
+                    entry_promoted_loads[pv_it->second] = loaded;
+                }
+            }
+        }
+        // Map all value IDs for each promoted var to the entry-loaded value
+        for (auto& [pv_idx, loaded] : entry_promoted_loads) {
+            PromotedVar& pv = promoted_vars[pv_idx];
+            auto vid_it = promoted_var_value_ids.find(pv.name);
+            if (vid_it != promoted_var_value_ids.end()) {
+                for (u32 vid : vid_it->second) {
+                    vm[vid] = loaded;
                 }
             }
         }
 
-        // Clone instructions and terminators for each reachable block
+        // Pass 1: Clone block params for all non-entry reachable blocks.
+        // For promoted variable params, still create block params (predecessors
+        // pass values via goto/branch args) but DON'T override vm — the
+        // promoted var values will be managed via struct store/load in Pass 2.
+        // Track promoted block params for set_field emission in Pass 2.
+        tsl::robin_map<u32, Vector<std::pair<ValueId, u32>>> promoted_block_params;
+        for (u32 orig_idx : reachable) {
+            if (orig_idx == entry_orig_idx) continue;
+            IRBlock* orig_block = original->blocks[orig_idx];
+            IRBlock* new_block = resume_func->blocks[block_map[orig_idx].id];
+            for (auto& param : orig_block->params) {
+                BlockParam new_param;
+                new_param.value = resume_func->new_value();
+                new_param.type = param.type;
+                new_param.name = param.name;
+                new_block->params.push_back(new_param);
+
+                auto pv_it = promoted_var_index.find(param.name);
+                if (pv_it != promoted_var_index.end()) {
+                    // Promoted: track for set_field at block entry, don't override vm
+                    promoted_block_params[new_block->id.id].push_back(
+                        {new_param.value, pv_it->second});
+                } else {
+                    vm[param.value.id] = new_param.value;
+                }
+            }
+        }
+
+        // Pass 2: Clone instructions and terminators for each reachable block
         for (u32 orig_idx : reachable) {
             IRBlock* orig_block = original->blocks[orig_idx];
             IRBlock* new_block = resume_func->blocks[block_map[orig_idx].id];
 
-            bool is_state_entry = (orig_idx == entry_orig_idx);
+            // For non-entry blocks: manage promoted vars via struct store/load.
+            // This ensures promoted variable values are always correct regardless
+            // of which path through the control flow graph reached this block.
+            if (orig_idx != entry_orig_idx) {
+                // Step A: Store promoted var block param values to the struct.
+                // When a predecessor passes a new value (e.g., loop increment),
+                // the block param receives it and we persist it to the struct.
+                auto pbp_it = promoted_block_params.find(new_block->id.id);
+                if (pbp_it != promoted_block_params.end()) {
+                    for (auto& [bp_val, pv_idx] : pbp_it->second) {
+                        PromotedVar& pv = promoted_vars[pv_idx];
+                        emit_set_field(allocator, resume_func, new_block, self_val,
+                                       pv.name, pv.field_slot_offset, pv.field_slot_count,
+                                       bp_val, pv.type);
+                    }
+                }
 
-            // For non-entry blocks, clone block params so predecessors can pass values
-            if (!is_state_entry) {
-                for (auto& param : orig_block->params) {
-                    BlockParam new_param;
-                    new_param.value = resume_func->new_value();
-                    new_param.type = param.type;
-                    new_param.name = param.name;
-                    new_block->params.push_back(new_param);
-                    vm[param.value.id] = new_param.value;
+                // Step B: Load all promoted vars from struct and update vm.
+                // This gives each block a fresh, correct value for every promoted
+                // variable, avoiding stale references to block params from
+                // non-dominating blocks.
+                for (auto& [pv_name, pv_idx] : promoted_var_index) {
+                    PromotedVar& pv = promoted_vars[pv_idx];
+                    ValueId loaded = emit_get_field(allocator, resume_func, new_block,
+                                                    self_val, pv.name,
+                                                    pv.field_slot_offset, pv.field_slot_count,
+                                                    pv.type);
+                    auto vid_it = promoted_var_value_ids.find(pv_name);
+                    if (vid_it != promoted_var_value_ids.end()) {
+                        for (u32 vid : vid_it->second) {
+                            vm[vid] = loaded;
+                        }
+                    }
                 }
             }
 
