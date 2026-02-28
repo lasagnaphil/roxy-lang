@@ -718,8 +718,11 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
         if (!decl) continue;
 
         if (decl->kind == AstKind::DeclFun) {
-            // Skip generic function templates - they're analyzed when instantiated
-            if (decl->fun_decl.type_params.size() > 0) continue;
+            if (decl->fun_decl.type_params.size() > 0) {
+                // Phase B: Check bounded template bodies against declared trait bounds
+                analyze_generic_template_body(decl);
+                continue;
+            }
             analyze_fun_decl(decl);
         }
         else if (decl->kind == AstKind::DeclStruct) {
@@ -891,6 +894,16 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             } else {
                 error(type_expr->loc, "'Self' can only be used in struct/trait method context");
                 return m_types.error_type();
+            }
+        }
+
+        // Check if this is an active generic type parameter (during template body checking)
+        if (!base_type && m_active_type_params.size() > 0) {
+            for (u32 i = 0; i < m_active_type_params.size(); i++) {
+                if (type_expr->name == m_active_type_params[i].name) {
+                    base_type = m_types.type_param(m_active_type_params[i].name, i);
+                    break;
+                }
             }
         }
 
@@ -1898,6 +1911,143 @@ bool SemanticAnalyzer::check_type_arg_bounds(StringView template_name, Span<Type
     return all_ok;
 }
 
+// ============================================================================
+// Phase B: Definition-site checking of generic template bodies
+// ============================================================================
+
+Type* SemanticAnalyzer::substitute_trait_types(Type* type, Type* type_param, Type* found_in_trait) {
+    if (!type) return type;
+    if (type->is_self()) return type_param;
+    if (type->is_type_param()) {
+        // Substitute trait's own type params with the bound's type args
+        u32 tp_index = type_param->type_param_info.index;
+        if (tp_index < m_active_type_param_bounds.size()) {
+            for (const auto& bound : m_active_type_param_bounds[tp_index]) {
+                if (bound.trait == found_in_trait && bound.type_args.size() > type->type_param_info.index) {
+                    return bound.type_args[type->type_param_info.index];
+                }
+            }
+        }
+        // If the type param matches one of our active type params, keep it as-is
+        return type;
+    }
+    return type;
+}
+
+const TraitMethodInfo* SemanticAnalyzer::lookup_type_param_method(
+    Type* type_param_type, StringView method_name, Type** found_in_trait) {
+
+    u32 param_index = type_param_type->type_param_info.index;
+    if (param_index >= m_active_type_param_bounds.size()) return nullptr;
+
+    for (const auto& bound : m_active_type_param_bounds[param_index]) {
+        TraitTypeInfo& trait_info = bound.trait->trait_info;
+        // Search methods (including those on this trait)
+        for (const auto& method : trait_info.methods) {
+            if (method.name == method_name) {
+                if (found_in_trait) *found_in_trait = bound.trait;
+                return &method;
+            }
+        }
+        // Also check parent trait methods
+        Type* parent = trait_info.parent;
+        while (parent && parent->is_trait()) {
+            for (const auto& method : parent->trait_info.methods) {
+                if (method.name == method_name) {
+                    if (found_in_trait) *found_in_trait = parent;
+                    return &method;
+                }
+            }
+            parent = parent->trait_info.parent;
+        }
+    }
+    return nullptr;
+}
+
+Type* SemanticAnalyzer::analyze_type_param_method_call(
+    Expr* expr, CallExpr& call_expr, GetExpr& get_expr, Type* obj_type,
+    Type* type_param_type, const TraitMethodInfo* trait_method, Type* found_in_trait) {
+
+    auto substitute = [&](Type* t) -> Type* {
+        return substitute_trait_types(t, type_param_type, found_in_trait);
+    };
+
+    // Check argument count
+    if (call_expr.arguments.size() != trait_method->param_types.size()) {
+        error_fmt(expr->loc, "method '{}' expects {} arguments but got {}",
+                 trait_method->name, trait_method->param_types.size(), call_expr.arguments.size());
+        return substitute(trait_method->return_type);
+    }
+
+    // Type-check arguments with substituted parameter types
+    for (u32 i = 0; i < call_expr.arguments.size(); i++) {
+        Type* arg_type = analyze_expr(call_expr.arguments[i].expr);
+        Type* param_type = substitute(trait_method->param_types[i]);
+        if (!arg_type->is_error() && !param_type->is_error()) {
+            check_assignable(param_type, arg_type, call_expr.arguments[i].expr->loc);
+        }
+    }
+
+    get_expr.object->resolved_type = obj_type;
+    return substitute(trait_method->return_type);
+}
+
+void SemanticAnalyzer::analyze_generic_template_body(Decl* decl) {
+    FunDecl& fun_decl = decl->fun_decl;
+    StringView func_name = fun_decl.name;
+
+    // Get resolved bounds for this template
+    const ResolvedTypeParams* bounds = m_type_env.generics().get_fun_bounds(func_name);
+
+    // Only check bodies of bounded templates (at least one type param has bounds)
+    if (!bounds) return;
+    bool has_any_bound = false;
+    for (u32 i = 0; i < bounds->param_bounds.size(); i++) {
+        if (bounds->param_bounds[i].size() > 0) { has_any_bound = true; break; }
+    }
+    if (!has_any_bound) return;
+
+    // Skip forward declarations (no body) and native functions
+    if (!fun_decl.body) return;
+    if (fun_decl.is_native) return;
+
+    // Save and set bounds context
+    auto saved_bounds = m_active_type_param_bounds;
+    auto saved_params = m_active_type_params;
+    m_active_type_param_bounds = bounds->param_bounds;
+    m_active_type_params = fun_decl.type_params;
+
+    // Resolve return type (may reference type params → resolves to TypeParam via resolve_type_expr)
+    Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
+
+    // Save and reset move states (same pattern as analyze_fun_decl)
+    MoveStateSnapshot saved_move_states = save_move_states();
+    m_move_states.clear();
+
+    // Push function scope with return type
+    m_symbols.push_function_scope(return_type);
+
+    // Define parameters in scope
+    for (u32 i = 0; i < fun_decl.params.size(); i++) {
+        Param& param = fun_decl.params[i];
+        Type* param_type = resolve_type_expr(param.type);
+        if (!param_type) param_type = m_types.error_type();
+        m_symbols.define_parameter(param.name, param_type, decl->loc, i);
+    }
+
+    // Analyze the body
+    analyze_stmt(fun_decl.body);
+
+    m_symbols.pop_scope();
+
+    // Restore move states
+    restore_move_states(saved_move_states);
+
+    // Restore bounds context
+    m_active_type_param_bounds = saved_bounds;
+    m_active_type_params = saved_params;
+}
+
 void SemanticAnalyzer::validate_trait_implementations() {
     // Group pending impls by (struct, trait, type_args)
     struct TraitImplGroup {
@@ -2283,6 +2433,20 @@ Type* SemanticAnalyzer::try_resolve_binary_op(BinaryOp op, Type* left, Type* rig
             return mi->return_type;
         }
     }
+
+    // Phase B: TypeParam path — look up through trait bounds
+    if (left->is_type_param() && m_active_type_param_bounds.size() > 0) {
+        Type* found_in_trait = nullptr;
+        const TraitMethodInfo* trait_method = lookup_type_param_method(left, name, &found_in_trait);
+        if (trait_method && trait_method->param_types.size() == 1) {
+            Type* return_type = substitute_trait_types(trait_method->return_type, left, found_in_trait);
+            Type* param_type = substitute_trait_types(trait_method->param_types[0], left, found_in_trait);
+            // Check right operand compatibility
+            if (param_type == right || is_assignable(param_type, right)) {
+                return return_type;
+            }
+        }
+    }
     return nullptr;
 }
 
@@ -2293,6 +2457,15 @@ Type* SemanticAnalyzer::try_resolve_unary_op(UnaryOp op, Type* operand) {
     const MethodInfo* mi = m_types.lookup_method(operand, name);
     if (mi && mi->param_types.size() == 0 && mi->return_type) {
         return mi->return_type;
+    }
+
+    // Phase B: TypeParam path — look up through trait bounds
+    if (operand->is_type_param() && m_active_type_param_bounds.size() > 0) {
+        Type* found_in_trait = nullptr;
+        const TraitMethodInfo* trait_method = lookup_type_param_method(operand, name, &found_in_trait);
+        if (trait_method && trait_method->param_types.size() == 0 && trait_method->return_type) {
+            return substitute_trait_types(trait_method->return_type, operand, found_in_trait);
+        }
     }
     return nullptr;
 }
@@ -3827,6 +4000,17 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                 error_fmt(expr->loc, "Coro has no method '{}'", get_expr.name);
                 return m_types.error_type();
             }
+            if (base_type && base_type->is_type_param() && m_active_type_param_bounds.size() > 0) {
+                Type* found_in_trait = nullptr;
+                const TraitMethodInfo* trait_method = lookup_type_param_method(base_type, get_expr.name, &found_in_trait);
+                if (trait_method) {
+                    return analyze_type_param_method_call(expr, call_expr, get_expr, obj_type, base_type,
+                                                          trait_method, found_in_trait);
+                }
+                error_fmt(expr->loc, "no method '{}' found in trait bounds for type parameter '{}'",
+                         get_expr.name, base_type->type_param_info.name);
+                return m_types.error_type();
+            }
             if (base_type && base_type->is_struct()) {
                 Type* result = analyze_struct_method_call(expr, call_expr, get_expr, obj_type, base_type);
                 if (result) return result;
@@ -4018,6 +4202,19 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
 
     if (base_type->is_map()) {
         error(get_expr.object->loc, "cannot access fields of Map type; use methods like .get(), .insert(), .len()");
+        return m_types.error_type();
+    }
+
+    if (base_type->is_type_param() && m_active_type_param_bounds.size() > 0) {
+        // Type parameters have no fields, but may have methods via bounds
+        Type* found_in_trait = nullptr;
+        const TraitMethodInfo* trait_method = lookup_type_param_method(base_type, get_expr.name, &found_in_trait);
+        if (trait_method) {
+            // Methods on type params must be called, not accessed as values
+            return m_types.error_type();
+        }
+        error_fmt(expr->loc, "type parameter '{}' has no field or method '{}'",
+                 base_type->type_param_info.name, get_expr.name);
         return m_types.error_type();
     }
 
@@ -4417,6 +4614,11 @@ bool SemanticAnalyzer::is_assignable(Type* target, Type* source) const {
     if (!target || !source) return false;
     if (target->is_error() || source->is_error()) return true;
     if (target == source) return true;
+    // TypeParam is assignable to itself (same name/index = same parameter)
+    if (target->is_type_param() && source->is_type_param()) {
+        return target->type_param_info.index == source->type_param_info.index
+            && target->type_param_info.name == source->type_param_info.name;
+    }
     if (source->is_nil() && target->is_reference()) return true;
     if (target->is_struct() && source->is_struct()) {
         if (is_subtype_of(source, target)) return true;
@@ -4439,6 +4641,14 @@ bool SemanticAnalyzer::check_assignable(Type* target, Type* source, SourceLocati
 
     // Same type is always assignable
     if (target == source) return true;
+
+    // TypeParam is assignable to itself (same name/index = same parameter)
+    if (target->is_type_param() && source->is_type_param()) {
+        if (target->type_param_info.index == source->type_param_info.index
+            && target->type_param_info.name == source->type_param_info.name) {
+            return true;
+        }
+    }
 
     // nil is assignable to reference types
     if (source->is_nil() && target->is_reference()) return true;

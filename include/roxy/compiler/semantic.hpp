@@ -157,6 +157,9 @@ private:
     Type* analyze_super_call(Expr* expr, CallExpr& ce);
     Type* analyze_builtin_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, const MethodInfo* mi);
     Type* analyze_struct_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, Type* base_type);
+    Type* analyze_type_param_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type,
+                                          Type* type_param_type, const TraitMethodInfo* trait_method,
+                                          Type* found_in_trait);
     Type* analyze_regular_fun_call(Expr* expr, CallExpr& ce);
 
     // Shared argument checking for method/function calls
@@ -226,6 +229,12 @@ private:
     bool m_in_coroutine = false;
     Type* m_coro_yield_type = nullptr;
 
+    // Phase B: Active type parameter bounds (set when analyzing generic template bodies)
+    // Maps type param index → resolved trait bounds
+    Span<Span<TraitBound>> m_active_type_param_bounds;
+    // The type params of the current generic template being checked
+    Span<TypeParam> m_active_type_params;
+
     Vector<Decl*> m_synthetic_decls;  // Injected default method declarations
 
     // Generic type argument inference
@@ -252,6 +261,12 @@ private:
     void append_method(StructTypeInfo& info, MethodInfo method);
     void append_constructor(StructTypeInfo& info, ConstructorInfo ctor);
     void append_destructor(StructTypeInfo& info, DestructorInfo dtor);
+
+    // Phase B: Definition-site checking of generic template bodies
+    void analyze_generic_template_body(Decl* decl);
+    const TraitMethodInfo* lookup_type_param_method(Type* type_param_type, StringView method_name,
+                                                      Type** found_in_trait);
+    Type* substitute_trait_types(Type* type, Type* type_param, Type* found_in_trait);
 
     // Generic trait bound resolution and checking
     Span<TraitBound> resolve_type_param_bounds(Span<TypeExpr*> bound_exprs, SourceLocation loc);

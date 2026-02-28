@@ -234,9 +234,9 @@ struct HashBox<T: Hash> {
 }
 ```
 
-**Phase A (current):** Bounds are checked at instantiation sites only. If a concrete type does not implement the required trait(s), a semantic error is reported. Generic function/struct bodies are NOT checked against bounds at definition time.
+**Phase A:** Bounds are checked at instantiation sites. If a concrete type does not implement the required trait(s), a semantic error is reported.
 
-**Phase B (planned):** Bodies will be checked against bounds at definition time, enabling safe method calls on bounded type parameters.
+**Phase B:** Bodies of bounded generic functions are checked at definition time. Method calls and operators on bounded type parameters are validated against the declared trait bounds. This catches errors like calling nonexistent methods without requiring any concrete instantiation. Unbounded generic templates are still only checked at instantiation time. See `docs/internals/generics.md` for details.
 
 ## The Universal `print()` Function
 

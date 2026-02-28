@@ -849,3 +849,187 @@ TEST_CASE("E2E - Generic bound: inferred type args violate bound (negative)") {
     TestResult result = run_and_capture(source, "main");
     CHECK_FALSE(result.success);
 }
+
+// ============================================================================
+// Phase B: Definition-site Trait Bound Checking Tests
+// Validates that generic template bodies are checked against declared bounds
+// ============================================================================
+
+TEST_CASE("E2E - Generic Phase B: call trait method on bounded param") {
+    const char* source = R"(
+        trait Greetable;
+        fun Greetable.greet(): i32;
+
+        struct Person { id: i32; }
+        fun Person.greet(): i32 for Greetable { return self.id; }
+
+        fun call_greet<T: Greetable>(v: T): i32 { return v.greet(); }
+
+        fun main(): i32 {
+            var p: Person = Person { id = 42 };
+            return call_greet<Person>(p);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic Phase B: call methods from multiple bounds") {
+    const char* source = R"(
+        trait HasX;
+        fun HasX.get_x(): i32;
+
+        trait HasY;
+        fun HasY.get_y(): i32;
+
+        struct Point { x: i32; y: i32; }
+        fun Point.get_x(): i32 for HasX { return self.x; }
+        fun Point.get_y(): i32 for HasY { return self.y; }
+
+        fun sum_xy<T: HasX + HasY>(v: T): i32 { return v.get_x() + v.get_y(); }
+
+        fun main(): i32 {
+            var p: Point = Point { x = 10, y = 32 };
+            return sum_xy<Point>(p);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic Phase B: return type Self resolves to T") {
+    const char* source = R"(
+        trait Addable;
+        fun Addable.add(other: Self): Self;
+
+        struct Num { val: i32; }
+        fun Num.add(other: Num): Num for Addable {
+            return Num { val = self.val + other.val };
+        }
+
+        fun double_add<T: Addable>(a: T, b: T): T { return a.add(b); }
+
+        fun main(): i32 {
+            var a: Num = Num { val = 10 };
+            var b: Num = Num { val = 32 };
+            var c: Num = double_add<Num>(a, b);
+            return c.val;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic Phase B: generic trait bound with type args") {
+    const char* source = R"(
+        trait Scalable<T>;
+        fun Scalable.scale(factor: T): Self;
+
+        struct Vec2 { x: i32; y: i32; }
+        fun Vec2.scale(factor: Vec2): Vec2 for Scalable<Vec2> {
+            return Vec2 { x = self.x + factor.x, y = self.y + factor.y };
+        }
+
+        fun apply_scale<T: Scalable<Vec2>>(v: T, f: Vec2): T {
+            return v.scale(f);
+        }
+
+        fun main(): i32 {
+            var v: Vec2 = Vec2 { x = 10, y = 20 };
+            var f: Vec2 = Vec2 { x = 5, y = 7 };
+            var r: Vec2 = apply_scale<Vec2>(v, f);
+            return r.x + r.y;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic Phase B: bounded template with passthrough return") {
+    const char* source = R"(
+        fun identity_bounded<T: Printable>(value: T): T {
+            return value;
+        }
+
+        fun main(): i32 {
+            return identity_bounded<i32>(42);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+// ============================================================================
+// Phase B Negative Tests: definition-site errors
+// ============================================================================
+
+TEST_CASE("E2E - Generic Phase B: call method not in any bound (negative)") {
+    const char* source = R"(
+        trait Greetable;
+        fun Greetable.greet(): i32;
+
+        fun bad<T: Greetable>(v: T): i32 { return v.nonexistent(); }
+
+        fun main(): i32 { return 0; }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK_FALSE(result.success);
+}
+
+TEST_CASE("E2E - Generic Phase B: call method from wrong trait (negative)") {
+    const char* source = R"(
+        trait Greetable;
+        fun Greetable.greet(): i32;
+
+        fun bad<T: Greetable>(v: T): i32 { return v.hash(); }
+
+        fun main(): i32 { return 0; }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK_FALSE(result.success);
+}
+
+TEST_CASE("E2E - Generic Phase B: access field on type param (negative)") {
+    const char* source = R"(
+        trait Greetable;
+        fun Greetable.greet(): i32;
+
+        fun bad<T: Greetable>(v: T): i32 { return v.x; }
+
+        fun main(): i32 { return 0; }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK_FALSE(result.success);
+}
+
+TEST_CASE("E2E - Generic Phase B: unbounded template body not checked") {
+    // Unbounded generic templates are NOT checked at definition site
+    // (only checked at instantiation). This should compile fine as long
+    // as main doesn't instantiate bad_func.
+    const char* source = R"(
+        fun identity<T>(value: T): T {
+            return value;
+        }
+
+        fun main(): i32 {
+            return identity<i32>(42);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}

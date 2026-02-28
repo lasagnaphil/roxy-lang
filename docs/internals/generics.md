@@ -4,7 +4,7 @@ Generics enable writing code that works with multiple types while maintaining st
 
 ## Implementation Status
 
-**Implemented (Phase 1 + 2 + 3 + 4 + 5):**
+**Implemented (Phase 1 + 2 + 3 + 4 + 5 + 6):**
 - Generic functions with explicit type arguments
 - Generic structs with explicit type arguments
 - Monomorphization with AST cloning and type substitution
@@ -16,9 +16,9 @@ Generics enable writing code that works with multiple types while maintaining st
 - Generic traits with type parameters (`trait Add<Rhs>`, see `traits.md`)
 - Local type inference for generic type arguments (function calls and struct literals)
 - Trait bounds on type parameters (Phase A: instantiation-site checking)
+- Trait bounds body checking (Phase B: definition-site checking of generic template bodies)
 
 **Not yet implemented:**
-- Trait bounds body checking (Phase B: checking generic bodies against bounds at definition time)
 - User-defined generic methods on generic structs
 - User-defined generic constructors/destructors
 - Higher-kinded types, associated types, specialization, const generics
@@ -262,11 +262,41 @@ HashBox<MyStruct> { value = s }; // ERROR if MyStruct doesn't implement Hash
 
 Self-referential bounds like `<T: Add<T>>` are supported — `T` in `Add<T>` is substituted with the concrete type during checking.
 
+### Definition-Site Checking (Phase B)
+
+When a generic function has at least one bounded type parameter, its body is analyzed at the **definition site** — before any instantiation. Method calls and operator usage on bounded type parameters are validated against the declared trait bounds:
+
+```roxy
+trait Greetable;
+fun Greetable.greet(): i32;
+
+fun call_greet<T: Greetable>(v: T): i32 {
+    return v.greet();    // OK: greet() is in Greetable
+}
+
+fun bad<T: Greetable>(v: T): i32 {
+    return v.unknown();  // ERROR: no method 'unknown' in trait bounds for T
+}
+```
+
+**How it works:**
+- `analyze_generic_template_body()` sets up a bounds context (`m_active_type_param_bounds`, `m_active_type_params`) and analyzes the function body with type parameters as abstract `TypeParam` types
+- `resolve_type_expr()` resolves type param names to `TypeParam` types during template body analysis
+- `analyze_call_expr()` dispatches method calls on `TypeParam` types to `lookup_type_param_method()`, which searches trait bounds for matching methods
+- `try_resolve_binary_op()` / `try_resolve_unary_op()` similarly consult trait bounds for operator dispatch
+- Trait method signatures use `Self` and trait type params which are substituted: `Self` → the type parameter, trait type params → the bound's type args
+- `is_assignable()` / `check_assignable()` treat `TypeParam` types as assignable to themselves (same name/index)
+
+**Unbounded templates** (no type param has any bound) are still only checked at instantiation time.
+
+**Duplicate checking:** Both definition-site and instantiation-site checking may report errors for the same issue. The definition-site error appears first and is more useful.
+
 ### Implementation
 
 - **Parsing:** `parse_type_params()` parses `: Trait1 + Trait2<Args>` after each type param name
 - **Resolution:** `resolve_generic_bounds()` (Pass 1.9) resolves bound expressions to `TraitBound` records stored in `GenericInstantiator`
-- **Checking:** `check_type_arg_bounds()` called at all 5 instantiation sites: explicit/inferred generic function calls, explicit generic struct constructor calls, explicit/inferred generic struct literals
+- **Phase A checking:** `check_type_arg_bounds()` called at all 5 instantiation sites: explicit/inferred generic function calls, explicit generic struct constructor calls, explicit/inferred generic struct literals
+- **Phase B checking:** `analyze_generic_template_body()` called during `analyze_function_bodies()` for bounded generic functions, validates method calls, operators, and type compatibility against bounds
 
 ## Grammar
 
@@ -302,13 +332,12 @@ type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ;
 | `include/roxy/shared/lexer.hpp` | save_position()/restore_position() for parser backtracking |
 | `src/roxy/compiler/semantic.cpp` | Generic template registration, instantiation, type resolution |
 | `src/roxy/compiler/ir_builder.cpp` | IR generation for generic instances |
-| `tests/e2e/test_generics.cpp` | E2E tests (37 test cases including trait bound tests) |
+| `tests/e2e/test_generics.cpp` | E2E tests (60 test cases including Phase A + Phase B trait bound tests) |
 
 ## Limitations
 
 1. **Limited type inference**: Type arguments can be inferred from function args and struct fields, but not from return type context alone
-2. **Trait bounds: instantiation-site only (Phase A)**: Bounds are checked when concrete types are provided, but generic bodies are not checked against bounds at definition time
-3. **No user-defined generic methods**: Methods on user-defined generic structs are not yet supported (native generic types like `List<T>` have methods via the `NativeRegistry` API)
+2. **No user-defined generic methods**: Methods on user-defined generic structs are not yet supported (native generic types like `List<T>` have methods via the `NativeRegistry` API)
 4. **No user-defined generic constructors/destructors**: Same as above — native types support these via `bind_generic_constructor`/`bind_generic_destructor`
 5. **No higher-kinded types**: Can't abstract over type constructors
 6. **No associated types**: Traits can't define type members
@@ -317,6 +346,5 @@ type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ;
 
 ## Future Work
 
-1. **Trait bounds body checking (Phase B)** — Check generic bodies against bounds at definition time, enabling safe method calls on bounded type parameters
-2. **User-defined generic methods** — Methods on generic structs (`fun Box.get<T>(): T`)
+1. **User-defined generic methods** — Methods on generic structs (`fun Box.get<T>(): T`)
 3. **User-defined generic constructors** — `fun new Box<T>(value: T)`
