@@ -1,6 +1,7 @@
 #include "roxy/compiler/ssa_ir.hpp"
 
 #include "roxy/core/static_string.hpp"
+#include "roxy/core/string.hpp"
 #include <cstring>
 
 namespace rx {
@@ -101,19 +102,19 @@ const char* ir_op_to_string(IROp op) {
     return "unknown";
 }
 
-static void append_str(Vector<char>& out, const char* str) {
+static void append_str(String& out, const char* str) {
     while (*str) {
         out.push_back(*str++);
     }
 }
 
-static void append_string_view(Vector<char>& out, StringView sv) {
+static void append_string_view(String& out, StringView sv) {
     for (char c : sv) {
         out.push_back(c);
     }
 }
 
-static void append_value_id(Vector<char>& out, ValueId v) {
+static void append_value_id(String& out, ValueId v) {
     if (!v.is_valid()) {
         append_str(out, "v?");
         return;
@@ -123,7 +124,7 @@ static void append_value_id(Vector<char>& out, ValueId v) {
     for (char c : tmp) out.push_back(c);
 }
 
-static void append_block_id(Vector<char>& out, BlockId b) {
+static void append_block_id(String& out, BlockId b) {
     if (!b.is_valid()) {
         append_str(out, "b?");
         return;
@@ -133,7 +134,7 @@ static void append_block_id(Vector<char>& out, BlockId b) {
     for (char c : tmp) out.push_back(c);
 }
 
-void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
+void ir_inst_to_string(const IRInst* inst, String& out) {
     // Result = op operands
     append_value_id(out, inst->result);
     append_str(out, " = ");
@@ -365,7 +366,7 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
             append_value_id(out, inst->cast.source);
             append_str(out, " (");
             if (inst->cast.source_type) {
-                Vector<char> type_str;
+                String type_str;
                 type_to_string(inst->cast.source_type, type_str);
                 for (char ch : type_str) out.push_back(ch);
             } else {
@@ -373,7 +374,7 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
             }
             append_str(out, " -> ");
             if (inst->type) {
-                Vector<char> type_str;
+                String type_str;
                 type_to_string(inst->type, type_str);
                 for (char ch : type_str) out.push_back(ch);
             } else {
@@ -385,7 +386,7 @@ void ir_inst_to_string(const IRInst* inst, Vector<char>& out) {
     }
 }
 
-static void append_jump_target(Vector<char>& out, const JumpTarget& target) {
+static void append_jump_target(String& out, const JumpTarget& target) {
     append_block_id(out, target.block);
     if (target.args.size() > 0) {
         append_str(out, "(");
@@ -397,7 +398,7 @@ static void append_jump_target(Vector<char>& out, const JumpTarget& target) {
     }
 }
 
-void ir_block_to_string(const IRBlock* block, Vector<char>& out) {
+void ir_block_to_string(const IRBlock* block, String& out) {
     // Block header: b0(v0, v1):
     append_block_id(out, block->id);
     if (!block->name.empty()) {
@@ -466,7 +467,7 @@ void ir_block_to_string(const IRBlock* block, Vector<char>& out) {
     out.push_back('\n');
 }
 
-void ir_function_to_string(const IRFunction* func, Vector<char>& out) {
+void ir_function_to_string(const IRFunction* func, String& out) {
     append_str(out, "fn ");
     for (char c : func->name) {
         out.push_back(c);
@@ -486,7 +487,7 @@ void ir_function_to_string(const IRFunction* func, Vector<char>& out) {
 
     if (func->return_type && !func->return_type->is_void()) {
         append_str(out, " -> ");
-        Vector<char> type_str;
+        String type_str;
         type_to_string(func->return_type, type_str);
         for (char c : type_str) out.push_back(c);
     }
@@ -640,7 +641,7 @@ void IRFunction::reorder_blocks_rpo() {
     }
 }
 
-void ir_module_to_string(const IRModule* module, Vector<char>& out) {
+void ir_module_to_string(const IRModule* module, String& out) {
     if (!module->name.empty()) {
         append_str(out, "// Module: ");
         for (char c : module->name) {

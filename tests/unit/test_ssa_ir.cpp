@@ -48,7 +48,7 @@ static IRModule* build_ir(BumpAllocator& allocator, const char* source) {
 
 // Helper to get IR as string
 static String ir_to_string(const IRModule* module) {
-    Vector<char> out;
+    String out;
     ir_module_to_string(module, out);
     return String(out.data(), out.size());
 }

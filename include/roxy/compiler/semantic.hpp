@@ -190,7 +190,7 @@ private:
     void register_primitive_operator_methods();
 
     // Convert a Type* to a null-terminated string for use in error messages
-    Vector<char> type_string(Type* type);
+    String type_string(Type* type);
 
     // Type mismatch error helpers
     // Returns true if types match, false and reports error if they don't

@@ -1,5 +1,7 @@
 #include "roxy/compiler/types.hpp"
 
+#include "roxy/core/string.hpp"
+
 #include <cstring>
 
 namespace rx {
@@ -460,19 +462,19 @@ const char* type_kind_to_string(TypeKind kind) {
     return "<unknown>";
 }
 
-static void append_string(Vector<char>& out, const char* str) {
+static void append_string(String& out, const char* str) {
     while (*str) {
         out.push_back(*str++);
     }
 }
 
-static void append_string(Vector<char>& out, StringView str) {
+static void append_string(String& out, StringView str) {
     for (char c : str) {
         out.push_back(c);
     }
 }
 
-void type_to_string(const Type* type, Vector<char>& out) {
+void type_to_string(const Type* type, String& out) {
     if (!type) {
         append_string(out, "<null>");
         return;

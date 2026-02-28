@@ -2,6 +2,7 @@
 
 #include "roxy/core/types.hpp"
 #include "roxy/core/span.hpp"
+#include "roxy/core/string.hpp"
 #include "roxy/core/string_view.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/core/bump_allocator.hpp"
@@ -380,9 +381,9 @@ struct IRModule {
 
 // String representations for debugging
 const char* ir_op_to_string(IROp op);
-void ir_inst_to_string(const IRInst* inst, Vector<char>& out);
-void ir_block_to_string(const IRBlock* block, Vector<char>& out);
-void ir_function_to_string(const IRFunction* func, Vector<char>& out);
-void ir_module_to_string(const IRModule* module, Vector<char>& out);
+void ir_inst_to_string(const IRInst* inst, String& out);
+void ir_block_to_string(const IRBlock* block, String& out);
+void ir_function_to_string(const IRFunction* func, String& out);
+void ir_module_to_string(const IRModule* module, String& out);
 
 }

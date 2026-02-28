@@ -88,7 +88,7 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
     }
 
     if (debug) {
-        Vector<char> ir_str;
+        String ir_str;
         ir_module_to_string(ir_module, ir_str);
         ir_str.push_back('\0');
         printf("=== IR ===\n%s\n", ir_str.data());

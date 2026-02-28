@@ -402,7 +402,7 @@ TEST_CASE("Disassemble lowered bytecode") {
     BytecodeBuilder builder;
     BCModule* bc_module = builder.build(ir_module);
 
-    Vector<char> out;
+    String out;
     disassemble_module(bc_module, out);
 
     // Check that disassembly contains expected elements

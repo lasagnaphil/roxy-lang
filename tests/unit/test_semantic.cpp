@@ -638,14 +638,14 @@ TEST_CASE("Types: type_to_string") {
     TypeCache types(allocator);
 
     SUBCASE("Primitive types") {
-        Vector<char> out;
+        String out;
         type_to_string(types.i32_type(), out);
         out.push_back('\0');
         CHECK(strcmp(out.data(), "i32") == 0);
     }
 
     SUBCASE("List types") {
-        Vector<char> out;
+        String out;
         Type* lst = types.list_type(types.f64_type());
         type_to_string(lst, out);
         out.push_back('\0');
@@ -653,7 +653,7 @@ TEST_CASE("Types: type_to_string") {
     }
 
     SUBCASE("Reference types") {
-        Vector<char> out;
+        String out;
         Type* uniq = types.uniq_type(types.i32_type());
         type_to_string(uniq, out);
         out.push_back('\0');

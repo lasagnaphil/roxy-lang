@@ -1751,7 +1751,7 @@ bool SemanticAnalyzer::check_type_arg_bounds(StringView template_name, Span<Type
             if (!satisfies) {
                 auto concrete_str = type_string(concrete_type);
                 // Build trait name with type args for error message
-                Vector<char> trait_str;
+                String trait_str;
                 auto append_sv = [&](StringView sv) { for (char c : sv) trait_str.push_back(c); };
                 auto append_cs = [&](const char* cs) { while (*cs) trait_str.push_back(*cs++); };
                 append_sv(bound.trait->trait_info.name);
@@ -4278,8 +4278,8 @@ bool SemanticAnalyzer::check_boolean(Type* type, SourceLocation loc) {
     return true;
 }
 
-Vector<char> SemanticAnalyzer::type_string(Type* type) {
-    Vector<char> str;
+String SemanticAnalyzer::type_string(Type* type) {
+    String str;
     type_to_string(type, str);
     str.push_back('\0');
     return str;

@@ -6,7 +6,7 @@ using namespace rx;
 // Helper: parse JSON source into a DOM value.
 // source_buf must outlive the returned JsonValue (in-situ parsing).
 static bool parse_json(const char* json, BumpAllocator& allocator, JsonValue& out,
-                        Vector<char>& source_buf, JsonParseError* error = nullptr) {
+                        String& source_buf, JsonParseError* error = nullptr) {
     u32 length = (u32)strlen(json);
     source_buf.reserve(length + 1);
     source_buf.resize(length + 1);
@@ -19,7 +19,7 @@ static bool parse_json(const char* json, BumpAllocator& allocator, JsonValue& ou
 
 TEST_CASE("JSON parse - null") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("null", allocator, root, buf));
     CHECK(root.is_null());
@@ -27,7 +27,7 @@ TEST_CASE("JSON parse - null") {
 
 TEST_CASE("JSON parse - true") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("true", allocator, root, buf));
     CHECK(root.is_bool());
@@ -36,7 +36,7 @@ TEST_CASE("JSON parse - true") {
 
 TEST_CASE("JSON parse - false") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("false", allocator, root, buf));
     CHECK(root.is_bool());
@@ -45,7 +45,7 @@ TEST_CASE("JSON parse - false") {
 
 TEST_CASE("JSON parse - integer zero") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("0", allocator, root, buf));
     CHECK(root.is_int());
@@ -54,7 +54,7 @@ TEST_CASE("JSON parse - integer zero") {
 
 TEST_CASE("JSON parse - positive integer") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("42", allocator, root, buf));
     CHECK(root.is_int());
@@ -63,7 +63,7 @@ TEST_CASE("JSON parse - positive integer") {
 
 TEST_CASE("JSON parse - negative integer") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("-123", allocator, root, buf));
     CHECK(root.is_int());
@@ -72,7 +72,7 @@ TEST_CASE("JSON parse - negative integer") {
 
 TEST_CASE("JSON parse - float with decimal") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("3.14", allocator, root, buf));
     CHECK(root.is_double());
@@ -81,7 +81,7 @@ TEST_CASE("JSON parse - float with decimal") {
 
 TEST_CASE("JSON parse - float with exponent") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("1.5e10", allocator, root, buf));
     CHECK(root.is_double());
@@ -90,7 +90,7 @@ TEST_CASE("JSON parse - float with exponent") {
 
 TEST_CASE("JSON parse - float with negative exponent") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("2.5E-3", allocator, root, buf));
     CHECK(root.is_double());
@@ -99,7 +99,7 @@ TEST_CASE("JSON parse - float with negative exponent") {
 
 TEST_CASE("JSON parse - simple string") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("\"hello\"", allocator, root, buf));
     CHECK(root.is_string());
@@ -108,7 +108,7 @@ TEST_CASE("JSON parse - simple string") {
 
 TEST_CASE("JSON parse - empty string") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("\"\"", allocator, root, buf));
     CHECK(root.is_string());
@@ -117,7 +117,7 @@ TEST_CASE("JSON parse - empty string") {
 
 TEST_CASE("JSON parse - string with escape sequences") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("\"line1\\nline2\\ttab\"", allocator, root, buf));
     CHECK(root.is_string());
@@ -126,7 +126,7 @@ TEST_CASE("JSON parse - string with escape sequences") {
 
 TEST_CASE("JSON parse - string with escaped quotes") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("\"say \\\"hi\\\"\"", allocator, root, buf));
     CHECK(root.is_string());
@@ -135,7 +135,7 @@ TEST_CASE("JSON parse - string with escaped quotes") {
 
 TEST_CASE("JSON parse - string with unicode escape") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     // \u0041 = 'A'
     REQUIRE(parse_json("\"\\u0041\"", allocator, root, buf));
@@ -145,7 +145,7 @@ TEST_CASE("JSON parse - string with unicode escape") {
 
 TEST_CASE("JSON parse - string with surrogate pair") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     // U+1F600 (grinning face) = \uD83D\uDE00
     REQUIRE(parse_json("\"\\uD83D\\uDE00\"", allocator, root, buf));
@@ -163,7 +163,7 @@ TEST_CASE("JSON parse - string with surrogate pair") {
 
 TEST_CASE("JSON parse - empty object") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("{}", allocator, root, buf));
     CHECK(root.is_object());
@@ -172,7 +172,7 @@ TEST_CASE("JSON parse - empty object") {
 
 TEST_CASE("JSON parse - empty array") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("[]", allocator, root, buf));
     CHECK(root.is_array());
@@ -181,7 +181,7 @@ TEST_CASE("JSON parse - empty array") {
 
 TEST_CASE("JSON parse - simple object") {
     BumpAllocator allocator(1024);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("{\"name\":\"alice\",\"age\":30}", allocator, root, buf));
     CHECK(root.is_object());
@@ -200,7 +200,7 @@ TEST_CASE("JSON parse - simple object") {
 
 TEST_CASE("JSON parse - simple array") {
     BumpAllocator allocator(1024);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("[1,2,3]", allocator, root, buf));
     CHECK(root.is_array());
@@ -212,7 +212,7 @@ TEST_CASE("JSON parse - simple array") {
 
 TEST_CASE("JSON parse - nested object") {
     BumpAllocator allocator(1024);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("{\"a\":{\"b\":42}}", allocator, root, buf));
     CHECK(root.is_object());
@@ -226,7 +226,7 @@ TEST_CASE("JSON parse - nested object") {
 
 TEST_CASE("JSON parse - nested array") {
     BumpAllocator allocator(1024);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("[[1,2],[3,4]]", allocator, root, buf));
     CHECK(root.is_array());
@@ -239,7 +239,7 @@ TEST_CASE("JSON parse - nested array") {
 
 TEST_CASE("JSON parse - mixed nesting") {
     BumpAllocator allocator(1024);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("{\"items\":[{\"id\":1},{\"id\":2}],\"count\":2}", allocator, root, buf));
     CHECK(root.is_object());
@@ -258,7 +258,7 @@ TEST_CASE("JSON parse - mixed nesting") {
 
 TEST_CASE("JSON parse - whitespace handling") {
     BumpAllocator allocator(1024);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("  {  \"key\"  :  \"value\"  }  ", allocator, root, buf));
     CHECK(root.is_object());
@@ -285,7 +285,7 @@ TEST_CASE("JSON parse - in-situ string points into source buffer") {
 
 TEST_CASE("JSON parse - find returns nullptr for missing key") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("{\"a\":1}", allocator, root, buf));
     CHECK(root.find("b") == nullptr);
@@ -293,7 +293,7 @@ TEST_CASE("JSON parse - find returns nullptr for missing key") {
 
 TEST_CASE("JSON parse - object with null and bool values") {
     BumpAllocator allocator(1024);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("{\"x\":null,\"y\":true,\"z\":false}", allocator, root, buf));
     CHECK(root.find("x")->is_null());
@@ -372,7 +372,7 @@ TEST_CASE("JSON SAX - early abort") {
 
 TEST_CASE("JSON parse error - unterminated string") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     JsonParseError error;
     CHECK(parse_json("\"hello", allocator, root, buf, &error) == false);
@@ -381,7 +381,7 @@ TEST_CASE("JSON parse error - unterminated string") {
 
 TEST_CASE("JSON parse error - invalid escape") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     JsonParseError error;
     CHECK(parse_json("\"\\q\"", allocator, root, buf, &error) == false);
@@ -389,7 +389,7 @@ TEST_CASE("JSON parse error - invalid escape") {
 
 TEST_CASE("JSON parse error - unexpected token") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     JsonParseError error;
     CHECK(parse_json("@", allocator, root, buf, &error) == false);
@@ -397,7 +397,7 @@ TEST_CASE("JSON parse error - unexpected token") {
 
 TEST_CASE("JSON parse error - empty input") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     JsonParseError error;
     CHECK(parse_json("", allocator, root, buf, &error) == false);
@@ -406,7 +406,7 @@ TEST_CASE("JSON parse error - empty input") {
 
 TEST_CASE("JSON parse error - trailing garbage") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     JsonParseError error;
     CHECK(parse_json("42 garbage", allocator, root, buf, &error) == false);
@@ -414,7 +414,7 @@ TEST_CASE("JSON parse error - trailing garbage") {
 
 TEST_CASE("JSON parse error - truncated true") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     JsonParseError error;
     CHECK(parse_json("tru", allocator, root, buf, &error) == false);
@@ -422,7 +422,7 @@ TEST_CASE("JSON parse error - truncated true") {
 
 TEST_CASE("JSON parse error - unterminated object") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     JsonParseError error;
     CHECK(parse_json("{\"a\":1", allocator, root, buf, &error) == false);
@@ -430,7 +430,7 @@ TEST_CASE("JSON parse error - unterminated object") {
 
 TEST_CASE("JSON parse error - unterminated array") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     JsonParseError error;
     CHECK(parse_json("[1,2", allocator, root, buf, &error) == false);
@@ -438,7 +438,7 @@ TEST_CASE("JSON parse error - unterminated array") {
 
 TEST_CASE("JSON parse error - unexpected low surrogate") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     JsonParseError error;
     CHECK(parse_json("\"\\uDC00\"", allocator, root, buf, &error) == false);
@@ -569,7 +569,7 @@ TEST_CASE("JSON write - nested object") {
 
 TEST_CASE("JSON write - write_value for DOM tree") {
     BumpAllocator allocator(1024);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("{\"a\":[1,2],\"b\":true}", allocator, root, buf));
 
@@ -603,7 +603,7 @@ TEST_CASE("JSON round-trip") {
 
         // Parse
         BumpAllocator allocator1(1024);
-        Vector<char> buf1;
+        String buf1;
         JsonValue root1;
         REQUIRE(parse_json(input, allocator1, root1, buf1));
 
@@ -613,7 +613,8 @@ TEST_CASE("JSON round-trip") {
         // Parse again
         BumpAllocator allocator2(1024);
         JsonValue root2;
-        Vector<char> buf2((u32)json1.size() + 1);
+        String buf2;
+        buf2.resize((u32)json1.size() + 1);
         memcpy(buf2.data(), json1.data(), json1.size());
         buf2[json1.size()] = '\0';
         REQUIRE(json_parse(buf2.data(), json1.size(), allocator2, root2, nullptr));
@@ -630,7 +631,7 @@ TEST_CASE("JSON round-trip") {
 
 TEST_CASE("JSON parse - large integer near i64 limits") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("9223372036854775807", allocator, root, buf));
     CHECK(root.is_int());
@@ -639,7 +640,7 @@ TEST_CASE("JSON parse - large integer near i64 limits") {
 
 TEST_CASE("JSON parse - large negative integer") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("-9223372036854775807", allocator, root, buf));
     CHECK(root.is_int());
@@ -655,7 +656,8 @@ TEST_CASE("JSON parse - deeply nested JSON") {
 
     BumpAllocator allocator(4096);
     JsonValue root;
-    Vector<char> buf(input.size() + 1);
+    String buf;
+    buf.resize(input.size() + 1);
     memcpy(buf.data(), input.data(), input.size());
     buf[input.size()] = '\0';
     REQUIRE(json_parse(buf.data(), input.size(), allocator, root, nullptr));
@@ -673,7 +675,7 @@ TEST_CASE("JSON parse - deeply nested JSON") {
 
 TEST_CASE("JSON parse - integer-only exponent is float") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("1e2", allocator, root, buf));
     CHECK(root.is_double());
@@ -682,7 +684,7 @@ TEST_CASE("JSON parse - integer-only exponent is float") {
 
 TEST_CASE("JSON parse - all value types in array") {
     BumpAllocator allocator(1024);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("[null,true,false,42,3.14,\"hi\",[],{}]", allocator, root, buf));
     CHECK(root.is_array());
@@ -709,7 +711,8 @@ TEST_CASE("JSON write - key convenience helpers") {
     // Verify it parses back correctly
     BumpAllocator allocator(1024);
     JsonValue root;
-    Vector<char> buf(output.size() + 1);
+    String buf;
+    buf.resize(output.size() + 1);
     memcpy(buf.data(), output.data(), output.size());
     buf[output.size()] = '\0';
     REQUIRE(json_parse(buf.data(), output.size(), allocator, root, nullptr));
@@ -720,7 +723,7 @@ TEST_CASE("JSON write - key convenience helpers") {
 
 TEST_CASE("JSON parse - string with backslash") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("\"a\\\\b\"", allocator, root, buf));
     CHECK(root.as_string() == "a\\b");
@@ -728,7 +731,7 @@ TEST_CASE("JSON parse - string with backslash") {
 
 TEST_CASE("JSON parse - string with slash") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     REQUIRE(parse_json("\"a\\/b\"", allocator, root, buf));
     CHECK(root.as_string() == "a/b");
@@ -736,7 +739,7 @@ TEST_CASE("JSON parse - string with slash") {
 
 TEST_CASE("JSON parse - unicode 2-byte sequence") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     // \u00E9 = é (2-byte UTF-8: C3 A9)
     REQUIRE(parse_json("\"\\u00E9\"", allocator, root, buf));
@@ -748,7 +751,7 @@ TEST_CASE("JSON parse - unicode 2-byte sequence") {
 
 TEST_CASE("JSON parse - unicode 3-byte sequence") {
     BumpAllocator allocator(256);
-    Vector<char> buf;
+    String buf;
     JsonValue root;
     // \u4E16 = 世 (3-byte UTF-8: E4 B8 96)
     REQUIRE(parse_json("\"\\u4E16\"", allocator, root, buf));

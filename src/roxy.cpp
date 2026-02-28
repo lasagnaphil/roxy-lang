@@ -108,7 +108,7 @@ static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len,
     }
 
     if (print_ir) {
-        Vector<char> ir_str;
+        String ir_str;
         ir_module_to_string(ir_module, ir_str);
         ir_str.push_back('\0');
         printf("=== SSA IR ===\n%s\n", ir_str.data());

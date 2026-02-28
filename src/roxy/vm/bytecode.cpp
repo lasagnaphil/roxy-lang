@@ -135,7 +135,7 @@ const char* opcode_to_string(Opcode op) {
     }
 }
 
-void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out) {
+void disassemble_instruction(u32 instr, u32 offset, String& out) {
     Opcode op = decode_opcode(instr);
     u8 a = decode_a(instr);
     u8 b = decode_b(instr);
@@ -322,7 +322,7 @@ void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out) {
     out.push_back('\n');
 }
 
-void disassemble_function(const BCFunction* func, Vector<char>& out) {
+void disassemble_function(const BCFunction* func, String& out) {
     auto append = [&out](const char* str) {
         while (*str) out.push_back(*str++);
     };
@@ -366,7 +366,7 @@ void disassemble_function(const BCFunction* func, Vector<char>& out) {
     }
 }
 
-void disassemble_module(const BCModule* module, Vector<char>& out) {
+void disassemble_module(const BCModule* module, String& out) {
     auto append = [&out](const char* str) {
         while (*str) out.push_back(*str++);
     };

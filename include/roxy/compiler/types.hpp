@@ -2,6 +2,7 @@
 
 #include "roxy/core/types.hpp"
 #include "roxy/core/span.hpp"
+#include "roxy/core/string.hpp"
 #include "roxy/core/string_view.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/core/bump_allocator.hpp"
@@ -444,7 +445,7 @@ private:
 
 // String representation of types (for error messages)
 const char* type_kind_to_string(TypeKind kind);
-void type_to_string(const Type* type, Vector<char>& out);
+void type_to_string(const Type* type, String& out);
 
 // Look up a method in a struct's type hierarchy (walks inheritance chain)
 // Returns the MethodInfo and optionally sets found_in_type to where the method was defined

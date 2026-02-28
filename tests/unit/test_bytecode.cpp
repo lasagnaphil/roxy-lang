@@ -135,7 +135,7 @@ TEST_CASE("BCModule structure") {
 }
 
 TEST_CASE("Disassemble instruction") {
-    Vector<char> out;
+    String out;
 
     SUBCASE("LOAD_INT") {
         u32 instr = encode_abi(Opcode::LOAD_INT, 0, 42);
@@ -177,7 +177,7 @@ TEST_CASE("Disassemble function") {
     func.code.push_back(encode_abc(Opcode::ADD_I, 2, 0, 1));
     func.code.push_back(encode_abc(Opcode::RET, 2, 0, 0));
 
-    Vector<char> out;
+    String out;
     disassemble_function(&func, out);
     out.push_back('\0');
 

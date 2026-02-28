@@ -1,8 +1,9 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
-#include "roxy/core/vector.hpp"
+#include "roxy/core/string.hpp"
 #include "roxy/core/string_view.hpp"
+#include "roxy/core/vector.hpp"
 #include "roxy/core/unique_ptr.hpp"
 
 namespace rx {
@@ -325,12 +326,12 @@ struct BCModule {
 };
 
 // Disassemble a single instruction
-void disassemble_instruction(u32 instr, u32 offset, Vector<char>& out);
+void disassemble_instruction(u32 instr, u32 offset, String& out);
 
 // Disassemble a function
-void disassemble_function(const BCFunction* func, Vector<char>& out);
+void disassemble_function(const BCFunction* func, String& out);
 
 // Disassemble a module
-void disassemble_module(const BCModule* module, Vector<char>& out);
+void disassemble_module(const BCModule* module, String& out);
 
 }
