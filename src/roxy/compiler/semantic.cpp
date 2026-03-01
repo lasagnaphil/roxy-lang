@@ -1253,8 +1253,8 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
     var_decl.resolved_type = var_type;
     m_symbols.define(SymbolKind::Variable, var_decl.name, var_type, decl->loc, decl);
 
-    // Track uniq variables for move semantics
-    if (var_type && var_type->kind == TypeKind::Uniq) {
+    // Track owned variables for move semantics (uniq refs and value structs with destructors)
+    if (var_type && var_type->needs_move_semantics()) {
         m_move_states[var_decl.name] = MoveState::Live;
     }
 }
@@ -1395,8 +1395,8 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
             m_symbols.define_parameter(p.name, ptype, p.loc, i);
         }
 
-        // Track uniq parameters as Live
-        if (ptype && ptype->kind == TypeKind::Uniq) {
+        // Track owned parameters as Live (uniq refs and value structs with destructors)
+        if (ptype && ptype->needs_move_semantics()) {
             m_move_states[p.name] = MoveState::Live;
         }
     }
@@ -1685,8 +1685,8 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
             m_symbols.define_parameter(p.name, ptype, p.loc, i);
         }
 
-        // Track uniq parameters as Live
-        if (ptype && ptype->kind == TypeKind::Uniq) {
+        // Track owned parameters as Live (uniq refs and value structs with destructors)
+        if (ptype && ptype->needs_move_semantics()) {
             m_move_states[p.name] = MoveState::Live;
         }
     }
@@ -2881,8 +2881,8 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
             coerce_int_literal(rs.value, expected);
         }
 
-        // Mark returned uniq variable as moved (ownership transferred to caller)
-        if (rs.value->kind == AstKind::ExprIdentifier && actual && actual->kind == TypeKind::Uniq) {
+        // Mark returned owned variable as moved (ownership transferred to caller)
+        if (rs.value->kind == AstKind::ExprIdentifier && actual && actual->needs_move_semantics()) {
             mark_moved(rs.value->identifier.name);
         }
     } else {
@@ -3311,9 +3311,9 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
         return m_types.error_type();
     }
 
-    // Check move state for uniq variables
+    // Check move state for owned variables (uniq refs and value structs with destructors)
     // Note: we check here but the actual move marking happens at call sites, return, delete
-    if (sym->type && sym->type->kind == TypeKind::Uniq) {
+    if (sym->type && sym->type->needs_move_semantics()) {
         check_not_moved(id.name, expr->loc);
     }
 
@@ -3461,10 +3461,13 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
             coerce_int_literal(arg.expr, param_types[i]);
         }
 
-        // Move semantics: passing uniq arg to uniq param transfers ownership
-        if (param_types[i] && param_types[i]->kind == TypeKind::Uniq &&
+        // Move semantics: passing owned arg to owned param transfers ownership
+        if (param_types[i] && param_types[i]->needs_move_semantics() &&
             arg.expr->kind == AstKind::ExprIdentifier) {
-            mark_moved(arg.expr->identifier.name);
+            Type* arg_type = arg.expr->resolved_type;
+            if (arg_type && arg_type->needs_move_semantics()) {
+                mark_moved(arg.expr->identifier.name);
+            }
         }
     }
 }
@@ -4636,9 +4639,9 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
         coerce_int_literal(assign_expr.value, target_type);
     }
 
-    // Reassignment to uniq variable: mark it live again (auto-delete of old value happens in IR)
+    // Reassignment to owned variable: mark it live again (auto-destroy of old value happens in IR)
     if (assign_expr.target->kind == AstKind::ExprIdentifier &&
-        target_type && target_type->kind == TypeKind::Uniq) {
+        target_type && target_type->needs_move_semantics()) {
         mark_live(assign_expr.target->identifier.name);
     }
 

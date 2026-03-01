@@ -812,3 +812,226 @@ TEST_CASE("E2E - RAII: deeply nested value-type fields with destructors") {
     CHECK(result.success);
     CHECK(result.stdout_output == "~Resource(42)\n");
 }
+
+// ============================================================================
+// Value-Type Struct Move Semantics
+// ============================================================================
+
+TEST_CASE("E2E - RAII: value struct scope-exit cleanup") {
+    // A value-type struct with a uniq field gets a synthetic destructor,
+    // so it should be cleaned up at scope exit
+    const char* source = R"CODE(
+        struct Leaf {
+            value: i32;
+        }
+
+        fun delete Leaf() {
+            print(f"~Leaf({self.value})");
+        }
+
+        struct Owner {
+            child: uniq Leaf;
+        }
+
+        fun main(): i32 {
+            var o: Owner = Owner();
+            o.child = uniq Leaf();
+            o.child.value = 55;
+            return 0;
+            // o is a value struct with synthetic destructor — cleaned up at scope exit
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "~Leaf(55)\n");
+}
+
+TEST_CASE("E2E - RAII: value struct use-after-move compile error") {
+    // Passing a move-semantic value struct to a function moves it;
+    // using it after is a compile error
+    const char* source = R"CODE(
+        struct Leaf {
+            value: i32;
+        }
+
+        struct Owner {
+            child: uniq Leaf;
+        }
+
+        fun consume(o: Owner): i32 {
+            return 0;
+        }
+
+        fun main(): i32 {
+            var o: Owner = Owner();
+            o.child = uniq Leaf();
+            o.child.value = 1;
+            var r: i32 = consume(o);
+            // o is moved — using it here should be a compile error
+            return o.child.value;
+        }
+    )CODE";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail to compile
+}
+
+TEST_CASE("E2E - RAII: value struct move on return") {
+    // Returning a value struct with move semantics moves it to the caller;
+    // no double-destroy should occur
+    const char* source = R"CODE(
+        struct Leaf {
+            value: i32;
+        }
+
+        fun delete Leaf() {
+            print(f"~Leaf({self.value})");
+        }
+
+        struct Owner {
+            child: uniq Leaf;
+        }
+
+        fun create(): Owner {
+            var o: Owner = Owner();
+            o.child = uniq Leaf();
+            o.child.value = 77;
+            return o;  // o is moved out, NOT destroyed
+        }
+
+        fun main(): i32 {
+            var o: Owner = create();
+            var result: i32 = o.child.value;
+            print(f"{result}");
+            return 0;
+            // o is destroyed here (once, not twice)
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "77\n~Leaf(77)\n");
+}
+
+TEST_CASE("E2E - RAII: value struct reassignment destroys old") {
+    // Reassigning a move-semantic value struct should destroy the old value first
+    const char* source = R"CODE(
+        struct Leaf {
+            value: i32;
+        }
+
+        fun delete Leaf() {
+            print(f"~Leaf({self.value})");
+        }
+
+        struct Owner {
+            child: uniq Leaf;
+        }
+
+        fun main(): i32 {
+            var o: Owner = Owner();
+            o.child = uniq Leaf();
+            o.child.value = 1;
+            // Old Owner is destroyed on reassignment
+            o = Owner();
+            o.child = uniq Leaf();
+            o.child.value = 2;
+            return 0;
+            // New o destroyed at scope exit
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "~Leaf(1)\n~Leaf(2)\n");
+}
+
+TEST_CASE("E2E - RAII: value struct conditional move compile error") {
+    // Moving in one if-branch but using after → compile error
+    const char* source = R"CODE(
+        struct Leaf {
+            value: i32;
+        }
+
+        struct Owner {
+            child: uniq Leaf;
+        }
+
+        fun consume(o: Owner): i32 {
+            return 0;
+        }
+
+        fun main(): i32 {
+            var o: Owner = Owner();
+            o.child = uniq Leaf();
+            if (true) {
+                var r: i32 = consume(o);
+            }
+            // o is possibly moved — using it is an error
+            return o.child.value;
+        }
+    )CODE";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail to compile
+}
+
+TEST_CASE("E2E - RAII: plain struct remains copyable") {
+    // A struct without uniq fields or destructors should be freely copyable
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun use_point(p: Point): i32 {
+            return p.x + p.y;
+        }
+
+        fun main(): i32 {
+            var p: Point = Point();
+            p.x = 1;
+            p.y = 2;
+            var sum: i32 = use_point(p);
+            // p is NOT moved — still usable
+            var result: i32 = p.x + sum;
+            return result;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 4);  // p.x (1) + sum (3) = 4
+}
+
+TEST_CASE("E2E - RAII: user-defined destructor makes struct non-copyable") {
+    // A struct with a user-defined default destructor should require move semantics
+    const char* source = R"CODE(
+        struct File {
+            fd: i32;
+        }
+
+        fun delete File() {
+            print(f"closing fd {self.fd}");
+        }
+
+        fun consume(f: File): i32 {
+            return f.fd;
+        }
+
+        fun main(): i32 {
+            var f: File = File();
+            f.fd = 42;
+            var result: i32 = consume(f);
+            // f is moved — using it here should be a compile error
+            return f.fd;
+        }
+    )CODE";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail to compile
+}

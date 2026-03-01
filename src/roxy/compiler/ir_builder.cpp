@@ -1261,13 +1261,13 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
     if (rs.value) {
         ValueId val = gen_expr(rs.value);
 
-        // If returning a uniq identifier, mark it as moved (don't delete what we're returning)
+        // If returning an owned identifier, mark it as moved (don't destroy what we're returning)
         if (rs.value->kind == AstKind::ExprIdentifier) {
             Type* return_type = rs.value->resolved_type;
-            if (return_type && return_type->kind == TypeKind::Uniq) {
-                UniqLocalInfo* uniq_info = find_uniq_local(rs.value->identifier.name);
-                if (uniq_info) {
-                    uniq_info->is_moved = true;
+            if (return_type && return_type->needs_move_semantics()) {
+                OwnedLocalInfo* owned_info = find_owned_local(rs.value->identifier.name);
+                if (owned_info) {
+                    owned_info->is_moved = true;
                 }
             }
         }
@@ -1387,11 +1387,11 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
         inst->unary = val;
     }
 
-    // Mark the variable as moved so scope cleanup doesn't double-delete
+    // Mark the variable as moved so scope cleanup doesn't double-destroy
     if (ds.expr->kind == AstKind::ExprIdentifier) {
-        UniqLocalInfo* uniq_info = find_uniq_local(ds.expr->identifier.name);
-        if (uniq_info) {
-            uniq_info->is_moved = true;
+        OwnedLocalInfo* owned_info = find_owned_local(ds.expr->identifier.name);
+        if (owned_info) {
+            owned_info->is_moved = true;
         }
     }
 }
@@ -2443,21 +2443,27 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         define_local(ia.name, new_val, ia.type);
     }
 
-    // Move semantics: null-ify uniq args that were passed to uniq params
-    // Get the function's parameter types from the callee's resolved type
+    // Move semantics: mark owned args passed to owned params as moved
+    // For uniq args, also null-ify the register so DEL_OBJ on scope exit is a safe no-op
     Type* callee_func_type = call_expr.callee->resolved_type;
     if (callee_func_type && callee_func_type->is_function()) {
         Span<Type*> param_types = callee_func_type->func_info.param_types;
         for (u32 i = 0; i < call_expr.arguments.size() && i < param_types.size(); i++) {
-            if (param_types[i] && param_types[i]->kind == TypeKind::Uniq &&
-                call_expr.arguments[i].expr->kind == AstKind::ExprIdentifier) {
-                StringView arg_name = call_expr.arguments[i].expr->identifier.name;
-                UniqLocalInfo* uniq_info = find_uniq_local(arg_name);
-                if (uniq_info && !uniq_info->is_moved) {
-                    // Null-ify the variable so DEL_OBJ on scope exit is a safe no-op
-                    ValueId null_val = emit_const_null();
-                    define_local(arg_name, null_val, call_expr.arguments[i].expr->resolved_type);
-                    uniq_info->is_moved = true;
+            if (call_expr.arguments[i].expr->kind == AstKind::ExprIdentifier) {
+                Type* arg_type = call_expr.arguments[i].expr->resolved_type;
+                if (arg_type && arg_type->needs_move_semantics() &&
+                    param_types[i] && param_types[i]->needs_move_semantics()) {
+                    StringView arg_name = call_expr.arguments[i].expr->identifier.name;
+                    OwnedLocalInfo* owned_info = find_owned_local(arg_name);
+                    if (owned_info && !owned_info->is_moved) {
+                        if (arg_type->kind == TypeKind::Uniq) {
+                            // Null-ify uniq variable so DEL_OBJ on scope exit is a safe no-op
+                            ValueId null_val = emit_const_null();
+                            define_local(arg_name, null_val, arg_type);
+                        }
+                        // For value structs: bitwise copy IS the move, just suppress scope cleanup
+                        owned_info->is_moved = true;
+                    }
                 }
             }
         }
@@ -2670,16 +2676,16 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
             return emit_store_ptr(ptr, value, slot_count, type);
         }
 
-        // Auto-delete old uniq value before reassignment
+        // Auto-destroy old owned value before reassignment
         Type* target_type = assign_expr.target->resolved_type;
-        if (target_type && target_type->kind == TypeKind::Uniq) {
-            UniqLocalInfo* uniq_info = find_uniq_local(name);
-            if (uniq_info && !uniq_info->is_moved) {
-                emit_implicit_delete(*uniq_info);
-                uniq_info->is_moved = false;  // Reset — new value is now live
-            } else if (uniq_info && uniq_info->is_moved) {
+        if (target_type && target_type->needs_move_semantics()) {
+            OwnedLocalInfo* owned_info = find_owned_local(name);
+            if (owned_info && !owned_info->is_moved) {
+                emit_implicit_destroy(*owned_info);
+                owned_info->is_moved = false;  // Reset — new value is now live
+            } else if (owned_info && owned_info->is_moved) {
                 // Variable was moved but now being reassigned — make it live again
-                uniq_info->is_moved = false;
+                owned_info->is_moved = false;
             }
         }
 
@@ -3289,11 +3295,10 @@ void IRBuilder::gen_var_decl(Decl* decl) {
 
     define_local(var_decl.name, value, type);
 
-    // Track uniq locals for implicit destruction
-    if (type && type->kind == TypeKind::Uniq) {
-        Type* inner_type = type->ref_info.inner_type;
+    // Track owned locals for implicit destruction (uniq refs and value structs with destructors)
+    if (type && type->needs_move_semantics()) {
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
-        m_uniq_locals.push_back({var_decl.name, inner_type, scope_depth, false});
+        m_owned_locals.push_back({var_decl.name, type, scope_depth, false});
     }
 }
 
@@ -3340,8 +3345,8 @@ void IRBuilder::pop_scope() {
     emit_scope_cleanup(depth);
 
     // Remove uniq tracking for this scope
-    while (!m_uniq_locals.empty() && m_uniq_locals.back().scope_depth >= depth) {
-        m_uniq_locals.pop_back();
+    while (!m_owned_locals.empty() && m_owned_locals.back().scope_depth >= depth) {
+        m_owned_locals.pop_back();
     }
 
     m_local_scopes.pop_back();
@@ -3358,8 +3363,8 @@ IRBuilder::LocalVar* IRBuilder::find_local(StringView name) {
     return nullptr;
 }
 
-IRBuilder::UniqLocalInfo* IRBuilder::find_uniq_local(StringView name) {
-    for (auto& info : m_uniq_locals) {
+IRBuilder::OwnedLocalInfo* IRBuilder::find_owned_local(StringView name) {
+    for (auto& info : m_owned_locals) {
         if (info.name == name) {
             return &info;
         }
@@ -3367,18 +3372,41 @@ IRBuilder::UniqLocalInfo* IRBuilder::find_uniq_local(StringView name) {
     return nullptr;
 }
 
-void IRBuilder::emit_implicit_delete(UniqLocalInfo& info) {
+void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
     if (info.is_moved) return;
     if (!m_current_block) return;  // Block already terminated
 
     ValueId current_value = lookup_local(info.name);
 
-    // Call default destructor if the inner type is a struct with one
-    if (info.struct_type && info.struct_type->is_struct()) {
-        StructTypeInfo& struct_type_info = info.struct_type->struct_info;
+    if (info.type->kind == TypeKind::Uniq) {
+        // Heap-allocated (uniq): call default destructor on inner type, then free memory
+        Type* inner_type = info.type->ref_info.inner_type;
+        if (inner_type && inner_type->is_struct()) {
+            StructTypeInfo& struct_type_info = inner_type->struct_info;
+            for (const auto& dtor : struct_type_info.destructors) {
+                if (dtor.name.empty()) {
+                    StringView dtor_name = mangle_destructor(struct_type_info.name);
+                    Vector<ValueId> call_args;
+                    call_args.push_back(current_value);
+                    emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
+                    break;
+                }
+            }
+        }
+
+        // Emit Delete IR instruction to free heap memory
+        IRInst* inst = emit_inst(IROp::Delete, m_types.void_type());
+        if (inst) {
+            inst->unary = current_value;
+        }
+    } else if (info.type->is_struct()) {
+        // Value-type struct with default destructor: call destructor only (no heap free).
+        // Value structs are always stored as pointers to stack-allocated space
+        // (allocated via StackAlloc in the constructor), so current_value is already
+        // a pointer we can pass directly to the destructor.
+        StructTypeInfo& struct_type_info = info.type->struct_info;
         for (const auto& dtor : struct_type_info.destructors) {
             if (dtor.name.empty()) {
-                // Found default destructor — call it
                 StringView dtor_name = mangle_destructor(struct_type_info.name);
                 Vector<ValueId> call_args;
                 call_args.push_back(current_value);
@@ -3388,13 +3416,7 @@ void IRBuilder::emit_implicit_delete(UniqLocalInfo& info) {
         }
     }
 
-    // Emit Delete IR instruction
-    IRInst* inst = emit_inst(IROp::Delete, m_types.void_type());
-    if (inst) {
-        inst->unary = current_value;
-    }
-
-    info.is_moved = true;  // Prevent double-delete
+    info.is_moved = true;  // Prevent double-destroy
 }
 
 void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
@@ -3468,10 +3490,10 @@ void IRBuilder::emit_scope_cleanup(u32 min_scope_depth) {
     if (!m_current_block) return;  // Block already terminated
 
     // LIFO order (reverse declaration order, like C++ destructors)
-    for (i32 i = static_cast<i32>(m_uniq_locals.size()) - 1; i >= 0; i--) {
-        auto& info = m_uniq_locals[i];
+    for (i32 i = static_cast<i32>(m_owned_locals.size()) - 1; i >= 0; i--) {
+        auto& info = m_owned_locals[i];
         if (info.scope_depth >= min_scope_depth && !info.is_moved) {
-            emit_implicit_delete(info);
+            emit_implicit_destroy(info);
         }
     }
 }
@@ -3726,7 +3748,7 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
 
     // Initialize local variable scopes and uniq tracking
     m_local_scopes.clear();
-    m_uniq_locals.clear();
+    m_owned_locals.clear();
     push_scope();
 
     // Add function parameters to local scope
@@ -3738,11 +3760,10 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
         BlockParam& bp = m_current_func->params[i];
         define_local(bp.name, bp.value, bp.type);
 
-        // Track uniq parameters — callee now owns them
-        if (bp.type && bp.type->kind == TypeKind::Uniq) {
-            Type* inner_type = bp.type->ref_info.inner_type;
+        // Track owned parameters — callee now owns them (uniq refs and value structs with destructors)
+        if (bp.type && bp.type->needs_move_semantics()) {
             u32 scope_depth = static_cast<u32>(m_local_scopes.size());
-            m_uniq_locals.push_back({bp.name, inner_type, scope_depth, false});
+            m_owned_locals.push_back({bp.name, bp.type, scope_depth, false});
         }
     }
 
@@ -3773,8 +3794,8 @@ void IRBuilder::end_function_body() {
     // Remove uniq tracking
     if (!m_local_scopes.empty()) {
         u32 depth = static_cast<u32>(m_local_scopes.size());
-        while (!m_uniq_locals.empty() && m_uniq_locals.back().scope_depth >= depth) {
-            m_uniq_locals.pop_back();
+        while (!m_owned_locals.empty() && m_owned_locals.back().scope_depth >= depth) {
+            m_owned_locals.pop_back();
         }
         m_local_scopes.pop_back();
     }

@@ -208,26 +208,27 @@ private:
     };
     Vector<LoopInfo> m_loop_stack;
 
-    // Ownership tracking for uniq locals (RAII / implicit destruction)
-    struct UniqLocalInfo {
+    // Ownership tracking for locals that need RAII / implicit destruction
+    // Covers both uniq references (heap-allocated) and value structs with destructors
+    struct OwnedLocalInfo {
         StringView name;
-        Type* struct_type;     // Inner type (for destructor lookup), nullptr if not a struct
+        Type* type;            // Full variable type (uniq T or struct T)
         u32 scope_depth;       // Scope level where declared
         bool is_moved;         // Ownership transferred (pass, return, explicit delete)
     };
-    Vector<UniqLocalInfo> m_uniq_locals;
+    Vector<OwnedLocalInfo> m_owned_locals;
 
-    // RAII helpers: emit destructor + Delete for a uniq local
-    void emit_implicit_delete(UniqLocalInfo& info);
+    // RAII helpers: emit destructor + Delete (for uniq) or destructor only (for value struct)
+    void emit_implicit_destroy(OwnedLocalInfo& info);
 
     // Emit cleanup code for uniq fields of a struct (called from destructors)
     void emit_field_cleanup(ValueId self_ptr, Type* struct_type);
 
-    // Emit cleanup (implicit deletes) for all live uniqs at or above min_scope_depth
+    // Emit cleanup (implicit destruction) for all live owned locals at or above min_scope_depth
     void emit_scope_cleanup(u32 min_scope_depth);
 
-    // Find a uniq local by name
-    UniqLocalInfo* find_uniq_local(StringView name);
+    // Find an owned local by name
+    OwnedLocalInfo* find_owned_local(StringView name);
 
     // Variable management (declared after LocalVar struct)
     void define_local(StringView name, ValueId value, Type* type);
