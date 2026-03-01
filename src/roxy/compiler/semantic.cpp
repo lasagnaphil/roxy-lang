@@ -3105,10 +3105,8 @@ void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
 void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
     TryStmt& ts = stmt->try_stmt;
 
-    // Analyze try body
-    m_in_try_catch_depth++;
+    // Analyze try body (yield is allowed here)
     analyze_stmt(ts.try_body);
-    m_in_try_catch_depth--;
 
     bool has_catch_all = false;
 
@@ -3152,17 +3150,15 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
                              m_types.exception_ref_type(), clause.loc);
         }
 
-        m_in_try_catch_depth++;
-        analyze_stmt(clause.body);
-        m_in_try_catch_depth--;
+        analyze_stmt(clause.body);  // yield is allowed in catch bodies
         m_symbols.pop_scope();
     }
 
-    // Analyze finally body if present
+    // Analyze finally body if present (yield is NOT allowed here)
     if (ts.finally_body) {
-        m_in_try_catch_depth++;
+        m_in_finally_depth++;
         analyze_stmt(ts.finally_body);
-        m_in_try_catch_depth--;
+        m_in_finally_depth--;
     }
 }
 
@@ -3174,8 +3170,8 @@ void SemanticAnalyzer::analyze_yield_stmt(Stmt* stmt) {
         return;
     }
 
-    if (m_in_try_catch_depth > 0) {
-        error(stmt->loc, "'yield' inside try/catch/finally is not yet supported");
+    if (m_in_finally_depth > 0) {
+        error(stmt->loc, "'yield' inside finally is not supported");
         return;
     }
 

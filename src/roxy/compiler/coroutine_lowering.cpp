@@ -259,9 +259,12 @@ static void remap_terminator_values(const tsl::robin_map<u32, ValueId>& value_ma
 }
 
 static void remap_all_block_ids(IRFunction* func, const tsl::robin_map<u32, u32>& block_map) {
+    auto remap_id = [&](BlockId& bid) {
+        auto it = block_map.find(bid.id);
+        if (it != block_map.end()) bid.id = it->second;
+    };
     auto remap_target = [&](JumpTarget& target) {
-        auto it = block_map.find(target.block.id);
-        if (it != block_map.end()) target.block.id = it->second;
+        remap_id(target.block);
     };
     for (auto* block : func->blocks) {
         switch (block->terminator.kind) {
@@ -275,6 +278,12 @@ static void remap_all_block_ids(IRFunction* func, const tsl::robin_map<u32, u32>
             default:
                 break;
         }
+    }
+    // Remap exception handler BlockIds
+    for (auto& handler : func->exception_handlers) {
+        remap_id(handler.try_entry);
+        remap_id(handler.try_exit);
+        remap_id(handler.handler_block);
     }
 }
 
@@ -290,6 +299,30 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
                             const Vector<PromotedVar>& promoted_vars,
                             const tsl::robin_map<StringView, u32>& promoted_var_index,
                             ValueId self_val, Type* ref_struct_type) {
+    // Build set of exception param (block_id, param_index) pairs.
+    // These are catch block parameters set by VM exception dispatch and must NOT
+    // be treated as promoted vars (even if the name collides).
+    struct ExceptionParamInfo {
+        u32 block_id;
+        u32 param_index;
+    };
+    Vector<ExceptionParamInfo> exception_params;
+    tsl::robin_map<u32, bool> exception_param_block_ids;
+    for (auto& handler : func->exception_handlers) {
+        IRBlock* handler_block = func->blocks[handler.handler_block.id];
+        if (!handler_block->params.empty()) {
+            exception_params.push_back({handler.handler_block.id, 0});
+            exception_param_block_ids[handler.handler_block.id] = true;
+        }
+    }
+
+    auto is_exception_param = [&](u32 block_id, u32 param_index) -> bool {
+        for (auto& ep : exception_params) {
+            if (ep.block_id == block_id && ep.param_index == param_index) return true;
+        }
+        return false;
+    };
+
     // 5a. Save and replace function params with self
     Vector<BlockParam> old_params = func->params;
     func->params.clear();
@@ -303,28 +336,35 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
 
     // 5b. Collect ALL original ValueIds for each promoted var
     // (from function params and block params across all blocks)
+    // Skip exception params — they are set by the VM, not by SSA data flow.
     tsl::robin_map<StringView, Vector<u32>> all_promoted_value_ids;
     for (auto& param : old_params) {
         if (promoted_var_index.count(param.name)) {
             all_promoted_value_ids[param.name].push_back(param.value.id);
         }
     }
-    for (auto* block : func->blocks) {
-        for (auto& param : block->params) {
-            if (promoted_var_index.count(param.name)) {
-                all_promoted_value_ids[param.name].push_back(param.value.id);
+    for (u32 block_idx = 0; block_idx < func->blocks.size(); block_idx++) {
+        IRBlock* block = func->blocks[block_idx];
+        for (u32 param_idx = 0; param_idx < block->params.size(); param_idx++) {
+            if (is_exception_param(block_idx, param_idx)) continue;
+            if (promoted_var_index.count(block->params[param_idx].name)) {
+                all_promoted_value_ids[block->params[param_idx].name].push_back(
+                    block->params[param_idx].value.id);
             }
         }
     }
 
     // 5c. Analyze block params before modification
+    // Exception params are classified as non-promoted regardless of name match.
     Vector<BlockParamAnalysis> block_analyses(func->blocks.size());
     for (u32 block_idx = 0; block_idx < func->blocks.size(); block_idx++) {
         IRBlock* block = func->blocks[block_idx];
         BlockParamAnalysis& analysis = block_analyses[block_idx];
         analysis.original_params = block->params;
         for (u32 i = 0; i < block->params.size(); i++) {
-            if (promoted_var_index.count(block->params[i].name)) {
+            if (is_exception_param(block_idx, i)) {
+                analysis.non_promoted_indices.push_back(i);
+            } else if (promoted_var_index.count(block->params[i].name)) {
                 analysis.promoted_indices.push_back(i);
             } else {
                 analysis.non_promoted_indices.push_back(i);
@@ -334,12 +374,35 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
 
     // 5d. For EVERY block: prepend GetField loads for ALL promoted vars,
     //     remap all instructions and terminator using per-block remap.
+    //     For catch blocks with exception params that match promoted vars,
+    //     also insert SetField to store the exception value into the struct.
     for (u32 block_idx = 0; block_idx < func->blocks.size(); block_idx++) {
         IRBlock* block = func->blocks[block_idx];
         tsl::robin_map<u32, ValueId> local_remap;
 
-        // Create GetField loads for all promoted vars
+        // For catch blocks: if the exception param name matches a promoted var,
+        // store it to the struct field first so subsequent GetField loads see it.
         Vector<IRInst*> prepend_insts;
+
+        if (exception_param_block_ids.count(block_idx) && !block->params.empty()) {
+            BlockParam& exc_param = block->params[0];
+            auto pv_it = promoted_var_index.find(exc_param.name);
+            if (pv_it != promoted_var_index.end()) {
+                const PromotedVar& pv = promoted_vars[pv_it->second];
+                IRInst* store_inst = allocator.emplace<IRInst>();
+                store_inst->op = IROp::SetField;
+                store_inst->type = pv.type;
+                store_inst->result = func->new_value();
+                store_inst->field.object = self_val;
+                store_inst->field.field_name = pv.name;
+                store_inst->field.slot_offset = pv.field_slot_offset;
+                store_inst->field.slot_count = pv.field_slot_count;
+                store_inst->store_value = exc_param.value;
+                prepend_insts.push_back(store_inst);
+            }
+        }
+
+        // Create GetField loads for all promoted vars
         for (u32 pv_idx = 0; pv_idx < promoted_vars.size(); pv_idx++) {
             const PromotedVar& pv = promoted_vars[pv_idx];
             IRInst* inst = allocator.emplace<IRInst>();
@@ -368,7 +431,7 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
         // Remap terminator
         remap_terminator_values(local_remap, block->terminator);
 
-        // Prepend GetField loads before original instructions
+        // Prepend GetField loads (and exception SetField if applicable) before original instructions
         Vector<IRInst*> new_insts;
         new_insts.reserve(prepend_insts.size() + block->instructions.size());
         for (auto* inst : prepend_insts) new_insts.push_back(inst);

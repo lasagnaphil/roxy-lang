@@ -479,12 +479,12 @@ TEST_CASE("E2E - Coroutine deeply nested yield") {
 }
 
 // ============================================================================
-// Yield in try/catch error
+// Yield in try/catch
 // ============================================================================
 
-TEST_CASE("E2E - Coroutine error: yield in try block") {
+TEST_CASE("E2E - Coroutine yield in try block") {
     const char* source = R"(
-        fun bad_coro(): Coro<i32> {
+        fun gen(): Coro<i32> {
             try {
                 yield 42;
             } catch (e) {
@@ -492,25 +492,24 @@ TEST_CASE("E2E - Coroutine error: yield in try block") {
         }
 
         fun main(): i32 {
-            var g = bad_coro();
+            var g = gen();
             return g.resume();
         }
     )";
 
     TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
+    CHECK(result.success);
+    CHECK(result.value == 42);
 }
 
-TEST_CASE("E2E - Coroutine error: yield in catch block") {
+TEST_CASE("E2E - Coroutine yield in catch block") {
     const char* source = R"(
-        struct MyErr {
-            fun message(): string {
-                return "err";
-            }
+        struct MyErr {}
+        fun MyErr.message(): string for Exception {
+            return "err";
         }
-        for Exception MyErr {}
 
-        fun bad_coro(): Coro<i32> {
+        fun gen(): Coro<i32> {
             try {
                 throw MyErr {};
             } catch (e: MyErr) {
@@ -519,13 +518,14 @@ TEST_CASE("E2E - Coroutine error: yield in catch block") {
         }
 
         fun main(): i32 {
-            var g = bad_coro();
+            var g = gen();
             return g.resume();
         }
     )";
 
     TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
+    CHECK(result.success);
+    CHECK(result.value == 42);
 }
 
 TEST_CASE("E2E - Coroutine error: yield in finally block") {
@@ -547,4 +547,116 @@ TEST_CASE("E2E - Coroutine error: yield in finally block") {
 
     TestResult result = run_and_capture(source, "main");
     CHECK(!result.success);
+}
+
+TEST_CASE("E2E - Coroutine yield in try, no exception") {
+    const char* source = R"(
+        fun gen(): Coro<i32> {
+            var result: i32 = 0;
+            try {
+                result = 10;
+                yield result;
+                result = 20;
+                yield result;
+            } catch (e) {
+                result = -1;
+            }
+            yield result;
+        }
+
+        fun main(): i32 {
+            var g = gen();
+            var a: i32 = g.resume();
+            var b: i32 = g.resume();
+            var c: i32 = g.resume();
+            return a * 100 + b * 10 + c;
+        }
+    )";
+
+    // a=10, b=20, c=20 (no exception, so result stays 20 after try)
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 1220);
+}
+
+TEST_CASE("E2E - Coroutine multiple yields in try") {
+    const char* source = R"(
+        fun gen(): Coro<i32> {
+            try {
+                yield 1;
+                yield 2;
+                yield 3;
+            } catch (e) {
+            }
+        }
+
+        fun main(): i32 {
+            var g = gen();
+            var a: i32 = g.resume();
+            var b: i32 = g.resume();
+            var c: i32 = g.resume();
+            return a * 100 + b * 10 + c;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 123);
+}
+
+TEST_CASE("E2E - Coroutine yield in catch after throw") {
+    const char* source = R"(
+        struct MyErr {
+            val: i32;
+        }
+        fun MyErr.message(): string for Exception {
+            return "err";
+        }
+
+        fun gen(): Coro<i32> {
+            try {
+                throw MyErr { val = 99 };
+            } catch (e: MyErr) {
+                yield e.val;
+                yield e.val + 1;
+            }
+        }
+
+        fun main(): i32 {
+            var g = gen();
+            var a: i32 = g.resume();
+            var b: i32 = g.resume();
+            return a * 100 + b;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 9900 + 100);
+}
+
+TEST_CASE("E2E - Coroutine yield in try with loop") {
+    const char* source = R"(
+        fun gen(): Coro<i32> {
+            try {
+                for (var i: i32 = 0; i < 3; i = i + 1) {
+                    yield i * 10;
+                }
+            } catch (e) {
+            }
+        }
+
+        fun main(): i32 {
+            var g = gen();
+            var a: i32 = g.resume();
+            var b: i32 = g.resume();
+            var c: i32 = g.resume();
+            return a + b + c;
+        }
+    )";
+
+    // 0 + 10 + 20 = 30
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 30);
 }

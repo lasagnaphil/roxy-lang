@@ -1746,8 +1746,12 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
     gen_stmt(ts.try_body);
     pop_scope();
 
-    // Record the last block of try body (the current block after generating body)
-    BlockId try_exit_block_id = m_current_block ? m_current_block->id : try_entry_block->id;
+    // Record the last block of try body: all blocks created during try body generation
+    // have IDs between try_entry and here. Catch blocks haven't been created yet,
+    // so the last block in the function is the last try body block.
+    // This ensures the handler covers ALL try body blocks, including resume blocks
+    // created by yields inside the try body.
+    BlockId try_exit_block_id = BlockId{static_cast<u32>(m_current_func->blocks.size()) - 1};
 
     // If try body didn't terminate (no throw/return/break), jump to after block
     // (or finally block if present)
