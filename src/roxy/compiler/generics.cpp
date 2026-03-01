@@ -42,6 +42,26 @@ const Vector<Decl*>* GenericInstantiator::get_generic_struct_methods(StringView 
     return nullptr;
 }
 
+void GenericInstantiator::register_generic_struct_constructor(StringView struct_name, Decl* ctor_decl) {
+    m_generic_struct_constructors[struct_name].push_back(ctor_decl);
+}
+
+void GenericInstantiator::register_generic_struct_destructor(StringView struct_name, Decl* dtor_decl) {
+    m_generic_struct_destructors[struct_name].push_back(dtor_decl);
+}
+
+const Vector<Decl*>* GenericInstantiator::get_generic_struct_constructors(StringView struct_name) const {
+    auto it = m_generic_struct_constructors.find(struct_name);
+    if (it != m_generic_struct_constructors.end()) return &it->second;
+    return nullptr;
+}
+
+const Vector<Decl*>* GenericInstantiator::get_generic_struct_destructors(StringView struct_name) const {
+    auto it = m_generic_struct_destructors.find(struct_name);
+    if (it != m_generic_struct_destructors.end()) return &it->second;
+    return nullptr;
+}
+
 bool GenericInstantiator::is_generic_fun(StringView name) const {
     return m_generic_funs.find(name) != m_generic_funs.end();
 }
@@ -289,6 +309,24 @@ StringView GenericInstantiator::instantiate_struct(StringView name, Span<Type*> 
         for (Decl* method_template : *ext_methods) {
             Decl* cloned = clone_method_decl(method_template, subst, mangled);
             instance->instantiated_methods.push_back(cloned);
+        }
+    }
+
+    // Clone external constructor templates for this instantiation
+    const Vector<Decl*>* ext_ctors = get_generic_struct_constructors(name);
+    if (ext_ctors) {
+        for (Decl* ctor_template : *ext_ctors) {
+            Decl* cloned = clone_constructor_decl(ctor_template, subst, mangled);
+            instance->instantiated_constructors.push_back(cloned);
+        }
+    }
+
+    // Clone external destructor templates for this instantiation
+    const Vector<Decl*>* ext_dtors = get_generic_struct_destructors(name);
+    if (ext_dtors) {
+        for (Decl* dtor_template : *ext_dtors) {
+            Decl* cloned = clone_destructor_decl(dtor_template, subst, mangled);
+            instance->instantiated_destructors.push_back(cloned);
         }
     }
 
@@ -713,6 +751,56 @@ Decl* GenericInstantiator::clone_method_decl(Decl* original, const TypeSubstitut
 
     // Clone body with substitution
     method_decl.body = clone_stmt(original->method_decl.body, subst);
+
+    return d;
+}
+
+Decl* GenericInstantiator::clone_constructor_decl(Decl* original, const TypeSubstitution& subst, StringView mangled_struct_name) {
+    Decl* d = m_allocator.emplace<Decl>();
+    *d = *original;
+
+    ConstructorDecl& constructor_decl = d->constructor_decl;
+    constructor_decl.struct_name = mangled_struct_name;
+    constructor_decl.type_params = Span<TypeParam>(); // Clear type params - concrete instantiation
+
+    // Substitute parameter types
+    if (constructor_decl.params.size() > 0) {
+        Param* params = reinterpret_cast<Param*>(
+            m_allocator.alloc_bytes(sizeof(Param) * constructor_decl.params.size(), alignof(Param)));
+        for (u32 i = 0; i < constructor_decl.params.size(); i++) {
+            params[i] = original->constructor_decl.params[i];
+            params[i].type = substitute_type_expr(original->constructor_decl.params[i].type, subst);
+        }
+        constructor_decl.params = Span<Param>(params, constructor_decl.params.size());
+    }
+
+    // Clone body with substitution
+    constructor_decl.body = clone_stmt(original->constructor_decl.body, subst);
+
+    return d;
+}
+
+Decl* GenericInstantiator::clone_destructor_decl(Decl* original, const TypeSubstitution& subst, StringView mangled_struct_name) {
+    Decl* d = m_allocator.emplace<Decl>();
+    *d = *original;
+
+    DestructorDecl& destructor_decl = d->destructor_decl;
+    destructor_decl.struct_name = mangled_struct_name;
+    destructor_decl.type_params = Span<TypeParam>(); // Clear type params - concrete instantiation
+
+    // Substitute parameter types
+    if (destructor_decl.params.size() > 0) {
+        Param* params = reinterpret_cast<Param*>(
+            m_allocator.alloc_bytes(sizeof(Param) * destructor_decl.params.size(), alignof(Param)));
+        for (u32 i = 0; i < destructor_decl.params.size(); i++) {
+            params[i] = original->destructor_decl.params[i];
+            params[i].type = substitute_type_expr(original->destructor_decl.params[i].type, subst);
+        }
+        destructor_decl.params = Span<Param>(params, destructor_decl.params.size());
+    }
+
+    // Clone body with substitution
+    destructor_decl.body = clone_stmt(original->destructor_decl.body, subst);
 
     return d;
 }

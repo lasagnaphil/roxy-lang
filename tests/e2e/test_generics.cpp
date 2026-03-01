@@ -1179,3 +1179,146 @@ TEST_CASE("E2E - Generic struct method: with additional parameters") {
     CHECK(result.success);
     CHECK(result.value == 42);
 }
+
+// ============================================================================
+// Generic Struct Constructor/Destructor Tests
+// ============================================================================
+
+TEST_CASE("E2E - Generic struct: user-defined default constructor") {
+    const char* source = R"(
+        struct Box<T> {
+            value: T;
+        }
+
+        fun new Box<T>(value: T) {
+            self.value = value;
+        }
+
+        fun main(): i32 {
+            var b: Box<i32> = Box<i32>(42);
+            return b.value;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic struct: named constructor") {
+    const char* source = R"(
+        struct Pair<T> {
+            first: T;
+            second: T;
+        }
+
+        fun new Pair<T>.make(a: T, b: T) {
+            self.first = a;
+            self.second = b;
+        }
+
+        fun main(): i32 {
+            var p: Pair<i32> = Pair<i32>.make(10, 32);
+            return p.first + p.second;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic struct: constructor with method") {
+    const char* source = R"(
+        struct Box<T> {
+            value: T;
+        }
+
+        fun new Box<T>(value: T) {
+            self.value = value;
+        }
+
+        fun Box<T>.get(): T {
+            return self.value;
+        }
+
+        fun main(): i32 {
+            var b: Box<i32> = Box<i32>(42);
+            return b.get();
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic struct: constructor multiple instantiations") {
+    const char* source = R"(
+        struct Box<T> {
+            value: T;
+        }
+
+        fun new Box<T>(value: T) {
+            self.value = value;
+        }
+
+        fun main(): i32 {
+            var b1: Box<i32> = Box<i32>(40);
+            var b2: Box<f64> = Box<f64>(2.5);
+            return b1.value + i32(b2.value);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Generic struct: destructor with uniq") {
+    const char* source = R"(
+        struct Box<T> {
+            value: T;
+        }
+
+        fun new Box<T>(value: T) {
+            self.value = value;
+        }
+
+        fun delete Box<T>() {
+            print(f"{self.value}");
+        }
+
+        fun main(): i32 {
+            var b: uniq Box<i32> = uniq Box<i32>(99);
+            delete b;
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "99\n");
+}
+
+TEST_CASE("E2E - Generic struct: constructor suppresses synthesized default") {
+    // User-defined default constructor should be used instead of synthesized one
+    const char* source = R"(
+        struct Box<T> {
+            value: T;
+        }
+
+        fun new Box<T>(value: T) {
+            self.value = value + value;
+        }
+
+        fun main(): i32 {
+            var b: Box<i32> = Box<i32>(21);
+            return b.value;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}

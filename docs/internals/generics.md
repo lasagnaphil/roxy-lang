@@ -4,7 +4,7 @@ Generics enable writing code that works with multiple types while maintaining st
 
 ## Implementation Status
 
-**Implemented (Phase 1 + 2 + 3 + 4 + 5 + 6 + 7):**
+**Implemented (Phase 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8):**
 - Generic functions with explicit type arguments
 - Generic structs with explicit type arguments
 - Monomorphization with AST cloning and type substitution
@@ -18,9 +18,9 @@ Generics enable writing code that works with multiple types while maintaining st
 - Trait bounds on type parameters (Phase A: instantiation-site checking)
 - Trait bounds body checking (Phase B: definition-site checking of generic template bodies)
 - User-defined external methods on generic structs (`fun Box<T>.get(): T`)
+- User-defined constructors/destructors on generic structs (`fun new Box<T>(...)`, `fun delete Box<T>()`)
 
 **Not yet implemented:**
-- User-defined generic constructors/destructors
 - Higher-kinded types, associated types, specialization, const generics
 
 **Native generic types** (e.g., `List<T>`) are supported via `NativeRegistry::register_generic_type`. See [interop.md](interop.md#generic-native-types) for details.
@@ -105,6 +105,37 @@ fun Counter<T>.get_count(): i32 { return self.count; }
 fun Counter<T>.is_empty(): bool { return self.get_count() == 0; }
 ```
 
+### Constructors and Destructors on Generic Structs
+
+User-defined constructors and destructors can be defined on generic structs using the same `<T>` syntax:
+
+```roxy
+struct Box<T> { value: T; }
+
+// Default constructor
+fun new Box<T>(value: T) {
+    self.value = value;
+}
+
+// Named constructor
+fun new Box<T>.make(value: T) {
+    self.value = value;
+}
+
+// Destructor
+fun delete Box<T>() {
+    // cleanup logic
+}
+
+// Usage
+var b: Box<i32> = Box<i32>(42);        // calls user-defined default constructor
+var b2: Box<i32> = Box<i32>.make(42);   // calls named constructor
+var u: uniq Box<i32> = uniq Box<i32>(99);
+delete u;                               // calls user-defined destructor
+```
+
+Constructor/destructor templates are registered during `resolve_type_members` and cloned with type substitution during `instantiate_struct()`, following the same pattern as external methods. User-defined default constructors suppress the synthesized default constructor for that instantiation.
+
 ## Type Inference
 
 When type arguments are omitted, the compiler attempts **local type inference** by unifying the template parameter types against the concrete argument types.
@@ -152,7 +183,7 @@ var p = Pair { first = 10, second = 2.5 };  // var type inferred as Pair<i32, f6
   make_default();         // ERROR: cannot infer T
   make_default<i32>();    // OK: explicit type arg
   ```
-- Generic struct *constructor calls* (e.g., `Box(42)`) are not supported for inference since user-defined generic constructors are not yet implemented.
+- Generic struct *constructor calls* (e.g., `Box(42)`) do not support type inference from arguments; explicit type arguments must be provided (e.g., `Box<i32>(42)`).
 
 ## Disambiguation: `<>` in Expression Position
 
@@ -165,7 +196,7 @@ var p = Pair { first = 10, second = 2.5 };  // var type inferred as Pair<i32, f6
 **In expression position** (`identifier<types>(` vs `a < b`):
 1. Save parser state (tokens + lexer position)
 2. Try parsing as comma-separated type expressions, then `>`
-3. If `>` is followed by `(` or `{` → commit as generic call/literal
+3. If `>` is followed by `(`, `{`, or `.` → commit as generic call/literal/named constructor
 4. Otherwise → restore state, parse `<` as comparison operator
 
 ## Monomorphization
@@ -241,7 +272,9 @@ struct GenericStructInstance {
     Decl* instantiated_decl;
     Type* concrete_type;             // The concrete struct Type*
     bool is_analyzed;
-    Vector<Decl*> instantiated_methods;  // Cloned external method DeclMethod nodes
+    Vector<Decl*> instantiated_methods;       // Cloned external method DeclMethod nodes
+    Vector<Decl*> instantiated_constructors;  // Cloned constructor DeclConstructor nodes
+    Vector<Decl*> instantiated_destructors;   // Cloned destructor DeclDestructor nodes
 };
 ```
 
@@ -255,7 +288,7 @@ After cloning, `resolve_type_expr` updates TypeExpr names to mangled names (e.g.
 
 When a generic struct is first instantiated via `resolve_type_expr`, its fields and method signatures are resolved **immediately inline** via `resolve_generic_struct_fields()` rather than deferred to the worklist. This ensures that functions using the struct (in the same or later analysis passes) can access field information and call methods.
 
-External method templates (`fun Box<T>.get(): T`) are registered during `resolve_type_members` and cloned with type substitution during `instantiate_struct()`. The cloned method declarations are stored in `GenericStructInstance::instantiated_methods`. Method **bodies** are analyzed later in the worklist loop.
+External method templates (`fun Box<T>.get(): T`), constructor templates (`fun new Box<T>(...)`), and destructor templates (`fun delete Box<T>()`) are registered during `resolve_type_members` and cloned with type substitution during `instantiate_struct()`. The cloned declarations are stored in `GenericStructInstance::instantiated_methods/constructors/destructors`. Their **bodies** are analyzed later in the worklist loop.
 
 ## Trait Bounds
 
@@ -369,13 +402,12 @@ type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ;
 ## Limitations
 
 1. **Limited type inference**: Type arguments can be inferred from function args and struct fields, but not from return type context alone
-2. **No user-defined generic constructors/destructors**: Native types support these via `bind_generic_constructor`/`bind_generic_destructor`, but user-defined ones are not yet supported
-3. **No higher-kinded types**: Can't abstract over type constructors
-4. **No associated types**: Traits can't define type members
-5. **No specialization**: Can't provide different implementations for specific types
-6. **No const generics**: Can't parameterize by values
+2. **No higher-kinded types**: Can't abstract over type constructors
+3. **No associated types**: Traits can't define type members
+4. **No specialization**: Can't provide different implementations for specific types
+5. **No const generics**: Can't parameterize by values
 
 ## Future Work
 
-1. **User-defined generic constructors** — `fun new Box<T>(value: T)`
-2. **Trait implementations on generic structs** — `fun Box<T>.print() for Printable`
+1. **Trait implementations on generic structs** — `fun Box<T>.print() for Printable`
+2. **Type inference for generic constructor calls** — `Box(42)` inferring `T = i32`

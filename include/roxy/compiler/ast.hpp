@@ -511,9 +511,11 @@ struct ImportDecl {
 
 // Constructor declaration: fun new StructName(params) { body }
 // or: fun new StructName.ctor_name(params) { body }
+// or generic: fun new StructName<T>(params) { body }
 struct ConstructorDecl {
     StringView struct_name;
     StringView name;           // empty for default constructor
+    Span<TypeParam> type_params;  // Struct type params: <T> in fun new Box<T>(...)
     Span<Param> params;
     Stmt* body;
     bool is_pub;
@@ -521,9 +523,11 @@ struct ConstructorDecl {
 
 // Destructor declaration: fun delete StructName(params) { body }
 // or: fun delete StructName.dtor_name(params) { body }
+// or generic: fun delete StructName<T>() { body }
 struct DestructorDecl {
     StringView struct_name;
     StringView name;           // empty for default destructor
+    Span<TypeParam> type_params;  // Struct type params: <T> in fun delete Box<T>(...)
     Span<Param> params;        // Destructors CAN have parameters
     Stmt* body;
     bool is_pub;

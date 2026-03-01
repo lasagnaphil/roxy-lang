@@ -97,6 +97,7 @@ private:
     struct CtorDtorParsed {
         StringView struct_name;
         StringView name;
+        Span<TypeParam> type_params;
         Vector<Param> params;
         Stmt* body;
     };

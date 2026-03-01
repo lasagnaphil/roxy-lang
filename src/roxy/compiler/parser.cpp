@@ -489,11 +489,18 @@ Expr* Parser::primary() {
     if (match(TokenKind::KwUniq)) {
         SourceLocation loc = m_previous.loc;
 
-        // uniq Type(...) or uniq Type { ... }
+        // uniq Type(...) or uniq Type { ... } or uniq Type<Args>(...) or uniq Type<Args> { ... }
         Token type_token = consume(TokenKind::Identifier, "Expected type name after 'uniq'");
         if (m_has_error) return nullptr;
 
-        // Check for struct literal: uniq Type { ... }
+        // Parse optional generic type args: uniq Box<i32>(...)
+        Span<TypeExpr*> type_args;
+        if (check(TokenKind::Less)) {
+            type_args = try_parse_generic_args();
+            if (m_has_error) return nullptr;
+        }
+
+        // Check for struct literal: uniq Type { ... } or uniq Type<Args> { ... }
         if (match(TokenKind::LeftBrace)) {
             Vector<FieldInit> fields;
             if (!check(TokenKind::RightBrace)) {
@@ -519,13 +526,13 @@ Expr* Parser::primary() {
             expr->loc = loc;
             expr->struct_literal.type_name = type_token.text();
             expr->struct_literal.fields = alloc_span(fields);
-            expr->struct_literal.type_args = Span<TypeExpr*>();
+            expr->struct_literal.type_args = type_args;
             expr->struct_literal.mangled_name = StringView(nullptr, 0);
             expr->struct_literal.is_heap = true;
             return expr;
         }
 
-        // Constructor call: uniq Type() or uniq Type.ctor_name()
+        // Constructor call: uniq Type() or uniq Type.ctor_name() or uniq Type<Args>() etc.
         StringView ctor_name(nullptr, 0);
         if (match(TokenKind::Dot)) {
             Token name_token = consume(TokenKind::Identifier, "Expected constructor name after '.'");
@@ -568,7 +575,7 @@ Expr* Parser::primary() {
         expr->loc = loc;
         expr->call.callee = callee;
         expr->call.arguments = alloc_span(arguments);
-        expr->call.type_args = Span<TypeExpr*>();
+        expr->call.type_args = type_args;
         expr->call.constructor_name = ctor_name;
         expr->call.mangled_name = StringView(nullptr, 0);
         expr->call.is_heap = true;
@@ -629,6 +636,51 @@ Expr* Parser::primary() {
                     expr->struct_literal.type_args = type_args;
                     expr->struct_literal.mangled_name = StringView(nullptr, 0);
                     expr->struct_literal.is_heap = false;
+                    return expr;
+                }
+
+                if (match(TokenKind::Dot)) {
+                    // Generic named constructor call: Pair<i32>.from(10, 32)
+                    Token ctor_name_token = consume(TokenKind::Identifier, "Expected constructor name after '.'");
+                    if (m_has_error) return nullptr;
+                    consume(TokenKind::LeftParen, "Expected '(' after constructor name");
+                    if (m_has_error) return nullptr;
+
+                    Vector<CallArg> arguments;
+                    if (!check(TokenKind::RightParen)) {
+                        do {
+                            CallArg arg;
+                            arg.modifier = ParamModifier::None;
+                            arg.modifier_loc = {};
+                            if (match(TokenKind::KwOut)) {
+                                arg.modifier = ParamModifier::Out;
+                                arg.modifier_loc = m_previous.loc;
+                            } else if (match(TokenKind::KwInout)) {
+                                arg.modifier = ParamModifier::Inout;
+                                arg.modifier_loc = m_previous.loc;
+                            }
+                            arg.expr = expression();
+                            if (m_has_error) return nullptr;
+                            arguments.push_back(arg);
+                        } while (match(TokenKind::Comma));
+                    }
+                    consume(TokenKind::RightParen, "Expected ')' after arguments");
+                    if (m_has_error) return nullptr;
+
+                    Expr* callee = alloc<Expr>();
+                    callee->kind = AstKind::ExprIdentifier;
+                    callee->loc = name_token.loc;
+                    callee->identifier.name = name_token.text();
+
+                    Expr* expr = alloc<Expr>();
+                    expr->kind = AstKind::ExprCall;
+                    expr->loc = name_token.loc;
+                    expr->call.callee = callee;
+                    expr->call.arguments = alloc_span(arguments);
+                    expr->call.type_args = type_args;
+                    expr->call.constructor_name = ctor_name_token.text();
+                    expr->call.mangled_name = StringView(nullptr, 0);
+                    expr->call.is_heap = false;
                     return expr;
                 }
 
@@ -1519,12 +1571,18 @@ Decl* Parser::method_declaration(bool is_pub, bool is_native,
 }
 
 bool Parser::parse_ctor_dtor_common(const char* kind_name, CtorDtorParsed& out) {
-    // Parse struct name: StructName or StructName.name
+    // Parse struct name: StructName or StructName<T> or StructName.name or StructName<T>.name
     Token struct_token = consume(TokenKind::Identifier, "Expected struct name");
     if (m_has_error) return false;
 
     out.struct_name = struct_token.text();
     out.name = StringView(nullptr, 0);  // Empty for default
+
+    // Parse optional type params: Box<T>
+    if (check(TokenKind::Less)) {
+        out.type_params = parse_type_params();
+        if (m_has_error) return false;
+    }
 
     // Check for named variant: StructName.name
     if (match(TokenKind::Dot)) {
@@ -1564,6 +1622,7 @@ Decl* Parser::constructor_declaration(bool is_pub) {
     decl->loc = loc;
     decl->constructor_decl.struct_name = parsed.struct_name;
     decl->constructor_decl.name = parsed.name;
+    decl->constructor_decl.type_params = parsed.type_params;
     decl->constructor_decl.params = alloc_span(parsed.params);
     decl->constructor_decl.body = parsed.body;
     decl->constructor_decl.is_pub = is_pub;
@@ -1583,6 +1642,7 @@ Decl* Parser::destructor_declaration(bool is_pub) {
     decl->loc = loc;
     decl->destructor_decl.struct_name = parsed.struct_name;
     decl->destructor_decl.name = parsed.name;
+    decl->destructor_decl.type_params = parsed.type_params;
     decl->destructor_decl.params = alloc_span(parsed.params);
     decl->destructor_decl.body = parsed.body;
     decl->destructor_decl.is_pub = is_pub;
@@ -2065,12 +2125,12 @@ Span<TypeExpr*> Parser::try_parse_generic_args() {
     }
 
     // Check if followed by '(' or '{' - confirms this is generic args, not comparison
-    if (check(TokenKind::LeftParen) || check(TokenKind::LeftBrace)) {
+    if (check(TokenKind::LeftParen) || check(TokenKind::LeftBrace) || check(TokenKind::Dot)) {
         // Commit - return the parsed type args
         return alloc_span(args);
     }
 
-    // Not followed by ( or { - this was a comparison, backtrack
+    // Not followed by (, {, or . - this was a comparison, backtrack
     restore_state(saved);
     return {};
 }

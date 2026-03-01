@@ -66,6 +66,8 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             }
         }
         else if (decl->kind == AstKind::DeclConstructor) {
+            // Skip generic struct constructor templates (handled below with instances)
+            if (decl->constructor_decl.type_params.size() > 0) continue;
             // Build constructor
             ConstructorDecl& constructor_decl = decl->constructor_decl;
             Type* struct_type = m_type_env.named_type_by_name(constructor_decl.struct_name);
@@ -79,6 +81,8 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             }
         }
         else if (decl->kind == AstKind::DeclDestructor) {
+            // Skip generic struct destructor templates (handled below with instances)
+            if (decl->destructor_decl.type_params.size() > 0) continue;
             // Build destructor
             DestructorDecl& destructor_decl = decl->destructor_decl;
             Type* struct_type = m_type_env.named_type_by_name(destructor_decl.struct_name);
@@ -121,6 +125,32 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
         if (instance->is_analyzed && instance->instantiated_decl) {
             IRFunction* func = build_function(&instance->instantiated_decl->fun_decl);
             module->functions.push_back(func);
+        }
+    }
+
+    if (m_has_error) return nullptr;
+
+    // Generate constructors/destructors for generic struct instances
+    for (auto* instance : m_type_env.generics().all_struct_instances()) {
+        if (!instance->is_analyzed || !instance->concrete_type) continue;
+
+        for (Decl* ctor_decl : instance->instantiated_constructors) {
+            ConstructorDecl& ctor = ctor_decl->constructor_decl;
+            if (ctor.body) {
+                IRFunction* func = build_constructor(&ctor, instance->concrete_type);
+                module->functions.push_back(func);
+                if (ctor.name.empty()) {
+                    has_default_ctor[instance->mangled_name] = true;
+                }
+            }
+        }
+
+        for (Decl* dtor_decl : instance->instantiated_destructors) {
+            DestructorDecl& dtor = dtor_decl->destructor_decl;
+            if (dtor.body) {
+                IRFunction* func = build_destructor(&dtor, instance->concrete_type);
+                module->functions.push_back(func);
+            }
         }
     }
 

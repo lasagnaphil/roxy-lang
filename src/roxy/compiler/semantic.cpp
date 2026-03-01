@@ -531,9 +531,19 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             sym->is_pub = var_decl.is_pub;
         }
         else if (decl->kind == AstKind::DeclConstructor) {
+            ConstructorDecl& constructor_decl = decl->constructor_decl;
+            if (generics().is_generic_struct(constructor_decl.struct_name)) {
+                generics().register_generic_struct_constructor(constructor_decl.struct_name, decl);
+                continue;
+            }
             analyze_constructor_decl(decl);
         }
         else if (decl->kind == AstKind::DeclDestructor) {
+            DestructorDecl& destructor_decl = decl->destructor_decl;
+            if (generics().is_generic_struct(destructor_decl.struct_name)) {
+                generics().register_generic_struct_destructor(destructor_decl.struct_name, decl);
+                continue;
+            }
             analyze_destructor_decl(decl);
         }
         else if (decl->kind == AstKind::DeclMethod) {
@@ -762,6 +772,8 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
         }
         else if (decl->kind == AstKind::DeclConstructor) {
             ConstructorDecl& constructor_decl = decl->constructor_decl;
+            // Skip generic struct constructor templates (handled in worklist)
+            if (generics().is_generic_struct(constructor_decl.struct_name)) continue;
             Type* ctor_struct = m_type_env.named_type_by_name(constructor_decl.struct_name);
             if (ctor_struct) {
                 analyze_constructor_body(decl, ctor_struct);
@@ -769,6 +781,8 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
         }
         else if (decl->kind == AstKind::DeclDestructor) {
             DestructorDecl& destructor_decl = decl->destructor_decl;
+            // Skip generic struct destructor templates (handled in worklist)
+            if (generics().is_generic_struct(destructor_decl.struct_name)) continue;
             Type* dtor_struct = m_type_env.named_type_by_name(destructor_decl.struct_name);
             if (dtor_struct) {
                 analyze_destructor_body(decl, dtor_struct);
@@ -817,11 +831,21 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                 }
             }
 
-            // Analyze method bodies (after ALL struct types and method infos are registered)
+            // Analyze bodies (after ALL struct types and infos are registered)
             for (auto* inst : pending_structs) {
                 // Analyze external method bodies
                 for (Decl* method_decl : inst->instantiated_methods) {
                     analyze_method_body(method_decl, inst->concrete_type);
+                }
+
+                // Analyze constructor bodies
+                for (Decl* ctor_decl : inst->instantiated_constructors) {
+                    analyze_constructor_body(ctor_decl, inst->concrete_type);
+                }
+
+                // Analyze destructor bodies
+                for (Decl* dtor_decl : inst->instantiated_destructors) {
+                    analyze_destructor_body(dtor_decl, inst->concrete_type);
                 }
             }
         }
@@ -873,6 +897,40 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
     struct_type_info.constructors = Span<ConstructorInfo>(nullptr, 0);
     struct_type_info.destructors = Span<DestructorInfo>(nullptr, 0);
     struct_type_info.methods = Span<MethodInfo>(nullptr, 0);
+
+    // Register ConstructorInfo for external constructors
+    for (Decl* ctor_decl : inst->instantiated_constructors) {
+        ConstructorDecl& ctor = ctor_decl->constructor_decl;
+        Vector<Type*> param_types;
+        for (const auto& param : ctor.params) {
+            Type* ptype = resolve_type_expr(param.type);
+            if (!ptype) ptype = m_types.error_type();
+            param_types.push_back(ptype);
+        }
+
+        ConstructorInfo ctor_info;
+        ctor_info.name = ctor.name;
+        ctor_info.param_types = m_allocator.alloc_span(param_types);
+        ctor_info.decl = ctor_decl;
+        append_constructor(struct_type_info, ctor_info);
+    }
+
+    // Register DestructorInfo for external destructors
+    for (Decl* dtor_decl : inst->instantiated_destructors) {
+        DestructorDecl& dtor = dtor_decl->destructor_decl;
+        Vector<Type*> param_types;
+        for (const auto& param : dtor.params) {
+            Type* ptype = resolve_type_expr(param.type);
+            if (!ptype) ptype = m_types.error_type();
+            param_types.push_back(ptype);
+        }
+
+        DestructorInfo dtor_info;
+        dtor_info.name = dtor.name;
+        dtor_info.param_types = m_allocator.alloc_span(param_types);
+        dtor_info.decl = dtor_decl;
+        append_destructor(struct_type_info, dtor_info);
+    }
 
     // Register MethodInfo for external methods so call sites can resolve them
     for (Decl* method_decl : inst->instantiated_methods) {
