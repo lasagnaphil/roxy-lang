@@ -1264,7 +1264,7 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
         // If returning an owned identifier, mark it as moved (don't destroy what we're returning)
         if (rs.value->kind == AstKind::ExprIdentifier) {
             Type* return_type = rs.value->resolved_type;
-            if (return_type && return_type->needs_move_semantics()) {
+            if (return_type && return_type->noncopyable()) {
                 OwnedLocalInfo* owned_info = find_owned_local(rs.value->identifier.name);
                 if (owned_info) {
                     owned_info->is_moved = true;
@@ -2455,8 +2455,8 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         for (u32 i = 0; i < call_expr.arguments.size() && i < param_types.size(); i++) {
             if (call_expr.arguments[i].expr->kind == AstKind::ExprIdentifier) {
                 Type* arg_type = call_expr.arguments[i].expr->resolved_type;
-                if (arg_type && arg_type->needs_move_semantics() &&
-                    param_types[i] && param_types[i]->needs_move_semantics()) {
+                if (arg_type && arg_type->noncopyable() &&
+                    param_types[i] && param_types[i]->noncopyable()) {
                     StringView arg_name = call_expr.arguments[i].expr->identifier.name;
                     OwnedLocalInfo* owned_info = find_owned_local(arg_name);
                     if (owned_info && !owned_info->is_moved) {
@@ -2682,7 +2682,7 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
 
         // Auto-destroy old owned value before reassignment
         Type* target_type = assign_expr.target->resolved_type;
-        if (target_type && target_type->needs_move_semantics()) {
+        if (target_type && target_type->noncopyable()) {
             OwnedLocalInfo* owned_info = find_owned_local(name);
             if (owned_info && !owned_info->is_moved) {
                 emit_implicit_destroy(*owned_info);
@@ -2730,6 +2730,7 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
                     is_variant_field = true;
                     slot_offset = when_clause->union_slot_offset + variant_field_info->slot_offset;
                     slot_count = variant_field_info->slot_count;
+                    field_type = variant_field_info->type;
                 }
             }
         }
@@ -2763,10 +2764,36 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
             set_current_block(pass_block);
         }
 
+        // Destroy old field value before overwriting (prevents leaks for uniq/move-semantic fields)
+        if (field_type && (field_type->kind == TypeKind::Uniq || field_type->noncopyable())) {
+            emit_single_field_destroy(obj, get_expr.name, slot_offset, slot_count, field_type);
+        }
+
         // Wrap uniq/ref → weak conversion for field assignment
         value = maybe_wrap_weak(value, assign_expr.value->resolved_type, field_type);
 
-        return emit_set_field(obj, get_expr.name, slot_offset, slot_count, value, expr->resolved_type);
+        ValueId result = emit_set_field(obj, get_expr.name, slot_offset, slot_count, value, expr->resolved_type);
+
+        // Move semantics: if value is a uniq/move-semantic identifier, mark it as moved
+        // Only when the field type also needs move semantics (not for weak ref fields)
+        if (assign_expr.value->kind == AstKind::ExprIdentifier && field_type &&
+            field_type->noncopyable()) {
+            Type* value_type = assign_expr.value->resolved_type;
+            if (value_type && value_type->noncopyable()) {
+                StringView value_name = assign_expr.value->identifier.name;
+                OwnedLocalInfo* owned_info = find_owned_local(value_name);
+                if (owned_info && !owned_info->is_moved) {
+                    if (value_type->kind == TypeKind::Uniq) {
+                        // Nullify uniq variable so DEL_OBJ on scope exit is a safe no-op
+                        ValueId null_val = emit_const_null();
+                        define_local(value_name, null_val, value_type);
+                    }
+                    owned_info->is_moved = true;
+                }
+            }
+        }
+
+        return result;
     }
     else if (assign_expr.target->kind == AstKind::ExprIndex) {
         // Index assignment
@@ -3300,7 +3327,7 @@ void IRBuilder::gen_var_decl(Decl* decl) {
     define_local(var_decl.name, value, type);
 
     // Track owned locals for implicit destruction (uniq refs and value structs with destructors)
-    if (type && type->needs_move_semantics()) {
+    if (type && type->noncopyable()) {
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         m_owned_locals.push_back({var_decl.name, type, scope_depth, false});
     }
@@ -3423,6 +3450,67 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
     info.is_moved = true;  // Prevent double-destroy
 }
 
+void IRBuilder::emit_single_field_destroy(ValueId obj_ptr, StringView field_name,
+                                          u32 slot_offset, u32 slot_count, Type* field_type) {
+    if (field_type->kind == TypeKind::Uniq) {
+        // Uniq field: null check → call destructor → Delete (free heap memory)
+        Type* inner_type = field_type->ref_info.inner_type;
+
+        ValueId field_val = emit_get_field(obj_ptr, field_name,
+            slot_offset, slot_count, field_type);
+
+        // Uniq fields may be null (uninitialized or already moved)
+        ValueId null_val = emit_const_null();
+        ValueId is_null = emit_binary(IROp::EqI, field_val, null_val, m_types.bool_type());
+
+        IRBlock* cleanup_block = create_block("field_cleanup");
+        IRBlock* skip_block = create_block("field_skip");
+
+        finish_block_branch(is_null, skip_block->id, cleanup_block->id);
+
+        set_current_block(cleanup_block);
+
+        if (inner_type && inner_type->is_struct()) {
+            for (const auto& dtor : inner_type->struct_info.destructors) {
+                if (dtor.name.empty()) {
+                    StringView dtor_name = mangle_destructor(inner_type->struct_info.name);
+                    Vector<ValueId> call_args;
+                    call_args.push_back(field_val);
+                    emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
+                    break;
+                }
+            }
+        }
+
+        IRInst* inst = emit_inst(IROp::Delete, m_types.void_type());
+        if (inst) {
+            inst->unary = field_val;
+        }
+
+        finish_block_goto(skip_block->id);
+        set_current_block(skip_block);
+
+    } else if (field_type->is_struct()) {
+        // Value-type struct field: call its default destructor if it has one.
+        // No null check needed (embedded, always valid). No Delete (not heap-allocated).
+        bool has_default_dtor = false;
+        for (const auto& dtor : field_type->struct_info.destructors) {
+            if (dtor.name.empty()) {
+                has_default_dtor = true;
+                break;
+            }
+        }
+        if (has_default_dtor) {
+            ValueId field_addr = emit_get_field_addr(obj_ptr, field_name,
+                slot_offset, field_type);
+            StringView dtor_name = mangle_destructor(field_type->struct_info.name);
+            Vector<ValueId> call_args;
+            call_args.push_back(field_addr);
+            emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
+        }
+    }
+}
+
 void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
     StructTypeInfo& struct_info = struct_type->struct_info;
     // Process fields in reverse order (LIFO, like C++ member destruction)
@@ -3430,62 +3518,9 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
         const FieldInfo& field = struct_info.fields[i];
         if (!field.type) continue;
 
-        if (field.type->kind == TypeKind::Uniq) {
-            // Uniq field: null check → call destructor → Delete (free heap memory)
-            Type* inner_type = field.type->ref_info.inner_type;
-
-            ValueId field_val = emit_get_field(self_ptr, field.name,
+        if (field.type->kind == TypeKind::Uniq || field.type->is_struct()) {
+            emit_single_field_destroy(self_ptr, field.name,
                 field.slot_offset, field.slot_count, field.type);
-
-            // Uniq fields may be null (uninitialized or already moved)
-            ValueId null_val = emit_const_null();
-            ValueId is_null = emit_binary(IROp::EqI, field_val, null_val, m_types.bool_type());
-
-            IRBlock* cleanup_block = create_block("field_cleanup");
-            IRBlock* skip_block = create_block("field_skip");
-
-            finish_block_branch(is_null, skip_block->id, cleanup_block->id);
-
-            set_current_block(cleanup_block);
-
-            if (inner_type && inner_type->is_struct()) {
-                for (const auto& dtor : inner_type->struct_info.destructors) {
-                    if (dtor.name.empty()) {
-                        StringView dtor_name = mangle_destructor(inner_type->struct_info.name);
-                        Vector<ValueId> call_args;
-                        call_args.push_back(field_val);
-                        emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
-                        break;
-                    }
-                }
-            }
-
-            IRInst* inst = emit_inst(IROp::Delete, m_types.void_type());
-            if (inst) {
-                inst->unary = field_val;
-            }
-
-            finish_block_goto(skip_block->id);
-            set_current_block(skip_block);
-
-        } else if (field.type->is_struct()) {
-            // Value-type struct field: call its default destructor if it has one.
-            // No null check needed (embedded, always valid). No Delete (not heap-allocated).
-            bool has_default_dtor = false;
-            for (const auto& dtor : field.type->struct_info.destructors) {
-                if (dtor.name.empty()) {
-                    has_default_dtor = true;
-                    break;
-                }
-            }
-            if (has_default_dtor) {
-                ValueId field_addr = emit_get_field_addr(self_ptr, field.name,
-                    field.slot_offset, field.type);
-                StringView dtor_name = mangle_destructor(field.type->struct_info.name);
-                Vector<ValueId> call_args;
-                call_args.push_back(field_addr);
-                emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
-            }
         }
     }
 }
@@ -3765,7 +3800,7 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
         define_local(bp.name, bp.value, bp.type);
 
         // Track owned parameters — callee now owns them (uniq refs and value structs with destructors)
-        if (bp.type && bp.type->needs_move_semantics()) {
+        if (bp.type && bp.type->noncopyable()) {
             u32 scope_depth = static_cast<u32>(m_local_scopes.size());
             m_owned_locals.push_back({bp.name, bp.type, scope_depth, false});
         }

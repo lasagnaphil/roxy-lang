@@ -312,6 +312,10 @@ private:
     // Check if a uniq variable is in a moved state and report an error
     bool check_not_moved(StringView name, SourceLocation loc);
 
+    // Check that an expression is not a field access with move-semantics type.
+    // Returns false and reports error if it is (field-level moves are unsound).
+    bool check_not_field_move(Expr* expr, SourceLocation loc);
+
     // Mark a uniq variable as moved
     void mark_moved(StringView name);
 

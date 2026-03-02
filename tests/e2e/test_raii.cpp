@@ -1035,3 +1035,387 @@ TEST_CASE("E2E - RAII: user-defined destructor makes struct non-copyable") {
     BCModule* module = compile(allocator, source);
     CHECK(module == nullptr);  // Should fail to compile
 }
+
+// ============================================================================
+// Field-Level Move Prevention (Compile Errors)
+// ============================================================================
+
+TEST_CASE("E2E - RAII: cannot pass uniq field to uniq parameter") {
+    const char* source = R"CODE(
+        struct Item {
+            value: i32;
+        }
+
+        struct Owner {
+            child: uniq Item;
+        }
+
+        fun take(item: uniq Item): i32 {
+            return item.value;
+        }
+
+        fun main(): i32 {
+            var o: uniq Owner = uniq Owner();
+            o.child = uniq Item();
+            o.child.value = 42;
+            return take(o.child);
+        }
+    )CODE";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Cannot move out of field
+}
+
+TEST_CASE("E2E - RAII: cannot assign uniq field to uniq variable") {
+    const char* source = R"CODE(
+        struct Item {
+            value: i32;
+        }
+
+        struct Owner {
+            child: uniq Item;
+        }
+
+        fun main(): i32 {
+            var o: uniq Owner = uniq Owner();
+            o.child = uniq Item();
+            var x: uniq Item = o.child;
+            return 0;
+        }
+    )CODE";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Cannot move out of field
+}
+
+TEST_CASE("E2E - RAII: cannot assign uniq field to inferred uniq variable") {
+    const char* source = R"CODE(
+        struct Item {
+            value: i32;
+        }
+
+        struct Owner {
+            child: uniq Item;
+        }
+
+        fun main(): i32 {
+            var o: uniq Owner = uniq Owner();
+            o.child = uniq Item();
+            var x = o.child;
+            return 0;
+        }
+    )CODE";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Cannot move out of field
+}
+
+TEST_CASE("E2E - RAII: cannot delete uniq field directly") {
+    const char* source = R"CODE(
+        struct Item {
+            value: i32;
+        }
+
+        struct Owner {
+            child: uniq Item;
+        }
+
+        fun main(): i32 {
+            var o: uniq Owner = uniq Owner();
+            o.child = uniq Item();
+            delete o.child;
+            return 0;
+        }
+    )CODE";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Cannot delete a field
+}
+
+TEST_CASE("E2E - RAII: cannot return uniq field") {
+    const char* source = R"CODE(
+        struct Item {
+            value: i32;
+        }
+
+        struct Owner {
+            child: uniq Item;
+        }
+
+        fun get_child(o: ref Owner): uniq Item {
+            return o.child;
+        }
+
+        fun main(): i32 {
+            var o: uniq Owner = uniq Owner();
+            o.child = uniq Item();
+            return 0;
+        }
+    )CODE";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Cannot return a field with move semantics
+}
+
+TEST_CASE("E2E - RAII: cannot reassign uniq variable from uniq field") {
+    const char* source = R"CODE(
+        struct Item {
+            value: i32;
+        }
+
+        struct Owner {
+            child: uniq Item;
+        }
+
+        fun main(): i32 {
+            var x: uniq Item = uniq Item();
+            var o: uniq Owner = uniq Owner();
+            o.child = uniq Item();
+            x = o.child;
+            return 0;
+        }
+    )CODE";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Cannot move out of field
+}
+
+// ============================================================================
+// Field Borrowing Still Works
+// ============================================================================
+
+TEST_CASE("E2E - RAII: reading through uniq field works") {
+    const char* source = R"CODE(
+        struct Item {
+            value: i32;
+        }
+
+        struct Owner {
+            child: uniq Item;
+        }
+
+        fun main(): i32 {
+            var o: uniq Owner = uniq Owner();
+            o.child = uniq Item();
+            o.child.value = 42;
+            return o.child.value;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - RAII: passing uniq field as ref parameter works") {
+    const char* source = R"CODE(
+        struct Item {
+            value: i32;
+        }
+
+        struct Owner {
+            child: uniq Item;
+        }
+
+        fun use_ref(item: ref Item): i32 {
+            return item.value;
+        }
+
+        fun main(): i32 {
+            var o: uniq Owner = uniq Owner();
+            o.child = uniq Item();
+            o.child.value = 42;
+            return use_ref(o.child);
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - RAII: calling method on uniq field works") {
+    const char* source = R"CODE(
+        struct Item {
+            value: i32;
+        }
+
+        fun Item.get_value(): i32 {
+            return self.value;
+        }
+
+        struct Owner {
+            child: uniq Item;
+        }
+
+        fun main(): i32 {
+            var o: uniq Owner = uniq Owner();
+            o.child = uniq Item();
+            o.child.value = 42;
+            return o.child.get_value();
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - RAII: reassigning uniq field with new value works") {
+    const char* source = R"CODE(
+        struct Item {
+            value: i32;
+        }
+
+        fun delete Item() {
+            print(f"~Item({self.value})");
+        }
+
+        struct Owner {
+            child: uniq Item;
+        }
+
+        fun main(): i32 {
+            var o: uniq Owner = uniq Owner();
+            o.child = uniq Item();
+            o.child.value = 1;
+            o.child = uniq Item();
+            o.child.value = 2;
+            return o.child.value;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 2);
+    // First child (value=1) destroyed on reassignment, second (value=2) destroyed at scope exit
+    CHECK(result.stdout_output == "~Item(1)\n~Item(2)\n");
+}
+
+// ============================================================================
+// Field Reassignment Cleanup (Runtime)
+// ============================================================================
+
+TEST_CASE("E2E - RAII: field reassignment destroys old uniq value") {
+    const char* source = R"CODE(
+        struct Item {
+            id: i32;
+        }
+
+        fun delete Item() {
+            print(f"~Item({self.id})");
+        }
+
+        struct Container {
+            item: uniq Item;
+        }
+
+        fun main(): i32 {
+            var c: uniq Container = uniq Container();
+            c.item = uniq Item();
+            c.item.id = 1;
+            print(f"{"before reassign"}");
+            c.item = uniq Item();
+            c.item.id = 2;
+            print(f"{"after reassign"}");
+            return 0;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    // Old item destroyed during reassignment, new item destroyed at scope exit
+    CHECK(result.stdout_output == "before reassign\n~Item(1)\nafter reassign\n~Item(2)\n");
+}
+
+TEST_CASE("E2E - RAII: field reassignment with nil destroys old value") {
+    const char* source = R"CODE(
+        struct Item {
+            id: i32;
+        }
+
+        fun delete Item() {
+            print(f"~Item({self.id})");
+        }
+
+        struct Container {
+            item: uniq Item;
+        }
+
+        fun main(): i32 {
+            var c: uniq Container = uniq Container();
+            c.item = uniq Item();
+            c.item.id = 99;
+            print(f"{"before nil"}");
+            c.item = nil;
+            print(f"{"after nil"}");
+            return 0;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "before nil\n~Item(99)\nafter nil\n");
+}
+
+TEST_CASE("E2E - RAII: field assignment from uniq variable moves source") {
+    const char* source = R"CODE(
+        struct Item {
+            value: i32;
+        }
+
+        struct Owner {
+            child: uniq Item;
+        }
+
+        fun main(): i32 {
+            var item: uniq Item = uniq Item();
+            item.value = 42;
+            var o: uniq Owner = uniq Owner();
+            o.child = item;
+            // item is now moved — using it should be a compile error
+            return item.value;
+        }
+    )CODE";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // item is moved after field assignment
+}
+
+TEST_CASE("E2E - RAII: field assignment from uniq variable works correctly") {
+    const char* source = R"CODE(
+        struct Item {
+            value: i32;
+        }
+
+        fun delete Item() {
+            print(f"~Item({self.value})");
+        }
+
+        struct Owner {
+            child: uniq Item;
+        }
+
+        fun main(): i32 {
+            var item: uniq Item = uniq Item();
+            item.value = 42;
+            var o: uniq Owner = uniq Owner();
+            o.child = item;
+            var result: i32 = o.child.value;
+            return result;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+    // Item destroyed once via Owner's field cleanup
+    CHECK(result.stdout_output == "~Item(42)\n");
+}

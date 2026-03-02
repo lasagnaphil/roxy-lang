@@ -224,6 +224,10 @@ private:
     // Emit cleanup code for uniq fields of a struct (called from destructors)
     void emit_field_cleanup(ValueId self_ptr, Type* struct_type);
 
+    // Emit cleanup for a single field (uniq or value-struct with destructor)
+    void emit_single_field_destroy(ValueId obj_ptr, StringView field_name,
+                                   u32 slot_offset, u32 slot_count, Type* field_type);
+
     // Emit cleanup (implicit destruction) for all live owned locals at or above min_scope_depth
     void emit_scope_cleanup(u32 min_scope_depth);
 

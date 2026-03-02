@@ -339,11 +339,11 @@ struct Type {
         return kind == TypeKind::ExceptionRef;
     }
 
-    // Returns true for types that require move semantics (cannot be bitwise-copied).
+    // Returns true for noncopyable types (require move semantics).
     // This includes:
-    //   - uniq references (existing behavior)
+    //   - uniq references
     //   - structs with a default destructor (synthetic or user-defined)
-    bool needs_move_semantics() const {
+    bool noncopyable() const {
         if (kind == TypeKind::Uniq) return true;
         if (kind == TypeKind::Struct) {
             for (const auto& dtor : struct_info.destructors) {

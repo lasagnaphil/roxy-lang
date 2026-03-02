@@ -1245,6 +1245,11 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
             // Coerce int literals to the annotated type
             coerce_int_literal(var_decl.initializer, var_type);
         }
+
+        // Cannot initialize an owned variable from a struct field (would create dual ownership)
+        if (var_type && var_type->noncopyable()) {
+            check_not_field_move(var_decl.initializer, decl->loc);
+        }
     } else if (!var_type) {
         error(decl->loc, "variable declaration requires type annotation or initializer");
         var_type = m_types.error_type();
@@ -1254,7 +1259,7 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
     m_symbols.define(SymbolKind::Variable, var_decl.name, var_type, decl->loc, decl);
 
     // Track owned variables for move semantics (uniq refs and value structs with destructors)
-    if (var_type && var_type->needs_move_semantics()) {
+    if (var_type && var_type->noncopyable()) {
         m_move_states[var_decl.name] = MoveState::Live;
     }
 }
@@ -1292,6 +1297,17 @@ bool SemanticAnalyzer::check_not_moved(StringView name, SourceLocation loc) {
     if (it->second == MoveState::MaybeValid) {
         error_fmt(loc, "use of possibly moved value '{}'", name);
         return false;
+    }
+    return true;
+}
+
+bool SemanticAnalyzer::check_not_field_move(Expr* expr, SourceLocation loc) {
+    if (expr->kind == AstKind::ExprGet) {
+        Type* type = expr->resolved_type;
+        if (type && type->noncopyable()) {
+            error(loc, "cannot move out of a struct field; consider borrowing with 'ref' instead");
+            return false;
+        }
     }
     return true;
 }
@@ -1396,7 +1412,7 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
         }
 
         // Track owned parameters as Live (uniq refs and value structs with destructors)
-        if (ptype && ptype->needs_move_semantics()) {
+        if (ptype && ptype->noncopyable()) {
             m_move_states[p.name] = MoveState::Live;
         }
     }
@@ -1686,7 +1702,7 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
         }
 
         // Track owned parameters as Live (uniq refs and value structs with destructors)
-        if (ptype && ptype->needs_move_semantics()) {
+        if (ptype && ptype->noncopyable()) {
             m_move_states[p.name] = MoveState::Live;
         }
     }
@@ -2882,8 +2898,13 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
         }
 
         // Mark returned owned variable as moved (ownership transferred to caller)
-        if (rs.value->kind == AstKind::ExprIdentifier && actual && actual->needs_move_semantics()) {
-            mark_moved(rs.value->identifier.name);
+        if (actual && actual->noncopyable()) {
+            // Cannot return a field with move semantics (would create dual ownership)
+            check_not_field_move(rs.value, stmt->loc);
+
+            if (rs.value->kind == AstKind::ExprIdentifier) {
+                mark_moved(rs.value->identifier.name);
+            }
         }
     } else {
         if (!expected->is_void()) {
@@ -2922,6 +2943,9 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
         error(stmt->loc, "'delete' can only be used on 'uniq' types");
         return;
     }
+
+    // Cannot delete a struct field directly (would leave dangling pointer in parent)
+    if (!check_not_field_move(ds.expr, stmt->loc)) return;
 
     // Get the inner struct type
     Type* inner_type = type->ref_info.inner_type;
@@ -3309,7 +3333,7 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
 
     // Check move state for owned variables (uniq refs and value structs with destructors)
     // Note: we check here but the actual move marking happens at call sites, return, delete
-    if (sym->type && sym->type->needs_move_semantics()) {
+    if (sym->type && sym->type->noncopyable()) {
         check_not_moved(id.name, expr->loc);
     }
 
@@ -3458,11 +3482,15 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
         }
 
         // Move semantics: passing owned arg to owned param transfers ownership
-        if (param_types[i] && param_types[i]->needs_move_semantics() &&
-            arg.expr->kind == AstKind::ExprIdentifier) {
-            Type* arg_type = arg.expr->resolved_type;
-            if (arg_type && arg_type->needs_move_semantics()) {
-                mark_moved(arg.expr->identifier.name);
+        if (param_types[i] && param_types[i]->noncopyable()) {
+            // Cannot move out of a struct field
+            if (!check_not_field_move(arg.expr, arg.expr->loc)) continue;
+
+            if (arg.expr->kind == AstKind::ExprIdentifier) {
+                Type* arg_type = arg.expr->resolved_type;
+                if (arg_type && arg_type->noncopyable()) {
+                    mark_moved(arg.expr->identifier.name);
+                }
             }
         }
     }
@@ -4633,12 +4661,26 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
     } else {
         check_assignable(target_type, value_type, assign_expr.value->loc);
         coerce_int_literal(assign_expr.value, target_type);
+
+        // Cannot assign a field with move semantics to an owned target (dual ownership)
+        if (target_type && target_type->noncopyable()) {
+            check_not_field_move(assign_expr.value, assign_expr.value->loc);
+        }
     }
 
     // Reassignment to owned variable: mark it live again (auto-destroy of old value happens in IR)
     if (assign_expr.target->kind == AstKind::ExprIdentifier &&
-        target_type && target_type->needs_move_semantics()) {
+        target_type && target_type->noncopyable()) {
         mark_live(assign_expr.target->identifier.name);
+    }
+
+    // Assignment to a field from a uniq/move-semantic variable: mark source as moved
+    // Only when the target field also needs move semantics (not for weak refs)
+    if (assign_expr.target->kind == AstKind::ExprGet &&
+        assign_expr.value->kind == AstKind::ExprIdentifier &&
+        value_type && value_type->noncopyable() &&
+        target_type && target_type->noncopyable()) {
+        mark_moved(assign_expr.value->identifier.name);
     }
 
     // Validate index_mut exists for index assignment targets
