@@ -151,6 +151,11 @@ enum class IROp : u8 {
     // Type casting
     Cast,           // Generic cast - uses source_type in CastData
 
+    // Cleanup support
+    Nullify,        // Zero the register of a specified value (for move null-ification).
+                    // unary = the value whose register should be zeroed.
+                    // Used to invalidate cleanup records after ownership transfer.
+
     // Exception handling
     Throw,          // Throw exception: unary = exception object pointer. Block terminator.
 
@@ -346,6 +351,14 @@ struct IRFinallyInfo {
     BlockId finally_end_block;  // Block after finally (for normal flow)
 };
 
+// Cleanup info for owned locals (used to generate bytecode cleanup records)
+struct IRCleanupInfo {
+    ValueId value;        // The SSA value to clean up
+    Type* type;           // Determines cleanup kind (uniq, struct w/ dtor, list, map)
+    BlockId start_block;  // First block where variable is live
+    BlockId end_block;    // Last block where variable is live (scope exit)
+};
+
 // IR Function
 struct IRFunction {
     StringView name;
@@ -358,6 +371,9 @@ struct IRFunction {
     // Exception handling metadata
     Vector<IRExceptionHandler> exception_handlers;
     Vector<IRFinallyInfo> finally_handlers;
+
+    // Cleanup records for owned locals (for exception-path cleanup)
+    Vector<IRCleanupInfo> cleanup_info;
 
     // Coroutine metadata (set by IR builder for functions returning Coro<T>)
     bool is_coroutine = false;

@@ -4,6 +4,7 @@
 #include "roxy/vm/natives.hpp"
 
 #include <cassert>
+#include <cstdio>
 
 namespace rx {
 
@@ -497,6 +498,96 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         m_current_func->exception_handlers.push_back(bc_handler);
     }
 
+    // Build cleanup records from IR cleanup info
+    for (const auto& ir_cleanup : ir_func->cleanup_info) {
+        auto start_it = m_block_offsets.find(ir_cleanup.start_block.id);
+        auto end_it = m_block_offsets.find(ir_cleanup.end_block.id);
+
+        if (start_it == m_block_offsets.end() || end_it == m_block_offsets.end()) {
+            continue;
+        }
+
+        BCCleanupRecord record;
+        record.scope_start_pc = start_it->second;
+
+        // scope_end_pc is the offset AFTER the end block's last instruction
+        BlockId end_block_id = ir_cleanup.end_block;
+        if (end_block_id.id + 1 < ir_func->blocks.size()) {
+            auto next_it = m_block_offsets.find(end_block_id.id + 1);
+            if (next_it != m_block_offsets.end()) {
+                record.scope_end_pc = next_it->second;
+            } else {
+                record.scope_end_pc = m_current_func->code.size();
+            }
+        } else {
+            record.scope_end_pc = m_current_func->code.size();
+        }
+
+        // Map SSA value to register
+        if (!has_register(ir_cleanup.value)) continue;
+        record.register_idx = get_register(ir_cleanup.value);
+
+        // Determine cleanup kind from type
+        record.destructor_fn_idx = 0;
+        Type* type = ir_cleanup.type;
+        if (type->kind == TypeKind::Uniq) {
+            Type* inner_type = type->ref_info.inner_type;
+            bool has_dtor = false;
+            if (inner_type && inner_type->is_struct()) {
+                for (const auto& dtor : inner_type->struct_info.destructors) {
+                    if (dtor.name.empty()) {
+                        has_dtor = true;
+                        break;
+                    }
+                }
+            }
+            if (has_dtor) {
+                record.kind = 1;  // CALL_DTOR + DEL_OBJ
+                // Look up destructor function index
+                char dtor_name_buf[256];
+                snprintf(dtor_name_buf, sizeof(dtor_name_buf), "%.*s$$delete",
+                         inner_type->struct_info.name.size(), inner_type->struct_info.name.data());
+                StringView dtor_name(dtor_name_buf, static_cast<u32>(strlen(dtor_name_buf)));
+                auto dtor_it = m_func_indices.find(dtor_name);
+                if (dtor_it != m_func_indices.end()) {
+                    record.destructor_fn_idx = static_cast<u16>(dtor_it->second);
+                }
+            } else {
+                record.kind = 0;  // DEL_OBJ only
+            }
+        } else if (type->is_struct()) {
+            // Value-type struct with destructor
+            bool has_dtor = false;
+            for (const auto& dtor : type->struct_info.destructors) {
+                if (dtor.name.empty()) {
+                    has_dtor = true;
+                    break;
+                }
+            }
+            if (has_dtor) {
+                record.kind = 2;  // CALL_DTOR only (no heap free)
+                char dtor_name_buf[256];
+                snprintf(dtor_name_buf, sizeof(dtor_name_buf), "%.*s$$delete",
+                         type->struct_info.name.size(), type->struct_info.name.data());
+                StringView dtor_name(dtor_name_buf, static_cast<u32>(strlen(dtor_name_buf)));
+                auto dtor_it = m_func_indices.find(dtor_name);
+                if (dtor_it != m_func_indices.end()) {
+                    record.destructor_fn_idx = static_cast<u16>(dtor_it->second);
+                }
+            } else {
+                continue;  // Value struct without destructor - no cleanup needed
+            }
+        } else if (type->is_list() && type->noncopyable()) {
+            record.kind = 3;  // LIST_CLEANUP
+        } else if (type->is_map() && type->noncopyable()) {
+            record.kind = 4;  // MAP_CLEANUP
+        } else {
+            continue;  // Unknown cleanup type - skip
+        }
+
+        m_current_func->cleanup_records.push_back(record);
+    }
+
     m_current_func->register_count = m_next_reg;
     m_current_func->local_stack_slots = m_next_stack_slot;
     return m_current_func;
@@ -800,6 +891,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                 case IROp::RefInc: case IROp::RefDec: case IROp::WeakCheck: case IROp::WeakCreate:
                 case IROp::Delete:
                 case IROp::Throw:
+                case IROp::Nullify:
                     mark_use(m_live_ranges, inst->unary, point);
                     break;
 
@@ -1002,6 +1094,22 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                 default:
                     break;
             }
+        }
+    }
+
+    // Pass 5: extend liveness of owned locals tracked by cleanup records.
+    // When a throw terminates a block, normal-path cleanup is skipped (the block
+    // is unreachable), so the owned local's SSA value may have no use after its
+    // last field access. But the VM's exception handler reads the register to
+    // perform cleanup, so the register must hold the value at the throw site.
+    // Extend each cleanup value's liveness to the end of its scope.
+    for (const auto& ci : ir_func->cleanup_info) {
+        if (!ci.value.is_valid() || ci.value.id >= num_values) continue;
+        if (!ci.end_block.is_valid() || ci.end_block.id >= block_points.size()) continue;
+        u32 scope_end_point = block_points[ci.end_block.id].term_point;
+        auto& lr = m_live_ranges[ci.value.id];
+        if (scope_end_point > lr.last_use_point) {
+            lr.last_use_point = scope_end_point;
         }
     }
 
@@ -1546,6 +1654,16 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             u8 ptr_reg = ensure_in_register(inst->unary, 0);
             // In constraint reference mode, interpreter will check ref_count == 0
             emit_abc(Opcode::DEL_OBJ, ptr_reg, 0, 0);
+            break;
+        }
+
+        case IROp::Nullify: {
+            // Zero the register of the specified value.
+            // Used to invalidate cleanup records after ownership transfer (move).
+            if (has_register(inst->unary)) {
+                u8 target_reg = get_register(inst->unary);
+                emit_abc(Opcode::LOAD_NULL, target_reg, 0, 0);
+            }
             break;
         }
 

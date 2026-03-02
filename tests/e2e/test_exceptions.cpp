@@ -477,3 +477,402 @@ TEST_CASE("E2E - Exception throw in directly in try block") {
     CHECK(result.success);
     CHECK(result.value == 77);
 }
+
+// ============================================================================
+// Exception Safety Tests - RAII Cleanup During Exception Handling
+// ============================================================================
+
+TEST_CASE("E2E - Exception safety: throw cleans up current scope uniq") {
+    // A uniq variable in the same scope as a throw should be cleaned up
+    const char* source = R"(
+        struct Resource {
+            id: i32;
+        }
+
+        fun delete Resource() {
+            print(f"{"~Resource"}");
+        }
+
+        struct MyError {
+            code: i32;
+        }
+
+        fun MyError.message(): string for Exception {
+            return "error";
+        }
+
+        fun main(): i32 {
+            try {
+                var r: uniq Resource = uniq Resource();
+                r.id = 1;
+                throw MyError { code = 42 };
+            } catch (e: MyError) {
+                print(f"{"caught"}");
+                return e.code;
+            }
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+    // Resource destructor should run before catch handler
+    CHECK(result.stdout_output == "~Resource\ncaught\n");
+}
+
+TEST_CASE("E2E - Exception safety: catch handler cleans up try scope") {
+    // A uniq variable declared in try body should be cleaned up when a called
+    // function throws an exception that is caught
+    const char* source = R"(
+        struct Resource {
+            id: i32;
+        }
+
+        fun delete Resource() {
+            print(f"{"~Resource"}");
+        }
+
+        struct MyError {
+            code: i32;
+        }
+
+        fun MyError.message(): string for Exception {
+            return "error";
+        }
+
+        fun risky() {
+            throw MyError { code = 99 };
+        }
+
+        fun main(): i32 {
+            try {
+                var r: uniq Resource = uniq Resource();
+                r.id = 1;
+                risky();
+                return -1;
+            } catch (e: MyError) {
+                print(f"{"caught"}");
+                return e.code;
+            }
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 99);
+    CHECK(result.stdout_output == "~Resource\ncaught\n");
+}
+
+TEST_CASE("E2E - Exception safety: cross-frame unwinding cleanup") {
+    // A uniq variable in an intermediate function (no handler) should be cleaned
+    // up when the exception propagates through
+    const char* source = R"(
+        struct Resource {
+            id: i32;
+        }
+
+        fun delete Resource() {
+            print(f"{"~Resource"}");
+        }
+
+        struct MyError {
+            code: i32;
+        }
+
+        fun MyError.message(): string for Exception {
+            return "error";
+        }
+
+        fun thrower() {
+            throw MyError { code = 7 };
+        }
+
+        fun middle() {
+            var r: uniq Resource = uniq Resource();
+            r.id = 2;
+            thrower();
+        }
+
+        fun main(): i32 {
+            try {
+                middle();
+                return -1;
+            } catch (e: MyError) {
+                print(f"{"caught"}");
+                return e.code;
+            }
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 7);
+    CHECK(result.stdout_output == "~Resource\ncaught\n");
+}
+
+TEST_CASE("E2E - Exception safety: LIFO cleanup order") {
+    // Multiple uniq variables should be cleaned up in reverse declaration order
+    const char* source = R"(
+        struct A {
+            val: i32;
+        }
+
+        fun delete A() {
+            print(f"{"~A"}");
+        }
+
+        struct B {
+            val: i32;
+        }
+
+        fun delete B() {
+            print(f"{"~B"}");
+        }
+
+        struct MyError {
+            code: i32;
+        }
+
+        fun MyError.message(): string for Exception {
+            return "error";
+        }
+
+        fun risky() {
+            throw MyError { code = 1 };
+        }
+
+        fun main(): i32 {
+            try {
+                var a: uniq A = uniq A();
+                var b: uniq B = uniq B();
+                risky();
+                return -1;
+            } catch (e: MyError) {
+                print(f"{"caught"}");
+                return e.code;
+            }
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 1);
+    // b destroyed first (LIFO), then a
+    CHECK(result.stdout_output == "~B\n~A\ncaught\n");
+}
+
+TEST_CASE("E2E - Exception safety: nested try/catch cleanup") {
+    // Inner and outer scopes should both be cleaned up correctly
+    const char* source = R"(
+        struct Outer {
+            val: i32;
+        }
+
+        fun delete Outer() {
+            print(f"{"~Outer"}");
+        }
+
+        struct Inner {
+            val: i32;
+        }
+
+        fun delete Inner() {
+            print(f"{"~Inner"}");
+        }
+
+        struct MyError {
+            code: i32;
+        }
+
+        fun MyError.message(): string for Exception {
+            return "error";
+        }
+
+        fun risky() {
+            throw MyError { code = 5 };
+        }
+
+        fun work() {
+            var outer: uniq Outer = uniq Outer();
+            try {
+                var inner: uniq Inner = uniq Inner();
+                risky();
+            } catch (e: MyError) {
+                print(f"{"inner caught"}");
+            }
+        }
+
+        fun main(): i32 {
+            work();
+            print(f"{"done"}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 0);
+    // Inner is cleaned up by exception handler, Outer is cleaned up at scope exit
+    CHECK(result.stdout_output == "~Inner\ninner caught\n~Outer\ndone\n");
+}
+
+TEST_CASE("E2E - Exception safety: value struct destructor during unwinding") {
+    // A value struct with a custom destructor should have its destructor
+    // called during exception unwinding
+    const char* source = R"(
+        struct Guard {
+            name: i32;
+        }
+
+        fun delete Guard() {
+            print(f"{"~Guard"}");
+        }
+
+        struct MyError {
+            code: i32;
+        }
+
+        fun MyError.message(): string for Exception {
+            return "error";
+        }
+
+        fun risky() {
+            throw MyError { code = 3 };
+        }
+
+        fun guarded() {
+            var g: Guard = Guard { name = 1 };
+            risky();
+        }
+
+        fun main(): i32 {
+            try {
+                guarded();
+                return -1;
+            } catch (e: MyError) {
+                print(f"{"caught"}");
+                return e.code;
+            }
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 3);
+    CHECK(result.stdout_output == "~Guard\ncaught\n");
+}
+
+TEST_CASE("E2E - Exception safety: finally on exception path") {
+    // A finally block should execute when an exception propagates through
+    const char* source = R"(
+        struct MyError {
+            code: i32;
+        }
+
+        fun MyError.message(): string for Exception {
+            return "error";
+        }
+
+        fun main(): i32 {
+            var result: i32 = 0;
+            try {
+                try {
+                    throw MyError { code = 10 };
+                } finally {
+                    print(f"{"finally"}");
+                }
+            } catch (e: MyError) {
+                result = e.code;
+                print(f"{"caught"}");
+            }
+            return result;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 10);
+    // Finally should run before the exception is re-thrown to outer catch
+    CHECK(result.stdout_output == "finally\ncaught\n");
+}
+
+TEST_CASE("E2E - Exception safety: already-moved uniq skipped during cleanup") {
+    // A uniq variable that was moved before the throw should not be double-freed
+    const char* source = R"(
+        struct Resource {
+            id: i32;
+        }
+
+        fun delete Resource() {
+            print(f"{"~Resource"}");
+        }
+
+        struct MyError {
+            code: i32;
+        }
+
+        fun MyError.message(): string for Exception {
+            return "error";
+        }
+
+        fun consume(r: uniq Resource): i32 {
+            return r.id;
+        }
+
+        fun main(): i32 {
+            try {
+                var r: uniq Resource = uniq Resource();
+                r.id = 42;
+                var val: i32 = consume(r);
+                // r is moved - should not be cleaned up during exception
+                throw MyError { code = val };
+            } catch (e: MyError) {
+                print(f"{"caught"}");
+                return e.code;
+            }
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+    // Resource is destroyed by consume(), NOT by exception cleanup
+    // Only one destructor call expected
+    CHECK(result.stdout_output == "~Resource\ncaught\n");
+}
+
+TEST_CASE("E2E - Exception safety: normal path still works") {
+    // Verify no regressions for non-exception RAII cleanup
+    const char* source = R"(
+        struct Resource {
+            id: i32;
+        }
+
+        fun delete Resource() {
+            print(f"{"~Resource"}");
+        }
+
+        fun work(): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.id = 10;
+            return r.id;
+        }
+
+        fun main(): i32 {
+            var result: i32 = work();
+            print(f"{result}");
+            return result;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 10);
+    CHECK(result.stdout_output == "~Resource\n10\n");
+}

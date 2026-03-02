@@ -58,7 +58,101 @@ static u64 load_constant(RoxyVM* vm, const BCFunction* func, u16 index) {
     }
 }
 
-bool interpret(RoxyVM* vm) {
+// Call a destructor function on an object during exception cleanup.
+// Uses nested interpretation: pushes a call frame for the destructor,
+// runs the interpreter until it returns, then continues.
+static void call_cleanup_destructor(RoxyVM* vm, u16 func_idx, void* obj_ptr) {
+    if (!obj_ptr) return;
+    if (func_idx >= vm->module->functions.size()) return;
+
+    const BCFunction* dtor_func = vm->module->functions[func_idx].get();
+    if (!dtor_func) return;
+
+    // Check call stack depth limit
+    if (vm->call_stack.size() >= 1024) return;
+
+    // Allocate registers for the destructor call
+    u32 reg_base = vm->register_top;
+    if (reg_base + dtor_func->register_count > vm->register_file_size) return;
+    vm->register_top += dtor_func->register_count;
+
+    // Zero-initialize the register window
+    u64* dtor_regs = &vm->register_file[reg_base];
+    memset(dtor_regs, 0, dtor_func->register_count * sizeof(u64));
+
+    // Set up the self parameter (first argument = object pointer)
+    dtor_regs[0] = reg_from_ptr(obj_ptr);
+
+    // Allocate local stack space
+    u32 local_stack_base = vm->local_stack_top;
+    vm->local_stack_top += dtor_func->local_stack_slots;
+
+    // Push call frame
+    u32 saved_depth = vm->call_stack.size();
+    vm->call_stack.push_back(CallFrame(
+        dtor_func, dtor_func->code.data(), dtor_regs, 0, local_stack_base));
+
+    // Run the destructor via nested interpretation
+    interpret(vm, saved_depth);
+}
+
+// Execute cleanup for owned locals during exception handling.
+// Iterates cleanup records in reverse (LIFO order) and cleans up any
+// variable whose scope spans the throw site but not the handler site.
+static void execute_cleanup(RoxyVM* vm, const BCFunction* func,
+                            u32 throw_pc, u32 handler_pc_or_max, u64* regs) {
+    if (func->cleanup_records.empty()) return;
+
+    // Iterate in reverse for LIFO cleanup order
+    for (i32 i = static_cast<i32>(func->cleanup_records.size()) - 1; i >= 0; i--) {
+        const BCCleanupRecord& record = func->cleanup_records[i];
+
+        // Check if the throw site is within this variable's live range
+        if (throw_pc < record.scope_start_pc || throw_pc >= record.scope_end_pc) {
+            continue;  // Throw is outside this variable's scope
+        }
+
+        // Check if the handler is also within this variable's scope
+        // If so, normal-path cleanup will handle it (handler is still in scope)
+        if (handler_pc_or_max >= record.scope_start_pc &&
+            handler_pc_or_max < record.scope_end_pc) {
+            continue;  // Handler is in scope - normal cleanup will handle this
+        }
+
+        // Read the register value
+        void* ptr = reg_as_ptr(regs[record.register_idx]);
+        if (!ptr) {
+            continue;  // Already cleaned up (null)
+        }
+
+        switch (record.kind) {
+            case 0:  // DEL_OBJ only (uniq without struct destructor)
+                object_free(vm, ptr);
+                break;
+
+            case 1:  // CALL_DTOR + DEL_OBJ (uniq with struct destructor)
+                call_cleanup_destructor(vm, record.destructor_fn_idx, ptr);
+                object_free(vm, ptr);
+                break;
+
+            case 2:  // CALL_DTOR only (value struct with destructor, no heap free)
+                call_cleanup_destructor(vm, record.destructor_fn_idx, ptr);
+                break;
+
+            case 3:  // LIST_CLEANUP (noncopyable list)
+            case 4:  // MAP_CLEANUP (noncopyable map)
+                // Basic cleanup: free the container. Element-level cleanup for
+                // noncopyable elements is not yet supported during exception unwinding.
+                object_free(vm, ptr);
+                break;
+        }
+
+        // Null-ify the register to prevent double-cleanup
+        regs[record.register_idx] = 0;
+    }
+}
+
+bool interpret(RoxyVM* vm, u32 stop_depth) {
     if (vm->call_stack.empty()) {
         vm->error = "No call frame";
         return false;
@@ -432,9 +526,13 @@ bool interpret(RoxyVM* vm) {
 
                 if (vm->call_stack.empty()) {
                     // Return from top-level function
-                    // Store result in R0 of register file
                     vm->register_file[0] = result;
                     vm->running = false;
+                    return true;
+                }
+
+                if (stop_depth > 0 && vm->call_stack.size() <= stop_depth) {
+                    // Nested interpretation complete - don't touch register_file[0]
                     return true;
                 }
 
@@ -462,6 +560,11 @@ bool interpret(RoxyVM* vm) {
                     // Return from top-level function
                     vm->register_file[0] = 0;
                     vm->running = false;
+                    return true;
+                }
+
+                if (stop_depth > 0 && vm->call_stack.size() <= stop_depth) {
+                    // Nested interpretation complete - don't touch register_file[0]
                     return true;
                 }
 
@@ -725,6 +828,11 @@ bool interpret(RoxyVM* vm) {
                     return true;
                 }
 
+                if (stop_depth > 0 && vm->call_stack.size() <= stop_depth) {
+                    // Nested interpretation complete - don't touch register_file
+                    return true;
+                }
+
                 // Restore caller frame and store return values
                 frame = &vm->call_stack.back();
                 func = frame->func;
@@ -881,6 +989,15 @@ bool interpret(RoxyVM* vm) {
                             }
 
                             if (type_matches) {
+                                // Execute cleanup for owned locals between throw site
+                                // and handler (variables in scope at throw but not at handler)
+                                execute_cleanup(vm, func, current_pc, handler.handler_pc, regs);
+
+                                // Re-cache frame pointer (execute_cleanup may call destructors
+                                // via nested interpretation, which pushes/pops call_stack and
+                                // can invalidate the pointer due to Vector reallocation)
+                                frame = &vm->call_stack.back();
+
                                 // Found a matching handler - jump to it
                                 regs[handler.exception_reg] = reg_from_ptr(exception_ptr);
                                 pc = func->code.data() + handler.handler_pc;
@@ -892,7 +1009,14 @@ bool interpret(RoxyVM* vm) {
 
                     if (handler_found) break;
 
-                    // No handler in this frame - pop frame and continue unwinding
+                    // No handler in this frame - clean up ALL owned locals in this frame
+                    execute_cleanup(vm, func, current_pc, UINT32_MAX, regs);
+
+                    // Re-cache frame pointer (may have been invalidated by nested
+                    // destructor calls during cleanup)
+                    frame = &vm->call_stack.back();
+
+                    // Pop frame and continue unwinding
                     u32 local_stack_base = frame->local_stack_base;
                     vm->call_stack.pop_back();
                     vm->register_top -= func->register_count;

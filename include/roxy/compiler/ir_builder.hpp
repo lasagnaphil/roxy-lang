@@ -215,6 +215,8 @@ private:
         Type* type;            // Full variable type (uniq T or struct T)
         u32 scope_depth;       // Scope level where declared
         bool is_moved;         // Ownership transferred (pass, return, explicit delete)
+        BlockId start_block;   // Block where variable becomes live (for cleanup records)
+        ValueId initial_value; // SSA value at declaration (for cleanup record register mapping)
     };
     Vector<OwnedLocalInfo> m_owned_locals;
 

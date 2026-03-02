@@ -268,6 +268,17 @@ struct BCExceptionHandler {
     u8 exception_reg;     // Register to store exception ptr in handler
 };
 
+// Cleanup record for exception-path cleanup of owned locals
+// During exception handling, the VM iterates these in reverse (LIFO) to clean up
+// owned variables whose scope spans the throw site but not the handler site.
+struct BCCleanupRecord {
+    u32 scope_start_pc;       // PC where variable becomes live (inclusive)
+    u32 scope_end_pc;         // PC where variable's normal cleanup occurs (exclusive)
+    u8 register_idx;          // Register holding the owned value
+    u8 kind;                  // 0=DEL_OBJ, 1=CALL_DTOR+DEL_OBJ, 2=CALL_DTOR, 3=LIST_CLEANUP, 4=MAP_CLEANUP
+    u16 destructor_fn_idx;    // Function index for destructor (kinds 1, 2 only)
+};
+
 // Bytecode function
 struct BCFunction {
     StringView name;            // Function name
@@ -278,6 +289,7 @@ struct BCFunction {
     Vector<u32> code;           // Bytecode instructions
     Vector<BCConstant> constants; // Constant pool
     Vector<BCExceptionHandler> exception_handlers; // Exception handler table
+    Vector<BCCleanupRecord> cleanup_records;        // Cleanup records for exception handling
 
     BCFunction() : param_count(0), param_register_count(0), register_count(0), local_stack_slots(0) {}
 };

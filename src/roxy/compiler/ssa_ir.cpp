@@ -98,6 +98,7 @@ const char* ir_op_to_string(IROp op) {
 
         case IROp::Cast:     return "cast";
 
+        case IROp::Nullify:  return "nullify";
         case IROp::Throw:    return "throw";
 
         case IROp::Yield:    return "yield";
@@ -240,6 +241,7 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         case IROp::WeakCreate:
         case IROp::Delete:
         case IROp::Copy:
+        case IROp::Nullify:
         case IROp::Throw:
         case IROp::Yield:
             append_str(out, " ");
@@ -643,6 +645,12 @@ void IRFunction::reorder_blocks_rpo() {
         remap(finally_info.try_exit);
         remap(finally_info.finally_block);
         remap(finally_info.finally_end_block);
+    }
+
+    // Remap cleanup info block IDs
+    for (auto& ci : cleanup_info) {
+        remap(ci.start_block);
+        remap(ci.end_block);
     }
 }
 

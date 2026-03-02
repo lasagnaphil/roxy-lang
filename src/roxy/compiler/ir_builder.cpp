@@ -1262,6 +1262,9 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
         ValueId val = gen_expr(rs.value);
 
         // If returning an owned identifier, mark it as moved (don't destroy what we're returning)
+        // Note: we do NOT emit Nullify here because the return value register may be
+        // the same as initial_value's register, and nullifying would corrupt the return.
+        // The is_moved flag prevents normal-path cleanup from freeing the returned value.
         if (rs.value->kind == AstKind::ExprIdentifier) {
             Type* return_type = rs.value->resolved_type;
             if (return_type && return_type->noncopyable()) {
@@ -1391,6 +1394,11 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
     if (ds.expr->kind == AstKind::ExprIdentifier) {
         OwnedLocalInfo* owned_info = find_owned_local(ds.expr->identifier.name);
         if (owned_info) {
+            // Zero the cleanup record's register so exception cleanup skips it
+            if (owned_info->initial_value.is_valid()) {
+                IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+                if (nullify) nullify->unary = owned_info->initial_value;
+            }
             owned_info->is_moved = true;
         }
     }
@@ -1816,6 +1824,45 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
         if (clause.resolved_type) {
             handler.type_name = clause.resolved_type->struct_info.name;
         }
+        m_current_func->exception_handlers.push_back(handler);
+    }
+
+    // If there's a finally block, add a catch-all handler that runs the finally
+    // body and re-throws. This is registered AFTER all typed catches so they're
+    // tried first. The finally handler catches everything else.
+    if (ts.finally_body) {
+        IRBlock* finally_catch_block = create_block("finally.catch");
+
+        // Add block parameter for exception pointer (opaque)
+        BlockParam exc_param;
+        exc_param.value = m_current_func->new_value();
+        exc_param.type = m_types.exception_ref_type();
+        exc_param.name = StringView("__exc", 5);
+        finally_catch_block->params.push_back(exc_param);
+
+        set_current_block(finally_catch_block);
+
+        // Execute finally body
+        push_scope();
+        gen_stmt(ts.finally_body);
+        pop_scope();
+
+        // Re-throw the exception
+        if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+            IRInst* inst = emit_inst(IROp::Throw, m_types.void_type());
+            if (inst) {
+                inst->unary = exc_param.value;
+            }
+            finish_block_unreachable();
+        }
+
+        // Register as catch-all handler (type_id=0, no type_name)
+        IRExceptionHandler handler;
+        handler.try_entry = try_entry_block->id;
+        handler.try_exit = try_exit_block_id;
+        handler.handler_block = finally_catch_block->id;
+        handler.type_id = 0;
+        handler.type_name = StringView(nullptr, 0);
         m_current_func->exception_handlers.push_back(handler);
     }
 
@@ -2468,6 +2515,11 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
                             ValueId null_val = emit_const_null();
                             define_local(arg_name, null_val, arg_type);
                         }
+                        // Zero the cleanup record's register so exception cleanup skips it
+                        if (owned_info->initial_value.is_valid()) {
+                            IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+                            if (nullify) nullify->unary = owned_info->initial_value;
+                        }
                         // For value structs: bitwise copy IS the move, just suppress scope cleanup
                         owned_info->is_moved = true;
                     }
@@ -2790,6 +2842,11 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
                         // Nullify uniq variable so DEL_OBJ on scope exit is a safe no-op
                         ValueId null_val = emit_const_null();
                         define_local(value_name, null_val, value_type);
+                    }
+                    // Zero the cleanup record's register so exception cleanup skips it
+                    if (owned_info->initial_value.is_valid()) {
+                        IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+                        if (nullify) nullify->unary = owned_info->initial_value;
                     }
                     owned_info->is_moved = true;
                 }
@@ -3332,7 +3389,8 @@ void IRBuilder::gen_var_decl(Decl* decl) {
     // Track owned locals for implicit destruction (uniq refs and value structs with destructors)
     if (type && type->noncopyable()) {
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
-        m_owned_locals.push_back({var_decl.name, type, scope_depth, false});
+        BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
+        m_owned_locals.push_back({var_decl.name, type, scope_depth, false, current_block_id, value});
 
         // Mark the source variable as moved when initializing from an identifier
         if (var_decl.initializer && var_decl.initializer->kind == AstKind::ExprIdentifier) {
@@ -3343,6 +3401,11 @@ void IRBuilder::gen_var_decl(Decl* decl) {
                     // Null-ify uniq variable so DEL_OBJ on scope exit is a safe no-op
                     ValueId null_val = emit_const_null();
                     define_local(source_name, null_val, type);
+                }
+                // Zero the cleanup record's register so exception cleanup skips it
+                if (source_info->initial_value.is_valid()) {
+                    IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+                    if (nullify) nullify->unary = source_info->initial_value;
                 }
                 source_info->is_moved = true;
             }
@@ -3389,10 +3452,42 @@ void IRBuilder::pop_scope() {
     if (m_local_scopes.empty()) return;
     u32 depth = static_cast<u32>(m_local_scopes.size());
 
-    // Emit cleanup for live uniqs in this scope
+    // Record cleanup info for exception-path cleanup BEFORE emit_scope_cleanup.
+    // Uses initial_value (the SSA value at declaration time) so lowering can map it
+    // to the correct register. The null-check in the VM ensures that if the variable
+    // was already cleaned up (register is 0), it's safely skipped.
+    // Records are pushed in declaration order (forward); the VM's execute_cleanup
+    // iterates in reverse to achieve LIFO cleanup order.
+    {
+        BlockId end_block = m_current_block ? m_current_block->id : BlockId::invalid();
+        if (!m_current_block && !m_current_func->blocks.empty()) {
+            end_block = m_current_func->blocks.back()->id;
+        }
+        // Find the first owned local in this scope
+        u32 first_in_scope = 0;
+        for (u32 i = 0; i < m_owned_locals.size(); i++) {
+            if (m_owned_locals[i].scope_depth >= depth) {
+                first_in_scope = i;
+                break;
+            }
+            if (i == m_owned_locals.size() - 1) {
+                first_in_scope = static_cast<u32>(m_owned_locals.size()); // none found
+            }
+        }
+        for (u32 i = first_in_scope; i < m_owned_locals.size(); i++) {
+            auto& info = m_owned_locals[i];
+            if (info.scope_depth < depth) continue;
+            if (info.start_block.is_valid() && end_block.is_valid() && info.initial_value.is_valid()) {
+                m_current_func->cleanup_info.push_back(
+                    {info.initial_value, info.type, info.start_block, end_block});
+            }
+        }
+    }
+
+    // Emit cleanup for live owned locals in this scope
     emit_scope_cleanup(depth);
 
-    // Remove uniq tracking for this scope
+    // Remove owned local tracking for this scope
     while (!m_owned_locals.empty() && m_owned_locals.back().scope_depth >= depth) {
         m_owned_locals.pop_back();
     }
@@ -3427,7 +3522,18 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
     ValueId current_value = lookup_local(info.name);
 
     if (info.type->kind == TypeKind::Uniq) {
-        // Heap-allocated (uniq): call default destructor on inner type, then free memory
+        // Heap-allocated (uniq): null-check → call destructor → Delete → null-ify
+        // The null-check makes cleanup idempotent: if the exception handler already
+        // cleaned up this variable (and set it to null), we skip it here.
+        ValueId null_val = emit_const_null();
+        ValueId is_null = emit_binary(IROp::EqI, current_value, null_val, m_types.bool_type());
+
+        IRBlock* cleanup_block = create_block("uniq_cleanup");
+        IRBlock* skip_block = create_block("uniq_skip");
+
+        finish_block_branch(is_null, skip_block->id, cleanup_block->id);
+        set_current_block(cleanup_block);
+
         Type* inner_type = info.type->ref_info.inner_type;
         if (inner_type && inner_type->is_struct()) {
             StructTypeInfo& struct_type_info = inner_type->struct_info;
@@ -3447,6 +3553,13 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
         if (inst) {
             inst->unary = current_value;
         }
+
+        // Null-ify the variable so double-cleanup is impossible
+        ValueId null_after = emit_const_null();
+        define_local(info.name, null_after, info.type);
+
+        finish_block_goto(skip_block->id);
+        set_current_block(skip_block);
     } else if (info.type->is_struct()) {
         // Value-type struct with default destructor: call destructor only (no heap free).
         // Value structs are always stored as pointers to stack-allocated space
@@ -3464,8 +3577,14 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
         }
     } else if (info.type->is_list() && info.type->noncopyable()) {
         emit_list_cleanup(current_value, info.type);
+        // Null-ify to prevent double-cleanup from exception handler
+        ValueId null_after = emit_const_null();
+        define_local(info.name, null_after, info.type);
     } else if (info.type->is_map() && info.type->noncopyable()) {
         emit_map_cleanup(current_value, info.type);
+        // Null-ify to prevent double-cleanup from exception handler
+        ValueId null_after = emit_const_null();
+        define_local(info.name, null_after, info.type);
     }
 
     info.is_moved = true;  // Prevent double-destroy
@@ -4046,7 +4165,8 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
         // Track owned parameters — callee now owns them (uniq refs and value structs with destructors)
         if (bp.type && bp.type->noncopyable()) {
             u32 scope_depth = static_cast<u32>(m_local_scopes.size());
-            m_owned_locals.push_back({bp.name, bp.type, scope_depth, false});
+            BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
+            m_owned_locals.push_back({bp.name, bp.type, scope_depth, false, current_block_id, bp.value});
         }
     }
 
@@ -4074,9 +4194,34 @@ void IRBuilder::end_function_body() {
     }
 
     // pop_scope without cleanup (already emitted above, or block is terminated)
-    // Remove uniq tracking
+    // Record cleanup info for exception-path cleanup before removing owned locals.
+    // This is needed for functions that don't have try/catch but may have exceptions
+    // propagate through them (cross-frame unwinding).
     if (!m_local_scopes.empty()) {
         u32 depth = static_cast<u32>(m_local_scopes.size());
+        BlockId end_block = m_current_block ? m_current_block->id : BlockId::invalid();
+        if (!m_current_block && !m_current_func->blocks.empty()) {
+            end_block = m_current_func->blocks.back()->id;
+        }
+        // Record in declaration order; VM iterates in reverse for LIFO cleanup
+        u32 first_in_scope = 0;
+        for (u32 i = 0; i < m_owned_locals.size(); i++) {
+            if (m_owned_locals[i].scope_depth >= depth) {
+                first_in_scope = i;
+                break;
+            }
+            if (i == m_owned_locals.size() - 1) {
+                first_in_scope = static_cast<u32>(m_owned_locals.size());
+            }
+        }
+        for (u32 i = first_in_scope; i < m_owned_locals.size(); i++) {
+            auto& info = m_owned_locals[i];
+            if (info.scope_depth < depth) continue;
+            if (info.start_block.is_valid() && end_block.is_valid() && info.initial_value.is_valid()) {
+                m_current_func->cleanup_info.push_back(
+                    {info.initial_value, info.type, info.start_block, end_block});
+            }
+        }
         while (!m_owned_locals.empty() && m_owned_locals.back().scope_depth >= depth) {
             m_owned_locals.pop_back();
         }
