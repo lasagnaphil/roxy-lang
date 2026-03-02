@@ -1419,3 +1419,236 @@ TEST_CASE("E2E - RAII: field assignment from uniq variable works correctly") {
     // Item destroyed once via Owner's field cleanup
     CHECK(result.stdout_output == "~Item(42)\n");
 }
+
+// ============================================================================
+// Noncopyable Container Tests — List<uniq T>
+// ============================================================================
+
+TEST_CASE("E2E - RAII: List<uniq T> empty list cleanup") {
+    // Empty noncopyable list should be cleaned up without issues
+    const char* source = R"CODE(
+        struct Item {
+            id: i32;
+        }
+
+        fun delete Item() {
+            print(f"~Item({self.id})");
+        }
+
+        fun main(): i32 {
+            var items: List<uniq Item> = List<uniq Item>();
+            print(f"created");
+            return 0;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "created\n");
+}
+
+TEST_CASE("E2E - RAII: List<uniq T> element cleanup at scope exit") {
+    // Elements in a List<uniq T> should be destroyed when the list goes out of scope
+    const char* source = R"CODE(
+        struct Item {
+            id: i32;
+        }
+
+        fun delete Item() {
+            print(f"~Item({self.id})");
+        }
+
+        fun main(): i32 {
+            var items: List<uniq Item> = List<uniq Item>();
+            var a: uniq Item = uniq Item();
+            a.id = 1;
+            items.push(a);
+            var b: uniq Item = uniq Item();
+            b.id = 2;
+            items.push(b);
+            var c: uniq Item = uniq Item();
+            c.id = 3;
+            items.push(c);
+            print(f"before exit");
+            return 0;
+            // items goes out of scope — all 3 elements should be destroyed
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "before exit\n~Item(1)\n~Item(2)\n~Item(3)\n");
+}
+
+TEST_CASE("E2E - RAII: List<uniq T> passed to function by move") {
+    // Passing List<uniq T> to a function moves it; elements destroyed in callee
+    const char* source = R"CODE(
+        struct Item {
+            id: i32;
+        }
+
+        fun delete Item() {
+            print(f"~Item({self.id})");
+        }
+
+        fun consume(items: List<uniq Item>): i32 {
+            var result: i32 = items.len();
+            return result;
+            // items destroyed here with all its elements
+        }
+
+        fun main(): i32 {
+            var items: List<uniq Item> = List<uniq Item>();
+            var a: uniq Item = uniq Item();
+            a.id = 10;
+            items.push(a);
+            var b: uniq Item = uniq Item();
+            b.id = 20;
+            items.push(b);
+            var result: i32 = consume(items);
+            print(f"{result}");
+            return 0;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "~Item(10)\n~Item(20)\n2\n");
+}
+
+TEST_CASE("E2E - RAII: struct with List<uniq T> field cleanup") {
+    // A struct containing a List<uniq T> field should get a synthetic destructor
+    // that cleans up the list elements
+    const char* source = R"CODE(
+        struct Item {
+            id: i32;
+        }
+
+        fun delete Item() {
+            print(f"~Item({self.id})");
+        }
+
+        struct Container {
+            items: List<uniq Item>;
+        }
+
+        fun main(): i32 {
+            var c: uniq Container = uniq Container();
+            c.items = List<uniq Item>();
+            var a: uniq Item = uniq Item();
+            a.id = 100;
+            c.items.push(a);
+            var b: uniq Item = uniq Item();
+            b.id = 200;
+            c.items.push(b);
+            return 0;
+            // c goes out of scope → synthetic destructor cleans up items list → elements destroyed
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "~Item(100)\n~Item(200)\n");
+}
+
+TEST_CASE("E2E - RAII: use-after-move on List<uniq T> via var init") {
+    // Initializing a new variable from a noncopyable list moves it;
+    // using the source after is a compile error
+    const char* source = R"CODE(
+        struct Item {
+            id: i32;
+        }
+
+        fun delete Item() {}
+
+        fun main(): i32 {
+            var items: List<uniq Item> = List<uniq Item>();
+            var copy = items;
+            // items is moved — using it here should be a compile error
+            return items.len();
+        }
+    )CODE";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail to compile — use after move
+}
+
+TEST_CASE("E2E - RAII: use-after-move on List<uniq T>") {
+    // Using a List<uniq T> after passing it to a function should fail
+    const char* source = R"CODE(
+        struct Item {
+            id: i32;
+        }
+
+        fun delete Item() {}
+
+        fun consume(items: List<uniq Item>): i32 {
+            return items.len();
+        }
+
+        fun main(): i32 {
+            var items: List<uniq Item> = List<uniq Item>();
+            var r: i32 = consume(items);
+            // items is moved — using it here should be a compile error
+            return items.len();
+        }
+    )CODE";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail to compile — use after move
+}
+
+TEST_CASE("E2E - RAII: List<i32> remains copyable") {
+    // Regular lists with copyable element types are still copyable
+    const char* source = R"CODE(
+        fun use_list(items: List<i32>): i32 {
+            return items.len();
+        }
+
+        fun main(): i32 {
+            var items: List<i32> = List<i32>();
+            items.push(1);
+            items.push(2);
+            var len1: i32 = use_list(items);
+            // items is NOT moved — still usable
+            var len2: i32 = items.len();
+            return len1 + len2;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 4);  // 2 + 2
+}
+
+TEST_CASE("E2E - RAII: method calls on noncopyable list work") {
+    // .push(), .len(), .pop() should still work on List<uniq T>
+    const char* source = R"CODE(
+        struct Item {
+            id: i32;
+        }
+
+        fun delete Item() {
+            print(f"~Item({self.id})");
+        }
+
+        fun main(): i32 {
+            var items: List<uniq Item> = List<uniq Item>();
+            var a: uniq Item = uniq Item();
+            a.id = 1;
+            items.push(a);
+            var b: uniq Item = uniq Item();
+            b.id = 2;
+            items.push(b);
+            var len: i32 = items.len();
+            print(f"len={len}");
+            return 0;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "len=2\n~Item(1)\n~Item(2)\n");
+}

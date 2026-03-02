@@ -340,7 +340,12 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         }
 
         // Check if this type has a copy constructor (e.g., List<T> or Map<K,V> value params)
+        // Skip copy for noncopyable containers — they use move semantics
         if (m_registry && param.type && (param.type->is_list() || param.type->is_map())) {
+            if (param.type->noncopyable()) {
+                prologue_param_reg_offset += reg_count;
+                continue;
+            }
             StringView copy_name = param.type->is_list()
                 ? param.type->list_info.copy_native_name
                 : param.type->map_info.copy_native_name;

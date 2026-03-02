@@ -44,6 +44,28 @@ var lst: List<i32> = List<i32>(10);
 
 List indexing (`list[i]` and `list[i] = val`) is handled via native `index` and `index_mut` methods registered through `NativeRegistry::bind_generic_method`. The compiler resolves these through `TypeCache::lookup_method()` and emits `CallNative` IR ops, the same path used by all other list methods (`.len()`, `.push()`, etc.). Both perform null checks and bounds checking, setting `vm->error` on failure.
 
+## Copy and Move Semantics
+
+A `List<T>` is **noncopyable** when `T` is noncopyable (i.e., `T` is `uniq`, a struct with a default destructor, or another noncopyable container). Noncopyable lists use move semantics — the same rules as `uniq` variables and value structs with destructors:
+
+- **Passing to a function** moves ownership; the caller's variable is consumed
+- **Initializing a new variable** (`var copy = items`) moves the source
+- **Use-after-move** is a compile-time error
+- **Struct fields** of noncopyable list type trigger a synthetic destructor on the containing struct
+
+When `T` is copyable (e.g., `i32`, `string`), the list is freely copyable via a shallow `list_copy` in the function prologue.
+
+### Scope-Exit Cleanup (RAII)
+
+When a noncopyable list goes out of scope, the compiler emits a cleanup loop in the IR:
+
+1. Get the list length
+2. For each element: load via `List$$index`, destroy via the element type's destructor + `Delete` (for `uniq` elements)
+3. Call `List$$delete` to free the element buffer
+4. Call `Delete` to free the slab-allocated list header
+
+This follows the same block-argument loop pattern as `gen_for_stmt` in the IR builder.
+
 ## Growth Strategy
 
 When pushing beyond capacity, the list doubles its capacity (minimum 8 elements).

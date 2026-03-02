@@ -343,12 +343,21 @@ struct Type {
     // This includes:
     //   - uniq references
     //   - structs with a default destructor (synthetic or user-defined)
+    //   - List<T> where T is noncopyable
+    //   - Map<K,V> where K or V is noncopyable
     bool noncopyable() const {
         if (kind == TypeKind::Uniq) return true;
         if (kind == TypeKind::Struct) {
             for (const auto& dtor : struct_info.destructors) {
                 if (dtor.name.empty()) return true;
             }
+        }
+        if (kind == TypeKind::List) {
+            return list_info.element_type && list_info.element_type->noncopyable();
+        }
+        if (kind == TypeKind::Map) {
+            return (map_info.key_type && map_info.key_type->noncopyable()) ||
+                   (map_info.value_type && map_info.value_type->noncopyable());
         }
         return false;
     }

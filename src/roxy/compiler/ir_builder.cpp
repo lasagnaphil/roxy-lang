@@ -2452,11 +2452,14 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     Type* callee_func_type = call_expr.callee->resolved_type;
     if (callee_func_type && callee_func_type->is_function()) {
         Span<Type*> param_types = callee_func_type->func_info.param_types;
-        for (u32 i = 0; i < call_expr.arguments.size() && i < param_types.size(); i++) {
+        // For method calls, param_types includes implicit 'self' as first parameter,
+        // but call_expr.arguments only has user-visible arguments. Offset by 1.
+        u32 param_offset = (call_expr.callee->kind == AstKind::ExprGet) ? 1 : 0;
+        for (u32 i = 0; i < call_expr.arguments.size() && (i + param_offset) < param_types.size(); i++) {
             if (call_expr.arguments[i].expr->kind == AstKind::ExprIdentifier) {
                 Type* arg_type = call_expr.arguments[i].expr->resolved_type;
                 if (arg_type && arg_type->noncopyable() &&
-                    param_types[i] && param_types[i]->noncopyable()) {
+                    param_types[i + param_offset] && param_types[i + param_offset]->noncopyable()) {
                     StringView arg_name = call_expr.arguments[i].expr->identifier.name;
                     OwnedLocalInfo* owned_info = find_owned_local(arg_name);
                     if (owned_info && !owned_info->is_moved) {
@@ -3330,6 +3333,20 @@ void IRBuilder::gen_var_decl(Decl* decl) {
     if (type && type->noncopyable()) {
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         m_owned_locals.push_back({var_decl.name, type, scope_depth, false});
+
+        // Mark the source variable as moved when initializing from an identifier
+        if (var_decl.initializer && var_decl.initializer->kind == AstKind::ExprIdentifier) {
+            StringView source_name = var_decl.initializer->identifier.name;
+            OwnedLocalInfo* source_info = find_owned_local(source_name);
+            if (source_info && !source_info->is_moved) {
+                if (type->kind == TypeKind::Uniq) {
+                    // Null-ify uniq variable so DEL_OBJ on scope exit is a safe no-op
+                    ValueId null_val = emit_const_null();
+                    define_local(source_name, null_val, type);
+                }
+                source_info->is_moved = true;
+            }
+        }
     }
 }
 
@@ -3445,6 +3462,10 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
                 break;
             }
         }
+    } else if (info.type->is_list() && info.type->noncopyable()) {
+        emit_list_cleanup(current_value, info.type);
+    } else if (info.type->is_map() && info.type->noncopyable()) {
+        emit_map_cleanup(current_value, info.type);
     }
 
     info.is_moved = true;  // Prevent double-destroy
@@ -3508,6 +3529,16 @@ void IRBuilder::emit_single_field_destroy(ValueId obj_ptr, StringView field_name
             call_args.push_back(field_addr);
             emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
         }
+    } else if (field_type->is_list() && field_type->noncopyable()) {
+        // Noncopyable list field: load the pointer and run list cleanup
+        ValueId field_val = emit_get_field(obj_ptr, field_name,
+            slot_offset, slot_count, field_type);
+        emit_list_cleanup(field_val, field_type);
+    } else if (field_type->is_map() && field_type->noncopyable()) {
+        // Noncopyable map field: load the pointer and run map cleanup
+        ValueId field_val = emit_get_field(obj_ptr, field_name,
+            slot_offset, slot_count, field_type);
+        emit_map_cleanup(field_val, field_type);
     }
 }
 
@@ -3518,11 +3549,224 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
         const FieldInfo& field = struct_info.fields[i];
         if (!field.type) continue;
 
-        if (field.type->kind == TypeKind::Uniq || field.type->is_struct()) {
+        if (field.type->kind == TypeKind::Uniq || field.type->noncopyable()) {
             emit_single_field_destroy(self_ptr, field.name,
                 field.slot_offset, field.slot_count, field.type);
         }
     }
+}
+
+void IRBuilder::emit_element_destroy(ValueId elem_value, Type* elem_type) {
+    if (elem_type->kind == TypeKind::Uniq) {
+        // Uniq element: null check → call destructor on inner type → Delete
+        Type* inner_type = elem_type->ref_info.inner_type;
+
+        ValueId null_val = emit_const_null();
+        ValueId is_null = emit_binary(IROp::EqI, elem_value, null_val, m_types.bool_type());
+
+        IRBlock* cleanup_block = create_block("elem_cleanup");
+        IRBlock* skip_block = create_block("elem_skip");
+
+        finish_block_branch(is_null, skip_block->id, cleanup_block->id);
+        set_current_block(cleanup_block);
+
+        if (inner_type && inner_type->is_struct()) {
+            for (const auto& dtor : inner_type->struct_info.destructors) {
+                if (dtor.name.empty()) {
+                    StringView dtor_name = mangle_destructor(inner_type->struct_info.name);
+                    Vector<ValueId> call_args;
+                    call_args.push_back(elem_value);
+                    emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
+                    break;
+                }
+            }
+        }
+
+        IRInst* inst = emit_inst(IROp::Delete, m_types.void_type());
+        if (inst) {
+            inst->unary = elem_value;
+        }
+
+        finish_block_goto(skip_block->id);
+        set_current_block(skip_block);
+
+    } else if (elem_type->is_struct() && elem_type->noncopyable()) {
+        // Value-type struct with default destructor: call destructor
+        StringView dtor_name = mangle_destructor(elem_type->struct_info.name);
+        Vector<ValueId> call_args;
+        call_args.push_back(elem_value);
+        emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
+
+    } else if (elem_type->is_list() && elem_type->noncopyable()) {
+        emit_list_cleanup(elem_value, elem_type);
+
+    } else if (elem_type->is_map() && elem_type->noncopyable()) {
+        emit_map_cleanup(elem_value, elem_type);
+    }
+}
+
+void IRBuilder::emit_list_cleanup(ValueId list_ptr, Type* list_type) {
+    Type* element_type = list_type->list_info.element_type;
+
+    // Look up native method indices for len, index, and List$$delete
+    const MethodInfo* len_method = lookup_list_method(list_type->list_info, StringView("len", 3));
+    const MethodInfo* index_method = lookup_list_method(list_type->list_info, StringView("index", 5));
+    StringView list_dtor_name = mangle_destructor(StringView("List", 4));
+    i32 len_native_idx = len_method ? m_registry.get_index(len_method->native_name) : -1;
+    i32 index_native_idx = index_method ? m_registry.get_index(index_method->native_name) : -1;
+    i32 dtor_native_idx = m_registry.get_index(list_dtor_name);
+
+    if (len_native_idx < 0 || index_native_idx < 0 || dtor_native_idx < 0) {
+        report_error("Cannot find native methods for List cleanup");
+        return;
+    }
+
+    // Null check on the list pointer before cleanup
+    ValueId null_val = emit_const_null();
+    ValueId is_null = emit_binary(IROp::EqI, list_ptr, null_val, m_types.bool_type());
+
+    IRBlock* cleanup_block = create_block("list_cleanup");
+    IRBlock* done_block = create_block("list_cleanup_done");
+
+    finish_block_branch(is_null, done_block->id, cleanup_block->id);
+    set_current_block(cleanup_block);
+
+    // len = CallNative("List$$len", [list_ptr])
+    Span<ValueId> len_args = alloc_span<ValueId>(1);
+    len_args[0] = list_ptr;
+    ValueId len = emit_call_native(len_method->native_name, len_args,
+                                   m_types.i32_type(), static_cast<u8>(len_native_idx));
+
+    // i_init = 0
+    ValueId i_init = emit_const_int(0, m_types.i32_type());
+
+    // Create loop blocks
+    IRBlock* header_block = create_block("list_loop");
+    IRBlock* body_block = create_block("list_body");
+    IRBlock* incr_block = create_block("list_incr");
+    IRBlock* exit_block = create_block("list_exit");
+
+    // Jump to header with initial i value
+    Span<BlockArgPair> initial_args = alloc_span<BlockArgPair>(1);
+    initial_args[0] = {i_init};
+    finish_block_goto(header_block->id, initial_args);
+
+    // header(i_param): cond = i < len; branch cond, body, exit
+    set_current_block(header_block);
+    ValueId i_param = m_current_func->new_value();
+    header_block->params.push_back({i_param, m_types.i32_type(), StringView("i", 1)});
+
+    ValueId cond = emit_binary(IROp::LtI, i_param, len, m_types.bool_type());
+    finish_block_branch(cond, body_block->id, exit_block->id);
+
+    // body: elem = index(list_ptr, i_param); destroy elem; goto incr
+    set_current_block(body_block);
+    Span<ValueId> index_args = alloc_span<ValueId>(2);
+    index_args[0] = list_ptr;
+    index_args[1] = i_param;
+    ValueId elem = emit_call_native(index_method->native_name, index_args,
+                                    element_type, static_cast<u8>(index_native_idx));
+    emit_element_destroy(elem, element_type);
+    if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+        finish_block_goto(incr_block->id);
+    }
+
+    // incr: i_next = i + 1; goto header(i_next)
+    set_current_block(incr_block);
+    ValueId one = emit_const_int(1, m_types.i32_type());
+    ValueId i_next = emit_binary(IROp::AddI, i_param, one, m_types.i32_type());
+    Span<BlockArgPair> back_args = alloc_span<BlockArgPair>(1);
+    back_args[0] = {i_next};
+    finish_block_goto(header_block->id, back_args);
+
+    // exit: call List$$delete to free element buffer, then Delete to free slab header
+    set_current_block(exit_block);
+    Span<ValueId> dtor_args = alloc_span<ValueId>(1);
+    dtor_args[0] = list_ptr;
+    emit_call_native(list_dtor_name, dtor_args, m_types.void_type(), static_cast<u8>(dtor_native_idx));
+
+    IRInst* del_inst = emit_inst(IROp::Delete, m_types.void_type());
+    if (del_inst) {
+        del_inst->unary = list_ptr;
+    }
+
+    finish_block_goto(done_block->id);
+    set_current_block(done_block);
+}
+
+void IRBuilder::emit_map_cleanup(ValueId map_ptr, Type* map_type) {
+    Type* key_type = map_type->map_info.key_type;
+    Type* value_type = map_type->map_info.value_type;
+
+    // Look up Map$$delete native index
+    StringView map_dtor_name = mangle_destructor(StringView("Map", 3));
+    i32 map_dtor_native_idx = m_registry.get_index(map_dtor_name);
+
+    if (map_dtor_native_idx < 0) {
+        report_error("Cannot find native Map destructor");
+        return;
+    }
+
+    // Null check on the map pointer before cleanup
+    ValueId null_val = emit_const_null();
+    ValueId is_null = emit_binary(IROp::EqI, map_ptr, null_val, m_types.bool_type());
+
+    IRBlock* cleanup_block = create_block("map_cleanup");
+    IRBlock* done_block = create_block("map_cleanup_done");
+
+    finish_block_branch(is_null, done_block->id, cleanup_block->id);
+    set_current_block(cleanup_block);
+
+    // For noncopyable keys: extract keys list, clean up elements, free temp list
+    if (key_type && key_type->noncopyable()) {
+        const MethodInfo* keys_method = lookup_map_method(map_type->map_info, StringView("keys", 4));
+        if (keys_method && !keys_method->native_name.empty()) {
+            i32 keys_native_idx = m_registry.get_index(keys_method->native_name);
+            if (keys_native_idx >= 0) {
+                // keys_list = Map$$keys(map_ptr)
+                Span<ValueId> keys_args = alloc_span<ValueId>(1);
+                keys_args[0] = map_ptr;
+                Type* keys_list_type = m_types.list_type(key_type);
+                ValueId keys_list = emit_call_native(keys_method->native_name, keys_args,
+                                                     keys_list_type, static_cast<u8>(keys_native_idx));
+
+                // Emit cleanup loop for the keys list (destroys elements and frees list)
+                emit_list_cleanup(keys_list, keys_list_type);
+            }
+        }
+    }
+
+    // For noncopyable values: extract values list, clean up elements, free temp list
+    if (value_type && value_type->noncopyable()) {
+        const MethodInfo* values_method = lookup_map_method(map_type->map_info, StringView("values", 6));
+        if (values_method && !values_method->native_name.empty()) {
+            i32 values_native_idx = m_registry.get_index(values_method->native_name);
+            if (values_native_idx >= 0) {
+                // values_list = Map$$values(map_ptr)
+                Span<ValueId> values_args = alloc_span<ValueId>(1);
+                values_args[0] = map_ptr;
+                Type* values_list_type = m_types.list_type(value_type);
+                ValueId values_list = emit_call_native(values_method->native_name, values_args,
+                                                       values_list_type, static_cast<u8>(values_native_idx));
+
+                // Emit cleanup loop for the values list (destroys elements and frees list)
+                emit_list_cleanup(values_list, values_list_type);
+            }
+        }
+    }
+
+    // Free map buffers via Map$$delete, then free slab header via Delete
+    Span<ValueId> dtor_args = alloc_span<ValueId>(1);
+    dtor_args[0] = map_ptr;
+    emit_call_native(map_dtor_name, dtor_args, m_types.void_type(), static_cast<u8>(map_dtor_native_idx));
+
+    IRInst* del_inst = emit_inst(IROp::Delete, m_types.void_type());
+    if (del_inst) {
+        del_inst->unary = map_ptr;
+    }
+
+    finish_block_goto(done_block->id);
+    set_current_block(done_block);
 }
 
 void IRBuilder::emit_scope_cleanup(u32 min_scope_depth) {

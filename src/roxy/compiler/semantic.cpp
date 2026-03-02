@@ -664,19 +664,9 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             bool needs_cleanup = false;
             for (const auto& field : struct_info.fields) {
                 if (!field.type) continue;
-                if (field.type->kind == TypeKind::Uniq) {
+                if (field.type->noncopyable()) {
                     needs_cleanup = true;
                     break;
-                }
-                if (field.type->is_struct()) {
-                    // Check if field's struct type has a default destructor
-                    for (const auto& dtor : field.type->struct_info.destructors) {
-                        if (dtor.name.empty()) {
-                            needs_cleanup = true;
-                            break;
-                        }
-                    }
-                    if (needs_cleanup) break;
                 }
             }
             if (!needs_cleanup) continue;
@@ -913,15 +903,9 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                 bool needs_cleanup = false;
                 for (const auto& field : concrete_info.fields) {
                     if (!field.type) continue;
-                    if (field.type->kind == TypeKind::Uniq) {
+                    if (field.type->noncopyable()) {
                         needs_cleanup = true;
                         break;
-                    }
-                    if (field.type->is_struct()) {
-                        for (const auto& dtor : field.type->struct_info.destructors) {
-                            if (dtor.name.empty()) { needs_cleanup = true; break; }
-                        }
-                        if (needs_cleanup) break;
                     }
                 }
                 if (needs_cleanup) {
@@ -1042,15 +1026,9 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
     bool needs_cleanup = false;
     for (const auto& field : struct_type_info.fields) {
         if (!field.type) continue;
-        if (field.type->kind == TypeKind::Uniq) {
+        if (field.type->noncopyable()) {
             needs_cleanup = true;
             break;
-        }
-        if (field.type->is_struct()) {
-            for (const auto& dtor : field.type->struct_info.destructors) {
-                if (dtor.name.empty()) { needs_cleanup = true; break; }
-            }
-            if (needs_cleanup) break;
         }
     }
     if (needs_cleanup) {
@@ -1249,6 +1227,11 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
         // Cannot initialize an owned variable from a struct field (would create dual ownership)
         if (var_type && var_type->noncopyable()) {
             check_not_field_move(var_decl.initializer, decl->loc);
+
+            // Mark the source variable as moved (transfer of ownership)
+            if (var_decl.initializer->kind == AstKind::ExprIdentifier) {
+                mark_moved(var_decl.initializer->identifier.name);
+            }
         }
     } else if (!var_type) {
         error(decl->loc, "variable declaration requires type annotation or initializer");
@@ -4097,6 +4080,11 @@ Type* SemanticAnalyzer::analyze_builtin_method_call(Expr* expr, CallExpr& ce, Ge
     check_call_args(ce.arguments, mi->param_types, Span<Param>(), expr->loc);
     ce.mangled_name = mi->native_name;
     ge.object->resolved_type = obj_type;
+
+    // Set callee's resolved_type to a function type for IR builder move tracking
+    Type* base_type = obj_type->base_type();
+    ce.callee->resolved_type = build_method_function_type(base_type, mi);
+
     return mi->return_type;
 }
 

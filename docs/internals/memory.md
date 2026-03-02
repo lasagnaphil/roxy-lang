@@ -160,11 +160,11 @@ Roxy uses a "constraint reference" model where:
 
 ## Implicit Destruction (RAII)
 
-`uniq` variables are automatically cleaned up when they go out of scope. This eliminates the need for manual `delete` in most cases.
+`uniq` variables are automatically cleaned up when they go out of scope. This eliminates the need for manual `delete` in most cases. The same applies to value-type structs with destructors and noncopyable containers (`List<T>` / `Map<K,V>` where `T`, `K`, or `V` is noncopyable).
 
 ### Scope Exit Cleanup
 
-At every scope exit point, the compiler emits implicit `Delete` instructions for all live `uniq` locals declared in that scope, in LIFO (reverse declaration) order:
+At every scope exit point, the compiler emits implicit cleanup for all live noncopyable locals declared in that scope, in LIFO (reverse declaration) order:
 
 | Exit Point | What's Cleaned Up |
 |------------|-------------------|
@@ -174,7 +174,7 @@ At every scope exit point, the compiler emits implicit `Delete` instructions for
 | `continue` | Uniqs in scopes inside the loop body |
 | End of function (implicit return) | All uniqs in function scope |
 
-If the struct type has a default destructor (`fun delete StructName()`), it is called before freeing memory.
+If the struct type has a default destructor (`fun delete StructName()`), it is called before freeing memory. For noncopyable containers, the compiler emits a cleanup loop that destroys each element before freeing the container's internal buffers and slab header (see `docs/internals/arrays.md` and `docs/internals/maps.md`).
 
 ### Null Safety
 
@@ -196,18 +196,19 @@ fun process(): i32 {
 
 ## Move Semantics
 
-Passing a `uniq` variable to a function parameter typed `uniq` **moves** ownership to the callee. The caller's variable becomes invalid.
+Passing a noncopyable variable to a function parameter of matching noncopyable type **moves** ownership to the callee. The caller's variable becomes invalid. This applies to `uniq` references, value-type structs with destructors, and noncopyable containers (`List<T>` / `Map<K,V>` where inner types are noncopyable).
 
 ### Rules
 
-- Passing `uniq` to a `uniq` parameter → ownership transferred, caller's variable consumed
-- Returning a `uniq` value → ownership transferred to caller, variable not deleted at scope exit
+- Passing a noncopyable value to a matching parameter → ownership transferred, caller's variable consumed
+- Returning a noncopyable value → ownership transferred to caller, variable not deleted at scope exit
+- Initializing a new variable from a noncopyable source (`var copy = items`) → ownership transferred
 - Explicit `delete` → variable consumed
-- Reassigning a `uniq` variable → old value is implicitly deleted before new value is assigned
+- Reassigning a noncopyable variable → old value is implicitly destroyed before new value is assigned
 
 ### Use-After-Move Detection
 
-The semantic analyzer tracks move state for each `uniq` local variable:
+The semantic analyzer tracks move state for each noncopyable local variable:
 
 | State | Meaning |
 |-------|---------|

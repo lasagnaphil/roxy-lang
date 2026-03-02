@@ -97,6 +97,26 @@ i32 val = map.get(42);
 map.remove(42);
 ```
 
+## Copy and Move Semantics
+
+A `Map<K, V>` is **noncopyable** when either `K` or `V` is noncopyable. Noncopyable maps follow the same move-semantic rules as noncopyable lists and `uniq` variables:
+
+- **Passing to a function** moves ownership
+- **Initializing a new variable** moves the source
+- **Use-after-move** is a compile-time error
+- **Struct fields** of noncopyable map type trigger a synthetic destructor on the containing struct
+
+When both `K` and `V` are copyable, the map is freely copyable via `map_copy` in the function prologue.
+
+### Scope-Exit Cleanup (RAII)
+
+When a noncopyable map goes out of scope, the compiler emits cleanup IR:
+
+1. If `K` is noncopyable: call `Map$$keys` to extract keys into a temp list, run a cleanup loop on each key, free the temp list
+2. If `V` is noncopyable: call `Map$$values` similarly, clean up each value
+3. Call `Map$$delete` to free the map's internal buffers
+4. Call `Delete` to free the slab-allocated map header
+
 ## Implementation Files
 
 | File | Description |

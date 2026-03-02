@@ -228,6 +228,15 @@ private:
     void emit_single_field_destroy(ValueId obj_ptr, StringView field_name,
                                    u32 slot_offset, u32 slot_count, Type* field_type);
 
+    // Emit destruction of a single element value based on its type
+    void emit_element_destroy(ValueId elem_value, Type* elem_type);
+
+    // Emit a cleanup loop that destroys all elements in a list, then frees the list
+    void emit_list_cleanup(ValueId list_ptr, Type* list_type);
+
+    // Emit cleanup that destroys all entries in a map, then frees the map
+    void emit_map_cleanup(ValueId map_ptr, Type* map_type);
+
     // Emit cleanup (implicit destruction) for all live owned locals at or above min_scope_depth
     void emit_scope_cleanup(u32 min_scope_depth);
 
