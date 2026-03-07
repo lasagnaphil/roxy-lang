@@ -1,6 +1,6 @@
 # C Backend (AOT Compilation)
 
-> **Status:** Not yet implemented. This document is a design plan.
+> **Status:** Phases 1–2 implemented (primitives, arithmetic, control flow, structs, enums, pointer operations). Phases 3–5 not yet implemented.
 
 The C backend translates Roxy's SSA IR into a `.cpp` file. The core logic is C-style (structs, gotos, typed variables), while native function bindings use C++ to interface directly with the embedder's C++ code. The output can be compiled by any C++ compiler (g++, clang++, MSVC).
 
@@ -80,11 +80,13 @@ typedef struct {
 ### Constants
 
 ```
-v0 = const_int 42          →  int64_t v0 = 42;
+v0 = const_int 42          →  int32_t v0 = 42;
 v1 = const_bool true       →  bool v1 = true;
 v2 = const_f64 3.14        →  double v2 = 3.14;
 v3 = const_string "hello"  →  roxy_string* v3 = roxy_string_from_literal("hello", 5);
 v4 = const_null             →  void* v4 = NULL;
+// Enum-typed integer constants require explicit cast:
+v5 = const_int 1 (Color)   →  Color v5 = (Color)1;
 ```
 
 ### Arithmetic and Comparisons
@@ -116,20 +118,35 @@ v1 = cast v0         →  // Depends on source/target types (CastData)
 Roxy structs map directly to C structs. The slot-based layout is compatible since field ordering is identical.
 
 ```
-// Struct type emission
-typedef struct {
+// Struct type emission (dependency-sorted, forward declared)
+typedef struct Point Point;
+
+struct Point {
     int32_t x;
     int32_t y;
-} Point;
+};
 
-// Stack allocation + field access
-v0 = stack_alloc 2          →  Point v0_struct = {0}; Point* v0 = &v0_struct;
+// Stack allocation: backing storage + pointer (two declarations)
+v0 = stack_alloc 2          →  Point v0_struct; memset(&v0_struct, 0, sizeof(v0_struct));
+                                Point* v0;
+                                // then at block entry:
+                                v0 = &v0_struct;
+
+// Field access uses -> since StackAlloc values are pointers
 v1 = const_int 10
 v2 = set_field v0.x <- v1   →  v0->x = v1;
 v3 = get_field v0.y         →  int32_t v3 = v0->y;
+
+// For scalar StackAlloc (out/inout on primitives), dereference instead:
+v1 = stack_alloc 1 (i32)    →  int32_t v1_struct; memset(...);
+                                int32_t* v1;
+v2 = set_field v1.n <- v0   →  *v1 = v0;   // not v1->n
+v3 = get_field v1.n          →  int32_t v3 = *v1;
 ```
 
-The `StackAlloc` IR instruction becomes a local variable declaration. We emit both the struct value and a pointer to it, since the rest of the IR refers to structs through pointers.
+The `StackAlloc` IR instruction becomes a local variable declaration. We emit both the struct value and a pointer to it, since the rest of the IR refers to structs through pointers. We use `memset` for zero-initialization instead of `= {0}` to avoid C++ compilation issues when the first field is an enum type.
+
+Struct types are forward-declared (`typedef struct Name Name;`) before their full definitions, and definitions are emitted in dependency order (topological sort based on field types).
 
 ### Struct Copy
 
@@ -157,6 +174,20 @@ int32_t add(int32_t v0, int32_t v1) {
 }
 ```
 
+Struct parameters are always emitted as pointers, since the IR uses pointer semantics (get_field/set_field with `->`) for all struct values:
+
+```
+// fun sum_point(p: Point): i32
+void sum_point(Point* v0) { ... }
+```
+
+For struct inheritance, when a child struct pointer is passed to a function expecting a parent struct pointer, an explicit C cast is emitted:
+
+```
+// Dog$$new calls Animal$$new(self) — self is Dog*
+Animal__new((Animal*)v0);
+```
+
 #### Out/Inout Parameters
 
 Parameters marked as pointers in `IRFunction::param_is_ptr` become pointer parameters:
@@ -178,18 +209,25 @@ void double_point(Point* v0) {
 
 #### Large Struct Returns (>16 bytes)
 
-Functions that return large structs use a hidden output pointer (same convention as the bytecode lowering):
+Functions that return large structs use a hidden output pointer (same convention as the bytecode lowering). The IR builder adds a `__ret_ptr` parameter and transforms the return into a `struct_copy` + void return. The emitter detects `returns_large_struct()` and emits void return type. At the call site, assignment is skipped since the function returns void — the caller provides a StackAlloc pointer as the output parameter:
 
 ```
-// fun make_big(): BigStruct    (slot_count > 4)
+// fun make_big(x: i32): BigStruct    (slot_count > 4)
 →
-void make_big(BigStruct* _out) {
-    BigStruct v0_struct = {0};
-    BigStruct* v0 = &v0_struct;
-    // ... fill fields ...
-    *_out = *v0;
+// Callee: void return, hidden output pointer is last param
+void make_big(int32_t v0, BigData* v1) {
+    BigData v2_struct; memset(&v2_struct, 0, sizeof(v2_struct));
+    BigData* v2;
+    // ... fill fields in v2 ...
+    memcpy(v1, v2, 20);  // struct_copy to output pointer
     return;
 }
+
+// Caller: no assignment from void call
+BigData v0_struct; memset(&v0_struct, 0, sizeof(v0_struct));
+BigData* v0 = &v0_struct;
+make_big(v1, v0);        // v0 is the output pointer
+v3 = v0->a;              // read fields from output pointer
 ```
 
 ### Control Flow
@@ -521,7 +559,20 @@ weak_check v0 →  bool v1 = roxy_weak_valid(v0.ptr, v0.generation);
 ```
 v1 = load_ptr v0          →  int32_t v1 = *v0;    // type from IRInst.type
 store_ptr v0, v1           →  *v0 = v1;
-v1 = var_addr "x"          →  int32_t* v1 = &x;
+v1 = var_addr "x"          →  int32_t* v1 = &v0;  // v0 is the SSA value for variable "x"
+                               // For StackAlloc values: &v0_struct (backing storage address)
+```
+
+### Nullify
+
+Zeros a value for move semantics cleanup:
+
+```
+// For struct backing storage:
+nullify v0  →  memset(&v0_struct, 0, sizeof(v0_struct));
+
+// For primitives/pointers:
+nullify v0  →  v0 = 0;
 ```
 
 ## Tagged Unions
@@ -543,15 +594,19 @@ struct Skill {
 ```
 
 ```c
-typedef struct {
-    roxy_string* name;
-    SkillType type;
+typedef struct Skill Skill;
+
+struct Skill {
+    void* name;       // string (void* placeholder until Phase 3)
+    SkillType type;   // discriminant field
     union {
-        AttackData attack;
-        DefendData defend;
+        struct { int32_t damage; float crit_chance; }; /* Attack */
+        struct { float damage_reduce; };               /* Defend */
     };
-} Skill;
+};
 ```
+
+Note: variant fields are emitted as anonymous structs within the union, with field names directly accessible on the parent struct. Each variant struct is annotated with a comment showing the case name.
 
 The `when` statement compiles to a chain of comparisons (same as bytecode lowering), which maps to `if`/`else if` in C:
 
@@ -995,55 +1050,85 @@ With `malloc`-based allocation, tombstoning for weak references requires keeping
 
 ```cpp
 struct CEmitterConfig {
-    // Headers to #include in the generated .cpp for native function access.
-    // These are the embedder's headers that declare native functions.
-    // Example: {"engine/native_bindings.hpp", "engine/types.hpp"}
-    Vector<String> native_include_paths;
-
-    // Whether to emit a standalone main() entry point.
-    // Set to false for library mode (embedder calls exported functions directly).
-    bool emit_main_entry = true;
+    Vector<String> native_include_paths;  // Embedder headers to #include
+    bool emit_main_entry = true;          // Emit standalone main() entry point
 };
 
 class CEmitter {
 public:
-    CEmitter(BumpAllocator& alloc, const NativeRegistry* registry,
-             const CEmitterConfig& config);
+    CEmitter(BumpAllocator& alloc, const CEmitterConfig& config);
 
-    // Emit the .cpp implementation file
-    void emit_source(const IRModule* module, Vector<char>& output);
-
-    // Emit the .hpp public header (pub structs, enums, and pub function declarations)
-    void emit_header(const IRModule* module, Vector<char>& output);
+    void emit_source(const IRModule* module, String& output);
+    void emit_header(const IRModule* module, String& output);
 
 private:
-    const NativeRegistry* m_registry;
-    CEmitterConfig m_config;
-
     // Type emission
-    void emit_forward_declarations(const IRModule* module);
-    void emit_struct_typedefs(const IRModule* module);
-    void emit_enum_typedefs(const IRModule* module);
-    void emit_function_prototypes(const IRModule* module);
-    void emit_native_declarations(const IRModule* module);
+    void emit_type(Type* type, String& out);
+    void emit_mangled_name(StringView name, String& out);  // $$ → __, $ → _
+
+    // Type definition emission
+    void emit_enum_typedefs(const IRModule* module, String& out);
+    void emit_struct_forward_declarations(const IRModule* module, String& out);
+    void emit_struct_typedefs(const IRModule* module, String& out);
 
     // Function emission
-    void emit_function(const IRFunction* func);
-    void emit_block(const IRBlock* block, const IRFunction* func);
-    void emit_instruction(const IRInst* inst);
-    void emit_terminator(const IRBlock* block);
+    void emit_function_prototype(const IRFunction* func, String& out);
+    void emit_function(const IRFunction* func, String& out);
+    void emit_block(const IRBlock* block, const IRFunction* func, String& out);
+    void emit_instruction(const IRInst* inst, String& out);
+    void emit_terminator(const IRBlock* block, const IRFunction* func, String& out);
 
-    // Helpers
-    void emit_type(Type* type);        // Emit C type name
-    void emit_value(ValueId id);       // Emit value reference (e.g., "v42")
-    void emit_mangled_name(StringView name);  // $$ → __
-    void emit_native_call(const IRInst* inst);  // Emit native function call
+    // Block argument helpers
+    void emit_block_arg_declarations(const IRFunction* func, String& out);
+    void emit_block_arg_assignments(const JumpTarget& target, String& out);
+
+    // Value helpers
+    void emit_value(ValueId id, String& out);
+
+    // Per-function state helpers
+    Type* get_value_type(ValueId id);
+    bool is_stack_alloc_value(ValueId id);
+    bool is_pointer_value(ValueId id);
+    bool is_scalar_stack_alloc(ValueId id);
+
+    // Field access: emit v0->field or v0.field depending on pointer tracking
+    void emit_field_access(ValueId object, StringView field_name, String& out);
+
+    void collect_value_types(const IRFunction* func);
+    const IRFunction* find_function(StringView name);
+
+    // Configuration
+    CEmitterConfig m_config;
+    BumpAllocator& m_alloc;
+
+    // Module-level state (set during emit_source)
+    const IRModule* m_module = nullptr;
+
+    // Per-function state
+    tsl::robin_map<u32, Type*> m_value_types;         // ValueId.id -> Type*
+    tsl::robin_set<u32> m_stack_alloc_values;          // StackAlloc result ValueIds
+    tsl::robin_set<u32> m_pointer_values;              // Pointer values (StackAlloc, struct params, GetFieldAddr)
+    tsl::robin_map<u32, ValueId> m_var_name_to_value;  // Variable name hash -> ValueId (for VarAddr)
 };
 ```
 
+The `m_pointer_values` set tracks which SSA values are struct pointers (from StackAlloc, struct params, ref/uniq params, out/inout params, and GetFieldAddr results). This determines whether `emit_field_access` uses `->` or `.` notation.
+
 ### Output Structure
 
-The CEmitter produces two files: a `.hpp` public header and a `.cpp` implementation.
+`emit_source()` produces a single `.cpp` file with the following sections in order:
+
+1. Standard includes (`<stdint.h>`, `<stdbool.h>`, `<stdio.h>`, `<stdlib.h>`, `<string.h>`)
+2. Native include paths (from `CEmitterConfig`)
+3. Enum typedefs
+4. Struct forward declarations (`typedef struct Name Name;`)
+5. Struct definitions (dependency-sorted by field types)
+6. Function forward declarations (all functions)
+7. Function bodies
+
+`emit_header()` produces a `.hpp` public header (Phase 3+: pub structs, enums, pub function declarations).
+
+The CEmitter is designed to produce two files: a `.hpp` public header and a `.cpp` implementation.
 
 #### Generated Header (`scripts.hpp`)
 
@@ -1349,39 +1434,48 @@ The `--native-includes` flag maps to `CEmitterConfig::native_include_paths`, tel
 
 ## Implementation Phases
 
-### Phase 1: Scaffold + Primitives
+### Phase 1: Scaffold + Primitives ✓
 
-- [ ] Create `include/roxy/compiler/c_emitter.hpp` and `src/roxy/compiler/c_emitter.cpp`
-- [ ] Implement `CEmitterConfig` (native include paths, emit main entry toggle)
-- [ ] Implement `emit_header()` — emit `.hpp` with pub structs, enums, and pub function declarations
-- [ ] Implement `emit_source()` — emit `.cpp` with includes, native declarations, all function bodies
-- [ ] Add `roxy_compiler` library dependency in CMakeLists.txt
-- [ ] Emit C type names for all primitive `TypeKind` variants
-- [ ] Emit constants: `ConstInt`, `ConstBool`, `ConstF`, `ConstD`, `ConstNull`
-- [ ] Emit arithmetic operations: `AddI`, `SubI`, `MulI`, `DivI`, `ModI`, `NegI`, and f32/f64 variants
-- [ ] Emit comparison operations: `EqI`, `NeI`, `LtI`, `LeI`, `GtI`, `GeI`, and f32/f64 variants
-- [ ] Emit logical/bitwise: `Not`, `And`, `Or`, `BitAnd`, `BitOr`, `BitNot`
-- [ ] Emit type conversions: `I_TO_F64`, `F64_TO_I`, `I_TO_B`, `B_TO_I`, `Cast`
-- [ ] Emit control flow: `Goto` → `goto`, `Branch` → `if-goto`, `Return` → `return`
-- [ ] Emit block arguments as local variables with assignment before `goto`
-- [ ] Emit function calls: `Call` → direct call
-- [ ] Add basic E2E test: compile Roxy → C++ → g++/clang++ → run → check output
+- [x] Create `include/roxy/compiler/c_emitter.hpp` and `src/roxy/compiler/c_emitter.cpp`
+- [x] Implement `CEmitterConfig` (native include paths, emit main entry toggle)
+- [x] Implement `emit_source()` — emit `.cpp` with includes, all function bodies
+- [x] Emit C type names for all primitive `TypeKind` variants
+- [x] Emit constants: `ConstInt`, `ConstBool`, `ConstF`, `ConstD`, `ConstNull`
+- [x] Emit arithmetic operations: `AddI`, `SubI`, `MulI`, `DivI`, `ModI`, `NegI`, and f32/f64 variants
+- [x] Emit comparison operations: `EqI`, `NeI`, `LtI`, `LeI`, `GtI`, `GeI`, and f32/f64 variants
+- [x] Emit logical/bitwise: `Not`, `And`, `Or`, `BitAnd`, `BitOr`, `BitXor`, `BitNot`, `Shl`, `Shr`
+- [x] Emit type conversions: `I_TO_F64`, `F64_TO_I`, `I_TO_B`, `B_TO_I`, `Cast`
+- [x] Emit `Copy` instruction
+- [x] Emit control flow: `Goto` → `goto`, `Branch` → `if-goto-else`, `Return` → `return`
+- [x] Emit block arguments as local variables with assignment before `goto`
+- [x] Emit function calls: `Call` → direct call, `CallExternal` → cross-module call
+- [x] Emit `main` function as `int main(void)` when `emit_main_entry` is true
+- [x] Add E2E tests: compile Roxy → C++ → c++ → run → check exit code (12 tests)
 
-### Phase 2: Structs
+### Phase 2: Structs, Enums, and Pointer Operations ✓
 
-- [ ] Emit `typedef struct` for all struct types (sorted by dependency order)
-- [ ] Emit enum `typedef enum` for all enum types
-- [ ] Handle `StackAlloc` → local struct variable + pointer
-- [ ] Handle `GetField`/`SetField` → `ptr->field`
-- [ ] Handle `GetFieldAddr` → `&ptr->field`
-- [ ] Handle `StructCopy` → struct assignment or `memcpy`
-- [ ] Handle struct function parameters and returns (small struct packing/unpacking)
-- [ ] Handle large struct returns via hidden output pointer
-- [ ] Handle struct inheritance (parent fields come first in C struct)
-- [ ] Handle tagged unions → C struct with `union` member
-- [ ] Emit inline C++ method wrappers on pub structs in `.hpp` header
-- [ ] Emit static `create()` constructor wrapper for pub structs with named constructors
-- [ ] E2E tests for structs, enums, tagged unions
+- [x] Add `struct_types` / `enum_types` vectors to `IRModule`, populated by `IRBuilder::build()`
+- [x] Emit `typedef enum` for all enum types (with variant values from AST)
+- [x] Emit `typedef struct` forward declarations for all struct types
+- [x] Emit struct definitions sorted by dependency order (Kahn's algorithm topological sort)
+- [x] Handle tagged unions → C struct with anonymous `union` member
+- [x] Handle `StackAlloc` → backing storage + pointer (two declarations, `memset` zero-init)
+- [x] Handle `GetField`/`SetField` → `ptr->field` or `ptr.field` (pointer tracking)
+- [x] Handle scalar `GetField`/`SetField` on non-struct StackAlloc → `*ptr` dereference
+- [x] Handle `GetFieldAddr` → `&ptr->field` (result tracked as pointer value)
+- [x] Handle `StructCopy` → `memcpy`
+- [x] Handle struct function parameters → always emitted as pointers
+- [x] Handle struct inheritance → explicit C cast for child-to-parent pointer args
+- [x] Handle large struct returns via hidden output pointer (void return, skip call-site assignment)
+- [x] Handle `LoadPtr`/`StorePtr` for out/inout parameter reads/writes
+- [x] Handle `VarAddr` → `&v_struct` for StackAlloc values, `&v` for others
+- [x] Handle `Cast` → C-style cast `(TargetType)source`
+- [x] Handle `Nullify` → `memset` for struct backing, `= 0` for scalars
+- [x] Handle enum-typed `ConstInt` → explicit cast `(EnumType)N`
+- [x] Handle struct return values → dereference StackAlloc pointer in `return *v`
+- [x] E2E tests for structs, enums, tagged unions, out/inout, large struct return, cast (15 tests)
+- [ ] Emit inline C++ method wrappers on pub structs in `.hpp` header (deferred to Phase 3+)
+- [ ] Emit static `create()` constructor wrapper for pub structs (deferred to Phase 3+)
 
 ### Phase 3: Runtime Library
 
@@ -1432,7 +1526,6 @@ The `--native-includes` flag maps to `CEmitterConfig::native_include_paths`, tel
 ### Phase 5: Polish
 
 - [ ] Emit `#line` directives mapping back to Roxy source (for debugger support)
-- [ ] Handle `LoadPtr`/`StorePtr`/`VarAddr` for out/inout parameters
 - [ ] Dead code elimination (skip unreachable blocks)
 - [ ] Optional: structured control flow reconstruction (Relooper/Stackifier)
 - [ ] Optional: emit `switch` for large enum `when` statements
@@ -1440,11 +1533,11 @@ The `--native-includes` flag maps to `CEmitterConfig::native_include_paths`, tel
 
 ## Testing Strategy
 
-C backend tests should mirror existing E2E tests:
+C backend tests use `compile_and_run_cpp()` which runs the full pipeline: Roxy source → semantic analysis → IR builder → CEmitter → write `.cpp` to temp file → compile with `c++` → run binary → check exit code.
 
 ```cpp
 // In tests/e2e/test_c_backend.cpp
-TEST_CASE("C Backend - Basics") {
+TEST_CASE("E2E - C Backend: Integer arithmetic") {
     const char* source = R"(
         fun main(): i32 {
             var x: i32 = 10;
@@ -1452,19 +1545,20 @@ TEST_CASE("C Backend - Basics") {
             return x + y;
         }
     )";
-
-    // Compile Roxy → SSA IR → C++ source
-    auto cpp_source = compile_to_cpp(source);
-
-    // Write to temp file, compile with C++ compiler, run, check output
-    auto result = compile_and_run_cpp(cpp_source);
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
     CHECK(result.exit_code == 30);
 }
 ```
 
-Helper functions:
-- `compile_to_cpp(source)` — runs Roxy frontend + CEmitter, returns C++ string
-- `compile_and_run_cpp(cpp_source)` — writes `.cpp`, invokes `c++`, links with `roxy_rt`, runs binary, returns exit code + stdout
+Helper functions (in `tests/e2e/test_helpers.hpp`):
+- `compile_to_cpp(source, debug)` — runs Roxy frontend + IR builder + CEmitter, returns C++ source string
+- `compile_and_run_cpp(source, debug)` — calls `compile_to_cpp`, writes to temp file, compiles with `c++ -std=c++17`, runs binary, returns `CBackendResult` with exit code + stdout
+
+Pass `debug=true` to print the IR and generated C++ source for debugging.
+
+Current test count: 27 tests (12 Phase 1 + 15 Phase 2).
 
 ## Name Mangling in C
 
@@ -1496,19 +1590,24 @@ The two paths complement each other: interpreter for development, C backend for 
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `include/roxy/compiler/c_emitter.hpp` | CEmitter + CEmitterConfig class declarations |
-| `src/roxy/compiler/c_emitter.cpp` | C emission implementation (`emit_header`, `emit_source`) |
-| `include/roxy/rt/roxy_rt.h` | C runtime library header (`roxy_ctx`, runtime function declarations) |
-| `src/roxy/rt/roxy_rt.c` | C runtime library implementation |
-| `tests/e2e/test_c_backend.cpp` | E2E tests |
-| *(generated)* `<name>.hpp` | Public API header: pub structs, enums, function declarations |
-| *(generated)* `<name>.cpp` | Implementation: includes, native decls, all function bodies |
+| File | Purpose | Status |
+|------|---------|--------|
+| `include/roxy/compiler/c_emitter.hpp` | CEmitter + CEmitterConfig class declarations | Implemented |
+| `src/roxy/compiler/c_emitter.cpp` | C emission implementation (`emit_header`, `emit_source`) | Implemented |
+| `include/roxy/compiler/ssa_ir.hpp` | `IRModule::struct_types` / `enum_types` for type emission | Implemented |
+| `src/roxy/compiler/ir_builder.cpp` | Populates `struct_types` / `enum_types` in `build()` | Implemented |
+| `tests/e2e/test_c_backend.cpp` | E2E tests (27 tests) | Implemented |
+| `tests/e2e/test_helpers.hpp` | `compile_to_cpp()`, `compile_and_run_cpp()` helpers | Implemented |
+| `include/roxy/rt/roxy_rt.h` | C runtime library header (Phase 3+) | Planned |
+| `src/roxy/rt/roxy_rt.c` | C runtime library implementation (Phase 3+) | Planned |
+| *(generated)* `<name>.hpp` | Public API header: pub structs, enums, function declarations | Planned |
+| *(generated)* `<name>.cpp` | Implementation: includes, native decls, all function bodies | Implemented (source emission) |
 
 ## Dependencies
 
-The C backend requires all existing frontend components:
-- Lexer, Parser, Semantic Analysis, IR Builder (already implemented)
-- `NativeRegistry` — the CEmitter reads registered native function entries to emit declarations and direct calls
-- Changes to existing code: `RoxyVM` gains a `roxy_ctx` first member; interpreter calls `roxy_set_ctx(&vm->ctx)` on entry; `FunctionBinder` no longer passes `vm`/`ctx` to native functions (they use `roxy_get_ctx()` if needed); native function signatures drop the `RoxyVM*`/`roxy_ctx*` first parameter
+The C backend uses all existing frontend components:
+- Lexer, Parser, Semantic Analysis, IR Builder (all implemented)
+- `IRModule` with `struct_types` / `enum_types` populated by `IRBuilder::build()`
+- `BumpAllocator` for string storage during emission
+- For Phase 3+: `NativeRegistry` — the CEmitter will read registered native function entries to emit declarations and direct calls
+- For Phase 4+: Changes to existing code: `RoxyVM` gains a `roxy_ctx` first member; interpreter calls `roxy_set_ctx(&vm->ctx)` on entry; `FunctionBinder` no longer passes `vm`/`ctx` to native functions (they use `roxy_get_ctx()` if needed); native function signatures drop the `RoxyVM*`/`roxy_ctx*` first parameter

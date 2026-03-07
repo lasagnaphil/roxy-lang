@@ -188,6 +188,10 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Coroutines** - Generator-style stackless coroutines via `Coro<T>` built-in type. Compile-time state machine transformation producing init/resume/done functions. Yield in straight-line code and if/else branches. Graph-preserving block cloning for correct control flow. `Coro<T>` is noncopyable (RAII cleanup of heap-allocated state struct). Promoted `uniq`/noncopyable fields are cleaned up by a generated `__coro_*$$delete` destructor; null-ification on done path prevents double-free.
 **Details:** `docs/internals/coroutines.md` | **Tests:** `tests/e2e/test_coroutines.cpp`
 
+### C Backend (Phases 1–2)
+**CEmitter** - AOT compilation via SSA IR → C/C++ transpilation. Phases 1–2 cover primitives, arithmetic, comparisons, logical/bitwise operations, type conversions, control flow (goto/branch/return with block arguments), function calls, struct/enum type definitions (dependency-sorted), struct field access (StackAlloc, GetField, SetField, GetFieldAddr, StructCopy), pointer operations (LoadPtr, StorePtr, VarAddr for out/inout params), large struct returns (hidden output pointer), struct inheritance (explicit pointer casts), tagged unions, Cast, and Nullify.
+**Details:** `docs/internals/c-backend.md` | **Files:** `compiler/c_emitter.hpp`, `compiler/c_emitter.cpp` | **Tests:** `tests/e2e/test_c_backend.cpp`
+
 ### LSP Server (Phases 1–7)
 **LSP Parser** - Error-recovering parser producing a lossless CST. Three recovery strategies: synthetic token insertion, statement boundary synchronization, bracket-aware skipping. Handles all grammar productions from the compiler parser.
 **Details:** `docs/internals/lsp-server.md` | **Files:** `lsp/syntax_tree.hpp`, `lsp/lsp_parser.hpp`, `lsp/lsp_parser.cpp`
@@ -200,7 +204,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 
 ## Planned Components (Not Yet Implemented)
 
-- C backend (AOT compilation via SSA IR → C transpilation, see `docs/internals/c-backend.md`)
+- C backend Phases 3–5: runtime library, native function integration, polish (see `docs/internals/c-backend.md`)
 - LSP Phase 8: Full semantic analysis (TypeCache/TypeEnv integration)
 - LSP Phase 9: Polish (signature help, code actions, workspace symbols, semantic tokens)
 - Optimizations
@@ -209,7 +213,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 
 - **Framework:** doctest (vendored in `include/roxy/core/doctest/`)
 - **Single executable:** `roxy_tests` contains all unit and E2E tests
-- **Helpers:** `tests/e2e/test_helpers.hpp` provides `compile()`, `compile_and_run()`, `run_and_capture()`
+- **Helpers:** `tests/e2e/test_helpers.hpp` provides `compile()`, `compile_and_run()`, `run_and_capture()`, `compile_to_cpp()`, `compile_and_run_cpp()`
 
 ### Running Tests
 
@@ -251,5 +255,5 @@ On Windows, use `.exe` extension.
   - `generics.md` - Generic functions and structs with monomorphization
   - `exceptions.md` - Exception handling: try/catch/throw/finally, Exception trait, handler tables
   - `coroutines.md` - Coroutines: Coro<T>, yield, state machine transformation, graph-preserving block cloning
-  - `c-backend.md` - C backend design plan (AOT compilation via SSA IR → C)
+  - `c-backend.md` - C backend (AOT compilation via SSA IR → C): Phases 1–2 implemented, Phases 3–5 design plan
   - `lsp-server.md` - LSP server architecture: map-reduce design, error-recovering parser, indexing, lazy analysis
