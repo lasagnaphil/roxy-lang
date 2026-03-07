@@ -291,6 +291,32 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
 
     if (m_has_error) return nullptr;
 
+    // Collect struct and enum types for C backend code generation
+    for (auto* decl : program->declarations) {
+        if (!decl) continue;
+        if (decl->kind == AstKind::DeclStruct) {
+            // Skip generic struct templates (they are instantiated separately)
+            if (decl->struct_decl.type_params.size() > 0) continue;
+            Type* struct_type = m_type_env.named_type_by_name(decl->struct_decl.name);
+            if (struct_type) {
+                module->struct_types.push_back(struct_type);
+            }
+        }
+        else if (decl->kind == AstKind::DeclEnum) {
+            Type* enum_type = m_type_env.named_type_by_name(decl->enum_decl.name);
+            if (enum_type) {
+                module->enum_types.push_back(enum_type);
+            }
+        }
+    }
+
+    // Collect monomorphized generic struct instances
+    for (auto* instance : m_type_env.generics().all_struct_instances()) {
+        if (instance->is_analyzed && instance->concrete_type) {
+            module->struct_types.push_back(instance->concrete_type);
+        }
+    }
+
     return module;
 }
 
