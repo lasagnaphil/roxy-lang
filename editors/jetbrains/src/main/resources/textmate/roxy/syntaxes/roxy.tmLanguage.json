@@ -1,0 +1,285 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Roxy",
+  "scopeName": "source.roxy",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#fstrings" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#constants" },
+    { "include": "#types" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#function-call" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.roxy",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.roxy",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "patterns": [
+            { "include": "#comments" }
+          ]
+        }
+      ]
+    },
+
+    "strings": {
+      "name": "string.quoted.double.roxy",
+      "begin": "(?<!f)\"",
+      "end": "\"",
+      "patterns": [
+        { "include": "#escape-sequences" }
+      ]
+    },
+
+    "fstrings": {
+      "name": "string.interpolated.roxy",
+      "begin": "f\"",
+      "end": "\"",
+      "patterns": [
+        { "include": "#fstring-escape-sequences" },
+        {
+          "name": "meta.interpolation.roxy",
+          "begin": "(?<!\\\\)\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "0": { "name": "punctuation.section.interpolation.begin.roxy" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.section.interpolation.end.roxy" }
+          },
+          "patterns": [
+            { "include": "$self" }
+          ]
+        }
+      ]
+    },
+
+    "escape-sequences": {
+      "name": "constant.character.escape.roxy",
+      "match": "\\\\[nrtv0f\\\\\"']"
+    },
+
+    "fstring-escape-sequences": {
+      "name": "constant.character.escape.roxy",
+      "match": "\\\\[nrtv0f\\\\\"'{}]"
+    },
+
+    "declarations": {
+      "patterns": [
+        { "include": "#function-declaration" },
+        { "include": "#constructor-declaration" },
+        { "include": "#destructor-declaration" },
+        { "include": "#struct-declaration" },
+        { "include": "#enum-declaration" },
+        { "include": "#trait-declaration" },
+        { "include": "#trait-impl" }
+      ]
+    },
+
+    "function-declaration": {
+      "comment": "fun name(...)  or  pub fun name(...)  or  native fun name(...)  or  pub native fun name(...)",
+      "match": "\\b(pub\\s+)?(native\\s+)?(fun)\\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(?=\\(|<)",
+      "captures": {
+        "1": { "name": "storage.modifier.roxy" },
+        "2": { "name": "storage.modifier.roxy" },
+        "3": { "name": "keyword.declaration.roxy" },
+        "4": { "name": "entity.name.function.roxy" }
+      }
+    },
+
+    "constructor-declaration": {
+      "comment": "fun new TypeName(...)  or  fun new TypeName.named(...)",
+      "match": "\\b(fun)\\s+(new)\\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(?=\\(|<)",
+      "captures": {
+        "1": { "name": "keyword.declaration.roxy" },
+        "2": { "name": "keyword.other.roxy" },
+        "3": { "name": "entity.name.function.roxy" }
+      }
+    },
+
+    "destructor-declaration": {
+      "comment": "fun delete TypeName(...)  or  fun delete TypeName.named(...)",
+      "match": "\\b(fun)\\s+(delete)\\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*)\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "keyword.declaration.roxy" },
+        "2": { "name": "keyword.other.roxy" },
+        "3": { "name": "entity.name.function.roxy" }
+      }
+    },
+
+    "struct-declaration": {
+      "match": "\\b(pub\\s+)?(struct)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.modifier.roxy" },
+        "2": { "name": "keyword.declaration.roxy" },
+        "3": { "name": "entity.name.type.roxy" }
+      }
+    },
+
+    "enum-declaration": {
+      "match": "\\b(pub\\s+)?(enum)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.modifier.roxy" },
+        "2": { "name": "keyword.declaration.roxy" },
+        "3": { "name": "entity.name.type.roxy" }
+      }
+    },
+
+    "trait-declaration": {
+      "match": "\\b(pub\\s+)?(trait)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.modifier.roxy" },
+        "2": { "name": "keyword.declaration.roxy" },
+        "3": { "name": "entity.name.type.roxy" }
+      }
+    },
+
+    "trait-impl": {
+      "comment": "for TraitName at end of method signature",
+      "match": "\\b(for)\\s+([A-Z][a-zA-Z0-9_]*)\\s*(?=\\{)",
+      "captures": {
+        "1": { "name": "keyword.declaration.roxy" },
+        "2": { "name": "entity.name.type.roxy" }
+      }
+    },
+
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.roxy",
+          "match": "\\b(if|else|for|while|break|continue|return|when|case)\\b"
+        },
+        {
+          "name": "keyword.declaration.roxy",
+          "match": "\\b(var|fun|struct|enum|trait|import|from)\\b"
+        },
+        {
+          "name": "storage.modifier.roxy",
+          "match": "\\b(pub|native|uniq|ref|weak|out|inout)\\b"
+        },
+        {
+          "name": "variable.language.roxy",
+          "match": "\\b(self|super)\\b"
+        },
+        {
+          "name": "keyword.other.roxy",
+          "match": "\\b(new|delete)\\b"
+        }
+      ]
+    },
+
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.roxy",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.null.roxy",
+          "match": "\\bnil\\b"
+        }
+      ]
+    },
+
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.roxy",
+          "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|string|void)\\b"
+        },
+        {
+          "name": "support.type.roxy",
+          "match": "\\b(List|Map)\\b"
+        }
+      ]
+    },
+
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.roxy",
+          "match": "\\b0[xX][0-9a-fA-F][0-9a-fA-F_]*(?:u(?:l)?|l)?\\b"
+        },
+        {
+          "name": "constant.numeric.binary.roxy",
+          "match": "\\b0[bB][01][01_]*(?:u(?:l)?|l)?\\b"
+        },
+        {
+          "name": "constant.numeric.octal.roxy",
+          "match": "\\b0[oO][0-7][0-7_]*(?:u(?:l)?|l)?\\b"
+        },
+        {
+          "name": "constant.numeric.float.roxy",
+          "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*(?:[eE][+-]?[0-9]+)?f?\\b"
+        },
+        {
+          "name": "constant.numeric.float.roxy",
+          "match": "\\b[0-9][0-9_]*[eE][+-]?[0-9]+f?\\b"
+        },
+        {
+          "name": "constant.numeric.float.roxy",
+          "match": "\\b[0-9][0-9_]*f\\b"
+        },
+        {
+          "name": "constant.numeric.integer.roxy",
+          "match": "\\b[0-9][0-9_]*(?:ul|u|l)?\\b"
+        }
+      ]
+    },
+
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.comparison.roxy",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.logical.roxy",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.assignment.roxy",
+          "match": "<<=|>>=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|="
+        },
+        {
+          "name": "keyword.operator.bitwise.roxy",
+          "match": "<<|>>|&|\\||\\^|~"
+        },
+        {
+          "name": "keyword.operator.arithmetic.roxy",
+          "match": "\\+|-|\\*|/|%"
+        },
+        {
+          "name": "keyword.operator.access.roxy",
+          "match": "::|\\."
+        },
+        {
+          "name": "keyword.operator.ternary.roxy",
+          "match": "\\?"
+        }
+      ]
+    },
+
+    "function-call": {
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "entity.name.function.roxy" }
+      }
+    },
+
+    "identifiers": {
+      "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+    }
+  }
+}

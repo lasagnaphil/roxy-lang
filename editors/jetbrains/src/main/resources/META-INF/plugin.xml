@@ -1,0 +1,42 @@
+<idea-plugin>
+    <id>com.roxy.intellij</id>
+    <name>Roxy Language</name>
+    <vendor>Roxy</vendor>
+    <description><![CDATA[
+        Language support for the Roxy programming language.
+        <ul>
+            <li>Syntax highlighting via TextMate grammar</li>
+            <li>LSP-based code intelligence (diagnostics, go-to-definition, completions, hover, references, rename)</li>
+        </ul>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.textmate</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <fileType
+                name="Roxy"
+                implementationClass="com.roxy.intellij.RoxyFileType"
+                fieldName="INSTANCE"
+                language="Roxy"
+                extensions="roxy"/>
+
+        <platform.lsp.serverSupportProvider
+                implementation="com.roxy.intellij.lsp.RoxyLspServerSupportProvider"/>
+
+        <applicationConfigurable
+                parentId="tools"
+                instance="com.roxy.intellij.lsp.RoxyLspSettingsConfigurable"
+                id="com.roxy.intellij.settings"
+                displayName="Roxy Language"/>
+
+        <notificationGroup
+                id="Roxy LSP"
+                displayType="BALLOON"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <textmate.bundleProvider
+                implementation="com.roxy.intellij.RoxyTextMateBundleProvider"/>
+    </extensions>
+</idea-plugin>

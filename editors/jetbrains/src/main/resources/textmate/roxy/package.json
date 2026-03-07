@@ -1,0 +1,22 @@
+{
+  "name": "roxy",
+  "displayName": "Roxy",
+  "version": "0.1.0",
+  "contributes": {
+    "languages": [
+      {
+        "id": "roxy",
+        "aliases": ["Roxy"],
+        "extensions": [".roxy"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "roxy",
+        "scopeName": "source.roxy",
+        "path": "./syntaxes/roxy.tmLanguage.json"
+      }
+    ]
+  }
+}
