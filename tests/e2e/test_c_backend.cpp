@@ -701,3 +701,334 @@ TEST_CASE("E2E - C Backend: compile_to_cpp produces valid output") {
     CHECK(cpp_source.find("int32_t") != String::npos);
     CHECK(cpp_source.find("return") != String::npos);
 }
+
+// ===== Phase 3: Runtime Library =====
+
+// --- Step 1: ConstString + CallNative(print) ---
+
+TEST_CASE("E2E - C Backend: Print string literal") {
+    const char* source = R"(
+        fun main(): i32 {
+            print("hello world");
+            return 0;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 0);
+    CHECK(result.stdout_output == "hello world\n");
+}
+
+TEST_CASE("E2E - C Backend: Multiple prints") {
+    const char* source = R"(
+        fun main(): i32 {
+            print("hello");
+            print("world");
+            return 0;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 0);
+    CHECK(result.stdout_output == "hello\nworld\n");
+}
+
+TEST_CASE("E2E - C Backend: Empty string") {
+    const char* source = R"(
+        fun main(): i32 {
+            print("");
+            return 0;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 0);
+    CHECK(result.stdout_output == "\n");
+}
+
+// --- Step 2: String operations + to_string + f-strings ---
+
+TEST_CASE("E2E - C Backend: String concatenation") {
+    const char* source = R"(
+        fun main(): i32 {
+            var a: string = "hello ";
+            var b: string = "world";
+            print(a + b);
+            return 0;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 0);
+    CHECK(result.stdout_output == "hello world\n");
+}
+
+TEST_CASE("E2E - C Backend: String equality") {
+    const char* source = R"(
+        fun main(): i32 {
+            var a: string = "hello";
+            var b: string = "hello";
+            if (a == b) { return 1; }
+            return 0;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 1);
+}
+
+TEST_CASE("E2E - C Backend: String inequality") {
+    const char* source = R"(
+        fun main(): i32 {
+            var a: string = "hello";
+            var b: string = "world";
+            if (a != b) { return 1; }
+            return 0;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 1);
+}
+
+TEST_CASE("E2E - C Backend: F-string interpolation") {
+    const char* source = R"(
+        fun main(): i32 {
+            var x: i32 = 42;
+            print(f"x = {x}");
+            return 0;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 0);
+    CHECK(result.stdout_output == "x = 42\n");
+}
+
+TEST_CASE("E2E - C Backend: F-string with multiple expressions") {
+    const char* source = R"(
+        fun main(): i32 {
+            var a: i32 = 10;
+            var b: i32 = 20;
+            print(f"{a} + {b} = {a + b}");
+            return 0;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 0);
+    CHECK(result.stdout_output == "10 + 20 = 30\n");
+}
+
+TEST_CASE("E2E - C Backend: String length") {
+    const char* source = R"(
+        fun main(): i32 {
+            var s: string = "hello";
+            return str_len(s);
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 5);
+}
+
+// --- Step 3: New / Delete (heap allocation) ---
+
+TEST_CASE("E2E - C Backend: Heap allocation basic") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            p.x = 20;
+            p.y = 22;
+            return p.x + p.y;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("E2E - C Backend: Heap allocation with constructor") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+        fun new Point(x: i32, y: i32) {
+            self.x = x;
+            self.y = y;
+        }
+        fun main(): i32 {
+            var p: uniq Point = uniq Point(20, 22);
+            return p.x + p.y;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+// --- Step 4: RefInc / RefDec ---
+
+TEST_CASE("E2E - C Backend: Ref parameter") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+        fun sum(p: ref Point): i32 {
+            return p.x + p.y;
+        }
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            p.x = 20;
+            p.y = 22;
+            return sum(p);
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("E2E - C Backend: Ref write through") {
+    const char* source = R"(
+        struct Counter {
+            val: i32;
+        }
+        fun increment(c: ref Counter) {
+            c.val = c.val + 1;
+        }
+        fun main(): i32 {
+            var c: uniq Counter = uniq Counter();
+            c.val = 41;
+            increment(c);
+            return c.val;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+// --- Step 6: List operations ---
+
+TEST_CASE("E2E - C Backend: List push and len") {
+    const char* source = R"(
+        fun main(): i32 {
+            var list: List<i32> = List<i32>();
+            list.push(10);
+            list.push(20);
+            list.push(12);
+            return list.len();
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 3);
+}
+
+TEST_CASE("E2E - C Backend: List indexing") {
+    const char* source = R"(
+        fun main(): i32 {
+            var list: List<i32> = List<i32>();
+            list.push(10);
+            list.push(20);
+            list.push(12);
+            return list[0] + list[1] + list[2];
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("E2E - C Backend: List pop") {
+    const char* source = R"(
+        fun main(): i32 {
+            var list: List<i32> = List<i32>();
+            list.push(10);
+            list.push(42);
+            list.push(99);
+            list.pop();
+            return list.pop();
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+// --- Step 7: Map operations ---
+
+TEST_CASE("E2E - C Backend: Map insert and get") {
+    const char* source = R"(
+        fun main(): i32 {
+            var m: Map<i32, i32> = Map<i32, i32>();
+            m.insert(1, 10);
+            m.insert(2, 32);
+            return m.get(1) + m.get(2);
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("E2E - C Backend: Map contains and remove") {
+    const char* source = R"(
+        fun main(): i32 {
+            var m: Map<i32, i32> = Map<i32, i32>();
+            m.insert(1, 42);
+            if (m.contains(1)) {
+                var val: i32 = m.get(1);
+                m.remove(1);
+                if (!m.contains(1)) {
+                    return val;
+                }
+            }
+            return 0;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("E2E - C Backend: Map len") {
+    const char* source = R"(
+        fun main(): i32 {
+            var m: Map<i32, i32> = Map<i32, i32>();
+            m.insert(1, 10);
+            m.insert(2, 20);
+            m.insert(3, 30);
+            return m.len();
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 3);
+}

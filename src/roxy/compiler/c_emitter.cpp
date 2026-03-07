@@ -39,13 +39,19 @@ void CEmitter::emit_type(Type* type, String& out) {
             out.append("*");
             break;
         case TypeKind::String:
-            out.append("void*"); // Phase 3: roxy_string*
+            out.append("void*");
             break;
         case TypeKind::List:
-            out.append("void*"); // Phase 3: roxy_list*
+            out.append("void*");
             break;
         case TypeKind::Map:
-            out.append("void*"); // Phase 3: roxy_map*
+            out.append("void*");
+            break;
+        case TypeKind::Weak:
+            out.append("roxy_weak");
+            break;
+        case TypeKind::Nil:
+            out.append("void*");
             break;
         default:
             out.append("/* unsupported type */ void");
@@ -168,6 +174,9 @@ void CEmitter::collect_value_types(const IRFunction* func) {
                 m_pointer_values.insert(inst->result.id);
             }
             if (inst->op == IROp::GetFieldAddr) {
+                m_pointer_values.insert(inst->result.id);
+            }
+            if (inst->op == IROp::New) {
                 m_pointer_values.insert(inst->result.id);
             }
         }
@@ -428,7 +437,7 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         case IROp::ConstNull: {
             out.append("    ");
             emit_value(inst->result, out);
-            out.append(" = 0;\n");
+            out.append(" = nullptr;\n");
             return;
         }
 
@@ -897,15 +906,100 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             return;
         }
 
-        // --- Unsupported ops (Phase 3+) ---
-        case IROp::ConstString:
-        case IROp::RefInc:
-        case IROp::RefDec:
-        case IROp::WeakCheck:
-        case IROp::WeakCreate:
-        case IROp::New:
-        case IROp::Delete:
-        case IROp::CallNative:
+        // --- Phase 3: Runtime library ops ---
+
+        case IROp::ConstString: {
+            out.append("    ");
+            emit_value(inst->result, out);
+            out.append(" = roxy_string_from_literal(");
+            emit_escaped_string(inst->const_data.string_val, out);
+            char buf[16];
+            format_to(buf, sizeof(buf), ", {});\n", inst->const_data.string_val.size());
+            out.append(buf);
+            return;
+        }
+
+        case IROp::CallNative: {
+            emit_native_call(inst, out);
+            return;
+        }
+
+        case IROp::New: {
+            // Allocate a new heap object: (StructType*)roxy_alloc(sizeof(StructType), TYPEID_StructType)
+            out.append("    ");
+            emit_value(inst->result, out);
+            out.append(" = (");
+            emit_type(inst->type, out);
+            out.append(")roxy_alloc(sizeof(");
+            // The result type is a pointer (Uniq/Ref), so get the inner struct type
+            Type* inner_type = inst->type;
+            if (inner_type && inner_type->is_reference()) {
+                inner_type = inner_type->ref_info.inner_type;
+            }
+            if (inner_type) {
+                emit_type(inner_type, out);
+            } else {
+                emit_type(inst->type, out);
+            }
+            out.append("), TYPEID_");
+            emit_mangled_name(inst->new_data.type_name, out);
+            out.append(");\n");
+            // Zero-initialize the struct data
+            out.append("    memset(");
+            emit_value(inst->result, out);
+            out.append(", 0, sizeof(");
+            if (inner_type) {
+                emit_type(inner_type, out);
+            } else {
+                emit_type(inst->type, out);
+            }
+            out.append("));\n");
+            return;
+        }
+
+        case IROp::Delete: {
+            out.append("    roxy_free(");
+            emit_value(inst->unary, out);
+            out.append(");\n");
+            return;
+        }
+
+        case IROp::RefInc: {
+            out.append("    roxy_ref_inc(");
+            emit_value(inst->unary, out);
+            out.append(");\n");
+            return;
+        }
+
+        case IROp::RefDec: {
+            out.append("    roxy_ref_dec(");
+            emit_value(inst->unary, out);
+            out.append(");\n");
+            return;
+        }
+
+        case IROp::WeakCreate: {
+            out.append("    ");
+            emit_value(inst->result, out);
+            out.append(" = roxy_weak_create(");
+            emit_value(inst->unary, out);
+            out.append(");\n");
+            return;
+        }
+
+        case IROp::WeakCheck: {
+            // WeakCheck takes a roxy_weak struct and checks validity
+            out.append("    ");
+            emit_value(inst->result, out);
+            out.append(" = roxy_weak_valid(");
+            emit_value(inst->unary, out);
+            out.append(".ptr, ");
+            emit_value(inst->unary, out);
+            out.append(".generation);\n");
+            return;
+        }
+
+        // --- Still unsupported (Phase 4+) ---
         case IROp::Throw:
         case IROp::Yield: {
             out.append("    /* TODO: unsupported op: ");
@@ -1193,6 +1287,287 @@ void CEmitter::emit_header(const IRModule* module, String& output) {
     output.append("#include <stdbool.h>\n\n");
 }
 
+// --- Phase 3: Runtime library support ---
+
+void CEmitter::emit_runtime_include(String& out) {
+    out.append("#include \"roxy_rt.h\"\n");
+}
+
+void CEmitter::emit_type_id_defines(const IRModule* module, String& out) {
+    // User-defined struct type IDs start at 100
+    for (u32 i = 0; i < module->struct_types.size(); i++) {
+        out.append("#define TYPEID_");
+        emit_mangled_name(module->struct_types[i]->struct_info.name, out);
+        char buf[16];
+        format_to(buf, sizeof(buf), " {}\n", 100 + i);
+        out.append(buf);
+    }
+    if (!module->struct_types.empty()) {
+        out.append("\n");
+    }
+}
+
+void CEmitter::emit_escaped_string(StringView str, String& out) {
+    out.push_back('"');
+    const char* data = str.data();
+    u32 len = str.size();
+    for (u32 i = 0; i < len; i++) {
+        char c = data[i];
+        switch (c) {
+            case '\\': out.append("\\\\"); break;
+            case '"':  out.append("\\\""); break;
+            case '\n': out.append("\\n"); break;
+            case '\r': out.append("\\r"); break;
+            case '\t': out.append("\\t"); break;
+            case '\0': out.append("\\0"); break;
+            default:
+                if (c < 0x20) {
+                    char buf[8];
+                    snprintf(buf, sizeof(buf), "\\x%02x", static_cast<unsigned char>(c));
+                    out.append(buf);
+                } else {
+                    out.push_back(c);
+                }
+                break;
+        }
+    }
+    out.push_back('"');
+}
+
+void CEmitter::emit_native_call(const IRInst* inst, String& out) {
+    StringView name = inst->call.func_name;
+
+    // Static name mapping table
+    struct NativeMapping {
+        const char* roxy_name;
+        const char* c_name;
+    };
+
+    static const NativeMapping mappings[] = {
+        // Print
+        {"print", "roxy_print"},
+        // String functions
+        {"str_concat", "roxy_string_concat"},
+        {"str_eq", "roxy_string_eq"},
+        {"str_ne", "roxy_string_ne"},
+        {"str_len", "roxy_string_len"},
+        // to_string
+        {"bool$$to_string", "roxy_bool_to_string"},
+        {"i32$$to_string", "roxy_i32_to_string"},
+        {"i64$$to_string", "roxy_i64_to_string"},
+        {"f32$$to_string", "roxy_f32_to_string"},
+        {"f64$$to_string", "roxy_f64_to_string"},
+        {"string$$to_string", "roxy_string_to_string"},
+        // Hash
+        {"bool$$hash", "roxy_bool_hash"},
+        {"i8$$hash", "roxy_i8_hash"},
+        {"i16$$hash", "roxy_i16_hash"},
+        {"i32$$hash", "roxy_i32_hash"},
+        {"i64$$hash", "roxy_i64_hash"},
+        {"u8$$hash", "roxy_u8_hash"},
+        {"u16$$hash", "roxy_u16_hash"},
+        {"u32$$hash", "roxy_u32_hash"},
+        {"u64$$hash", "roxy_u64_hash"},
+        {"f32$$hash", "roxy_f32_hash"},
+        {"f64$$hash", "roxy_f64_hash"},
+        {"string$$hash", "roxy_string_hash"},
+        // List
+        {"list_alloc", "roxy_list_alloc"},
+        {"list_copy", "roxy_list_copy"},
+        {"List$$new", "roxy_list_init"},
+        {"List$$delete", "roxy_list_delete"},
+        {"List$$len", "roxy_list_len"},
+        {"List$$cap", "roxy_list_cap"},
+        {"List$$push", "roxy_list_push"},
+        {"List$$pop", "roxy_list_pop"},
+        {"List$$index", "roxy_list_get"},
+        {"List$$index_mut", "roxy_list_set"},
+        // Map
+        {"map_alloc", "roxy_map_alloc"},
+        {"map_copy", "roxy_map_copy"},
+        {"Map$$new", "roxy_map_init"},
+        {"Map$$delete", "roxy_map_delete"},
+        {"Map$$len", "roxy_map_len"},
+        {"Map$$contains", "roxy_map_contains"},
+        {"Map$$get", "roxy_map_get"},
+        {"Map$$insert", "roxy_map_insert"},
+        {"Map$$remove", "roxy_map_remove"},
+        {"Map$$clear", "roxy_map_clear"},
+        {"Map$$keys", "roxy_map_keys"},
+        {"Map$$values", "roxy_map_values"},
+        {"Map$$index", "roxy_map_index"},
+        {"Map$$index_mut", "roxy_map_index_mut"},
+        // Internal map iteration
+        {"__map_iter_capacity", "roxy_map_iter_capacity"},
+        {"__map_iter_next_occupied", "roxy_map_iter_next_occupied"},
+        {"__map_iter_key_at", "roxy_map_iter_key_at"},
+        {"__map_iter_value_at", "roxy_map_iter_value_at"},
+    };
+
+    const char* c_func_name = nullptr;
+
+    // Check exact matches first
+    for (const auto& m : mappings) {
+        if (name == StringView(m.roxy_name)) {
+            c_func_name = m.c_name;
+            break;
+        }
+    }
+
+    // If no exact match found, check for pattern-based matches
+    // (e.g., monomorphized generic names like "List$i32$$$push")
+    if (!c_func_name) {
+        // Check for List methods with monomorphized names (List$<type>$$method)
+        if (name.size() > 4 && name.data()[0] == 'L' && name.data()[1] == 'i' &&
+            name.data()[2] == 's' && name.data()[3] == 't') {
+            // Find the last $$ in the name to get the method part
+            const char* data = name.data();
+            u32 len = name.size();
+            for (u32 i = len - 1; i >= 2; i--) {
+                if (data[i - 1] == '$' && data[i] == '$' && i + 1 < len) {
+                    StringView method_part(data + i + 1, len - i - 1);
+                    if (method_part == StringView("new")) { c_func_name = "roxy_list_init"; break; }
+                    if (method_part == StringView("delete")) { c_func_name = "roxy_list_delete"; break; }
+                    if (method_part == StringView("len")) { c_func_name = "roxy_list_len"; break; }
+                    if (method_part == StringView("cap")) { c_func_name = "roxy_list_cap"; break; }
+                    if (method_part == StringView("push")) { c_func_name = "roxy_list_push"; break; }
+                    if (method_part == StringView("pop")) { c_func_name = "roxy_list_pop"; break; }
+                    if (method_part == StringView("index")) { c_func_name = "roxy_list_get"; break; }
+                    if (method_part == StringView("index_mut")) { c_func_name = "roxy_list_set"; break; }
+                    break;
+                }
+            }
+        }
+
+        // Check for Map methods with monomorphized names
+        if (!c_func_name && name.size() > 3 && name.data()[0] == 'M' && name.data()[1] == 'a' &&
+            name.data()[2] == 'p') {
+            const char* data = name.data();
+            u32 len = name.size();
+            for (u32 i = len - 1; i >= 2; i--) {
+                if (data[i - 1] == '$' && data[i] == '$' && i + 1 < len) {
+                    StringView method_part(data + i + 1, len - i - 1);
+                    if (method_part == StringView("new")) { c_func_name = "roxy_map_init"; break; }
+                    if (method_part == StringView("delete")) { c_func_name = "roxy_map_delete"; break; }
+                    if (method_part == StringView("len")) { c_func_name = "roxy_map_len"; break; }
+                    if (method_part == StringView("contains")) { c_func_name = "roxy_map_contains"; break; }
+                    if (method_part == StringView("get")) { c_func_name = "roxy_map_get"; break; }
+                    if (method_part == StringView("insert")) { c_func_name = "roxy_map_insert"; break; }
+                    if (method_part == StringView("remove")) { c_func_name = "roxy_map_remove"; break; }
+                    if (method_part == StringView("clear")) { c_func_name = "roxy_map_clear"; break; }
+                    if (method_part == StringView("keys")) { c_func_name = "roxy_map_keys"; break; }
+                    if (method_part == StringView("values")) { c_func_name = "roxy_map_values"; break; }
+                    if (method_part == StringView("index")) { c_func_name = "roxy_map_index"; break; }
+                    if (method_part == StringView("index_mut")) { c_func_name = "roxy_map_index_mut"; break; }
+                    break;
+                }
+            }
+        }
+
+        // Check for monomorphized list_alloc / list_copy / map_alloc / map_copy
+        if (!c_func_name) {
+            // list_alloc$<type> or map_alloc$<type>
+            if (name.size() > 10 && StringView(name.data(), 10) == StringView("list_alloc")) {
+                c_func_name = "roxy_list_alloc";
+            } else if (name.size() > 9 && StringView(name.data(), 9) == StringView("list_copy")) {
+                c_func_name = "roxy_list_copy";
+            } else if (name.size() > 9 && StringView(name.data(), 9) == StringView("map_alloc")) {
+                c_func_name = "roxy_map_alloc";
+            } else if (name.size() > 8 && StringView(name.data(), 8) == StringView("map_copy")) {
+                c_func_name = "roxy_map_copy";
+            }
+        }
+    }
+
+    if (!c_func_name) {
+        // Fallback: emit as mangled name with a warning comment
+        out.append("    /* WARNING: unmapped native '");
+        out.append(name.data(), name.size());
+        out.append("' */ ");
+        if (inst->result.is_valid() && inst->type && inst->type->kind != TypeKind::Void) {
+            emit_value(inst->result, out);
+            out.append(" = ");
+        }
+        emit_mangled_name(name, out);
+        out.push_back('(');
+        for (u32 i = 0; i < inst->call.args.size(); i++) {
+            if (i > 0) out.append(", ");
+            emit_value(inst->call.args[i], out);
+        }
+        out.append(");\n");
+        return;
+    }
+
+    // Determine if this is a list/map operation that needs type-erasure casts
+    auto name_eq = [](const char* a, const char* b) { return strcmp(a, b) == 0; };
+    bool is_list_init = name_eq(c_func_name, "roxy_list_init");
+    bool is_list_push = name_eq(c_func_name, "roxy_list_push");
+    bool is_list_set = name_eq(c_func_name, "roxy_list_set");
+    bool is_list_pop = name_eq(c_func_name, "roxy_list_pop");
+    bool is_list_get = name_eq(c_func_name, "roxy_list_get");
+    bool is_map_init = name_eq(c_func_name, "roxy_map_init");
+    bool is_map_insert = name_eq(c_func_name, "roxy_map_insert");
+    bool is_map_get = name_eq(c_func_name, "roxy_map_get");
+    bool is_map_contains = name_eq(c_func_name, "roxy_map_contains");
+    bool is_map_index = name_eq(c_func_name, "roxy_map_index");
+    bool is_map_index_mut = name_eq(c_func_name, "roxy_map_index_mut");
+    bool is_map_iter_key_at = name_eq(c_func_name, "roxy_map_iter_key_at");
+    bool is_map_iter_value_at = name_eq(c_func_name, "roxy_map_iter_value_at");
+    bool needs_result_cast = is_list_pop || is_list_get || is_map_get || is_map_index ||
+                             is_map_iter_key_at || is_map_iter_value_at;
+
+    // Determine which argument positions need uint64_t cast for type-erased container ops
+    // list_push(self, value) -> value at index 1
+    // list_set(self, index, value) -> value at index 2
+    // map_insert(self, key, value) -> key at 1, value at 2
+    // map_contains(self, key) -> key at 1
+    // map_get(self, key) -> key at 1
+    // map_index(self, key) -> key at 1
+    // map_index_mut(self, key, value) -> key at 1, value at 2
+
+    out.append("    ");
+    bool has_result = inst->result.is_valid() && inst->type && inst->type->kind != TypeKind::Void;
+    if (has_result) {
+        emit_value(inst->result, out);
+        out.append(" = ");
+        if (needs_result_cast) {
+            out.append("(");
+            emit_type(inst->type, out);
+            out.append(")");
+        }
+    }
+    out.append(c_func_name);
+    out.push_back('(');
+    for (u32 i = 0; i < inst->call.args.size(); i++) {
+        if (i > 0) out.append(", ");
+
+        // Check if this argument needs a uint64_t cast
+        bool cast_to_u64 = false;
+        if (is_list_push && i == 1) cast_to_u64 = true;
+        if (is_list_set && i == 2) cast_to_u64 = true;
+        if (is_map_insert && (i == 1 || i == 2)) cast_to_u64 = true;
+        if (is_map_contains && i == 1) cast_to_u64 = true;
+        if ((is_map_get || is_map_index) && i == 1) cast_to_u64 = true;
+        if (is_map_index_mut && (i == 1 || i == 2)) cast_to_u64 = true;
+
+        if (cast_to_u64) {
+            out.append("(uint64_t)");
+        }
+        emit_value(inst->call.args[i], out);
+    }
+
+    // List$$new(self) -> roxy_list_init(self, 0) - add default capacity
+    if (is_list_init && inst->call.args.size() == 1) {
+        out.append(", 0");
+    }
+    // Map$$new(self, key_kind) -> roxy_map_init(self, key_kind, 0) - add default capacity
+    if (is_map_init && inst->call.args.size() == 2) {
+        out.append(", 0");
+    }
+
+    out.append(");\n");
+}
+
 void CEmitter::emit_source(const IRModule* module, String& output) {
     m_module = module;
 
@@ -1201,7 +1576,11 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
     output.append("#include <stdbool.h>\n");
     output.append("#include <stdio.h>\n");
     output.append("#include <stdlib.h>\n");
-    output.append("#include <string.h>\n\n");
+    output.append("#include <string.h>\n");
+
+    // Runtime library include
+    emit_runtime_include(output);
+    output.append("\n");
 
     for (u32 i = 0; i < m_config.native_include_paths.size(); i++) {
         output.append("#include \"");
@@ -1211,6 +1590,9 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
     if (!m_config.native_include_paths.empty()) {
         output.append("\n");
     }
+
+    // Type ID defines for user-defined structs
+    emit_type_id_defines(module, output);
 
     // Enum typedefs
     emit_enum_typedefs(module, output);

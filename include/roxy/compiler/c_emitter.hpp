@@ -65,6 +65,12 @@ private:
     // Check if a StackAlloc value is for a non-struct type (scalar out/inout)
     bool is_scalar_stack_alloc(ValueId id);
 
+    // Phase 3: Runtime library support
+    void emit_runtime_include(String& out);
+    void emit_type_id_defines(const IRModule* module, String& out);
+    void emit_escaped_string(StringView str, String& out);
+    void emit_native_call(const IRInst* inst, String& out);
+
     // Configuration
     CEmitterConfig m_config;
     BumpAllocator& m_alloc;

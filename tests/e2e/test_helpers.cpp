@@ -146,9 +146,9 @@ IRModule* compile_to_ir(BumpAllocator& allocator, const char* source, bool debug
     SemanticAnalyzer analyzer(allocator, type_env, modules);
     if (!analyzer.analyze(program)) {
         if (debug) {
-            printf("Semantic errors:\n");
+            fprintf(stderr, "Semantic errors:\n");
             for (const auto& err : analyzer.errors()) {
-                printf("  Line %u: %s\n", err.loc.line, err.message);
+                fprintf(stderr, "  Line %u: %s\n", err.loc.line, err.message);
             }
         }
         return nullptr;
@@ -175,14 +175,14 @@ IRModule* compile_to_ir(BumpAllocator& allocator, const char* source, bool debug
         String ir_str;
         ir_module_to_string(ir_module, ir_str);
         ir_str.push_back('\0');
-        printf("=== IR ===\n%s\n", ir_str.data());
+        fprintf(stderr, "=== IR ===\n%s\n", ir_str.data());
     }
 
     coroutine_lower(ir_module, allocator, type_env);
 
     IRValidator validator;
     if (!validator.validate(ir_module)) {
-        if (debug) printf("IR validation failed: %s\n", validator.error());
+        if (debug) fprintf(stderr, "IR validation failed: %s\n", validator.error());
         return nullptr;
     }
 
@@ -210,6 +210,41 @@ String compile_to_cpp(const char* source, bool debug) {
     return output;
 }
 
+// Get the project root directory
+// Uses ROXY_PROJECT_ROOT define set by CMake, falls back to __FILE__-based detection
+static const char* get_project_root() {
+#ifdef ROXY_PROJECT_ROOT
+    return ROXY_PROJECT_ROOT;
+#else
+    // Fallback: derive from __FILE__
+    // __FILE__ = ".../roxy-v2/tests/e2e/test_helpers.cpp"
+    static char root[512] = {0};
+    if (root[0] != '\0') return root;
+
+    const char* file = __FILE__;
+    size_t file_len = strlen(file);
+    if (file_len >= sizeof(root)) return nullptr;
+    strncpy(root, file, sizeof(root) - 1);
+
+    for (size_t i = file_len; i > 0; i--) {
+        if (root[i - 1] == '/' || root[i - 1] == '\\') {
+            root[i - 1] = '\0';
+            size_t remaining = strlen(root);
+            if (remaining >= 9 && strcmp(root + remaining - 9, "tests/e2e") == 0) {
+                root[remaining - 9] = '\0';
+                remaining = strlen(root);
+                if (remaining > 0 && (root[remaining - 1] == '/' || root[remaining - 1] == '\\')) {
+                    root[remaining - 1] = '\0';
+                }
+                return root;
+            }
+            root[i - 1] = file[i - 1];
+        }
+    }
+    return nullptr;
+#endif
+}
+
 CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     CBackendResult result;
     result.exit_code = -1;
@@ -218,8 +253,24 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
 
     String cpp_source = compile_to_cpp(source, debug);
     if (cpp_source.empty()) {
+        fprintf(stderr, "[C Backend] compile_to_cpp returned empty\n");
         return result;
     }
+
+    // Find project root for runtime include path
+    const char* project_root = get_project_root();
+    if (!project_root) {
+        fprintf(stderr, "[C Backend] Failed to find project root\n");
+        return result;
+    }
+
+    // Build paths to runtime files
+    char rt_include_dir[512];       // For generated code: #include "roxy_rt.h"
+    char rt_include_dir_root[512];  // For roxy_rt.cpp: #include "roxy/rt/roxy_rt.h"
+    char rt_src_path[512];
+    snprintf(rt_include_dir, sizeof(rt_include_dir), "%s/include/roxy/rt", project_root);
+    snprintf(rt_include_dir_root, sizeof(rt_include_dir_root), "%s/include", project_root);
+    snprintf(rt_src_path, sizeof(rt_src_path), "%s/src/roxy/rt/roxy_rt.cpp", project_root);
 
     // Write C++ source to temp file
     const char* tmpdir = getenv("TMPDIR");
@@ -248,10 +299,15 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     }
     close(bin_fd);
 
-    // Compile with c++
-    char compile_cmd[512];
+    // Compile with c++ — include runtime header and compile runtime source
+    char compile_cmd[1024];
     snprintf(compile_cmd, sizeof(compile_cmd),
-             "c++ -std=c++17 -o %s %s 2>&1", bin_path, src_path);
+             "c++ -std=c++17 -I%s -I%s -o %s %s %s 2>&1",
+             rt_include_dir, rt_include_dir_root, bin_path, src_path, rt_src_path);
+
+    if (debug) {
+        printf("Compile command: %s\n", compile_cmd);
+    }
 
     FILE* compile_pipe = popen(compile_cmd, "r");
     if (!compile_pipe) {
@@ -268,8 +324,9 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     int compile_status = pclose(compile_pipe);
 
     if (compile_status != 0) {
+        fprintf(stderr, "[C Backend] C++ compilation failed:\n%s\n", compile_errors.c_str());
         if (debug) {
-            printf("C++ compilation failed:\n%s\n", compile_errors.c_str());
+            fprintf(stderr, "=== Generated C++ ===\n%s\n", cpp_source.c_str());
         }
         remove(src_path);
         remove(bin_path);
