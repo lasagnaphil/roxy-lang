@@ -1,8 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 
 #include "roxy/lsp/global_index.hpp"
-#include "roxy/lsp/lsp_type_resolver.hpp"
-#include "roxy/lsp/cst_lowering.hpp"
 #include "roxy/lsp/lsp_parser.hpp"
 #include "roxy/lsp/indexer.hpp"
 #include "roxy/core/bump_allocator.hpp"
@@ -153,133 +151,8 @@ TEST_CASE("Completion - GlobalIndex: cleanup on remove_file") {
     CHECK(index.find_method_signature("Point", "length").empty());
 }
 
-// --- LspTypeResolver accessor tests ---
-
-TEST_CASE("Completion - LspTypeResolver: var_types accessible") {
-    GlobalIndex index;
-    BumpAllocator parse_alloc(4096);
-    BumpAllocator ast_alloc(4096);
-
-    const char* source = "fun main() { var p: Point; var q: i32; }";
-    u32 length = static_cast<u32>(strlen(source));
-
-    LspTypeResolver resolver(index);
-
-    Lexer lexer(source, length);
-    LspParser parser(lexer, parse_alloc);
-    SyntaxTree tree = parser.parse();
-
-    SyntaxNode* fn_node = nullptr;
-    for (u32 i = 0; i < tree.root->children.size(); i++) {
-        if (tree.root->children[i]->kind == SyntaxKind::NodeFunDecl) {
-            fn_node = tree.root->children[i];
-            break;
-        }
-    }
-    REQUIRE(fn_node != nullptr);
-
-    CstLowering lowering(ast_alloc);
-    Decl* ast_decl = lowering.lower_decl(fn_node);
-    resolver.analyze_function(ast_decl);
-
-    const auto& var_types = resolver.var_types();
-    CHECK(var_types.size() == 2);
-
-    auto p_it = var_types.find(String("p"));
-    REQUIRE(p_it != var_types.end());
-    CHECK(p_it->second == String("Point"));
-
-    auto q_it = var_types.find(String("q"));
-    REQUIRE(q_it != var_types.end());
-    CHECK(q_it->second == String("i32"));
-}
-
-TEST_CASE("Completion - LspTypeResolver: self_type in method") {
-    BumpAllocator index_alloc(4096);
-    GlobalIndex index;
-    setup_index(index, "struct Point { x: f32; }", index_alloc);
-
-    BumpAllocator parse_alloc(4096);
-    BumpAllocator ast_alloc(4096);
-
-    const char* source = "fun Point.get_x(): f32 { return self.x; }";
-    u32 length = static_cast<u32>(strlen(source));
-
-    LspTypeResolver resolver(index);
-
-    Lexer lexer(source, length);
-    LspParser parser(lexer, parse_alloc);
-    SyntaxTree tree = parser.parse();
-
-    SyntaxNode* fn_node = nullptr;
-    for (u32 i = 0; i < tree.root->children.size(); i++) {
-        if (tree.root->children[i]->kind == SyntaxKind::NodeMethodDecl) {
-            fn_node = tree.root->children[i];
-            break;
-        }
-    }
-    REQUIRE(fn_node != nullptr);
-
-    CstLowering lowering(ast_alloc);
-    Decl* ast_decl = lowering.lower_decl(fn_node);
-    resolver.analyze_function(ast_decl);
-
-    CHECK(resolver.self_type() == String("Point"));
-}
-
 // --- Completion context detection tests ---
 // These test the context detection logic indirectly through integration
-
-TEST_CASE("Completion - Integration: dot access completes struct fields and methods") {
-    BumpAllocator allocator(4096);
-    GlobalIndex index;
-    setup_index(index,
-        "struct Point { x: f32; y: f32; }\n"
-        "fun Point.length(): f32 { return 0.0; }",
-        allocator);
-
-    // Source with cursor after "p."
-    const char* source = "fun main() { var p: Point; p. }";
-    u32 length = static_cast<u32>(strlen(source));
-
-    // Re-parse to get CST
-    BumpAllocator parse_alloc(8192);
-    Lexer lexer(source, length);
-    LspParser parser(lexer, parse_alloc);
-    SyntaxTree tree = parser.parse();
-
-    // Find enclosing function and resolve types
-    SyntaxNode* fn_node = nullptr;
-    for (u32 i = 0; i < tree.root->children.size(); i++) {
-        if (tree.root->children[i]->kind == SyntaxKind::NodeFunDecl) {
-            fn_node = tree.root->children[i];
-            break;
-        }
-    }
-    REQUIRE(fn_node != nullptr);
-
-    BumpAllocator ast_alloc(8192);
-    CstLowering lowering(ast_alloc);
-    Decl* ast_decl = lowering.lower_decl(fn_node);
-
-    LspTypeResolver resolver(index);
-    resolver.analyze_function(ast_decl);
-
-    // Verify "p" resolves to Point
-    auto p_it = resolver.var_types().find(String("p"));
-    REQUIRE(p_it != resolver.var_types().end());
-    CHECK(p_it->second == String("Point"));
-
-    // Verify fields and methods are available
-    const Vector<String>* fields = index.get_struct_fields("Point");
-    REQUIRE(fields != nullptr);
-    CHECK(fields->size() == 2);
-
-    const Vector<String>* methods = index.get_struct_methods("Point");
-    REQUIRE(methods != nullptr);
-    CHECK(methods->size() == 1);
-    CHECK((*methods)[0] == String("length"));
-}
 
 TEST_CASE("Completion - Integration: inherited fields in dot completion") {
     BumpAllocator allocator(4096);

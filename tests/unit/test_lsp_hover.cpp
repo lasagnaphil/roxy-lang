@@ -1,28 +1,41 @@
 #include "roxy/core/doctest/doctest.h"
 
 #include "roxy/lsp/global_index.hpp"
-#include "roxy/lsp/lsp_type_resolver.hpp"
-#include "roxy/lsp/cst_lowering.hpp"
+#include "roxy/lsp/lsp_analysis_context.hpp"
 #include "roxy/lsp/lsp_parser.hpp"
 #include "roxy/lsp/indexer.hpp"
 #include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/tsl/robin_map.h"
 
 #include <cstring>
 
 using namespace rx;
 
-// Helper to set up a GlobalIndex with given source
-static void setup_index(GlobalIndex& index, const char* source, BumpAllocator& allocator) {
-    u32 length = static_cast<u32>(strlen(source));
-    Lexer lexer(source, length);
-    LspParser parser(lexer, allocator);
-    SyntaxTree tree = parser.parse();
+// Bundles GlobalIndex + LspAnalysisContext for tests
+struct HoverTestContext {
+    BumpAllocator index_alloc{8192};
+    GlobalIndex index;
+    LspAnalysisContext analysis_ctx;
 
-    FileIndexer indexer;
-    FileStubs stubs = indexer.index(tree.root);
-    String uri("file:///test.roxy");
-    index.update_file(uri, stubs);
-}
+    void setup(const char* source) {
+        u32 length = static_cast<u32>(strlen(source));
+        Lexer lexer(source, length);
+        LspParser parser(lexer, index_alloc);
+        SyntaxTree tree = parser.parse();
+
+        FileIndexer indexer;
+        FileStubs stubs = indexer.index(tree.root);
+        String uri("file:///test.roxy");
+        index.update_file(uri, stubs);
+
+        LspAnalysisContext::SourceFile file;
+        file.uri = StringView("file:///test.roxy");
+        file.source = source;
+        file.source_length = length;
+        file.cst_root = tree.root;
+        analysis_ctx.rebuild_declarations(Span<LspAnalysisContext::SourceFile>(&file, 1));
+    }
+};
 
 // Helper: find the SyntaxNode at a given byte offset
 static SyntaxNode* parse_and_find(const char* source, u32 offset, BumpAllocator& allocator,
@@ -51,7 +64,7 @@ static SyntaxNode* find_enclosing_function(SyntaxNode* node) {
 
 // Resolve hover text for a node — mirrors the logic in handle_hover
 static String resolve_hover(SyntaxNode* node, const char* source, u32 source_length,
-                             GlobalIndex& index) {
+                             GlobalIndex& index, LspAnalysisContext& analysis_ctx) {
     if (!node) return String();
 
     // Bool literals
@@ -102,12 +115,16 @@ static String resolve_hover(SyntaxNode* node, const char* source, u32 source_len
             SyntaxNode* enclosing_fn = find_enclosing_function(parent);
             if (enclosing_fn) {
                 BumpAllocator ast_allocator(8192);
-                CstLowering lowering(ast_allocator);
-                Decl* ast_decl = lowering.lower_decl(enclosing_fn);
-
-                LspTypeResolver resolver(index);
-                resolver.analyze_function(ast_decl);
-                receiver_type = resolver.resolve_cst_expr_type(object_expr);
+                BodyAnalysisResult body_result = analysis_ctx.analyze_function_body(
+                    enclosing_fn, ast_allocator);
+                if (body_result.decl) {
+                    tsl::robin_map<String, Type*> local_vars;
+                    analysis_ctx.collect_local_variables(body_result.decl, local_vars);
+                    Type* recv_type = analysis_ctx.resolve_cst_expr_type(object_expr, local_vars);
+                    if (recv_type && !recv_type->is_error()) {
+                        receiver_type = LspAnalysisContext::type_to_string(recv_type);
+                    }
+                }
             }
 
             if (!receiver_type.empty()) {
@@ -260,19 +277,20 @@ static String resolve_hover(SyntaxNode* node, const char* source, u32 source_len
         SyntaxNode* enclosing_fn = find_enclosing_function(node);
         if (enclosing_fn) {
             BumpAllocator ast_allocator(8192);
-            CstLowering lowering(ast_allocator);
-            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
-
-            LspTypeResolver resolver(index);
-            resolver.analyze_function(ast_decl);
-
-            auto var_it = resolver.var_types().find(String(identifier));
-            if (var_it != resolver.var_types().end()) {
-                String result("(variable) ");
-                result.append(identifier.data(), identifier.size());
-                result.append(": ", 2);
-                result.append(var_it->second.data(), var_it->second.size());
-                return result;
+            BodyAnalysisResult body_result = analysis_ctx.analyze_function_body(
+                enclosing_fn, ast_allocator);
+            if (body_result.decl) {
+                tsl::robin_map<String, Type*> local_vars;
+                analysis_ctx.collect_local_variables(body_result.decl, local_vars);
+                auto var_it = local_vars.find(String(identifier));
+                if (var_it != local_vars.end()) {
+                    String type_str = LspAnalysisContext::type_to_string(var_it->second);
+                    String result("(variable) ");
+                    result.append(identifier.data(), identifier.size());
+                    result.append(": ", 2);
+                    result.append(type_str.data(), type_str.size());
+                    return result;
+                }
             }
         }
     }
@@ -326,9 +344,8 @@ TEST_CASE("Hover - Variable in expression") {
         "    p;\n"
         "}\n";
 
-    BumpAllocator allocator(8192);
-    GlobalIndex index;
-    setup_index(index, source, allocator);
+    HoverTestContext ctx;
+    ctx.setup(source);
 
     // Find the 'p' in the expression statement "p;"
     // "    p;" — find the offset of the second 'p'
@@ -338,16 +355,16 @@ TEST_CASE("Hover - Variable in expression") {
     SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
     REQUIRE(node != nullptr);
 
-    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), index);
+    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
+                                  ctx.index, ctx.analysis_ctx);
     CHECK(hover == String("(variable) p: Point"));
 }
 
 TEST_CASE("Hover - Function name") {
     const char* source = "fun add(a: i32, b: i32): i32 { return a + b; }";
 
-    BumpAllocator allocator(8192);
-    GlobalIndex index;
-    setup_index(index, source, allocator);
+    HoverTestContext ctx;
+    ctx.setup(source);
 
     // Hover on "add" — offset at 'a' of 'add'
     u32 offset = 4;
@@ -356,7 +373,8 @@ TEST_CASE("Hover - Function name") {
     SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
     REQUIRE(node != nullptr);
 
-    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), index);
+    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
+                                  ctx.index, ctx.analysis_ctx);
     CHECK(hover == String("fun add(a: i32, b: i32): i32"));
 }
 
@@ -369,9 +387,8 @@ TEST_CASE("Hover - Method after dot") {
         "    p.length();\n"
         "}\n";
 
-    BumpAllocator allocator(8192);
-    GlobalIndex index;
-    setup_index(index, source, allocator);
+    HoverTestContext ctx;
+    ctx.setup(source);
 
     // Find "length" after "p." in "p.length();"
     const char* length_pos = strstr(source, "p.length()");
@@ -383,7 +400,8 @@ TEST_CASE("Hover - Method after dot") {
     SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
     REQUIRE(node != nullptr);
 
-    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), index);
+    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
+                                  ctx.index, ctx.analysis_ctx);
     CHECK(hover == String("fun Point.length(): f32"));
 }
 
@@ -395,9 +413,8 @@ TEST_CASE("Hover - Field after dot") {
         "    p.x;\n"
         "}\n";
 
-    BumpAllocator allocator(8192);
-    GlobalIndex index;
-    setup_index(index, source, allocator);
+    HoverTestContext ctx;
+    ctx.setup(source);
 
     // Find "x" after "p." in "p.x;"
     const char* access_pos = strstr(source, "p.x;");
@@ -409,7 +426,8 @@ TEST_CASE("Hover - Field after dot") {
     SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
     REQUIRE(node != nullptr);
 
-    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), index);
+    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
+                                  ctx.index, ctx.analysis_ctx);
     CHECK(hover == String("(field) Point.x: f32"));
 }
 
@@ -420,9 +438,8 @@ TEST_CASE("Hover - Struct type in annotation") {
         "    var p: Point;\n"
         "}\n";
 
-    BumpAllocator allocator(8192);
-    GlobalIndex index;
-    setup_index(index, source, allocator);
+    HoverTestContext ctx;
+    ctx.setup(source);
 
     // Find "Point" in "var p: Point;"
     const char* type_pos = strstr(source + 33, "Point");
@@ -434,7 +451,8 @@ TEST_CASE("Hover - Struct type in annotation") {
     SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
     REQUIRE(node != nullptr);
 
-    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), index);
+    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
+                                  ctx.index, ctx.analysis_ctx);
     CHECK(hover == String("struct Point"));
 }
 
@@ -445,9 +463,8 @@ TEST_CASE("Hover - Enum type") {
         "    var c: Color;\n"
         "}\n";
 
-    BumpAllocator allocator(8192);
-    GlobalIndex index;
-    setup_index(index, source, allocator);
+    HoverTestContext ctx;
+    ctx.setup(source);
 
     // Find "Color" in "var c: Color;"
     const char* type_pos = strstr(source + 31, "Color");
@@ -459,7 +476,8 @@ TEST_CASE("Hover - Enum type") {
     SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
     REQUIRE(node != nullptr);
 
-    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), index);
+    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
+                                  ctx.index, ctx.analysis_ctx);
     CHECK(hover == String("enum Color"));
 }
 
@@ -470,9 +488,8 @@ TEST_CASE("Hover - Self keyword") {
         "    return self.x;\n"
         "}\n";
 
-    BumpAllocator allocator(8192);
-    GlobalIndex index;
-    setup_index(index, source, allocator);
+    HoverTestContext ctx;
+    ctx.setup(source);
 
     // Find "self" in "self.x"
     const char* self_pos = strstr(source, "self");
@@ -484,7 +501,8 @@ TEST_CASE("Hover - Self keyword") {
     SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
     REQUIRE(node != nullptr);
 
-    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), index);
+    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
+                                  ctx.index, ctx.analysis_ctx);
     CHECK(hover == String("self: Point"));
 }
 
@@ -495,9 +513,8 @@ TEST_CASE("Hover - Enum variant via static access") {
         "    var c = Color::Red;\n"
         "}\n";
 
-    BumpAllocator allocator(8192);
-    GlobalIndex index;
-    setup_index(index, source, allocator);
+    HoverTestContext ctx;
+    ctx.setup(source);
 
     // Find "Red" in "Color::Red"
     const char* red_pos = strstr(source, "Red;");
@@ -509,7 +526,8 @@ TEST_CASE("Hover - Enum variant via static access") {
     SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
     REQUIRE(node != nullptr);
 
-    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), index);
+    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
+                                  ctx.index, ctx.analysis_ctx);
     CHECK(hover == String("(variant) Color::Red"));
 }
 
@@ -522,9 +540,8 @@ TEST_CASE("Hover - Inherited field") {
         "    c.x;\n"
         "}\n";
 
-    BumpAllocator allocator(8192);
-    GlobalIndex index;
-    setup_index(index, source, allocator);
+    HoverTestContext ctx;
+    ctx.setup(source);
 
     // Find "x" in "c.x;"
     const char* access_pos = strstr(source, "c.x;");
@@ -536,16 +553,16 @@ TEST_CASE("Hover - Inherited field") {
     SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
     REQUIRE(node != nullptr);
 
-    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), index);
+    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
+                                  ctx.index, ctx.analysis_ctx);
     CHECK(hover == String("(field) Base.x: i32"));
 }
 
 TEST_CASE("Hover - Parameter in function body") {
     const char* source = "fun add(a: i32, b: i32): i32 { return a + b; }";
 
-    BumpAllocator allocator(8192);
-    GlobalIndex index;
-    setup_index(index, source, allocator);
+    HoverTestContext ctx;
+    ctx.setup(source);
 
     // Find 'a' inside the body (after "return ")
     const char* a_pos = strstr(source, "return a");
@@ -557,16 +574,16 @@ TEST_CASE("Hover - Parameter in function body") {
     SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
     REQUIRE(node != nullptr);
 
-    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), index);
+    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
+                                  ctx.index, ctx.analysis_ctx);
     CHECK(hover == String("(variable) a: i32"));
 }
 
 TEST_CASE("Hover - Bool literal true") {
     const char* source = "fun test() { var b = true; }";
 
-    BumpAllocator allocator(8192);
-    GlobalIndex index;
-    setup_index(index, source, allocator);
+    HoverTestContext ctx;
+    ctx.setup(source);
 
     const char* true_pos = strstr(source, "true");
     REQUIRE(true_pos != nullptr);
@@ -577,7 +594,8 @@ TEST_CASE("Hover - Bool literal true") {
     SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
     REQUIRE(node != nullptr);
 
-    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), index);
+    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
+                                  ctx.index, ctx.analysis_ctx);
     CHECK(hover == String("bool"));
 }
 
@@ -588,9 +606,8 @@ TEST_CASE("Hover - Struct literal name") {
         "    var p = Point { x = 1.0, y = 2.0 };\n"
         "}\n";
 
-    BumpAllocator allocator(8192);
-    GlobalIndex index;
-    setup_index(index, source, allocator);
+    HoverTestContext ctx;
+    ctx.setup(source);
 
     // Find "Point" in "Point { x = 1.0"
     const char* lit_pos = strstr(source + 33, "Point");
@@ -602,16 +619,16 @@ TEST_CASE("Hover - Struct literal name") {
     SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
     REQUIRE(node != nullptr);
 
-    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), index);
+    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
+                                  ctx.index, ctx.analysis_ctx);
     CHECK(hover == String("struct Point"));
 }
 
 TEST_CASE("Hover - Global variable") {
     const char* source = "var count: i32 = 0;";
 
-    BumpAllocator allocator(8192);
-    GlobalIndex index;
-    setup_index(index, source, allocator);
+    HoverTestContext ctx;
+    ctx.setup(source);
 
     // Hover on "count" — offset at 'c' of 'count'
     u32 offset = 4;
@@ -620,16 +637,16 @@ TEST_CASE("Hover - Global variable") {
     SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
     REQUIRE(node != nullptr);
 
-    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), index);
+    String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
+                                  ctx.index, ctx.analysis_ctx);
     CHECK(hover == String("(global) count: i32"));
 }
 
 TEST_CASE("Hover - Unresolvable (whitespace)") {
     const char* source = "fun test() { var x: i32; }";
 
-    BumpAllocator allocator(8192);
-    GlobalIndex index;
-    setup_index(index, source, allocator);
+    HoverTestContext ctx;
+    ctx.setup(source);
 
     // Try offset in whitespace before 'var' — should return empty
     u32 offset = 13; // space after '{'
@@ -640,7 +657,8 @@ TEST_CASE("Hover - Unresolvable (whitespace)") {
     // Node may be a keyword or non-identifier; hover should return empty
     String hover;
     if (node) {
-        hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), index);
+        hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
+                               ctx.index, ctx.analysis_ctx);
     }
     CHECK(hover.empty());
 }

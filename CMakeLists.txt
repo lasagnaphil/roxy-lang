@@ -89,17 +89,22 @@ endif()
 
 target_link_libraries(roxy_vm roxy_compiler)
 
+# Runtime library (for AOT-compiled C backend binaries)
+add_library(roxy_rt
+    src/roxy/rt/roxy_rt.cpp
+)
+
 # LSP library
 add_library(roxy_lsp
     src/roxy/lsp/lsp_parser.cpp
     src/roxy/lsp/indexer.cpp
     src/roxy/lsp/global_index.cpp
     src/roxy/lsp/cst_lowering.cpp
-    src/roxy/lsp/lsp_type_resolver.cpp
+    src/roxy/lsp/lsp_analysis_context.cpp
     src/roxy/lsp/transport.cpp
     src/roxy/lsp/server.cpp
 )
-target_link_libraries(roxy_lsp roxy_shared)
+target_link_libraries(roxy_lsp roxy_compiler roxy_vm)
 
 # LSP server executable
 add_executable(roxy_lsp_server src/roxy_lsp_server.cpp)
@@ -128,11 +133,10 @@ add_executable(roxy_tests
     tests/unit/test_indexer.cpp
     tests/unit/test_global_index.cpp
     tests/unit/test_cst_lowering.cpp
-    tests/unit/test_lsp_type_resolver.cpp
     tests/unit/test_lsp_completion.cpp
     tests/unit/test_lsp_hover.cpp
-    tests/unit/test_lsp_semantic_diagnostics.cpp
     tests/unit/test_lsp_references.cpp
+    tests/unit/test_lsp_analysis_context.cpp
 
     # E2E tests
     tests/e2e/test_helpers.cpp
@@ -164,6 +168,7 @@ add_executable(roxy_tests
     tests/e2e/test_c_backend.cpp
 )
 target_link_libraries(roxy_tests roxy_vm roxy_lsp)
+target_compile_definitions(roxy_tests PRIVATE "ROXY_PROJECT_ROOT=\"${CMAKE_SOURCE_DIR}\"")
 
 # Standalone interpreter executable
 add_executable(roxy src/roxy.cpp)

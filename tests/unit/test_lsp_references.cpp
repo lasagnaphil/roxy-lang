@@ -1,12 +1,13 @@
 #include "roxy/core/doctest/doctest.h"
 
 #include "roxy/lsp/global_index.hpp"
-#include "roxy/lsp/lsp_type_resolver.hpp"
+#include "roxy/lsp/lsp_analysis_context.hpp"
 #include "roxy/lsp/cst_lowering.hpp"
 #include "roxy/lsp/lsp_parser.hpp"
 #include "roxy/lsp/indexer.hpp"
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/tsl/robin_map.h"
+#include "roxy/core/tsl/robin_set.h"
 
 #include <cstring>
 
@@ -62,16 +63,48 @@ static void collect_identifiers(SyntaxNode* root, StringView name, Vector<Syntax
     }
 }
 
+// Helper: check if identifier is a local variable in the enclosing function
+static bool is_local_variable(SyntaxNode* candidate, StringView candidate_text) {
+    SyntaxNode* enclosing_fn = find_enclosing_function(candidate);
+    if (!enclosing_fn) return false;
+    BumpAllocator ast_allocator(4096);
+    CstLowering lowering(ast_allocator);
+    Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+    tsl::robin_set<String> local_names;
+    LspAnalysisContext::collect_local_var_names(ast_decl, local_names);
+    return local_names.count(String(candidate_text)) > 0;
+}
+
+// Helper: resolve receiver type for a dot-access expression
+static String resolve_receiver_type(SyntaxNode* object_expr, SyntaxNode* enclosing_fn,
+                                     LspAnalysisContext* analysis_ctx) {
+    if (!analysis_ctx || !enclosing_fn) return String();
+    BumpAllocator ast_allocator(8192);
+    BodyAnalysisResult body_result = analysis_ctx->analyze_function_body(
+        enclosing_fn, ast_allocator);
+    if (!body_result.decl) return String();
+    tsl::robin_map<String, Type*> local_vars;
+    analysis_ctx->collect_local_variables(body_result.decl, local_vars);
+    Type* recv_type = analysis_ctx->resolve_cst_expr_type(object_expr, local_vars);
+    if (recv_type && !recv_type->is_error()) {
+        return LspAnalysisContext::type_to_string(recv_type);
+    }
+    return String();
+}
+
 // Forward declarations of functions mirroring server.cpp logic
 static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index,
-                                       StringView uri, SymbolIdentity& out_identity);
+                                       StringView uri, SymbolIdentity& out_identity,
+                                       LspAnalysisContext* analysis_ctx = nullptr);
 static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& target,
                                     const GlobalIndex& index, SyntaxNode* file_root,
-                                    StringView file_uri);
+                                    StringView file_uri,
+                                    LspAnalysisContext* analysis_ctx = nullptr);
 
 // --- identify_symbol_at_cursor ---
 static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index,
-                                       StringView uri, SymbolIdentity& out_identity) {
+                                       StringView uri, SymbolIdentity& out_identity,
+                                       LspAnalysisContext* analysis_ctx) {
     if (!node) return false;
 
     if (node->kind == SyntaxKind::TokenKwSelf) {
@@ -98,16 +131,8 @@ static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index
                 parent->children[parent->children.size() - 1] == node;
             if (is_member_name) {
                 SyntaxNode* object_expr = parent->children[0];
-                String receiver_type;
                 SyntaxNode* enclosing_fn = find_enclosing_function(parent);
-                if (enclosing_fn) {
-                    BumpAllocator ast_allocator(8192);
-                    CstLowering lowering(ast_allocator);
-                    Decl* ast_decl = lowering.lower_decl(enclosing_fn);
-                    LspTypeResolver resolver(index);
-                    resolver.analyze_function(ast_decl);
-                    receiver_type = resolver.resolve_cst_expr_type(object_expr);
-                }
+                String receiver_type = resolve_receiver_type(object_expr, enclosing_fn, analysis_ctx);
                 if (!receiver_type.empty()) {
                     StringView current_type(receiver_type.data(), receiver_type.size());
                     u32 depth = 0;
@@ -349,21 +374,13 @@ static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index
     }
 
     // General identifier — check locals first
-    SyntaxNode* enclosing_fn = find_enclosing_function(node);
-    if (enclosing_fn) {
-        BumpAllocator ast_allocator(8192);
-        CstLowering lowering(ast_allocator);
-        Decl* ast_decl = lowering.lower_decl(enclosing_fn);
-        LspTypeResolver resolver(index);
-        resolver.analyze_function(ast_decl);
-        auto var_it = resolver.var_types().find(String(identifier));
-        if (var_it != resolver.var_types().end()) {
-            out_identity.category = SymbolCategory::Local;
-            out_identity.name = String(identifier);
-            out_identity.enclosing_range = enclosing_fn->range;
-            out_identity.enclosing_uri = String(uri);
-            return true;
-        }
+    if (is_local_variable(node, identifier)) {
+        SyntaxNode* enclosing_fn = find_enclosing_function(node);
+        out_identity.category = SymbolCategory::Local;
+        out_identity.name = String(identifier);
+        out_identity.enclosing_range = enclosing_fn->range;
+        out_identity.enclosing_uri = String(uri);
+        return true;
     }
 
     if (index.find_function(identifier)) {
@@ -397,7 +414,8 @@ static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index
 // --- is_reference_to_symbol ---
 static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& target,
                                     const GlobalIndex& index, SyntaxNode* file_root,
-                                    StringView file_uri) {
+                                    StringView file_uri,
+                                    LspAnalysisContext* analysis_ctx) {
     if (!candidate) return false;
 
     StringView candidate_text;
@@ -427,16 +445,7 @@ static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& 
             parent->kind == SyntaxKind::NodeEnumDecl ||
             parent->kind == SyntaxKind::NodeTraitDecl) return false;
 
-        SyntaxNode* enclosing_fn = find_enclosing_function(candidate);
-        if (enclosing_fn) {
-            BumpAllocator ast_allocator(4096);
-            CstLowering lowering(ast_allocator);
-            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
-            LspTypeResolver resolver(index);
-            resolver.analyze_function(ast_decl);
-            auto var_it = resolver.var_types().find(String(candidate_text));
-            if (var_it != resolver.var_types().end()) return false;
-        }
+        if (is_local_variable(candidate, candidate_text)) return false;
 
         if (parent->kind == SyntaxKind::NodeFunDecl) return true;
         return index.find_function(candidate_text) != nullptr;
@@ -463,16 +472,7 @@ static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& 
                 }
             }
         }
-        SyntaxNode* enclosing_fn = find_enclosing_function(candidate);
-        if (enclosing_fn) {
-            BumpAllocator ast_allocator(4096);
-            CstLowering lowering(ast_allocator);
-            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
-            LspTypeResolver resolver(index);
-            resolver.analyze_function(ast_decl);
-            auto var_it = resolver.var_types().find(String(candidate_text));
-            if (var_it != resolver.var_types().end()) return false;
-        }
+        if (is_local_variable(candidate, candidate_text)) return false;
         return true;
     }
 
@@ -486,16 +486,7 @@ static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& 
         if (parent->kind == SyntaxKind::NodeFieldInit &&
             parent->children.size() > 0 && parent->children[0] == candidate) return false;
         if (parent->kind == SyntaxKind::NodeFieldDecl) return false;
-        SyntaxNode* enclosing_fn = find_enclosing_function(candidate);
-        if (enclosing_fn) {
-            BumpAllocator ast_allocator(4096);
-            CstLowering lowering(ast_allocator);
-            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
-            LspTypeResolver resolver(index);
-            resolver.analyze_function(ast_decl);
-            auto var_it = resolver.var_types().find(String(candidate_text));
-            if (var_it != resolver.var_types().end()) return false;
-        }
+        if (is_local_variable(candidate, candidate_text)) return false;
         return true;
     }
 
@@ -524,16 +515,7 @@ static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& 
             parent->kind == SyntaxKind::NodeEnumDecl ||
             parent->kind == SyntaxKind::NodeTraitDecl ||
             parent->kind == SyntaxKind::NodeFunDecl) return false;
-        SyntaxNode* enclosing_fn = find_enclosing_function(candidate);
-        if (enclosing_fn) {
-            BumpAllocator ast_allocator(4096);
-            CstLowering lowering(ast_allocator);
-            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
-            LspTypeResolver resolver(index);
-            resolver.analyze_function(ast_decl);
-            auto var_it = resolver.var_types().find(String(candidate_text));
-            if (var_it != resolver.var_types().end()) return false;
-        }
+        if (is_local_variable(candidate, candidate_text)) return false;
         return true;
     }
 
@@ -545,13 +527,7 @@ static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& 
             if (!is_member_name) return false;
             SyntaxNode* object_expr = parent->children[0];
             SyntaxNode* enclosing_fn = find_enclosing_function(parent);
-            if (!enclosing_fn) return false;
-            BumpAllocator ast_allocator(8192);
-            CstLowering lowering(ast_allocator);
-            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
-            LspTypeResolver resolver(index);
-            resolver.analyze_function(ast_decl);
-            String receiver_type = resolver.resolve_cst_expr_type(object_expr);
+            String receiver_type = resolve_receiver_type(object_expr, enclosing_fn, analysis_ctx);
             if (receiver_type.empty()) return false;
             StringView current_type(receiver_type.data(), receiver_type.size());
             u32 depth = 0;
@@ -595,13 +571,7 @@ static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& 
             if (!is_member_name) return false;
             SyntaxNode* object_expr = parent->children[0];
             SyntaxNode* enclosing_fn = find_enclosing_function(parent);
-            if (!enclosing_fn) return false;
-            BumpAllocator ast_allocator(8192);
-            CstLowering lowering(ast_allocator);
-            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
-            LspTypeResolver resolver(index);
-            resolver.analyze_function(ast_decl);
-            String receiver_type = resolver.resolve_cst_expr_type(object_expr);
+            String receiver_type = resolve_receiver_type(object_expr, enclosing_fn, analysis_ctx);
             if (receiver_type.empty()) return false;
             StringView current_type(receiver_type.data(), receiver_type.size());
             u32 depth = 0;
@@ -710,6 +680,15 @@ static ReferenceResult find_references(const char* source, u32 cursor_offset,
     GlobalIndex index;
     index.update_file(uri, stubs);
 
+    // Build LspAnalysisContext
+    LspAnalysisContext analysis_ctx;
+    LspAnalysisContext::SourceFile src_file;
+    src_file.uri = StringView("file:///test.roxy");
+    src_file.source = source;
+    src_file.source_length = length;
+    src_file.cst_root = index_tree.root;
+    analysis_ctx.rebuild_declarations(Span<LspAnalysisContext::SourceFile>(&src_file, 1));
+
     // Parse CST for cursor lookup
     BumpAllocator allocator(8192);
     Lexer lexer(source, length);
@@ -720,7 +699,8 @@ static ReferenceResult find_references(const char* source, u32 cursor_offset,
     if (!node) return {0, {}};
 
     SymbolIdentity identity;
-    if (!identify_symbol_at_cursor(node, index, StringView(uri.data(), uri.size()), identity)) {
+    if (!identify_symbol_at_cursor(node, index, StringView(uri.data(), uri.size()), identity,
+                                    &analysis_ctx)) {
         return {0, {}};
     }
 
@@ -734,7 +714,7 @@ static ReferenceResult find_references(const char* source, u32 cursor_offset,
 
     for (u32 i = 0; i < candidates.size(); i++) {
         if (is_reference_to_symbol(candidates[i], identity, index, tree.root,
-                                    StringView(uri.data(), uri.size()))) {
+                                    StringView(uri.data(), uri.size()), &analysis_ctx)) {
             // Check declaration filtering
             if (!include_declaration) {
                 SyntaxNode* parent = candidates[i]->parent;

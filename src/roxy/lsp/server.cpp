@@ -2,9 +2,7 @@
 #include "roxy/lsp/lsp_parser.hpp"
 #include "roxy/lsp/indexer.hpp"
 #include "roxy/lsp/cst_lowering.hpp"
-#include "roxy/lsp/lsp_type_resolver.hpp"
 #include "roxy/core/bump_allocator.hpp"
-#include "roxy/core/format.hpp"
 #include "roxy/core/file.hpp"
 
 #include <cstring>
@@ -177,6 +175,9 @@ void LspServer::handle_initialize(const JsonValue& params, i64 id) {
     if (!m_workspace_root.empty()) {
         scan_workspace();
     }
+
+    // Build initial analysis context from workspace files
+    rebuild_analysis_context();
 }
 
 void LspServer::handle_initialized() {
@@ -295,6 +296,35 @@ void LspServer::handle_did_close(const JsonValue& params) {
     }
 }
 
+// Check if declaration-level stubs changed (structs, enums, functions, traits)
+static bool declarations_changed(const FileStubs& old_stubs, const FileStubs& new_stubs) {
+    // Quick size checks
+    if (old_stubs.structs.size() != new_stubs.structs.size()) return true;
+    if (old_stubs.enums.size() != new_stubs.enums.size()) return true;
+    if (old_stubs.functions.size() != new_stubs.functions.size()) return true;
+    if (old_stubs.traits.size() != new_stubs.traits.size()) return true;
+    if (old_stubs.methods.size() != new_stubs.methods.size()) return true;
+
+    // Check struct names and field counts
+    for (u32 i = 0; i < old_stubs.structs.size(); i++) {
+        if (old_stubs.structs[i].name != new_stubs.structs[i].name) return true;
+        if (old_stubs.structs[i].fields.size() != new_stubs.structs[i].fields.size()) return true;
+    }
+
+    // Check enum names
+    for (u32 i = 0; i < old_stubs.enums.size(); i++) {
+        if (old_stubs.enums[i].name != new_stubs.enums[i].name) return true;
+    }
+
+    // Check function signatures
+    for (u32 i = 0; i < old_stubs.functions.size(); i++) {
+        if (old_stubs.functions[i].name != new_stubs.functions[i].name) return true;
+        if (old_stubs.functions[i].params.size() != new_stubs.functions[i].params.size()) return true;
+    }
+
+    return false;
+}
+
 void LspServer::parse_and_publish_diagnostics(OpenDocument& doc) {
     // Create a fresh allocator for this parse
     BumpAllocator allocator(8192);
@@ -305,7 +335,18 @@ void LspServer::parse_and_publish_diagnostics(OpenDocument& doc) {
 
     // Index the CST for document symbols
     FileIndexer indexer;
-    doc.stubs = indexer.index(tree.root);
+    FileStubs new_stubs = indexer.index(tree.root);
+
+    // Check if declarations changed and rebuild analysis context if so
+    bool decls_changed = declarations_changed(doc.stubs, new_stubs);
+    doc.stubs = std::move(new_stubs);
+
+    if (decls_changed) {
+        // Update global index first
+        m_global_index.update_file(
+            StringView(doc.uri.data(), doc.uri.size()), doc.stubs);
+        rebuild_analysis_context();
+    }
 
     // Convert ParseDiagnostics to LspDiagnostics
     Vector<LspDiagnostic> lsp_diagnostics;
@@ -345,22 +386,30 @@ void LspServer::collect_semantic_diagnostics(SyntaxNode* root, BumpAllocator& al
             continue;
         }
 
+        if (!m_analysis_context.is_initialized()) continue;
+
         BumpAllocator ast_allocator(4096);
-        CstLowering lowering(ast_allocator);
-        Decl* ast_decl = lowering.lower_decl(root->children[i]);
-        if (!ast_decl) continue;
+        BodyAnalysisResult result = m_analysis_context.analyze_function_body(
+            root->children[i], ast_allocator);
 
-        LspTypeResolver resolver(m_global_index);
-        resolver.analyze_function_with_diagnostics(ast_decl);
+        if (result.decl) {
+            // Convert SemanticErrors to LspDiagnostics
+            for (u32 j = 0; j < result.errors.size(); j++) {
+                const SemanticError& err = result.errors[j];
 
-        const Vector<SemanticDiagnostic>& sem_diags = resolver.diagnostics();
-        for (u32 j = 0; j < sem_diags.size(); j++) {
-            LspDiagnostic lsp_diag;
-            lsp_diag.range = text_range_to_lsp_range(source, source_length, sem_diags[j].range);
-            lsp_diag.severity = sem_diags[j].severity;
-            lsp_diag.message = sem_diags[j].message;
-            out_diagnostics.push_back(std::move(lsp_diag));
+                TextRange text_range;
+                text_range.start = err.loc.offset;
+                text_range.end = err.loc.end_offset > err.loc.offset
+                    ? err.loc.end_offset : err.loc.offset + 1;
+
+                LspDiagnostic lsp_diag;
+                lsp_diag.range = text_range_to_lsp_range(source, source_length, text_range);
+                lsp_diag.severity = DiagnosticSeverity::Error;
+                lsp_diag.message = String(err.message);
+                out_diagnostics.push_back(std::move(lsp_diag));
+            }
         }
+        delete result.symbols;
     }
 }
 
@@ -737,34 +786,52 @@ void LspServer::handle_definition(const JsonValue& params, i64 id) {
             }
 
             if (is_member_name) {
-                // Try to resolve the object expression type
-                SyntaxNode* object_expr = parent->children[0];
-                String receiver_type;
-
                 SyntaxNode* enclosing_fn = find_enclosing_function(parent);
-                if (enclosing_fn) {
+
+                if (enclosing_fn && m_analysis_context.is_initialized()) {
                     BumpAllocator ast_allocator(8192);
-                    CstLowering lowering(ast_allocator);
-                    Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+                    BodyAnalysisResult result = m_analysis_context.analyze_function_body(
+                        enclosing_fn, ast_allocator);
 
-                    LspTypeResolver resolver(m_global_index);
-                    resolver.analyze_function(ast_decl);
+                    if (result.decl) {
+                        tsl::robin_map<String, Type*> local_vars;
+                        m_analysis_context.collect_local_variables(result.decl, local_vars);
 
-                    receiver_type = resolver.resolve_cst_expr_type(object_expr);
-                }
+                        SyntaxNode* object_expr = parent->children[0];
+                        Type* resolved = m_analysis_context.resolve_cst_expr_type(
+                            object_expr, local_vars);
 
-                if (!receiver_type.empty()) {
-                    // Walk inheritance chain to find field or method
-                    StringView current_type(receiver_type.data(), receiver_type.size());
-                    u32 depth = 0;
-                    while (!current_type.empty() && depth < 16) {
-                        match = m_global_index.find_field(current_type, identifier);
-                        if (match) break;
-                        match = m_global_index.find_method(current_type, identifier);
-                        if (match) break;
-                        current_type = m_global_index.find_struct_parent(current_type);
-                        depth++;
+                        // Unwrap reference types
+                        if (resolved && resolved->is_reference()) {
+                            resolved = resolved->ref_info.inner_type;
+                        }
+
+                        if (resolved && resolved->kind == TypeKind::Struct) {
+                            // Check fields first
+                            for (const auto& field : resolved->struct_info.fields) {
+                                if (field.name == identifier) {
+                                    String type_str = LspAnalysisContext::type_to_string(resolved);
+                                    match = m_global_index.find_field(
+                                        StringView(type_str.data(), type_str.size()), identifier);
+                                    break;
+                                }
+                            }
+
+                            // Check methods via hierarchy
+                            if (!match) {
+                                Type* found_in = nullptr;
+                                const MethodInfo* method_info =
+                                    m_analysis_context.types().lookup_method(
+                                        resolved, identifier, &found_in);
+                                if (method_info && found_in && found_in->kind == TypeKind::Struct) {
+                                    String found_str = LspAnalysisContext::type_to_string(found_in);
+                                    match = m_global_index.find_method(
+                                        StringView(found_str.data(), found_str.size()), identifier);
+                                }
+                            }
+                        }
                     }
+                    delete result.symbols;
                 }
 
                 // Fallback to find_any if type resolution failed
@@ -1057,60 +1124,54 @@ void LspServer::handle_completion(const JsonValue& params, i64 id) {
         StringView receiver_ident = find_dot_receiver(
             doc->content.data(), doc->content.size(), byte_offset);
 
-        String receiver_type;
-        if (!receiver_ident.empty()) {
-            // Try to resolve receiver type via CstLowering + LspTypeResolver
+        // Resolve receiver type via semantic analysis
+        if (!receiver_ident.empty() && m_analysis_context.is_initialized()) {
             SyntaxNode* cursor_node = find_node_at_offset(tree.root, byte_offset > 0 ? byte_offset - 1 : 0);
             SyntaxNode* enclosing_fn = cursor_node ? find_enclosing_function(cursor_node) : nullptr;
 
             if (enclosing_fn) {
                 BumpAllocator ast_allocator(8192);
-                CstLowering lowering(ast_allocator);
-                Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+                BodyAnalysisResult body_result = m_analysis_context.analyze_function_body(
+                    enclosing_fn, ast_allocator);
 
-                LspTypeResolver resolver(m_global_index);
-                resolver.analyze_function(ast_decl);
+                if (body_result.decl) {
+                    tsl::robin_map<String, Type*> local_vars;
+                    m_analysis_context.collect_local_variables(body_result.decl, local_vars);
 
-                // Check if receiver is "self"
-                if (receiver_ident == StringView("self")) {
-                    receiver_type = resolver.self_type();
-                } else {
-                    // Look up variable type
-                    auto var_it = resolver.var_types().find(String(receiver_ident));
-                    if (var_it != resolver.var_types().end()) {
-                        receiver_type = var_it->second;
+                    auto var_it = local_vars.find(String(receiver_ident));
+                    Type* receiver_type = (var_it != local_vars.end()) ? var_it->second : nullptr;
+
+                    if (receiver_type && !receiver_type->is_error()) {
+                        Type* base_type = receiver_type->base_type();
+
+                        if (base_type->kind == TypeKind::Struct) {
+                            // Emit fields
+                            for (const auto& field : base_type->struct_info.fields) {
+                                String field_type_str = LspAnalysisContext::type_to_string(field.type);
+                                write_completion_item(writer, field.name,
+                                    CompletionItemKind::Field,
+                                    StringView(field_type_str.data(), field_type_str.size()));
+                            }
+                            // Emit methods
+                            for (const auto& method : base_type->struct_info.methods) {
+                                String sig;
+                                sig.push_back('(');
+                                for (u32 pi = 0; pi < method.param_types.size(); pi++) {
+                                    if (pi > 0) sig.append(", ", 2);
+                                    String param_str = LspAnalysisContext::type_to_string(method.param_types[pi]);
+                                    sig.append(param_str.data(), param_str.size());
+                                }
+                                sig.append("): ", 3);
+                                String ret_str = LspAnalysisContext::type_to_string(method.return_type);
+                                sig.append(ret_str.data(), ret_str.size());
+                                write_completion_item(writer, method.name,
+                                    CompletionItemKind::Method,
+                                    StringView(sig.data(), sig.size()));
+                            }
+                        }
                     }
                 }
-            }
-        }
-
-        if (!receiver_type.empty()) {
-            // Walk inheritance chain collecting fields and methods
-            StringView current_type(receiver_type.data(), receiver_type.size());
-            u32 depth = 0;
-            while (!current_type.empty() && depth < 16) {
-                // Fields
-                const Vector<String>* fields = m_global_index.get_struct_fields(current_type);
-                if (fields) {
-                    for (u32 i = 0; i < fields->size(); i++) {
-                        StringView field_name((*fields)[i].data(), (*fields)[i].size());
-                        StringView field_type = m_global_index.find_field_type(current_type, field_name);
-                        write_completion_item(writer, field_name, CompletionItemKind::Field, field_type);
-                    }
-                }
-
-                // Methods
-                const Vector<String>* methods = m_global_index.get_struct_methods(current_type);
-                if (methods) {
-                    for (u32 i = 0; i < methods->size(); i++) {
-                        StringView method_name((*methods)[i].data(), (*methods)[i].size());
-                        StringView signature = m_global_index.find_method_signature(current_type, method_name);
-                        write_completion_item(writer, method_name, CompletionItemKind::Method, signature);
-                    }
-                }
-
-                current_type = m_global_index.find_struct_parent(current_type);
-                depth++;
+                delete body_result.symbols;
             }
         }
     } else if (context == CompletionContext::StaticAccess) {
@@ -1163,30 +1224,27 @@ void LspServer::handle_completion(const JsonValue& params, i64 id) {
         write_completion_item(writer, StringView("List"), CompletionItemKind::Struct);
         write_completion_item(writer, StringView("Map"), CompletionItemKind::Struct);
     } else if (context == CompletionContext::BareIdentifier) {
-        // Local variables from resolver
+        // Local variables from semantic analysis
         SyntaxNode* cursor_node = find_node_at_offset(tree.root, byte_offset > 0 ? byte_offset - 1 : 0);
         SyntaxNode* enclosing_fn = cursor_node ? find_enclosing_function(cursor_node) : nullptr;
 
-        if (enclosing_fn) {
+        if (enclosing_fn && m_analysis_context.is_initialized()) {
             BumpAllocator ast_allocator(8192);
-            CstLowering lowering(ast_allocator);
-            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+            BodyAnalysisResult body_result = m_analysis_context.analyze_function_body(
+                enclosing_fn, ast_allocator);
 
-            LspTypeResolver resolver(m_global_index);
-            resolver.analyze_function(ast_decl);
+            if (body_result.decl) {
+                tsl::robin_map<String, Type*> local_vars;
+                m_analysis_context.collect_local_variables(body_result.decl, local_vars);
 
-            // Emit locals
-            for (auto it = resolver.var_types().begin(); it != resolver.var_types().end(); ++it) {
-                StringView var_name(it->first.data(), it->first.size());
-                StringView var_type(it->second.data(), it->second.size());
-                write_completion_item(writer, var_name, CompletionItemKind::Variable, var_type);
+                for (auto it = local_vars.begin(); it != local_vars.end(); ++it) {
+                    StringView var_name(it->first.data(), it->first.size());
+                    String type_str = LspAnalysisContext::type_to_string(it->second);
+                    write_completion_item(writer, var_name, CompletionItemKind::Variable,
+                        StringView(type_str.data(), type_str.size()));
+                }
             }
-
-            // Emit self if in method
-            if (!resolver.self_type().empty()) {
-                StringView self_type(resolver.self_type().data(), resolver.self_type().size());
-                write_completion_item(writer, StringView("self"), CompletionItemKind::Variable, self_type);
-            }
+            delete body_result.symbols;
         }
 
         // All functions
@@ -1373,58 +1431,75 @@ void LspServer::handle_hover(const JsonValue& params, i64 id) {
             parent->children[parent->children.size() - 1] == node;
 
         if (is_member_name) {
-            // Resolve receiver type
-            SyntaxNode* object_expr = parent->children[0];
-            String receiver_type;
-
             SyntaxNode* enclosing_fn = find_enclosing_function(parent);
-            if (enclosing_fn) {
+            if (enclosing_fn && m_analysis_context.is_initialized()) {
                 BumpAllocator ast_allocator(8192);
-                CstLowering lowering(ast_allocator);
-                Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+                BodyAnalysisResult result = m_analysis_context.analyze_function_body(
+                    enclosing_fn, ast_allocator);
 
-                LspTypeResolver resolver(m_global_index);
-                resolver.analyze_function(ast_decl);
-                receiver_type = resolver.resolve_cst_expr_type(object_expr);
-            }
+                if (result.decl) {
+                    tsl::robin_map<String, Type*> local_vars;
+                    m_analysis_context.collect_local_variables(result.decl, local_vars);
 
-            if (!receiver_type.empty()) {
-                // Walk inheritance chain looking for field or method
-                StringView current_type(receiver_type.data(), receiver_type.size());
-                u32 depth = 0;
-                while (!current_type.empty() && depth < 16) {
-                    // Check field
-                    StringView field_type = m_global_index.find_field_type(current_type, identifier);
-                    if (!field_type.empty()) {
-                        String hover_text("(field) ");
-                        hover_text.append(current_type.data(), current_type.size());
-                        hover_text.push_back('.');
-                        hover_text.append(identifier.data(), identifier.size());
-                        hover_text.append(": ", 2);
-                        hover_text.append(field_type.data(), field_type.size());
-                        write_hover_response(m_transport, id,
-                            StringView(hover_text.data(), hover_text.size()),
-                            source, source_length, node->range);
-                        return;
+                    SyntaxNode* object_expr = parent->children[0];
+                    Type* resolved_type = m_analysis_context.resolve_cst_expr_type(
+                        object_expr, local_vars);
+
+                    // Unwrap reference types
+                    if (resolved_type && resolved_type->is_reference()) {
+                        resolved_type = resolved_type->ref_info.inner_type;
                     }
 
-                    // Check method
-                    StringView method_sig = m_global_index.find_method_signature(current_type, identifier);
-                    if (!method_sig.empty()) {
-                        String hover_text("fun ");
-                        hover_text.append(current_type.data(), current_type.size());
-                        hover_text.push_back('.');
-                        hover_text.append(identifier.data(), identifier.size());
-                        hover_text.append(method_sig.data(), method_sig.size());
-                        write_hover_response(m_transport, id,
-                            StringView(hover_text.data(), hover_text.size()),
-                            source, source_length, node->range);
-                        return;
-                    }
+                    if (resolved_type && resolved_type->kind == TypeKind::Struct) {
+                        // Check fields
+                        for (const auto& field : resolved_type->struct_info.fields) {
+                            if (field.name == identifier) {
+                                String hover_text("(field) ");
+                                String type_str = LspAnalysisContext::type_to_string(resolved_type);
+                                hover_text.append(type_str.data(), type_str.size());
+                                hover_text.push_back('.');
+                                hover_text.append(identifier.data(), identifier.size());
+                                hover_text.append(": ", 2);
+                                String field_type_str = LspAnalysisContext::type_to_string(field.type);
+                                hover_text.append(field_type_str.data(), field_type_str.size());
+                                write_hover_response(m_transport, id,
+                                    StringView(hover_text.data(), hover_text.size()),
+                                    source, source_length, node->range);
+                                delete result.symbols;
+                                return;
+                            }
+                        }
 
-                    current_type = m_global_index.find_struct_parent(current_type);
-                    depth++;
+                        // Check methods via TypeCache
+                        Type* found_in = nullptr;
+                        const MethodInfo* method_info = m_analysis_context.types().lookup_method(
+                            resolved_type, identifier, &found_in);
+                        if (method_info) {
+                            String hover_text("fun ");
+                            String type_str = LspAnalysisContext::type_to_string(
+                                found_in ? found_in : resolved_type);
+                            hover_text.append(type_str.data(), type_str.size());
+                            hover_text.push_back('.');
+                            hover_text.append(identifier.data(), identifier.size());
+                            hover_text.push_back('(');
+                            for (u32 pi = 0; pi < method_info->param_types.size(); pi++) {
+                                if (pi > 0) hover_text.append(", ", 2);
+                                String param_str = LspAnalysisContext::type_to_string(
+                                    method_info->param_types[pi]);
+                                hover_text.append(param_str.data(), param_str.size());
+                            }
+                            hover_text.append("): ", 3);
+                            String ret_str = LspAnalysisContext::type_to_string(method_info->return_type);
+                            hover_text.append(ret_str.data(), ret_str.size());
+                            write_hover_response(m_transport, id,
+                                StringView(hover_text.data(), hover_text.size()),
+                                source, source_length, node->range);
+                            delete result.symbols;
+                            return;
+                        }
+                    }
                 }
+                delete result.symbols;
             }
 
             m_transport.write_response(id, "null");
@@ -1591,25 +1666,30 @@ void LspServer::handle_hover(const JsonValue& params, i64 id) {
     // --- Local variable resolution (expression context) ---
     {
         SyntaxNode* enclosing_fn = find_enclosing_function(node);
-        if (enclosing_fn) {
+        if (enclosing_fn && m_analysis_context.is_initialized()) {
             BumpAllocator ast_allocator(8192);
-            CstLowering lowering(ast_allocator);
-            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+            BodyAnalysisResult result = m_analysis_context.analyze_function_body(
+                enclosing_fn, ast_allocator);
 
-            LspTypeResolver resolver(m_global_index);
-            resolver.analyze_function(ast_decl);
+            if (result.decl) {
+                tsl::robin_map<String, Type*> local_vars;
+                m_analysis_context.collect_local_variables(result.decl, local_vars);
 
-            auto var_it = resolver.var_types().find(String(identifier));
-            if (var_it != resolver.var_types().end()) {
-                String hover_text("(variable) ");
-                hover_text.append(identifier.data(), identifier.size());
-                hover_text.append(": ", 2);
-                hover_text.append(var_it->second.data(), var_it->second.size());
-                write_hover_response(m_transport, id,
-                    StringView(hover_text.data(), hover_text.size()),
-                    source, source_length, node->range);
-                return;
+                auto var_it = local_vars.find(String(identifier));
+                if (var_it != local_vars.end() && var_it->second && !var_it->second->is_error()) {
+                    String hover_text("(variable) ");
+                    hover_text.append(identifier.data(), identifier.size());
+                    hover_text.append(": ", 2);
+                    String type_str = LspAnalysisContext::type_to_string(var_it->second);
+                    hover_text.append(type_str.data(), type_str.size());
+                    write_hover_response(m_transport, id,
+                        StringView(hover_text.data(), hover_text.size()),
+                        source, source_length, node->range);
+                    delete result.symbols;
+                    return;
+                }
             }
+            delete result.symbols;
         }
     }
 
@@ -1761,6 +1841,59 @@ void LspServer::index_workspace_file(const String& file_path) {
     m_workspace_files[uri] = std::move(workspace_file);
 }
 
+void LspServer::rebuild_analysis_context() {
+    // Collect source files from open documents and workspace files
+    Vector<LspAnalysisContext::SourceFile> source_files;
+
+    // We need to parse each file's CST for the analysis context
+    // Use a temporary allocator for parsing
+    BumpAllocator parse_allocator(16384);
+
+    // Add open documents
+    for (u32 i = 0; i < m_open_documents.size(); i++) {
+        const OpenDocument& doc = m_open_documents[i];
+        Lexer lexer(doc.content.data(), doc.content.size());
+        LspParser parser(lexer, parse_allocator);
+        SyntaxTree tree = parser.parse();
+
+        LspAnalysisContext::SourceFile source_file;
+        source_file.uri = StringView(doc.uri.data(), doc.uri.size());
+        source_file.source = doc.content.data();
+        source_file.source_length = doc.content.size();
+        source_file.cst_root = tree.root;
+        source_files.push_back(source_file);
+    }
+
+    // Add workspace files not already covered by open documents
+    for (auto& [uri, workspace_file] : m_workspace_files) {
+        // Skip if already in open documents
+        bool already_open = false;
+        for (u32 i = 0; i < m_open_documents.size(); i++) {
+            if (StringView(m_open_documents[i].uri.data(), m_open_documents[i].uri.size()) ==
+                StringView(uri.data(), uri.size())) {
+                already_open = true;
+                break;
+            }
+        }
+        if (already_open) continue;
+
+        Lexer lexer(workspace_file.content.data(), workspace_file.content.size());
+        LspParser parser(lexer, parse_allocator);
+        SyntaxTree tree = parser.parse();
+
+        LspAnalysisContext::SourceFile source_file;
+        source_file.uri = StringView(workspace_file.uri.data(), workspace_file.uri.size());
+        source_file.source = workspace_file.content.data();
+        source_file.source_length = workspace_file.content.size();
+        source_file.cst_root = tree.root;
+        source_files.push_back(source_file);
+    }
+
+    Span<LspAnalysisContext::SourceFile> source_span(
+        source_files.data(), static_cast<u32>(source_files.size()));
+    m_analysis_context.rebuild_declarations(source_span);
+}
+
 String LspServer::file_path_to_uri(StringView path) {
     String result("file://");
     result.append(path.data(), path.size());
@@ -1847,7 +1980,8 @@ static void collect_identifiers(SyntaxNode* root, StringView name, Vector<Syntax
 
 // Identify what symbol the cursor is on, producing a SymbolIdentity
 static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index,
-                                       StringView uri, SymbolIdentity& out_identity) {
+                                       StringView uri, SymbolIdentity& out_identity,
+                                       LspAnalysisContext* analysis_context = nullptr) {
     if (!node) return false;
 
     // Handle self keyword
@@ -1883,14 +2017,22 @@ static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index
                 String receiver_type;
 
                 SyntaxNode* enclosing_fn = find_enclosing_function(parent);
-                if (enclosing_fn) {
+                if (enclosing_fn && analysis_context && analysis_context->is_initialized()) {
                     BumpAllocator ast_allocator(8192);
-                    CstLowering lowering(ast_allocator);
-                    Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+                    BodyAnalysisResult body_result = analysis_context->analyze_function_body(
+                        enclosing_fn, ast_allocator);
 
-                    LspTypeResolver resolver(index);
-                    resolver.analyze_function(ast_decl);
-                    receiver_type = resolver.resolve_cst_expr_type(object_expr);
+                    if (body_result.decl) {
+                        tsl::robin_map<String, Type*> local_vars;
+                        analysis_context->collect_local_variables(body_result.decl, local_vars);
+
+                        Type* resolved = analysis_context->resolve_cst_expr_type(
+                            object_expr, local_vars);
+                        if (resolved) {
+                            receiver_type = LspAnalysisContext::type_to_string(resolved);
+                        }
+                    }
+                    delete body_result.symbols;
                 }
 
                 if (!receiver_type.empty()) {
@@ -2181,11 +2323,10 @@ static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index
         CstLowering lowering(ast_allocator);
         Decl* ast_decl = lowering.lower_decl(enclosing_fn);
 
-        LspTypeResolver resolver(index);
-        resolver.analyze_function(ast_decl);
+        tsl::robin_set<String> local_names;
+        LspAnalysisContext::collect_local_var_names(ast_decl, local_names);
 
-        auto var_it = resolver.var_types().find(String(identifier));
-        if (var_it != resolver.var_types().end()) {
+        if (local_names.find(String(identifier)) != local_names.end()) {
             out_identity.category = SymbolCategory::Local;
             out_identity.name = String(identifier);
             out_identity.enclosing_range = enclosing_fn->range;
@@ -2227,7 +2368,8 @@ static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index
 // Check if a candidate identifier node refers to the same symbol described by the identity
 static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& target,
                                     const GlobalIndex& index, SyntaxNode* file_root,
-                                    StringView file_uri) {
+                                    StringView file_uri,
+                                    LspAnalysisContext* analysis_context = nullptr) {
     if (!candidate) return false;
 
     StringView candidate_text;
@@ -2276,11 +2418,9 @@ static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& 
             CstLowering lowering(ast_allocator);
             Decl* ast_decl = lowering.lower_decl(enclosing_fn);
 
-            LspTypeResolver resolver(index);
-            resolver.analyze_function(ast_decl);
-
-            auto var_it = resolver.var_types().find(String(candidate_text));
-            if (var_it != resolver.var_types().end()) return false;
+            tsl::robin_set<String> local_names;
+            LspAnalysisContext::collect_local_var_names(ast_decl, local_names);
+            if (local_names.find(String(candidate_text)) != local_names.end()) return false;
         }
 
         // It's a fun decl name if parent is NodeFunDecl
@@ -2330,11 +2470,9 @@ static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& 
             CstLowering lowering(ast_allocator);
             Decl* ast_decl = lowering.lower_decl(enclosing_fn);
 
-            LspTypeResolver resolver(index);
-            resolver.analyze_function(ast_decl);
-
-            auto var_it = resolver.var_types().find(String(candidate_text));
-            if (var_it != resolver.var_types().end()) return false;
+            tsl::robin_set<String> local_names;
+            LspAnalysisContext::collect_local_var_names(ast_decl, local_names);
+            if (local_names.find(String(candidate_text)) != local_names.end()) return false;
         }
 
         // Valid contexts: type annotations, struct literal, call expr, struct decl,
@@ -2366,11 +2504,9 @@ static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& 
             CstLowering lowering(ast_allocator);
             Decl* ast_decl = lowering.lower_decl(enclosing_fn);
 
-            LspTypeResolver resolver(index);
-            resolver.analyze_function(ast_decl);
-
-            auto var_it = resolver.var_types().find(String(candidate_text));
-            if (var_it != resolver.var_types().end()) return false;
+            tsl::robin_set<String> local_names;
+            LspAnalysisContext::collect_local_var_names(ast_decl, local_names);
+            if (local_names.find(String(candidate_text)) != local_names.end()) return false;
         }
 
         return true;
@@ -2422,11 +2558,9 @@ static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& 
             CstLowering lowering(ast_allocator);
             Decl* ast_decl = lowering.lower_decl(enclosing_fn);
 
-            LspTypeResolver resolver(index);
-            resolver.analyze_function(ast_decl);
-
-            auto var_it = resolver.var_types().find(String(candidate_text));
-            if (var_it != resolver.var_types().end()) return false;
+            tsl::robin_set<String> local_names;
+            LspAnalysisContext::collect_local_var_names(ast_decl, local_names);
+            if (local_names.find(String(candidate_text)) != local_names.end()) return false;
         }
 
         return true;
@@ -2444,17 +2578,25 @@ static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& 
 
             SyntaxNode* object_expr = parent->children[0];
             SyntaxNode* enclosing_fn = find_enclosing_function(parent);
-            if (!enclosing_fn) return false;
+            if (!enclosing_fn || !analysis_context || !analysis_context->is_initialized()) return false;
 
             BumpAllocator ast_allocator(8192);
-            CstLowering lowering(ast_allocator);
-            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+            BodyAnalysisResult body_result = analysis_context->analyze_function_body(
+                enclosing_fn, ast_allocator);
 
-            LspTypeResolver resolver(index);
-            resolver.analyze_function(ast_decl);
-            String receiver_type = resolver.resolve_cst_expr_type(object_expr);
+            if (!body_result.decl) {
+                delete body_result.symbols;
+                return false;
+            }
 
-            if (receiver_type.empty()) return false;
+            tsl::robin_map<String, Type*> local_vars;
+            analysis_context->collect_local_variables(body_result.decl, local_vars);
+
+            Type* receiver = analysis_context->resolve_cst_expr_type(object_expr, local_vars);
+            delete body_result.symbols;
+
+            if (!receiver) return false;
+            String receiver_type = LspAnalysisContext::type_to_string(receiver);
 
             // Walk inheritance chain to check if the method is on the target struct
             StringView current_type(receiver_type.data(), receiver_type.size());
@@ -2509,17 +2651,25 @@ static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& 
 
             SyntaxNode* object_expr = parent->children[0];
             SyntaxNode* enclosing_fn = find_enclosing_function(parent);
-            if (!enclosing_fn) return false;
+            if (!enclosing_fn || !analysis_context || !analysis_context->is_initialized()) return false;
 
             BumpAllocator ast_allocator(8192);
-            CstLowering lowering(ast_allocator);
-            Decl* ast_decl = lowering.lower_decl(enclosing_fn);
+            BodyAnalysisResult body_result = analysis_context->analyze_function_body(
+                enclosing_fn, ast_allocator);
 
-            LspTypeResolver resolver(index);
-            resolver.analyze_function(ast_decl);
-            String receiver_type = resolver.resolve_cst_expr_type(object_expr);
+            if (!body_result.decl) {
+                delete body_result.symbols;
+                return false;
+            }
 
-            if (receiver_type.empty()) return false;
+            tsl::robin_map<String, Type*> local_vars;
+            analysis_context->collect_local_variables(body_result.decl, local_vars);
+
+            Type* receiver = analysis_context->resolve_cst_expr_type(object_expr, local_vars);
+            delete body_result.symbols;
+
+            if (!receiver) return false;
+            String receiver_type = LspAnalysisContext::type_to_string(receiver);
 
             // Walk inheritance chain
             StringView current_type(receiver_type.data(), receiver_type.size());
@@ -2643,7 +2793,8 @@ static void find_all_references(const SymbolIdentity& target, const GlobalIndex&
                                  bool include_declaration,
                                  const Vector<OpenDocument>& open_documents,
                                  const tsl::robin_map<String, WorkspaceFile>& workspace_files,
-                                 Vector<ReferenceLocation>& out_locations) {
+                                 Vector<ReferenceLocation>& out_locations,
+                                 LspAnalysisContext* analysis_context = nullptr) {
     // Collect all file URIs and their content
     // Use a map to avoid duplicates (open docs override workspace files)
     struct FileInfo {
@@ -2696,7 +2847,7 @@ static void find_all_references(const SymbolIdentity& target, const GlobalIndex&
 
         // Filter candidates
         for (u32 j = 0; j < candidates.size(); j++) {
-            if (is_reference_to_symbol(candidates[j], target, index, tree.root, file_info.uri)) {
+            if (is_reference_to_symbol(candidates[j], target, index, tree.root, file_info.uri, analysis_context)) {
                 // Check if this is the declaration and if we should skip it
                 if (!include_declaration) {
                     // Check if candidate is at a declaration site
@@ -2805,7 +2956,7 @@ void LspServer::handle_references(const JsonValue& params, i64 id) {
 
     // Identify the symbol at cursor
     SymbolIdentity identity;
-    if (!identify_symbol_at_cursor(node, m_global_index, uri, identity)) {
+    if (!identify_symbol_at_cursor(node, m_global_index, uri, identity, &m_analysis_context)) {
         m_transport.write_response(id, "[]");
         return;
     }
@@ -2823,7 +2974,8 @@ void LspServer::handle_references(const JsonValue& params, i64 id) {
     // Find all references
     Vector<ReferenceLocation> locations;
     find_all_references(identity, m_global_index, include_declaration,
-                         m_open_documents, m_workspace_files, locations);
+                         m_open_documents, m_workspace_files, locations,
+                         &m_analysis_context);
 
     // Build Location[] response
     String result;
@@ -2912,7 +3064,7 @@ void LspServer::handle_rename(const JsonValue& params, i64 id) {
     }
 
     SymbolIdentity identity;
-    if (!identify_symbol_at_cursor(node, m_global_index, uri, identity)) {
+    if (!identify_symbol_at_cursor(node, m_global_index, uri, identity, &m_analysis_context)) {
         m_transport.write_response(id, "null");
         return;
     }
@@ -2920,7 +3072,8 @@ void LspServer::handle_rename(const JsonValue& params, i64 id) {
     // Find all references (always include declaration for rename)
     Vector<ReferenceLocation> locations;
     find_all_references(identity, m_global_index, true,
-                         m_open_documents, m_workspace_files, locations);
+                         m_open_documents, m_workspace_files, locations,
+                         &m_analysis_context);
 
     if (locations.empty()) {
         m_transport.write_response(id, "null");

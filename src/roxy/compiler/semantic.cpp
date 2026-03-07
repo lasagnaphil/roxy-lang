@@ -93,6 +93,179 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, 
 {
 }
 
+void SemanticAnalyzer::set_lsp_mode(bool enable) { m_lsp_mode = enable; }
+bool SemanticAnalyzer::lsp_mode() const { return m_lsp_mode; }
+
+bool SemanticAnalyzer::too_many_errors() const {
+    u32 limit = m_lsp_mode ? MAX_LSP_SEMANTIC_ERRORS : MAX_SEMANTIC_ERRORS;
+    return m_errors.size() >= limit;
+}
+
+void SemanticAnalyzer::run_declaration_passes(Program* program) {
+    m_program = program;
+
+    // Pass 0a: Auto-import builtin module as prelude
+    import_builtin_prelude();
+
+    // Pass 0b: Process user imports
+    for (auto* decl : program->declarations) {
+        if (decl && decl->kind == AstKind::DeclImport) {
+            analyze_import_decl(decl);
+        }
+    }
+
+    // Pass 0c: Apply native function symbols from registry (non-method entries)
+    if (m_registry) {
+        m_registry->apply_to_symbols(m_symbols, m_types, m_allocator);
+    }
+
+    // Pass 1: Collect type declarations (struct/enum names)
+    collect_type_declarations(program);
+
+    // Pass 1.5: Create native struct types from registry
+    if (m_registry) {
+        m_registry->apply_structs_to_types(m_type_env, m_allocator, m_symbols);
+    }
+
+    // Pass 1.6: Apply native methods to struct types
+    if (m_registry) {
+        m_registry->apply_methods_to_types(m_type_env, m_allocator);
+    }
+
+    // Pass 1.7: Register builtin traits (Printable, Hash, Exception)
+    // and primitive operator methods — guarded against re-initialization
+    if (!m_type_env.printable_type()) {
+        Type* printable_type = m_types.trait_type(StringView("Printable", 9), nullptr);
+        m_type_env.set_printable_type(printable_type);
+        m_type_env.register_trait_type(StringView("Printable", 9), printable_type);
+
+        TraitMethodInfo trait_method_info;
+        trait_method_info.name = StringView("to_string", 9);
+        trait_method_info.param_types = Span<Type*>(nullptr, 0);
+        trait_method_info.return_type = m_types.string_type();
+        trait_method_info.decl = nullptr;
+        trait_method_info.has_default = false;
+
+        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
+            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
+        tmi_data[0] = trait_method_info;
+        printable_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
+
+        TypeKind prim_kinds[] = {
+            TypeKind::Bool, TypeKind::I32, TypeKind::I64,
+            TypeKind::F32, TypeKind::F64, TypeKind::String
+        };
+        for (TypeKind tk : prim_kinds) {
+            MethodInfo method_info;
+            method_info.name = StringView("to_string", 9);
+            method_info.param_types = Span<Type*>(nullptr, 0);
+            method_info.return_type = m_types.string_type();
+            method_info.decl = nullptr;
+            m_types.register_primitive_method(tk, method_info);
+            m_types.register_primitive_trait(tk, printable_type);
+        }
+    }
+
+    if (!m_type_env.hash_type()) {
+        Type* hash_trait_type = m_types.trait_type(StringView("Hash", 4), nullptr);
+        m_type_env.set_hash_type(hash_trait_type);
+        m_type_env.register_trait_type(StringView("Hash", 4), hash_trait_type);
+
+        TraitMethodInfo trait_method_info;
+        trait_method_info.name = StringView("hash", 4);
+        trait_method_info.param_types = Span<Type*>(nullptr, 0);
+        trait_method_info.return_type = m_types.i64_type();
+        trait_method_info.decl = nullptr;
+        trait_method_info.has_default = false;
+
+        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
+            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
+        tmi_data[0] = trait_method_info;
+        hash_trait_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
+
+        TypeKind hashable_kinds[] = {
+            TypeKind::Bool,
+            TypeKind::I8, TypeKind::I16, TypeKind::I32, TypeKind::I64,
+            TypeKind::U8, TypeKind::U16, TypeKind::U32, TypeKind::U64,
+            TypeKind::F32, TypeKind::F64,
+            TypeKind::String
+        };
+        for (TypeKind tk : hashable_kinds) {
+            MethodInfo method_info;
+            method_info.name = StringView("hash", 4);
+            method_info.param_types = Span<Type*>(nullptr, 0);
+            method_info.return_type = m_types.i64_type();
+            method_info.decl = nullptr;
+            m_types.register_primitive_method(tk, method_info);
+            m_types.register_primitive_trait(tk, hash_trait_type);
+        }
+    }
+
+    if (!m_type_env.exception_type()) {
+        Type* exception_trait_type = m_types.trait_type(StringView("Exception", 9), nullptr);
+        m_type_env.set_exception_type(exception_trait_type);
+        m_type_env.register_trait_type(StringView("Exception", 9), exception_trait_type);
+
+        TraitMethodInfo trait_method_info;
+        trait_method_info.name = StringView("message", 7);
+        trait_method_info.param_types = Span<Type*>(nullptr, 0);
+        trait_method_info.return_type = m_types.string_type();
+        trait_method_info.decl = nullptr;
+        trait_method_info.has_default = false;
+
+        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
+            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
+        tmi_data[0] = trait_method_info;
+        exception_trait_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
+
+        MethodInfo method_info;
+        method_info.name = StringView("message", 7);
+        method_info.param_types = Span<Type*>(nullptr, 0);
+        method_info.return_type = m_types.string_type();
+        method_info.decl = nullptr;
+        m_types.register_primitive_method(TypeKind::ExceptionRef, method_info);
+    }
+
+    // Pass 1.8: Register built-in operator trait methods for primitive types
+    register_primitive_operator_methods();
+
+    // Pass 1.9: Resolve trait bounds on generic type parameters
+    resolve_generic_bounds();
+
+    // Pass 2: Resolve type members (field types, parent types, method signatures)
+    resolve_type_members(program);
+}
+
+void SemanticAnalyzer::run_body_analysis(Program* program) {
+    m_program = program;
+    analyze_function_bodies(program);
+}
+
+void SemanticAnalyzer::analyze_single_function(Decl* decl) {
+    if (!decl) return;
+
+    // Import builtin prelude so symbols are available
+    import_builtin_prelude();
+
+    // Analyze the declaration based on its kind
+    switch (decl->kind) {
+        case AstKind::DeclFun:
+            analyze_fun_decl(decl);
+            break;
+        case AstKind::DeclMethod:
+            analyze_method_decl(decl);
+            break;
+        case AstKind::DeclConstructor:
+            analyze_constructor_decl(decl);
+            break;
+        case AstKind::DeclDestructor:
+            analyze_destructor_decl(decl);
+            break;
+        default:
+            break;
+    }
+}
+
 void SemanticAnalyzer::import_builtin_prelude() {
     // Auto-import all exports from the "builtin" module if available
     ModuleInfo* builtin_module = m_modules.find_module(BUILTIN_MODULE_NAME);
@@ -119,154 +292,12 @@ void SemanticAnalyzer::import_builtin_prelude() {
 }
 
 bool SemanticAnalyzer::analyze(Program* program) {
-    m_program = program;
-
-    // Pass 0a: Auto-import builtin module as prelude
-    import_builtin_prelude();
-    if (too_many_errors()) return false;
-
-    // Pass 0b: Process user imports
-    for (auto* decl : program->declarations) {
-        if (decl && decl->kind == AstKind::DeclImport) {
-            analyze_import_decl(decl);
-        }
-    }
-    if (too_many_errors()) return false;
-
-    // Pass 0c: Apply native function symbols from registry (non-method entries)
-    if (m_registry) {
-        m_registry->apply_to_symbols(m_symbols, m_types, m_allocator);
-    }
-
-    // Pass 1: Collect type declarations (struct/enum names)
-    collect_type_declarations(program);
-    if (too_many_errors()) return false;
-
-    // Pass 1.5: Create native struct types from registry
-    if (m_registry) {
-        m_registry->apply_structs_to_types(m_type_env, m_allocator, m_symbols);
-    }
-
-    // Pass 1.6: Apply native methods to struct types
-    if (m_registry) {
-        m_registry->apply_methods_to_types(m_type_env, m_allocator);
-    }
-
-    // Pass 1.7: Register builtin Printable trait and primitive implementations
-    // Guard against re-initialization since TypeEnv persists across modules
-    if (!m_type_env.printable_type()) {
-        // Create the Printable trait type
-        Type* printable_type = m_types.trait_type(StringView("Printable", 9), nullptr);
-        m_type_env.set_printable_type(printable_type);
-        m_type_env.register_trait_type(StringView("Printable", 9), printable_type);
-
-        // Add to_string() as the required trait method
-        TraitMethodInfo trait_method_info;
-        trait_method_info.name = StringView("to_string", 9);
-        trait_method_info.param_types = Span<Type*>(nullptr, 0);  // no params besides self
-        trait_method_info.return_type = m_types.string_type();
-        trait_method_info.decl = nullptr;
-        trait_method_info.has_default = false;
-
-        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
-            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
-        tmi_data[0] = trait_method_info;
-        printable_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
-
-        // Register to_string method and Printable trait for each primitive type
-        TypeKind prim_kinds[] = {
-            TypeKind::Bool, TypeKind::I32, TypeKind::I64,
-            TypeKind::F32, TypeKind::F64, TypeKind::String
-        };
-        for (TypeKind tk : prim_kinds) {
-            MethodInfo method_info;
-            method_info.name = StringView("to_string", 9);
-            method_info.param_types = Span<Type*>(nullptr, 0);
-            method_info.return_type = m_types.string_type();
-            method_info.decl = nullptr;
-            m_types.register_primitive_method(tk, method_info);
-            m_types.register_primitive_trait(tk, printable_type);
-         }
-    }
-
-    // Pass 1.7b: Register builtin Hash trait and primitive implementations
-    if (!m_type_env.hash_type()) {
-        Type* hash_trait_type = m_types.trait_type(StringView("Hash", 4), nullptr);
-        m_type_env.set_hash_type(hash_trait_type);
-        m_type_env.register_trait_type(StringView("Hash", 4), hash_trait_type);
-
-        // Add hash() as the required trait method
-        TraitMethodInfo trait_method_info;
-        trait_method_info.name = StringView("hash", 4);
-        trait_method_info.param_types = Span<Type*>(nullptr, 0);
-        trait_method_info.return_type = m_types.i64_type();
-        trait_method_info.decl = nullptr;
-        trait_method_info.has_default = false;
-
-        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
-            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
-        tmi_data[0] = trait_method_info;
-        hash_trait_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
-
-        // Register hash() method and Hash trait for hashable primitive types
-        TypeKind hashable_kinds[] = {
-            TypeKind::Bool,
-            TypeKind::I8, TypeKind::I16, TypeKind::I32, TypeKind::I64,
-            TypeKind::U8, TypeKind::U16, TypeKind::U32, TypeKind::U64,
-            TypeKind::F32, TypeKind::F64,
-            TypeKind::String
-        };
-        for (TypeKind tk : hashable_kinds) {
-            MethodInfo method_info;
-            method_info.name = StringView("hash", 4);
-            method_info.param_types = Span<Type*>(nullptr, 0);
-            method_info.return_type = m_types.i64_type();
-            method_info.decl = nullptr;
-            m_types.register_primitive_method(tk, method_info);
-            m_types.register_primitive_trait(tk, hash_trait_type);
-        }
-    }
-
-    // Pass 1.7c: Register builtin Exception trait
-    if (!m_type_env.exception_type()) {
-        Type* exception_trait_type = m_types.trait_type(StringView("Exception", 9), nullptr);
-        m_type_env.set_exception_type(exception_trait_type);
-        m_type_env.register_trait_type(StringView("Exception", 9), exception_trait_type);
-
-        // Add message() as the required trait method
-        TraitMethodInfo trait_method_info;
-        trait_method_info.name = StringView("message", 7);
-        trait_method_info.param_types = Span<Type*>(nullptr, 0);  // no params besides self
-        trait_method_info.return_type = m_types.string_type();
-        trait_method_info.decl = nullptr;
-        trait_method_info.has_default = false;
-
-        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
-            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
-        tmi_data[0] = trait_method_info;
-        exception_trait_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
-
-        // Register message() method on ExceptionRef built-in type
-        MethodInfo method_info;
-        method_info.name = StringView("message", 7);
-        method_info.param_types = Span<Type*>(nullptr, 0);
-        method_info.return_type = m_types.string_type();
-        method_info.decl = nullptr;
-        m_types.register_primitive_method(TypeKind::ExceptionRef, method_info);
-    }
-
-    // Pass 1.8: Register built-in operator trait methods for primitive types
-    register_primitive_operator_methods();
-
-    // Pass 1.9: Resolve trait bounds on generic type parameters
-    resolve_generic_bounds();
-    if (too_many_errors()) return false;
-
-    resolve_type_members(program);
+    // Run declaration passes (0-2)
+    run_declaration_passes(program);
     if (too_many_errors()) return false;
 
     // Pass 3: Analyze function bodies (full type checking)
-    analyze_function_bodies(program);
+    run_body_analysis(program);
 
     return !has_errors();
 }
@@ -389,7 +420,6 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
 
             // Then add own fields
             for (auto& field : struct_decl.fields) {
-
                 Type* field_type = resolve_type_expr(field.type);
                 if (!field_type) {
                     field_type = m_types.error_type();
@@ -4151,6 +4181,8 @@ Type* SemanticAnalyzer::analyze_regular_fun_call(Expr* expr, CallExpr& ce) {
 Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
     CallExpr& call_expr = expr->call;
 
+    if (!call_expr.callee) return m_types.error_type();
+
     // Primitive type cast: i32(x), f64(x), bool(x)
     if (call_expr.callee->kind == AstKind::ExprIdentifier) {
         StringView type_name = call_expr.callee->identifier.name;
@@ -4451,6 +4483,8 @@ Type* SemanticAnalyzer::analyze_index_expr(Expr* expr) {
 
 Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
     GetExpr& get_expr = expr->get;
+
+    if (!get_expr.object) return m_types.error_type();
 
     // Check for module-qualified access: module.member
     if (get_expr.object->kind == AstKind::ExprIdentifier) {

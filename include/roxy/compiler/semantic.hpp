@@ -34,6 +34,7 @@ struct SemanticError {
 
 // Maximum number of errors to collect before stopping
 constexpr u32 MAX_SEMANTIC_ERRORS = 20;
+constexpr u32 MAX_LSP_SEMANTIC_ERRORS = 200;
 
 // Move state for uniq ownership tracking
 enum class MoveState : u8 {
@@ -56,6 +57,21 @@ public:
 
     // Analyze a program - returns true if no errors
     bool analyze(Program* program);
+
+    // Sub-pass entry points for LSP use
+    // Run declaration passes (0-2): imports, type collection, member resolution
+    void run_declaration_passes(Program* program);
+
+    // Run body analysis pass (3) on all functions in the program
+    void run_body_analysis(Program* program);
+
+    // Analyze a single function/method/constructor/destructor body
+    // Uses the already-populated TypeEnv for type lookups
+    void analyze_single_function(Decl* decl);
+
+    // LSP mode: more tolerant of errors, handles null AST children gracefully
+    void set_lsp_mode(bool enable);
+    bool lsp_mode() const;
 
     // Error access
     bool has_errors() const { return !m_errors.empty(); }
@@ -86,7 +102,7 @@ private:
 
         m_errors.push_back({loc, msg, true});
     }
-    bool too_many_errors() const { return m_errors.size() >= MAX_SEMANTIC_ERRORS; }
+    bool too_many_errors() const;
 
     // Auto-import builtin module exports as prelude
     void import_builtin_prelude();
@@ -224,6 +240,7 @@ private:
     SymbolTable& m_symbols;
     Vector<SemanticError> m_errors;
     Program* m_program;                   // Current program being analyzed
+    bool m_lsp_mode = false;              // When true, more tolerant of errors
 
     // Coroutine tracking (set while analyzing a function returning Coro<T>)
     bool m_in_coroutine = false;

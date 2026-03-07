@@ -9,6 +9,7 @@
 #include "roxy/lsp/protocol.hpp"
 #include "roxy/lsp/indexer.hpp"
 #include "roxy/lsp/global_index.hpp"
+#include "roxy/lsp/lsp_analysis_context.hpp"
 
 namespace rx {
 
@@ -34,6 +35,7 @@ private:
     LspTransport m_transport;
     Vector<OpenDocument> m_open_documents;
     GlobalIndex m_global_index;
+    LspAnalysisContext m_analysis_context;
     String m_workspace_root;
     tsl::robin_map<String, WorkspaceFile> m_workspace_files;
     bool m_initialized = false;
@@ -66,6 +68,9 @@ private:
     // Workspace helpers
     void scan_workspace();
     void index_workspace_file(const String& file_path);
+
+    // Rebuild type-level analysis from all workspace sources
+    void rebuild_analysis_context();
     String file_path_to_uri(StringView file_path);
     String uri_to_file_path(StringView uri);
 
