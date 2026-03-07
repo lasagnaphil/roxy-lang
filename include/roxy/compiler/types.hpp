@@ -342,11 +342,13 @@ struct Type {
     // Returns true for noncopyable types (require move semantics).
     // This includes:
     //   - uniq references
+    //   - Coro<T> (heap-allocated state struct)
     //   - structs with a default destructor (synthetic or user-defined)
     //   - List<T> where T is noncopyable
     //   - Map<K,V> where K or V is noncopyable
     bool noncopyable() const {
         if (kind == TypeKind::Uniq) return true;
+        if (kind == TypeKind::Coroutine) return true;
         if (kind == TypeKind::Struct) {
             for (const auto& dtor : struct_info.destructors) {
                 if (dtor.name.empty()) return true;

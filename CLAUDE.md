@@ -185,7 +185,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Details:** `docs/internals/exceptions.md` | **Tests:** `tests/e2e/test_exceptions.cpp`
 
 ### Coroutines
-**Coroutines** - Generator-style stackless coroutines via `Coro<T>` built-in type. Compile-time state machine transformation producing init/resume/done functions. Yield in straight-line code and if/else branches. Graph-preserving block cloning for correct control flow.
+**Coroutines** - Generator-style stackless coroutines via `Coro<T>` built-in type. Compile-time state machine transformation producing init/resume/done functions. Yield in straight-line code and if/else branches. Graph-preserving block cloning for correct control flow. `Coro<T>` is noncopyable (RAII cleanup of heap-allocated state struct). Promoted `uniq`/noncopyable fields are cleaned up by a generated `__coro_*$$delete` destructor; null-ification on done path prevents double-free.
 **Details:** `docs/internals/coroutines.md` | **Tests:** `tests/e2e/test_coroutines.cpp`
 
 ### LSP Server (Phases 1–7)

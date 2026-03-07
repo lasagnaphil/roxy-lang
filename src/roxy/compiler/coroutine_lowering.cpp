@@ -176,6 +176,137 @@ static IRBlock* create_block(BumpAllocator& allocator, IRFunction* func, StringV
     return block;
 }
 
+static ValueId emit_const_null(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
+                                Type* nil_type) {
+    IRInst* inst = make_inst(allocator, func, block, IROp::ConstNull, nil_type);
+    return inst->result;
+}
+
+static ValueId emit_call(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
+                           StringView func_name, Span<ValueId> args, Type* result_type) {
+    IRInst* inst = make_inst(allocator, func, block, IROp::Call, result_type);
+    inst->call.func_name = func_name;
+    inst->call.args = args;
+    inst->call.native_index = 0;
+    return inst->result;
+}
+
+static void emit_delete(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
+                          ValueId value, Type* void_type) {
+    IRInst* inst = make_inst(allocator, func, block, IROp::Delete, void_type);
+    inst->unary = value;
+}
+
+// Generate the __coro_<func_name>$$delete destructor function.
+// This iterates promoted struct fields in reverse order (LIFO) and cleans up
+// any noncopyable pointer-type fields (uniq, List, Map, Coro).
+static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* struct_type,
+                                             StringView func_name, TypeCache& types) {
+    IRFunction* dtor_func = allocator.emplace<IRFunction>();
+    StringView dtor_name = alloc_string_fmt(allocator, "__coro_{}$$delete", func_name);
+    dtor_func->name = dtor_name;
+    dtor_func->return_type = types.void_type();
+
+    // Single parameter: self: ref<__coro_*>
+    Type* ref_struct_type = types.ref_type(struct_type);
+    BlockParam self_param;
+    self_param.value = dtor_func->new_value();
+    self_param.type = ref_struct_type;
+    self_param.name = alloc_string(allocator, "self");
+    dtor_func->params.push_back(self_param);
+    dtor_func->param_is_ptr.push_back(false);
+
+    ValueId self_val = self_param.value;
+    IRBlock* entry = create_block(allocator, dtor_func, alloc_string(allocator, "entry"));
+
+    // Process fields in reverse order (LIFO, like C++ member destruction)
+    // Skip __state and __yield_val (indices 0 and 1)
+    const auto& fields = struct_type->struct_info.fields;
+    for (i32 i = static_cast<i32>(fields.size()) - 1; i >= 2; i--) {
+        const FieldInfo& field = fields[i];
+        if (!field.type) continue;
+
+        bool is_noncopyable_pointer = false;
+        if (field.type->kind == TypeKind::Uniq ||
+            (field.type->is_list() && field.type->noncopyable()) ||
+            (field.type->is_map() && field.type->noncopyable()) ||
+            field.type->is_coroutine()) {
+            is_noncopyable_pointer = true;
+        }
+        if (!is_noncopyable_pointer) continue;
+
+        // GetField → null check → call inner destructor → Delete → skip
+        ValueId field_val = emit_get_field(allocator, dtor_func, entry, self_val,
+                                            field.name, field.slot_offset, field.slot_count,
+                                            field.type);
+        ValueId null_val = emit_const_null(allocator, dtor_func, entry, types.nil_type());
+        ValueId is_null = emit_eq_i(allocator, dtor_func, entry,
+                                     field_val, null_val, types.bool_type());
+
+        char cleanup_name[64];
+        format_to(cleanup_name, sizeof(cleanup_name), "field_cleanup_{}", i);
+        char skip_name[64];
+        format_to(skip_name, sizeof(skip_name), "field_skip_{}", i);
+
+        IRBlock* cleanup_block = create_block(allocator, dtor_func,
+                                               alloc_string(allocator, cleanup_name));
+        IRBlock* skip_block = create_block(allocator, dtor_func,
+                                            alloc_string(allocator, skip_name));
+
+        finish_branch(entry, is_null, skip_block->id, cleanup_block->id);
+
+        // In cleanup block: call inner destructor if applicable, then Delete
+        if (field.type->kind == TypeKind::Uniq) {
+            Type* inner_type = field.type->ref_info.inner_type;
+            if (inner_type && inner_type->is_struct()) {
+                bool has_dtor = false;
+                for (const auto& dtor : inner_type->struct_info.destructors) {
+                    if (dtor.name.empty()) { has_dtor = true; break; }
+                }
+                if (has_dtor) {
+                    char inner_dtor_name[256];
+                    i32 len = format_to(inner_dtor_name, sizeof(inner_dtor_name),
+                                        "{}$$delete", inner_type->struct_info.name);
+                    StringView inner_dtor_sv = alloc_string(allocator, inner_dtor_name);
+                    Span<ValueId> call_args = alloc_span<ValueId>(allocator, 1);
+                    call_args[0] = field_val;
+                    emit_call(allocator, dtor_func, cleanup_block,
+                              inner_dtor_sv, call_args, types.void_type());
+                }
+            }
+            emit_delete(allocator, dtor_func, cleanup_block, field_val, types.void_type());
+        } else if (field.type->is_coroutine()) {
+            // Recursively call the coroutine's destructor
+            StringView coro_func_name = field.type->coro_info.func_name;
+            StringView coro_dtor_name = alloc_string_fmt(allocator,
+                "__coro_{}$$delete", coro_func_name);
+            Span<ValueId> call_args = alloc_span<ValueId>(allocator, 1);
+            call_args[0] = field_val;
+            emit_call(allocator, dtor_func, cleanup_block,
+                      coro_dtor_name, call_args, types.void_type());
+            emit_delete(allocator, dtor_func, cleanup_block, field_val, types.void_type());
+        }
+        // Note: List and Map cleanup requires native function calls that are only
+        // available through the IR builder (which has access to NativeRegistry).
+        // For now, we emit Delete for the slab allocation. The list/map internal
+        // buffers are freed by the slab allocator's tombstoning.
+        // TODO: Full list/map element cleanup in coroutine destructors requires
+        // emitting the cleanup loop IR here.
+        else if (field.type->is_list() || field.type->is_map()) {
+            emit_delete(allocator, dtor_func, cleanup_block, field_val, types.void_type());
+        }
+
+        finish_goto(allocator, cleanup_block, skip_block->id);
+        entry = skip_block;  // Continue from skip block for next field
+    }
+
+    // Return void from the last block
+    ValueId void_val = emit_const_int(allocator, dtor_func, entry, 0, types.void_type());
+    finish_return(entry, void_val);
+
+    return dtor_func;
+}
+
 // ===== In-place value remapping =====
 
 static ValueId remap_value(const tsl::robin_map<u32, ValueId>& value_map, ValueId vid) {
@@ -511,7 +642,7 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
 static void phase2_split(IRFunction* func, BumpAllocator& allocator,
                           ValueId self_val, Type* coro_yield_type,
                           const FieldInfo* state_field, const FieldInfo* yield_field,
-                          TypeCache& types) {
+                          TypeCache& types, const Vector<PromotedVar>& promoted_vars) {
     // Re-scan for yield points after Phase 1 (instruction indices changed)
     Vector<YieldPoint> yield_points;
     for (u32 block_idx = 0; block_idx < func->blocks.size(); block_idx++) {
@@ -607,6 +738,21 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
     for (auto* block : func->blocks) {
         if (block->terminator.kind != TerminatorKind::Return) continue;
         if (block_to_yield_idx.count(block->id.id)) continue;
+
+        // Null-ify promoted noncopyable pointer fields before setting done state.
+        // The IR builder's inline cleanup code has already freed the objects on this path,
+        // but the struct fields still hold stale pointers. The destructor (called later
+        // when the Coro goes out of scope) would double-free without this.
+        for (const auto& pv : promoted_vars) {
+            if (!pv.type->noncopyable()) continue;
+            if (pv.type->kind == TypeKind::Uniq || pv.type->is_list() ||
+                pv.type->is_map() || pv.type->is_coroutine()) {
+                ValueId null_val = emit_const_null(allocator, func, block, types.nil_type());
+                emit_set_field(allocator, func, block, self_val,
+                               pv.name, pv.field_slot_offset, pv.field_slot_count,
+                               null_val, pv.type);
+            }
+        }
 
         ValueId done_val = emit_const_int(allocator, func, block, CORO_STATE_DONE, types.i32_type());
         emit_set_field(allocator, func, block, self_val,
@@ -801,7 +947,13 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     struct_type->struct_info.fields = alloc_span(allocator, fields);
     struct_type->struct_info.slot_count = current_slot;
     struct_type->struct_info.constructors = Span<ConstructorInfo>();
-    struct_type->struct_info.destructors = Span<DestructorInfo>();
+    // Attach a synthetic default destructor so noncopyable() and cleanup recognize this struct
+    DestructorInfo* dtor_info = reinterpret_cast<DestructorInfo*>(
+        allocator.alloc_bytes(sizeof(DestructorInfo), alignof(DestructorInfo)));
+    dtor_info->name = StringView();  // empty = default destructor
+    dtor_info->param_types = Span<Type*>();
+    dtor_info->decl = nullptr;
+    struct_type->struct_info.destructors = Span<DestructorInfo>(dtor_info, 1);
     struct_type->struct_info.methods = Span<MethodInfo>();
     struct_type->struct_info.when_clauses = Span<WhenClauseInfo>();
     struct_type->struct_info.implemented_traits = Span<TraitImplRecord>();
@@ -874,6 +1026,10 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
                                  done_state_val, done_sentinel, types.bool_type());
     finish_return(done_entry, is_done);
 
+    // ===== Generate destructor function =====
+    IRFunction* dtor_func = generate_coro_destructor(allocator, struct_type,
+                                                      original->name, types);
+
     // ===== Transform original into resume function =====
     ValueId self_val = original->new_value();
 
@@ -883,7 +1039,29 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
 
     // Phase 2: split at yields, add dispatch
     phase2_split(original, allocator, self_val, coro_yield_type,
-                 state_field, yield_field, types);
+                 state_field, yield_field, types, promoted_vars);
+
+    // Clean up stale cleanup_info for promoted variables.
+    // After Phase 1, the original function's cleanup_info entries reference SSA values
+    // and blocks that may be stale. Remove entries for promoted variables since their
+    // cleanup is now handled by the destructor.
+    {
+        Vector<IRCleanupInfo> filtered_cleanup;
+        for (u32 i = 0; i < original->cleanup_info.size(); i++) {
+            const IRCleanupInfo& info = original->cleanup_info[i];
+            bool is_promoted = false;
+            for (const auto& pv : promoted_vars) {
+                if (info.type == pv.type && pv.type->noncopyable()) {
+                    is_promoted = true;
+                    break;
+                }
+            }
+            if (!is_promoted) {
+                filtered_cleanup.push_back(info);
+            }
+        }
+        original->cleanup_info = std::move(filtered_cleanup);
+    }
 
     // Set resume function metadata
     original->name = alloc_string_fmt(allocator, "__coro_{}$$resume", init_func->name);
@@ -899,6 +1077,7 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     }
     module->functions.push_back(original);
     module->functions.push_back(done_func);
+    module->functions.push_back(dtor_func);
 }
 
 void coroutine_lower(IRModule* module, BumpAllocator& allocator, TypeEnv& type_env) {

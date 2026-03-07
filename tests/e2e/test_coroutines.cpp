@@ -660,3 +660,175 @@ TEST_CASE("E2E - Coroutine yield in try with loop") {
     CHECK(result.success);
     CHECK(result.value == 30);
 }
+
+// ============================================================================
+// Coroutine Memory Management Tests
+// ============================================================================
+
+TEST_CASE("E2E - Coroutine primitive cleanup") {
+    // Verify primitive-only Coro<i32> compiles and runs correctly.
+    // The heap-allocated state struct is freed at scope exit.
+    const char* source = R"(
+        fun counter(): Coro<i32> {
+            yield 10;
+            yield 20;
+        }
+
+        fun main(): i32 {
+            var g = counter();
+            var a: i32 = g.resume();
+            var b: i32 = g.resume();
+            return a + b;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 30);
+}
+
+TEST_CASE("E2E - Coroutine uniq promoted, run to completion") {
+    // A uniq variable captured across a yield point becomes a promoted field.
+    // When the coroutine runs to completion, inline cleanup frees the uniq,
+    // and the destructor (called at Coro scope exit) sees null and skips it.
+    const char* source = R"(
+        struct Resource {
+            value: i32;
+        }
+
+        fun delete Resource() {
+            print(f"{"dtor"}");
+        }
+
+        fun gen(): Coro<i32> {
+            var r: uniq Resource = uniq Resource();
+            r.value = 42;
+            yield r.value;
+            yield r.value + 1;
+        }
+
+        fun main(): i32 {
+            var g = gen();
+            var a: i32 = g.resume();
+            var b: i32 = g.resume();
+            // Resume once more to reach done state (triggers inline cleanup of r)
+            g.resume();
+            return a * 100 + b;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 4243);
+    // Destructor should be called exactly once (inline cleanup on done path)
+    CHECK(result.stdout_output == "dtor\n");
+}
+
+TEST_CASE("E2E - Coroutine uniq promoted, early drop") {
+    // Drop the Coro before it reaches done. The destructor should clean up
+    // the promoted uniq field that hasn't been freed by inline cleanup.
+    const char* source = R"(
+        struct Resource {
+            value: i32;
+        }
+
+        fun delete Resource() {
+            print(f"{"freed"}");
+        }
+
+        fun gen(): Coro<i32> {
+            var r: uniq Resource = uniq Resource();
+            r.value = 99;
+            yield r.value;
+            yield r.value + 1;
+        }
+
+        fun main(): i32 {
+            var result: i32 = 0;
+            {
+                var g = gen();
+                result = g.resume();
+                // g goes out of scope here without reaching done
+                // The destructor should clean up the promoted uniq field
+            }
+            return result;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 99);
+    // Destructor should be called by the coroutine's destructor
+    CHECK(result.stdout_output == "freed\n");
+}
+
+TEST_CASE("E2E - Coroutine uniq parameter") {
+    // A uniq parameter to a coroutine is captured in the state struct.
+    // Cleanup should free it when the coroutine is destroyed.
+    const char* source = R"(
+        struct Data {
+            value: i32;
+        }
+
+        fun delete Data() {
+            print(f"{"~Data"}");
+        }
+
+        fun gen(d: uniq Data): Coro<i32> {
+            yield d.value;
+            yield d.value * 2;
+        }
+
+        fun main(): i32 {
+            var d: uniq Data = uniq Data();
+            d.value = 5;
+            var g = gen(d);
+            var a: i32 = g.resume();
+            var b: i32 = g.resume();
+            g.resume();  // Run to completion
+            return a * 10 + b;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 60);
+    CHECK(result.stdout_output == "~Data\n");
+}
+
+TEST_CASE("E2E - Coroutine mixed primitive and uniq promoted") {
+    // Only noncopyable fields get cleanup. Primitive promoted variables
+    // should work alongside uniq promoted variables.
+    const char* source = R"(
+        struct Counter {
+            count: i32;
+        }
+
+        fun delete Counter() {
+            print(f"{"~Counter"}");
+        }
+
+        fun gen(): Coro<i32> {
+            var c: uniq Counter = uniq Counter();
+            c.count = 0;
+            var multiplier: i32 = 10;
+            c.count = c.count + 1;
+            yield c.count * multiplier;
+            c.count = c.count + 1;
+            yield c.count * multiplier;
+        }
+
+        fun main(): i32 {
+            var g = gen();
+            var a: i32 = g.resume();
+            var b: i32 = g.resume();
+            g.resume();  // Run to completion
+            return a + b;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 30);
+    CHECK(result.stdout_output == "~Counter\n");
+}
