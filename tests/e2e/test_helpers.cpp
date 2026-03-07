@@ -10,6 +10,7 @@
 #include "roxy/compiler/coroutine_lowering.hpp"
 #include "roxy/compiler/lowering.hpp"
 #include "roxy/compiler/module_registry.hpp"
+#include "roxy/compiler/c_emitter.hpp"
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/natives.hpp"
@@ -17,6 +18,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 
 #ifdef _WIN32
 #define _CRT_SECURE_NO_WARNINGS
@@ -120,6 +122,198 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
         registry.apply_to_module(module);
     }
     return module;
+}
+
+IRModule* compile_to_ir(BumpAllocator& allocator, const char* source, bool debug) {
+    u32 len = 0;
+    while (source[len]) len++;
+
+    TypeEnv type_env(allocator);
+    NativeRegistry registry(allocator, type_env.types());
+    register_builtin_natives(registry);
+
+    ModuleRegistry modules(allocator);
+    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, type_env.types());
+
+    Lexer lexer(source, len);
+    Parser parser(lexer, allocator);
+    Program* program = parser.parse();
+
+    if (!program || parser.has_error()) {
+        return nullptr;
+    }
+
+    SemanticAnalyzer analyzer(allocator, type_env, modules);
+    if (!analyzer.analyze(program)) {
+        if (debug) {
+            printf("Semantic errors:\n");
+            for (const auto& err : analyzer.errors()) {
+                printf("  Line %u: %s\n", err.loc.line, err.message);
+            }
+        }
+        return nullptr;
+    }
+
+    const auto& syn_vec = analyzer.synthetic_decls();
+    Span<Decl*> synthetic_decls;
+    if (!syn_vec.empty()) {
+        Decl** data = reinterpret_cast<Decl**>(allocator.alloc_bytes(
+            sizeof(Decl*) * syn_vec.size(), alignof(Decl*)));
+        for (u32 j = 0; j < syn_vec.size(); j++) {
+            data[j] = syn_vec[j];
+        }
+        synthetic_decls = Span<Decl*>(data, static_cast<u32>(syn_vec.size()));
+    }
+
+    IRBuilder ir_builder(allocator, type_env, registry, analyzer.symbols(), modules);
+    IRModule* ir_module = ir_builder.build(program, synthetic_decls);
+    if (!ir_module) {
+        return nullptr;
+    }
+
+    if (debug) {
+        String ir_str;
+        ir_module_to_string(ir_module, ir_str);
+        ir_str.push_back('\0');
+        printf("=== IR ===\n%s\n", ir_str.data());
+    }
+
+    coroutine_lower(ir_module, allocator, type_env);
+
+    IRValidator validator;
+    if (!validator.validate(ir_module)) {
+        if (debug) printf("IR validation failed: %s\n", validator.error());
+        return nullptr;
+    }
+
+    return ir_module;
+}
+
+String compile_to_cpp(const char* source, bool debug) {
+    BumpAllocator allocator(8192);
+    IRModule* ir_module = compile_to_ir(allocator, source, debug);
+    if (!ir_module) {
+        return String();
+    }
+
+    CEmitterConfig config;
+    config.emit_main_entry = true;
+    CEmitter emitter(allocator, config);
+
+    String output;
+    emitter.emit_source(ir_module, output);
+
+    if (debug) {
+        printf("=== Generated C++ ===\n%s\n", output.c_str());
+    }
+
+    return output;
+}
+
+CBackendResult compile_and_run_cpp(const char* source, bool debug) {
+    CBackendResult result;
+    result.exit_code = -1;
+    result.compile_success = false;
+    result.run_success = false;
+
+    String cpp_source = compile_to_cpp(source, debug);
+    if (cpp_source.empty()) {
+        return result;
+    }
+
+    // Write C++ source to temp file
+    const char* tmpdir = getenv("TMPDIR");
+    if (!tmpdir) tmpdir = "/tmp";
+
+    char src_path[256];
+    char bin_path[256];
+    snprintf(src_path, sizeof(src_path), "%s/roxy_cbackend_XXXXXX.cpp", tmpdir);
+    snprintf(bin_path, sizeof(bin_path), "%s/roxy_cbackend_bin_XXXXXX", tmpdir);
+
+    // Create unique temp file for source
+    int src_fd = mkstemps(src_path, 4); // .cpp suffix
+    if (src_fd < 0) {
+        return result;
+    }
+
+    // Write source
+    write(src_fd, cpp_source.data(), cpp_source.size());
+    close(src_fd);
+
+    // Create unique temp path for binary
+    int bin_fd = mkstemp(bin_path);
+    if (bin_fd < 0) {
+        remove(src_path);
+        return result;
+    }
+    close(bin_fd);
+
+    // Compile with c++
+    char compile_cmd[512];
+    snprintf(compile_cmd, sizeof(compile_cmd),
+             "c++ -std=c++17 -o %s %s 2>&1", bin_path, src_path);
+
+    FILE* compile_pipe = popen(compile_cmd, "r");
+    if (!compile_pipe) {
+        remove(src_path);
+        remove(bin_path);
+        return result;
+    }
+
+    char compile_output[1024];
+    String compile_errors;
+    while (fgets(compile_output, sizeof(compile_output), compile_pipe)) {
+        compile_errors.append(compile_output, static_cast<u32>(strlen(compile_output)));
+    }
+    int compile_status = pclose(compile_pipe);
+
+    if (compile_status != 0) {
+        if (debug) {
+            printf("C++ compilation failed:\n%s\n", compile_errors.c_str());
+        }
+        remove(src_path);
+        remove(bin_path);
+        return result;
+    }
+
+    result.compile_success = true;
+
+    // Run the binary
+    char run_cmd[512];
+    snprintf(run_cmd, sizeof(run_cmd), "%s 2>&1", bin_path);
+
+    FILE* run_pipe = popen(run_cmd, "r");
+    if (!run_pipe) {
+        remove(src_path);
+        remove(bin_path);
+        return result;
+    }
+
+    char run_output[1024];
+    while (fgets(run_output, sizeof(run_output), run_pipe)) {
+        result.stdout_output.append(run_output, static_cast<u32>(strlen(run_output)));
+    }
+    int run_status = pclose(run_pipe);
+
+    // pclose returns the exit status in the format of waitpid
+    // WEXITSTATUS extracts the actual exit code
+#ifdef _WIN32
+    result.exit_code = run_status;
+#else
+    if (WIFEXITED(run_status)) {
+        result.exit_code = WEXITSTATUS(run_status);
+    } else {
+        result.exit_code = -1;
+    }
+#endif
+
+    result.run_success = true;
+
+    // Cleanup temp files
+    remove(src_path);
+    remove(bin_path);
+
+    return result;
 }
 
 Value compile_and_run(const char* source, StringView func_name, Span<Value> args, bool debug) {
