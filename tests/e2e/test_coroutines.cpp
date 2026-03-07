@@ -918,8 +918,86 @@ TEST_CASE("E2E - Coroutine List<uniq T> cleanup on early drop") {
     CHECK(result.stdout_output == "~Resource(10)\n~Resource(20)\n");
 }
 
-// TODO: Map<string, uniq T> coroutine cleanup tests
-// Map<K, uniq V> is not yet supported by the semantic analyzer.
-// Once supported, add tests for:
-// - Map cleanup on completion (coroutine runs to done, map values cleaned up)
-// - Map cleanup on early drop (Coro dropped before done, destructor cleans up map values)
+TEST_CASE("E2E - Coroutine Map<string, uniq T> cleanup on completion") {
+    const char* source = R"CODE(
+        struct Resource {
+            id: i32;
+        }
+
+        fun delete Resource() {
+            print(f"~Resource({self.id})");
+        }
+
+        fun gen(): Coro<i32> {
+            var m: Map<string, uniq Resource> = Map<string, uniq Resource>();
+            var r1: uniq Resource = uniq Resource();
+            r1.id = 100;
+            m.insert("a", r1);
+            var r2: uniq Resource = uniq Resource();
+            r2.id = 200;
+            m.insert("b", r2);
+            yield m.len();
+            var r3: uniq Resource = uniq Resource();
+            r3.id = 300;
+            m.insert("c", r3);
+            yield m.len();
+        }
+
+        fun main(): i32 {
+            var g = gen();
+            var a: i32 = g.resume();
+            var b: i32 = g.resume();
+            g.resume();
+            return a * 10 + b;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 23);
+    // All three resources should be cleaned up (order depends on hash table bucket layout)
+    CHECK(result.stdout_output.find("~Resource(100)") != std::string::npos);
+    CHECK(result.stdout_output.find("~Resource(200)") != std::string::npos);
+    CHECK(result.stdout_output.find("~Resource(300)") != std::string::npos);
+}
+
+TEST_CASE("E2E - Coroutine Map<string, uniq T> cleanup on early drop") {
+    const char* source = R"CODE(
+        struct Resource {
+            id: i32;
+        }
+
+        fun delete Resource() {
+            print(f"~Resource({self.id})");
+        }
+
+        fun gen(): Coro<i32> {
+            var m: Map<string, uniq Resource> = Map<string, uniq Resource>();
+            var r1: uniq Resource = uniq Resource();
+            r1.id = 10;
+            m.insert("x", r1);
+            var r2: uniq Resource = uniq Resource();
+            r2.id = 20;
+            m.insert("y", r2);
+            yield m.len();
+            yield m.len();
+        }
+
+        fun main(): i32 {
+            var result: i32 = 0;
+            {
+                var g = gen();
+                result = g.resume();
+                // g goes out of scope before done — destructor must clean up map values
+            }
+            return result;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 2);
+    // Both resources should be cleaned up by the coroutine destructor
+    CHECK(result.stdout_output.find("~Resource(10)") != std::string::npos);
+    CHECK(result.stdout_output.find("~Resource(20)") != std::string::npos);
+}

@@ -663,6 +663,48 @@ static void native_map_index_mut(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = 0;
 }
 
+// ===== Internal map bucket iteration (for cleanup of noncopyable elements) =====
+
+static void native_map_iter_capacity(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (!map_ptr) {
+        regs[dst] = 0;
+        return;
+    }
+    const MapHeader* header = get_map_header(map_ptr);
+    regs[dst] = static_cast<u64>(header->capacity);
+}
+
+static void native_map_iter_next_occupied(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    i32 idx = static_cast<i32>(regs[first_arg + 1]);
+    const MapHeader* header = get_map_header(map_ptr);
+    u32 cap = header->capacity;
+    u32 i = static_cast<u32>(idx);
+    while (i < cap && header->distances[i] == 0) {
+        i++;
+    }
+    regs[dst] = static_cast<u64>(i);
+}
+
+static void native_map_iter_key_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    i32 idx = static_cast<i32>(regs[first_arg + 1]);
+    const MapHeader* header = get_map_header(map_ptr);
+    regs[dst] = header->keys[idx];
+}
+
+static void native_map_iter_value_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    i32 idx = static_cast<i32>(regs[first_arg + 1]);
+    const MapHeader* header = get_map_header(map_ptr);
+    regs[dst] = header->values[idx];
+}
+
 void register_builtin_natives(NativeRegistry& registry) {
     // List<T> - registered as a generic native type
     registry.register_generic_type("List<T>", "list_alloc", native_list_alloc);
@@ -723,6 +765,12 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_method(native_map_values,    "fun Map<K, V>.values(): List<V>");
     registry.bind_method(native_map_index,     "fun Map<K, V>.index(key: K): V");
     registry.bind_method(native_map_index_mut, "fun Map<K, V>.index_mut(key: K, val: V)");
+
+    // Internal map bucket iteration functions (used by emit_map_cleanup for noncopyable elements)
+    registry.bind_native("__map_iter_capacity",       native_map_iter_capacity,       "fun __map_iter_capacity(map: i64): i32");
+    registry.bind_native("__map_iter_next_occupied", native_map_iter_next_occupied, "fun __map_iter_next_occupied(map: i64, idx: i32): i32");
+    registry.bind_native("__map_iter_key_at",        native_map_iter_key_at,        "fun __map_iter_key_at(map: i64, idx: i32): i64");
+    registry.bind_native("__map_iter_value_at",      native_map_iter_value_at,      "fun __map_iter_value_at(map: i64, idx: i32): i64");
 }
 
 }

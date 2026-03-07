@@ -3948,12 +3948,35 @@ void IRBuilder::emit_map_cleanup(ValueId map_ptr, Type* map_type) {
     Type* key_type = map_type->map_info.key_type;
     Type* value_type = map_type->map_info.value_type;
 
-    // Look up Map$$delete native index
+    // Look up internal map iteration native indices
+    StringView cap_name("__map_iter_capacity", 19);
+    StringView next_occ_name("__map_iter_next_occupied", 24);
+    StringView key_at_name("__map_iter_key_at", 17);
+    StringView val_at_name("__map_iter_value_at", 19);
     StringView map_dtor_name = mangle_destructor(StringView("Map", 3));
-    i32 map_dtor_native_idx = m_registry.get_index(map_dtor_name);
 
-    if (map_dtor_native_idx < 0) {
-        report_error("Cannot find native Map destructor");
+    i32 cap_idx = m_registry.get_index(cap_name);
+    i32 next_occ_idx = m_registry.get_index(next_occ_name);
+    i32 map_dtor_idx = m_registry.get_index(map_dtor_name);
+
+    i32 key_at_idx = -1, val_at_idx = -1;
+    if (key_type && key_type->noncopyable()) {
+        key_at_idx = m_registry.get_index(key_at_name);
+    }
+    if (value_type && value_type->noncopyable()) {
+        val_at_idx = m_registry.get_index(val_at_name);
+    }
+
+    if (cap_idx < 0 || next_occ_idx < 0 || map_dtor_idx < 0) {
+        report_error("Cannot find native functions for Map cleanup");
+        return;
+    }
+    if (key_type && key_type->noncopyable() && key_at_idx < 0) {
+        report_error("Cannot find native __map_iter_key_at for Map cleanup");
+        return;
+    }
+    if (value_type && value_type->noncopyable() && val_at_idx < 0) {
+        report_error("Cannot find native __map_iter_value_at for Map cleanup");
         return;
     }
 
@@ -3967,48 +3990,84 @@ void IRBuilder::emit_map_cleanup(ValueId map_ptr, Type* map_type) {
     finish_block_branch(is_null, done_block->id, cleanup_block->id);
     set_current_block(cleanup_block);
 
-    // For noncopyable keys: extract keys list, clean up elements, free temp list
+    // cap = __map_iter_capacity(map_ptr)
+    Span<ValueId> cap_args = alloc_span<ValueId>(1);
+    cap_args[0] = map_ptr;
+    ValueId cap = emit_call_native(cap_name, cap_args,
+                                   m_types.i32_type(), static_cast<u8>(cap_idx));
+
+    // i_init = __map_iter_next_occupied(map_ptr, 0) — skip to first occupied bucket
+    ValueId zero = emit_const_int(0, m_types.i32_type());
+    Span<ValueId> first_occ_args = alloc_span<ValueId>(2);
+    first_occ_args[0] = map_ptr;
+    first_occ_args[1] = zero;
+    ValueId i_init = emit_call_native(next_occ_name, first_occ_args,
+                                      m_types.i32_type(), static_cast<u8>(next_occ_idx));
+
+    // Create loop blocks
+    IRBlock* header_block = create_block("map_iter_header");
+    IRBlock* body_block = create_block("map_iter_body");
+    IRBlock* incr_block = create_block("map_iter_incr");
+    IRBlock* exit_block = create_block("map_iter_exit");
+
+    // Jump to header with initial i value
+    Span<BlockArgPair> initial_args = alloc_span<BlockArgPair>(1);
+    initial_args[0] = {i_init};
+    finish_block_goto(header_block->id, initial_args);
+
+    // header(i_param): cond = i < cap; branch cond, body, exit
+    set_current_block(header_block);
+    ValueId i_param = m_current_func->new_value();
+    header_block->params.push_back({i_param, m_types.i32_type(), StringView("i", 1)});
+
+    ValueId cond = emit_binary(IROp::LtI, i_param, cap, m_types.bool_type());
+    finish_block_branch(cond, body_block->id, exit_block->id);
+
+    // body: get key/value at occupied bucket and destroy noncopyable ones
+    set_current_block(body_block);
+
     if (key_type && key_type->noncopyable()) {
-        const MethodInfo* keys_method = lookup_map_method(map_type->map_info, StringView("keys", 4));
-        if (keys_method && !keys_method->native_name.empty()) {
-            i32 keys_native_idx = m_registry.get_index(keys_method->native_name);
-            if (keys_native_idx >= 0) {
-                // keys_list = Map$$keys(map_ptr)
-                Span<ValueId> keys_args = alloc_span<ValueId>(1);
-                keys_args[0] = map_ptr;
-                Type* keys_list_type = m_types.list_type(key_type);
-                ValueId keys_list = emit_call_native(keys_method->native_name, keys_args,
-                                                     keys_list_type, static_cast<u8>(keys_native_idx));
-
-                // Emit cleanup loop for the keys list (destroys elements and frees list)
-                emit_list_cleanup(keys_list, keys_list_type);
-            }
-        }
+        Span<ValueId> key_args = alloc_span<ValueId>(2);
+        key_args[0] = map_ptr;
+        key_args[1] = i_param;
+        ValueId key_val = emit_call_native(key_at_name, key_args,
+                                           key_type, static_cast<u8>(key_at_idx));
+        emit_element_destroy(key_val, key_type);
     }
 
-    // For noncopyable values: extract values list, clean up elements, free temp list
     if (value_type && value_type->noncopyable()) {
-        const MethodInfo* values_method = lookup_map_method(map_type->map_info, StringView("values", 6));
-        if (values_method && !values_method->native_name.empty()) {
-            i32 values_native_idx = m_registry.get_index(values_method->native_name);
-            if (values_native_idx >= 0) {
-                // values_list = Map$$values(map_ptr)
-                Span<ValueId> values_args = alloc_span<ValueId>(1);
-                values_args[0] = map_ptr;
-                Type* values_list_type = m_types.list_type(value_type);
-                ValueId values_list = emit_call_native(values_method->native_name, values_args,
-                                                       values_list_type, static_cast<u8>(values_native_idx));
-
-                // Emit cleanup loop for the values list (destroys elements and frees list)
-                emit_list_cleanup(values_list, values_list_type);
-            }
-        }
+        Span<ValueId> val_args = alloc_span<ValueId>(2);
+        val_args[0] = map_ptr;
+        val_args[1] = i_param;
+        ValueId val_val = emit_call_native(val_at_name, val_args,
+                                           value_type, static_cast<u8>(val_at_idx));
+        emit_element_destroy(val_val, value_type);
     }
 
-    // Free map buffers via Map$$delete, then free slab header via Delete
+    // After emit_element_destroy, m_current_block may have changed
+    if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+        finish_block_goto(incr_block->id);
+    }
+
+    // incr: i_next = __map_iter_next_occupied(map_ptr, i + 1) — skip to next occupied
+    set_current_block(incr_block);
+    ValueId one = emit_const_int(1, m_types.i32_type());
+    ValueId i_plus_one = emit_binary(IROp::AddI, i_param, one, m_types.i32_type());
+    Span<ValueId> next_args = alloc_span<ValueId>(2);
+    next_args[0] = map_ptr;
+    next_args[1] = i_plus_one;
+    ValueId i_next = emit_call_native(next_occ_name, next_args,
+                                      m_types.i32_type(), static_cast<u8>(next_occ_idx));
+    Span<BlockArgPair> back_args = alloc_span<BlockArgPair>(1);
+    back_args[0] = {i_next};
+    finish_block_goto(header_block->id, back_args);
+
+    // exit: free map buffers via Map$$delete, then free slab header via Delete
+    set_current_block(exit_block);
     Span<ValueId> dtor_args = alloc_span<ValueId>(1);
     dtor_args[0] = map_ptr;
-    emit_call_native(map_dtor_name, dtor_args, m_types.void_type(), static_cast<u8>(map_dtor_native_idx));
+    emit_call_native(map_dtor_name, dtor_args,
+                     m_types.void_type(), static_cast<u8>(map_dtor_idx));
 
     IRInst* del_inst = emit_inst(IROp::Delete, m_types.void_type());
     if (del_inst) {
