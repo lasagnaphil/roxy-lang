@@ -2,7 +2,7 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-02-22
+Last updated: 2026-03-08
 
 ---
 
@@ -26,12 +26,14 @@ Last updated: 2026-02-22
 
 ## Planned Features
 
+- [ ] Closures and first-class functions — functions as values, lambda syntax, closure environment capture, `fun(params): ret` function type syntax
+- [ ] Recursive types — allow `uniq`/`ref` members to the same type or boxed/indirect fields for tree/graph data structures
 - [ ] Bounded quantification Phase B: declaration-site checking of generic bodies against trait bounds
 - [ ] Flow-sensitive typing for tagged union variant fields
 - [ ] Exhaustiveness checking for when statements
 - [ ] Variant constructors (`Type.Variant { ... }` syntax)
-- [x] Exception handling
-- [ ] LSP server for IDE support
+- [ ] LSP server Phase 8: full semantic analysis (TypeCache/TypeEnv integration)
+- [ ] LSP server Phase 9: polish (signature help, code actions, workspace symbols, semantic tokens)
 - [ ] AOT compilation to C (design plan complete in `docs/internals/c-backend.md`)
 
 ---

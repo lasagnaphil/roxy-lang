@@ -92,7 +92,7 @@ Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA
 
 | Type | Owns? | Nullable? | On dangling | Move semantics |
 |------|-------|-----------|-------------|----------------|
-| `uniq` | Yes | No | N/A (is owner) | Passed to `uniq` param = move (caller consumed) |
+| `uniq` | Yes | Yes | N/A (is owner) | Passed to `uniq` param = move (caller consumed) |
 | `ref` | No | No | Assert/crash | Borrows from owner |
 | `weak` | No | Yes | Returns null or asserts | N/A |
 
