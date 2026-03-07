@@ -82,7 +82,7 @@ void Parser::report_error_at(const Token& token, const char* message) {
 template <typename T>
 Span<T> Parser::alloc_span(const Vector<T>& vec) {
     if (vec.empty()) {
-        return Span<T>(nullptr, 0);
+        return Span<T>{};
     }
     T* data = reinterpret_cast<T*>(m_allocator.alloc_bytes(sizeof(T) * vec.size(), alignof(T)));
     for (u32 i = 0; i < vec.size(); i++) {
@@ -338,8 +338,8 @@ Expr* Parser::finish_call(Expr* callee) {
     call_expr->call.callee = callee;
     call_expr->call.arguments = alloc_span(arguments);
     call_expr->call.type_args = Span<TypeExpr*>();
-    call_expr->call.constructor_name = StringView(nullptr, 0);
-    call_expr->call.mangled_name = StringView(nullptr, 0);
+    call_expr->call.constructor_name = StringView{};
+    call_expr->call.mangled_name = StringView{};
     call_expr->call.is_heap = false;
     return call_expr;
 }
@@ -527,13 +527,13 @@ Expr* Parser::primary() {
             expr->struct_literal.type_name = type_token.text();
             expr->struct_literal.fields = alloc_span(fields);
             expr->struct_literal.type_args = type_args;
-            expr->struct_literal.mangled_name = StringView(nullptr, 0);
+            expr->struct_literal.mangled_name = StringView{};
             expr->struct_literal.is_heap = true;
             return expr;
         }
 
         // Constructor call: uniq Type() or uniq Type.ctor_name() or uniq Type<Args>() etc.
-        StringView ctor_name(nullptr, 0);
+        StringView ctor_name;
         if (match(TokenKind::Dot)) {
             Token name_token = consume(TokenKind::Identifier, "Expected constructor name after '.'");
             if (m_has_error) return nullptr;
@@ -577,7 +577,7 @@ Expr* Parser::primary() {
         expr->call.arguments = alloc_span(arguments);
         expr->call.type_args = type_args;
         expr->call.constructor_name = ctor_name;
-        expr->call.mangled_name = StringView(nullptr, 0);
+        expr->call.mangled_name = StringView{};
         expr->call.is_heap = true;
         return expr;
     }
@@ -634,7 +634,7 @@ Expr* Parser::primary() {
                     expr->struct_literal.type_name = name_token.text();
                     expr->struct_literal.fields = alloc_span(fields);
                     expr->struct_literal.type_args = type_args;
-                    expr->struct_literal.mangled_name = StringView(nullptr, 0);
+                    expr->struct_literal.mangled_name = StringView{};
                     expr->struct_literal.is_heap = false;
                     return expr;
                 }
@@ -679,7 +679,7 @@ Expr* Parser::primary() {
                     expr->call.arguments = alloc_span(arguments);
                     expr->call.type_args = type_args;
                     expr->call.constructor_name = ctor_name_token.text();
-                    expr->call.mangled_name = StringView(nullptr, 0);
+                    expr->call.mangled_name = StringView{};
                     expr->call.is_heap = false;
                     return expr;
                 }
@@ -718,8 +718,8 @@ Expr* Parser::primary() {
                     expr->call.callee = callee;
                     expr->call.arguments = alloc_span(arguments);
                     expr->call.type_args = type_args;
-                    expr->call.constructor_name = StringView(nullptr, 0);
-                    expr->call.mangled_name = StringView(nullptr, 0);
+                    expr->call.constructor_name = StringView{};
+                    expr->call.mangled_name = StringView{};
                     expr->call.is_heap = false;
                     return expr;
                 }
@@ -755,7 +755,7 @@ Expr* Parser::primary() {
             expr->struct_literal.type_name = name_token.text();
             expr->struct_literal.fields = alloc_span(fields);
             expr->struct_literal.type_args = Span<TypeExpr*>();
-            expr->struct_literal.mangled_name = StringView(nullptr, 0);
+            expr->struct_literal.mangled_name = StringView{};
             expr->struct_literal.is_heap = false;
             return expr;
         }
@@ -787,7 +787,7 @@ Expr* Parser::primary() {
             Expr* expr = alloc<Expr>();
             expr->kind = AstKind::ExprSuper;
             expr->loc = loc;
-            expr->super_expr.method_name = StringView(nullptr, 0);  // empty = default constructor
+            expr->super_expr.method_name = StringView{};  // empty = default constructor
             return expr;
         }
 
@@ -1053,7 +1053,7 @@ Stmt* Parser::delete_statement() {
     Expr* expr = expression();
     if (m_has_error) return nullptr;
 
-    StringView dtor_name(nullptr, 0);  // Empty for default destructor
+    StringView dtor_name;  // Empty for default destructor
     Vector<CallArg> arguments;
 
     // Check if the expression is a call on a member (potential destructor call)
@@ -1115,7 +1115,7 @@ Stmt* Parser::when_statement() {
     if (m_has_error) return nullptr;
 
     Vector<WhenCase> cases;
-    Span<Decl*> else_body(nullptr, 0);
+    Span<Decl*> else_body;
     SourceLocation else_loc{};
 
     // Parse cases: case A, B: { ... } or case A, B: stmt; stmt; ...
@@ -1525,7 +1525,7 @@ Decl* Parser::method_declaration(bool is_pub, bool is_native,
     }
 
     // Check for "for Trait" or "for Trait<Args>" clause
-    StringView trait_name(nullptr, 0);
+    StringView trait_name;
     Span<TypeExpr*> trait_type_args;
     if (match(TokenKind::KwFor)) {
         Token trait_token = consume(TokenKind::Identifier, "Expected trait name after 'for'");
@@ -1576,7 +1576,7 @@ bool Parser::parse_ctor_dtor_common(const char* kind_name, CtorDtorParsed& out) 
     if (m_has_error) return false;
 
     out.struct_name = struct_token.text();
-    out.name = StringView(nullptr, 0);  // Empty for default
+    out.name = StringView{};  // Empty for default
 
     // Parse optional type params: Box<T>
     if (check(TokenKind::Less)) {
@@ -1662,7 +1662,7 @@ Decl* Parser::struct_declaration(bool is_pub) {
         if (m_has_error) return nullptr;
     }
 
-    StringView parent_name(nullptr, 0);
+    StringView parent_name;
     if (match(TokenKind::Colon)) {
         Token parent_token = consume(TokenKind::Identifier, "Expected parent struct name");
         if (m_has_error) return nullptr;
@@ -1886,7 +1886,7 @@ Decl* Parser::trait_declaration(bool is_pub) {
         if (m_has_error) return nullptr;
     }
 
-    StringView parent_name(nullptr, 0);
+    StringView parent_name;
     if (match(TokenKind::Colon)) {
         Token parent_token = consume(TokenKind::Identifier, "Expected parent trait name");
         if (m_has_error) return nullptr;
@@ -1964,7 +1964,7 @@ Decl* Parser::import_declaration() {
 
             ImportName import_name;
             import_name.name = name_token.text();
-            import_name.alias = StringView(nullptr, 0);  // Initialize alias to empty
+            import_name.alias = StringView{};  // Initialize alias to empty
             import_name.loc = name_token.loc;
 
             // Check for alias: "as alias_name"
@@ -2001,7 +2001,7 @@ Decl* Parser::import_declaration() {
         decl->kind = AstKind::DeclImport;
         decl->loc = loc;
         decl->import_decl.module_path = module_path;
-        decl->import_decl.names = Span<ImportName>(nullptr, 0);
+        decl->import_decl.names = Span<ImportName>{};
         decl->import_decl.is_from_import = false;
         return decl;
     }

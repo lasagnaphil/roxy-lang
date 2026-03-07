@@ -13,8 +13,7 @@ class StringView {
     u32 m_size;
 
 public:
-    // Trivial default constructor - leaves members uninitialized (required for union usage)
-    StringView() = default;
+    StringView() : m_data(nullptr), m_size(0) {}
     StringView(const char* data, u32 size) : m_data(data), m_size(size) {}
 
     // Construct from null-terminated string (implicit for convenience with string literals)
