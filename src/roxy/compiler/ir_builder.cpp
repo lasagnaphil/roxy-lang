@@ -247,6 +247,50 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
 
     if (m_has_error) return nullptr;
 
+    // Generate cleanup wrapper functions for noncopyable List/Map types in coroutines
+    {
+        tsl::robin_map<Type*, bool> seen_types;
+        Vector<IRFunction*> wrappers;
+        u32 wrapper_index = 0;
+
+        for (auto* func : module->functions) {
+            if (!func->is_coroutine) continue;
+
+            // Scan cleanup_info for noncopyable List/Map types
+            for (const auto& cleanup : func->cleanup_info) {
+                if (!cleanup.type) continue;
+                if (cleanup.type->is_container() &&
+                    cleanup.type->noncopyable() &&
+                    seen_types.find(cleanup.type) == seen_types.end()) {
+                    seen_types[cleanup.type] = true;
+                    IRFunction* wrapper = build_cleanup_wrapper(cleanup.type, wrapper_index++);
+                    wrappers.push_back(wrapper);
+                    module->cleanup_wrappers[cleanup.type] = wrapper->name;
+                }
+            }
+
+            // Scan parameters for noncopyable List/Map types
+            for (const auto& param : func->params) {
+                if (!param.type) continue;
+                if (param.type->is_container() &&
+                    param.type->noncopyable() &&
+                    seen_types.find(param.type) == seen_types.end()) {
+                    seen_types[param.type] = true;
+                    IRFunction* wrapper = build_cleanup_wrapper(param.type, wrapper_index++);
+                    wrappers.push_back(wrapper);
+                    module->cleanup_wrappers[param.type] = wrapper->name;
+                }
+            }
+        }
+
+        // Add wrappers after iteration to avoid invalidating the iterator
+        for (auto* wrapper : wrappers) {
+            module->functions.push_back(wrapper);
+        }
+    }
+
+    if (m_has_error) return nullptr;
+
     return module;
 }
 
@@ -612,6 +656,54 @@ IRFunction* IRBuilder::build_synthesized_default_destructor(Type* struct_type) {
 
     // End function body
     end_function_body();
+
+    IRFunction* result = m_current_func;
+    m_current_func = nullptr;
+    m_current_block = nullptr;
+    return result;
+}
+
+IRFunction* IRBuilder::build_cleanup_wrapper(Type* noncopyable_type, u32 wrapper_index) {
+    m_current_func = m_allocator.emplace<IRFunction>();
+
+    // Name: __cleanup_wrapper_<index>
+    char name_buf[64];
+    format_to(name_buf, sizeof(name_buf), "__cleanup_wrapper_{}", wrapper_index);
+    u32 name_len = 0;
+    while (name_buf[name_len]) name_len++;
+    char* name_alloc = reinterpret_cast<char*>(m_allocator.alloc_bytes(name_len, 1));
+    memcpy(name_alloc, name_buf, name_len);
+    m_current_func->name = StringView(name_alloc, name_len);
+
+    // Single parameter: the list/map pointer
+    m_current_func->return_type = m_types.void_type();
+
+    BlockParam param;
+    param.value = m_current_func->new_value();
+    param.type = noncopyable_type;
+    param.name = StringView("ptr", 3);
+    m_current_func->params.push_back(param);
+    m_current_func->param_is_ptr.push_back(false);
+
+    // Create entry block with the parameter as a block arg
+    m_current_block = create_block(StringView("entry", 5));
+    m_current_block->params.push_back(param);
+
+    ValueId param_val = param.value;
+
+    // Emit the appropriate cleanup
+    if (noncopyable_type->is_list()) {
+        emit_list_cleanup(param_val, noncopyable_type);
+    } else if (noncopyable_type->is_map()) {
+        emit_map_cleanup(param_val, noncopyable_type);
+    }
+
+    // After emit_list_cleanup/emit_map_cleanup, m_current_block is the done block.
+    // Set Return terminator directly (avoid finish_block_return which calls emit_ref_param_decrements).
+    if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+        m_current_block->terminator.kind = TerminatorKind::Return;
+        m_current_block->terminator.return_value = ValueId::invalid();
+    }
 
     IRFunction* result = m_current_func;
     m_current_func = nullptr;
@@ -2425,7 +2517,7 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
                 result = emit_call(method_name, method_args, expr->resolved_type);
             }
             // Check for List or Map method call (builtin native methods)
-            else if (struct_type && (struct_type->is_list() || struct_type->is_map())) {
+            else if (struct_type && struct_type->is_container()) {
                 StringView native_name = call_expr.mangled_name;
                 i32 native_idx = m_registry.get_index(native_name);
 
@@ -2554,7 +2646,7 @@ ValueId IRBuilder::gen_index_expr(Expr* expr) {
     }
 
     // List/Map indexing: dispatch to native "index" method
-    if (base_type && (base_type->is_list() || base_type->is_map())) {
+    if (base_type && base_type->is_container()) {
         const MethodInfo* method_info = m_types.lookup_method(base_type, StringView("index", 5));
         if (method_info && !method_info->native_name.empty()) {
             ValueId obj = gen_expr(index_expr.object);
@@ -2881,7 +2973,7 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
 
         // List/Map indexing: dispatch to native "index_mut" method
         Type* container_base = container_type;
-        if (container_base && (container_base->is_list() || container_base->is_map())) {
+        if (container_base && container_base->is_container()) {
             const MethodInfo* method_info = m_types.lookup_method(container_base, StringView("index_mut", 9));
             if (method_info && !method_info->native_name.empty()) {
                 ValueId obj = gen_expr(index_expr.object);

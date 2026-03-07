@@ -201,7 +201,8 @@ static void emit_delete(BumpAllocator& allocator, IRFunction* func, IRBlock* blo
 // This iterates promoted struct fields in reverse order (LIFO) and cleans up
 // any noncopyable pointer-type fields (uniq, List, Map, Coro).
 static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* struct_type,
-                                             StringView func_name, TypeCache& types) {
+                                             StringView func_name, TypeCache& types,
+                                             IRModule* module) {
     IRFunction* dtor_func = allocator.emplace<IRFunction>();
     StringView dtor_name = alloc_string_fmt(allocator, "__coro_{}$$delete", func_name);
     dtor_func->name = dtor_name;
@@ -228,8 +229,7 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
 
         bool is_noncopyable_pointer = false;
         if (field.type->kind == TypeKind::Uniq ||
-            (field.type->is_list() && field.type->noncopyable()) ||
-            (field.type->is_map() && field.type->noncopyable()) ||
+            (field.type->is_container() && field.type->noncopyable()) ||
             field.type->is_coroutine()) {
             is_noncopyable_pointer = true;
         }
@@ -286,14 +286,18 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
                       coro_dtor_name, call_args, types.void_type());
             emit_delete(allocator, dtor_func, cleanup_block, field_val, types.void_type());
         }
-        // Note: List and Map cleanup requires native function calls that are only
-        // available through the IR builder (which has access to NativeRegistry).
-        // For now, we emit Delete for the slab allocation. The list/map internal
-        // buffers are freed by the slab allocator's tombstoning.
-        // TODO: Full list/map element cleanup in coroutine destructors requires
-        // emitting the cleanup loop IR here.
-        else if (field.type->is_list() || field.type->is_map()) {
-            emit_delete(allocator, dtor_func, cleanup_block, field_val, types.void_type());
+        else if (field.type->is_container()) {
+            auto wrapper_it = module->cleanup_wrappers.find(field.type);
+            if (wrapper_it != module->cleanup_wrappers.end()) {
+                // Call the cleanup wrapper (handles element cleanup + buffer free + Delete)
+                Span<ValueId> call_args = alloc_span<ValueId>(allocator, 1);
+                call_args[0] = field_val;
+                emit_call(allocator, dtor_func, cleanup_block,
+                          wrapper_it->second, call_args, types.void_type());
+            } else {
+                // Fallback: bare Delete (no element cleanup)
+                emit_delete(allocator, dtor_func, cleanup_block, field_val, types.void_type());
+            }
         }
 
         finish_goto(allocator, cleanup_block, skip_block->id);
@@ -745,8 +749,8 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
         // when the Coro goes out of scope) would double-free without this.
         for (const auto& pv : promoted_vars) {
             if (!pv.type->noncopyable()) continue;
-            if (pv.type->kind == TypeKind::Uniq || pv.type->is_list() ||
-                pv.type->is_map() || pv.type->is_coroutine()) {
+            if (pv.type->kind == TypeKind::Uniq || pv.type->is_container() ||
+                pv.type->is_coroutine()) {
                 ValueId null_val = emit_const_null(allocator, func, block, types.nil_type());
                 emit_set_field(allocator, func, block, self_val,
                                pv.name, pv.field_slot_offset, pv.field_slot_count,
@@ -1028,7 +1032,7 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
 
     // ===== Generate destructor function =====
     IRFunction* dtor_func = generate_coro_destructor(allocator, struct_type,
-                                                      original->name, types);
+                                                      original->name, types, module);
 
     // ===== Transform original into resume function =====
     ValueId self_val = original->new_value();

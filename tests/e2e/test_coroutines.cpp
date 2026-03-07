@@ -832,3 +832,94 @@ TEST_CASE("E2E - Coroutine mixed primitive and uniq promoted") {
     CHECK(result.value == 30);
     CHECK(result.stdout_output == "~Counter\n");
 }
+
+// ============================================================================
+// List/Map Cleanup in Coroutine Destructors
+// ============================================================================
+
+TEST_CASE("E2E - Coroutine List<uniq T> cleanup on completion") {
+    const char* source = R"CODE(
+        struct Resource {
+            id: i32;
+        }
+
+        fun delete Resource() {
+            print(f"~Resource({self.id})");
+        }
+
+        fun gen(): Coro<i32> {
+            var items: List<uniq Resource> = List<uniq Resource>();
+            var r1: uniq Resource = uniq Resource();
+            r1.id = 1;
+            items.push(r1);
+            var r2: uniq Resource = uniq Resource();
+            r2.id = 2;
+            items.push(r2);
+            yield items.len();
+            var r3: uniq Resource = uniq Resource();
+            r3.id = 3;
+            items.push(r3);
+            yield items.len();
+        }
+
+        fun main(): i32 {
+            var g = gen();
+            var a: i32 = g.resume();
+            var b: i32 = g.resume();
+            g.resume();
+            return a * 10 + b;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 23);
+    // All three resources should be cleaned up (order: 1, 2, 3 from list iteration)
+    CHECK(result.stdout_output == "~Resource(1)\n~Resource(2)\n~Resource(3)\n");
+}
+
+TEST_CASE("E2E - Coroutine List<uniq T> cleanup on early drop") {
+    const char* source = R"CODE(
+        struct Resource {
+            id: i32;
+        }
+
+        fun delete Resource() {
+            print(f"~Resource({self.id})");
+        }
+
+        fun gen(): Coro<i32> {
+            var items: List<uniq Resource> = List<uniq Resource>();
+            var r1: uniq Resource = uniq Resource();
+            r1.id = 10;
+            items.push(r1);
+            var r2: uniq Resource = uniq Resource();
+            r2.id = 20;
+            items.push(r2);
+            yield items.len();
+            yield items.len();
+        }
+
+        fun main(): i32 {
+            var result: i32 = 0;
+            {
+                var g = gen();
+                result = g.resume();
+                // g goes out of scope before done — destructor must clean up list elements
+            }
+            return result;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 2);
+    // Both resources should be cleaned up by the coroutine destructor
+    CHECK(result.stdout_output == "~Resource(10)\n~Resource(20)\n");
+}
+
+// TODO: Map<string, uniq T> coroutine cleanup tests
+// Map<K, uniq V> is not yet supported by the semantic analyzer.
+// Once supported, add tests for:
+// - Map cleanup on completion (coroutine runs to done, map values cleaned up)
+// - Map cleanup on early drop (Coro dropped before done, destructor cleans up map values)

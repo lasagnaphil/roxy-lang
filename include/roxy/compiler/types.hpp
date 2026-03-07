@@ -311,6 +311,12 @@ struct Type {
         return kind == TypeKind::Map;
     }
 
+    // Builtin container types (List, Map) — types that own a collection of elements
+    // requiring element-by-element cleanup via native function calls.
+    bool is_container() const {
+        return kind == TypeKind::List || kind == TypeKind::Map;
+    }
+
     bool is_coroutine() const {
         return kind == TypeKind::Coroutine;
     }

@@ -274,6 +274,10 @@ private:
         return span;
     }
 
+    // Build a standalone cleanup wrapper function for a noncopyable List or Map type.
+    // Used by coroutine destructors to clean up promoted fields.
+    IRFunction* build_cleanup_wrapper(Type* noncopyable_type, u32 wrapper_index);
+
     // Push/pop scope for local variables
     void push_scope();
     void pop_scope();

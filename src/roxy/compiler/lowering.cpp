@@ -342,7 +342,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
 
         // Check if this type has a copy constructor (e.g., List<T> or Map<K,V> value params)
         // Skip copy for noncopyable containers — they use move semantics
-        if (m_registry && param.type && (param.type->is_list() || param.type->is_map())) {
+        if (m_registry && param.type && param.type->is_container()) {
             if (param.type->noncopyable()) {
                 prologue_param_reg_offset += reg_count;
                 continue;
