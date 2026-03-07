@@ -2162,21 +2162,25 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
         IRBlock* right_block = create_block("and.rhs");
         IRBlock* merge_block = create_block("and.end");
 
-        // If left is false, result is false; otherwise evaluate right
-        finish_block_branch(left, right_block->id, merge_block->id);
+        // Merge block receives the result via a block argument
+        ValueId result_param = m_current_func->new_value();
+        merge_block->params.push_back({result_param, m_types.bool_type(), {}});
 
+        // If left is false, short-circuit: result is false
+        ValueId false_val = emit_const_bool(false);
+        Span<BlockArgPair> short_circuit_args = alloc_span<BlockArgPair>(1);
+        short_circuit_args[0] = {false_val};
+        finish_block_branch(left, right_block->id, merge_block->id, {}, short_circuit_args);
+
+        // Evaluate right side, pass result to merge
         set_current_block(right_block);
         ValueId right = gen_expr(binary_expr.right);
-        IRBlock* right_end_block = m_current_block;
-        finish_block_goto(merge_block->id);
+        Span<BlockArgPair> right_args = alloc_span<BlockArgPair>(1);
+        right_args[0] = {right};
+        finish_block_goto(merge_block->id, right_args);
 
-        // In SSA, we'd need a phi here. For now, use block arguments.
-        // Create merge block with a parameter
         set_current_block(merge_block);
-
-        // For simplicity, just return the right value if we got here through right_block
-        // This is a simplified approach - proper SSA would need phi/block arguments
-        return right;
+        return result_param;
     }
     else if (binary_expr.op == BinaryOp::Or) {
         ValueId left = gen_expr(binary_expr.left);
@@ -2184,15 +2188,25 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
         IRBlock* right_block = create_block("or.rhs");
         IRBlock* merge_block = create_block("or.end");
 
-        // If left is true, result is true; otherwise evaluate right
-        finish_block_branch(left, merge_block->id, right_block->id);
+        // Merge block receives the result via a block argument
+        ValueId result_param = m_current_func->new_value();
+        merge_block->params.push_back({result_param, m_types.bool_type(), {}});
 
+        // If left is true, short-circuit: result is true
+        ValueId true_val = emit_const_bool(true);
+        Span<BlockArgPair> short_circuit_args = alloc_span<BlockArgPair>(1);
+        short_circuit_args[0] = {true_val};
+        finish_block_branch(left, merge_block->id, right_block->id, short_circuit_args, {});
+
+        // Evaluate right side, pass result to merge
         set_current_block(right_block);
         ValueId right = gen_expr(binary_expr.right);
-        finish_block_goto(merge_block->id);
+        Span<BlockArgPair> right_args = alloc_span<BlockArgPair>(1);
+        right_args[0] = {right};
+        finish_block_goto(merge_block->id, right_args);
 
         set_current_block(merge_block);
-        return right;
+        return result_param;
     }
 
     // Regular binary operations

@@ -163,12 +163,10 @@ TEST_CASE("E2E - C Backend: Comparisons and boolean logic") {
     }
 
     SUBCASE("Boolean OR") {
-        // Note: a=false so the || RHS is evaluated (avoids pre-existing IRBuilder
-        // short-circuit bug where the phi node is missing for the true-path case)
         const char* source = R"(
             fun main(): i32 {
-                var a: bool = false;
-                var b: bool = true;
+                var a: bool = true;
+                var b: bool = false;
                 if (a || b) { return 1; }
                 return 0;
             }
