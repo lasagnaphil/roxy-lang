@@ -220,6 +220,7 @@ bool vm_call_index(RoxyVM* vm, u32 func_index, Span<Value> args) {
     // Execute
     vm->running = true;
     bool success = interpret(vm);
+    vm->running = false;
 
     // If we still have a frame on the stack, it means we returned normally
     // The result should be in registers[0]

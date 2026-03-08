@@ -404,7 +404,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
     DISPATCH();
 #else
     // Main dispatch loop (switch-based fallback)
-    while (vm->running) {
+    for (;;) {
         instr = *pc++;
         switch (decode_opcode(instr)) {
 #endif
@@ -822,7 +822,6 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
 
         if (vm->call_stack_empty()) {
             vm->register_file[0] = result;
-            vm->running = false;
             return true;
         }
 
@@ -848,7 +847,6 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
 
         if (vm->call_stack_empty()) {
             vm->register_file[0] = 0;
-            vm->running = false;
             return true;
         }
 
@@ -869,10 +867,10 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         u8 dst = decode_a(instr);
         u8 func_idx = decode_b(instr);
         u8 arg_count = decode_c(instr);
-        u8 first_arg = dst + 1;
 
         assert(func_idx < vm->function_count);
         const BCFunction* callee = vm->function_ptrs[func_idx];
+        u8 first_arg = dst + callee->ret_reg_count;
 
         assert(arg_count == callee->param_count);
 
@@ -1163,7 +1161,6 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             for (u8 r = 0; r < reg_count; r++) {
                 vm->register_file[r] = ret_vals[r];
             }
-            vm->running = false;
             return true;
         }
 
@@ -1339,7 +1336,6 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             if (vm->call_stack_empty()) {
                 object_free(vm, exception_ptr);
                 vm->error = "Unhandled exception";
-                vm->running = false;
                 return false;
             }
 
@@ -1373,7 +1369,6 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
     }
 
     OP(HALT) {
-        vm->running = false;
         return true;
     }
 
