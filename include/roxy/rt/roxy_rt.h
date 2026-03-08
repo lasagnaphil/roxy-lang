@@ -103,7 +103,7 @@ typedef struct {
 
 // ===== List Operations =====
 
-void* roxy_list_alloc(void);
+void* roxy_list_alloc(int32_t element_slot_count, int32_t element_is_inline);
 void roxy_list_init(void* self, int32_t capacity);
 void roxy_list_delete(void* self);
 int32_t roxy_list_len(void* self);

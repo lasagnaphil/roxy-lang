@@ -18,7 +18,7 @@ template<typename T>
 struct RoxyList {
     // Factory: allocate a new list via the VM
     static RoxyList<T> alloc(RoxyVM* vm, u32 capacity) {
-        void* data = list_alloc(vm, capacity);
+        void* data = list_alloc(vm, capacity, 2);
         return RoxyList<T>(data);
     }
 

@@ -274,7 +274,7 @@ int main(int argc, char** argv) {
         }
 
         // Allocate List<string>
-        void* list_data = list_alloc(&vm, static_cast<u32>(program_arg_count));
+        void* list_data = list_alloc(&vm, static_cast<u32>(program_arg_count), 2);
 
         // args[0] = source file path
         u32 source_path_len = static_cast<u32>(strlen(opts.source_file));

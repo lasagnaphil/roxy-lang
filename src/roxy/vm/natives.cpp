@@ -16,9 +16,13 @@ namespace rx {
 static constexpr i64 MAX_COLLECTION_CAPACITY = 1000000;
 
 // Allocates an empty list (capacity 0). Non-method, no self.
+// argc >= 1: first arg is element_slot_count
+// argc >= 2: second arg is element_is_inline (0 = false, nonzero = true)
 static void native_list_alloc(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack.back().registers;
-    void* lst = list_alloc(vm, 0);
+    u32 element_slot_count = (argc >= 1) ? static_cast<u32>(regs[first_arg]) : 2;
+    bool element_is_inline = (argc >= 2) ? (regs[first_arg + 1] != 0) : true;
+    void* lst = list_alloc(vm, 0, element_slot_count, element_is_inline);
     if (!lst) {
         vm->error = "failed to allocate list";
         return;
@@ -48,9 +52,10 @@ static void native_list_init(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         u32 capacity = static_cast<u32>(cap);
         if (capacity > 0) {
             ListHeader* header = get_list_header(lst_ptr);
+            u32 esc = header->element_slot_count;
             header->capacity = capacity;
-            header->elements = static_cast<Value*>(malloc(sizeof(Value) * capacity));
-            memset(header->elements, 0, sizeof(Value) * capacity);
+            header->elements = static_cast<u32*>(malloc(sizeof(u32) * esc * capacity));
+            memset(header->elements, 0, sizeof(u32) * esc * capacity);
         }
     }
     regs[dst] = 0; // void
@@ -139,8 +144,15 @@ static void native_list_push(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
 
-    Value val = Value::from_u64(regs[first_arg + 1]);
-    list_push(lst_ptr, val);
+    ListHeader* header = get_list_header(lst_ptr);
+    if (header->element_is_inline) {
+        // Primitive: value is directly in register
+        list_push_slots(lst_ptr, reinterpret_cast<const u32*>(&regs[first_arg + 1]));
+    } else {
+        // Struct: register holds pointer to struct data
+        u32* src = reinterpret_cast<u32*>(regs[first_arg + 1]);
+        list_push_slots(lst_ptr, src);
+    }
     regs[dst] = 0;
 }
 
@@ -159,8 +171,20 @@ static void native_list_pop(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
 
-    Value result = list_pop(lst_ptr);
-    regs[dst] = result.as_u64();
+    ListHeader* header = get_list_header(lst_ptr);
+    u32* ptr = list_pop_ptr(lst_ptr);
+    if (!ptr) {
+        regs[dst] = 0;
+        return;
+    }
+    if (header->element_is_inline) {
+        u64 val = 0;
+        memcpy(&val, ptr, sizeof(u32) * header->element_slot_count);
+        regs[dst] = val;
+    } else {
+        // Struct: return pointer to popped element data
+        regs[dst] = reinterpret_cast<u64>(ptr);
+    }
 }
 
 // Native function: print(s: string)
@@ -419,11 +443,16 @@ static void native_list_index(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
     i64 index = static_cast<i64>(regs[first_arg + 1]);
-    Value result;
-    if (!list_get(lst_ptr, index, result, &vm->error)) {
-        return;
+    u32* ptr = list_get_ptr(lst_ptr, index, &vm->error);
+    if (!ptr) return;
+    ListHeader* header = get_list_header(lst_ptr);
+    if (header->element_is_inline) {
+        u64 val = 0;
+        memcpy(&val, ptr, sizeof(u32) * header->element_slot_count);
+        regs[dst] = val;
+    } else {
+        regs[dst] = reinterpret_cast<u64>(ptr);
     }
-    regs[dst] = result.as_u64();
 }
 
 // Native function: list index_mut (set element by index)
@@ -435,9 +464,16 @@ static void native_list_index_mut(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
     i64 index = static_cast<i64>(regs[first_arg + 1]);
-    Value value = Value::from_u64(regs[first_arg + 2]);
-    if (!list_set(lst_ptr, index, value, &vm->error)) {
-        return;
+    ListHeader* header = get_list_header(lst_ptr);
+    if (header->element_is_inline) {
+        if (!list_set_slots(lst_ptr, index, reinterpret_cast<const u32*>(&regs[first_arg + 2]), &vm->error)) {
+            return;
+        }
+    } else {
+        u32* src = reinterpret_cast<u32*>(regs[first_arg + 2]);
+        if (!list_set_slots(lst_ptr, index, src, &vm->error)) {
+            return;
+        }
     }
     regs[dst] = 0;
 }

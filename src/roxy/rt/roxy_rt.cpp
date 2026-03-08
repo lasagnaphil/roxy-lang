@@ -186,7 +186,9 @@ void* roxy_string_to_string(void* val) {
 
 // ===== List Operations =====
 
-void* roxy_list_alloc() {
+void* roxy_list_alloc(int32_t element_slot_count, int32_t element_is_inline) {
+    (void)element_slot_count;  // C backend uses uint64_t elements; multi-slot deferred
+    (void)element_is_inline;
     void* data = roxy_alloc(sizeof(roxy_list_header), ROXY_TYPEID_LIST);
     if (!data) return nullptr;
     // Already zero-initialized by roxy_alloc
@@ -255,7 +257,7 @@ void* roxy_list_copy(void* src) {
     if (!src) return nullptr;
     auto* src_hdr = static_cast<roxy_list_header*>(src);
 
-    void* dst = roxy_list_alloc();
+    void* dst = roxy_list_alloc(2, 1);
     if (!dst) return nullptr;
 
     auto* dst_hdr = static_cast<roxy_list_header*>(dst);
@@ -638,7 +640,7 @@ void roxy_map_clear(void* self) {
 
 void* roxy_map_keys(void* self) {
     auto* hdr = map_hdr(self);
-    void* lst = roxy_list_alloc();
+    void* lst = roxy_list_alloc(2, 1);
     if (!lst) return nullptr;
     roxy_list_init(lst, static_cast<int32_t>(hdr->length));
 
@@ -652,7 +654,7 @@ void* roxy_map_keys(void* self) {
 
 void* roxy_map_values(void* self) {
     auto* hdr = map_hdr(self);
-    void* lst = roxy_list_alloc();
+    void* lst = roxy_list_alloc(2, 1);
     if (!lst) return nullptr;
     roxy_list_init(lst, static_cast<int32_t>(hdr->length));
 

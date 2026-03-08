@@ -373,7 +373,7 @@ void map_clear(void* data) {
 
 void* map_keys(RoxyVM* vm, void* data) {
     const MapHeader* header = get_map_header(data);
-    void* lst = list_alloc(vm, header->length);
+    void* lst = list_alloc(vm, header->length, 2);
     if (!lst) return nullptr;
 
     for (u32 i = 0; i < header->capacity; i++) {
@@ -386,7 +386,7 @@ void* map_keys(RoxyVM* vm, void* data) {
 
 void* map_values(RoxyVM* vm, void* data) {
     const MapHeader* header = get_map_header(data);
-    void* lst = list_alloc(vm, header->length);
+    void* lst = list_alloc(vm, header->length, 2);
     if (!lst) return nullptr;
 
     for (u32 i = 0; i < header->capacity; i++) {

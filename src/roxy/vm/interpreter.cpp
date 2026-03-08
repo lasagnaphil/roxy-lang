@@ -675,11 +675,21 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
                     return false;
                 }
                 i64 idx = reg_as_i64(regs[c]);
-                Value result;
-                if (!list_get(lst_ptr, idx, result, &vm->error)) {
+                ListHeader* header = get_list_header(lst_ptr);
+                if (idx < 0 || static_cast<u64>(idx) >= header->length) {
+                    vm->error = "List index out of bounds";
                     return false;
                 }
-                regs[a] = result.as_u64();
+                if (header->element_is_inline) {
+                    // Primitive: load 1-2 u32 slots into register as value
+                    u64 val = 0;
+                    memcpy(&val, list_element_ptr(header, static_cast<u32>(idx)),
+                           sizeof(u32) * header->element_slot_count);
+                    regs[a] = val;
+                } else {
+                    // Struct: return pointer to element data in buffer
+                    regs[a] = reinterpret_cast<u64>(list_element_ptr(header, static_cast<u32>(idx)));
+                }
                 break;
             }
 
@@ -691,9 +701,20 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
                     return false;
                 }
                 i64 idx = reg_as_i64(regs[b]);
-                Value value = Value::from_u64(regs[c]);
-                if (!list_set(lst_ptr, idx, value, &vm->error)) {
+                ListHeader* header = get_list_header(lst_ptr);
+                if (idx < 0 || static_cast<u64>(idx) >= header->length) {
+                    vm->error = "List index out of bounds";
                     return false;
+                }
+                if (header->element_is_inline) {
+                    // Primitive: register holds the value directly
+                    memcpy(list_element_ptr(header, static_cast<u32>(idx)),
+                           &regs[c], sizeof(u32) * header->element_slot_count);
+                } else {
+                    // Struct: regs[c] is a pointer to struct data
+                    u32* src = reinterpret_cast<u32*>(regs[c]);
+                    memcpy(list_element_ptr(header, static_cast<u32>(idx)),
+                           src, sizeof(u32) * header->element_slot_count);
                 }
                 break;
             }

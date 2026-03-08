@@ -11,6 +11,37 @@
 
 namespace rx {
 
+// Returns number of u32 slots needed for a type
+static u32 get_type_slot_count(Type* type) {
+    if (!type) return 0;
+    switch (type->kind) {
+        case TypeKind::Bool:
+        case TypeKind::I8: case TypeKind::U8:
+        case TypeKind::I16: case TypeKind::U16:
+        case TypeKind::I32: case TypeKind::U32:
+        case TypeKind::F32:
+        case TypeKind::Enum:
+        case TypeKind::IntLiteral:
+            return 1;
+        case TypeKind::I64: case TypeKind::U64:
+        case TypeKind::F64:
+        case TypeKind::Uniq:
+        case TypeKind::Ref:
+        case TypeKind::List:
+        case TypeKind::Map:
+        case TypeKind::Coroutine:
+            return 2;
+        case TypeKind::Weak:
+            return 4;
+        case TypeKind::Struct:
+            return type->struct_info.slot_count;
+        case TypeKind::String:
+            return 2;
+        default:
+            return 0;
+    }
+}
+
 IRBuilder::IRBuilder(BumpAllocator& allocator, TypeEnv& type_env, NativeRegistry& registry,
                      SymbolTable& symbols, ModuleRegistry& module_registry)
     : m_allocator(allocator)
@@ -2362,11 +2393,18 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             user_args[i] = gen_expr(call_expr.arguments[i].expr);
         }
 
-        // Step 1: Allocate empty list (non-method native, 0 args)
+        // Step 1: Allocate empty list with element_slot_count and element_is_inline args
         StringView alloc_name = call_expr.callee->resolved_type->list_info.alloc_native_name;
         i32 alloc_idx = m_registry.get_index(alloc_name);
-        Span<ValueId> empty = alloc_span<ValueId>(0);
-        ValueId list_ptr = emit_call_native(alloc_name, empty, expr->resolved_type,
+        Type* elem_type = call_expr.callee->resolved_type->list_info.element_type;
+        u32 esc = get_type_slot_count(elem_type);
+        bool is_inline = !elem_type->is_struct();
+        ValueId esc_val = emit_const_int(static_cast<i64>(esc), m_types.i32_type());
+        ValueId inline_val = emit_const_int(is_inline ? 1 : 0, m_types.i32_type());
+        Span<ValueId> alloc_args = alloc_span<ValueId>(2);
+        alloc_args[0] = esc_val;
+        alloc_args[1] = inline_val;
+        ValueId list_ptr = emit_call_native(alloc_name, alloc_args, expr->resolved_type,
                                              static_cast<u8>(alloc_idx));
 
         // Step 2: Call constructor method with [self, user_args...]
