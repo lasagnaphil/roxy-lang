@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
 
 namespace rx {
 
@@ -705,6 +706,129 @@ static void native_map_iter_value_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) 
     regs[dst] = header->values[idx];
 }
 
+// Native function: str_char_at(s: string, i: i32) -> i32
+// Returns the ASCII code of the character at the given index.
+static void native_str_char_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* str = reinterpret_cast<void*>(regs[first_arg]);
+    if (!str) {
+        vm->error = "str_char_at: null string";
+        return;
+    }
+    i32 index = static_cast<i32>(regs[first_arg + 1]);
+    u32 len = string_length(str);
+    if (index < 0 || static_cast<u32>(index) >= len) {
+        vm->error = "str_char_at: index out of bounds";
+        return;
+    }
+    const char* chars = string_chars(str);
+    regs[dst] = static_cast<u64>(static_cast<u8>(chars[index]));
+}
+
+// Native function: str_substr(s: string, start: i32, len: i32) -> string
+// Extracts a substring starting at 'start' with the given length.
+static void native_str_substr(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* str = reinterpret_cast<void*>(regs[first_arg]);
+    if (!str) {
+        vm->error = "str_substr: null string";
+        return;
+    }
+    i32 start = static_cast<i32>(regs[first_arg + 1]);
+    i32 sub_len = static_cast<i32>(regs[first_arg + 2]);
+    u32 str_len = string_length(str);
+    if (start < 0 || sub_len < 0 || static_cast<u32>(start + sub_len) > str_len) {
+        vm->error = "str_substr: index out of bounds";
+        return;
+    }
+    const char* chars = string_chars(str);
+    void* result = string_alloc(vm, chars + start, static_cast<u32>(sub_len));
+    if (!result) {
+        vm->error = "str_substr: failed to allocate string";
+        return;
+    }
+    regs[dst] = reinterpret_cast<u64>(result);
+}
+
+// Native function: str_to_f64(s: string) -> f64
+// Parses a string as a floating-point number.
+static void native_str_to_f64(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* str = reinterpret_cast<void*>(regs[first_arg]);
+    if (!str) {
+        vm->error = "str_to_f64: null string";
+        return;
+    }
+    const char* chars = string_chars(str);
+    char* end = nullptr;
+    f64 val = strtod(chars, &end);
+    memcpy(&regs[dst], &val, sizeof(f64));
+}
+
+// Native function: str_from_code(code: i32) -> string
+// Creates a single-character string from an ASCII code.
+static void native_str_from_code(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    i32 code = static_cast<i32>(regs[first_arg]);
+    char ch = static_cast<char>(code);
+    void* result = string_alloc(vm, &ch, 1);
+    if (!result) {
+        vm->error = "str_from_code: failed to allocate string";
+        return;
+    }
+    regs[dst] = reinterpret_cast<u64>(result);
+}
+
+// Native function: clock() -> f64
+// Returns current time in seconds since an arbitrary epoch.
+static void native_clock(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    auto now = std::chrono::high_resolution_clock::now();
+    auto duration = now.time_since_epoch();
+    f64 seconds = std::chrono::duration<f64>(duration).count();
+    memcpy(&regs[dst], &seconds, sizeof(f64));
+}
+
+// Native function: read_file(path: string) -> string
+// Reads the entire contents of a file as a string.
+static void native_read_file(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack.back().registers;
+    void* path_str = reinterpret_cast<void*>(regs[first_arg]);
+    if (!path_str) {
+        vm->error = "read_file: null path";
+        return;
+    }
+    const char* path = string_chars(path_str);
+    FILE* file = fopen(path, "rb");
+    if (!file) {
+        vm->error = "read_file: could not open file";
+        return;
+    }
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    if (size < 0) {
+        fclose(file);
+        vm->error = "read_file: could not determine file size";
+        return;
+    }
+    char* buffer = static_cast<char*>(malloc(static_cast<size_t>(size)));
+    if (!buffer) {
+        fclose(file);
+        vm->error = "read_file: allocation failed";
+        return;
+    }
+    size_t bytes_read = fread(buffer, 1, static_cast<size_t>(size), file);
+    fclose(file);
+    void* result = string_alloc(vm, buffer, static_cast<u32>(bytes_read));
+    free(buffer);
+    if (!result) {
+        vm->error = "read_file: failed to allocate string";
+        return;
+    }
+    regs[dst] = reinterpret_cast<u64>(result);
+}
+
 void register_builtin_natives(NativeRegistry& registry) {
     // List<T> - registered as a generic native type
     registry.register_generic_type("List<T>", "list_alloc", native_list_alloc);
@@ -726,6 +850,14 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_native(native_str_eq, "fun str_eq(a: string, b: string): bool");
     registry.bind_native(native_str_ne, "fun str_ne(a: string, b: string): bool");
     registry.bind_native(native_str_len, "fun str_len(s: string): i32");
+    registry.bind_native(native_str_char_at, "fun str_char_at(s: string, i: i32): i32");
+    registry.bind_native(native_str_substr, "fun str_substr(s: string, start: i32, len: i32): string");
+    registry.bind_native(native_str_to_f64, "fun str_to_f64(s: string): f64");
+    registry.bind_native(native_str_from_code, "fun str_from_code(code: i32): string");
+
+    // Utility functions
+    registry.bind_native(native_clock, "fun clock(): f64");
+    registry.bind_native(native_read_file, "fun read_file(path: string): string");
 
     // to_string natives for primitive types ($$-mangled name override)
     registry.bind_native("bool$$to_string",   native_bool_to_string,   "fun to_string(val: bool): string");

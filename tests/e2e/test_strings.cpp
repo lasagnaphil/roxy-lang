@@ -502,3 +502,105 @@ TEST_CASE("E2E - F-string empty") {
     CHECK(result.success);
     CHECK(result.stdout_output == "\n");
 }
+
+// ============================================================================
+// New String Native Functions
+// ============================================================================
+
+TEST_CASE("E2E - str_char_at basic") {
+    const char* source = R"(
+        fun main(): i32 {
+            var s: string = "hello";
+            var ch: i32 = str_char_at(s, 0);
+            print(f"{ch}");
+            ch = str_char_at(s, 4);
+            print(f"{ch}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    // 'h' = 104, 'o' = 111
+    CHECK(result.stdout_output == "104\n111\n");
+}
+
+TEST_CASE("E2E - str_substr basic") {
+    const char* source = R"(
+        fun main(): i32 {
+            var s: string = "hello world";
+            var sub: string = str_substr(s, 6, 5);
+            print(sub);
+            sub = str_substr(s, 0, 5);
+            print(sub);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "world\nhello\n");
+}
+
+TEST_CASE("E2E - str_to_f64 basic") {
+    const char* source = R"(
+        fun main(): i32 {
+            var v: f64 = str_to_f64("3.14");
+            print(f"{v}");
+            v = str_to_f64("42");
+            print(f"{v}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "3.14\n42\n");
+}
+
+TEST_CASE("E2E - str_from_code basic") {
+    const char* source = R"(
+        fun main(): i32 {
+            var s: string = str_from_code(65);
+            print(s);
+            s = str_from_code(122);
+            print(s);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    // 65 = 'A', 122 = 'z'
+    CHECK(result.stdout_output == "A\nz\n");
+}
+
+TEST_CASE("E2E - clock returns positive value") {
+    const char* source = R"(
+        fun main(): i32 {
+            var t: f64 = clock();
+            if (t > 0.0) {
+                print("ok");
+            }
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "ok\n");
+}
+
+TEST_CASE("E2E - read_file basic") {
+    const char* source = R"(
+        fun main(): i32 {
+            var content: string = read_file("/dev/null");
+            print(f"{str_len(content)}");
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "0\n");
+}
