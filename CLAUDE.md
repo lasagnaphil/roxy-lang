@@ -9,6 +9,197 @@ Roxy is an embeddable scripting language for game engines with:
 - Fast C++ interop
 - Future AOT compilation to C
 
+## Example Code
+
+```roxy
+// ── Enums ──
+enum Element { Fire, Ice, Lightning }
+
+// ── Structs with fields and default values ──
+struct Vec2 {
+    x: f32 = 0.0f;
+    y: f32 = 0.0f;
+}
+
+// ── Methods ──
+fun Vec2.length_sq(): f32 {
+    return self.x * self.x + self.y * self.y;
+}
+
+// ── Traits and operator overloading ──
+fun Vec2.add(other: Vec2): Vec2 for Add {
+    return Vec2 { x = self.x + other.x, y = self.y + other.y };
+}
+
+fun Vec2.mul(scalar: f32): Vec2 for Mul<f32> {
+    return Vec2 { x = self.x * scalar, y = self.y * scalar };
+}
+
+fun Vec2.eq(other: Vec2): bool for Eq {
+    return self.x == other.x && self.y == other.y;
+}
+
+// ── Generics ──
+struct Pair<T, U> {
+    first: T;
+    second: U;
+}
+
+fun identity<T>(value: T): T {
+    return value;
+}
+
+// ── Inheritance ──
+struct Entity {
+    pos: Vec2;
+    hp: i32;
+}
+
+fun Entity.is_alive(): bool {
+    return self.hp > 0;
+}
+
+struct Player : Entity {
+    name: string;
+    mana: i32;
+}
+
+// ── Named constructors and destructors ──
+fun new Player(name: string, x: f32, y: f32) {
+    self.pos = Vec2 { x = x, y = y };
+    self.hp = 100;
+    self.name = name;
+    self.mana = 50;
+}
+
+fun delete Player() {
+    print(f"Player {self.name} removed");
+}
+
+// ── Tagged unions ──
+struct Skill {
+    name: string;
+    when element: Element {
+        case Fire:
+            burn_duration: i32;
+        case Ice:
+            slow_factor: f32;
+        case Lightning:
+            chain_count: i32;
+    }
+}
+
+// ── When statement (pattern matching) ──
+fun describe_skill(s: Skill): string {
+    when s.element {
+        case Fire:
+            return f"Fire skill: burns for {s.burn_duration} turns";
+        case Ice:
+            return f"Ice skill: slows by {s.slow_factor}";
+        case Lightning:
+            return f"Lightning skill: chains to {s.chain_count} targets";
+    }
+}
+
+// ── Exception handling ──
+struct OutOfMana {
+    required: i32;
+    available: i32;
+}
+
+fun OutOfMana.message(): string for Exception {
+    return f"Need {self.required} mana, have {self.available}";
+}
+
+fun cast_spell(player: ref Player, cost: i32) {
+    if (player.mana < cost) {
+        throw OutOfMana { required = cost, available = player.mana };
+    }
+    player.mana = player.mana - cost;
+}
+
+// ── Coroutines ──
+fun countdown(n: i32): Coro<i32> {
+    var i: i32 = n;
+    while (i > 0) {
+        yield i;
+        i = i - 1;
+    }
+}
+
+// ── Lists, Maps, control flow, references ──
+fun main() {
+    // Unique ownership and RAII
+    var player: uniq Player = uniq Player("Arwen", 10.0f, 20.0f);
+
+    // Inherited method
+    print(f"Alive: {player.is_alive()}");
+
+    // Operator overloading
+    var a: Vec2 = Vec2 { x = 1.0f, y = 2.0f };
+    var b: Vec2 = Vec2 { x = 3.0f, y = 4.0f };
+    var c: Vec2 = (a + b) * 2.0f;
+
+    // Generic inference
+    var pair = Pair { first = 42, second = "hello" };
+    var x: i32 = identity(10);
+
+    // Lists
+    var scores: List<i32> = List<i32>();
+    for (var i: i32 = 0; i < 5; i = i + 1) {
+        scores.push(i * 10);
+    }
+    print(f"Scores: len={scores.len()}, first={scores[0]}");
+
+    // Maps
+    var inventory: Map<string, i32> = Map<string, i32>();
+    inventory.insert("potion", 3);
+    inventory.insert("elixir", 1);
+    inventory["potion"] = inventory["potion"] + 1;
+    print(f"Potions: {inventory["potion"]}");
+
+    // Tagged union + when
+    var skill: Skill = Skill {
+        name = "Fireball",
+        element = Element::Fire,
+        burn_duration = 3
+    };
+    print(describe_skill(skill));
+
+    // Exception handling
+    try {
+        cast_spell(player, 999);
+    } catch (e: OutOfMana) {
+        print(f"Failed: {e.message()}");
+    } finally {
+        print("Spell attempt complete");
+    }
+
+    // Coroutine
+    var coro = countdown(3);
+    while (!coro.done()) {
+        print(f"Countdown: {coro.resume()}");
+    }
+
+    // Type casting and numeric literals
+    var big: i64 = 1000000l;
+    var small: i32 = i32(big);
+    var flag: bool = bool(small);
+
+    // Out parameters
+    var ox: i32 = 0;
+    var oy: i32 = 0;
+    init_pair(out ox, out oy);
+
+    // player is automatically deleted here (RAII)
+}
+
+fun init_pair(x: out i32, y: out i32) {
+    x = 10;
+    y = 20;
+}
+```
+
 ## Build System
 
 - **Build tool:** CMake with Ninja
