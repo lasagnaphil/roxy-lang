@@ -109,6 +109,14 @@ enum class Opcode : u8 {
     RET         = 0x93,     // return reg (or void if reg=0xFF)
     RET_VOID    = 0x94,     // return (void)
 
+    // Fused compare-and-branch (two-word: [op:8][_:8][src1:8][src2:8] + [offset:32])
+    JMP_IF_LT_I = 0x95,    // if (src1 <  src2) pc += offset (signed i32)
+    JMP_IF_LE_I = 0x96,    // if (src1 <= src2) pc += offset (signed i32)
+    JMP_IF_GT_I = 0x97,    // if (src1 >  src2) pc += offset (signed i32)
+    JMP_IF_GE_I = 0x98,    // if (src1 >= src2) pc += offset (signed i32)
+    JMP_IF_EQ_I = 0x99,    // if (src1 == src2) pc += offset (signed i32)
+    JMP_IF_NE_I = 0x9A,    // if (src1 != src2) pc += offset (signed i32)
+
     // 0xA0-0xAF: Function Calls and Container Indexing
     CALL        = 0xA0,     // dst = call func_idx(args...)
     CALL_NATIVE = 0xA1,     // dst = call_native func_idx(args...)
@@ -290,12 +298,13 @@ struct BCFunction {
     u32 param_register_count;   // Total registers needed for parameters (may exceed param_count for multi-register structs)
     u32 register_count;         // Total registers needed
     u32 local_stack_slots;      // Local stack slots needed for struct data
+    u8 ret_reg_count;           // Registers used by return value (1 normally, 2 for 3-4 slot struct returns)
     Vector<u32> code;           // Bytecode instructions
     Vector<BCConstant> constants; // Constant pool
     Vector<BCExceptionHandler> exception_handlers; // Exception handler table
     Vector<BCCleanupRecord> cleanup_records;        // Cleanup records for exception handling
 
-    BCFunction() : param_count(0), param_register_count(0), register_count(0), local_stack_slots(0) {}
+    BCFunction() : param_count(0), param_register_count(0), register_count(0), local_stack_slots(0), ret_reg_count(1) {}
 };
 
 // Native function signature

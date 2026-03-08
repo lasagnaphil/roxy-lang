@@ -318,9 +318,12 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         [0x92] = &&op_JMP_IF_NOT,
         [0x93] = &&op_RET,
         [0x94] = &&op_RET_VOID,
-        [0x95] = &&op_DEFAULT, [0x96] = &&op_DEFAULT,
-        [0x97] = &&op_DEFAULT, [0x98] = &&op_DEFAULT,
-        [0x99] = &&op_DEFAULT, [0x9A] = &&op_DEFAULT,
+        [0x95] = &&op_JMP_IF_LT_I,
+        [0x96] = &&op_JMP_IF_LE_I,
+        [0x97] = &&op_JMP_IF_GT_I,
+        [0x98] = &&op_JMP_IF_GE_I,
+        [0x99] = &&op_JMP_IF_EQ_I,
+        [0x9A] = &&op_JMP_IF_NE_I,
         [0x9B] = &&op_DEFAULT, [0x9C] = &&op_DEFAULT,
         [0x9D] = &&op_DEFAULT, [0x9E] = &&op_DEFAULT,
         [0x9F] = &&op_DEFAULT,
@@ -806,6 +809,56 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
     OP(JMP_IF_NOT) {
         if (!reg_is_truthy(regs[decode_a(instr)])) {
             pc += decode_offset(instr);
+        }
+        DISPATCH();
+    }
+
+    // ── Fused Compare-and-Branch (two-word: ABC + offset) ──
+
+    OP(JMP_IF_LT_I) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_i64(regs[decode_b(instr)]) < reg_as_i64(regs[decode_c(instr)])) {
+            pc += offset;
+        }
+        DISPATCH();
+    }
+
+    OP(JMP_IF_LE_I) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_i64(regs[decode_b(instr)]) <= reg_as_i64(regs[decode_c(instr)])) {
+            pc += offset;
+        }
+        DISPATCH();
+    }
+
+    OP(JMP_IF_GT_I) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_i64(regs[decode_b(instr)]) > reg_as_i64(regs[decode_c(instr)])) {
+            pc += offset;
+        }
+        DISPATCH();
+    }
+
+    OP(JMP_IF_GE_I) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_i64(regs[decode_b(instr)]) >= reg_as_i64(regs[decode_c(instr)])) {
+            pc += offset;
+        }
+        DISPATCH();
+    }
+
+    OP(JMP_IF_EQ_I) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_i64(regs[decode_b(instr)]) == reg_as_i64(regs[decode_c(instr)])) {
+            pc += offset;
+        }
+        DISPATCH();
+    }
+
+    OP(JMP_IF_NE_I) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_i64(regs[decode_b(instr)]) != reg_as_i64(regs[decode_c(instr)])) {
+            pc += offset;
         }
         DISPATCH();
     }

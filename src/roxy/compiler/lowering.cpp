@@ -99,6 +99,21 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_current_func->name = ir_func->name;
     m_current_func->param_count = ir_func->params.size();
 
+    // Compute ret_reg_count based on return type
+    {
+        Type* ret_type = ir_func->return_type;
+        if (ret_type && ret_type->kind == TypeKind::Weak) {
+            m_current_func->ret_reg_count = 2;
+        } else {
+            u32 ret_slot_count = get_struct_slot_count(ret_type);
+            if (ret_slot_count > 0 && ret_slot_count <= 4) {
+                m_current_func->ret_reg_count = static_cast<u8>((ret_slot_count + 1) / 2);
+            } else {
+                m_current_func->ret_reg_count = 1;
+            }
+        }
+    }
+
     // Reset state
     m_value_to_reg.clear();
     m_value_to_stack_slot.clear();
@@ -429,6 +444,9 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
 
     // Patch jump offsets
     patch_jumps();
+
+    // Fuse compare + conditional branch pairs into single two-word instructions
+    fuse_compare_branch();
 
     // Build exception handler table from IR exception handlers
     for (const auto& ir_handler : ir_func->exception_handlers) {
@@ -1947,6 +1965,61 @@ void BytecodeBuilder::patch_jumps() {
         u8 a = decode_a(instr);
 
         instr = encode_aoff(op, a, relative_offset);
+    }
+}
+
+void BytecodeBuilder::fuse_compare_branch() {
+    auto& code = m_current_func->code;
+    if (code.size() < 2) return;
+
+    for (u32 i = 0; i + 1 < code.size(); i++) {
+        Opcode cmp_op = decode_opcode(code[i]);
+        Opcode jmp_op = decode_opcode(code[i + 1]);
+
+        // Only fuse signed integer comparisons for now
+        if (cmp_op < Opcode::EQ_I || cmp_op > Opcode::GE_I) continue;
+        if (jmp_op != Opcode::JMP_IF_NOT && jmp_op != Opcode::JMP_IF) continue;
+
+        // The comparison destination must match the branch condition register
+        u8 cmp_dst = decode_a(code[i]);
+        u8 jmp_reg = decode_a(code[i + 1]);
+        if (cmp_dst != jmp_reg) continue;
+
+        u8 src1 = decode_b(code[i]);
+        u8 src2 = decode_c(code[i]);
+        i16 offset = decode_offset(code[i + 1]);
+
+        // Map comparison opcode to fused opcode
+        // JMP_IF_NOT negates the comparison; JMP_IF keeps it
+        Opcode fused_op;
+        if (jmp_op == Opcode::JMP_IF_NOT) {
+            switch (cmp_op) {
+                case Opcode::EQ_I: fused_op = Opcode::JMP_IF_NE_I; break;
+                case Opcode::NE_I: fused_op = Opcode::JMP_IF_EQ_I; break;
+                case Opcode::LT_I: fused_op = Opcode::JMP_IF_GE_I; break;
+                case Opcode::LE_I: fused_op = Opcode::JMP_IF_GT_I; break;
+                case Opcode::GT_I: fused_op = Opcode::JMP_IF_LE_I; break;
+                case Opcode::GE_I: fused_op = Opcode::JMP_IF_LT_I; break;
+                default: continue;
+            }
+        } else {
+            switch (cmp_op) {
+                case Opcode::EQ_I: fused_op = Opcode::JMP_IF_EQ_I; break;
+                case Opcode::NE_I: fused_op = Opcode::JMP_IF_NE_I; break;
+                case Opcode::LT_I: fused_op = Opcode::JMP_IF_LT_I; break;
+                case Opcode::LE_I: fused_op = Opcode::JMP_IF_LE_I; break;
+                case Opcode::GT_I: fused_op = Opcode::JMP_IF_GT_I; break;
+                case Opcode::GE_I: fused_op = Opcode::JMP_IF_GE_I; break;
+                default: continue;
+            }
+        }
+
+        // Replace: word 0 = fused opcode with src registers, word 1 = offset
+        code[i] = encode_abc(fused_op, 0, src1, src2);
+        code[i + 1] = static_cast<u32>(static_cast<i32>(offset));
+
+        // Skip past the fused pair
+        i++;
     }
 }
 

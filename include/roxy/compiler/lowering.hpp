@@ -105,6 +105,9 @@ private:
     // Patch jump offsets after all blocks are emitted
     void patch_jumps();
 
+    // Fuse adjacent compare + conditional branch into single two-word instruction
+    void fuse_compare_branch();
+
     // Get opcode for IR operation
     Opcode get_opcode(IROp op) const;
 

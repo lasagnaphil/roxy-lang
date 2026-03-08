@@ -96,6 +96,12 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::JMP_IF_NOT:    return "JMP_IF_NOT";
         case Opcode::RET:           return "RET";
         case Opcode::RET_VOID:      return "RET_VOID";
+        case Opcode::JMP_IF_LT_I:   return "JMP_IF_LT_I";
+        case Opcode::JMP_IF_LE_I:   return "JMP_IF_LE_I";
+        case Opcode::JMP_IF_GT_I:   return "JMP_IF_GT_I";
+        case Opcode::JMP_IF_GE_I:   return "JMP_IF_GE_I";
+        case Opcode::JMP_IF_EQ_I:   return "JMP_IF_EQ_I";
+        case Opcode::JMP_IF_NE_I:   return "JMP_IF_NE_I";
 
         // Function Calls and Container Indexing
         case Opcode::CALL:              return "CALL";
@@ -257,6 +263,16 @@ void disassemble_instruction(u32 instr, u32 offset, String& out) {
         case Opcode::JMP_IF:
         case Opcode::JMP_IF_NOT:
             buf.format("R{}, {:+} -> {}", a, (i32)soff, (u32)(offset + 1 + soff));
+            break;
+
+        // Format: src1, src2 (two-word: next word is offset)
+        case Opcode::JMP_IF_LT_I:
+        case Opcode::JMP_IF_LE_I:
+        case Opcode::JMP_IF_GT_I:
+        case Opcode::JMP_IF_GE_I:
+        case Opcode::JMP_IF_EQ_I:
+        case Opcode::JMP_IF_NE_I:
+            buf.format("R{}, R{}  ; (two-word)", b, c);
             break;
 
         // Format: reg
