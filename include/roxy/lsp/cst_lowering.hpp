@@ -63,6 +63,7 @@ private:
     Expr* lower_super_expr(SyntaxNode* node);
     Expr* lower_struct_literal_expr(SyntaxNode* node);
     Expr* lower_string_interp_expr(SyntaxNode* node);
+    Expr* lower_ref_expr(SyntaxNode* node);
 
     // Type expressions and parameters
     TypeExpr* lower_type_expr(SyntaxNode* node);

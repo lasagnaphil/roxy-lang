@@ -181,6 +181,7 @@ enum class SyntaxKind : u16 {
     NodeStructLiteralExpr,
     NodeStringInterpExpr,
     NodeUniqExpr,
+    NodeRefExpr,
     NodeCallArgList,
     NodeCallArg,
 

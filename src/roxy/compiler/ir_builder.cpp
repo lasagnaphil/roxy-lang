@@ -2108,6 +2108,14 @@ ValueId IRBuilder::gen_unary_expr(Expr* expr) {
         }
     }
 
+    // ref expr: borrow a reference — just pass through the value with ref type
+    if (unary_expr.op == UnaryOp::Ref) {
+        ValueId operand = gen_expr(unary_expr.operand);
+        Type* result_type = expr->resolved_type;
+        // uniq and ref have the same runtime representation, just reinterpret the type
+        return emit_unary(IROp::Copy, operand, result_type);
+    }
+
     ValueId operand = gen_expr(unary_expr.operand);
     Type* result_type = expr->resolved_type;
 
@@ -2118,8 +2126,25 @@ ValueId IRBuilder::gen_unary_expr(Expr* expr) {
 ValueId IRBuilder::gen_binary_expr(Expr* expr) {
     BinaryExpr& binary_expr = expr->binary;
 
-    // Check for string operations - rewrite to native function calls
+    // Reference/nil comparison: ref/uniq/weak == nil or != nil
     Type* left_type = binary_expr.left->resolved_type;
+    Type* right_type = binary_expr.right->resolved_type;
+    if ((binary_expr.op == BinaryOp::Equal || binary_expr.op == BinaryOp::NotEqual) &&
+        ((left_type && left_type->is_reference() && right_type && right_type->is_nil()) ||
+         (left_type && left_type->is_nil() && right_type && right_type->is_reference()))) {
+        ValueId ref_val, null_val;
+        if (left_type->is_reference()) {
+            ref_val = gen_expr(binary_expr.left);
+            null_val = emit_const_null();
+        } else {
+            null_val = emit_const_null();
+            ref_val = gen_expr(binary_expr.right);
+        }
+        IROp cmp_op = (binary_expr.op == BinaryOp::Equal) ? IROp::EqI : IROp::NeI;
+        return emit_binary(cmp_op, ref_val, null_val, m_types.bool_type());
+    }
+
+    // Check for string operations - rewrite to native function calls
     if (left_type && left_type->kind == TypeKind::String) {
         ValueId left = gen_expr(binary_expr.left);
         ValueId right = gen_expr(binary_expr.right);
@@ -4336,6 +4361,8 @@ IROp IRBuilder::get_unary_op(UnaryOp op, Type* type) {
             return IROp::Not;
         case UnaryOp::BitNot:
             return IROp::BitNot;
+        case UnaryOp::Ref:
+            return IROp::Copy;  // Handled specially in gen_unary_expr
     }
     return IROp::Copy;
 }

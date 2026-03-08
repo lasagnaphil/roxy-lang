@@ -10,6 +10,7 @@
 #include "roxy/compiler/types.hpp"
 #include "roxy/compiler/type_env.hpp"
 #include "roxy/compiler/symbol_table.hpp"
+#include "roxy/core/tsl/robin_set.h"
 
 namespace rx {
 
@@ -256,6 +257,9 @@ private:
     u32 m_in_finally_depth = 0;
 
     Vector<Decl*> m_synthetic_decls;  // Injected default method declarations
+
+    // Cycle detection for direct value-type recursion in struct fields
+    tsl::robin_set<Type*> m_resolving_structs;
 
     // Generic type argument inference
     bool unify_type_expr(TypeExpr* pattern, Type* concrete,

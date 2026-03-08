@@ -1369,6 +1369,17 @@ SyntaxNode* LspParser::parse_primary() {
         return parse_fstring();
     }
 
+    // ref expr - explicit borrow expression
+    if (match(TokenKind::KwRef)) {
+        auto builder = begin_node(SyntaxKind::NodeRefExpr);
+        builder.children.push_back(make_token_node(m_previous)); // 'ref'
+
+        SyntaxNode* operand = parse_unary();
+        builder.children.push_back(operand);
+
+        return finish_node(builder);
+    }
+
     // uniq Type(...) or uniq Type { ... }
     if (match(TokenKind::KwUniq)) {
         auto builder = begin_node(SyntaxKind::NodeUniqExpr);

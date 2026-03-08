@@ -993,6 +993,7 @@ Expr* CstLowering::lower_expr(SyntaxNode* node) {
         case SyntaxKind::NodeStructLiteralExpr:   return lower_struct_literal_expr(node);
         case SyntaxKind::NodeStringInterpExpr:    return lower_string_interp_expr(node);
         case SyntaxKind::NodeUniqExpr:            return lower_call_expr(node); // uniq calls
+        case SyntaxKind::NodeRefExpr:            return lower_ref_expr(node);
         default: return nullptr;
     }
 }
@@ -1064,6 +1065,21 @@ Expr* CstLowering::lower_unary_expr(SyntaxNode* node) {
 
     if (node->children.size() >= 2) {
         expr->unary.op = syntax_kind_to_unary_op(node->children[0]->kind);
+        expr->unary.operand = lower_expr(node->children[1]);
+    }
+
+    return expr;
+}
+
+Expr* CstLowering::lower_ref_expr(SyntaxNode* node) {
+    Expr* expr = alloc<Expr>();
+    expr->kind = AstKind::ExprUnary;
+    expr->loc = make_loc(node);
+    expr->unary.op = UnaryOp::Ref;
+    expr->unary.operand = nullptr;
+
+    // children[0] is the 'ref' token, children[1] is the operand expression
+    if (node->children.size() >= 2) {
         expr->unary.operand = lower_expr(node->children[1]);
     }
 

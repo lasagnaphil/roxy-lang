@@ -77,6 +77,7 @@ enum class UnaryOp : u8 {
     Negate,     // -
     Not,        // !
     BitNot,     // ~
+    Ref,        // ref - borrow a reference
 };
 
 enum class BinaryOp : u8 {

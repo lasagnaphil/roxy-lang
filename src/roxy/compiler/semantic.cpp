@@ -440,6 +440,23 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                 fields.push_back(info);
             }
 
+            // Check for direct self-referencing cycles (infinite size)
+            bool has_cycle = false;
+            for (u32 fi = 0; fi < struct_decl.fields.size(); fi++) {
+                auto& field_info = fields[fields.size() - struct_decl.fields.size() + fi];
+                if (field_info.type->kind == TypeKind::Struct &&
+                    field_info.type == type) {
+                    error_fmt(struct_decl.fields[fi].loc,
+                        "recursive struct type '{}' has infinite size; "
+                        "use 'uniq {}' for indirection",
+                        field_info.type->struct_info.name,
+                        field_info.type->struct_info.name);
+                    has_cycle = true;
+                }
+            }
+
+            if (has_cycle) continue;
+
             // Compute field slot offsets for regular fields
             u32 current_slot = 0;
             for (auto& field_info : fields) {
@@ -657,6 +674,41 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                     error_fmt(decl->loc, "trait '{}' cannot inherit from itself", trait_decl.name);
                 } else {
                     trait_type->trait_info.parent = parent_trait;
+                }
+            }
+        }
+    }
+
+    // Detect mutual recursion: after all structs are resolved, recompute
+    // each struct's expected slot_count. If it differs from the stored value,
+    // it means a field referenced a not-yet-resolved struct (mutual recursion
+    // or invalid forward reference of a value type).
+    for (auto* decl : program->declarations) {
+        if (!decl || decl->kind != AstKind::DeclStruct) continue;
+        if (decl->struct_decl.type_params.size() > 0) continue;
+
+        Type* type = m_type_env.named_type_by_name(decl->struct_decl.name);
+        if (!type || !type->is_struct()) continue;
+
+        u32 recomputed_slots = 0;
+        for (const auto& field : type->struct_info.fields) {
+            recomputed_slots += get_type_slot_count(field.type);
+        }
+
+        if (recomputed_slots != type->struct_info.slot_count) {
+            // Find the offending field and report error
+            for (u32 fi = 0; fi < decl->struct_decl.fields.size(); fi++) {
+                Type* field_type = type->struct_info.fields[fi].type;
+                if (field_type && field_type->kind == TypeKind::Struct) {
+                    // Check if this field's slot count changed
+                    u32 current_field_slots = get_type_slot_count(field_type);
+                    if (current_field_slots != type->struct_info.fields[fi].slot_count) {
+                        error_fmt(decl->struct_decl.fields[fi].loc,
+                            "recursive struct type '{}' has infinite size; "
+                            "use 'uniq {}' for indirection",
+                            field_type->struct_info.name,
+                            field_type->struct_info.name);
+                    }
                 }
             }
         }
@@ -969,23 +1021,51 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
     StructDecl& struct_decl = inst->instantiated_decl->struct_decl;
     StructTypeInfo& struct_type_info = inst->concrete_type->struct_info;
 
+    // Track for cycle detection
+    m_resolving_structs.insert(inst->concrete_type);
+
     Vector<FieldInfo> fields;
-    u32 slot_offset = 0;
     for (u32 fi = 0; fi < struct_decl.fields.size(); fi++) {
         Type* field_type = resolve_type_expr(struct_decl.fields[fi].type);
         if (!field_type) field_type = m_types.error_type();
-
-        u32 slot_count = get_type_slot_count(field_type);
 
         FieldInfo info;
         info.name = struct_decl.fields[fi].name;
         info.type = field_type;
         info.is_pub = struct_decl.fields[fi].is_pub;
         info.index = fi;
-        info.slot_offset = slot_offset;
-        info.slot_count = slot_count;
+        info.slot_offset = 0;
+        info.slot_count = 0;
         fields.push_back(info);
-        slot_offset += slot_count;
+    }
+
+    // Check for direct value-type cycles
+    bool has_cycle = false;
+    for (u32 fi = 0; fi < fields.size(); fi++) {
+        if (fields[fi].type->kind == TypeKind::Struct &&
+            m_resolving_structs.count(fields[fi].type)) {
+            error_fmt(struct_decl.fields[fi].loc,
+                "recursive struct type '{}' has infinite size; "
+                "use 'uniq {}' for indirection",
+                fields[fi].type->struct_info.name,
+                fields[fi].type->struct_info.name);
+            has_cycle = true;
+        }
+    }
+
+    m_resolving_structs.erase(inst->concrete_type);
+
+    if (has_cycle) {
+        inst->is_analyzed = true;
+        return;
+    }
+
+    // Compute slot offsets
+    u32 slot_offset = 0;
+    for (auto& field_info : fields) {
+        field_info.slot_count = get_type_slot_count(field_info.type);
+        field_info.slot_offset = slot_offset;
+        slot_offset += field_info.slot_count;
     }
 
     struct_type_info.fields = m_allocator.alloc_span(fields);
@@ -3359,6 +3439,27 @@ Type* SemanticAnalyzer::analyze_unary_expr(Expr* expr) {
     Type* operand_type = analyze_expr(unary_expr.operand);
     if (operand_type->is_error()) return m_types.error_type();
 
+    // Handle ref expression: borrow a reference from an lvalue
+    if (unary_expr.op == UnaryOp::Ref) {
+        if (!is_lvalue(unary_expr.operand)) {
+            error(expr->loc, "'ref' requires an lvalue operand");
+            return m_types.error_type();
+        }
+
+        // ref of uniq<T> → ref<T>
+        if (operand_type->kind == TypeKind::Uniq) {
+            return m_types.ref_type(operand_type->ref_info.inner_type);
+        }
+        // ref of ref<T> → ref<T> (identity)
+        if (operand_type->kind == TypeKind::Ref) {
+            return operand_type;
+        }
+
+        error_fmt(expr->loc, "'ref' requires a 'uniq' or 'ref' operand, got '{}'",
+                  type_string(operand_type));
+        return m_types.error_type();
+    }
+
     return get_unary_result_type(unary_expr.op, operand_type, expr->loc);
 }
 
@@ -5141,6 +5242,12 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
         case BinaryOp::LessEq:
         case BinaryOp::Greater:
         case BinaryOp::GreaterEq: {
+            // Reference/nil comparison: uniq/ref/weak == nil, nil == uniq/ref/weak
+            if ((op == BinaryOp::Equal || op == BinaryOp::NotEqual) &&
+                ((left->is_reference() && right->is_nil()) ||
+                 (left->is_nil() && right->is_reference()))) {
+                return m_types.bool_type();
+            }
             if (Type* result = try_resolve_binary_op(op, left, right))
                 return result;
             // Type mismatch check for better error messages
@@ -5200,6 +5307,10 @@ Type* SemanticAnalyzer::get_unary_result_type(UnaryOp op, Type* operand, SourceL
             if (Type* result = try_resolve_unary_op(op, operand))
                 return result;
             error(loc, "unary '~' requires integer operand");
+            return m_types.error_type();
+
+        case UnaryOp::Ref:
+            // Handled in analyze_unary_expr before this function is called
             return m_types.error_type();
     }
 

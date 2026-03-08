@@ -484,6 +484,20 @@ Expr* Parser::primary() {
         return expr;
     }
 
+    // ref expr - explicit borrow expression
+    if (match(TokenKind::KwRef)) {
+        SourceLocation loc = m_previous.loc;
+        Expr* operand = unary();
+        if (m_has_error) return nullptr;
+
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprUnary;
+        expr->loc = loc;
+        expr->unary.op = UnaryOp::Ref;
+        expr->unary.operand = operand;
+        return expr;
+    }
+
     // uniq Type(...) or uniq Type { ... } - heap allocation with constructor/literal
     // Must be parsed before regular identifiers
     if (match(TokenKind::KwUniq)) {
