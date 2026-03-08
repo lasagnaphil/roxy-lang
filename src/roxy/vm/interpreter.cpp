@@ -152,6 +152,25 @@ static void execute_cleanup(RoxyVM* vm, const BCFunction* func,
     }
 }
 
+// Computed goto (threaded dispatch) for GCC/Clang.
+// Falls back to switch-based dispatch on other compilers (e.g. MSVC).
+#if defined(__GNUC__) || defined(__clang__)
+#define RX_USE_COMPUTED_GOTO 1
+#else
+#define RX_USE_COMPUTED_GOTO 0
+#endif
+
+#if RX_USE_COMPUTED_GOTO
+#define OP(name) op_##name:
+#define DISPATCH() do {          \
+    instr = *pc++;               \
+    goto *dispatch_table[instr >> 24]; \
+} while(0)
+#else
+#define OP(name) case Opcode::name:
+#define DISPATCH() break
+#endif
+
 bool interpret(RoxyVM* vm, u32 stop_depth) {
     if (vm->call_stack.empty()) {
         vm->error = "No call frame";
@@ -164,984 +183,1210 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
     const u32* pc = frame->pc;
     u64* regs = frame->registers;
 
-    // Main dispatch loop
+    u32 instr;
+
+#if RX_USE_COMPUTED_GOTO
+    // 256-entry dispatch table, one per possible opcode byte value.
+    // Unused entries point to op_DEFAULT (unknown opcode error handler).
+    static void* dispatch_table[256] = {
+        // 0x00-0x0F: Constants and Moves
+        [0x00] = &&op_LOAD_NULL,
+        [0x01] = &&op_LOAD_TRUE,
+        [0x02] = &&op_LOAD_FALSE,
+        [0x03] = &&op_LOAD_INT,
+        [0x04] = &&op_LOAD_CONST,
+        [0x05] = &&op_MOV,
+        [0x06] = &&op_DEFAULT, [0x07] = &&op_DEFAULT,
+        [0x08] = &&op_DEFAULT, [0x09] = &&op_DEFAULT,
+        [0x0A] = &&op_DEFAULT, [0x0B] = &&op_DEFAULT,
+        [0x0C] = &&op_DEFAULT, [0x0D] = &&op_DEFAULT,
+        [0x0E] = &&op_DEFAULT, [0x0F] = &&op_DEFAULT,
+
+        // 0x10-0x1F: Integer Arithmetic
+        [0x10] = &&op_ADD_I,
+        [0x11] = &&op_SUB_I,
+        [0x12] = &&op_MUL_I,
+        [0x13] = &&op_DIV_I,
+        [0x14] = &&op_MOD_I,
+        [0x15] = &&op_NEG_I,
+        [0x16] = &&op_DEFAULT, [0x17] = &&op_DEFAULT,
+        [0x18] = &&op_DEFAULT, [0x19] = &&op_DEFAULT,
+        [0x1A] = &&op_DEFAULT, [0x1B] = &&op_DEFAULT,
+        [0x1C] = &&op_DEFAULT, [0x1D] = &&op_DEFAULT,
+        [0x1E] = &&op_DEFAULT, [0x1F] = &&op_DEFAULT,
+
+        // 0x20-0x2F: Float Arithmetic
+        [0x20] = &&op_ADD_F,
+        [0x21] = &&op_SUB_F,
+        [0x22] = &&op_MUL_F,
+        [0x23] = &&op_DIV_F,
+        [0x24] = &&op_NEG_F,
+        [0x25] = &&op_ADD_D,
+        [0x26] = &&op_SUB_D,
+        [0x27] = &&op_MUL_D,
+        [0x28] = &&op_DIV_D,
+        [0x29] = &&op_NEG_D,
+        [0x2A] = &&op_DEFAULT, [0x2B] = &&op_DEFAULT,
+        [0x2C] = &&op_DEFAULT, [0x2D] = &&op_DEFAULT,
+        [0x2E] = &&op_DEFAULT, [0x2F] = &&op_DEFAULT,
+
+        // 0x30-0x3F: Bitwise Operations
+        [0x30] = &&op_BIT_AND,
+        [0x31] = &&op_BIT_OR,
+        [0x32] = &&op_BIT_XOR,
+        [0x33] = &&op_BIT_NOT,
+        [0x34] = &&op_SHL,
+        [0x35] = &&op_SHR,
+        [0x36] = &&op_USHR,
+        [0x37] = &&op_DEFAULT, [0x38] = &&op_DEFAULT,
+        [0x39] = &&op_DEFAULT, [0x3A] = &&op_DEFAULT,
+        [0x3B] = &&op_DEFAULT, [0x3C] = &&op_DEFAULT,
+        [0x3D] = &&op_DEFAULT, [0x3E] = &&op_DEFAULT,
+        [0x3F] = &&op_DEFAULT,
+
+        // 0x40-0x4F: Integer Comparisons
+        [0x40] = &&op_EQ_I,
+        [0x41] = &&op_NE_I,
+        [0x42] = &&op_LT_I,
+        [0x43] = &&op_LE_I,
+        [0x44] = &&op_GT_I,
+        [0x45] = &&op_GE_I,
+        [0x46] = &&op_LT_U,
+        [0x47] = &&op_LE_U,
+        [0x48] = &&op_GT_U,
+        [0x49] = &&op_GE_U,
+        [0x4A] = &&op_DEFAULT, [0x4B] = &&op_DEFAULT,
+        [0x4C] = &&op_DEFAULT, [0x4D] = &&op_DEFAULT,
+        [0x4E] = &&op_DEFAULT, [0x4F] = &&op_DEFAULT,
+
+        // 0x50-0x5F: Float Comparisons
+        [0x50] = &&op_EQ_F,
+        [0x51] = &&op_NE_F,
+        [0x52] = &&op_LT_F,
+        [0x53] = &&op_LE_F,
+        [0x54] = &&op_GT_F,
+        [0x55] = &&op_GE_F,
+        [0x56] = &&op_EQ_D,
+        [0x57] = &&op_NE_D,
+        [0x58] = &&op_LT_D,
+        [0x59] = &&op_LE_D,
+        [0x5A] = &&op_GT_D,
+        [0x5B] = &&op_GE_D,
+        [0x5C] = &&op_DEFAULT, [0x5D] = &&op_DEFAULT,
+        [0x5E] = &&op_DEFAULT, [0x5F] = &&op_DEFAULT,
+
+        // 0x60-0x6F: Logical Operations
+        [0x60] = &&op_NOT,
+        [0x61] = &&op_AND,
+        [0x62] = &&op_OR,
+        [0x63] = &&op_DEFAULT, [0x64] = &&op_DEFAULT,
+        [0x65] = &&op_DEFAULT, [0x66] = &&op_DEFAULT,
+        [0x67] = &&op_DEFAULT, [0x68] = &&op_DEFAULT,
+        [0x69] = &&op_DEFAULT, [0x6A] = &&op_DEFAULT,
+        [0x6B] = &&op_DEFAULT, [0x6C] = &&op_DEFAULT,
+        [0x6D] = &&op_DEFAULT, [0x6E] = &&op_DEFAULT,
+        [0x6F] = &&op_DEFAULT,
+
+        // 0x70-0x7F: Unused
+        [0x70] = &&op_DEFAULT, [0x71] = &&op_DEFAULT,
+        [0x72] = &&op_DEFAULT, [0x73] = &&op_DEFAULT,
+        [0x74] = &&op_DEFAULT, [0x75] = &&op_DEFAULT,
+        [0x76] = &&op_DEFAULT, [0x77] = &&op_DEFAULT,
+        [0x78] = &&op_DEFAULT, [0x79] = &&op_DEFAULT,
+        [0x7A] = &&op_DEFAULT, [0x7B] = &&op_DEFAULT,
+        [0x7C] = &&op_DEFAULT, [0x7D] = &&op_DEFAULT,
+        [0x7E] = &&op_DEFAULT, [0x7F] = &&op_DEFAULT,
+
+        // 0x80-0x8F: Type Conversions
+        [0x80] = &&op_I_TO_F64,
+        [0x81] = &&op_F64_TO_I,
+        [0x82] = &&op_I_TO_B,
+        [0x83] = &&op_B_TO_I,
+        [0x84] = &&op_TRUNC_S,
+        [0x85] = &&op_TRUNC_U,
+        [0x86] = &&op_F32_TO_F64,
+        [0x87] = &&op_F64_TO_F32,
+        [0x88] = &&op_I_TO_F32,
+        [0x89] = &&op_F32_TO_I,
+        [0x8A] = &&op_DEFAULT, [0x8B] = &&op_DEFAULT,
+        [0x8C] = &&op_DEFAULT, [0x8D] = &&op_DEFAULT,
+        [0x8E] = &&op_DEFAULT, [0x8F] = &&op_DEFAULT,
+
+        // 0x90-0x9F: Control Flow
+        [0x90] = &&op_JMP,
+        [0x91] = &&op_JMP_IF,
+        [0x92] = &&op_JMP_IF_NOT,
+        [0x93] = &&op_RET,
+        [0x94] = &&op_RET_VOID,
+        [0x95] = &&op_DEFAULT, [0x96] = &&op_DEFAULT,
+        [0x97] = &&op_DEFAULT, [0x98] = &&op_DEFAULT,
+        [0x99] = &&op_DEFAULT, [0x9A] = &&op_DEFAULT,
+        [0x9B] = &&op_DEFAULT, [0x9C] = &&op_DEFAULT,
+        [0x9D] = &&op_DEFAULT, [0x9E] = &&op_DEFAULT,
+        [0x9F] = &&op_DEFAULT,
+
+        // 0xA0-0xAF: Function Calls and Container Indexing
+        [0xA0] = &&op_CALL,
+        [0xA1] = &&op_CALL_NATIVE,
+        [0xA2] = &&op_INDEX_GET_LIST,
+        [0xA3] = &&op_INDEX_SET_LIST,
+        [0xA4] = &&op_INDEX_GET_MAP,
+        [0xA5] = &&op_INDEX_SET_MAP,
+        [0xA6] = &&op_DEFAULT, [0xA7] = &&op_DEFAULT,
+        [0xA8] = &&op_DEFAULT, [0xA9] = &&op_DEFAULT,
+        [0xAA] = &&op_DEFAULT, [0xAB] = &&op_DEFAULT,
+        [0xAC] = &&op_DEFAULT, [0xAD] = &&op_DEFAULT,
+        [0xAE] = &&op_DEFAULT, [0xAF] = &&op_DEFAULT,
+
+        // 0xB0-0xBF: Field and Stack Access
+        [0xB0] = &&op_GET_FIELD,
+        [0xB1] = &&op_SET_FIELD,
+        [0xB2] = &&op_STACK_ADDR,
+        [0xB3] = &&op_GET_FIELD_ADDR,
+        [0xB4] = &&op_STRUCT_LOAD_REGS,
+        [0xB5] = &&op_STRUCT_STORE_REGS,
+        [0xB6] = &&op_STRUCT_COPY,
+        [0xB7] = &&op_RET_STRUCT_SMALL,
+        [0xB8] = &&op_SPILL_REG,
+        [0xB9] = &&op_RELOAD_REG,
+        [0xBA] = &&op_DEFAULT, [0xBB] = &&op_DEFAULT,
+        [0xBC] = &&op_DEFAULT, [0xBD] = &&op_DEFAULT,
+        [0xBE] = &&op_DEFAULT, [0xBF] = &&op_DEFAULT,
+
+        // 0xC0-0xCF: Unused
+        [0xC0] = &&op_DEFAULT, [0xC1] = &&op_DEFAULT,
+        [0xC2] = &&op_DEFAULT, [0xC3] = &&op_DEFAULT,
+        [0xC4] = &&op_DEFAULT, [0xC5] = &&op_DEFAULT,
+        [0xC6] = &&op_DEFAULT, [0xC7] = &&op_DEFAULT,
+        [0xC8] = &&op_DEFAULT, [0xC9] = &&op_DEFAULT,
+        [0xCA] = &&op_DEFAULT, [0xCB] = &&op_DEFAULT,
+        [0xCC] = &&op_DEFAULT, [0xCD] = &&op_DEFAULT,
+        [0xCE] = &&op_DEFAULT, [0xCF] = &&op_DEFAULT,
+
+        // 0xD0-0xDF: Object Lifecycle and Exceptions
+        [0xD0] = &&op_NEW_OBJ,
+        [0xD1] = &&op_DEL_OBJ,
+        [0xD2] = &&op_THROW,
+        [0xD3] = &&op_CALL_EXC_MSG,
+        [0xD4] = &&op_DEFAULT, [0xD5] = &&op_DEFAULT,
+        [0xD6] = &&op_DEFAULT, [0xD7] = &&op_DEFAULT,
+        [0xD8] = &&op_DEFAULT, [0xD9] = &&op_DEFAULT,
+        [0xDA] = &&op_DEFAULT, [0xDB] = &&op_DEFAULT,
+        [0xDC] = &&op_DEFAULT, [0xDD] = &&op_DEFAULT,
+        [0xDE] = &&op_DEFAULT, [0xDF] = &&op_DEFAULT,
+
+        // 0xE0-0xEF: Reference Counting
+        [0xE0] = &&op_REF_INC,
+        [0xE1] = &&op_REF_DEC,
+        [0xE2] = &&op_WEAK_CHECK,
+        [0xE3] = &&op_WEAK_CREATE,
+        [0xE4] = &&op_DEFAULT, [0xE5] = &&op_DEFAULT,
+        [0xE6] = &&op_DEFAULT, [0xE7] = &&op_DEFAULT,
+        [0xE8] = &&op_DEFAULT, [0xE9] = &&op_DEFAULT,
+        [0xEA] = &&op_DEFAULT, [0xEB] = &&op_DEFAULT,
+        [0xEC] = &&op_DEFAULT, [0xED] = &&op_DEFAULT,
+        [0xEE] = &&op_DEFAULT, [0xEF] = &&op_DEFAULT,
+
+        // 0xF0-0xFF: Debug/Error
+        [0xF0] = &&op_TRAP,
+        [0xF1] = &&op_DEFAULT, [0xF2] = &&op_DEFAULT,
+        [0xF3] = &&op_DEFAULT, [0xF4] = &&op_DEFAULT,
+        [0xF5] = &&op_DEFAULT, [0xF6] = &&op_DEFAULT,
+        [0xF7] = &&op_DEFAULT, [0xF8] = &&op_DEFAULT,
+        [0xF9] = &&op_DEFAULT, [0xFA] = &&op_DEFAULT,
+        [0xFB] = &&op_DEFAULT, [0xFC] = &&op_DEFAULT,
+        [0xFD] = &&op_DEFAULT,
+        [0xFE] = &&op_NOP,
+        [0xFF] = &&op_HALT,
+    };
+
+    // Initial dispatch
+    DISPATCH();
+#else
+    // Main dispatch loop (switch-based fallback)
     while (vm->running) {
-        u32 instr = *pc++;
-        Opcode op = decode_opcode(instr);
+        instr = *pc++;
+        switch (decode_opcode(instr)) {
+#endif
+
+    // ── Constants and Moves ──
+
+    OP(LOAD_NULL) {
+        regs[decode_a(instr)] = 0;
+        DISPATCH();
+    }
+
+    OP(LOAD_TRUE) {
+        regs[decode_a(instr)] = 1;
+        DISPATCH();
+    }
+
+    OP(LOAD_FALSE) {
+        regs[decode_a(instr)] = 0;
+        DISPATCH();
+    }
+
+    OP(LOAD_INT) {
+        regs[decode_a(instr)] = reg_from_i64(static_cast<i16>(decode_imm16(instr)));
+        DISPATCH();
+    }
+
+    OP(LOAD_CONST) {
+        regs[decode_a(instr)] = load_constant(vm, func, decode_imm16(instr));
+        DISPATCH();
+    }
+
+    OP(MOV) {
+        regs[decode_a(instr)] = regs[decode_b(instr)];
+        DISPATCH();
+    }
+
+    // ── Integer Arithmetic ──
+
+    OP(ADD_I) {
+        regs[decode_a(instr)] = reg_from_i64(reg_as_i64(regs[decode_b(instr)]) + reg_as_i64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(SUB_I) {
+        regs[decode_a(instr)] = reg_from_i64(reg_as_i64(regs[decode_b(instr)]) - reg_as_i64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(MUL_I) {
+        regs[decode_a(instr)] = reg_from_i64(reg_as_i64(regs[decode_b(instr)]) * reg_as_i64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(DIV_I) {
+        i64 divisor = reg_as_i64(regs[decode_c(instr)]);
+        if (divisor == 0) {
+            vm->error = "Division by zero";
+            return false;
+        }
+        regs[decode_a(instr)] = reg_from_i64(reg_as_i64(regs[decode_b(instr)]) / divisor);
+        DISPATCH();
+    }
+
+    OP(MOD_I) {
+        i64 divisor = reg_as_i64(regs[decode_c(instr)]);
+        if (divisor == 0) {
+            vm->error = "Division by zero";
+            return false;
+        }
+        regs[decode_a(instr)] = reg_from_i64(reg_as_i64(regs[decode_b(instr)]) % divisor);
+        DISPATCH();
+    }
+
+    OP(NEG_I) {
+        regs[decode_a(instr)] = reg_from_i64(-reg_as_i64(regs[decode_b(instr)]));
+        DISPATCH();
+    }
+
+    // ── f32 Arithmetic ──
+
+    OP(ADD_F) {
+        regs[decode_a(instr)] = reg_from_f32(reg_as_f32(regs[decode_b(instr)]) + reg_as_f32(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(SUB_F) {
+        regs[decode_a(instr)] = reg_from_f32(reg_as_f32(regs[decode_b(instr)]) - reg_as_f32(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(MUL_F) {
+        regs[decode_a(instr)] = reg_from_f32(reg_as_f32(regs[decode_b(instr)]) * reg_as_f32(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(DIV_F) {
+        regs[decode_a(instr)] = reg_from_f32(reg_as_f32(regs[decode_b(instr)]) / reg_as_f32(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(NEG_F) {
+        regs[decode_a(instr)] = reg_from_f32(-reg_as_f32(regs[decode_b(instr)]));
+        DISPATCH();
+    }
+
+    // ── f64 Arithmetic ──
+
+    OP(ADD_D) {
+        regs[decode_a(instr)] = reg_from_f64(reg_as_f64(regs[decode_b(instr)]) + reg_as_f64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(SUB_D) {
+        regs[decode_a(instr)] = reg_from_f64(reg_as_f64(regs[decode_b(instr)]) - reg_as_f64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(MUL_D) {
+        regs[decode_a(instr)] = reg_from_f64(reg_as_f64(regs[decode_b(instr)]) * reg_as_f64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(DIV_D) {
+        regs[decode_a(instr)] = reg_from_f64(reg_as_f64(regs[decode_b(instr)]) / reg_as_f64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(NEG_D) {
+        regs[decode_a(instr)] = reg_from_f64(-reg_as_f64(regs[decode_b(instr)]));
+        DISPATCH();
+    }
+
+    // ── Bitwise Operations ──
+
+    OP(BIT_AND) {
+        regs[decode_a(instr)] = regs[decode_b(instr)] & regs[decode_c(instr)];
+        DISPATCH();
+    }
+
+    OP(BIT_OR) {
+        regs[decode_a(instr)] = regs[decode_b(instr)] | regs[decode_c(instr)];
+        DISPATCH();
+    }
+
+    OP(BIT_XOR) {
+        regs[decode_a(instr)] = regs[decode_b(instr)] ^ regs[decode_c(instr)];
+        DISPATCH();
+    }
+
+    OP(BIT_NOT) {
+        regs[decode_a(instr)] = ~regs[decode_b(instr)];
+        DISPATCH();
+    }
+
+    OP(SHL) {
+        regs[decode_a(instr)] = reg_from_i64(reg_as_i64(regs[decode_b(instr)]) << regs[decode_c(instr)]);
+        DISPATCH();
+    }
+
+    OP(SHR) {
+        regs[decode_a(instr)] = reg_from_i64(reg_as_i64(regs[decode_b(instr)]) >> regs[decode_c(instr)]);
+        DISPATCH();
+    }
+
+    OP(USHR) {
+        regs[decode_a(instr)] = regs[decode_b(instr)] >> regs[decode_c(instr)];
+        DISPATCH();
+    }
+
+    // ── Integer Comparisons ──
+
+    OP(EQ_I) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_i64(regs[decode_b(instr)]) == reg_as_i64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(NE_I) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_i64(regs[decode_b(instr)]) != reg_as_i64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(LT_I) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_i64(regs[decode_b(instr)]) < reg_as_i64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(LE_I) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_i64(regs[decode_b(instr)]) <= reg_as_i64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(GT_I) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_i64(regs[decode_b(instr)]) > reg_as_i64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(GE_I) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_i64(regs[decode_b(instr)]) >= reg_as_i64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(LT_U) {
+        regs[decode_a(instr)] = reg_from_bool(regs[decode_b(instr)] < regs[decode_c(instr)]);
+        DISPATCH();
+    }
+
+    OP(LE_U) {
+        regs[decode_a(instr)] = reg_from_bool(regs[decode_b(instr)] <= regs[decode_c(instr)]);
+        DISPATCH();
+    }
+
+    OP(GT_U) {
+        regs[decode_a(instr)] = reg_from_bool(regs[decode_b(instr)] > regs[decode_c(instr)]);
+        DISPATCH();
+    }
+
+    OP(GE_U) {
+        regs[decode_a(instr)] = reg_from_bool(regs[decode_b(instr)] >= regs[decode_c(instr)]);
+        DISPATCH();
+    }
+
+    // ── f32 Comparisons ──
+
+    OP(EQ_F) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f32(regs[decode_b(instr)]) == reg_as_f32(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(NE_F) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f32(regs[decode_b(instr)]) != reg_as_f32(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(LT_F) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f32(regs[decode_b(instr)]) < reg_as_f32(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(LE_F) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f32(regs[decode_b(instr)]) <= reg_as_f32(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(GT_F) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f32(regs[decode_b(instr)]) > reg_as_f32(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(GE_F) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f32(regs[decode_b(instr)]) >= reg_as_f32(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    // ── f64 Comparisons ──
+
+    OP(EQ_D) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f64(regs[decode_b(instr)]) == reg_as_f64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(NE_D) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f64(regs[decode_b(instr)]) != reg_as_f64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(LT_D) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f64(regs[decode_b(instr)]) < reg_as_f64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(LE_D) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f64(regs[decode_b(instr)]) <= reg_as_f64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(GT_D) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f64(regs[decode_b(instr)]) > reg_as_f64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(GE_D) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f64(regs[decode_b(instr)]) >= reg_as_f64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    // ── Logical Operations ──
+
+    OP(NOT) {
+        regs[decode_a(instr)] = reg_from_bool(!reg_is_truthy(regs[decode_b(instr)]));
+        DISPATCH();
+    }
+
+    OP(AND) {
+        regs[decode_a(instr)] = reg_from_bool(reg_is_truthy(regs[decode_b(instr)]) && reg_is_truthy(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    OP(OR) {
+        regs[decode_a(instr)] = reg_from_bool(reg_is_truthy(regs[decode_b(instr)]) || reg_is_truthy(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    // ── Type Conversions ──
+
+    OP(I_TO_F64) {
+        regs[decode_a(instr)] = reg_from_f64(static_cast<f64>(reg_as_i64(regs[decode_b(instr)])));
+        DISPATCH();
+    }
+
+    OP(F64_TO_I) {
+        regs[decode_a(instr)] = reg_from_i64(static_cast<i64>(reg_as_f64(regs[decode_b(instr)])));
+        DISPATCH();
+    }
+
+    OP(I_TO_B) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_i64(regs[decode_b(instr)]) != 0);
+        DISPATCH();
+    }
+
+    OP(B_TO_I) {
+        regs[decode_a(instr)] = reg_is_truthy(regs[decode_b(instr)]) ? 1 : 0;
+        DISPATCH();
+    }
+
+    OP(TRUNC_S) {
+        u8 a = decode_a(instr);
+        u8 bits = decode_c(instr);
+        i64 val = reg_as_i64(regs[decode_b(instr)]);
+        switch (bits) {
+            case 8:  regs[a] = static_cast<u64>(static_cast<i64>(static_cast<i8>(val))); break;
+            case 16: regs[a] = static_cast<u64>(static_cast<i64>(static_cast<i16>(val))); break;
+            case 32: regs[a] = static_cast<u64>(static_cast<i64>(static_cast<i32>(val))); break;
+            default: regs[a] = regs[decode_b(instr)]; break;
+        }
+        DISPATCH();
+    }
+
+    OP(TRUNC_U) {
+        u8 a = decode_a(instr);
+        u8 bits = decode_c(instr);
+        u64 val = regs[decode_b(instr)];
+        switch (bits) {
+            case 8:  regs[a] = val & 0xFF; break;
+            case 16: regs[a] = val & 0xFFFF; break;
+            case 32: regs[a] = val & 0xFFFFFFFF; break;
+            default: regs[a] = val; break;
+        }
+        DISPATCH();
+    }
+
+    OP(F32_TO_F64) {
+        f32 fval;
+        u32 bits32 = static_cast<u32>(regs[decode_b(instr)]);
+        memcpy(&fval, &bits32, sizeof(fval));
+        regs[decode_a(instr)] = reg_from_f64(static_cast<f64>(fval));
+        DISPATCH();
+    }
+
+    OP(F64_TO_F32) {
+        f64 fval = reg_as_f64(regs[decode_b(instr)]);
+        f32 result = static_cast<f32>(fval);
+        u32 bits32;
+        memcpy(&bits32, &result, sizeof(bits32));
+        regs[decode_a(instr)] = static_cast<u64>(bits32);
+        DISPATCH();
+    }
+
+    OP(I_TO_F32) {
+        i64 ival = reg_as_i64(regs[decode_b(instr)]);
+        f32 result = static_cast<f32>(ival);
+        u32 bits32;
+        memcpy(&bits32, &result, sizeof(bits32));
+        regs[decode_a(instr)] = static_cast<u64>(bits32);
+        DISPATCH();
+    }
+
+    OP(F32_TO_I) {
+        f32 fval;
+        u32 bits32 = static_cast<u32>(regs[decode_b(instr)]);
+        memcpy(&fval, &bits32, sizeof(fval));
+        regs[decode_a(instr)] = static_cast<u64>(static_cast<i64>(fval));
+        DISPATCH();
+    }
+
+    // ── Control Flow ──
+
+    OP(JMP) {
+        pc += decode_offset(instr);
+        DISPATCH();
+    }
+
+    OP(JMP_IF) {
+        if (reg_is_truthy(regs[decode_a(instr)])) {
+            pc += decode_offset(instr);
+        }
+        DISPATCH();
+    }
+
+    OP(JMP_IF_NOT) {
+        if (!reg_is_truthy(regs[decode_a(instr)])) {
+            pc += decode_offset(instr);
+        }
+        DISPATCH();
+    }
+
+    OP(RET) {
+        u64 result = regs[decode_a(instr)];
+
+        u32 return_reg = frame->return_reg;
+        u32 local_stack_base = frame->local_stack_base;
+
+        vm->call_stack.pop_back();
+        vm->register_top -= func->register_count;
+        vm->local_stack_top = local_stack_base;
+
+        if (vm->call_stack.empty()) {
+            vm->register_file[0] = result;
+            vm->running = false;
+            return true;
+        }
+
+        if (stop_depth > 0 && vm->call_stack.size() <= stop_depth) {
+            return true;
+        }
+
+        frame = &vm->call_stack.back();
+        func = frame->func;
+        pc = frame->pc;
+        regs = frame->registers;
+
+        regs[return_reg] = result;
+        DISPATCH();
+    }
+
+    OP(RET_VOID) {
+        u32 local_stack_base = frame->local_stack_base;
+
+        vm->call_stack.pop_back();
+        vm->register_top -= func->register_count;
+        vm->local_stack_top = local_stack_base;
+
+        if (vm->call_stack.empty()) {
+            vm->register_file[0] = 0;
+            vm->running = false;
+            return true;
+        }
+
+        if (stop_depth > 0 && vm->call_stack.size() <= stop_depth) {
+            return true;
+        }
+
+        frame = &vm->call_stack.back();
+        func = frame->func;
+        pc = frame->pc;
+        regs = frame->registers;
+        DISPATCH();
+    }
+
+    // ── Function Calls ──
+
+    OP(CALL) {
+        u8 dst = decode_a(instr);
+        u8 func_idx = decode_b(instr);
+        u8 arg_count = decode_c(instr);
+        u8 first_arg = dst + 1;
+
+        if (func_idx >= vm->module->functions.size()) {
+            vm->error = "Invalid function index";
+            return false;
+        }
+
+        const BCFunction* callee = vm->module->functions[func_idx].get();
+
+        if (arg_count != callee->param_count) {
+            vm->error = "Wrong number of arguments";
+            return false;
+        }
+
+        if (vm->register_top + callee->register_count > vm->register_file_size) {
+            vm->error = "Register file overflow";
+            return false;
+        }
+
+        frame->pc = pc;
+
+        u64* callee_regs = &vm->register_file[vm->register_top];
+        vm->register_top += callee->register_count;
+
+        for (u32 i = 0; i < callee->register_count; i++) {
+            callee_regs[i] = 0;
+        }
+
+        u32 reg_count = callee->param_register_count;
+        for (u32 i = 0; i < reg_count; i++) {
+            callee_regs[i] = regs[first_arg + i];
+        }
+
+        u32 local_stack_base = (vm->local_stack_top + 3) & ~3u;
+        if (local_stack_base + callee->local_stack_slots > vm->local_stack_size) {
+            vm->error = "Local stack overflow";
+            return false;
+        }
+        vm->local_stack_top = local_stack_base + callee->local_stack_slots;
+
+        CallFrame new_frame(callee, callee->code.data(), callee_regs, dst, local_stack_base);
+        vm->call_stack.push_back(new_frame);
+
+        frame = &vm->call_stack.back();
+        func = frame->func;
+        pc = frame->pc;
+        regs = frame->registers;
+        DISPATCH();
+    }
+
+    OP(CALL_NATIVE) {
+        u8 dst = decode_a(instr);
+        u8 func_idx = decode_b(instr);
+        u8 arg_count = decode_c(instr);
+        u8 first_arg = dst + 1;
+
+        if (func_idx >= vm->module->native_functions.size()) {
+            vm->error = "Invalid native function index";
+            return false;
+        }
+
+        const BCNativeFunction& native = vm->module->native_functions[func_idx];
+
+        native.func(vm, dst, arg_count, first_arg);
+
+        if (vm->error != nullptr) {
+            return false;
+        }
+        DISPATCH();
+    }
+
+    // ── Container Indexing ──
+
+    OP(INDEX_GET_LIST) {
         u8 a = decode_a(instr);
         u8 b = decode_b(instr);
-        u8 c = decode_c(instr);
-        u16 imm = decode_imm16(instr);
-        i16 offset = decode_offset(instr);
+        void* lst_ptr = reg_as_ptr(regs[b]);
+        if (!lst_ptr) {
+            vm->error = "list index: null list reference";
+            return false;
+        }
+        i64 idx = reg_as_i64(regs[decode_c(instr)]);
+        ListHeader* header = get_list_header(lst_ptr);
+        if (idx < 0 || static_cast<u64>(idx) >= header->length) {
+            vm->error = "List index out of bounds";
+            return false;
+        }
+        if (header->element_is_inline) {
+            u64 val = 0;
+            memcpy(&val, list_element_ptr(header, static_cast<u32>(idx)),
+                   sizeof(u32) * header->element_slot_count);
+            regs[a] = val;
+        } else {
+            regs[a] = reinterpret_cast<u64>(list_element_ptr(header, static_cast<u32>(idx)));
+        }
+        DISPATCH();
+    }
 
-        switch (op) {
-            // Constants and Moves
-            case Opcode::LOAD_NULL:
-                regs[a] = 0;
-                break;
+    OP(INDEX_SET_LIST) {
+        u8 a = decode_a(instr);
+        u8 b = decode_b(instr);
+        void* lst_ptr = reg_as_ptr(regs[a]);
+        if (!lst_ptr) {
+            vm->error = "list index_mut: null list reference";
+            return false;
+        }
+        i64 idx = reg_as_i64(regs[b]);
+        ListHeader* header = get_list_header(lst_ptr);
+        if (idx < 0 || static_cast<u64>(idx) >= header->length) {
+            vm->error = "List index out of bounds";
+            return false;
+        }
+        if (header->element_is_inline) {
+            u8 c = decode_c(instr);
+            memcpy(list_element_ptr(header, static_cast<u32>(idx)),
+                   &regs[c], sizeof(u32) * header->element_slot_count);
+        } else {
+            u32* src = reinterpret_cast<u32*>(regs[decode_c(instr)]);
+            memcpy(list_element_ptr(header, static_cast<u32>(idx)),
+                   src, sizeof(u32) * header->element_slot_count);
+        }
+        DISPATCH();
+    }
 
-            case Opcode::LOAD_TRUE:
-                regs[a] = 1;
-                break;
+    OP(INDEX_GET_MAP) {
+        u8 a = decode_a(instr);
+        void* map_ptr = reg_as_ptr(regs[decode_b(instr)]);
+        if (!map_ptr) {
+            vm->error = "map index: null map reference";
+            return false;
+        }
+        u64 value;
+        if (!map_get(map_ptr, regs[decode_c(instr)], value, &vm->error)) {
+            return false;
+        }
+        regs[a] = value;
+        DISPATCH();
+    }
 
-            case Opcode::LOAD_FALSE:
-                regs[a] = 0;
-                break;
+    OP(INDEX_SET_MAP) {
+        void* map_ptr = reg_as_ptr(regs[decode_a(instr)]);
+        if (!map_ptr) {
+            vm->error = "map index_mut: null map reference";
+            return false;
+        }
+        map_insert(map_ptr, regs[decode_b(instr)], regs[decode_c(instr)]);
+        DISPATCH();
+    }
 
-            case Opcode::LOAD_INT:
-                regs[a] = reg_from_i64(static_cast<i16>(imm));
-                break;
+    // ── Stack Address ──
 
-            case Opcode::LOAD_CONST:
-                regs[a] = load_constant(vm, func, imm);
-                break;
+    OP(STACK_ADDR) {
+        u16 slot_offset = decode_imm16(instr);
+        u32* addr = vm->local_stack.get() + frame->local_stack_base + slot_offset;
+        regs[decode_a(instr)] = reg_from_ptr(addr);
+        DISPATCH();
+    }
 
-            case Opcode::MOV:
-                regs[a] = regs[b];
-                break;
+    // ── Field Access ──
 
-            // Integer Arithmetic
-            case Opcode::ADD_I:
-                regs[a] = reg_from_i64(reg_as_i64(regs[b]) + reg_as_i64(regs[c]));
-                break;
+    OP(GET_FIELD) {
+        u8 a = decode_a(instr);
+        u8 b = decode_b(instr);
+        u8 slot_count = decode_c(instr);
+        u16 slot_offset = static_cast<u16>(*pc++);
 
-            case Opcode::SUB_I:
-                regs[a] = reg_from_i64(reg_as_i64(regs[b]) - reg_as_i64(regs[c]));
-                break;
+        u32* base = reinterpret_cast<u32*>(reg_as_ptr(regs[b]));
+        u32* field = base + slot_offset;
 
-            case Opcode::MUL_I:
-                regs[a] = reg_from_i64(reg_as_i64(regs[b]) * reg_as_i64(regs[c]));
-                break;
+        if (slot_count == 1) {
+            regs[a] = static_cast<u64>(*field);
+        } else if (slot_count == 2) {
+            regs[a] = static_cast<u64>(field[0]) | (static_cast<u64>(field[1]) << 32);
+        } else {
+            regs[a] = static_cast<u64>(field[0]) | (static_cast<u64>(field[1]) << 32);
+            regs[a + 1] = (slot_count >= 4)
+                ? (static_cast<u64>(field[2]) | (static_cast<u64>(field[3]) << 32))
+                : static_cast<u64>(field[2]);
+        }
+        DISPATCH();
+    }
 
-            case Opcode::DIV_I: {
-                i64 divisor = reg_as_i64(regs[c]);
-                if (divisor == 0) {
-                    vm->error = "Division by zero";
-                    return false;
-                }
-                regs[a] = reg_from_i64(reg_as_i64(regs[b]) / divisor);
-                break;
+    OP(GET_FIELD_ADDR) {
+        u16 slot_offset = static_cast<u16>(*pc++);
+        u32* base = reinterpret_cast<u32*>(reg_as_ptr(regs[decode_b(instr)]));
+        u32* field_addr = base + slot_offset;
+        regs[decode_a(instr)] = reg_from_ptr(field_addr);
+        DISPATCH();
+    }
+
+    OP(SET_FIELD) {
+        u8 a = decode_a(instr);
+        u8 b = decode_b(instr);
+        u8 slot_count = decode_c(instr);
+        u16 slot_offset = static_cast<u16>(*pc++);
+
+        u32* base = reinterpret_cast<u32*>(reg_as_ptr(regs[a]));
+        u32* field = base + slot_offset;
+        u64 val = regs[b];
+
+        if (slot_count == 1) {
+            *field = static_cast<u32>(val);
+        } else if (slot_count == 2) {
+            field[0] = static_cast<u32>(val);
+            field[1] = static_cast<u32>(val >> 32);
+        } else {
+            field[0] = static_cast<u32>(val);
+            field[1] = static_cast<u32>(val >> 32);
+            u64 val2 = regs[b + 1];
+            field[2] = static_cast<u32>(val2);
+            if (slot_count >= 4) field[3] = static_cast<u32>(val2 >> 32);
+        }
+        DISPATCH();
+    }
+
+    OP(STRUCT_LOAD_REGS) {
+        u8 dst_reg = decode_a(instr);
+        u8 src_ptr_reg = decode_b(instr);
+        u8 slot_count = decode_c(instr);
+        pc++;  // Skip padding word
+
+        u32* src = reinterpret_cast<u32*>(regs[src_ptr_reg]);
+        u8 reg_count = (slot_count + 1) / 2;
+
+        for (u8 r = 0; r < reg_count; r++) {
+            u32 slot_idx = r * 2;
+            u64 value = 0;
+            if (slot_idx < slot_count) value = src[slot_idx];
+            if (slot_idx + 1 < slot_count) value |= static_cast<u64>(src[slot_idx + 1]) << 32;
+            regs[dst_reg + r] = value;
+        }
+        DISPATCH();
+    }
+
+    OP(STRUCT_STORE_REGS) {
+        u8 dst_ptr_reg = decode_a(instr);
+        u8 src_reg = decode_b(instr);
+        u8 slot_count = decode_c(instr);
+        pc++;  // Skip padding word
+
+        u32* dst = reinterpret_cast<u32*>(regs[dst_ptr_reg]);
+        u8 reg_count = (slot_count + 1) / 2;
+
+        for (u8 r = 0; r < reg_count; r++) {
+            u64 value = regs[src_reg + r];
+            u32 slot_idx = r * 2;
+            if (slot_idx < slot_count) dst[slot_idx] = static_cast<u32>(value);
+            if (slot_idx + 1 < slot_count) dst[slot_idx + 1] = static_cast<u32>(value >> 32);
+        }
+        DISPATCH();
+    }
+
+    OP(STRUCT_COPY) {
+        u8 dst_ptr_reg = decode_a(instr);
+        u8 src_ptr_reg = decode_b(instr);
+        u8 slot_count = decode_c(instr);
+        u32* dst = reinterpret_cast<u32*>(regs[dst_ptr_reg]);
+        u32* src = reinterpret_cast<u32*>(regs[src_ptr_reg]);
+        for (u8 i = 0; i < slot_count; i++) {
+            dst[i] = src[i];
+        }
+        DISPATCH();
+    }
+
+    OP(RET_STRUCT_SMALL) {
+        u8 src_ptr_reg = decode_a(instr);
+        u8 slot_count = decode_b(instr);
+        u32* src = reinterpret_cast<u32*>(regs[src_ptr_reg]);
+        u8 reg_count = (slot_count + 1) / 2;
+
+        u64 ret_vals[2] = {0, 0};
+        for (u8 r = 0; r < reg_count; r++) {
+            u32 slot_idx = r * 2;
+            if (slot_idx < slot_count) ret_vals[r] = src[slot_idx];
+            if (slot_idx + 1 < slot_count) ret_vals[r] |= static_cast<u64>(src[slot_idx + 1]) << 32;
+        }
+
+        u8 return_reg = frame->return_reg;
+        u32 local_stack_base = frame->local_stack_base;
+
+        vm->call_stack.pop_back();
+        vm->register_top -= func->register_count;
+        vm->local_stack_top = local_stack_base;
+
+        if (vm->call_stack.empty()) {
+            for (u8 r = 0; r < reg_count; r++) {
+                vm->register_file[r] = ret_vals[r];
             }
-
-            case Opcode::MOD_I: {
-                i64 divisor = reg_as_i64(regs[c]);
-                if (divisor == 0) {
-                    vm->error = "Division by zero";
-                    return false;
-                }
-                regs[a] = reg_from_i64(reg_as_i64(regs[b]) % divisor);
-                break;
-            }
-
-            case Opcode::NEG_I:
-                regs[a] = reg_from_i64(-reg_as_i64(regs[b]));
-                break;
-
-            // f32 Arithmetic
-            case Opcode::ADD_F:
-                regs[a] = reg_from_f32(reg_as_f32(regs[b]) + reg_as_f32(regs[c]));
-                break;
-
-            case Opcode::SUB_F:
-                regs[a] = reg_from_f32(reg_as_f32(regs[b]) - reg_as_f32(regs[c]));
-                break;
-
-            case Opcode::MUL_F:
-                regs[a] = reg_from_f32(reg_as_f32(regs[b]) * reg_as_f32(regs[c]));
-                break;
-
-            // Float/double division by zero follows IEEE 754 semantics:
-            // produces +/-infinity or NaN, unlike integer division which
-            // raises a runtime error above (DIV_I, MOD_I).
-            case Opcode::DIV_F:
-                regs[a] = reg_from_f32(reg_as_f32(regs[b]) / reg_as_f32(regs[c]));
-                break;
-
-            case Opcode::NEG_F:
-                regs[a] = reg_from_f32(-reg_as_f32(regs[b]));
-                break;
-
-            // f64 Arithmetic
-            case Opcode::ADD_D:
-                regs[a] = reg_from_f64(reg_as_f64(regs[b]) + reg_as_f64(regs[c]));
-                break;
-
-            case Opcode::SUB_D:
-                regs[a] = reg_from_f64(reg_as_f64(regs[b]) - reg_as_f64(regs[c]));
-                break;
-
-            case Opcode::MUL_D:
-                regs[a] = reg_from_f64(reg_as_f64(regs[b]) * reg_as_f64(regs[c]));
-                break;
-
-            case Opcode::DIV_D:
-                regs[a] = reg_from_f64(reg_as_f64(regs[b]) / reg_as_f64(regs[c]));
-                break;
-
-            case Opcode::NEG_D:
-                regs[a] = reg_from_f64(-reg_as_f64(regs[b]));
-                break;
-
-            // Bitwise Operations
-            case Opcode::BIT_AND:
-                regs[a] = regs[b] & regs[c];
-                break;
-
-            case Opcode::BIT_OR:
-                regs[a] = regs[b] | regs[c];
-                break;
-
-            case Opcode::BIT_XOR:
-                regs[a] = regs[b] ^ regs[c];
-                break;
-
-            case Opcode::BIT_NOT:
-                regs[a] = ~regs[b];
-                break;
-
-            case Opcode::SHL:
-                regs[a] = reg_from_i64(reg_as_i64(regs[b]) << regs[c]);
-                break;
-
-            case Opcode::SHR:
-                regs[a] = reg_from_i64(reg_as_i64(regs[b]) >> regs[c]);
-                break;
-
-            case Opcode::USHR:
-                regs[a] = regs[b] >> regs[c];
-                break;
-
-            // Integer Comparisons
-            case Opcode::EQ_I:
-                regs[a] = reg_from_bool(reg_as_i64(regs[b]) == reg_as_i64(regs[c]));
-                break;
-
-            case Opcode::NE_I:
-                regs[a] = reg_from_bool(reg_as_i64(regs[b]) != reg_as_i64(regs[c]));
-                break;
-
-            case Opcode::LT_I:
-                regs[a] = reg_from_bool(reg_as_i64(regs[b]) < reg_as_i64(regs[c]));
-                break;
-
-            case Opcode::LE_I:
-                regs[a] = reg_from_bool(reg_as_i64(regs[b]) <= reg_as_i64(regs[c]));
-                break;
-
-            case Opcode::GT_I:
-                regs[a] = reg_from_bool(reg_as_i64(regs[b]) > reg_as_i64(regs[c]));
-                break;
-
-            case Opcode::GE_I:
-                regs[a] = reg_from_bool(reg_as_i64(regs[b]) >= reg_as_i64(regs[c]));
-                break;
-
-            case Opcode::LT_U:
-                regs[a] = reg_from_bool(regs[b] < regs[c]);
-                break;
-
-            case Opcode::LE_U:
-                regs[a] = reg_from_bool(regs[b] <= regs[c]);
-                break;
-
-            case Opcode::GT_U:
-                regs[a] = reg_from_bool(regs[b] > regs[c]);
-                break;
-
-            case Opcode::GE_U:
-                regs[a] = reg_from_bool(regs[b] >= regs[c]);
-                break;
-
-            // f32 Comparisons
-            case Opcode::EQ_F:
-                regs[a] = reg_from_bool(reg_as_f32(regs[b]) == reg_as_f32(regs[c]));
-                break;
-
-            case Opcode::NE_F:
-                regs[a] = reg_from_bool(reg_as_f32(regs[b]) != reg_as_f32(regs[c]));
-                break;
-
-            case Opcode::LT_F:
-                regs[a] = reg_from_bool(reg_as_f32(regs[b]) < reg_as_f32(regs[c]));
-                break;
-
-            case Opcode::LE_F:
-                regs[a] = reg_from_bool(reg_as_f32(regs[b]) <= reg_as_f32(regs[c]));
-                break;
-
-            case Opcode::GT_F:
-                regs[a] = reg_from_bool(reg_as_f32(regs[b]) > reg_as_f32(regs[c]));
-                break;
-
-            case Opcode::GE_F:
-                regs[a] = reg_from_bool(reg_as_f32(regs[b]) >= reg_as_f32(regs[c]));
-                break;
-
-            // f64 Comparisons
-            case Opcode::EQ_D:
-                regs[a] = reg_from_bool(reg_as_f64(regs[b]) == reg_as_f64(regs[c]));
-                break;
-
-            case Opcode::NE_D:
-                regs[a] = reg_from_bool(reg_as_f64(regs[b]) != reg_as_f64(regs[c]));
-                break;
-
-            case Opcode::LT_D:
-                regs[a] = reg_from_bool(reg_as_f64(regs[b]) < reg_as_f64(regs[c]));
-                break;
-
-            case Opcode::LE_D:
-                regs[a] = reg_from_bool(reg_as_f64(regs[b]) <= reg_as_f64(regs[c]));
-                break;
-
-            case Opcode::GT_D:
-                regs[a] = reg_from_bool(reg_as_f64(regs[b]) > reg_as_f64(regs[c]));
-                break;
-
-            case Opcode::GE_D:
-                regs[a] = reg_from_bool(reg_as_f64(regs[b]) >= reg_as_f64(regs[c]));
-                break;
-
-            // Logical Operations
-            case Opcode::NOT:
-                regs[a] = reg_from_bool(!reg_is_truthy(regs[b]));
-                break;
-
-            case Opcode::AND:
-                regs[a] = reg_from_bool(reg_is_truthy(regs[b]) && reg_is_truthy(regs[c]));
-                break;
-
-            case Opcode::OR:
-                regs[a] = reg_from_bool(reg_is_truthy(regs[b]) || reg_is_truthy(regs[c]));
-                break;
-
-            // Type Conversions
-            case Opcode::I_TO_F64:
-                regs[a] = reg_from_f64(static_cast<f64>(reg_as_i64(regs[b])));
-                break;
-
-            case Opcode::F64_TO_I:
-                regs[a] = reg_from_i64(static_cast<i64>(reg_as_f64(regs[b])));
-                break;
-
-            case Opcode::I_TO_B:
-                regs[a] = reg_from_bool(reg_as_i64(regs[b]) != 0);
-                break;
-
-            case Opcode::B_TO_I:
-                regs[a] = reg_is_truthy(regs[b]) ? 1 : 0;
-                break;
-
-            case Opcode::TRUNC_S: {
-                // Format: [TRUNC_S][dst][src][bits]
-                u8 bits = c;  // 8, 16, or 32
-                i64 val = reg_as_i64(regs[b]);
-                switch (bits) {
-                    case 8:  regs[a] = static_cast<u64>(static_cast<i64>(static_cast<i8>(val))); break;
-                    case 16: regs[a] = static_cast<u64>(static_cast<i64>(static_cast<i16>(val))); break;
-                    case 32: regs[a] = static_cast<u64>(static_cast<i64>(static_cast<i32>(val))); break;
-                    default: regs[a] = regs[b]; break;
-                }
-                break;
-            }
-
-            case Opcode::TRUNC_U: {
-                u8 bits = c;
-                u64 val = regs[b];
-                switch (bits) {
-                    case 8:  regs[a] = val & 0xFF; break;
-                    case 16: regs[a] = val & 0xFFFF; break;
-                    case 32: regs[a] = val & 0xFFFFFFFF; break;
-                    default: regs[a] = val; break;
-                }
-                break;
-            }
-
-            case Opcode::F32_TO_F64: {
-                // Convert f32 (stored in lower 32 bits) to f64
-                f32 fval;
-                u32 bits32 = static_cast<u32>(regs[b]);
-                memcpy(&fval, &bits32, sizeof(fval));
-                regs[a] = reg_from_f64(static_cast<f64>(fval));
-                break;
-            }
-
-            case Opcode::F64_TO_F32: {
-                // Convert f64 to f32 (stored in lower 32 bits)
-                f64 fval = reg_as_f64(regs[b]);
-                f32 result = static_cast<f32>(fval);
-                u32 bits32;
-                memcpy(&bits32, &result, sizeof(bits32));
-                regs[a] = static_cast<u64>(bits32);
-                break;
-            }
-
-            case Opcode::I_TO_F32: {
-                // Convert integer to f32 (stored in lower 32 bits)
-                i64 ival = reg_as_i64(regs[b]);
-                f32 result = static_cast<f32>(ival);
-                u32 bits32;
-                memcpy(&bits32, &result, sizeof(bits32));
-                regs[a] = static_cast<u64>(bits32);
-                break;
-            }
-
-            case Opcode::F32_TO_I: {
-                // Convert f32 (stored in lower 32 bits) to i64
-                f32 fval;
-                u32 bits32 = static_cast<u32>(regs[b]);
-                memcpy(&fval, &bits32, sizeof(fval));
-                regs[a] = static_cast<u64>(static_cast<i64>(fval));
-                break;
-            }
-
-            // Control Flow
-            case Opcode::JMP:
-                pc += offset;
-                break;
-
-            case Opcode::JMP_IF:
-                if (reg_is_truthy(regs[a])) {
-                    pc += offset;
-                }
-                break;
-
-            case Opcode::JMP_IF_NOT:
-                if (!reg_is_truthy(regs[a])) {
-                    pc += offset;
-                }
-                break;
-
-            case Opcode::RET: {
-                u64 result = regs[a];
-
-                // Save return register and local stack base before popping frame
-                u32 return_reg = frame->return_reg;
-                u32 local_stack_base = frame->local_stack_base;
-
-                // Pop current frame
-                vm->call_stack.pop_back();
-                vm->register_top -= func->register_count;
-                vm->local_stack_top = local_stack_base;  // Deallocate local stack
-
-                if (vm->call_stack.empty()) {
-                    // Return from top-level function
-                    vm->register_file[0] = result;
-                    vm->running = false;
-                    return true;
-                }
-
-                if (stop_depth > 0 && vm->call_stack.size() <= stop_depth) {
-                    // Nested interpretation complete - don't touch register_file[0]
-                    return true;
-                }
-
-                // Restore caller frame
-                frame = &vm->call_stack.back();
-                func = frame->func;
-                pc = frame->pc;
-                regs = frame->registers;
-
-                // Store result in caller's return register (saved from callee frame)
-                regs[return_reg] = result;
-                break;
-            }
-
-            case Opcode::RET_VOID: {
-                // Save local stack base before popping frame
-                u32 local_stack_base = frame->local_stack_base;
-
-                // Pop current frame
-                vm->call_stack.pop_back();
-                vm->register_top -= func->register_count;
-                vm->local_stack_top = local_stack_base;  // Deallocate local stack
-
-                if (vm->call_stack.empty()) {
-                    // Return from top-level function
-                    vm->register_file[0] = 0;
-                    vm->running = false;
-                    return true;
-                }
-
-                if (stop_depth > 0 && vm->call_stack.size() <= stop_depth) {
-                    // Nested interpretation complete - don't touch register_file[0]
-                    return true;
-                }
-
-                // Restore caller frame
-                frame = &vm->call_stack.back();
-                func = frame->func;
-                pc = frame->pc;
-                regs = frame->registers;
-                break;
-            }
-
-            // Function Calls
-            case Opcode::CALL: {
-                // Format: CALL dst, func_idx, arg_count
-                // Arguments are at dst+1, dst+2, ... (set up by caller)
-                u8 dst = a;
-                u8 func_idx = b;
-                u8 arg_count = c;
-                u8 first_arg = dst + 1;  // Arguments follow the destination register
-
-                if (func_idx >= vm->module->functions.size()) {
-                    vm->error = "Invalid function index";
-                    return false;
-                }
-
-                const BCFunction* callee = vm->module->functions[func_idx].get();
-
-                // Check argument count
-                if (arg_count != callee->param_count) {
-                    vm->error = "Wrong number of arguments";
-                    return false;
-                }
-
-                // Check register space
-                if (vm->register_top + callee->register_count > vm->register_file_size) {
-                    vm->error = "Register file overflow";
-                    return false;
-                }
-
-                // Save current PC
-                frame->pc = pc;
-
-                // Allocate registers for callee
-                u64* callee_regs = &vm->register_file[vm->register_top];
-                vm->register_top += callee->register_count;
-
-                // Clear callee registers
-                for (u32 i = 0; i < callee->register_count; i++) {
-                    callee_regs[i] = 0;
-                }
-
-                // Copy arguments - use param_register_count to handle multi-register struct params
-                u32 reg_count = callee->param_register_count;
-                for (u32 i = 0; i < reg_count; i++) {
-                    callee_regs[i] = regs[first_arg + i];
-                }
-
-                // Allocate local stack space for callee (16-byte aligned)
-                u32 local_stack_base = (vm->local_stack_top + 3) & ~3u;  // Align to 4 slots (16 bytes)
-                if (local_stack_base + callee->local_stack_slots > vm->local_stack_size) {
-                    vm->error = "Local stack overflow";
-                    return false;
-                }
-                vm->local_stack_top = local_stack_base + callee->local_stack_slots;
-
-                // Push new call frame
-                CallFrame new_frame(callee, callee->code.data(), callee_regs, dst, local_stack_base);
-                vm->call_stack.push_back(new_frame);
-
-                // Update cached values
-                frame = &vm->call_stack.back();
-                func = frame->func;
-                pc = frame->pc;
-                regs = frame->registers;
-                break;
-            }
-
-            case Opcode::CALL_NATIVE: {
-                // Format: CALL_NATIVE dst, func_idx, arg_count
-                // Arguments are at dst+1, dst+2, ... (set up by caller)
-                u8 dst = a;
-                u8 func_idx = b;
-                u8 arg_count = c;
-                u8 first_arg = dst + 1;
-
-                if (func_idx >= vm->module->native_functions.size()) {
-                    vm->error = "Invalid native function index";
-                    return false;
-                }
-
-                const BCNativeFunction& native = vm->module->native_functions[func_idx];
-
-                // Call native function directly
-                native.func(vm, dst, arg_count, first_arg);
-
-                if (vm->error != nullptr) {
-                    return false;
-                }
-                break;
-            }
-
-            // Container Indexing
-            case Opcode::INDEX_GET_LIST: {
-                // Format: a=dst, b=obj, c=index
-                void* lst_ptr = reg_as_ptr(regs[b]);
-                if (!lst_ptr) {
-                    vm->error = "list index: null list reference";
-                    return false;
-                }
-                i64 idx = reg_as_i64(regs[c]);
-                ListHeader* header = get_list_header(lst_ptr);
-                if (idx < 0 || static_cast<u64>(idx) >= header->length) {
-                    vm->error = "List index out of bounds";
-                    return false;
-                }
-                if (header->element_is_inline) {
-                    // Primitive: load 1-2 u32 slots into register as value
-                    u64 val = 0;
-                    memcpy(&val, list_element_ptr(header, static_cast<u32>(idx)),
-                           sizeof(u32) * header->element_slot_count);
-                    regs[a] = val;
-                } else {
-                    // Struct: return pointer to element data in buffer
-                    regs[a] = reinterpret_cast<u64>(list_element_ptr(header, static_cast<u32>(idx)));
-                }
-                break;
-            }
-
-            case Opcode::INDEX_SET_LIST: {
-                // Format: a=obj, b=index, c=value
-                void* lst_ptr = reg_as_ptr(regs[a]);
-                if (!lst_ptr) {
-                    vm->error = "list index_mut: null list reference";
-                    return false;
-                }
-                i64 idx = reg_as_i64(regs[b]);
-                ListHeader* header = get_list_header(lst_ptr);
-                if (idx < 0 || static_cast<u64>(idx) >= header->length) {
-                    vm->error = "List index out of bounds";
-                    return false;
-                }
-                if (header->element_is_inline) {
-                    // Primitive: register holds the value directly
-                    memcpy(list_element_ptr(header, static_cast<u32>(idx)),
-                           &regs[c], sizeof(u32) * header->element_slot_count);
-                } else {
-                    // Struct: regs[c] is a pointer to struct data
-                    u32* src = reinterpret_cast<u32*>(regs[c]);
-                    memcpy(list_element_ptr(header, static_cast<u32>(idx)),
-                           src, sizeof(u32) * header->element_slot_count);
-                }
-                break;
-            }
-
-            case Opcode::INDEX_GET_MAP: {
-                // Format: a=dst, b=obj, c=key
-                void* map_ptr = reg_as_ptr(regs[b]);
-                if (!map_ptr) {
-                    vm->error = "map index: null map reference";
-                    return false;
-                }
-                u64 value;
-                if (!map_get(map_ptr, regs[c], value, &vm->error)) {
-                    return false;
-                }
-                regs[a] = value;
-                break;
-            }
-
-            case Opcode::INDEX_SET_MAP: {
-                // Format: a=obj, b=key, c=value
-                void* map_ptr = reg_as_ptr(regs[a]);
-                if (!map_ptr) {
-                    vm->error = "map index_mut: null map reference";
-                    return false;
-                }
-                map_insert(map_ptr, regs[b], regs[c]);
-                break;
-            }
-
-            // Stack Address
-            case Opcode::STACK_ADDR: {
-                // Format: STACK_ADDR dst, slot_offset
-                // dst = pointer to local_stack[local_stack_base + slot_offset]
-                u16 slot_offset = imm;
-                u32* addr = vm->local_stack.get() + frame->local_stack_base + slot_offset;
-                regs[a] = reg_from_ptr(addr);
-                break;
-            }
-
-            // Field Access
-            case Opcode::GET_FIELD: {
-                // Format: [GET_FIELD dst obj slot_count] + [slot_offset:16 padding:16]
-                u8 slot_count = c;
-                u16 slot_offset = static_cast<u16>(*pc++);  // Read second instruction word
-
-                u32* base = reinterpret_cast<u32*>(reg_as_ptr(regs[b]));
-                u32* field = base + slot_offset;
-
-                if (slot_count == 1) {
-                    // 32-bit field: zero-extend to 64-bit
-                    regs[a] = static_cast<u64>(*field);
-                } else if (slot_count == 2) {
-                    // 64-bit field: read two consecutive slots (little-endian)
-                    regs[a] = static_cast<u64>(field[0]) | (static_cast<u64>(field[1]) << 32);
-                } else {
-                    // 3-4 slots: read into 2 consecutive registers (for weak refs)
-                    regs[a] = static_cast<u64>(field[0]) | (static_cast<u64>(field[1]) << 32);
-                    regs[a + 1] = (slot_count >= 4)
-                        ? (static_cast<u64>(field[2]) | (static_cast<u64>(field[3]) << 32))
-                        : static_cast<u64>(field[2]);
-                }
-                break;
-            }
-
-            case Opcode::GET_FIELD_ADDR: {
-                // Format: [GET_FIELD_ADDR dst obj 0] + [slot_offset:16 padding:16]
-                // Computes: dst = obj_ptr + slot_offset * sizeof(u32)
-                u16 slot_offset = static_cast<u16>(*pc++);  // Read second instruction word
-
-                u32* base = reinterpret_cast<u32*>(reg_as_ptr(regs[b]));
-                u32* field_addr = base + slot_offset;
-
-                regs[a] = reg_from_ptr(field_addr);
-                break;
-            }
-
-            case Opcode::SET_FIELD: {
-                // Format: [SET_FIELD obj val slot_count] + [slot_offset:16 padding:16]
-                u8 slot_count = c;
-                u16 slot_offset = static_cast<u16>(*pc++);  // Read second instruction word
-
-                u32* base = reinterpret_cast<u32*>(reg_as_ptr(regs[a]));
-                u32* field = base + slot_offset;
-                u64 val = regs[b];
-
-                if (slot_count == 1) {
-                    // 32-bit field
-                    *field = static_cast<u32>(val);
-                } else if (slot_count == 2) {
-                    // 64-bit field: write two consecutive slots (little-endian)
-                    field[0] = static_cast<u32>(val);
-                    field[1] = static_cast<u32>(val >> 32);
-                } else {
-                    // 3-4 slots from 2 consecutive registers (for weak refs)
-                    field[0] = static_cast<u32>(val);
-                    field[1] = static_cast<u32>(val >> 32);
-                    u64 val2 = regs[b + 1];
-                    field[2] = static_cast<u32>(val2);
-                    if (slot_count >= 4) field[3] = static_cast<u32>(val2 >> 32);
-                }
-                break;
-            }
-
-            case Opcode::STRUCT_LOAD_REGS: {
-                // Format: [STRUCT_LOAD_REGS dst src_ptr slot_count][pad]
-                // Load struct data from memory to consecutive registers
-                u8 dst_reg = a;
-                u8 src_ptr_reg = b;
-                u8 slot_count = c;
-                pc++;  // Skip padding word
-
-                u32* src = reinterpret_cast<u32*>(regs[src_ptr_reg]);
-                u8 reg_count = (slot_count + 1) / 2;
-
-                for (u8 r = 0; r < reg_count; r++) {
-                    u32 slot_idx = r * 2;
-                    u64 value = 0;
-                    if (slot_idx < slot_count) value = src[slot_idx];
-                    if (slot_idx + 1 < slot_count) value |= static_cast<u64>(src[slot_idx + 1]) << 32;
-                    regs[dst_reg + r] = value;
-                }
-                break;
-            }
-
-            case Opcode::STRUCT_STORE_REGS: {
-                // Format: [STRUCT_STORE_REGS dst_ptr src_reg slot_count][pad]
-                // Store consecutive registers to struct memory
-                u8 dst_ptr_reg = a;
-                u8 src_reg = b;
-                u8 slot_count = c;
-                pc++;  // Skip padding word
-
-                u32* dst = reinterpret_cast<u32*>(regs[dst_ptr_reg]);
-                u8 reg_count = (slot_count + 1) / 2;
-
-                for (u8 r = 0; r < reg_count; r++) {
-                    u64 value = regs[src_reg + r];
-                    u32 slot_idx = r * 2;
-                    if (slot_idx < slot_count) dst[slot_idx] = static_cast<u32>(value);
-                    if (slot_idx + 1 < slot_count) dst[slot_idx + 1] = static_cast<u32>(value >> 32);
-                }
-                break;
-            }
-
-            case Opcode::STRUCT_COPY: {
-                // Format: [STRUCT_COPY dst_ptr src_ptr slot_count]
-                // Memory-to-memory struct copy
-                u8 dst_ptr_reg = a;
-                u8 src_ptr_reg = b;
-                u8 slot_count = c;
-                u32* dst = reinterpret_cast<u32*>(regs[dst_ptr_reg]);
-                u32* src = reinterpret_cast<u32*>(regs[src_ptr_reg]);
-                for (u8 i = 0; i < slot_count; i++) {
-                    dst[i] = src[i];
-                }
-                break;
-            }
-
-            case Opcode::RET_STRUCT_SMALL: {
-                // Format: [RET_STRUCT_SMALL src_ptr slot_count 0]
-                // Return small struct (≤4 slots) in registers
-                u8 src_ptr_reg = a;
-                u8 slot_count = b;
-                u32* src = reinterpret_cast<u32*>(regs[src_ptr_reg]);
-                u8 reg_count = (slot_count + 1) / 2;
-
-                // Pack struct into temp values
-                u64 ret_vals[2] = {0, 0};
-                for (u8 r = 0; r < reg_count; r++) {
-                    u32 slot_idx = r * 2;
-                    if (slot_idx < slot_count) ret_vals[r] = src[slot_idx];
-                    if (slot_idx + 1 < slot_count) ret_vals[r] |= static_cast<u64>(src[slot_idx + 1]) << 32;
-                }
-
-                // Save frame info before popping
-                u8 return_reg = frame->return_reg;
-                u32 local_stack_base = frame->local_stack_base;
-
-                vm->call_stack.pop_back();
-                vm->register_top -= func->register_count;
-                vm->local_stack_top = local_stack_base;
-
-                if (vm->call_stack.empty()) {
-                    // Top-level return - store in R0, R1
-                    for (u8 r = 0; r < reg_count; r++) {
-                        vm->register_file[r] = ret_vals[r];
-                    }
-                    vm->running = false;
-                    return true;
-                }
-
-                if (stop_depth > 0 && vm->call_stack.size() <= stop_depth) {
-                    // Nested interpretation complete - don't touch register_file
-                    return true;
-                }
-
-                // Restore caller frame and store return values
-                frame = &vm->call_stack.back();
-                func = frame->func;
-                pc = frame->pc;
-                regs = frame->registers;
-
-                for (u8 r = 0; r < reg_count; r++) {
-                    regs[return_reg + r] = ret_vals[r];
-                }
-                break;
-            }
-
-            // Object Lifecycle
-            case Opcode::NEW_OBJ: {
-                // imm is the module's type index, look up the global type_id
-                u16 type_idx = imm;
-                if (type_idx >= vm->module->type_ids.size()) {
-                    vm->error = "Invalid type index";
-                    return false;
-                }
-                u32 type_id = vm->module->type_ids[type_idx];
-
-                const ObjectTypeInfo* type_info = get_object_type(type_id);
-                if (type_info == nullptr) {
-                    vm->error = "Invalid type ID";
-                    return false;
-                }
-
-                void* data = object_alloc(vm, type_id, type_info->size);
-                if (data == nullptr) {
-                    vm->error = "Memory allocation failed";
-                    return false;
-                }
-
-                regs[a] = reg_from_ptr(data);
-                break;
-            }
-
-            case Opcode::DEL_OBJ: {
-                void* ptr = reg_as_ptr(regs[a]);
-                if (ptr != nullptr) {
-                    // Constraint reference model: check for active borrows
-                    ObjectHeader* header = get_header_from_data(ptr);
-                    if (header->ref_count > 0) {
-                        vm->error = "Cannot delete: object has active borrows";
-                        return false;
-                    }
-                    object_free(vm, ptr);
-                    regs[a] = 0;
-                }
-                break;
-            }
-
-            // Reference Counting
-            case Opcode::REF_INC: {
-                void* ptr = reg_as_ptr(regs[a]);
-                if (ptr != nullptr) {
-                    ref_inc(ptr);
-                }
-                break;
-            }
-
-            case Opcode::REF_DEC: {
-                void* ptr = reg_as_ptr(regs[a]);
-                if (ptr != nullptr) {
-                    if (!ref_dec(vm, ptr)) return false;
-                }
-                break;
-            }
-
-            case Opcode::WEAK_CHECK: {
-                // Format: WEAK_CHECK dst, ptr_reg, 0
-                // Check if weak reference is still valid using 64-bit generation
-                // Weak ref occupies 2 consecutive registers: ptr in regs[b], generation in regs[b+1]
-                void* ptr = reg_as_ptr(regs[b]);
-                u64 gen = regs[b + 1];
-
-                if (ptr == nullptr) {
-                    regs[a] = 0;  // false - null pointer
-                } else {
-                    // Safe to read: memory is always mapped (active or tombstoned)
-                    // Tombstoned memory returns zeros, so is_alive() will be false
-                    bool valid = weak_ref_valid(ptr, gen);
-                    regs[a] = reg_from_bool(valid);
-                }
-                break;
-            }
-
-            case Opcode::WEAK_CREATE: {
-                // Format: WEAK_CREATE dst, src, 0
-                // Create weak ref: dst = pointer, dst+1 = generation
-                void* ptr = reg_as_ptr(regs[b]);
-                regs[a] = regs[b];  // Copy pointer
-                regs[a + 1] = (ptr != nullptr) ? weak_ref_create(ptr) : 0;
-                break;
-            }
-
-            // Spill/Reload
-            case Opcode::SPILL_REG: {
-                u16 slot_offset = imm;
-                u32* addr = vm->local_stack.get() + frame->local_stack_base + slot_offset;
-                u64 val = regs[a];
-                addr[0] = static_cast<u32>(val);
-                addr[1] = static_cast<u32>(val >> 32);
-                break;
-            }
-
-            case Opcode::RELOAD_REG: {
-                u16 slot_offset = imm;
-                u32* addr = vm->local_stack.get() + frame->local_stack_base + slot_offset;
-                regs[a] = static_cast<u64>(addr[0]) | (static_cast<u64>(addr[1]) << 32);
-                break;
-            }
-
-            // Debug
-            case Opcode::NOP:
-                break;
-
-            case Opcode::TRAP:
-                vm->error = "Runtime error: variant field access with wrong discriminant";
+            vm->running = false;
+            return true;
+        }
+
+        if (stop_depth > 0 && vm->call_stack.size() <= stop_depth) {
+            return true;
+        }
+
+        frame = &vm->call_stack.back();
+        func = frame->func;
+        pc = frame->pc;
+        regs = frame->registers;
+
+        for (u8 r = 0; r < reg_count; r++) {
+            regs[return_reg + r] = ret_vals[r];
+        }
+        DISPATCH();
+    }
+
+    // ── Spill/Reload ──
+
+    OP(SPILL_REG) {
+        u8 a = decode_a(instr);
+        u16 slot_offset = decode_imm16(instr);
+        u32* addr = vm->local_stack.get() + frame->local_stack_base + slot_offset;
+        u64 val = regs[a];
+        addr[0] = static_cast<u32>(val);
+        addr[1] = static_cast<u32>(val >> 32);
+        DISPATCH();
+    }
+
+    OP(RELOAD_REG) {
+        u16 slot_offset = decode_imm16(instr);
+        u32* addr = vm->local_stack.get() + frame->local_stack_base + slot_offset;
+        regs[decode_a(instr)] = static_cast<u64>(addr[0]) | (static_cast<u64>(addr[1]) << 32);
+        DISPATCH();
+    }
+
+    // ── Object Lifecycle ──
+
+    OP(NEW_OBJ) {
+        u16 type_idx = decode_imm16(instr);
+        if (type_idx >= vm->module->type_ids.size()) {
+            vm->error = "Invalid type index";
+            return false;
+        }
+        u32 type_id = vm->module->type_ids[type_idx];
+
+        const ObjectTypeInfo* type_info = get_object_type(type_id);
+        if (type_info == nullptr) {
+            vm->error = "Invalid type ID";
+            return false;
+        }
+
+        void* data = object_alloc(vm, type_id, type_info->size);
+        if (data == nullptr) {
+            vm->error = "Memory allocation failed";
+            return false;
+        }
+
+        regs[decode_a(instr)] = reg_from_ptr(data);
+        DISPATCH();
+    }
+
+    OP(DEL_OBJ) {
+        u8 a = decode_a(instr);
+        void* ptr = reg_as_ptr(regs[a]);
+        if (ptr != nullptr) {
+            ObjectHeader* header = get_header_from_data(ptr);
+            if (header->ref_count > 0) {
+                vm->error = "Cannot delete: object has active borrows";
                 return false;
+            }
+            object_free(vm, ptr);
+            regs[a] = 0;
+        }
+        DISPATCH();
+    }
 
-            case Opcode::THROW: {
-                void* exception_ptr = reg_as_ptr(regs[a]);
-                if (!exception_ptr) {
-                    vm->error = "throw: null exception";
-                    return false;
-                }
+    // ── Reference Counting ──
 
-                ObjectHeader* header = get_header_from_data(exception_ptr);
-                u32 exception_type_id = header->type_id;
+    OP(REF_INC) {
+        void* ptr = reg_as_ptr(regs[decode_a(instr)]);
+        if (ptr != nullptr) {
+            ref_inc(ptr);
+        }
+        DISPATCH();
+    }
 
-                // Stack unwinding: search for a matching exception handler
-                // Save PC for current frame before searching
-                frame->pc = pc;
+    OP(REF_DEC) {
+        void* ptr = reg_as_ptr(regs[decode_a(instr)]);
+        if (ptr != nullptr) {
+            if (!ref_dec(vm, ptr)) return false;
+        }
+        DISPATCH();
+    }
 
-                while (true) {
-                    // Compute current PC offset within the function
-                    u32 current_pc = static_cast<u32>(frame->pc - func->code.data());
+    OP(WEAK_CHECK) {
+        u8 a = decode_a(instr);
+        u8 b = decode_b(instr);
+        void* ptr = reg_as_ptr(regs[b]);
+        u64 gen = regs[b + 1];
 
-                    // Search exception handlers in current function
-                    bool handler_found = false;
-                    for (const auto& handler : func->exception_handlers) {
-                        if (current_pc >= handler.try_start_pc && current_pc < handler.try_end_pc) {
-                            // Check type match
-                            bool type_matches = false;
-                            if (handler.type_id == 0) {
-                                // Catch-all
-                                type_matches = true;
-                            } else {
-                                // Typed catch: compare global type_ids
-                                u32 handler_global_type_id = vm->module->type_ids[handler.type_id - 1];
-                                type_matches = (exception_type_id == handler_global_type_id);
-                            }
+        if (ptr == nullptr) {
+            regs[a] = 0;
+        } else {
+            bool valid = weak_ref_valid(ptr, gen);
+            regs[a] = reg_from_bool(valid);
+        }
+        DISPATCH();
+    }
 
-                            if (type_matches) {
-                                // Execute cleanup for owned locals between throw site
-                                // and handler (variables in scope at throw but not at handler)
-                                execute_cleanup(vm, func, current_pc, handler.handler_pc, regs);
+    OP(WEAK_CREATE) {
+        u8 a = decode_a(instr);
+        u8 b = decode_b(instr);
+        void* ptr = reg_as_ptr(regs[b]);
+        regs[a] = regs[b];
+        regs[a + 1] = (ptr != nullptr) ? weak_ref_create(ptr) : 0;
+        DISPATCH();
+    }
 
-                                // Re-cache frame pointer (execute_cleanup may call destructors
-                                // via nested interpretation, which pushes/pops call_stack and
-                                // can invalidate the pointer due to Vector reallocation)
-                                frame = &vm->call_stack.back();
+    // ── Exception Handling ──
 
-                                // Found a matching handler - jump to it
-                                regs[handler.exception_reg] = reg_from_ptr(exception_ptr);
-                                pc = func->code.data() + handler.handler_pc;
-                                handler_found = true;
-                                break;
-                            }
-                        }
+    OP(THROW) {
+        void* exception_ptr = reg_as_ptr(regs[decode_a(instr)]);
+        if (!exception_ptr) {
+            vm->error = "throw: null exception";
+            return false;
+        }
+
+        ObjectHeader* header = get_header_from_data(exception_ptr);
+        u32 exception_type_id = header->type_id;
+
+        frame->pc = pc;
+
+        while (true) {
+            u32 current_pc = static_cast<u32>(frame->pc - func->code.data());
+
+            bool handler_found = false;
+            for (const auto& handler : func->exception_handlers) {
+                if (current_pc >= handler.try_start_pc && current_pc < handler.try_end_pc) {
+                    bool type_matches = false;
+                    if (handler.type_id == 0) {
+                        type_matches = true;
+                    } else {
+                        u32 handler_global_type_id = vm->module->type_ids[handler.type_id - 1];
+                        type_matches = (exception_type_id == handler_global_type_id);
                     }
 
-                    if (handler_found) break;
+                    if (type_matches) {
+                        execute_cleanup(vm, func, current_pc, handler.handler_pc, regs);
 
-                    // No handler in this frame - clean up ALL owned locals in this frame
-                    execute_cleanup(vm, func, current_pc, UINT32_MAX, regs);
+                        frame = &vm->call_stack.back();
 
-                    // Re-cache frame pointer (may have been invalidated by nested
-                    // destructor calls during cleanup)
-                    frame = &vm->call_stack.back();
-
-                    // Pop frame and continue unwinding
-                    u32 local_stack_base = frame->local_stack_base;
-                    vm->call_stack.pop_back();
-                    vm->register_top -= func->register_count;
-                    vm->local_stack_top = local_stack_base;
-
-                    if (vm->call_stack.empty()) {
-                        // Unhandled exception - free exception object and set error
-                        object_free(vm, exception_ptr);
-                        vm->error = "Unhandled exception";
-                        vm->running = false;
-                        return false;
+                        regs[handler.exception_reg] = reg_from_ptr(exception_ptr);
+                        pc = func->code.data() + handler.handler_pc;
+                        handler_found = true;
+                        break;
                     }
-
-                    // Restore caller frame
-                    frame = &vm->call_stack.back();
-                    func = frame->func;
-                    regs = frame->registers;
-                    // frame->pc already contains the right PC from saved state
                 }
-
-                break;
             }
 
-            case Opcode::CALL_EXC_MSG: {
-                // For now, a simple stub - will be implemented when ExceptionRef.message() is needed
-                void* exception_ptr = reg_as_ptr(regs[b]);
-                if (exception_ptr) {
-                    // Call the stored message function for this exception type
-                    // For now, return a generic message
-                    void* msg = string_alloc(vm, "exception", 9);
-                    regs[a] = reg_from_ptr(msg);
-                }
-                break;
-            }
+            if (handler_found) break;
 
-            case Opcode::HALT:
+            execute_cleanup(vm, func, current_pc, UINT32_MAX, regs);
+
+            frame = &vm->call_stack.back();
+
+            u32 local_stack_base = frame->local_stack_base;
+            vm->call_stack.pop_back();
+            vm->register_top -= func->register_count;
+            vm->local_stack_top = local_stack_base;
+
+            if (vm->call_stack.empty()) {
+                object_free(vm, exception_ptr);
+                vm->error = "Unhandled exception";
                 vm->running = false;
-                return true;
+                return false;
+            }
 
+            frame = &vm->call_stack.back();
+            func = frame->func;
+            regs = frame->registers;
+        }
+
+        DISPATCH();
+    }
+
+    OP(CALL_EXC_MSG) {
+        u8 a = decode_a(instr);
+        void* exception_ptr = reg_as_ptr(regs[decode_b(instr)]);
+        if (exception_ptr) {
+            void* msg = string_alloc(vm, "exception", 9);
+            regs[a] = reg_from_ptr(msg);
+        }
+        DISPATCH();
+    }
+
+    // ── Debug/Error ──
+
+    OP(NOP) {
+        DISPATCH();
+    }
+
+    OP(TRAP) {
+        vm->error = "Runtime error: variant field access with wrong discriminant";
+        return false;
+    }
+
+    OP(HALT) {
+        vm->running = false;
+        return true;
+    }
+
+#if RX_USE_COMPUTED_GOTO
+    op_DEFAULT:
+        vm->error = "Unknown opcode";
+        return false;
+#else
             default:
                 vm->error = "Unknown opcode";
                 return false;
-        }
-    }
+        } // switch
+    } // while
 
     return true;
+#endif
 }
+
+#undef OP
+#undef DISPATCH
 
 }
