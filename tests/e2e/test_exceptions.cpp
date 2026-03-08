@@ -876,3 +876,143 @@ TEST_CASE("E2E - Exception safety: normal path still works") {
     CHECK(result.value == 10);
     CHECK(result.stdout_output == "~Resource\n10\n");
 }
+
+TEST_CASE("E2E - Exception move tracking: moved in try, used in catch") {
+    const char* source = R"(
+        struct Resource { id: i32; }
+        fun delete Resource() { print(f"{"~Resource"}"); }
+        fun consume(r: uniq Resource): i32 { return r.id; }
+
+        struct MyError { code: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+
+        fun main(): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.id = 42;
+            try {
+                var val: i32 = consume(r);
+                throw MyError { code = val };
+            } catch (e: MyError) {
+                return r.id;
+            }
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(!result.success);
+}
+
+TEST_CASE("E2E - Exception move tracking: moved in try, reassigned in catch, used after") {
+    const char* source = R"(
+        struct Resource { id: i32; }
+        fun delete Resource() { print(f"{"~Resource"}"); }
+        fun consume(r: uniq Resource): i32 { return r.id; }
+
+        struct MyError { code: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+
+        fun main(): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.id = 42;
+            try {
+                var val: i32 = consume(r);
+                throw MyError { code = val };
+            } catch (e: MyError) {
+                r = uniq Resource();
+                r.id = 99;
+            }
+            return r.id;
+        }
+    )";
+
+    // post-try: Moved, post-catch: Live → merged = MaybeValid
+    TestResult result = run_and_capture(source, "main");
+    CHECK(!result.success);
+}
+
+TEST_CASE("E2E - Exception move tracking: not moved in try, moved in catch, used after") {
+    const char* source = R"(
+        struct Resource { id: i32; }
+        fun delete Resource() { print(f"{"~Resource"}"); }
+        fun consume(r: uniq Resource): i32 { return r.id; }
+
+        struct MyError { code: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+
+        fun main(): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.id = 42;
+            try {
+                throw MyError { code = 1 };
+            } catch (e: MyError) {
+                var val: i32 = consume(r);
+            }
+            return r.id;
+        }
+    )";
+
+    // post-try: Live, post-catch: Moved → merged = MaybeValid
+    TestResult result = run_and_capture(source, "main");
+    CHECK(!result.success);
+}
+
+TEST_CASE("E2E - Exception move tracking: no move anywhere") {
+    const char* source = R"(
+        struct Resource { id: i32; }
+        fun delete Resource() { print(f"{"~Resource"}"); }
+
+        struct MyError { code: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+
+        fun main(): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.id = 42;
+            try {
+                throw MyError { code = 1 };
+            } catch (e: MyError) {
+                r.id = 99;
+            }
+            return r.id;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+}
+
+TEST_CASE("E2E - Exception move tracking: no leak between catch clauses") {
+    const char* source = R"(
+        struct Resource { id: i32; }
+        fun delete Resource() { print(f"{"~Resource"}"); }
+        fun consume(r: uniq Resource): i32 { return r.id; }
+
+        struct MyError { code: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+
+        struct OtherError { code: i32; }
+        fun OtherError.message(): string for Exception { return "other"; }
+
+        fun main(): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.id = 42;
+            try {
+                throw MyError { code = 1 };
+            } catch (e: MyError) {
+                var val: i32 = consume(r);
+            } catch (e: OtherError) {
+                return r.id;
+            }
+            return 0;
+        }
+    )";
+
+    // Second catch starts from catch_entry (not first catch's exit).
+    // r is not moved in try, so catch_entry has r as Live.
+    // The second catch can access r.id without error — the first catch's
+    // move does not leak into the second catch.
+    // r is not accessed after the try/catch, so the merged MaybeValid state is fine.
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+}
+

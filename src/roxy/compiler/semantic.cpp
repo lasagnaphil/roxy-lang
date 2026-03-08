@@ -3322,8 +3322,25 @@ void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
 void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
     TryStmt& ts = stmt->try_stmt;
 
+    // Save move states before try body
+    MoveStateSnapshot pre_try = save_move_states();
+
     // Analyze try body (yield is allowed here)
     analyze_stmt(ts.try_body);
+
+    // Save post-try states
+    MoveStateSnapshot post_try = save_move_states();
+
+    // Compute catch entry state: merge(pre_try, post_try)
+    // An exception can be thrown at any point in the try body, so catch clauses
+    // must see the conservative merge of pre-try and post-try states
+    restore_move_states(pre_try);
+    merge_move_states(pre_try, post_try);
+    MoveStateSnapshot catch_entry = save_move_states();
+
+    // Normal try exit is one exit path
+    std::vector<MoveStateSnapshot> exit_paths;
+    exit_paths.push_back(post_try);
 
     bool has_catch_all = false;
 
@@ -3335,6 +3352,9 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
             error(clause.loc, "catch clause after catch-all is unreachable");
             continue;
         }
+
+        // Each catch starts from the same catch entry state
+        restore_move_states(catch_entry);
 
         m_symbols.push_scope(ScopeKind::Block);
 
@@ -3369,6 +3389,17 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
 
         analyze_stmt(clause.body);  // yield is allowed in catch bodies
         m_symbols.pop_scope();
+
+        exit_paths.push_back(save_move_states());
+    }
+
+    // Pairwise-merge all exit paths
+    if (!exit_paths.empty()) {
+        restore_move_states(exit_paths[0]);
+        for (size_t i = 1; i < exit_paths.size(); i++) {
+            MoveStateSnapshot current = save_move_states();
+            merge_move_states(current, exit_paths[i]);
+        }
     }
 
     // Analyze finally body if present (yield is NOT allowed here)
