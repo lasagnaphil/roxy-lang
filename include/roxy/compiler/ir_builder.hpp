@@ -76,6 +76,8 @@ private:
     ValueId emit_call(StringView func_name, Span<ValueId> args, Type* result_type);
     ValueId emit_call_native(StringView func_name, Span<ValueId> args, Type* result_type, u8 native_index);
     ValueId emit_call_external(StringView module_name, StringView func_name, Span<ValueId> args, Type* result_type);
+    ValueId emit_index_get(ValueId container, ValueId index, ContainerKind kind, Type* result_type);
+    void emit_index_set(ValueId container, ValueId index, ValueId value, ContainerKind kind);
     ValueId emit_new(StringView type_name, Span<ValueId> args, Type* result_type);
     ValueId emit_stack_alloc(u32 slot_count, Type* result_type);
     ValueId emit_get_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, Type* result_type);

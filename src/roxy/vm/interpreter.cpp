@@ -666,6 +666,64 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
                 break;
             }
 
+            // Container Indexing
+            case Opcode::INDEX_GET_LIST: {
+                // Format: a=dst, b=obj, c=index
+                void* lst_ptr = reg_as_ptr(regs[b]);
+                if (!lst_ptr) {
+                    vm->error = "list index: null list reference";
+                    return false;
+                }
+                i64 idx = reg_as_i64(regs[c]);
+                Value result;
+                if (!list_get(lst_ptr, idx, result, &vm->error)) {
+                    return false;
+                }
+                regs[a] = result.as_u64();
+                break;
+            }
+
+            case Opcode::INDEX_SET_LIST: {
+                // Format: a=obj, b=index, c=value
+                void* lst_ptr = reg_as_ptr(regs[a]);
+                if (!lst_ptr) {
+                    vm->error = "list index_mut: null list reference";
+                    return false;
+                }
+                i64 idx = reg_as_i64(regs[b]);
+                Value value = Value::from_u64(regs[c]);
+                if (!list_set(lst_ptr, idx, value, &vm->error)) {
+                    return false;
+                }
+                break;
+            }
+
+            case Opcode::INDEX_GET_MAP: {
+                // Format: a=dst, b=obj, c=key
+                void* map_ptr = reg_as_ptr(regs[b]);
+                if (!map_ptr) {
+                    vm->error = "map index: null map reference";
+                    return false;
+                }
+                u64 value;
+                if (!map_get(map_ptr, regs[c], value, &vm->error)) {
+                    return false;
+                }
+                regs[a] = value;
+                break;
+            }
+
+            case Opcode::INDEX_SET_MAP: {
+                // Format: a=obj, b=key, c=value
+                void* map_ptr = reg_as_ptr(regs[a]);
+                if (!map_ptr) {
+                    vm->error = "map index_mut: null map reference";
+                    return false;
+                }
+                map_insert(map_ptr, regs[b], regs[c]);
+                break;
+            }
+
             // Stack Address
             case Opcode::STACK_ADDR: {
                 // Format: STACK_ADDR dst, slot_offset

@@ -109,9 +109,13 @@ enum class Opcode : u8 {
     RET         = 0x93,     // return reg (or void if reg=0xFF)
     RET_VOID    = 0x94,     // return (void)
 
-    // 0xA0-0xAF: Function Calls
+    // 0xA0-0xAF: Function Calls and Container Indexing
     CALL        = 0xA0,     // dst = call func_idx(args...)
     CALL_NATIVE = 0xA1,     // dst = call_native func_idx(args...)
+    INDEX_GET_LIST = 0xA2,  // dst = list[index]     — ABC: a=dst, b=obj, c=index
+    INDEX_SET_LIST = 0xA3,  // list[index] = value    — ABC: a=obj, b=index, c=value
+    INDEX_GET_MAP  = 0xA4,  // dst = map[key]         — ABC: a=dst, b=obj, c=key
+    INDEX_SET_MAP  = 0xA5,  // map[key] = value       — ABC: a=obj, b=key, c=value
 
     // 0xB0-0xBF: Field and Stack Access
     GET_FIELD       = 0xB0, // dst = src1.field[slot_offset] (two-word: ABC + offset)

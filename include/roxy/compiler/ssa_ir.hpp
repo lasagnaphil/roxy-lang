@@ -135,6 +135,10 @@ enum class IROp : u8 {
     CallNative,     // call native function
     CallExternal,   // call function in another module
 
+    // Container indexing (List/Map)
+    IndexGet,       // container[index] — for List/Map
+    IndexSet,       // container[index] = value — for List/Map
+
     // Block argument (phi-like)
     BlockArg,       // Block parameter - receives value from predecessor
 
@@ -235,6 +239,17 @@ struct VarAddrData {
     StringView name;  // Name of the local variable
 };
 
+// Container kind for IndexGet/IndexSet
+enum class ContainerKind : u8 { List, Map };
+
+// Index access data (for IndexGet/IndexSet)
+struct IndexData {
+    ValueId container;
+    ValueId index;       // index for List, key for Map
+    ValueId value;       // only used by IndexSet
+    ContainerKind kind;
+};
+
 // Cast data
 struct CastData {
     ValueId source;
@@ -265,6 +280,7 @@ struct IRInst {
         StorePtrData store_ptr;         // For StorePtr
         VarAddrData var_addr;           // For VarAddr
         CastData cast;                  // For Cast
+        IndexData index_data;           // For IndexGet/IndexSet
         u32 block_arg_index;            // For BlockArg (parameter index)
     };
 

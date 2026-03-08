@@ -938,6 +938,18 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                     }
                     break;
 
+                // Container indexing
+                case IROp::IndexGet:
+                    mark_use(m_live_ranges, inst->index_data.container, point);
+                    mark_use(m_live_ranges, inst->index_data.index, point);
+                    break;
+
+                case IROp::IndexSet:
+                    mark_use(m_live_ranges, inst->index_data.container, point);
+                    mark_use(m_live_ranges, inst->index_data.index, point);
+                    mark_use(m_live_ranges, inst->index_data.value, point);
+                    break;
+
                 // Field access
                 case IROp::GetField:
                 case IROp::GetFieldAddr:
@@ -1593,6 +1605,26 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 emit(0);  // Padding word
                 emit_abc(Opcode::MOV, dst, temp_reg, 0);
             }
+            break;
+        }
+
+        case IROp::IndexGet: {
+            u8 obj_reg = ensure_in_register(inst->index_data.container, 0);
+            u8 idx_reg = ensure_in_register(inst->index_data.index, 0);
+            Opcode op = (inst->index_data.kind == ContainerKind::List)
+                ? Opcode::INDEX_GET_LIST : Opcode::INDEX_GET_MAP;
+            emit_abc(op, dst, obj_reg, idx_reg);
+            spill_if_needed(inst->result, dst);
+            break;
+        }
+
+        case IROp::IndexSet: {
+            u8 obj_reg = ensure_in_register(inst->index_data.container, 0);
+            u8 idx_reg = ensure_in_register(inst->index_data.index, 0);
+            u8 val_reg = ensure_in_register(inst->index_data.value, 0);
+            Opcode op = (inst->index_data.kind == ContainerKind::List)
+                ? Opcode::INDEX_SET_LIST : Opcode::INDEX_SET_MAP;
+            emit_abc(op, obj_reg, idx_reg, val_reg);
             break;
         }
 

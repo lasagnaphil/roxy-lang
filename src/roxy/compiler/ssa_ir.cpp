@@ -87,6 +87,9 @@ const char* ir_op_to_string(IROp op) {
         case IROp::CallNative:   return "call_native";
         case IROp::CallExternal: return "call_external";
 
+        case IROp::IndexGet:     return "index_get";
+        case IROp::IndexSet:     return "index_set";
+
         case IROp::BlockArg: return "block_arg";
         case IROp::Copy:     return "copy";
 
@@ -365,6 +368,30 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         case IROp::VarAddr: {
             append_str(out, " &");
             append_string_view(out, inst->var_addr.name);
+            break;
+        }
+
+        case IROp::IndexGet: {
+            append_str(out, " ");
+            append_value_id(out, inst->index_data.container);
+            append_str(out, "[");
+            append_value_id(out, inst->index_data.index);
+            append_str(out, "] (");
+            append_str(out, inst->index_data.kind == ContainerKind::List ? "list" : "map");
+            append_str(out, ")");
+            break;
+        }
+
+        case IROp::IndexSet: {
+            append_str(out, " ");
+            append_value_id(out, inst->index_data.container);
+            append_str(out, "[");
+            append_value_id(out, inst->index_data.index);
+            append_str(out, "] <- ");
+            append_value_id(out, inst->index_data.value);
+            append_str(out, " (");
+            append_str(out, inst->index_data.kind == ContainerKind::List ? "list" : "map");
+            append_str(out, ")");
             break;
         }
 

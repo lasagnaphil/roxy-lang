@@ -924,6 +924,39 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             return;
         }
 
+        case IROp::IndexGet: {
+            // container[index] — emit as roxy_list_get / roxy_map_get
+            out.append("    ");
+            emit_value(inst->result, out);
+            if (inst->index_data.kind == ContainerKind::List) {
+                out.append(" = roxy_list_get((void*)");
+            } else {
+                out.append(" = roxy_map_get((void*)");
+            }
+            emit_value(inst->index_data.container, out);
+            out.append(", ");
+            emit_value(inst->index_data.index, out);
+            out.append(");\n");
+            return;
+        }
+
+        case IROp::IndexSet: {
+            // container[index] = value — emit as roxy_list_set / roxy_map_insert
+            out.append("    ");
+            if (inst->index_data.kind == ContainerKind::List) {
+                out.append("roxy_list_set((void*)");
+            } else {
+                out.append("roxy_map_insert((void*)");
+            }
+            emit_value(inst->index_data.container, out);
+            out.append(", ");
+            emit_value(inst->index_data.index, out);
+            out.append(", ");
+            emit_value(inst->index_data.value, out);
+            out.append(");\n");
+            return;
+        }
+
         case IROp::New: {
             // Allocate a new heap object: (StructType*)roxy_alloc(sizeof(StructType), TYPEID_StructType)
             out.append("    ");

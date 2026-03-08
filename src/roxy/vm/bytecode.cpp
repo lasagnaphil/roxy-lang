@@ -97,9 +97,13 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::RET:           return "RET";
         case Opcode::RET_VOID:      return "RET_VOID";
 
-        // Function Calls
-        case Opcode::CALL:          return "CALL";
-        case Opcode::CALL_NATIVE:   return "CALL_NATIVE";
+        // Function Calls and Container Indexing
+        case Opcode::CALL:              return "CALL";
+        case Opcode::CALL_NATIVE:       return "CALL_NATIVE";
+        case Opcode::INDEX_GET_LIST:    return "INDEX_GET_LIST";
+        case Opcode::INDEX_SET_LIST:    return "INDEX_SET_LIST";
+        case Opcode::INDEX_GET_MAP:     return "INDEX_GET_MAP";
+        case Opcode::INDEX_SET_MAP:     return "INDEX_SET_MAP";
 
         // Field Access
         case Opcode::GET_FIELD:     return "GET_FIELD";
@@ -264,6 +268,18 @@ void disassemble_instruction(u32 instr, u32 offset, String& out) {
         case Opcode::CALL:
         case Opcode::CALL_NATIVE:
             buf.format("R{}, func[{}], {} args from R{}", a, b, c, (u32)(a + 1));
+            break;
+
+        // Format: dst, obj, index/key
+        case Opcode::INDEX_GET_LIST:
+        case Opcode::INDEX_GET_MAP:
+            buf.format("R{}, R{}, R{}", a, b, c);
+            break;
+
+        // Format: obj, index/key, value
+        case Opcode::INDEX_SET_LIST:
+        case Opcode::INDEX_SET_MAP:
+            buf.format("R{}, R{}, R{}", a, b, c);
             break;
 
         // Format: dst, src, field_idx
