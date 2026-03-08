@@ -1,45 +1,42 @@
 // Roxy standalone interpreter
-// Usage: roxy <source_file>
+// Usage: roxy [options] <source_file> [program_args...]
 
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/file.hpp"
 #include "roxy/core/unique_ptr.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/shared/lexer.hpp"
-#include "roxy/compiler/parser.hpp"
-#include "roxy/compiler/semantic.hpp"
-#include "roxy/compiler/type_env.hpp"
-#include "roxy/compiler/ssa_ir.hpp"
-#include "roxy/compiler/ir_builder.hpp"
-#include "roxy/compiler/ir_validator.hpp"
-#include "roxy/compiler/lowering.hpp"
-#include "roxy/compiler/module_registry.hpp"
+#include "roxy/compiler/compiler.hpp"
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
-#include "roxy/vm/natives.hpp"
-#include "roxy/vm/binding/interop.hpp"
+#include "roxy/vm/string.hpp"
+#include "roxy/vm/list.hpp"
 
 #include <cstdio>
 #include <cstring>
 
+// tsl::robin_map for visited module tracking (used as set with bool values)
+#include "roxy/core/tsl/robin_map.h"
+
 using namespace rx;
 
 static void print_usage(const char* program) {
-    fprintf(stderr, "Usage: %s [options] <source_file>\n", program);
+    fprintf(stderr, "Usage: %s [options] <source_file> [args...]\n", program);
     fprintf(stderr, "\n");
     fprintf(stderr, "Arguments:\n");
     fprintf(stderr, "  source_file    Path to a .roxy source file\n");
+    fprintf(stderr, "  args           Arguments passed to main(args: List<string>)\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  --ir           Print generated SSA IR\n");
     fprintf(stderr, "  --help, -h     Show this help message\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "The program must define a main() function as the entry point.\n");
+    fprintf(stderr, "Imported modules are auto-discovered from the source file's directory.\n");
 }
 
 struct Options {
     const char* source_file = nullptr;
-    bool print_ir = false;
+    int program_args_start = 0;  // Index into argv where program args begin (0 = none)
 };
 
 static bool parse_args(int argc, char** argv, Options& opts) {
@@ -47,16 +44,14 @@ static bool parse_args(int argc, char** argv, Options& opts) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(argv[0]);
             return false;
-        } else if (strcmp(argv[i], "--ir") == 0) {
-            opts.print_ir = true;
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
             return false;
         } else if (!opts.source_file) {
             opts.source_file = argv[i];
-        } else {
-            fprintf(stderr, "Error: Unexpected argument '%s'\n", argv[i]);
-            return false;
+            // All remaining arguments are program arguments
+            opts.program_args_start = i + 1;
+            break;
         }
     }
 
@@ -69,67 +64,122 @@ static bool parse_args(int argc, char** argv, Options& opts) {
     return true;
 }
 
-static BCModule* compile(BumpAllocator& allocator, const char* source, u32 len,
-                         TypeEnv& type_env, NativeRegistry& registry, bool print_ir) {
+// Extract the directory part of a file path (including trailing separator).
+// Returns "." if no directory separator found.
+static String get_directory(const char* path) {
+    const char* last_sep = nullptr;
+    for (const char* p = path; *p; p++) {
+        if (*p == '/' || *p == '\\') last_sep = p;
+    }
+    if (!last_sep) {
+        return String("./", 2);
+    }
+    return String(path, static_cast<u32>(last_sep - path + 1));
+}
+
+// Extract the module name from a file path (basename without .roxy extension).
+static String get_module_name(const char* path) {
+    const char* last_sep = nullptr;
+    for (const char* p = path; *p; p++) {
+        if (*p == '/' || *p == '\\') last_sep = p;
+    }
+    const char* basename = last_sep ? last_sep + 1 : path;
+    u32 basename_len = static_cast<u32>(strlen(basename));
+
+    // Strip .roxy extension if present
+    if (basename_len > 5 && strcmp(basename + basename_len - 5, ".roxy") == 0) {
+        return String(basename, basename_len - 5);
+    }
+    return String(basename, basename_len);
+}
+
+// Scan source code for import/from statements and extract module names.
+// Uses the lexer to correctly handle comments and strings.
+static void scan_imports(const char* source, u32 len, Vector<String>& module_names) {
     Lexer lexer(source, len);
-    Parser parser(lexer, allocator);
-    Program* program = parser.parse();
+    while (true) {
+        Token token = lexer.next_token();
+        if (token.kind == TokenKind::Eof) break;
 
-    if (!program || parser.has_error()) {
-        const auto& err = parser.error();
-        fprintf(stderr, "Parse error at line %u, column %u: %s\n",
-                err.loc.line, err.loc.column, err.message);
-        return nullptr;
-    }
-
-    // Create module registry and register builtin module for prelude auto-import
-    ModuleRegistry modules(allocator);
-    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, type_env.types());
-
-    SemanticAnalyzer analyzer(allocator, type_env, modules);
-    if (!analyzer.analyze(program)) {
-        fprintf(stderr, "Semantic errors:\n");
-        for (const auto& err : analyzer.errors()) {
-            fprintf(stderr, "  Line %u, column %u: %s\n",
-                    err.loc.line, err.loc.column, err.message);
+        if (token.kind == TokenKind::KwImport || token.kind == TokenKind::KwFrom) {
+            // Next token should be the first segment of the module path
+            Token name = lexer.next_token();
+            if (name.kind == TokenKind::Identifier) {
+                // Build full dotted path (e.g., a.b.c)
+                String mod_path(name.start, name.length);
+                while (true) {
+                    Token next = lexer.next_token();
+                    if (next.kind == TokenKind::Dot) {
+                        Token segment = lexer.next_token();
+                        if (segment.kind == TokenKind::Identifier) {
+                            mod_path.push_back('.');
+                            mod_path.append(segment.start, segment.length);
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                module_names.push_back(std::move(mod_path));
+            }
         }
-        return nullptr;
     }
+}
 
-    IRBuilder ir_builder(allocator, type_env, registry, analyzer.symbols(), modules);
-    IRModule* ir_module = ir_builder.build(program);
-    if (!ir_module) {
-        if (ir_builder.has_error()) {
-            fprintf(stderr, "IR generation failed: %s\n", ir_builder.error());
-        } else {
-            fprintf(stderr, "IR generation failed\n");
+// Stored source file data - keeps the buffer alive for the compiler
+struct SourceFile {
+    String module_name;
+    Vector<u8> buffer;  // Source bytes (null-terminated by read_file_to_buf)
+};
+
+// Recursively discover all imported modules starting from the main file.
+// Returns false on error (e.g., missing imported file).
+static bool discover_modules(const String& base_dir,
+                             const String& module_name,
+                             const char* source, u32 source_len,
+                             Vector<SourceFile>& discovered,
+                             tsl::robin_map<String, bool>& visited) {
+    if (visited.count(module_name)) return true;
+    visited[module_name] = true;
+
+    // Scan this source for imports
+    Vector<String> imports;
+    scan_imports(source, source_len, imports);
+
+    // Process each import
+    for (auto& import_name : imports) {
+        if (visited.count(import_name)) continue;
+
+        // Build file path: base_dir + import_name + ".roxy"
+        // For dotted paths like "foo.bar", use "foo.bar.roxy" (flat directory)
+        String file_path = base_dir;
+        file_path.append(import_name.data(), import_name.size());
+        file_path.append(".roxy", 5);
+        file_path.push_back('\0');
+
+        // Read the file
+        SourceFile source_file;
+        source_file.module_name = import_name;
+        if (!read_file_to_buf(file_path.data(), source_file.buffer)) {
+            fprintf(stderr, "Error: Could not read imported module '%s' (expected at '%s')\n",
+                    import_name.c_str(), file_path.data());
+            return false;
         }
-        return nullptr;
+
+        const char* mod_source = reinterpret_cast<const char*>(source_file.buffer.data());
+        u32 mod_len = static_cast<u32>(source_file.buffer.size() - 1);
+
+        // Recursively discover this module's imports
+        if (!discover_modules(base_dir, import_name, mod_source, mod_len,
+                              discovered, visited)) {
+            return false;
+        }
+
+        discovered.push_back(std::move(source_file));
     }
 
-    if (print_ir) {
-        String ir_str;
-        ir_module_to_string(ir_module, ir_str);
-        ir_str.push_back('\0');
-        printf("=== SSA IR ===\n%s\n", ir_str.data());
-    }
-
-    IRValidator validator;
-    if (!validator.validate(ir_module)) {
-        fprintf(stderr, "IR validation failed: %s\n", validator.error());
-        return nullptr;
-    }
-
-    BytecodeBuilder bc_builder;
-    bc_builder.set_registry(&registry);
-    BCModule* module = bc_builder.build(ir_module);
-    if (!module) {
-        fprintf(stderr, "Bytecode generation failed\n");
-        return nullptr;
-    }
-
-    registry.apply_to_module(module);
-    return module;
+    return true;
 }
 
 int main(int argc, char** argv) {
@@ -138,36 +188,61 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Read source file
-    Vector<u8> source_buf;
-    if (!read_file_to_buf(opts.source_file, source_buf)) {
+    // Read main source file
+    Vector<u8> main_source_buf;
+    if (!read_file_to_buf(opts.source_file, main_source_buf)) {
         fprintf(stderr, "Error: Could not read file '%s'\n", opts.source_file);
         return 1;
     }
 
-    // read_file_to_buf already null-terminates, so size includes the null
-    const char* source = reinterpret_cast<const char*>(source_buf.data());
-    u32 len = static_cast<u32>(source_buf.size() - 1);  // Exclude null terminator
+    const char* main_source = reinterpret_cast<const char*>(main_source_buf.data());
+    u32 main_len = static_cast<u32>(main_source_buf.size() - 1);
 
-    // Create allocator and type environment
+    // Determine base directory and module name
+    String base_dir = get_directory(opts.source_file);
+    String main_module_name = get_module_name(opts.source_file);
+
+    // Discover all imported modules recursively
+    Vector<SourceFile> discovered_modules;
+    tsl::robin_map<String, bool> visited;
+    if (!discover_modules(base_dir, main_module_name, main_source, main_len,
+                          discovered_modules, visited)) {
+        return 1;
+    }
+
+    // Create allocator and compiler
     BumpAllocator allocator(65536);
-    TypeEnv type_env(allocator);
+    Compiler compiler(allocator);
 
-    // Create registry and register built-in natives
-    NativeRegistry registry(allocator, type_env.types());
-    register_builtin_natives(registry);
+    // Add discovered modules first (dependencies before dependents)
+    for (auto& source_file : discovered_modules) {
+        const char* source = reinterpret_cast<const char*>(source_file.buffer.data());
+        u32 len = static_cast<u32>(source_file.buffer.size() - 1);
+        compiler.add_source(StringView(source_file.module_name.data(),
+                                       static_cast<u32>(source_file.module_name.size())),
+                           source, len);
+    }
 
-    // Compile
-    UniquePtr<BCModule> module(compile(allocator, source, len, type_env, registry, opts.print_ir));
+    // Add main module last
+    compiler.add_source(StringView(main_module_name.data(),
+                                   static_cast<u32>(main_module_name.size())),
+                       main_source, main_len);
+
+    // Compile all modules
+    BCModule* module = compiler.compile();
     if (!module) {
+        fprintf(stderr, "Compilation failed:\n");
+        for (const char* error : compiler.errors()) {
+            fprintf(stderr, "  %s\n", error);
+        }
         return 1;
     }
 
     // Find main() function
-    StringView main_name("main", 4);
+    StringView main_func_name("main", 4);
     BCFunction* main_func = nullptr;
     for (auto& fn : module->functions) {
-        if (fn->name == main_name) {
+        if (fn->name == main_func_name) {
             main_func = fn.get();
             break;
         }
@@ -178,8 +253,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    if (main_func->param_count > 0) {
-        fprintf(stderr, "Error: main() must take no arguments (found %u parameters)\n",
+    if (main_func->param_count > 1) {
+        fprintf(stderr, "Error: main() must take 0 or 1 argument (found %u parameters)\n",
                 main_func->param_count);
         return 1;
     }
@@ -187,9 +262,42 @@ int main(int argc, char** argv) {
     // Initialize VM and run
     RoxyVM vm;
     vm_init(&vm);
-    vm_load_module(&vm, module.get());
+    vm_load_module(&vm, module);
 
-    if (!vm_call(&vm, main_name, {})) {
+    // Build argument list for main() if it takes a parameter
+    Value args_value;
+    if (main_func->param_count == 1) {
+        // Count program args: source file + remaining CLI arguments
+        int program_arg_count = 1;  // source file is args[0]
+        if (opts.program_args_start > 0) {
+            program_arg_count += argc - opts.program_args_start;
+        }
+
+        // Allocate List<string>
+        void* list_data = list_alloc(&vm, static_cast<u32>(program_arg_count));
+
+        // args[0] = source file path
+        u32 source_path_len = static_cast<u32>(strlen(opts.source_file));
+        void* source_str = string_alloc(&vm, opts.source_file, source_path_len);
+        list_push(list_data, Value::make_ptr(source_str));
+
+        // args[1..] = remaining CLI arguments
+        if (opts.program_args_start > 0) {
+            for (int i = opts.program_args_start; i < argc; i++) {
+                u32 arg_len = static_cast<u32>(strlen(argv[i]));
+                void* arg_str = string_alloc(&vm, argv[i], arg_len);
+                list_push(list_data, Value::make_ptr(arg_str));
+            }
+        }
+
+        args_value = Value::make_ptr(list_data);
+    }
+
+    Span<Value> call_args = main_func->param_count == 1
+        ? Span<Value>(&args_value, 1)
+        : Span<Value>();
+
+    if (!vm_call(&vm, main_func_name, call_args)) {
         fprintf(stderr, "Runtime error: %s\n", vm.error ? vm.error : "unknown error");
         vm_destroy(&vm);
         return 1;
