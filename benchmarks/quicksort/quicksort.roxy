@@ -1,0 +1,56 @@
+fun swap(arr: inout List<i32>, i: i32, j: i32) {
+    var temp: i32 = arr[i];
+    arr[i] = arr[j];
+    arr[j] = temp;
+}
+
+fun partition(arr: inout List<i32>, low: i32, high: i32): i32 {
+    var pivot: i32 = arr[high];
+    var i: i32 = low - 1;
+    for (var j: i32 = low; j < high; j = j + 1) {
+        if (arr[j] <= pivot) {
+            i = i + 1;
+            swap(inout arr, i, j);
+        }
+    }
+    swap(inout arr, i + 1, high);
+    return i + 1;
+}
+
+fun quicksort(arr: inout List<i32>, low: i32, high: i32) {
+    if (low < high) {
+        var pi: i32 = partition(inout arr, low, high);
+        quicksort(inout arr, low, pi - 1);
+        quicksort(inout arr, pi + 1, high);
+    }
+}
+
+fun main(): i32 {
+    var count: i32 = 100000;
+    var arr: List<i32> = List<i32>(count);
+
+    // Generate pseudo-random numbers using Park-Miller LCG
+    var seed: i64 = 12345l;
+    for (var i: i32 = 0; i < count; i = i + 1) {
+        seed = (seed * 16807l) % 2147483647l;
+        var val: i32 = i32(seed % 1000000l);
+        arr.push(val);
+    }
+
+    var start: f64 = clock();
+    quicksort(inout arr, 0, arr.len() - 1);
+    var elapsed: f64 = (clock() - start) * 1000.0;
+    print(f"Time: {elapsed} ms");
+
+    // Verification: print first element, last element, and checksum
+    print(f"First: {arr[0]}");
+    print(f"Last: {arr[arr.len() - 1]}");
+
+    var checksum: i64 = 0l;
+    for (var i: i32 = 0; i < 10; i = i + 1) {
+        checksum = checksum + i64(arr[i]);
+    }
+    print(f"Checksum (sum of first 10): {checksum}");
+
+    return 0;
+}
