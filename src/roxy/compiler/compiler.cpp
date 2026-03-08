@@ -199,11 +199,10 @@ bool Compiler::analyze_all() {
         // After analysis, register this module's exports
         ModuleInfo* mod_info = m_module_registry.find_module(src.name);
         if (mod_info) {
-            // Register public functions as exports
-            // Look up function types from the symbol table
             for (auto* decl : program->declarations) {
-                if (decl && decl->kind == AstKind::DeclFun && decl->fun_decl.is_pub) {
-                    // Look up the function in the symbol table to get its type
+                if (!decl) continue;
+
+                if (decl->kind == AstKind::DeclFun && decl->fun_decl.is_pub) {
                     Symbol* sym = symbols->lookup(decl->fun_decl.name);
                     Type* func_type = sym ? sym->type : nullptr;
 
@@ -211,6 +210,34 @@ bool Compiler::analyze_all() {
                     exp.name = decl->fun_decl.name;
                     exp.kind = ExportKind::Function;
                     exp.type = func_type;
+                    exp.is_native = false;
+                    exp.is_pub = true;
+                    exp.index = static_cast<u32>(mod_info->exports.size());
+                    exp.decl = decl;
+                    mod_info->exports.push_back(exp);
+                }
+                else if (decl->kind == AstKind::DeclStruct && decl->struct_decl.is_pub) {
+                    Symbol* sym = symbols->lookup(decl->struct_decl.name);
+                    Type* struct_type = sym ? sym->type : nullptr;
+
+                    ModuleExport exp;
+                    exp.name = decl->struct_decl.name;
+                    exp.kind = ExportKind::Struct;
+                    exp.type = struct_type;
+                    exp.is_native = false;
+                    exp.is_pub = true;
+                    exp.index = static_cast<u32>(mod_info->exports.size());
+                    exp.decl = decl;
+                    mod_info->exports.push_back(exp);
+                }
+                else if (decl->kind == AstKind::DeclEnum && decl->enum_decl.is_pub) {
+                    Symbol* sym = symbols->lookup(decl->enum_decl.name);
+                    Type* enum_type = sym ? sym->type : nullptr;
+
+                    ModuleExport exp;
+                    exp.name = decl->enum_decl.name;
+                    exp.kind = ExportKind::Enum;
+                    exp.type = enum_type;
                     exp.is_native = false;
                     exp.is_pub = true;
                     exp.index = static_cast<u32>(mod_info->exports.size());

@@ -44,6 +44,7 @@ static u32 get_type_slot_count(Type* type) {
         // 2 slots (8 bytes)
         case TypeKind::I64: case TypeKind::U64:
         case TypeKind::F64:
+        case TypeKind::String:  // Heap-allocated string object (pointer)
         case TypeKind::Uniq:
         case TypeKind::Ref:
             return 2;
@@ -1642,11 +1643,30 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
                 m_symbols.define_imported_function(
                     local_name, exp->type, name.loc,
                     imp.module_path, exp->name, exp->index, exp->is_native);
+            } else if (exp->kind == ExportKind::Enum) {
+                // Define the enum type
+                m_symbols.define(SymbolKind::Enum, local_name, exp->type, name.loc, exp->decl);
+
+                // Also register enum variants so EnumName::Variant works
+                if (exp->type && exp->type->kind == TypeKind::Enum && exp->type->enum_info.decl) {
+                    EnumDecl& enum_decl = exp->type->enum_info.decl->enum_decl;
+                    i64 next_value = 0;
+                    for (auto& variant : enum_decl.variants) {
+                        i64 value = next_value;
+                        if (variant.value && variant.value->kind == AstKind::ExprLiteral) {
+                            LiteralKind lk = variant.value->literal.literal_kind;
+                            if (lk == LiteralKind::I32 || lk == LiteralKind::I64 ||
+                                lk == LiteralKind::U32 || lk == LiteralKind::U64) {
+                                value = variant.value->literal.int_value;
+                            }
+                        }
+                        m_symbols.define_enum_variant(variant.name, exp->type, name.loc, value);
+                        next_value = value + 1;
+                    }
+                }
             } else {
-                // For structs/enums, define as regular types
-                m_symbols.define(static_cast<SymbolKind>(
-                    exp->kind == ExportKind::Struct ? SymbolKind::Struct : SymbolKind::Enum),
-                    local_name, exp->type, name.loc, exp->decl);
+                // Structs
+                m_symbols.define(SymbolKind::Struct, local_name, exp->type, name.loc, exp->decl);
             }
         }
     } else {
