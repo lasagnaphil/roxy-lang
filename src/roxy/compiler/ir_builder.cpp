@@ -1161,6 +1161,12 @@ void IRBuilder::gen_block_stmt(Stmt* stmt) {
 void IRBuilder::gen_if_stmt(Stmt* stmt) {
     IfStmt& is = stmt->if_stmt;
 
+    // Detect else-if chains and use flat codegen to avoid quadratic compilation
+    if (is.else_branch && is.else_branch->kind == AstKind::StmtIf) {
+        gen_if_else_chain(stmt);
+        return;
+    }
+
     // Evaluate condition
     ValueId cond = gen_expr(is.condition);
 
@@ -1273,6 +1279,181 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     set_current_block(merge_block);
 
     // Bind variables to merge block params (phi results)
+    for (const auto& pi : phi_info) {
+        define_local(pi.name, pi.merge_param, pi.type);
+    }
+}
+
+void IRBuilder::gen_if_else_chain(Stmt* stmt) {
+    // Flatten the nested if-else AST into a linear list of (condition, body) pairs
+    struct IfElseBranch {
+        Expr* condition;
+        Stmt* body;
+    };
+    Vector<IfElseBranch> branches;
+    Stmt* default_body = nullptr;
+    Stmt* current = stmt;
+    while (current && current->kind == AstKind::StmtIf) {
+        branches.push_back({current->if_stmt.condition, current->if_stmt.then_branch});
+        if (current->if_stmt.else_branch &&
+            current->if_stmt.else_branch->kind == AstKind::StmtIf) {
+            current = current->if_stmt.else_branch;
+        } else {
+            default_body = current->if_stmt.else_branch;
+            break;
+        }
+    }
+
+    // 1. Collect variables assigned in any branch ONCE (replaces N separate walks)
+    Vector<StringView> all_modified;
+    for (auto& branch : branches) {
+        collect_assigned_vars(branch.body, all_modified);
+    }
+    if (default_body) collect_assigned_vars(default_body, all_modified);
+
+    // 2. Find phi vars: modified vars that exist before the if chain
+    Vector<StringView> phi_vars;
+    for (const auto& name : all_modified) {
+        LocalVar* local_var = find_local(name);
+        if (local_var && local_var->value.is_valid()) {
+            bool found = false;
+            for (const auto& existing : phi_vars) {
+                if (existing == name) { found = true; break; }
+            }
+            if (!found) phi_vars.push_back(name);
+        }
+    }
+
+    // 3. Create merge block with parameters for phi vars
+    IRBlock* merge_block = create_block("endif");
+
+    struct PhiInfo {
+        StringView name;
+        Type* type;
+        ValueId merge_param;
+        ValueId original_value;
+    };
+    Vector<PhiInfo> phi_info;
+    for (const auto& phi_var : phi_vars) {
+        LocalVar* local_var = find_local(phi_var);
+        if (local_var) {
+            ValueId param = m_current_func->new_value();
+            merge_block->params.push_back({param, local_var->type, phi_var});
+            phi_info.push_back({phi_var, local_var->type, param, local_var->value});
+        }
+    }
+
+    // 4. Save variable state ONCE before any branch
+    Vector<tsl::robin_map<StringView, LocalVar>> saved_scopes;
+    saved_scopes.reserve(m_local_scopes.size());
+    for (auto& scope : m_local_scopes) {
+        saved_scopes.push_back(scope);
+    }
+
+    // Save is_moved state for owned locals
+    Vector<bool> saved_is_moved;
+    for (auto& info : m_owned_locals) {
+        saved_is_moved.push_back(info.is_moved);
+    }
+
+    // 5. Create body blocks for each branch + optional default
+    Vector<IRBlock*> body_blocks;
+    for (u32 i = 0; i < branches.size(); i++) {
+        body_blocks.push_back(create_block("then"));
+    }
+    IRBlock* default_block = nullptr;
+    if (default_body) {
+        default_block = create_block("else");
+    }
+
+    // 6. Generate comparison chain: evaluate each condition, branch to body or next check
+    for (u32 i = 0; i < branches.size(); i++) {
+        ValueId cond = gen_expr(branches[i].condition);
+
+        // Determine fallthrough target
+        IRBlock* fallthrough_block = nullptr;
+        if (i + 1 < branches.size()) {
+            fallthrough_block = create_block("elif");
+        } else if (default_block) {
+            fallthrough_block = default_block;
+        } else {
+            fallthrough_block = merge_block;
+        }
+
+        // Branch: if condition true, go to body, else check next
+        if (fallthrough_block == merge_block) {
+            Vector<BlockArgPair> fallthrough_args;
+            for (const auto& pi : phi_info) {
+                fallthrough_args.push_back({pi.original_value});
+            }
+            finish_block_branch(cond, body_blocks[i]->id, fallthrough_block->id,
+                                {}, alloc_span(fallthrough_args));
+        } else {
+            finish_block_branch(cond, body_blocks[i]->id, fallthrough_block->id);
+        }
+
+        // Set next check block as current if there are more branches
+        if (i + 1 < branches.size()) {
+            set_current_block(fallthrough_block);
+        }
+    }
+
+    // 7. Generate branch bodies
+    for (u32 i = 0; i < branches.size(); i++) {
+        // Restore scopes so this branch sees original values
+        m_local_scopes.clear();
+        for (auto& scope : saved_scopes) {
+            m_local_scopes.push_back(scope);
+        }
+
+        // Restore is_moved state
+        for (u32 j = 0; j < saved_is_moved.size() && j < m_owned_locals.size(); j++) {
+            m_owned_locals[j].is_moved = saved_is_moved[j];
+        }
+
+        set_current_block(body_blocks[i]);
+        gen_stmt(branches[i].body);
+
+        // Jump to merge block with phi args if not terminated
+        if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+            Vector<BlockArgPair> args;
+            for (const auto& pi : phi_info) {
+                ValueId val = lookup_local(pi.name);
+                args.push_back({val});
+            }
+            finish_block_goto(merge_block->id, alloc_span(args));
+        }
+    }
+
+    // 8. Generate default body if present
+    if (default_block) {
+        // Restore scopes
+        m_local_scopes.clear();
+        for (auto& scope : saved_scopes) {
+            m_local_scopes.push_back(scope);
+        }
+
+        // Restore is_moved state
+        for (u32 j = 0; j < saved_is_moved.size() && j < m_owned_locals.size(); j++) {
+            m_owned_locals[j].is_moved = saved_is_moved[j];
+        }
+
+        set_current_block(default_block);
+        gen_stmt(default_body);
+
+        // Jump to merge block with phi args if not terminated
+        if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+            Vector<BlockArgPair> args;
+            for (const auto& pi : phi_info) {
+                ValueId val = lookup_local(pi.name);
+                args.push_back({val});
+            }
+            finish_block_goto(merge_block->id, alloc_span(args));
+        }
+    }
+
+    // 9. Continue from merge block, bind phi results
+    set_current_block(merge_block);
     for (const auto& pi : phi_info) {
         define_local(pi.name, pi.merge_param, pi.type);
     }

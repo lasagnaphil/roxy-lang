@@ -105,6 +105,7 @@ private:
     void gen_expr_stmt(Stmt* stmt);
     void gen_block_stmt(Stmt* stmt);
     void gen_if_stmt(Stmt* stmt);
+    void gen_if_else_chain(Stmt* stmt);  // Flattened codegen for else-if chains
     void gen_while_stmt(Stmt* stmt);
     void gen_for_stmt(Stmt* stmt);
     void gen_return_stmt(Stmt* stmt);

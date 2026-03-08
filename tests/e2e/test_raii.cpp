@@ -1819,3 +1819,50 @@ TEST_CASE("E2E - RAII: conditional move in loop is error") {
     TestResult result = run_and_capture(source, "main");
     CHECK(!result.success);  // Should fail: MaybeValid cross-iteration
 }
+
+// ============================================================================
+// Deep else-if chain compilation performance
+// ============================================================================
+
+TEST_CASE("E2E - RAII: deep else-if chain with noncopyable types") {
+    // Regression: 20+ else-if branches with List<uniq T> in scope
+    // previously caused the compiler to hang (quadratic compilation)
+    const char* source = R"CODE(
+        struct Item { value: i32; }
+
+        fun classify(n: i32): i32 {
+            var items: List<uniq Item> = List<uniq Item>();
+            if (n == 1) { items.push(uniq Item()); items[0].value = 10; }
+            else if (n == 2) { items.push(uniq Item()); items[0].value = 20; }
+            else if (n == 3) { items.push(uniq Item()); items[0].value = 30; }
+            else if (n == 4) { items.push(uniq Item()); items[0].value = 40; }
+            else if (n == 5) { items.push(uniq Item()); items[0].value = 50; }
+            else if (n == 6) { items.push(uniq Item()); items[0].value = 60; }
+            else if (n == 7) { items.push(uniq Item()); items[0].value = 70; }
+            else if (n == 8) { items.push(uniq Item()); items[0].value = 80; }
+            else if (n == 9) { items.push(uniq Item()); items[0].value = 90; }
+            else if (n == 10) { items.push(uniq Item()); items[0].value = 100; }
+            else if (n == 11) { items.push(uniq Item()); items[0].value = 110; }
+            else if (n == 12) { items.push(uniq Item()); items[0].value = 120; }
+            else if (n == 13) { items.push(uniq Item()); items[0].value = 130; }
+            else if (n == 14) { items.push(uniq Item()); items[0].value = 140; }
+            else if (n == 15) { items.push(uniq Item()); items[0].value = 150; }
+            else if (n == 16) { items.push(uniq Item()); items[0].value = 160; }
+            else if (n == 17) { items.push(uniq Item()); items[0].value = 170; }
+            else if (n == 18) { items.push(uniq Item()); items[0].value = 180; }
+            else if (n == 19) { items.push(uniq Item()); items[0].value = 190; }
+            else { items.push(uniq Item()); items[0].value = 0; }
+            var result: i32 = 0;
+            if (items.len() > 0) { result = items[0].value; }
+            return result;
+        }
+
+        fun main(): i32 {
+            return classify(5) + classify(15);
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 200);  // 50 + 150
+}
