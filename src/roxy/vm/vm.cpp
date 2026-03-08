@@ -16,6 +16,10 @@ RoxyVM::RoxyVM()
     , register_top(0)
     , local_stack_size(0)
     , local_stack_top(0)
+    , call_stack_size(0)
+    , call_stack_capacity(0)
+    , function_ptrs(nullptr)
+    , function_count(0)
     , running(false)
     , error(nullptr)
     , in_flight_exception(nullptr)
@@ -24,6 +28,10 @@ RoxyVM::RoxyVM()
 {}
 
 RoxyVM::~RoxyVM() {
+    // Clean up function pointer cache
+    delete[] function_ptrs;
+    function_ptrs = nullptr;
+
     // UniquePtr members are automatically cleaned up
     // But we need to call shutdown() on allocator first if it exists
     if (allocator) {
@@ -47,9 +55,7 @@ bool vm_init(RoxyVM* vm, const VMConfig& config) {
     vm->register_top = 0;
 
     // Initialize all registers to zero
-    for (u32 i = 0; i < config.register_file_size; i++) {
-        vm->register_file[i] = 0;
-    }
+    memset(vm->register_file.get(), 0, config.register_file_size * sizeof(u64));
 
     // Initialize local stack (4-byte slots for struct data)
     vm->local_stack_size = config.local_stack_size;
@@ -74,7 +80,19 @@ bool vm_init(RoxyVM* vm, const VMConfig& config) {
         return false;
     }
 
-    vm->call_stack.reserve(config.max_call_depth);
+    // Pre-allocate fixed-size call stack
+    vm->call_stack_capacity = config.max_call_depth;
+    vm->call_stack = UniquePtr<CallFrame[]>(new (std::nothrow) CallFrame[config.max_call_depth]);
+    if (!vm->call_stack) {
+        vm->allocator.reset();
+        vm->register_file.reset();
+        vm->local_stack.reset();
+        return false;
+    }
+    vm->call_stack_size = 0;
+
+    vm->function_ptrs = nullptr;
+    vm->function_count = 0;
 
     return true;
 }
@@ -94,7 +112,14 @@ void vm_destroy(RoxyVM* vm) {
         vm->allocator.reset();
     }
 
-    vm->call_stack.clear();
+    vm->call_stack.reset();
+    vm->call_stack_size = 0;
+    vm->call_stack_capacity = 0;
+
+    delete[] vm->function_ptrs;
+    vm->function_ptrs = nullptr;
+    vm->function_count = 0;
+
     vm->module = nullptr;
     vm->running = false;
     vm->error = nullptr;
@@ -109,6 +134,18 @@ bool vm_load_module(RoxyVM* vm, BCModule* module) {
     for (const BCTypeInfo& type_info : module->types) {
         u32 type_id = register_object_type(type_info.name.data(), type_info.size_bytes, nullptr);
         module->type_ids.push_back(type_id);
+    }
+
+    // Build flat function pointer cache
+    delete[] vm->function_ptrs;
+    vm->function_count = static_cast<u32>(module->functions.size());
+    vm->function_ptrs = new (std::nothrow) const BCFunction*[vm->function_count];
+    if (!vm->function_ptrs) {
+        vm->function_count = 0;
+        return false;
+    }
+    for (u32 i = 0; i < vm->function_count; i++) {
+        vm->function_ptrs[i] = module->functions[i].get();
     }
 
     return true;
@@ -158,13 +195,12 @@ bool vm_call_index(RoxyVM* vm, u32 func_index, Span<Value> args) {
     u64* registers = &vm->register_file[vm->register_top];
     vm->register_top += func->register_count;
 
-    // Clear registers
-    for (u32 i = 0; i < func->register_count; i++) {
-        registers[i] = 0;
-    }
+    // Clear registers (debug only — SSA guarantees write-before-read)
+#ifndef NDEBUG
+    memset(registers, 0, func->register_count * sizeof(u64));
+#endif
 
     // Copy arguments to registers R0, R1, ...
-    // Convert Value to u64 (store raw bits)
     for (u32 i = 0; i < args.size(); i++) {
         registers[i] = args[i].as_u64();
     }
@@ -179,8 +215,7 @@ bool vm_call_index(RoxyVM* vm, u32 func_index, Span<Value> args) {
 
     // Push call frame
     // For top-level call, return_reg is 0 (result goes to R0 of this frame)
-    CallFrame frame(func, func->code.data(), registers, 0, local_stack_base);
-    vm->call_stack.push_back(frame);
+    vm->call_stack[vm->call_stack_size++] = CallFrame(func, func->code.data(), registers, 0, local_stack_base);
 
     // Execute
     vm->running = true;

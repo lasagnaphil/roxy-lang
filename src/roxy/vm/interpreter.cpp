@@ -63,13 +63,13 @@ static u64 load_constant(RoxyVM* vm, const BCFunction* func, u16 index) {
 // runs the interpreter until it returns, then continues.
 static void call_cleanup_destructor(RoxyVM* vm, u16 func_idx, void* obj_ptr) {
     if (!obj_ptr) return;
-    if (func_idx >= vm->module->functions.size()) return;
+    assert(func_idx < vm->function_count);
 
-    const BCFunction* dtor_func = vm->module->functions[func_idx].get();
+    const BCFunction* dtor_func = vm->function_ptrs[func_idx];
     if (!dtor_func) return;
 
     // Check call stack depth limit
-    if (vm->call_stack.size() >= 1024) return;
+    if (vm->call_stack_size >= vm->call_stack_capacity) return;
 
     // Allocate registers for the destructor call
     u32 reg_base = vm->register_top;
@@ -88,9 +88,9 @@ static void call_cleanup_destructor(RoxyVM* vm, u16 func_idx, void* obj_ptr) {
     vm->local_stack_top += dtor_func->local_stack_slots;
 
     // Push call frame
-    u32 saved_depth = vm->call_stack.size();
-    vm->call_stack.push_back(CallFrame(
-        dtor_func, dtor_func->code.data(), dtor_regs, 0, local_stack_base));
+    u32 saved_depth = vm->call_stack_size;
+    vm->call_stack[vm->call_stack_size++] = CallFrame(
+        dtor_func, dtor_func->code.data(), dtor_regs, 0, local_stack_base);
 
     // Run the destructor via nested interpretation
     interpret(vm, saved_depth);
@@ -172,13 +172,13 @@ static void execute_cleanup(RoxyVM* vm, const BCFunction* func,
 #endif
 
 bool interpret(RoxyVM* vm, u32 stop_depth) {
-    if (vm->call_stack.empty()) {
+    if (vm->call_stack_empty()) {
         vm->error = "No call frame";
         return false;
     }
 
     // Cache current frame
-    CallFrame* frame = &vm->call_stack.back();
+    CallFrame* frame = &vm->call_stack_back();
     const BCFunction* func = frame->func;
     const u32* pc = frame->pc;
     u64* regs = frame->registers;
@@ -816,21 +816,21 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         u32 return_reg = frame->return_reg;
         u32 local_stack_base = frame->local_stack_base;
 
-        vm->call_stack.pop_back();
+        --vm->call_stack_size;
         vm->register_top -= func->register_count;
         vm->local_stack_top = local_stack_base;
 
-        if (vm->call_stack.empty()) {
+        if (vm->call_stack_empty()) {
             vm->register_file[0] = result;
             vm->running = false;
             return true;
         }
 
-        if (stop_depth > 0 && vm->call_stack.size() <= stop_depth) {
+        if (stop_depth > 0 && vm->call_stack_size <= stop_depth) {
             return true;
         }
 
-        frame = &vm->call_stack.back();
+        frame = &vm->call_stack_back();
         func = frame->func;
         pc = frame->pc;
         regs = frame->registers;
@@ -842,21 +842,21 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
     OP(RET_VOID) {
         u32 local_stack_base = frame->local_stack_base;
 
-        vm->call_stack.pop_back();
+        --vm->call_stack_size;
         vm->register_top -= func->register_count;
         vm->local_stack_top = local_stack_base;
 
-        if (vm->call_stack.empty()) {
+        if (vm->call_stack_empty()) {
             vm->register_file[0] = 0;
             vm->running = false;
             return true;
         }
 
-        if (stop_depth > 0 && vm->call_stack.size() <= stop_depth) {
+        if (stop_depth > 0 && vm->call_stack_size <= stop_depth) {
             return true;
         }
 
-        frame = &vm->call_stack.back();
+        frame = &vm->call_stack_back();
         func = frame->func;
         pc = frame->pc;
         regs = frame->registers;
@@ -871,17 +871,10 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         u8 arg_count = decode_c(instr);
         u8 first_arg = dst + 1;
 
-        if (func_idx >= vm->module->functions.size()) {
-            vm->error = "Invalid function index";
-            return false;
-        }
+        assert(func_idx < vm->function_count);
+        const BCFunction* callee = vm->function_ptrs[func_idx];
 
-        const BCFunction* callee = vm->module->functions[func_idx].get();
-
-        if (arg_count != callee->param_count) {
-            vm->error = "Wrong number of arguments";
-            return false;
-        }
+        assert(arg_count == callee->param_count);
 
         if (vm->register_top + callee->register_count > vm->register_file_size) {
             vm->error = "Register file overflow";
@@ -893,14 +886,15 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         u64* callee_regs = &vm->register_file[vm->register_top];
         vm->register_top += callee->register_count;
 
-        for (u32 i = 0; i < callee->register_count; i++) {
+        // Copy arguments first (memcpy is safe since src/dst don't overlap)
+        memcpy(callee_regs, &regs[first_arg], callee->param_register_count * sizeof(u64));
+
+        // Zero remaining registers (debug only — SSA guarantees write-before-read)
+#ifndef NDEBUG
+        for (u32 i = callee->param_register_count; i < callee->register_count; i++) {
             callee_regs[i] = 0;
         }
-
-        u32 reg_count = callee->param_register_count;
-        for (u32 i = 0; i < reg_count; i++) {
-            callee_regs[i] = regs[first_arg + i];
-        }
+#endif
 
         u32 local_stack_base = (vm->local_stack_top + 3) & ~3u;
         if (local_stack_base + callee->local_stack_slots > vm->local_stack_size) {
@@ -909,10 +903,9 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         }
         vm->local_stack_top = local_stack_base + callee->local_stack_slots;
 
-        CallFrame new_frame(callee, callee->code.data(), callee_regs, dst, local_stack_base);
-        vm->call_stack.push_back(new_frame);
+        vm->call_stack[vm->call_stack_size++] = CallFrame(callee, callee->code.data(), callee_regs, dst, local_stack_base);
 
-        frame = &vm->call_stack.back();
+        frame = &vm->call_stack_back();
         func = frame->func;
         pc = frame->pc;
         regs = frame->registers;
@@ -1149,11 +1142,11 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         u8 return_reg = frame->return_reg;
         u32 local_stack_base = frame->local_stack_base;
 
-        vm->call_stack.pop_back();
+        --vm->call_stack_size;
         vm->register_top -= func->register_count;
         vm->local_stack_top = local_stack_base;
 
-        if (vm->call_stack.empty()) {
+        if (vm->call_stack_empty()) {
             for (u8 r = 0; r < reg_count; r++) {
                 vm->register_file[r] = ret_vals[r];
             }
@@ -1161,11 +1154,11 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             return true;
         }
 
-        if (stop_depth > 0 && vm->call_stack.size() <= stop_depth) {
+        if (stop_depth > 0 && vm->call_stack_size <= stop_depth) {
             return true;
         }
 
-        frame = &vm->call_stack.back();
+        frame = &vm->call_stack_back();
         func = frame->func;
         pc = frame->pc;
         regs = frame->registers;
@@ -1309,7 +1302,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
                     if (type_matches) {
                         execute_cleanup(vm, func, current_pc, handler.handler_pc, regs);
 
-                        frame = &vm->call_stack.back();
+                        frame = &vm->call_stack_back();
 
                         regs[handler.exception_reg] = reg_from_ptr(exception_ptr);
                         pc = func->code.data() + handler.handler_pc;
@@ -1323,21 +1316,21 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
 
             execute_cleanup(vm, func, current_pc, UINT32_MAX, regs);
 
-            frame = &vm->call_stack.back();
+            frame = &vm->call_stack_back();
 
             u32 local_stack_base = frame->local_stack_base;
-            vm->call_stack.pop_back();
+            --vm->call_stack_size;
             vm->register_top -= func->register_count;
             vm->local_stack_top = local_stack_base;
 
-            if (vm->call_stack.empty()) {
+            if (vm->call_stack_empty()) {
                 object_free(vm, exception_ptr);
                 vm->error = "Unhandled exception";
                 vm->running = false;
                 return false;
             }
 
-            frame = &vm->call_stack.back();
+            frame = &vm->call_stack_back();
             func = frame->func;
             regs = frame->registers;
         }

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
-#include "roxy/core/vector.hpp"
 #include "roxy/core/unique_ptr.hpp"
 #include "roxy/vm/bytecode.hpp"
 #include "roxy/vm/value.hpp"
@@ -52,7 +51,13 @@ struct RoxyVM {
 
     UniquePtr<SlabAllocator> allocator;  // Slab allocator for heap objects
 
-    Vector<CallFrame> call_stack;   // Call stack
+    UniquePtr<CallFrame[]> call_stack;  // Pre-allocated call stack
+    u32 call_stack_size;                // Current call stack depth
+    u32 call_stack_capacity;            // Maximum call stack depth
+
+    const BCFunction** function_ptrs;   // Flat function pointer cache (owned by module)
+    u32 function_count;                 // Number of cached function pointers
+
     bool running;                   // Execution state
     const char* error;              // Error message (null if no error)
 
@@ -60,6 +65,11 @@ struct RoxyVM {
     void* in_flight_exception;          // Exception object being propagated (nullptr if none)
     u32 in_flight_exception_type_id;    // type_id from ObjectHeader
     u32 in_flight_message_fn_idx;       // Function index for message() method (UINT32_MAX = none)
+
+    // Inline call stack accessors
+    CallFrame& call_stack_back() { return call_stack[call_stack_size - 1]; }
+    const CallFrame& call_stack_back() const { return call_stack[call_stack_size - 1]; }
+    bool call_stack_empty() const { return call_stack_size == 0; }
 
     // Constructor and destructor declared here, defined in vm.cpp
     // (destructor must be out-of-line for UniquePtr<SlabAllocator> with forward-declared type)

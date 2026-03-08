@@ -28,7 +28,7 @@ struct FunctionBinder {
 
     // The generated native function that matches NativeFunction signature
     static void invoke(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-        u64* regs = vm->call_stack.back().registers;
+        u64* regs = vm->call_stack_back().registers;
         invoke_impl(vm, regs, dst, first_arg, std::make_index_sequence<RegArity>{});
     }
 

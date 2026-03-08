@@ -664,7 +664,7 @@ TEST_CASE("Interop - Native struct with manual method") {
 
     // Manual native method: receives (self_ptr, ...) in registers
     auto native_product = [](RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-        u64* regs = vm->call_stack.back().registers;
+        u64* regs = vm->call_stack_back().registers;
         CppPoint* self = reinterpret_cast<CppPoint*>(regs[first_arg]);
         i32 result = self->x * self->y;
         regs[dst] = static_cast<u64>(static_cast<i64>(result));

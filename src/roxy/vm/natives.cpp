@@ -19,7 +19,7 @@ static constexpr i64 MAX_COLLECTION_CAPACITY = 1000000;
 // argc >= 1: first arg is element_slot_count
 // argc >= 2: second arg is element_is_inline (0 = false, nonzero = true)
 static void native_list_alloc(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     u32 element_slot_count = (argc >= 1) ? static_cast<u32>(regs[first_arg]) : 2;
     bool element_is_inline = (argc >= 2) ? (regs[first_arg + 1] != 0) : true;
     void* lst = list_alloc(vm, 0, element_slot_count, element_is_inline);
@@ -32,7 +32,7 @@ static void native_list_alloc(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Constructor method. Receives self + optional capacity.
 static void native_list_init(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]); // self
     if (!lst_ptr) {
         vm->error = "list init: null self";
@@ -63,7 +63,7 @@ static void native_list_init(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Destructor method. Receives self, frees element buffer.
 static void native_list_delete(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]); // self
     if (lst_ptr) {
         ListHeader* header = get_list_header(lst_ptr);
@@ -77,7 +77,7 @@ static void native_list_delete(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Native function: list_copy(src: List<T>) -> List<T> (deep copy)
 static void native_list_copy(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* src = reinterpret_cast<void*>(regs[first_arg]);
     if (!src) {
         vm->error = "list_copy: null source";
@@ -98,7 +98,7 @@ static void native_list_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
 
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]);
 
     if (lst_ptr == nullptr) {
@@ -117,7 +117,7 @@ static void native_list_cap(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
 
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]);
 
     if (lst_ptr == nullptr) {
@@ -136,7 +136,7 @@ static void native_list_push(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
 
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]);
 
     if (lst_ptr == nullptr) {
@@ -163,7 +163,7 @@ static void native_list_pop(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
 
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]);
 
     if (lst_ptr == nullptr) {
@@ -194,7 +194,7 @@ static void native_print(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
 
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* str = reinterpret_cast<void*>(regs[first_arg]);
 
     if (str) {
@@ -213,7 +213,7 @@ static void native_str_concat(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
 
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* str1 = reinterpret_cast<void*>(regs[first_arg]);
     void* str2 = reinterpret_cast<void*>(regs[first_arg + 1]);
 
@@ -238,7 +238,7 @@ static void native_str_eq(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
 
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* str1 = reinterpret_cast<void*>(regs[first_arg]);
     void* str2 = reinterpret_cast<void*>(regs[first_arg + 1]);
 
@@ -252,7 +252,7 @@ static void native_str_ne(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
 
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* str1 = reinterpret_cast<void*>(regs[first_arg]);
     void* str2 = reinterpret_cast<void*>(regs[first_arg + 1]);
 
@@ -266,7 +266,7 @@ static void native_str_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
 
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* str = reinterpret_cast<void*>(regs[first_arg]);
 
     if (!str) {
@@ -281,7 +281,7 @@ static void native_str_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Native function: bool$$to_string(val: bool) -> string
 static void native_bool_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     bool val = regs[first_arg] != 0;
     const char* s = val ? "true" : "false";
     u32 len = val ? 4 : 5;
@@ -291,7 +291,7 @@ static void native_bool_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Native function: i32$$to_string(val: i32) -> string
 static void native_i32_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     i32 val = static_cast<i32>(regs[first_arg]);
     char buf[32];
     int len = snprintf(buf, sizeof(buf), "%d", val);
@@ -301,7 +301,7 @@ static void native_i32_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Native function: i64$$to_string(val: i64) -> string
 static void native_i64_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     i64 val = static_cast<i64>(regs[first_arg]);
     char buf[32];
     int len = snprintf(buf, sizeof(buf), "%lld", (long long)val);
@@ -311,7 +311,7 @@ static void native_i64_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Native function: f32$$to_string(val: f32) -> string
 static void native_f32_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     f32 val;
     memcpy(&val, &regs[first_arg], sizeof(f32));
     char buf[64];
@@ -322,7 +322,7 @@ static void native_f32_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Native function: f64$$to_string(val: f64) -> string
 static void native_f64_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     f64 val;
     memcpy(&val, &regs[first_arg], sizeof(f64));
     char buf[64];
@@ -333,7 +333,7 @@ static void native_f64_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Native function: string$$to_string(val: string) -> string (identity)
 static void native_string_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     regs[dst] = regs[first_arg];
 }
 
@@ -350,52 +350,52 @@ static u64 splitmix64(u64 x) {
 }
 
 static void native_bool_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     regs[dst] = static_cast<i64>(regs[first_arg] != 0 ? 1 : 0);
 }
 
 static void native_i8_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
 }
 
 static void native_i16_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
 }
 
 static void native_i32_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
 }
 
 static void native_i64_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
 }
 
 static void native_u8_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
 }
 
 static void native_u16_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
 }
 
 static void native_u32_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
 }
 
 static void native_u64_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
 }
 
 static void native_f32_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     f32 val;
     memcpy(&val, &regs[first_arg], sizeof(f32));
     if (val == 0.0f) val = 0.0f; // Normalize -0
@@ -405,7 +405,7 @@ static void native_f32_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 static void native_f64_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     f64 val;
     memcpy(&val, &regs[first_arg], sizeof(f64));
     if (val == 0.0) val = 0.0; // Normalize -0
@@ -415,7 +415,7 @@ static void native_f64_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 static void native_string_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* str = reinterpret_cast<void*>(regs[first_arg]);
     if (!str) {
         regs[dst] = 0;
@@ -436,7 +436,7 @@ static void native_string_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Native function: list index (get element by index)
 static void native_list_index(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]);
     if (!lst_ptr) {
         vm->error = "list index: null list reference";
@@ -457,7 +457,7 @@ static void native_list_index(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Native function: list index_mut (set element by index)
 static void native_list_index_mut(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* lst_ptr = reinterpret_cast<void*>(regs[first_arg]);
     if (!lst_ptr) {
         vm->error = "list index_mut: null list reference";
@@ -486,7 +486,7 @@ static MapKeyKind key_kind_from_i32(i32 val) {
 }
 
 static void native_map_alloc(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     // Allocate with Integer key kind by default; constructor sets the real key_kind
     void* map = map_alloc(vm, MapKeyKind::Integer, 0);
     if (!map) {
@@ -498,7 +498,7 @@ static void native_map_alloc(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Constructor: receives self, key_kind, optional capacity
 static void native_map_init(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]); // self
     if (!map_ptr) {
         vm->error = "map init: null self";
@@ -538,7 +538,7 @@ static void native_map_init(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 static void native_map_delete(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     if (map_ptr) {
         MapHeader* header = get_map_header(map_ptr);
@@ -555,7 +555,7 @@ static void native_map_delete(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 static void native_map_copy(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* src = reinterpret_cast<void*>(regs[first_arg]);
     if (!src) {
         vm->error = "map_copy: null source";
@@ -570,7 +570,7 @@ static void native_map_copy(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 static void native_map_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     if (!map_ptr) {
         vm->error = "map_len: null map reference";
@@ -580,7 +580,7 @@ static void native_map_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 static void native_map_contains(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     if (!map_ptr) {
         vm->error = "map_contains: null map reference";
@@ -591,7 +591,7 @@ static void native_map_contains(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 static void native_map_get(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     if (!map_ptr) {
         vm->error = "map_get: null map reference";
@@ -606,7 +606,7 @@ static void native_map_get(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 static void native_map_insert(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     if (!map_ptr) {
         vm->error = "map_insert: null map reference";
@@ -619,7 +619,7 @@ static void native_map_insert(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 static void native_map_remove(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     if (!map_ptr) {
         vm->error = "map_remove: null map reference";
@@ -630,7 +630,7 @@ static void native_map_remove(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 static void native_map_clear(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     if (!map_ptr) {
         vm->error = "map_clear: null map reference";
@@ -641,7 +641,7 @@ static void native_map_clear(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 static void native_map_keys(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     if (!map_ptr) {
         vm->error = "map_keys: null map reference";
@@ -656,7 +656,7 @@ static void native_map_keys(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 static void native_map_values(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     if (!map_ptr) {
         vm->error = "map_values: null map reference";
@@ -672,7 +672,7 @@ static void native_map_values(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Native function: map index (get value by key)
 static void native_map_index(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     if (!map_ptr) {
         vm->error = "map index: null map reference";
@@ -688,7 +688,7 @@ static void native_map_index(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // Native function: map index_mut (insert/update key-value pair)
 static void native_map_index_mut(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     if (!map_ptr) {
         vm->error = "map index_mut: null map reference";
@@ -703,7 +703,7 @@ static void native_map_index_mut(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 // ===== Internal map bucket iteration (for cleanup of noncopyable elements) =====
 
 static void native_map_iter_capacity(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     if (!map_ptr) {
         regs[dst] = 0;
@@ -714,7 +714,7 @@ static void native_map_iter_capacity(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) 
 }
 
 static void native_map_iter_next_occupied(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     i32 idx = static_cast<i32>(regs[first_arg + 1]);
     const MapHeader* header = get_map_header(map_ptr);
@@ -727,7 +727,7 @@ static void native_map_iter_next_occupied(RoxyVM* vm, u8 dst, u8 argc, u8 first_
 }
 
 static void native_map_iter_key_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     i32 idx = static_cast<i32>(regs[first_arg + 1]);
     const MapHeader* header = get_map_header(map_ptr);
@@ -735,7 +735,7 @@ static void native_map_iter_key_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 }
 
 static void native_map_iter_value_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     i32 idx = static_cast<i32>(regs[first_arg + 1]);
     const MapHeader* header = get_map_header(map_ptr);
@@ -745,7 +745,7 @@ static void native_map_iter_value_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) 
 // Native function: str_char_at(s: string, i: i32) -> i32
 // Returns the ASCII code of the character at the given index.
 static void native_str_char_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* str = reinterpret_cast<void*>(regs[first_arg]);
     if (!str) {
         vm->error = "str_char_at: null string";
@@ -764,7 +764,7 @@ static void native_str_char_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 // Native function: str_substr(s: string, start: i32, len: i32) -> string
 // Extracts a substring starting at 'start' with the given length.
 static void native_str_substr(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* str = reinterpret_cast<void*>(regs[first_arg]);
     if (!str) {
         vm->error = "str_substr: null string";
@@ -789,7 +789,7 @@ static void native_str_substr(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 // Native function: str_to_f64(s: string) -> f64
 // Parses a string as a floating-point number.
 static void native_str_to_f64(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* str = reinterpret_cast<void*>(regs[first_arg]);
     if (!str) {
         vm->error = "str_to_f64: null string";
@@ -804,7 +804,7 @@ static void native_str_to_f64(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 // Native function: str_from_code(code: i32) -> string
 // Creates a single-character string from an ASCII code.
 static void native_str_from_code(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     i32 code = static_cast<i32>(regs[first_arg]);
     char ch = static_cast<char>(code);
     void* result = string_alloc(vm, &ch, 1);
@@ -818,7 +818,7 @@ static void native_str_from_code(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 // Native function: clock() -> f64
 // Returns current time in seconds since an arbitrary epoch.
 static void native_clock(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     auto now = std::chrono::high_resolution_clock::now();
     auto duration = now.time_since_epoch();
     f64 seconds = std::chrono::duration<f64>(duration).count();
@@ -828,7 +828,7 @@ static void native_clock(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 // Native function: read_file(path: string) -> string
 // Reads the entire contents of a file as a string.
 static void native_read_file(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
-    u64* regs = vm->call_stack.back().registers;
+    u64* regs = vm->call_stack_back().registers;
     void* path_str = reinterpret_cast<void*>(regs[first_arg]);
     if (!path_str) {
         vm->error = "read_file: null path";
