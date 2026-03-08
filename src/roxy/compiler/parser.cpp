@@ -742,7 +742,7 @@ Expr* Parser::primary() {
         }
 
         // Check for struct literal: Type { ... }
-        if (match(TokenKind::LeftBrace)) {
+        if (!m_suppress_struct_literal && match(TokenKind::LeftBrace)) {
             SourceLocation loc = name_token.loc;
             Vector<FieldInit> fields;
             if (!check(TokenKind::RightBrace)) {
@@ -1101,29 +1101,13 @@ Stmt* Parser::delete_statement() {
 Stmt* Parser::when_statement() {
     SourceLocation loc = m_previous.loc;
 
-    // Parse discriminant expression
-    // We use a simpler parsing approach: identifier with optional member access
-    // This avoids the ambiguity where "when c { ... }" could be parsed as struct literal
-    Token name_token = consume(TokenKind::Identifier, "Expected discriminant after 'when'");
+    // Parse discriminant as a general expression.
+    // Suppress struct literal parsing so that "when x { ... }" doesn't
+    // try to parse "x { ... }" as a struct literal.
+    m_suppress_struct_literal = true;
+    Expr* discriminant = expression();
+    m_suppress_struct_literal = false;
     if (m_has_error) return nullptr;
-
-    Expr* discriminant = alloc<Expr>();
-    discriminant->kind = AstKind::ExprIdentifier;
-    discriminant->loc = name_token.loc;
-    discriminant->identifier.name = name_token.text();
-
-    // Handle member access (e.g., obj.field)
-    while (match(TokenKind::Dot)) {
-        Token member_token = consume(TokenKind::Identifier, "Expected member name after '.'");
-        if (m_has_error) return nullptr;
-
-        Expr* get_expr = alloc<Expr>();
-        get_expr->kind = AstKind::ExprGet;
-        get_expr->loc = member_token.loc;
-        get_expr->get.object = discriminant;
-        get_expr->get.name = member_token.text();
-        discriminant = get_expr;
-    }
 
     consume(TokenKind::LeftBrace, "Expected '{' after 'when' discriminant");
     if (m_has_error) return nullptr;

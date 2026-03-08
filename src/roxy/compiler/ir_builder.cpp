@@ -3298,6 +3298,24 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         } else {
             emit_set_field(struct_ptr, field_info.name, field_info.slot_offset, field_info.slot_count, value, field_info.type);
         }
+
+        // Nullify source variable when moving a noncopyable value into a regular field
+        if (field_info.type && field_info.type->noncopyable() &&
+            value_expr && value_expr->kind == AstKind::ExprIdentifier) {
+            StringView source_name = value_expr->identifier.name;
+            OwnedLocalInfo* owned_info = find_owned_local(source_name);
+            if (owned_info && !owned_info->is_moved) {
+                if (field_info.type->kind == TypeKind::Uniq) {
+                    ValueId null_val = emit_const_null();
+                    define_local(source_name, null_val, field_info.type);
+                }
+                if (owned_info->initial_value.is_valid()) {
+                    IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+                    if (nullify) nullify->unary = owned_info->initial_value;
+                }
+                owned_info->is_moved = true;
+            }
+        }
     }
 
     // Initialize variant fields from when clauses
@@ -3311,7 +3329,8 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
 
                 auto it = provided_fields.find(variant_field_info.name);
                 if (it != provided_fields.end()) {
-                    ValueId value = gen_expr(it->second);
+                    Expr* value_expr = it->second;
+                    ValueId value = gen_expr(value_expr);
 
                     // Compute the actual offset: union_slot_offset + variant field's offset
                     u32 actual_slot_offset = clause.union_slot_offset + variant_field_info.slot_offset;
@@ -3322,6 +3341,24 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
                         emit_struct_copy(field_addr, value, variant_field_info.slot_count);
                     } else {
                         emit_set_field(struct_ptr, variant_field_info.name, actual_slot_offset, variant_field_info.slot_count, value, variant_field_info.type);
+                    }
+
+                    // Nullify source variable when moving a noncopyable value into a variant field
+                    if (variant_field_info.type && variant_field_info.type->noncopyable() &&
+                        value_expr->kind == AstKind::ExprIdentifier) {
+                        StringView source_name = value_expr->identifier.name;
+                        OwnedLocalInfo* owned_info = find_owned_local(source_name);
+                        if (owned_info && !owned_info->is_moved) {
+                            if (variant_field_info.type->kind == TypeKind::Uniq) {
+                                ValueId null_val = emit_const_null();
+                                define_local(source_name, null_val, variant_field_info.type);
+                            }
+                            if (owned_info->initial_value.is_valid()) {
+                                IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+                                if (nullify) nullify->unary = owned_info->initial_value;
+                            }
+                            owned_info->is_moved = true;
+                        }
                     }
                 }
             }
@@ -3880,7 +3917,7 @@ void IRBuilder::emit_single_field_destroy(ValueId obj_ptr, StringView field_name
 
 void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
     StructTypeInfo& struct_info = struct_type->struct_info;
-    // Process fields in reverse order (LIFO, like C++ member destruction)
+    // Process regular fields in reverse order (LIFO, like C++ member destruction)
     for (i32 i = static_cast<i32>(struct_info.fields.size()) - 1; i >= 0; i--) {
         const FieldInfo& field = struct_info.fields[i];
         if (!field.type) continue;
@@ -3889,6 +3926,85 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
             emit_single_field_destroy(self_ptr, field.name,
                 field.slot_offset, field.slot_count, field.type);
         }
+    }
+
+    // Process variant fields in when clauses (discriminant-aware cleanup)
+    for (const auto& clause : struct_info.when_clauses) {
+        // Check if any variant in this clause has noncopyable fields
+        bool has_noncopyable_variant = false;
+        for (const auto& variant : clause.variants) {
+            for (const auto& variant_field : variant.fields) {
+                if (variant_field.type && (variant_field.type->kind == TypeKind::Uniq ||
+                                           variant_field.type->noncopyable())) {
+                    has_noncopyable_variant = true;
+                    break;
+                }
+            }
+            if (has_noncopyable_variant) break;
+        }
+        if (!has_noncopyable_variant) continue;
+
+        // Load the discriminant value
+        const FieldInfo* disc_field = nullptr;
+        for (const auto& field : struct_info.fields) {
+            if (field.name == clause.discriminant_name) {
+                disc_field = &field;
+                break;
+            }
+        }
+        if (!disc_field) continue;
+
+        ValueId disc_val = emit_get_field(self_ptr, disc_field->name,
+            disc_field->slot_offset, disc_field->slot_count, disc_field->type);
+
+        // Create a merge block for after all variant cleanup
+        IRBlock* merge_block = create_block("variant_cleanup_done");
+
+        // For each variant, emit: if disc == variant_value, clean up that variant's fields
+        for (u32 vi = 0; vi < clause.variants.size(); vi++) {
+            const auto& variant = clause.variants[vi];
+
+            // Check if this variant has any noncopyable fields
+            bool variant_has_cleanup = false;
+            for (const auto& variant_field : variant.fields) {
+                if (variant_field.type && (variant_field.type->kind == TypeKind::Uniq ||
+                                           variant_field.type->noncopyable())) {
+                    variant_has_cleanup = true;
+                    break;
+                }
+            }
+            if (!variant_has_cleanup) continue;
+
+            // Compare discriminant to this variant's value
+            ValueId variant_val = emit_const_int(
+                static_cast<i32>(variant.discriminant_value), disc_field->type);
+            ValueId is_match = emit_binary(IROp::EqI, disc_val, variant_val, m_types.bool_type());
+
+            IRBlock* cleanup_block = create_block("variant_cleanup");
+            IRBlock* next_block = create_block("variant_next");
+
+            finish_block_branch(is_match, cleanup_block->id, next_block->id);
+
+            // Emit cleanup for this variant's noncopyable fields
+            set_current_block(cleanup_block);
+            for (i32 fi = static_cast<i32>(variant.fields.size()) - 1; fi >= 0; fi--) {
+                const auto& variant_field = variant.fields[fi];
+                if (!variant_field.type) continue;
+                if (variant_field.type->kind == TypeKind::Uniq ||
+                    variant_field.type->noncopyable()) {
+                    u32 actual_offset = clause.union_slot_offset + variant_field.slot_offset;
+                    emit_single_field_destroy(self_ptr, variant_field.name,
+                        actual_offset, variant_field.slot_count, variant_field.type);
+                }
+            }
+            finish_block_goto(merge_block->id);
+
+            set_current_block(next_block);
+        }
+
+        // Fall through to merge block from last next_block
+        finish_block_goto(merge_block->id);
+        set_current_block(merge_block);
     }
 }
 

@@ -28,6 +28,7 @@ private:
     Token m_current;
     Token m_previous;
     bool m_has_error;
+    bool m_suppress_struct_literal = false;  // Suppresses identifier { } struct literal parsing
     ParseError m_error;
 
     // Token operations

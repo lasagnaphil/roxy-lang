@@ -742,13 +742,28 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             }
             if (has_default_dtor) continue;
 
-            // Check if any field needs cleanup
+            // Check if any field needs cleanup (regular fields or variant fields)
             bool needs_cleanup = false;
             for (const auto& field : struct_info.fields) {
                 if (!field.type) continue;
                 if (field.type->noncopyable()) {
                     needs_cleanup = true;
                     break;
+                }
+            }
+            if (!needs_cleanup) {
+                // Also check variant fields in when clauses
+                for (const auto& clause : struct_info.when_clauses) {
+                    for (const auto& variant : clause.variants) {
+                        for (const auto& variant_field : variant.fields) {
+                            if (variant_field.type && variant_field.type->noncopyable()) {
+                                needs_cleanup = true;
+                                break;
+                            }
+                        }
+                        if (needs_cleanup) break;
+                    }
+                    if (needs_cleanup) break;
                 }
             }
             if (!needs_cleanup) continue;
@@ -990,6 +1005,20 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                         break;
                     }
                 }
+                if (!needs_cleanup) {
+                    for (const auto& clause : concrete_info.when_clauses) {
+                        for (const auto& variant : clause.variants) {
+                            for (const auto& variant_field : variant.fields) {
+                                if (variant_field.type && variant_field.type->noncopyable()) {
+                                    needs_cleanup = true;
+                                    break;
+                                }
+                            }
+                            if (needs_cleanup) break;
+                        }
+                        if (needs_cleanup) break;
+                    }
+                }
                 if (needs_cleanup) {
                     DestructorInfo synthetic_dtor;
                     synthetic_dtor.name = StringView();
@@ -1139,6 +1168,20 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         if (field.type->noncopyable()) {
             needs_cleanup = true;
             break;
+        }
+    }
+    if (!needs_cleanup) {
+        for (const auto& clause : struct_type_info.when_clauses) {
+            for (const auto& variant : clause.variants) {
+                for (const auto& variant_field : variant.fields) {
+                    if (variant_field.type && variant_field.type->noncopyable()) {
+                        needs_cleanup = true;
+                        break;
+                    }
+                }
+                if (needs_cleanup) break;
+            }
+            if (needs_cleanup) break;
         }
     }
     if (needs_cleanup) {
