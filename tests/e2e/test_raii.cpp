@@ -1652,3 +1652,170 @@ TEST_CASE("E2E - RAII: method calls on noncopyable list work") {
     CHECK(result.success);
     CHECK(result.stdout_output == "len=2\n~Item(1)\n~Item(2)\n");
 }
+
+// ============================================================================
+// Variable-to-variable move semantics
+// ============================================================================
+
+TEST_CASE("E2E - RAII: variable-to-variable move marks source as moved") {
+    // After `b = a`, using `a` should be a compile error (use-after-move)
+    const char* source = R"CODE(
+        struct Node {
+            value: i32;
+        }
+
+        fun main(): i32 {
+            var a: uniq Node = uniq Node();
+            a.value = 10;
+            var b: uniq Node = uniq Node();
+            b = a;
+            return a.value;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(!result.success);  // Should fail: use-after-move on `a`
+}
+
+TEST_CASE("E2E - RAII: variable-to-variable move works correctly") {
+    // After `b = a`, using `b` should work fine
+    const char* source = R"CODE(
+        struct Node {
+            value: i32;
+        }
+
+        fun main(): i32 {
+            var a: uniq Node = uniq Node();
+            a.value = 42;
+            var b: uniq Node = uniq Node();
+            b = a;
+            return b.value;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - RAII: linked list building in while loop") {
+    // Move head into field, reassign head, repeat — should work
+    const char* source = R"CODE(
+        struct Node {
+            value: i32;
+            next: uniq Node;
+        }
+
+        fun main(): i32 {
+            var head: uniq Node = uniq Node();
+            head.value = 0;
+            head.next = nil;
+
+            var i: i32 = 1;
+            while (i <= 3) {
+                var new_node: uniq Node = uniq Node();
+                new_node.value = i;
+                new_node.next = head;
+                head = new_node;
+                i = i + 1;
+            }
+
+            var result: i32 = head.value;
+            return result;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 3);
+}
+
+TEST_CASE("E2E - RAII: linked list building in for loop") {
+    // Same pattern with for loop
+    const char* source = R"CODE(
+        struct Node {
+            value: i32;
+            next: uniq Node;
+        }
+
+        fun main(): i32 {
+            var head: uniq Node = uniq Node();
+            head.value = 0;
+            head.next = nil;
+
+            for (var i: i32 = 1; i <= 3; i = i + 1) {
+                var new_node: uniq Node = uniq Node();
+                new_node.value = i;
+                new_node.next = head;
+                head = new_node;
+            }
+
+            var result: i32 = head.value;
+            return result;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 3);
+}
+
+TEST_CASE("E2E - RAII: move in loop without reassignment is error") {
+    // Moving a uniq in a loop body without reassigning should be a compile error
+    const char* source = R"CODE(
+        struct Node {
+            value: i32;
+            child: uniq Node;
+        }
+
+        fun take_ownership(n: uniq Node): i32 {
+            return n.value;
+        }
+
+        fun main(): i32 {
+            var node: uniq Node = uniq Node();
+            node.value = 5;
+
+            var i: i32 = 0;
+            while (i < 2) {
+                take_ownership(node);
+                i = i + 1;
+            }
+            return 0;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(!result.success);  // Should fail: use-after-move on next iteration
+}
+
+TEST_CASE("E2E - RAII: conditional move in loop is error") {
+    // Moving in one branch of an if inside a loop — MaybeValid cross-iteration
+    const char* source = R"CODE(
+        struct Node {
+            value: i32;
+            child: uniq Node;
+        }
+
+        fun take_ownership(n: uniq Node): i32 {
+            return n.value;
+        }
+
+        fun main(): i32 {
+            var node: uniq Node = uniq Node();
+            node.value = 5;
+
+            var i: i32 = 0;
+            while (i < 4) {
+                if (i == 2) {
+                    take_ownership(node);
+                }
+                i = i + 1;
+            }
+            return 0;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(!result.success);  // Should fail: MaybeValid cross-iteration
+}

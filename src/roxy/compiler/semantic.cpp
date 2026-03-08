@@ -2923,10 +2923,43 @@ void SemanticAnalyzer::analyze_while_stmt(Stmt* stmt) {
         check_boolean(cond_type, ws.condition->loc);
     }
 
+    // Save move states before loop body
+    MoveStateSnapshot pre_loop_states = save_move_states();
+
     m_symbols.push_loop_scope();
     analyze_stmt(ws.body);
     check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
     m_symbols.pop_scope();
+
+    MoveStateSnapshot post_body_states = save_move_states();
+
+    // Cross-iteration check: if a variable was Live before the loop
+    // but is Moved/MaybeValid after the body, it would be use-after-move
+    // on the next iteration.
+    for (auto& [name, pre_state] : pre_loop_states) {
+        if (pre_state != MoveState::Live) continue;
+        auto post_it = post_body_states.find(name);
+        if (post_it != post_body_states.end() && post_it->second == MoveState::Moved) {
+            // Check if the variable was reassigned (marked live) then moved again —
+            // that's fine (e.g. linked list building pattern). Only error if it's
+            // moved without any reassignment path.
+            // The mark_live in analyze_assign_expr fires before mark_moved for the source,
+            // so if the variable is the target of an assignment AND moved as a source,
+            // it ends up Moved — which is correct. But if it's ONLY moved (never reassigned),
+            // that's a cross-iteration error.
+            error_fmt(stmt->loc,
+                "variable '{}' is moved in loop body without reassignment; "
+                "would be use-after-move on next iteration", name);
+        }
+        if (post_it != post_body_states.end() && post_it->second == MoveState::MaybeValid) {
+            error_fmt(stmt->loc,
+                "variable '{}' may be moved in loop body without reassignment", name);
+        }
+    }
+
+    // After loop: merge pre-loop with post-body (loop may execute 0 times)
+    restore_move_states(pre_loop_states);
+    merge_move_states(post_body_states, pre_loop_states);
 }
 
 void SemanticAnalyzer::analyze_for_stmt(Stmt* stmt) {
@@ -2954,10 +2987,34 @@ void SemanticAnalyzer::analyze_for_stmt(Stmt* stmt) {
         analyze_expr(fs.increment);
     }
 
+    // Save move states after initializer/condition/increment, before loop body
+    MoveStateSnapshot pre_loop_states = save_move_states();
+
     m_symbols.push_loop_scope();
     analyze_stmt(fs.body);
     check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
     m_symbols.pop_scope();
+
+    MoveStateSnapshot post_body_states = save_move_states();
+
+    // Cross-iteration check: same logic as while loop
+    for (auto& [name, pre_state] : pre_loop_states) {
+        if (pre_state != MoveState::Live) continue;
+        auto post_it = post_body_states.find(name);
+        if (post_it != post_body_states.end() && post_it->second == MoveState::Moved) {
+            error_fmt(stmt->loc,
+                "variable '{}' is moved in loop body without reassignment; "
+                "would be use-after-move on next iteration", name);
+        }
+        if (post_it != post_body_states.end() && post_it->second == MoveState::MaybeValid) {
+            error_fmt(stmt->loc,
+                "variable '{}' may be moved in loop body without reassignment", name);
+        }
+    }
+
+    // After loop: merge pre-loop with post-body (loop may execute 0 times)
+    restore_move_states(pre_loop_states);
+    merge_move_states(post_body_states, pre_loop_states);
 
     check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
     m_symbols.pop_scope();
@@ -4797,13 +4854,16 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
         mark_live(assign_expr.target->identifier.name);
     }
 
-    // Assignment to a field from a uniq/move-semantic variable: mark source as moved
-    // Only when the target field also needs move semantics (not for weak refs)
-    if (assign_expr.target->kind == AstKind::ExprGet &&
-        assign_expr.value->kind == AstKind::ExprIdentifier &&
-        value_type && value_type->noncopyable() &&
-        target_type && target_type->noncopyable()) {
-        mark_moved(assign_expr.value->identifier.name);
+    // Assignment from a noncopyable identifier: mark source as moved
+    // Applies to both variable-to-variable and variable-to-field assignments
+    if (assign_expr.value->kind == AstKind::ExprIdentifier &&
+        value_type && value_type->noncopyable()) {
+        // For field targets, only mark moved when the field type also needs move semantics
+        if (assign_expr.target->kind == AstKind::ExprIdentifier ||
+            (assign_expr.target->kind == AstKind::ExprGet &&
+             target_type && target_type->noncopyable())) {
+            mark_moved(assign_expr.value->identifier.name);
+        }
     }
 
     // Validate index_mut exists for index assignment targets

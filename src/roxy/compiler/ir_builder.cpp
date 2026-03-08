@@ -2910,6 +2910,27 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
 
         // Normal variable assignment - in SSA, we create a new value
         define_local(name, value, expr->resolved_type);
+
+        // Move semantics: if value is a noncopyable identifier, mark source as moved.
+        // Unlike field assignment, we do NOT emit Nullify here because the target
+        // variable now shares the same SSA value/register as the source.
+        // Nullifying would corrupt the target's register.
+        if (assign_expr.value->kind == AstKind::ExprIdentifier) {
+            Type* value_type = assign_expr.value->resolved_type;
+            if (value_type && value_type->noncopyable()) {
+                StringView value_name = assign_expr.value->identifier.name;
+                OwnedLocalInfo* owned_info = find_owned_local(value_name);
+                if (owned_info && !owned_info->is_moved) {
+                    if (value_type->kind == TypeKind::Uniq) {
+                        // Update SSA mapping so future reads of source see null
+                        ValueId null_val = emit_const_null();
+                        define_local(value_name, null_val, value_type);
+                    }
+                    owned_info->is_moved = true;
+                }
+            }
+        }
+
         return value;
     }
     else if (assign_expr.target->kind == AstKind::ExprGet) {
