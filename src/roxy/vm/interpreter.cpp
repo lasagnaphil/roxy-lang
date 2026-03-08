@@ -943,17 +943,23 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             vm->error = "list index: null list reference";
             return false;
         }
-        i64 idx = reg_as_i64(regs[decode_c(instr)]);
+        u64 idx = regs[decode_c(instr)];
         ListHeader* header = get_list_header(lst_ptr);
-        if (idx < 0 || static_cast<u64>(idx) >= header->length) {
+        if (idx >= header->length) {
             vm->error = "List index out of bounds";
             return false;
         }
         if (header->element_is_inline) {
-            u64 val = 0;
-            memcpy(&val, list_element_ptr(header, static_cast<u32>(idx)),
-                   sizeof(u32) * header->element_slot_count);
-            regs[a] = val;
+            u32* elem = header->elements + static_cast<u32>(idx) * header->element_slot_count;
+            if (header->element_slot_count == 1) {
+                regs[a] = static_cast<u64>(elem[0]);
+            } else if (header->element_slot_count == 2) {
+                regs[a] = static_cast<u64>(elem[0]) | (static_cast<u64>(elem[1]) << 32);
+            } else {
+                u64 val = 0;
+                memcpy(&val, elem, sizeof(u32) * header->element_slot_count);
+                regs[a] = val;
+            }
         } else {
             regs[a] = reinterpret_cast<u64>(list_element_ptr(header, static_cast<u32>(idx)));
         }
@@ -968,16 +974,23 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             vm->error = "list index_mut: null list reference";
             return false;
         }
-        i64 idx = reg_as_i64(regs[b]);
+        u64 idx = regs[b];
         ListHeader* header = get_list_header(lst_ptr);
-        if (idx < 0 || static_cast<u64>(idx) >= header->length) {
+        if (idx >= header->length) {
             vm->error = "List index out of bounds";
             return false;
         }
         if (header->element_is_inline) {
             u8 c = decode_c(instr);
-            memcpy(list_element_ptr(header, static_cast<u32>(idx)),
-                   &regs[c], sizeof(u32) * header->element_slot_count);
+            u32* elem = header->elements + static_cast<u32>(idx) * header->element_slot_count;
+            if (header->element_slot_count == 1) {
+                elem[0] = static_cast<u32>(regs[c]);
+            } else if (header->element_slot_count == 2) {
+                elem[0] = static_cast<u32>(regs[c]);
+                elem[1] = static_cast<u32>(regs[c] >> 32);
+            } else {
+                memcpy(elem, &regs[c], sizeof(u32) * header->element_slot_count);
+            }
         } else {
             u32* src = reinterpret_cast<u32*>(regs[decode_c(instr)]);
             memcpy(list_element_ptr(header, static_cast<u32>(idx)),
