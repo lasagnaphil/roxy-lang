@@ -337,6 +337,12 @@ private:
     // Returns false and reports error if it is (field-level moves are unsound).
     bool check_not_field_move(Expr* expr, SourceLocation loc);
 
+    // Consume a noncopyable value: validates field-move legality and marks
+    // the source identifier as moved. Call this at every point that transfers
+    // ownership of a noncopyable value (var init, return, delete, call args,
+    // assignment, struct literal fields).
+    void consume_noncopyable(Expr* expr, SourceLocation loc);
+
     // Mark a uniq variable as moved
     void mark_moved(StringView name);
 

@@ -1378,14 +1378,9 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
             coerce_int_literal(var_decl.initializer, var_type);
         }
 
-        // Cannot initialize an owned variable from a struct field (would create dual ownership)
+        // Consume noncopyable source (field-move check + mark source as moved)
         if (var_type && var_type->noncopyable()) {
-            check_not_field_move(var_decl.initializer, decl->loc);
-
-            // Mark the source variable as moved (transfer of ownership)
-            if (var_decl.initializer->kind == AstKind::ExprIdentifier) {
-                mark_moved(var_decl.initializer->identifier.name);
-            }
+            consume_noncopyable(var_decl.initializer, decl->loc);
         }
     } else if (!var_type) {
         error(decl->loc, "variable declaration requires type annotation or initializer");
@@ -1439,14 +1434,45 @@ bool SemanticAnalyzer::check_not_moved(StringView name, SourceLocation loc) {
 }
 
 bool SemanticAnalyzer::check_not_field_move(Expr* expr, SourceLocation loc) {
-    if (expr->kind == AstKind::ExprGet) {
-        Type* type = expr->resolved_type;
-        if (type && type->noncopyable()) {
-            error(loc, "cannot move out of a struct field; consider borrowing with 'ref' instead");
-            return false;
+    if (expr->kind != AstKind::ExprGet) return true;
+
+    Type* field_type = expr->resolved_type;
+    if (!field_type || !field_type->noncopyable()) return true;
+
+    // Allow moving a noncopyable field out of a local value-struct variable.
+    // After the move, the parent variable is marked as moved (unusable).
+    // The IR builder will emit cleanup for any remaining noncopyable fields.
+    GetExpr& get_expr = expr->get;
+    if (get_expr.object->kind == AstKind::ExprIdentifier) {
+        StringView parent_name = get_expr.object->identifier.name;
+        Type* parent_type = get_expr.object->resolved_type;
+
+        // Only allow for local value structs (not uniq/ref/weak references)
+        if (parent_type && !parent_type->is_reference() && parent_type->is_struct()) {
+            // Parent must be live (not already moved)
+            auto it = m_move_states.find(parent_name);
+            if (it != m_move_states.end() && it->second == MoveState::Live) {
+                expr->is_field_move = true;
+                mark_moved(parent_name);
+                return true;
+            }
         }
     }
-    return true;
+
+    error(loc, "cannot move out of a struct field; consider borrowing with 'ref' instead");
+    return false;
+}
+
+void SemanticAnalyzer::consume_noncopyable(Expr* expr, SourceLocation loc) {
+    if (!expr) return;
+    Type* type = expr->resolved_type;
+    if (!type || !type->noncopyable()) return;
+
+    if (!check_not_field_move(expr, loc)) return;
+
+    if (expr->kind == AstKind::ExprIdentifier) {
+        mark_moved(expr->identifier.name);
+    }
 }
 
 void SemanticAnalyzer::mark_moved(StringView name) {
@@ -3110,15 +3136,8 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
             coerce_int_literal(rs.value, expected);
         }
 
-        // Mark returned owned variable as moved (ownership transferred to caller)
-        if (actual && actual->noncopyable()) {
-            // Cannot return a field with move semantics (would create dual ownership)
-            check_not_field_move(rs.value, stmt->loc);
-
-            if (rs.value->kind == AstKind::ExprIdentifier) {
-                mark_moved(rs.value->identifier.name);
-            }
-        }
+        // Consume noncopyable return value (field-move check + mark source as moved)
+        consume_noncopyable(rs.value, stmt->loc);
     } else {
         if (!expected->is_void()) {
             error(stmt->loc, "non-void function must return a value");
@@ -3212,10 +3231,8 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
         }
     }
 
-    // Mark the deleted variable as moved
-    if (ds.expr->kind == AstKind::ExprIdentifier) {
-        mark_moved(ds.expr->identifier.name);
-    }
+    // Consume the deleted variable (mark as moved)
+    consume_noncopyable(ds.expr, stmt->loc);
 }
 
 void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
@@ -3748,15 +3765,7 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
 
         // Move semantics: passing owned arg to owned param transfers ownership
         if (param_types[i] && param_types[i]->noncopyable()) {
-            // Cannot move out of a struct field
-            if (!check_not_field_move(arg.expr, arg.expr->loc)) continue;
-
-            if (arg.expr->kind == AstKind::ExprIdentifier) {
-                Type* arg_type = arg.expr->resolved_type;
-                if (arg_type && arg_type->noncopyable()) {
-                    mark_moved(arg.expr->identifier.name);
-                }
-            }
+            consume_noncopyable(arg.expr, arg.expr->loc);
         }
     }
 }
@@ -4935,11 +4944,6 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
     } else {
         check_assignable(target_type, value_type, assign_expr.value->loc);
         coerce_int_literal(assign_expr.value, target_type);
-
-        // Cannot assign a field with move semantics to an owned target (dual ownership)
-        if (target_type && target_type->noncopyable()) {
-            check_not_field_move(assign_expr.value, assign_expr.value->loc);
-        }
     }
 
     // Reassignment to owned variable: mark it live again (auto-destroy of old value happens in IR)
@@ -4948,16 +4952,9 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
         mark_live(assign_expr.target->identifier.name);
     }
 
-    // Assignment from a noncopyable identifier: mark source as moved
-    // Applies to both variable-to-variable and variable-to-field assignments
-    if (assign_expr.value->kind == AstKind::ExprIdentifier &&
-        value_type && value_type->noncopyable()) {
-        // For field targets, only mark moved when the field type also needs move semantics
-        if (assign_expr.target->kind == AstKind::ExprIdentifier ||
-            (assign_expr.target->kind == AstKind::ExprGet &&
-             target_type && target_type->noncopyable())) {
-            mark_moved(assign_expr.value->identifier.name);
-        }
+    // Consume noncopyable source (field-move check + mark source as moved)
+    if (assign_expr.op == AssignOp::Assign && target_type && target_type->noncopyable()) {
+        consume_noncopyable(assign_expr.value, assign_expr.value->loc);
     }
 
     // Validate index_mut exists for index assignment targets
@@ -5150,6 +5147,11 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
             check_assignable(field_type, value_type, fi.loc);
             coerce_int_literal(fi.value, field_type);
 
+            // Consume noncopyable source (field-move check + mark source as moved)
+            if (field_type && field_type->noncopyable()) {
+                consume_noncopyable(fi.value, fi.loc);
+            }
+
             // Track discriminant value if this is a discriminant field
             for (const auto& clause : type->struct_info.when_clauses) {
                 if (clause.discriminant_name == fi.name) {
@@ -5182,6 +5184,11 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
             Type* value_type = analyze_expr(fi.value);
             check_assignable(variant_field_info->type, value_type, fi.loc);
             coerce_int_literal(fi.value, variant_field_info->type);
+
+            // Consume noncopyable source (field-move check + mark source as moved)
+            if (variant_field_info->type && variant_field_info->type->noncopyable()) {
+                consume_noncopyable(fi.value, fi.loc);
+            }
             continue;
         }
 
