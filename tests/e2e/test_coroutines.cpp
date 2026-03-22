@@ -388,7 +388,7 @@ TEST_CASE("E2E - Coroutine yield in nested loops") {
 
     // (0,0)=0, (0,1)=1, (1,0)=10, (1,1)=11
     // a=0, b=1, c=10, d=11 → 0*1000 + 1*100 + 10*10 + 11 = 211
-    TestResult result = run_and_capture(source, "main", {}, true);
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.value == 211);
 }

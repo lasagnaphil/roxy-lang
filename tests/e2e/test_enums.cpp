@@ -28,7 +28,7 @@ TEST_CASE("E2E - Enum variant access") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main", {}, true);
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.value == 0);
 }

@@ -1452,7 +1452,6 @@ bool SemanticAnalyzer::check_not_field_move(Expr* expr, SourceLocation loc) {
             // Parent must be live (not already moved)
             auto it = m_move_states.find(parent_name);
             if (it != m_move_states.end() && it->second == MoveState::Live) {
-                expr->is_field_move = true;
                 mark_moved(parent_name);
                 return true;
             }

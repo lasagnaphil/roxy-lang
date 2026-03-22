@@ -70,11 +70,11 @@ TEST_CASE("E2E - Ackermann function (deeply recursive)") {
         }
 
         fun main(): i32 {
-            print(f"{ackermann(0, 0)}");
-            print(f"{ackermann(1, 1)}");
-            print(f"{ackermann(2, 2)}");
-            print(f"{ackermann(3, 2)}");
-            return 0;
+            var a: i32 = ackermann(0, 0);
+            var b: i32 = ackermann(1, 1);
+            var c: i32 = ackermann(2, 2);
+            var d: i32 = ackermann(3, 2);
+            return a + b + c + d;
         }
     )";
 
@@ -90,7 +90,8 @@ TEST_CASE("E2E - Ackermann function (deeply recursive)") {
     vm_load_module(&vm, module);
 
     CHECK(vm_call(&vm, "main", {}));
-    CHECK(vm_get_result(&vm).as_int == 0);
+    // ackermann(0,0)=1, ackermann(1,1)=3, ackermann(2,2)=7, ackermann(3,2)=29
+    CHECK(vm_get_result(&vm).as_int == 1 + 3 + 7 + 29);
 
     vm_destroy(&vm);
     delete module;

@@ -795,7 +795,7 @@ TEST_CASE("E2E - Struct with f32 fields") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main", {}, true);
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.value == 4);  // 1.5 + 2.5 = 4.0 -> 4
 }
@@ -814,7 +814,7 @@ TEST_CASE("E2E - Struct with mixed i32 and f32 fields") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main", {}, true);
+    TestResult result = run_and_capture(source, "main");
     CHECK(result.success);
     CHECK(result.value == 25);  // 10 * 2.5 = 25.0 -> 25
 }
