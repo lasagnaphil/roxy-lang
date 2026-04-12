@@ -1,0 +1,17 @@
+{
+    "name": "Roxy Dev",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "remoteUser": "vscode",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "twxs.cmake"
+            ]
+        }
+    },
+    "postCreateCommand": "mkdir -p build && cd build && cmake .. -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+}
