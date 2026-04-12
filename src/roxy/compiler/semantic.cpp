@@ -1915,7 +1915,14 @@ void SemanticAnalyzer::analyze_constructor_body(Decl* decl, Type* struct_type) {
 
 void SemanticAnalyzer::analyze_destructor_body(Decl* decl, Type* struct_type) {
     auto& dd = decl->destructor_decl;
+    // Track delete destructor context to forbid throw inside it.
+    // Named destructors (dd.name is non-empty) are explicitly called and can throw.
+    bool prev_in_delete_destructor = m_in_delete_destructor;
+    if (dd.name.empty()) {
+        m_in_delete_destructor = true;
+    }
     analyze_member_body(decl, struct_type, dd.params, dd.body, m_types.void_type());
+    m_in_delete_destructor = prev_in_delete_destructor;
 }
 
 void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
@@ -3346,6 +3353,11 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
 
 void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
     ThrowStmt& ts = stmt->throw_stmt;
+
+    if (m_in_delete_destructor) {
+        error(stmt->loc, "'throw' is not allowed inside a delete destructor");
+        return;
+    }
 
     Type* expr_type = analyze_expr(ts.expr);
     if (!expr_type || expr_type->is_error()) return;

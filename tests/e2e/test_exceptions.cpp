@@ -1143,3 +1143,71 @@ TEST_CASE("E2E - Exception cleanup: temporary uniq destroyed on unwind") {
     CHECK(result.stdout_output.find("del:99") != String::npos);
 }
 
+// ============================================================================
+// Throw in delete destructor (compile-time ban)
+// ============================================================================
+
+TEST_CASE("E2E - Exception throw in delete destructor rejected") {
+    SUBCASE("Direct throw in delete destructor") {
+        const char* source = R"(
+            struct MyError {
+                code: i32;
+            }
+
+            fun MyError.message(): string for Exception {
+                return "error";
+            }
+
+            struct Widget {
+                id: i32;
+            }
+
+            fun delete Widget() {
+                throw MyError { code = 1 };
+            }
+
+            fun main(): i32 {
+                var w: uniq Widget = uniq Widget { id = 1 };
+                return 0;
+            }
+        )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);
+    }
+
+    SUBCASE("Throw in named destructor is allowed") {
+        const char* source = R"(
+            struct MyError {
+                code: i32;
+            }
+
+            fun MyError.message(): string for Exception {
+                return "error";
+            }
+
+            struct Widget {
+                id: i32;
+            }
+
+            fun delete Widget.close() {
+                throw MyError { code = 1 };
+            }
+
+            fun main(): i32 {
+                var w: uniq Widget = uniq Widget { id = 1 };
+                try {
+                    delete w.close();
+                } catch (e: MyError) {
+                    return e.code;
+                }
+                return 0;
+            }
+        )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+    }
+}
+

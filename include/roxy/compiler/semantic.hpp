@@ -253,6 +253,9 @@ private:
     // The type params of the current generic template being checked
     Span<TypeParam> m_active_type_params;
 
+    // Delete destructor tracking (throw is forbidden inside delete destructors)
+    bool m_in_delete_destructor = false;
+
     // Finally depth tracking (for yield-in-finally validation)
     u32 m_in_finally_depth = 0;
 

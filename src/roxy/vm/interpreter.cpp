@@ -197,6 +197,9 @@ static void execute_cleanup(RoxyVM* vm, const BCFunction* func,
 
         // Null-ify the register to prevent double-cleanup
         regs[record.register_idx] = 0;
+
+        // If a cleanup destructor caused a fatal error, abort remaining cleanups
+        if (vm->error) return;
     }
 }
 
@@ -1403,8 +1406,21 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             return false;
         }
 
+        // If an exception is already being unwound (e.g. a destructor threw during
+        // cleanup), this is a fatal error — like C++ std::terminate.
+        if (vm->in_flight_exception) {
+            object_free(vm, exception_ptr);
+            vm->error = "exception thrown during exception unwinding (destructor threw)";
+            return false;
+        }
+
         ObjectHeader* header = get_header_from_data(exception_ptr);
         u32 exception_type_id = header->type_id;
+
+        // Mark this exception as in-flight so nested throws (from cleanup
+        // destructors) are detected as fatal double-throw errors.
+        vm->in_flight_exception = exception_ptr;
+        vm->in_flight_exception_type_id = exception_type_id;
 
         frame->pc = pc;
 
@@ -1425,8 +1441,14 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
                     if (type_matches) {
                         execute_cleanup(vm, func, current_pc, handler.handler_pc, regs);
 
+                        if (vm->error) {
+                            vm->in_flight_exception = nullptr;
+                            return false;
+                        }
+
                         frame = &vm->call_stack_back();
 
+                        vm->in_flight_exception = nullptr;
                         regs[handler.exception_reg] = reg_from_ptr(exception_ptr);
                         pc = func->code.data() + handler.handler_pc;
                         handler_found = true;
@@ -1439,6 +1461,11 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
 
             execute_cleanup(vm, func, current_pc, UINT32_MAX, regs);
 
+            if (vm->error) {
+                vm->in_flight_exception = nullptr;
+                return false;
+            }
+
             frame = &vm->call_stack_back();
 
             u32 local_stack_base = frame->local_stack_base;
@@ -1447,6 +1474,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             vm->local_stack_top = local_stack_base;
 
             if (vm->call_stack_empty()) {
+                vm->in_flight_exception = nullptr;
                 object_free(vm, exception_ptr);
                 vm->error = "Unhandled exception";
                 return false;

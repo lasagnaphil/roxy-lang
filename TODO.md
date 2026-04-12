@@ -14,7 +14,7 @@ Last updated: 2026-04-12
 
 ## Medium Priority
 
-- [ ] Destructor throw during exception unwinding loses original exception — `call_cleanup_destructor()` overwrites `vm->in_flight_exception` if the destructor throws, silently losing the original exception (`interpreter.cpp:61-97`)
+- [x] Destructor throw during exception unwinding loses original exception — fixed: compile-time ban on `throw` in delete destructors + runtime safety net via `in_flight_exception` guard
 - [ ] Ternary expressions skip move-state merging — unlike `if`/`else`, ternary expressions don't save/restore/merge move states, so conditional moves in ternary branches may not be detected (`semantic.cpp:3685-3728`)
 - [ ] `alloc_large()` only zeros `size` bytes, not page-aligned `alloc_size` bytes — padding between `size` and `alloc_size` contains uninitialized memory, unlike slab path which zeros the full slot (`slab_allocator.cpp:229`)
 - [ ] Self-assignment of noncopyable values causes use-after-free — `x = x` for noncopyable types: IR emits auto-delete of old value then assigns the now-dangling pointer; semantic analyzer should reject this case (`semantic.cpp:4883-4980`)
