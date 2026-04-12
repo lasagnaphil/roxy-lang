@@ -101,6 +101,32 @@ TEST_CASE("Unit - SlabAllocator large object") {
     allocator.shutdown();
 }
 
+TEST_CASE("Unit - SlabAllocator large object free preserves tracking") {
+    SlabAllocator allocator;
+    CHECK(allocator.init());
+
+    // Allocate a large object (> 4096 bytes)
+    u64 gen;
+    void* ptr = allocator.alloc(8192, &gen);
+    CHECK(ptr != nullptr);
+    CHECK(allocator.owns(ptr));
+
+    // Free it — should tombstone but keep tracked
+    allocator.free(ptr);
+    CHECK(allocator.owns(ptr));
+
+    // Tombstoned memory should read as zeros (remap_to_zero)
+    u8 byte = *reinterpret_cast<u8*>(ptr);
+    CHECK(byte == 0);
+
+    // Double-free should be idempotent (no assert)
+    allocator.free(ptr);
+    CHECK(allocator.owns(ptr));
+
+    // Shutdown releases the vaddr range cleanly
+    allocator.shutdown();
+}
+
 TEST_CASE("Unit - SlabAllocator random generation uniqueness") {
     SlabAllocator allocator;
     CHECK(allocator.init());

@@ -52,6 +52,12 @@ struct Slab {
     }
 };
 
+// Tracking info for a large object (> 4KB)
+struct LargeObjectInfo {
+    u32 page_count : 31;   // max ~2B pages (~8 TB @ 4KB pages)
+    u32 tombstoned : 1;    // true after free_large; vaddr still mapped (zeros)
+};
+
 // Main slab allocator
 // Provides memory allocation with tombstoning support for weak references
 struct SlabAllocator {
@@ -66,8 +72,8 @@ struct SlabAllocator {
     Vector<UniquePtr<Slab>> size_classes[NUM_SIZE_CLASSES];
 
     // Large object tracking (> 4KB)
-    // Maps pointer to page count for deallocation
-    tsl::robin_map<void*, u32> large_objects;
+    // Maps pointer to page count + tombstone state for deallocation
+    tsl::robin_map<void*, LargeObjectInfo> large_objects;
 
     // Random generation for weak references
     RandomGen rng;

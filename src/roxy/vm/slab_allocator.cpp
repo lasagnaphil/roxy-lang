@@ -104,9 +104,9 @@ void SlabAllocator::shutdown() {
         size_classes[i].clear();
     }
 
-    // Free large objects
-    for (auto& [ptr, page_count] : large_objects) {
-        VirtualMemoryOps::release(ptr, static_cast<u64>(page_count) * m_page_size);
+    // Free large objects (both live and tombstoned)
+    for (auto& [ptr, info] : large_objects) {
+        VirtualMemoryOps::release(ptr, static_cast<u64>(info.page_count) * m_page_size);
     }
     large_objects.clear();
 
@@ -218,7 +218,10 @@ void* SlabAllocator::alloc_large(u32 size, u64* out_generation) {
     }
 
     // Track the allocation
-    large_objects[mem] = page_count;
+    LargeObjectInfo info;
+    info.page_count = page_count;
+    info.tombstoned = 0;
+    large_objects[mem] = info;
     total_allocated++;
 
     // Generate random generation (must be non-zero; 0 means dead)
@@ -294,19 +297,21 @@ void SlabAllocator::free_in_slab(Slab* slab, u32 slot_idx) {
 void SlabAllocator::free_large(void* ptr) {
     auto it = large_objects.find(ptr);
     if (it == large_objects.end()) {
-        return;  // Not a large object (or already freed)
+        return;  // Not a large object
     }
 
-    u32 page_count = it->second;
-    u64 size = static_cast<u64>(page_count) * m_page_size;
+    if (it->second.tombstoned) {
+        return;  // Already freed (idempotent double-free)
+    }
+
+    u64 size = static_cast<u64>(it->second.page_count) * m_page_size;
 
     // Zero the memory and make it read-only (tombstone behavior)
+    // Keep mapped so weak refs can safely read zeros
     VirtualMemoryOps::remap_to_zero(ptr, size);
 
-    // Remove from tracking (but don't release - keep mapped for weak refs)
-    // In a production system, we might want to track these separately
-    // and release them when memory pressure is high
-    large_objects.erase(it);
+    // Mark as tombstoned but keep tracked — shutdown() will release the vaddr
+    it.value().tombstoned = 1;
     total_tombstoned++;
 }
 
