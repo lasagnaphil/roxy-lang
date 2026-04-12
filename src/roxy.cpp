@@ -7,6 +7,8 @@
 #include "roxy/core/vector.hpp"
 #include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/compiler.hpp"
+#include "roxy/compiler/ssa_ir.hpp"
+#include "roxy/vm/bytecode.hpp"
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/string.hpp"
@@ -29,6 +31,8 @@ static void print_usage(const char* program) {
     fprintf(stderr, "\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  --help, -h     Show this help message\n");
+    fprintf(stderr, "  --dump-ir      Print SSA IR to stderr after compilation\n");
+    fprintf(stderr, "  --dump-bc      Print bytecode disassembly to stderr after compilation\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "The program must define a main() function as the entry point.\n");
     fprintf(stderr, "Imported modules are auto-discovered from the source file's directory.\n");
@@ -37,6 +41,8 @@ static void print_usage(const char* program) {
 struct Options {
     const char* source_file = nullptr;
     int program_args_start = 0;  // Index into argv where program args begin (0 = none)
+    bool dump_ir = false;
+    bool dump_bc = false;
 };
 
 static bool parse_args(int argc, char** argv, Options& opts) {
@@ -44,6 +50,10 @@ static bool parse_args(int argc, char** argv, Options& opts) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(argv[0]);
             return false;
+        } else if (strcmp(argv[i], "--dump-ir") == 0) {
+            opts.dump_ir = true;
+        } else if (strcmp(argv[i], "--dump-bc") == 0) {
+            opts.dump_bc = true;
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
             return false;
@@ -236,6 +246,27 @@ int main(int argc, char** argv) {
             fprintf(stderr, "  %s\n", error);
         }
         return 1;
+    }
+
+    // Dump IR if requested
+    if (opts.dump_ir) {
+        for (u32 i = 0; i < compiler.module_count(); i++) {
+            IRModule* ir_module = compiler.ir_module(i);
+            if (ir_module) {
+                String ir_str;
+                ir_module_to_string(ir_module, ir_str);
+                ir_str.push_back('\0');
+                fprintf(stderr, "%s\n", ir_str.data());
+            }
+        }
+    }
+
+    // Dump bytecode if requested
+    if (opts.dump_bc) {
+        String bc_str;
+        disassemble_module(module, bc_str);
+        bc_str.push_back('\0');
+        fprintf(stderr, "%s\n", bc_str.data());
     }
 
     // Find main() function

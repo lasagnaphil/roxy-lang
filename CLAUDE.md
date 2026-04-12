@@ -419,7 +419,7 @@ cd build
 
 On Windows, use `.exe` extension.
 
-**Note for Claude Code:** C backend tests (`*C Backend*`) invoke the system C++ compiler to compile and run generated code. These require running outside the sandbox (`dangerouslyDisableSandbox: true`). All other tests run fine inside the sandbox.
+**Note for Claude Code:** C backend tests (`*C Backend*`) invoke the system C++ compiler to compile and run generated code. These require running outside the sandbox (`dangerouslyDisableSandbox: true`). ASAN builds also require running outside the sandbox for the symbolizer to work. All other tests run fine inside the sandbox.
 
 ## Documentation
 

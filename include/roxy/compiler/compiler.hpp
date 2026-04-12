@@ -52,6 +52,10 @@ public:
     bool has_errors() const { return !m_errors.empty(); }
     const Vector<const char*>& errors() const { return m_errors; }
 
+    // Access IR modules (valid after compile() succeeds)
+    u32 module_count() const { return static_cast<u32>(m_module_states.size()); }
+    IRModule* ir_module(u32 index) const { return m_module_states[index].ir_module; }
+
 private:
     // Compilation phases
     bool parse_all();
