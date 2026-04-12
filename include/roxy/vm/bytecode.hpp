@@ -147,9 +147,10 @@ enum class Opcode : u8 {
     WEAK_CHECK  = 0xE2,     // dst = weak_valid(src1)
     WEAK_CREATE = 0xE3,     // dst,dst+1 = weak_create(src) — extracts generation
 
-    // 0xD2-0xD3: Exception Handling
+    // 0xD2-0xD4: Exception Handling and Typed Delete
     THROW       = 0xD2,     // throw regs[a] (exception object pointer)
     CALL_EXC_MSG = 0xD3,    // dst = exception_message(regs[src]) - call stored message fn ptr
+    DELETE      = 0xD4,     // ABI: typed delete regs[a] using delete_descs[imm16]
 
     // 0xF0-0xFD: Debug/Error
     TRAP        = 0xF0,     // runtime error trap (for variant field access checks)
@@ -280,30 +281,27 @@ struct BCExceptionHandler {
     u8 exception_reg;     // Register to store exception ptr in handler
 };
 
-// Describes how to clean up one value during exception unwinding.
-// Forms a tree via indices into BCFunction::element_cleanups[].
-// Mirrors the 5 cases in IRBuilder::emit_element_destroy().
-struct BCElementCleanup {
-    u8 kind;                  // 0=DEL_OBJ, 1=CALL_DTOR+DEL_OBJ, 2=CALL_DTOR,
-                              // 3=LIST (iterate + recurse), 4=MAP (iterate + recurse)
-    u16 dtor_fn_idx;          // kinds 1, 2: destructor function index
-    u16 elem_cleanup_idx;     // kind 3: element descriptor index
-                              // kind 4: value descriptor index (0xFFFF = copyable values)
-    u16 key_cleanup_idx;      // kind 4 only: key descriptor index (0xFFFF = copyable keys)
+// Describes how to delete one noncopyable value. Forms a tree via indices into
+// BCFunction::delete_descs[] for recursive container cleanup. Used by both
+// the DELETE opcode (normal scope-exit) and exception unwinding.
+struct BCDeleteDesc {
+    u8 kind;              // 0=DEL_OBJ, 1=CALL_DTOR+DEL_OBJ, 2=CALL_DTOR,
+                          // 3=LIST (iterate + recurse), 4=MAP (iterate + recurse)
+    u16 dtor_fn_idx;      // kinds 1, 2: destructor function index
+    u16 elem_desc_idx;    // kind 3: element descriptor index
+                          // kind 4: value descriptor index (0xFFFF = n/a)
+    u16 key_desc_idx;     // kind 4 only: key descriptor index (0xFFFF = copyable keys)
 };
 
-// Cleanup record for exception-path cleanup of owned locals
-// During exception handling, the VM iterates these in reverse (LIFO) to clean up
-// owned variables whose scope spans the throw site but not the handler site.
+// Cleanup record for exception-path cleanup of owned locals.
+// During exception unwinding, the VM iterates these in reverse (LIFO) to
+// delete owned variables whose scope spans the throw site but not the handler.
 struct BCCleanupRecord {
     u32 scope_start_pc;       // PC where variable becomes live (inclusive)
     u32 scope_end_pc;         // PC where variable's normal cleanup occurs (exclusive)
     u8 register_idx;          // Register holding the owned value
-    u8 kind;                  // 0=DEL_OBJ, 1=CALL_DTOR+DEL_OBJ, 2=CALL_DTOR, 3=LIST_CLEANUP, 4=MAP_CLEANUP
-    union {
-        u16 destructor_fn_idx;    // kinds 0-2: destructor function index
-        u16 elem_cleanup_idx;     // kinds 3-4: root index into BCFunction::element_cleanups[]
-    };
+    u8 _pad;
+    u16 delete_desc_idx;      // Index into BCFunction::delete_descs[]
 };
 
 // Bytecode function
@@ -318,7 +316,7 @@ struct BCFunction {
     Vector<BCConstant> constants; // Constant pool
     Vector<BCExceptionHandler> exception_handlers; // Exception handler table
     Vector<BCCleanupRecord> cleanup_records;        // Cleanup records for exception handling
-    Vector<BCElementCleanup> element_cleanups;     // Cleanup descriptors for container elements (tree via indices)
+    Vector<BCDeleteDesc> delete_descs;             // Typed delete descriptors (tree via indices)
 
     BCFunction() : param_count(0), param_register_count(0), register_count(0), local_stack_slots(0), ret_reg_count(1) {}
 };

@@ -419,6 +419,8 @@ cd build
 
 On Windows, use `.exe` extension.
 
+**Note for Claude Code:** C backend tests (`*C Backend*`) invoke the system C++ compiler to compile and run generated code. These require running outside the sandbox (`dangerouslyDisableSandbox: true`). All other tests run fine inside the sandbox.
+
 ## Documentation
 
 - `CLAUDE.md` - Quick reference for Claude Code (this file)

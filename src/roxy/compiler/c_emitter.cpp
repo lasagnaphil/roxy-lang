@@ -991,9 +991,18 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         }
 
         case IROp::Delete: {
-            out.append("    roxy_free(");
-            emit_value(inst->unary, out);
-            out.append(");\n");
+            if (!inst->type || inst->type->kind == TypeKind::Void) {
+                // Raw free (explicit delete after manual destructor call)
+                out.append("    roxy_free(");
+                emit_value(inst->unary, out);
+                out.append(");\n");
+            } else {
+                // TODO: emit inline typed delete for C backend
+                // For now, emit raw free as a fallback
+                out.append("    roxy_free(");
+                emit_value(inst->unary, out);
+                out.append("); /* TODO: typed delete */\n");
+            }
             return;
         }
 
