@@ -102,6 +102,11 @@ private:
     // Block offsets for jump resolution
     tsl::robin_map<u32, u32> m_block_offsets;  // BlockId.id -> code offset
 
+    // Nullify positions: tracks where ownership was transferred for each value.
+    // Used to narrow cleanup record scopes (Nullify is a compile-time annotation,
+    // not a runtime instruction).
+    tsl::robin_map<u32, u32> m_nullify_pcs;  // ValueId.id -> PC where ownership transferred
+
     // Patch jump offsets after all blocks are emitted
     void patch_jumps();
 

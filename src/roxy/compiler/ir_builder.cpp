@@ -2729,7 +2729,9 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         } else {
             args[i] = gen_expr(arg.expr);
 
-            // Consume noncopyable temporaries (ownership transfers to callee)
+            // Consume noncopyable temporaries (ownership transfers to callee).
+            // Nullify is a compile-time annotation — it ends the cleanup record
+            // scope so exception cleanup skips this value after the transfer.
             if (arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
                 consume_temp_noncopyable(args[i]);
             }
@@ -3379,7 +3381,7 @@ ValueId IRBuilder::gen_constructor_call(Expr* expr) {
 
             define_local(temp_name, obj, result_type);
             u32 scope_depth = static_cast<u32>(m_local_scopes.size());
-            m_owned_locals.push_back({temp_name, result_type, scope_depth, false,
+            m_owned_locals.push_back({temp_name, result_type, scope_depth, false, true,
                                       m_current_block->id, obj});
         }
     } else {
@@ -3496,7 +3498,7 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
 
             define_local(temp_name, struct_ptr, result_type);
             u32 scope_depth = static_cast<u32>(m_local_scopes.size());
-            m_owned_locals.push_back({temp_name, result_type, scope_depth, false,
+            m_owned_locals.push_back({temp_name, result_type, scope_depth, false, true,
                                       m_current_block->id, struct_ptr});
         }
     } else {
@@ -3864,12 +3866,14 @@ void IRBuilder::gen_var_decl(Decl* decl) {
 
     // Track owned locals for implicit destruction (uniq refs and value structs with destructors)
     if (type && type->noncopyable()) {
-        // If the initializer was a temporary, consume it (named variable takes over tracking)
-        consume_temp_noncopyable(value);
+        // If the initializer was a temporary, consume it (variable takes over tracking).
+        // Pass adopted_by_variable=true: the variable's cleanup record handles cleanup,
+        // so no Nullify annotation is needed for the temp.
+        consume_temp_noncopyable(value, true);
 
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
-        m_owned_locals.push_back({var_decl.name, type, scope_depth, false, current_block_id, value});
+        m_owned_locals.push_back({var_decl.name, type, scope_depth, false, false, current_block_id, value});
 
         // Mark the source variable as moved when initializing from an identifier
         if (var_decl.initializer && var_decl.initializer->kind == AstKind::ExprIdentifier) {
@@ -3956,6 +3960,9 @@ void IRBuilder::pop_scope() {
         for (u32 i = first_in_scope; i < m_owned_locals.size(); i++) {
             auto& info = m_owned_locals[i];
             if (info.scope_depth < depth) continue;
+            // Skip moved entries — their ownership was transferred and a different
+            // cleanup record (or the callee) is responsible for cleanup.
+            if (info.is_moved) continue;
             if (info.start_block.is_valid() && end_block.is_valid() && info.initial_value.is_valid()) {
                 m_current_func->cleanup_info.push_back(
                     {info.initial_value, info.type, info.start_block, end_block});
@@ -3994,17 +4001,20 @@ IRBuilder::OwnedLocalInfo* IRBuilder::find_owned_local(StringView name) {
     return nullptr;
 }
 
-void IRBuilder::consume_temp_noncopyable(ValueId val) {
-    // Find the temporary in m_owned_locals by ValueId (temporaries have __tmp names)
+void IRBuilder::consume_temp_noncopyable(ValueId val, bool adopted_by_variable) {
+    // Find the temporary in m_owned_locals by ValueId (temporaries have __tmp names).
+    // Only matches temporaries, not named variables that happen to share the same ValueId.
     for (i32 i = static_cast<i32>(m_owned_locals.size()) - 1; i >= 0; i--) {
         auto& info = m_owned_locals[i];
-        if (info.initial_value.id == val.id && !info.is_moved) {
-            // Mark as moved and nullify the register so the exception-path
-            // cleanup record becomes a no-op (prevents double-free when the
-            // callee takes ownership).
+        if (info.initial_value.id == val.id && !info.is_moved && info.is_temporary) {
             info.is_moved = true;
-            IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-            if (nullify) nullify->unary = val;
+            // When adopted by a variable (same register), the variable's cleanup record
+            // handles destruction — no Nullify needed. Otherwise, emit a Nullify annotation
+            // so the bytecode builder ends the cleanup record scope at this point.
+            if (!adopted_by_variable) {
+                IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+                if (nullify) nullify->unary = val;
+            }
             return;
         }
     }
@@ -4430,7 +4440,7 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
         if (bp.type && bp.type->noncopyable()) {
             u32 scope_depth = static_cast<u32>(m_local_scopes.size());
             BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
-            m_owned_locals.push_back({bp.name, bp.type, scope_depth, false, current_block_id, bp.value});
+            m_owned_locals.push_back({bp.name, bp.type, scope_depth, false, false, current_block_id, bp.value});
         }
     }
 
@@ -4481,6 +4491,7 @@ void IRBuilder::end_function_body() {
         for (u32 i = first_in_scope; i < m_owned_locals.size(); i++) {
             auto& info = m_owned_locals[i];
             if (info.scope_depth < depth) continue;
+            if (info.is_moved) continue;
             if (info.start_block.is_valid() && end_block.is_valid() && info.initial_value.is_valid()) {
                 m_current_func->cleanup_info.push_back(
                     {info.initial_value, info.type, info.start_block, end_block});

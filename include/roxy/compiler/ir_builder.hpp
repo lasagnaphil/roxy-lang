@@ -218,6 +218,7 @@ private:
         Type* type;            // Full variable type (uniq T or struct T)
         u32 scope_depth;       // Scope level where declared
         bool is_moved;         // Ownership transferred (pass, return, explicit delete)
+        bool is_temporary;     // True for compiler-generated temporaries (__tmp*)
         BlockId start_block;   // Block where variable becomes live (for cleanup records)
         ValueId initial_value; // SSA value at declaration (for cleanup record register mapping)
     };
@@ -226,9 +227,11 @@ private:
     u32 m_next_temp_id = 0;  // Counter for generating unique temporary names (__tmp0, __tmp1, ...)
 
     // Consume a temporary noncopyable value (ownership transferred to callee/variable).
-    // Finds the temporary OwnedLocalInfo entry by ValueId, marks it moved,
-    // and nullifies its register so exception cleanup skips it.
-    void consume_temp_noncopyable(ValueId val);
+    // Finds the temporary OwnedLocalInfo entry by ValueId and marks it moved.
+    // When adopted_by_variable=true, the caller takes over the same register
+    // (e.g., var decl adopting a temp), so no Nullify annotation is needed —
+    // the variable's own cleanup record handles it.
+    void consume_temp_noncopyable(ValueId val, bool adopted_by_variable = false);
 
     // RAII helpers: emit destructor + Delete (for uniq) or destructor only (for value struct)
     void emit_implicit_destroy(OwnedLocalInfo& info);

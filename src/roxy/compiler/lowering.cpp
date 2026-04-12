@@ -120,6 +120,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_var_name_to_stack_slot.clear();
     m_value_types.clear();
     m_block_offsets.clear();
+    m_nullify_pcs.clear();
     m_jump_patches.clear();
     m_free_regs.clear();
     m_active.clear();
@@ -539,6 +540,15 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             }
         } else {
             record.scope_end_pc = m_current_func->code.size();
+        }
+
+        // Narrow scope if a Nullify annotation marks an earlier ownership transfer
+        auto nullify_it = m_nullify_pcs.find(ir_cleanup.value.id);
+        if (nullify_it != m_nullify_pcs.end()) {
+            u32 nullify_pc = nullify_it->second;
+            if (nullify_pc >= record.scope_start_pc && nullify_pc < record.scope_end_pc) {
+                record.scope_end_pc = nullify_pc;
+            }
         }
 
         // Map SSA value to register
@@ -1658,12 +1668,10 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         }
 
         case IROp::Nullify: {
-            // Zero the register of the specified value.
-            // Used to invalidate cleanup records after ownership transfer (move).
-            if (has_register(inst->unary)) {
-                u8 target_reg = get_register(inst->unary);
-                emit_abc(Opcode::LOAD_NULL, target_reg, 0, 0);
-            }
+            // Record the current PC as the point where ownership was transferred.
+            // The cleanup record builder uses this to end the scope early.
+            // No runtime instruction is emitted — Nullify is a compile-time annotation.
+            m_nullify_pcs[inst->unary.id] = static_cast<u32>(m_current_func->code.size());
             break;
         }
 
