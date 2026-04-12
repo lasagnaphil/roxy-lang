@@ -1892,3 +1892,52 @@ TEST_CASE("E2E - RAII: variable shadowing does not corrupt outer move state") {
     TestResult result = run_and_capture(source, "main");
     CHECK(!result.success);  // Should fail: use of moved value 'x' (outer)
 }
+
+TEST_CASE("E2E - RAII: struct literal field marks source as moved") {
+    SUBCASE("Use after move into struct literal is rejected") {
+        const char* source = R"CODE(
+            struct Widget {
+                id: i32;
+            }
+
+            fun delete Widget() { }
+
+            struct Wrapper {
+                item: uniq Widget;
+            }
+
+            fun main(): i32 {
+                var w: uniq Widget = uniq Widget { id = 42 };
+                var wrapper: Wrapper = Wrapper { item = w };
+                return w.id;
+            }
+        )CODE";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);  // Should fail: use of moved value 'w'
+    }
+
+    SUBCASE("Move into struct literal without later use succeeds") {
+        const char* source = R"CODE(
+            struct Widget {
+                id: i32;
+            }
+
+            fun delete Widget() { }
+
+            struct Wrapper {
+                item: uniq Widget;
+            }
+
+            fun main(): i32 {
+                var w: uniq Widget = uniq Widget { id = 42 };
+                var wrapper: Wrapper = Wrapper { item = w };
+                return wrapper.item.id;
+            }
+        )CODE";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
+}
