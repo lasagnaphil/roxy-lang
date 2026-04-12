@@ -3251,6 +3251,11 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
 
         ValueId result = emit_set_field(obj, get_expr.name, slot_offset, slot_count, value, expr->resolved_type);
 
+        // Consume noncopyable temporaries assigned to fields
+        if (field_type && field_type->noncopyable()) {
+            consume_temp_noncopyable(value);
+        }
+
         // Move semantics: if value is a uniq/move-semantic identifier, mark it as moved
         // Only when the field type also needs move semantics (not for weak ref fields)
         if (assign_expr.value->kind == AstKind::ExprIdentifier && field_type &&
@@ -3562,6 +3567,11 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
             emit_set_field(struct_ptr, field_info.name, field_info.slot_offset, field_info.slot_count, value, field_info.type);
         }
 
+        // Consume noncopyable temporaries moved into struct fields
+        if (field_info.type && field_info.type->noncopyable() && value_expr) {
+            consume_temp_noncopyable(value);
+        }
+
         // Nullify source variable when moving a noncopyable value into a regular field
         if (field_info.type && field_info.type->noncopyable() &&
             value_expr && value_expr->kind == AstKind::ExprIdentifier) {
@@ -3604,6 +3614,11 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
                         emit_struct_copy(field_addr, value, variant_field_info.slot_count);
                     } else {
                         emit_set_field(struct_ptr, variant_field_info.name, actual_slot_offset, variant_field_info.slot_count, value, variant_field_info.type);
+                    }
+
+                    // Consume noncopyable temporaries moved into variant fields
+                    if (variant_field_info.type && variant_field_info.type->noncopyable()) {
+                        consume_temp_noncopyable(value);
                     }
 
                     // Nullify source variable when moving a noncopyable value into a variant field
@@ -3960,9 +3975,6 @@ void IRBuilder::pop_scope() {
         for (u32 i = first_in_scope; i < m_owned_locals.size(); i++) {
             auto& info = m_owned_locals[i];
             if (info.scope_depth < depth) continue;
-            // Skip moved entries — their ownership was transferred and a different
-            // cleanup record (or the callee) is responsible for cleanup.
-            if (info.is_moved) continue;
             if (info.start_block.is_valid() && end_block.is_valid() && info.initial_value.is_valid()) {
                 m_current_func->cleanup_info.push_back(
                     {info.initial_value, info.type, info.start_block, end_block});
@@ -4034,11 +4046,15 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
         inst->unary = current_value;
     }
 
-    // Null-ify heap-allocated values to prevent double-cleanup from exception handler
+    // Null-ify heap-allocated values to prevent double-cleanup from exception handler.
+    // Use a Nullify annotation (not a runtime ConstNull) so the bytecode builder
+    // narrows the cleanup record scope instead of zeroing the register.
     if (info.type->kind == TypeKind::Uniq || info.type->is_list()
         || info.type->is_map() || info.type->is_coroutine()) {
-        ValueId null_after = emit_const_null();
-        define_local(info.name, null_after, info.type);
+        if (info.initial_value.is_valid()) {
+            IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+            if (nullify) nullify->unary = info.initial_value;
+        }
     }
 
     info.is_moved = true;  // Prevent double-destroy
@@ -4491,7 +4507,6 @@ void IRBuilder::end_function_body() {
         for (u32 i = first_in_scope; i < m_owned_locals.size(); i++) {
             auto& info = m_owned_locals[i];
             if (info.scope_depth < depth) continue;
-            if (info.is_moved) continue;
             if (info.start_block.is_valid() && end_block.is_valid() && info.initial_value.is_valid()) {
                 m_current_func->cleanup_info.push_back(
                     {info.initial_value, info.type, info.start_block, end_block});
