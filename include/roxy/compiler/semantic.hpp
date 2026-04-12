@@ -315,11 +315,12 @@ private:
     };
     Vector<PendingTraitImpl> m_pending_trait_impls;
 
-    // Move-state tracking for uniq variables (per-function)
-    tsl::robin_map<StringView, MoveState> m_move_states;
+    // Move-state tracking for noncopyable variables (per-function).
+    // Keyed by Symbol* for correct handling of variable shadowing.
+    tsl::robin_map<Symbol*, MoveState> m_move_states;
 
     // Save/restore move states for branching (if/else)
-    using MoveStateSnapshot = tsl::robin_map<StringView, MoveState>;
+    using MoveStateSnapshot = tsl::robin_map<Symbol*, MoveState>;
     MoveStateSnapshot save_move_states() const { return m_move_states; }
     void restore_move_states(const MoveStateSnapshot& snapshot) { m_move_states = snapshot; }
 

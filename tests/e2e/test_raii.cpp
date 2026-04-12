@@ -1866,3 +1866,29 @@ TEST_CASE("E2E - RAII: deep else-if chain with noncopyable types") {
     CHECK(result.success);
     CHECK(result.value == 200);  // 50 + 150
 }
+
+TEST_CASE("E2E - RAII: variable shadowing does not corrupt outer move state") {
+    // After moving outer x, an inner scope declaring a new x should not
+    // make the outer x appear live again after the inner scope exits.
+    const char* source = R"CODE(
+        struct Widget {
+            id: i32;
+        }
+
+        fun delete Widget() { }
+
+        fun consume(w: uniq Widget) { }
+
+        fun main(): i32 {
+            var x: uniq Widget = uniq Widget { id = 1 };
+            consume(x);
+            {
+                var x: uniq Widget = uniq Widget { id = 2 };
+            }
+            return x.id;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(!result.success);  // Should fail: use of moved value 'x' (outer)
+}

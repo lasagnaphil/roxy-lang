@@ -1388,11 +1388,11 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
     }
 
     var_decl.resolved_type = var_type;
-    m_symbols.define(SymbolKind::Variable, var_decl.name, var_type, decl->loc, decl);
+    Symbol* var_sym = m_symbols.define(SymbolKind::Variable, var_decl.name, var_type, decl->loc, decl);
 
     // Track owned variables for move semantics (uniq refs and value structs with destructors)
-    if (var_type && var_type->noncopyable()) {
-        m_move_states[var_decl.name] = MoveState::Live;
+    if (var_type && var_type->noncopyable() && var_sym) {
+        m_move_states[var_sym] = MoveState::Live;
     }
 }
 
@@ -1402,9 +1402,9 @@ void SemanticAnalyzer::merge_move_states(const MoveStateSnapshot& then_states,
                                           const MoveStateSnapshot& else_states) {
     // For each tracked variable, merge states from both branches
     for (auto it = m_move_states.begin(); it != m_move_states.end(); ++it) {
-        StringView name = it->first;
-        auto then_it = then_states.find(name);
-        auto else_it = else_states.find(name);
+        Symbol* sym = it->first;
+        auto then_it = then_states.find(sym);
+        auto else_it = else_states.find(sym);
 
         MoveState then_state = (then_it != then_states.end()) ? then_it->second : it->second;
         MoveState else_state = (else_it != else_states.end()) ? else_it->second : it->second;
@@ -1419,8 +1419,10 @@ void SemanticAnalyzer::merge_move_states(const MoveStateSnapshot& then_states,
 }
 
 bool SemanticAnalyzer::check_not_moved(StringView name, SourceLocation loc) {
-    auto it = m_move_states.find(name);
-    if (it == m_move_states.end()) return true;  // Not tracked (not uniq)
+    Symbol* sym = m_symbols.lookup(name);
+    if (!sym) return true;
+    auto it = m_move_states.find(sym);
+    if (it == m_move_states.end()) return true;  // Not tracked (not noncopyable)
 
     if (it->second == MoveState::Moved) {
         error_fmt(loc, "use of moved value '{}'", name);
@@ -1450,7 +1452,8 @@ bool SemanticAnalyzer::check_not_field_move(Expr* expr, SourceLocation loc) {
         // Only allow for local value structs (not uniq/ref/weak references)
         if (parent_type && !parent_type->is_reference() && parent_type->is_struct()) {
             // Parent must be live (not already moved)
-            auto it = m_move_states.find(parent_name);
+            Symbol* parent_sym = m_symbols.lookup(parent_name);
+            auto it = parent_sym ? m_move_states.find(parent_sym) : m_move_states.end();
             if (it != m_move_states.end() && it->second == MoveState::Live) {
                 mark_moved(parent_name);
                 return true;
@@ -1475,14 +1478,18 @@ void SemanticAnalyzer::consume_noncopyable(Expr* expr, SourceLocation loc) {
 }
 
 void SemanticAnalyzer::mark_moved(StringView name) {
-    auto it = m_move_states.find(name);
+    Symbol* sym = m_symbols.lookup(name);
+    if (!sym) return;
+    auto it = m_move_states.find(sym);
     if (it != m_move_states.end()) {
         it.value() = MoveState::Moved;
     }
 }
 
 void SemanticAnalyzer::mark_live(StringView name) {
-    auto it = m_move_states.find(name);
+    Symbol* sym = m_symbols.lookup(name);
+    if (!sym) return;
+    auto it = m_move_states.find(sym);
     if (it != m_move_states.end()) {
         it.value() = MoveState::Live;
     }
@@ -1496,7 +1503,7 @@ void SemanticAnalyzer::check_scope_exit_uniq_destructors(const Scope* scope, Sou
         if (!type || type->kind != TypeKind::Uniq) continue;
 
         // Check if the variable is still live (not moved/deleted)
-        auto it = m_move_states.find(sym->name);
+        auto it = m_move_states.find(sym);
         if (it == m_move_states.end() || it->second != MoveState::Live) continue;
 
         // Get the inner struct type
@@ -1575,7 +1582,8 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
 
         // Track owned parameters as Live (uniq refs and value structs with destructors)
         if (ptype && ptype->noncopyable()) {
-            m_move_states[p.name] = MoveState::Live;
+            Symbol* param_sym = m_symbols.lookup(p.name);
+            if (param_sym) m_move_states[param_sym] = MoveState::Live;
         }
     }
 
@@ -1884,7 +1892,8 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
 
         // Track owned parameters as Live (uniq refs and value structs with destructors)
         if (ptype && ptype->noncopyable()) {
-            m_move_states[p.name] = MoveState::Live;
+            Symbol* param_sym = m_symbols.lookup(p.name);
+            if (param_sym) m_move_states[param_sym] = MoveState::Live;
         }
     }
 
@@ -4884,11 +4893,14 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
     MoveState saved_state = MoveState::Live;
     if (assign_expr.op == AssignOp::Assign &&
         assign_expr.target->kind == AstKind::ExprIdentifier) {
-        auto it = m_move_states.find(assign_expr.target->identifier.name);
-        if (it != m_move_states.end() && it->second != MoveState::Live) {
-            saved_state = it->second;
-            it.value() = MoveState::Live;
-            restored_for_assign = true;
+        Symbol* target_sym = m_symbols.lookup(assign_expr.target->identifier.name);
+        if (target_sym) {
+            auto it = m_move_states.find(target_sym);
+            if (it != m_move_states.end() && it->second != MoveState::Live) {
+                saved_state = it->second;
+                it.value() = MoveState::Live;
+                restored_for_assign = true;
+            }
         }
     }
 
@@ -4896,9 +4908,12 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
 
     // Restore the state so auto-delete logic in IR builder knows the old value was moved
     if (restored_for_assign) {
-        auto it = m_move_states.find(assign_expr.target->identifier.name);
-        if (it != m_move_states.end()) {
-            it.value() = saved_state;
+        Symbol* target_sym = m_symbols.lookup(assign_expr.target->identifier.name);
+        if (target_sym) {
+            auto it = m_move_states.find(target_sym);
+            if (it != m_move_states.end()) {
+                it.value() = saved_state;
+            }
         }
     }
 
