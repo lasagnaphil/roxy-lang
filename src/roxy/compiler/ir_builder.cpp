@@ -1611,6 +1611,11 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
     if (rs.value) {
         ValueId val = gen_expr(rs.value);
 
+        // Consume noncopyable temporaries (ownership transfers to caller)
+        if (rs.value->resolved_type && rs.value->resolved_type->noncopyable()) {
+            consume_temp_noncopyable(val);
+        }
+
         // If returning an owned identifier, mark it as moved (don't destroy what we're returning)
         // Note: we do NOT emit Nullify here because the return value register may be
         // the same as initial_value's register, and nullifying would corrupt the return.
@@ -2724,6 +2729,11 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         } else {
             args[i] = gen_expr(arg.expr);
 
+            // Consume noncopyable temporaries (ownership transfers to callee)
+            if (arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
+                consume_temp_noncopyable(args[i]);
+            }
+
             // Wrap uniq/ref → weak conversion for call arguments
             Type* callee_func_type = call_expr.callee->resolved_type;
             if (callee_func_type && callee_func_type->is_function() &&
@@ -3358,6 +3368,20 @@ ValueId IRBuilder::gen_constructor_call(Expr* expr) {
         // result_type is uniq<StructType>
         Span<ValueId> empty_args = {};
         obj = emit_new(struct_type->struct_info.name, empty_args, result_type);
+        // Track temporary for exception cleanup via m_owned_locals.
+        // Consumed when passed/assigned/returned (marked is_moved + Nullify).
+        if (result_type && result_type->noncopyable() && m_current_block) {
+            char buf[32];
+            i32 len = format_to(buf, sizeof(buf), "__tmp{}", m_next_temp_id++);
+            char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(len) + 1, 1));
+            memcpy(name_ptr, buf, static_cast<u32>(len) + 1);
+            StringView temp_name(name_ptr, static_cast<u32>(len));
+
+            define_local(temp_name, obj, result_type);
+            u32 scope_depth = static_cast<u32>(m_local_scopes.size());
+            m_owned_locals.push_back({temp_name, result_type, scope_depth, false,
+                                      m_current_block->id, obj});
+        }
     } else {
         // Type() - stack allocation
         // result_type is StructType (value type)
@@ -3462,6 +3486,19 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         // Use mangled name for generic struct instances (e.g., "Box$i32")
         StringView type_name = sl.mangled_name.size() > 0 ? sl.mangled_name : sl.type_name;
         struct_ptr = emit_new(type_name, empty_args, result_type);
+        // Track temporary for exception cleanup via m_owned_locals
+        if (result_type && result_type->noncopyable() && m_current_block) {
+            char buf[32];
+            i32 len = format_to(buf, sizeof(buf), "__tmp{}", m_next_temp_id++);
+            char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(len) + 1, 1));
+            memcpy(name_ptr, buf, static_cast<u32>(len) + 1);
+            StringView temp_name(name_ptr, static_cast<u32>(len));
+
+            define_local(temp_name, struct_ptr, result_type);
+            u32 scope_depth = static_cast<u32>(m_local_scopes.size());
+            m_owned_locals.push_back({temp_name, result_type, scope_depth, false,
+                                      m_current_block->id, struct_ptr});
+        }
     } else {
         // Type { ... } - stack allocation
         struct_type = result_type;
@@ -3827,6 +3864,9 @@ void IRBuilder::gen_var_decl(Decl* decl) {
 
     // Track owned locals for implicit destruction (uniq refs and value structs with destructors)
     if (type && type->noncopyable()) {
+        // If the initializer was a temporary, consume it (named variable takes over tracking)
+        consume_temp_noncopyable(value);
+
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
         m_owned_locals.push_back({var_decl.name, type, scope_depth, false, current_block_id, value});
@@ -3952,6 +3992,23 @@ IRBuilder::OwnedLocalInfo* IRBuilder::find_owned_local(StringView name) {
         }
     }
     return nullptr;
+}
+
+void IRBuilder::consume_temp_noncopyable(ValueId val) {
+    // Find the temporary in m_owned_locals by ValueId (temporaries have __tmp names)
+    for (i32 i = static_cast<i32>(m_owned_locals.size()) - 1; i >= 0; i--) {
+        auto& info = m_owned_locals[i];
+        if (info.initial_value.id == val.id && !info.is_moved) {
+            // Mark as moved and nullify the register so the exception-path
+            // cleanup record becomes a no-op (prevents double-free when the
+            // callee takes ownership).
+            info.is_moved = true;
+            IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+            if (nullify) nullify->unary = val;
+            return;
+        }
+    }
+    // Not found — val is not a tracked temporary (e.g., named variable, or copyable type)
 }
 
 void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
@@ -4354,9 +4411,10 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
     IRBlock* entry = create_block("entry");
     set_current_block(entry);
 
-    // Initialize local variable scopes and uniq tracking
+    // Initialize local variable scopes and ownership tracking
     m_local_scopes.clear();
     m_owned_locals.clear();
+    m_next_temp_id = 0;
     push_scope();
 
     // Add function parameters to local scope

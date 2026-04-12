@@ -223,6 +223,13 @@ private:
     };
     Vector<OwnedLocalInfo> m_owned_locals;
 
+    u32 m_next_temp_id = 0;  // Counter for generating unique temporary names (__tmp0, __tmp1, ...)
+
+    // Consume a temporary noncopyable value (ownership transferred to callee/variable).
+    // Finds the temporary OwnedLocalInfo entry by ValueId, marks it moved,
+    // and nullifies its register so exception cleanup skips it.
+    void consume_temp_noncopyable(ValueId val);
+
     // RAII helpers: emit destructor + Delete (for uniq) or destructor only (for value struct)
     void emit_implicit_destroy(OwnedLocalInfo& info);
 

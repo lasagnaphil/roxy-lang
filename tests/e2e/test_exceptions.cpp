@@ -1103,3 +1103,43 @@ TEST_CASE("E2E - Exception cleanup: Map<string, uniq T> values destroyed on unwi
     CHECK(result.stdout_output.find("free:200") != String::npos);
 }
 
+TEST_CASE("E2E - Exception cleanup: temporary uniq destroyed on unwind") {
+    const char* source = R"(
+        struct Widget {
+            id: i32;
+        }
+
+        fun delete Widget() {
+            print(f"del:{self.id}");
+        }
+
+        struct Boom {
+            code: i32;
+        }
+        fun Boom.message(): string for Exception {
+            return "boom";
+        }
+
+        fun consume(w: uniq Widget): i32 {
+            throw Boom { code = 1 };
+            return 0;
+        }
+
+        fun main(): i32 {
+            try {
+                consume(uniq Widget { id = 99 });
+                return -1;
+            } catch (e: Boom) {
+                return e.code;
+            }
+            return -2;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 1);
+    // The temporary uniq Widget should be cleaned up during exception unwind
+    CHECK(result.stdout_output.find("del:99") != String::npos);
+}
+
