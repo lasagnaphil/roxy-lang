@@ -1016,3 +1016,90 @@ TEST_CASE("E2E - Exception move tracking: no leak between catch clauses") {
     CHECK(result.success);
 }
 
+// ============================================================================
+// Container cleanup on exception unwind
+// ============================================================================
+
+TEST_CASE("E2E - Exception cleanup: List<uniq T> elements destroyed on unwind") {
+    const char* source = R"(
+        struct Widget {
+            id: i32;
+        }
+
+        fun delete Widget() {
+            print(f"del:{self.id}");
+        }
+
+        struct Boom {
+            code: i32;
+        }
+        fun Boom.message(): string for Exception {
+            return "boom";
+        }
+
+        fun explode() {
+            throw Boom { code = 1 };
+        }
+
+        fun main(): i32 {
+            try {
+                var items: List<uniq Widget> = List<uniq Widget>();
+                items.push(uniq Widget { id = 10 });
+                items.push(uniq Widget { id = 20 });
+                items.push(uniq Widget { id = 30 });
+                explode();
+                return -1;
+            } catch (e: Boom) {
+                return e.code;
+            }
+            return -2;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 1);
+    // Destructors should have been called for all 3 widgets during unwind
+    CHECK(result.stdout_output.find("del:10") != String::npos);
+    CHECK(result.stdout_output.find("del:20") != String::npos);
+    CHECK(result.stdout_output.find("del:30") != String::npos);
+}
+
+TEST_CASE("E2E - Exception cleanup: Map<string, uniq T> values destroyed on unwind") {
+    const char* source = R"(
+        struct Resource {
+            value: i32;
+        }
+
+        fun delete Resource() {
+            print(f"free:{self.value}");
+        }
+
+        struct Fail {
+            x: i32;
+        }
+        fun Fail.message(): string for Exception {
+            return "fail";
+        }
+
+        fun main(): i32 {
+            try {
+                var m: Map<string, uniq Resource> = Map<string, uniq Resource>();
+                m.insert("a", uniq Resource { value = 100 });
+                m.insert("b", uniq Resource { value = 200 });
+                throw Fail { x = 42 };
+                return -1;
+            } catch (e: Fail) {
+                return e.x;
+            }
+            return -2;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+    CHECK(result.stdout_output.find("free:100") != String::npos);
+    CHECK(result.stdout_output.find("free:200") != String::npos);
+}
+

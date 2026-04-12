@@ -114,6 +114,11 @@ private:
     // Emit cast bytecode based on source and target types
     void emit_cast_bytecode(u8 dst, u8 src, Type* source_type, Type* target_type);
 
+    // Build element cleanup descriptor tree for noncopyable container types.
+    // Recursively walks the type and appends BCElementCleanup entries to
+    // m_current_func->element_cleanups. Returns the index of the root entry.
+    u16 build_element_cleanup(Type* type);
+
     // Check if type is a struct that should be passed by reference (>4 slots)
     bool is_large_struct(Type* type) const;
 

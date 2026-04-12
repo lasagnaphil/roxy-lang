@@ -96,6 +96,72 @@ static void call_cleanup_destructor(RoxyVM* vm, u16 func_idx, void* obj_ptr) {
     interpret(vm, saved_depth);
 }
 
+// Recursively clean up a single value during exception unwinding.
+// Walks the BCElementCleanup descriptor tree to handle arbitrarily nested
+// noncopyable containers (e.g., List<List<uniq T>>, Map<K, List<uniq V>>).
+static void cleanup_element(RoxyVM* vm, void* ptr,
+                            const BCElementCleanup& desc,
+                            const BCFunction* func) {
+    if (!ptr) return;
+
+    switch (desc.kind) {
+    case 0:  // DEL_OBJ only (uniq without destructor)
+        object_free(vm, ptr);
+        break;
+
+    case 1:  // CALL_DTOR + DEL_OBJ (uniq with destructor)
+        call_cleanup_destructor(vm, desc.dtor_fn_idx, ptr);
+        object_free(vm, ptr);
+        break;
+
+    case 2:  // CALL_DTOR only (value struct with destructor, no heap free)
+        call_cleanup_destructor(vm, desc.dtor_fn_idx, ptr);
+        break;
+
+    case 3: { // LIST: iterate elements, recurse, free buffers, free header
+        ListHeader* header = get_list_header(ptr);
+        if (header->elements && desc.elem_cleanup_idx != 0xFFFF) {
+            const BCElementCleanup& elem_desc = func->element_cleanups[desc.elem_cleanup_idx];
+            for (u32 i = 0; i < header->length; i++) {
+                // List elements stored in u32* slot buffer; pointers use 2 slots
+                u32* slot = header->elements + i * header->element_slot_count;
+                u64 val = static_cast<u64>(slot[0]) | (static_cast<u64>(slot[1]) << 32);
+                cleanup_element(vm, reinterpret_cast<void*>(val), elem_desc, func);
+            }
+        }
+        free(header->elements);
+        header->elements = nullptr;
+        object_free(vm, ptr);
+        break;
+    }
+
+    case 4: { // MAP: iterate occupied buckets, recurse, free buffers, free header
+        MapHeader* header = get_map_header(ptr);
+        if (header->capacity > 0 && header->distances) {
+            for (u32 i = 0; i < header->capacity; i++) {
+                if (header->distances[i] == 0) continue;  // empty bucket
+                if (desc.key_cleanup_idx != 0xFFFF) {
+                    const BCElementCleanup& key_desc = func->element_cleanups[desc.key_cleanup_idx];
+                    cleanup_element(vm, reinterpret_cast<void*>(header->keys[i]), key_desc, func);
+                }
+                if (desc.elem_cleanup_idx != 0xFFFF) {
+                    const BCElementCleanup& val_desc = func->element_cleanups[desc.elem_cleanup_idx];
+                    cleanup_element(vm, reinterpret_cast<void*>(header->values[i]), val_desc, func);
+                }
+            }
+        }
+        free(header->distances);
+        free(header->keys);
+        free(header->values);
+        header->distances = nullptr;
+        header->keys = nullptr;
+        header->values = nullptr;
+        object_free(vm, ptr);
+        break;
+    }
+    }
+}
+
 // Execute cleanup for owned locals during exception handling.
 // Iterates cleanup records in reverse (LIFO order) and cleans up any
 // variable whose scope spans the throw site but not the handler site.
@@ -140,11 +206,11 @@ static void execute_cleanup(RoxyVM* vm, const BCFunction* func,
                 break;
 
             case 3:  // LIST_CLEANUP (noncopyable list)
-            case 4:  // MAP_CLEANUP (noncopyable map)
-                // Basic cleanup: free the container. Element-level cleanup for
-                // noncopyable elements is not yet supported during exception unwinding.
-                object_free(vm, ptr);
+            case 4: { // MAP_CLEANUP (noncopyable map)
+                const BCElementCleanup& desc = func->element_cleanups[record.elem_cleanup_idx];
+                cleanup_element(vm, ptr, desc, func);
                 break;
+            }
         }
 
         // Null-ify the register to prevent double-cleanup

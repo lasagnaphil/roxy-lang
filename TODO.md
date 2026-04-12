@@ -9,7 +9,7 @@ Last updated: 2026-03-08
 ## High Priority
 
 - [x] Large object virtual address space leak — `free_large()` calls `remap_to_zero()` then erases from `large_objects` map, making the virtual address range permanently untracked with no reclamation path (`slab_allocator.cpp:294-311`)
-- [ ] Noncopyable container elements leaked on exception unwind — cleanup kinds 3/4 (LIST_CLEANUP/MAP_CLEANUP) call `object_free()` on the container but do not iterate and destroy noncopyable elements (`interpreter.cpp:142-146`)
+- [x] Noncopyable container elements leaked on exception unwind — cleanup kinds 3/4 (LIST_CLEANUP/MAP_CLEANUP) call `object_free()` on the container but do not iterate and destroy noncopyable elements (`interpreter.cpp:142-146`)
 - [ ] Temporary uniq values not tracked for exception cleanup — intermediate `uniq` values in expressions are not added to `m_owned_locals` and have no `BCCleanupRecord`, so they leak if an exception is thrown mid-expression
 - [ ] Variable shadowing corrupts move states — `m_move_states` is keyed by bare `StringView` name; inner-scope declaration of same name overwrites outer variable's Moved state to Live, allowing use-after-move after inner scope exits (`semantic.cpp:1399-1401`)
 - [ ] Struct literal fields don't mark source variables as moved — `analyze_struct_literal_expr` type-checks noncopyable field values but never calls `mark_moved` or `check_not_field_move`, so `Wrapper { item = x }` leaves x as Live (`semantic.cpp:5146-5208`)

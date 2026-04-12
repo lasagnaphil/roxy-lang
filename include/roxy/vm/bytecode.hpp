@@ -280,6 +280,18 @@ struct BCExceptionHandler {
     u8 exception_reg;     // Register to store exception ptr in handler
 };
 
+// Describes how to clean up one value during exception unwinding.
+// Forms a tree via indices into BCFunction::element_cleanups[].
+// Mirrors the 5 cases in IRBuilder::emit_element_destroy().
+struct BCElementCleanup {
+    u8 kind;                  // 0=DEL_OBJ, 1=CALL_DTOR+DEL_OBJ, 2=CALL_DTOR,
+                              // 3=LIST (iterate + recurse), 4=MAP (iterate + recurse)
+    u16 dtor_fn_idx;          // kinds 1, 2: destructor function index
+    u16 elem_cleanup_idx;     // kind 3: element descriptor index
+                              // kind 4: value descriptor index (0xFFFF = copyable values)
+    u16 key_cleanup_idx;      // kind 4 only: key descriptor index (0xFFFF = copyable keys)
+};
+
 // Cleanup record for exception-path cleanup of owned locals
 // During exception handling, the VM iterates these in reverse (LIFO) to clean up
 // owned variables whose scope spans the throw site but not the handler site.
@@ -288,7 +300,10 @@ struct BCCleanupRecord {
     u32 scope_end_pc;         // PC where variable's normal cleanup occurs (exclusive)
     u8 register_idx;          // Register holding the owned value
     u8 kind;                  // 0=DEL_OBJ, 1=CALL_DTOR+DEL_OBJ, 2=CALL_DTOR, 3=LIST_CLEANUP, 4=MAP_CLEANUP
-    u16 destructor_fn_idx;    // Function index for destructor (kinds 1, 2 only)
+    union {
+        u16 destructor_fn_idx;    // kinds 0-2: destructor function index
+        u16 elem_cleanup_idx;     // kinds 3-4: root index into BCFunction::element_cleanups[]
+    };
 };
 
 // Bytecode function
@@ -303,6 +318,7 @@ struct BCFunction {
     Vector<BCConstant> constants; // Constant pool
     Vector<BCExceptionHandler> exception_handlers; // Exception handler table
     Vector<BCCleanupRecord> cleanup_records;        // Cleanup records for exception handling
+    Vector<BCElementCleanup> element_cleanups;     // Cleanup descriptors for container elements (tree via indices)
 
     BCFunction() : param_count(0), param_register_count(0), register_count(0), local_stack_slots(0), ret_reg_count(1) {}
 };
