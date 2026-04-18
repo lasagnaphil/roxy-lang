@@ -259,6 +259,13 @@ private:
     // Finally depth tracking (for yield-in-finally validation)
     u32 m_in_finally_depth = 0;
 
+    // Definite-termination analysis: true after analyzing a statement that
+    // always transfers control out of the current join point (return/throw/
+    // break/continue). Sticky through straight-line blocks; reset inside
+    // loop bodies; consumed at if/when/try merge sites to pick the surviving
+    // branch's move-state snapshot instead of producing MaybeValid.
+    bool m_branch_terminates = false;
+
     Vector<Decl*> m_synthetic_decls;  // Injected default method declarations
 
     // Cycle detection for direct value-type recursion in struct fields

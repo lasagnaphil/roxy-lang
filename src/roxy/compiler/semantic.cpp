@@ -3000,22 +3000,45 @@ void SemanticAnalyzer::analyze_if_stmt(Stmt* stmt) {
     // Save move states before branching
     MoveStateSnapshot pre_branch_states = save_move_states();
 
+    // Reset termination flag for the then-branch; capture whether it ended
+    // with an unconditional return/throw/break/continue.
+    m_branch_terminates = false;
     analyze_stmt(is.then_branch);
     MoveStateSnapshot then_states = save_move_states();
+    bool then_terminates = m_branch_terminates;
 
     if (is.else_branch) {
         // Restore to pre-branch state for else analysis
         restore_move_states(pre_branch_states);
+        m_branch_terminates = false;
         analyze_stmt(is.else_branch);
         MoveStateSnapshot else_states = save_move_states();
+        bool else_terminates = m_branch_terminates;
 
-        // Merge both branches
-        restore_move_states(pre_branch_states);
-        merge_move_states(then_states, else_states);
+        // Terminating branches contribute no state to the post-merge point.
+        // Pick the surviving branch's snapshot; if both terminate, the code
+        // after is unreachable but we pick then_states arbitrarily.
+        if (then_terminates && !else_terminates) {
+            restore_move_states(else_states);
+        } else if (!then_terminates && else_terminates) {
+            restore_move_states(then_states);
+        } else {
+            restore_move_states(pre_branch_states);
+            merge_move_states(then_states, else_states);
+        }
+
+        m_branch_terminates = then_terminates && else_terminates;
     } else {
-        // No else branch — merge then-branch with pre-branch (else is identity)
-        restore_move_states(pre_branch_states);
-        merge_move_states(then_states, pre_branch_states);
+        // No else branch — the implicit else is the pre-branch state (no moves).
+        // If the then-branch terminates, only the fall-through survives.
+        if (then_terminates) {
+            restore_move_states(pre_branch_states);
+        } else {
+            restore_move_states(pre_branch_states);
+            merge_move_states(then_states, pre_branch_states);
+        }
+        // A no-else if never proves termination: the condition may be false.
+        m_branch_terminates = false;
     }
 }
 
@@ -3030,10 +3053,17 @@ void SemanticAnalyzer::analyze_while_stmt(Stmt* stmt) {
     // Save move states before loop body
     MoveStateSnapshot pre_loop_states = save_move_states();
 
+    // The loop body may execute zero times, so any termination inside the
+    // body (return/throw/break/continue) does not prove the loop itself
+    // terminates. Preserve the caller's flag across the body.
+    bool pre_loop_terminates = m_branch_terminates;
+
     m_symbols.push_loop_scope();
     analyze_stmt(ws.body);
     check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
     m_symbols.pop_scope();
+
+    m_branch_terminates = pre_loop_terminates;
 
     MoveStateSnapshot post_body_states = save_move_states();
 
@@ -3094,10 +3124,15 @@ void SemanticAnalyzer::analyze_for_stmt(Stmt* stmt) {
     // Save move states after initializer/condition/increment, before loop body
     MoveStateSnapshot pre_loop_states = save_move_states();
 
+    // The loop body may execute zero times — see note in analyze_while_stmt.
+    bool pre_loop_terminates = m_branch_terminates;
+
     m_symbols.push_loop_scope();
     analyze_stmt(fs.body);
     check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
     m_symbols.pop_scope();
+
+    m_branch_terminates = pre_loop_terminates;
 
     MoveStateSnapshot post_body_states = save_move_states();
 
@@ -3138,6 +3173,7 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
             error(stmt->loc, "coroutine functions cannot return a value; use 'yield' instead");
         }
         m_symbols.mark_return();
+        m_branch_terminates = true;
         return;
     }
 
@@ -3161,6 +3197,7 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
 
     check_all_scopes_uniq_destructors(stmt->loc, ScopeKind::Function);
     m_symbols.mark_return();
+    m_branch_terminates = true;
 }
 
 void SemanticAnalyzer::analyze_break_stmt(Stmt* stmt) {
@@ -3169,6 +3206,7 @@ void SemanticAnalyzer::analyze_break_stmt(Stmt* stmt) {
     } else {
         check_all_scopes_uniq_destructors(stmt->loc, ScopeKind::Loop);
     }
+    m_branch_terminates = true;
 }
 
 void SemanticAnalyzer::analyze_continue_stmt(Stmt* stmt) {
@@ -3177,6 +3215,7 @@ void SemanticAnalyzer::analyze_continue_stmt(Stmt* stmt) {
     } else {
         check_all_scopes_uniq_destructors(stmt->loc, ScopeKind::Loop);
     }
+    m_branch_terminates = true;
 }
 
 void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
@@ -3272,6 +3311,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
     // Save move states before branching
     MoveStateSnapshot pre_when_states = save_move_states();
     std::vector<MoveStateSnapshot> case_snapshots;
+    std::vector<bool> case_terminates;
 
     // Analyze each case
     for (auto& wc : ws.cases) {
@@ -3304,6 +3344,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
 
         // Restore pre-when state so each case starts fresh
         restore_move_states(pre_when_states);
+        m_branch_terminates = false;
 
         // Analyze case body in a new scope
         m_symbols.push_scope(ScopeKind::Block);
@@ -3318,11 +3359,14 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
         m_symbols.pop_scope();
 
         case_snapshots.push_back(save_move_states());
+        case_terminates.push_back(m_branch_terminates);
     }
 
     // Analyze else body if present
-    if (ws.else_body.size() > 0) {
+    bool has_else = ws.else_body.size() > 0;
+    if (has_else) {
         restore_move_states(pre_when_states);
+        m_branch_terminates = false;
 
         m_symbols.push_scope(ScopeKind::Block);
         for (auto& decl : ws.else_body) {
@@ -3336,18 +3380,35 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
         m_symbols.pop_scope();
 
         case_snapshots.push_back(save_move_states());
+        case_terminates.push_back(m_branch_terminates);
     } else {
-        // No else — when might not match, so include pre-when as fall-through path
+        // No else — an unmatched enum value falls past the whole statement,
+        // so the pre-when state is a non-terminating survivor path.
         case_snapshots.push_back(pre_when_states);
+        case_terminates.push_back(false);
     }
 
-    // Pairwise-merge all case snapshots
-    if (!case_snapshots.empty()) {
-        restore_move_states(case_snapshots[0]);
-        for (size_t i = 1; i < case_snapshots.size(); i++) {
+    // Pairwise-merge only the surviving (non-terminating) case snapshots.
+    int first_survivor = -1;
+    for (size_t i = 0; i < case_snapshots.size(); i++) {
+        if (case_terminates[i]) continue;
+        if (first_survivor < 0) {
+            restore_move_states(case_snapshots[i]);
+            first_survivor = (int)i;
+        } else {
             MoveStateSnapshot current = save_move_states();
             merge_move_states(current, case_snapshots[i]);
         }
+    }
+
+    // If every path terminates (only possible when else exists; otherwise the
+    // pre-when fall-through is always non-terminating), the code after the
+    // when is unreachable — pick any snapshot and report termination upward.
+    if (first_survivor < 0 && !case_snapshots.empty()) {
+        restore_move_states(case_snapshots[0]);
+        m_branch_terminates = true;
+    } else {
+        m_branch_terminates = false;
     }
 }
 
@@ -3360,12 +3421,16 @@ void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
     }
 
     Type* expr_type = analyze_expr(ts.expr);
-    if (!expr_type || expr_type->is_error()) return;
+    if (!expr_type || expr_type->is_error()) {
+        m_branch_terminates = true;
+        return;
+    }
 
     // The thrown expression must be a struct type that implements Exception trait
     Type* base = expr_type->base_type();
     if (!base->is_struct()) {
         error(stmt->loc, "throw expression must be a struct type that implements Exception");
+        m_branch_terminates = true;
         return;
     }
 
@@ -3374,6 +3439,7 @@ void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
         error_fmt(stmt->loc, "thrown type '{}' does not implement the Exception trait",
                   base->struct_info.name);
     }
+    m_branch_terminates = true;
 }
 
 void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
@@ -3383,7 +3449,9 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
     MoveStateSnapshot pre_try = save_move_states();
 
     // Analyze try body (yield is allowed here)
+    m_branch_terminates = false;
     analyze_stmt(ts.try_body);
+    bool try_terminates = m_branch_terminates;
 
     // Save post-try states
     MoveStateSnapshot post_try = save_move_states();
@@ -3395,9 +3463,12 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
     merge_move_states(pre_try, post_try);
     MoveStateSnapshot catch_entry = save_move_states();
 
-    // Normal try exit is one exit path
+    // Normal try exit is one exit path. If the try body ends in an
+    // unconditional return/throw, the normal-exit path is unreachable.
     std::vector<MoveStateSnapshot> exit_paths;
+    std::vector<bool> exit_terminates;
     exit_paths.push_back(post_try);
+    exit_terminates.push_back(try_terminates);
 
     bool has_catch_all = false;
 
@@ -3412,6 +3483,7 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
 
         // Each catch starts from the same catch entry state
         restore_move_states(catch_entry);
+        m_branch_terminates = false;
 
         m_symbols.push_scope(ScopeKind::Block);
 
@@ -3448,22 +3520,44 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
         m_symbols.pop_scope();
 
         exit_paths.push_back(save_move_states());
+        exit_terminates.push_back(m_branch_terminates);
     }
 
-    // Pairwise-merge all exit paths
-    if (!exit_paths.empty()) {
-        restore_move_states(exit_paths[0]);
-        for (size_t i = 1; i < exit_paths.size(); i++) {
+    // Pairwise-merge only the surviving (non-terminating) exit paths.
+    int first_survivor = -1;
+    for (size_t i = 0; i < exit_paths.size(); i++) {
+        if (exit_terminates[i]) continue;
+        if (first_survivor < 0) {
+            restore_move_states(exit_paths[i]);
+            first_survivor = (int)i;
+        } else {
             MoveStateSnapshot current = save_move_states();
             merge_move_states(current, exit_paths[i]);
         }
     }
 
-    // Analyze finally body if present (yield is NOT allowed here)
+    // If every exit path terminates, code after the try is unreachable —
+    // pick any snapshot and propagate termination upward.
+    bool all_terminate = (first_survivor < 0) && !exit_paths.empty();
+    if (all_terminate) {
+        restore_move_states(exit_paths[0]);
+    }
+
+    // Analyze finally body if present (yield is NOT allowed here).
+    // Finally runs on every exit path, so its own terminators are the
+    // conservative upper bound for the whole try/catch/finally.
     if (ts.finally_body) {
         m_in_finally_depth++;
+        m_branch_terminates = false;
         analyze_stmt(ts.finally_body);
         m_in_finally_depth--;
+        // If finally terminates, so does the whole statement; otherwise
+        // use the all_terminate result computed from try+catches.
+        if (!m_branch_terminates) {
+            m_branch_terminates = all_terminate;
+        }
+    } else {
+        m_branch_terminates = all_terminate;
     }
 }
 

@@ -926,9 +926,13 @@ TEST_CASE("E2E - Exception move tracking: moved in try, reassigned in catch, use
         }
     )";
 
-    // post-try: Moved, post-catch: Live → merged = MaybeValid
+    // Try body ends with an unconditional throw, so its normal-exit path
+    // (r = Moved) is unreachable after the try/catch. Only the catch path
+    // survives (r reassigned, Live), so this program is well-typed and
+    // returns 99.
     TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
+    CHECK(result.success);
+    CHECK(result.value == 99);
 }
 
 TEST_CASE("E2E - Exception move tracking: not moved in try, moved in catch, used after") {

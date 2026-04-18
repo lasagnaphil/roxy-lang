@@ -18,7 +18,7 @@ Last updated: 2026-04-18
 - [ ] Ternary expressions skip move-state merging — unlike `if`/`else`, ternary expressions don't save/restore/merge move states, so conditional moves in ternary branches may not be detected (`semantic.cpp:3685-3728`)
 - [ ] `alloc_large()` only zeros `size` bytes, not page-aligned `alloc_size` bytes — padding between `size` and `alloc_size` contains uninitialized memory, unlike slab path which zeros the full slot (`slab_allocator.cpp:229`)
 - [x] Self-assignment of noncopyable values causes use-after-free — fixed: semantic analyzer rejects `x = x` when target is a noncopyable identifier resolving to the same symbol as the source
-- [ ] No definite-termination analysis for move-state merging — if one branch always returns/throws, the merge still produces MaybeValid instead of taking the surviving branch's state, rejecting valid code like `if (err) { return; } consume(x);` (`semantic.cpp:2970-2998`)
+- [x] No definite-termination analysis for move-state merging — fixed: terminating branches (return/throw/break/continue) are now excluded from move-state merges in if/when/try; also fixed an IR-gen bug where `gen_assign_expr` didn't adopt the RHS temporary for noncopyable identifier targets, which surfaced once the analysis started accepting catch-reassignment patterns
 
 ---
 

@@ -1988,3 +1988,266 @@ TEST_CASE("E2E - RAII: struct literal field marks source as moved") {
         CHECK(result.value == 42);
     }
 }
+
+// ============================================================================
+// RAII Tests - Definite-termination analysis
+// ============================================================================
+// If one branch of an if/when/try always returns/throws/breaks/continues, the
+// merge should pick the surviving branch's move state instead of MaybeValid.
+
+TEST_CASE("E2E - RAII: early return in if-then preserves x live after") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            p.x = 42;
+            if (false) {
+                return 0;
+            }
+            // p is still live here — then-branch terminated
+            return consume(p);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - RAII: throw in if-then preserves x live after") {
+    const char* source = R"(
+        struct BadInput {
+            code: i32;
+        }
+
+        fun BadInput.message(): string for Exception {
+            return "bad input";
+        }
+
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun do_work(bail: bool): i32 {
+            var p: uniq Point = uniq Point();
+            p.x = 99;
+            if (bail) {
+                throw BadInput { code = 1 };
+            }
+            return consume(p);
+        }
+
+        fun main(): i32 {
+            try {
+                return do_work(false);
+            } catch (e: BadInput) {
+                return -1;
+            }
+            return -2;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 99);
+}
+
+TEST_CASE("E2E - RAII: move and return in then, live in else") {
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            p.x = 7;
+            if (false) {
+                return consume(p);
+            } else {
+                // else keeps p live; then moved and returned
+            }
+            // p is live here — only else-branch survives
+            return consume(p);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 7);
+}
+
+TEST_CASE("E2E - RAII: when with one terminating case preserves live path") {
+    const char* source = R"(
+        enum Kind { A, B }
+
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            p.x = 5;
+            var k: Kind = Kind::B;
+            when k {
+                case A:
+                    return 0;
+                case B:
+                    // fall through, p still live
+            }
+            return consume(p);
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 5);
+}
+
+TEST_CASE("E2E - RAII: try body move with terminating catch keeps x moved after") {
+    // Regression/precision test: catch terminates, so the only surviving
+    // exit path is the try body where x was moved. Using x after must error.
+    const char* source = R"(
+        struct E { code: i32; }
+        fun E.message(): string for Exception { return "e"; }
+
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            try {
+                var r: i32 = consume(p);
+            } catch (e: E) {
+                return -1;
+            }
+            // p is moved on the surviving try-exit path
+            return p.x;
+        }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);
+}
+
+TEST_CASE("E2E - RAII: reassignment in nested scope adopts RHS temporary") {
+    // Regression for an IR-gen fix: gen_assign_expr must consume the RHS
+    // temporary when the target is a noncopyable identifier, otherwise the
+    // temp's cleanup record at the inner scope depth triggers a double-free
+    // against the outer variable's cleanup when the scopes pop in order.
+    // This is observable when the reassignment sits in a nested block that
+    // pops before the variable's scope.
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            p.x = 1;
+            if (true) {
+                p = uniq Point();
+                p.x = 42;
+            }
+            return p.x;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - RAII: reassignment in catch after terminating try") {
+    // Exercises both the try/catch termination analysis and the
+    // gen_assign_expr temp-adoption fix: the try throws (terminating), so
+    // only the catch path survives; the catch reassigns a uniq variable
+    // from an outer scope, and the value must flow out to the caller
+    // without double-destroying the new resource.
+    const char* source = R"(
+        struct Resource { id: i32; }
+        fun delete Resource() { }
+
+        struct E { code: i32; }
+        fun E.message(): string for Exception { return "e"; }
+
+        fun main(): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.id = 1;
+            try {
+                throw E { code = 0 };
+            } catch (e: E) {
+                r = uniq Resource();
+                r.id = 7;
+            }
+            return r.id;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 7);
+}
+
+TEST_CASE("E2E - RAII: loop body return does not escape enclosing if") {
+    // Regression: if we incorrectly propagated termination from a loop body,
+    // we'd accept this program. The loop may execute zero times, so the
+    // then-branch may fall through with p moved — use of p after must still
+    // be rejected.
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            if (true) {
+                var r: i32 = consume(p);  // moves p
+                while (false) {
+                    return 0;
+                }
+                // loop may run 0 times; p is moved on this path
+            }
+            return p.x;  // should error: p may have been moved
+        }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);
+}

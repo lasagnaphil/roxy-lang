@@ -3155,6 +3155,21 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
         // Normal variable assignment - in SSA, we create a new value
         define_local(name, value, expr->resolved_type);
 
+        // If the RHS was a noncopyable temporary (e.g. `uniq T()`), transfer
+        // its ownership to the target variable. Without this, the temp's
+        // cleanup record at the current scope depth races with the
+        // variable's cleanup record at the variable's (outer) scope depth —
+        // harmless when register allocation aliases them and tombstoning
+        // absorbs the double-delete, but catastrophic inside nested scopes
+        // (e.g. a catch body) where the temp's scope pops before the
+        // variable's value is observed, leaving the variable pointing at
+        // freed memory. Matches the consume_temp_noncopyable(value, true)
+        // call in gen_var_decl.
+        if (assign_expr.target->resolved_type &&
+            assign_expr.target->resolved_type->noncopyable()) {
+            consume_temp_noncopyable(value, true);
+        }
+
         // Move semantics: if value is a noncopyable identifier, mark source as moved.
         // Unlike field assignment, we do NOT emit Nullify here because the target
         // variable now shares the same SSA value/register as the source.
