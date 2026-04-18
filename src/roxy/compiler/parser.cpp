@@ -1786,6 +1786,8 @@ WhenFieldDecl Parser::parse_when_field_decl() {
         // Parse fields until next case or end of when clause
         Vector<FieldDecl> fields;
         while (!check(TokenKind::KwCase) && !check(TokenKind::RightBrace) && !is_at_end()) {
+            bool field_is_pub = match(TokenKind::KwPub);
+
             Token field_name = consume(TokenKind::Identifier, "Expected field name");
             if (m_has_error) return WhenFieldDecl{};
 
@@ -1808,7 +1810,7 @@ WhenFieldDecl Parser::parse_when_field_decl() {
             field.name = field_name.text();
             field.type = field_type;
             field.default_value = default_value;
-            field.is_pub = false;  // variant fields are not individually public
+            field.is_pub = field_is_pub;
             field.loc = field_name.loc;
             fields.push_back(field);
         }

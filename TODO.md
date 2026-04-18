@@ -2,7 +2,8 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-04-18
+Last updated: 2026-04-19
+
 
 ---
 
@@ -14,6 +15,7 @@ Last updated: 2026-04-18
 
 ## Medium Priority
 
+- [x] Variant (when-case) struct fields bypass cross-module visibility checks — fixed: parser now accepts `pub` on variant fields, and `analyze_get_expr` enforces the same `is_pub && !same_module` check as regular fields
 - [x] Destructor throw during exception unwinding loses original exception — fixed: compile-time ban on `throw` in delete destructors + runtime safety net via `in_flight_exception` guard
 - [x] Ternary expressions skip move-state merging — fixed: `analyze_ternary_expr` now saves/restores/merges move states across both branches, mirroring the if-statement pattern. Also fixed a pre-existing IR-gen bug where `gen_ternary_expr` returned `else_val` directly instead of a phi-merged block argument, causing the then-path to produce garbage at runtime
 - [x] `alloc_large()` only zeros `size` bytes, not page-aligned `alloc_size` bytes — fixed: `alloc_large` now zeros the full page-aligned `alloc_size`, matching the slab path which zeros the full `slot_size`

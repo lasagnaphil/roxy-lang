@@ -99,6 +99,7 @@ struct FieldInfo {
 struct VariantFieldInfo {
     StringView name;
     Type* type;
+    bool is_pub;
     u32 slot_offset;    // Offset WITHIN the union (from union start)
     u32 slot_count;
 };

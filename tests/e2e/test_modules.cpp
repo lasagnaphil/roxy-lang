@@ -757,4 +757,157 @@ TEST_CASE("E2E - Module: error on unknown nested module") {
     CHECK(found_error);
 }
 
+// =============================================================================
+// Tagged union variant field visibility across modules
+// =============================================================================
+
+TEST_CASE("E2E - Compiler: variant field visibility - cross-module private read rejected") {
+    BumpAllocator allocator(16384);
+
+    const char* lib_source = R"(
+        pub enum Kind { Fire, Ice }
+
+        pub struct Skill {
+            when kind: Kind {
+                case Fire:
+                    burn: i32;
+                case Ice:
+                    slow: i32;
+            }
+        }
+
+        pub fun make_fire(amount: i32): Skill {
+            return Skill { kind = Kind::Fire, burn = amount };
+        }
+    )";
+
+    const char* main_source = R"(
+        from lib import Skill, Kind, make_fire;
+
+        fun main(): i32 {
+            var s: Skill = make_fire(7);
+            when s.kind {
+                case Fire:
+                    return s.burn;
+                case Ice:
+                    return 0;
+            }
+            return -1;
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("lib", lib_source, static_cast<u32>(strlen(lib_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    CHECK(module == nullptr);
+    CHECK(compiler.has_errors());
+
+    bool found_error = false;
+    for (const char* err : compiler.errors()) {
+        if (strstr(err, "variant field") && strstr(err, "burn") && strstr(err, "private")) {
+            found_error = true;
+            break;
+        }
+    }
+    CHECK(found_error);
+}
+
+TEST_CASE("E2E - Compiler: variant field visibility - cross-module private init rejected") {
+    BumpAllocator allocator(16384);
+
+    const char* lib_source = R"(
+        pub enum Kind { Fire, Ice }
+
+        pub struct Skill {
+            when kind: Kind {
+                case Fire:
+                    burn: i32;
+                case Ice:
+                    slow: i32;
+            }
+        }
+    )";
+
+    const char* main_source = R"(
+        from lib import Skill, Kind;
+
+        fun main(): i32 {
+            var s: Skill = Skill { kind = Kind::Fire, burn = 7 };
+            return 0;
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("lib", lib_source, static_cast<u32>(strlen(lib_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    CHECK(module == nullptr);
+    CHECK(compiler.has_errors());
+
+    bool found_error = false;
+    for (const char* err : compiler.errors()) {
+        if (strstr(err, "variant field") && strstr(err, "burn") && strstr(err, "private")) {
+            found_error = true;
+            break;
+        }
+    }
+    CHECK(found_error);
+}
+
+TEST_CASE("E2E - Compiler: variant field visibility - cross-module pub read allowed") {
+    BumpAllocator allocator(16384);
+
+    const char* lib_source = R"(
+        pub enum Kind { Fire, Ice }
+
+        pub struct Skill {
+            when kind: Kind {
+                case Fire:
+                    pub burn: i32;
+                case Ice:
+                    pub slow: i32;
+            }
+        }
+    )";
+
+    const char* main_source = R"(
+        from lib import Skill, Kind;
+
+        fun main(): i32 {
+            var s: Skill = Skill { kind = Kind::Fire, burn = 11 };
+            when s.kind {
+                case Fire:
+                    return s.burn;
+                case Ice:
+                    return 0;
+            }
+            return -1;
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("lib", lib_source, static_cast<u32>(strlen(lib_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    REQUIRE(module != nullptr);
+    REQUIRE(!compiler.has_errors());
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    bool success = vm_call(&vm, "main", {});
+    REQUIRE(success);
+
+    Value result = vm_get_result(&vm);
+    CHECK(result.as_int == 11);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
 } // namespace rx

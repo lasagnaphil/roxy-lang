@@ -838,6 +838,7 @@ void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
                 VariantFieldInfo variant_field_info;
                 variant_field_info.name = field.name;
                 variant_field_info.type = field_type;
+                variant_field_info.is_pub = field.is_pub;
                 variant_field_info.slot_offset = var_slot;
                 variant_field_info.slot_count = slot_count;
                 var_fields.push_back(variant_field_info);
@@ -4961,6 +4962,13 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
     const VariantFieldInfo* variant_field_info = struct_type_info.find_variant_field(get_expr.name, &found_clause, &found_variant);
     if (variant_field_info) {
         // Variant field access - semantic analysis allows it, runtime will check discriminant
+        bool same_module = struct_type_info.module_name.empty() || m_program->module_name.empty() ||
+                           struct_type_info.module_name == m_program->module_name;
+        if (!variant_field_info->is_pub && !same_module) {
+            error_fmt(expr->loc, "variant field '{}' is private in struct '{}'",
+                      get_expr.name, struct_type_info.name);
+            return m_types.error_type();
+        }
         return variant_field_info->type;
     }
 
@@ -5331,6 +5339,14 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
                 continue;
             }
             variant_field_initialized[fi.name] = true;
+
+            bool same_module = type->struct_info.module_name.empty() || m_program->module_name.empty() ||
+                               type->struct_info.module_name == m_program->module_name;
+            if (!variant_field_info->is_pub && !same_module) {
+                error_fmt(fi.loc, "variant field '{}' is private in struct '{}'",
+                          fi.name, type->struct_info.name);
+                continue;
+            }
 
             // Type-check field value
             Type* value_type = analyze_expr(fi.value);
