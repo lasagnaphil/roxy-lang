@@ -1215,3 +1215,89 @@ TEST_CASE("E2E - Exception throw in delete destructor rejected") {
     }
 }
 
+// ============================================================================
+// Pre-declared local reassigned from a throwing call inside try/catch
+// ============================================================================
+// The IR builder must not let the try-body's rebinding of `r` to the call's
+// (never-produced) result leak into the catch handler — otherwise the catch
+// dereferences an uninitialized SSA value (segfault for struct returns,
+// silently-wrong value for primitives).
+
+TEST_CASE("E2E - Try/catch: throwing call to pre-declared struct local preserves prior value") {
+    const char* source = R"ROXY(
+        struct Pt { x: i32; y: i32; z: i32; }
+        struct E { c: i32; }
+        fun E.message(): string for Exception { return "e"; }
+
+        fun inner(): Pt {
+            throw E { c = 1 };
+            return Pt { x = 99, y = 99, z = 99 };
+        }
+
+        fun main(): i32 {
+            var r: Pt = Pt { x = 7, y = 7, z = 7 };
+            try {
+                r = inner();
+            } catch (e: E) {
+            }
+            return r.x;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 7);
+}
+
+TEST_CASE("E2E - Try/catch: throwing call to pre-declared primitive local preserves prior value") {
+    const char* source = R"ROXY(
+        struct E { c: i32; }
+        fun E.message(): string for Exception { return "e"; }
+
+        fun inner(): i32 {
+            throw E { c = 1 };
+            return 99;
+        }
+
+        fun main(): i32 {
+            var r: i32 = 7;
+            try {
+                r = inner();
+            } catch (e: E) {
+            }
+            return r;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 7);
+}
+
+TEST_CASE("E2E - Try/catch: non-throwing call still rebinds the pre-declared local") {
+    // Sanity check that the IR-builder rollback doesn't break the happy path:
+    // when the call succeeds, the assignment must take effect.
+    const char* source = R"ROXY(
+        struct Pt { x: i32; y: i32; z: i32; }
+        struct E { c: i32; }
+        fun E.message(): string for Exception { return "e"; }
+
+        fun inner(): Pt {
+            return Pt { x = 42, y = 42, z = 42 };
+        }
+
+        fun main(): i32 {
+            var r: Pt = Pt { x = 7, y = 7, z = 7 };
+            try {
+                r = inner();
+            } catch (e: E) {
+            }
+            return r.x;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+

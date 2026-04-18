@@ -2167,6 +2167,31 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
         return alloc_span(args);
     };
 
+    // Snapshot pre-try local-scope SSA bindings. Each catch block must see the
+    // locals as they were *before* the try body ran — otherwise the catch sees
+    // rebindings (e.g. `r = throwing_call()` rebinds r to the call result's
+    // SSA value, even when the call threw and never produced one), and the
+    // after-block phi feeds those undefined values out.
+    //
+    // We deliberately do NOT snapshot m_owned_locals.is_moved here. That flag
+    // governs IR-builder bookkeeping for runtime cleanup (whether to emit a
+    // destroy at scope exit / before reassignment). Rolling it back would
+    // re-enable the implicit-destroy preamble of `r = uniq T()` inside catch
+    // for a uniq local already consumed in the try body, double-freeing the
+    // already-dead slab slot. Use-after-move in catch is the semantic
+    // analyzer's job to reject, not the IR builder's to repair.
+    Vector<tsl::robin_map<StringView, LocalVar>> saved_scopes_pre;
+    saved_scopes_pre.reserve(m_local_scopes.size());
+    for (auto& scope : m_local_scopes) {
+        saved_scopes_pre.push_back(scope);
+    }
+    auto restore_pre_try_state = [&]() {
+        m_local_scopes.clear();
+        for (auto& scope : saved_scopes_pre) {
+            m_local_scopes.push_back(scope);
+        }
+    };
+
     // Record the first block of the try body
     IRBlock* try_entry_block = create_block("try.body");
     finish_block_goto(try_entry_block->id);
@@ -2217,6 +2242,10 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
 
         set_current_block(catch_block);
 
+        // Restore pre-try state: the catch path begins where the throw aborted,
+        // so any rebindings/moves the try body did must not be visible here.
+        restore_pre_try_state();
+
         // Define catch variable in scope
         push_scope();
         define_local(clause.var_name, exc_param.value, exc_param.type);
@@ -2264,6 +2293,9 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
         finally_catch_block->params.push_back(exc_param);
 
         set_current_block(finally_catch_block);
+
+        // Restore pre-try state for the same reason as the typed catches.
+        restore_pre_try_state();
 
         // Execute finally body
         push_scope();
