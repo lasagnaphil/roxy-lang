@@ -910,4 +910,127 @@ TEST_CASE("E2E - Compiler: variant field visibility - cross-module pub read allo
     delete module;
 }
 
+// =============================================================================
+// Module-local function name scoping (non-pub names must not leak across modules)
+// =============================================================================
+
+TEST_CASE("E2E - Compiler: non-pub function names do not collide across modules") {
+    BumpAllocator allocator(16384);
+
+    // Both modules define a non-pub `aux`. Module A's `run` calls its own `aux`.
+    // Pre-fix: B's `aux` overwrote A's in the global function index; A's `run`
+    // dispatched to B's body. With module-local mangling, A's `aux` becomes
+    // `a::aux` and resolves correctly.
+    const char* a_source = R"(
+        pub fun run(): i32 {
+            return aux();
+        }
+
+        fun aux(): i32 {
+            return 1;
+        }
+    )";
+
+    const char* b_source = R"(
+        import a;
+
+        fun aux(): i32 {
+            return 2;
+        }
+
+        pub fun run_b(): i32 {
+            return aux();
+        }
+    )";
+
+    const char* main_source = R"(
+        from a import run;
+        from b import run_b;
+
+        fun main(): i32 {
+            return run() * 10 + run_b();
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("a", a_source, static_cast<u32>(strlen(a_source)));
+    compiler.add_source("b", b_source, static_cast<u32>(strlen(b_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    REQUIRE(module != nullptr);
+    REQUIRE(!compiler.has_errors());
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    bool success = vm_call(&vm, "main", {});
+    REQUIRE(success);
+
+    Value result = vm_get_result(&vm);
+    CHECK(result.as_int == 12);  // run()=1 * 10 + run_b()=2 = 12
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+TEST_CASE("E2E - Compiler: non-pub functions with mismatched signatures do not cross modules") {
+    BumpAllocator allocator(16384);
+
+    // Pre-fix this would dispatch A's zero-arg `helper()` call to B's two-arg
+    // `helper(i32, i32)`, tripping the arg_count == param_count assertion in
+    // the interpreter. Post-fix, each module's `helper` is module-scoped.
+    const char* a_source = R"(
+        pub fun answer(): i32 {
+            return helper();
+        }
+
+        fun helper(): i32 {
+            return 42;
+        }
+    )";
+
+    const char* b_source = R"(
+        fun helper(x: i32, y: i32): i32 {
+            return x + y;
+        }
+
+        pub fun sum(x: i32, y: i32): i32 {
+            return helper(x, y);
+        }
+    )";
+
+    const char* main_source = R"(
+        from a import answer;
+        from b import sum;
+
+        fun main(): i32 {
+            return answer() + sum(3, 4);
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("a", a_source, static_cast<u32>(strlen(a_source)));
+    compiler.add_source("b", b_source, static_cast<u32>(strlen(b_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    REQUIRE(module != nullptr);
+    REQUIRE(!compiler.has_errors());
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+
+    bool success = vm_call(&vm, "main", {});
+    REQUIRE(success);
+
+    Value result = vm_get_result(&vm);
+    CHECK(result.as_int == 49);  // answer()=42 + sum(3,4)=7 = 49
+
+    vm_destroy(&vm);
+    delete module;
+}
+
 } // namespace rx

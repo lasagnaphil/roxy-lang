@@ -17,12 +17,14 @@ TEST_CASE("E2E - Float arithmetic") {
             var b: f64 = 2.5;
             return a + b;
         }
+
+        fun main(): i32 {
+            return i32(calc());
+        }
     )";
 
-    Value result = compile_and_run(source, "calc");
-    // With untyped registers, we need to interpret the raw bits as float
-    Value float_result = Value::float_from_u64(result.as_u64());
-    CHECK(float_result.as_float == doctest::Approx(6.0));
+    Value result = compile_and_run(source, "main");
+    CHECK(result.as_int == 6);
 }
 
 TEST_CASE("E2E - Float comparison") {
@@ -33,24 +35,19 @@ TEST_CASE("E2E - Float comparison") {
             }
             return b;
         }
+
+        fun main(): i32 {
+            // Pack two boolean checks into one int so a single pass exercises both branches.
+            var hi: i32 = 0;
+            if (max_float(3.14, 2.71) == 3.14) { hi = 1; }
+            var lo: i32 = 0;
+            if (max_float(1.5, 4.5) == 4.5) { lo = 1; }
+            return hi * 2 + lo;
+        }
     )";
 
-    BumpAllocator allocator(4096);
-    BCModule* module = compile(allocator, source);
-    REQUIRE(module != nullptr);
-
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
-
-    Value args[2] = {Value::make_float(3.14), Value::make_float(2.71)};
-    CHECK(vm_call(&vm, "max_float", Span<Value>(args, 2)));
-    // With untyped registers, interpret result bits as float
-    Value float_result = Value::float_from_u64(vm_get_result(&vm).as_u64());
-    CHECK(float_result.as_float == doctest::Approx(3.14));
-
-    vm_destroy(&vm);
-    delete module;
+    Value result = compile_and_run(source, "main");
+    CHECK(result.as_int == 3);  // both branches matched
 }
 
 // ============================================================================

@@ -151,6 +151,11 @@ private:
     StringView mangle_constructor(StringView struct_name, StringView ctor_name = {});
     StringView mangle_destructor(StringView struct_name, StringView dtor_name = {});
 
+    // Mangle a non-pub function with the current module prefix to keep names
+    // module-private after IR modules are merged into one global table.
+    // Returns name unchanged if module is empty (single-file mode).
+    StringView mangle_module_local(StringView name);
+
     // Apply reference wrapper to base type based on RefKind
     Type* apply_ref_kind(Type* base_type, RefKind ref_kind);
 
@@ -171,6 +176,11 @@ private:
     NativeRegistry& m_registry;
     SymbolTable& m_symbols;
     ModuleRegistry& m_module_registry;
+
+    // Name of the module currently being built. Set in build() from
+    // program->module_name. Used by mangle_module_local to scope non-pub
+    // function names so they don't collide across modules at link time.
+    StringView m_module_name;
 
     // Current function being built
     IRFunction* m_current_func;

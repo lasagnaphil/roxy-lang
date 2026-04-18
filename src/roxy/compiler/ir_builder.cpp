@@ -67,6 +67,7 @@ void IRBuilder::report_error(const char* message) {
 IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
     m_has_error = false;
     m_error = nullptr;
+    m_module_name = program->module_name;
 
     IRModule* module = m_allocator.emplace<IRModule>();
 
@@ -353,7 +354,14 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
 
 IRFunction* IRBuilder::build_function(FunDecl* decl) {
     m_current_func = m_allocator.emplace<IRFunction>();
-    m_current_func->name = decl->name;
+    // Non-pub functions are scoped to their module so they don't collide at link time.
+    // "main" is the program entry point convention — leave it un-mangled so the host
+    // can still invoke it via vm_call(&vm, "main", {}).
+    if (!decl->is_pub && decl->name != StringView("main", 4)) {
+        m_current_func->name = mangle_module_local(decl->name);
+    } else {
+        m_current_func->name = decl->name;
+    }
 
     // Set up parameters
     setup_parameters(decl->params);
@@ -2777,12 +2785,16 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
 
     // Get function name from callee
     if (call_expr.callee->kind == AstKind::ExprIdentifier) {
+        // Original (unmangled) callee name from source. For generic calls, this is the
+        // template name ("helper"); the symbol table is keyed by template name, not by
+        // monomorphized name ("helper$i32"), so we must look up via orig_name.
+        StringView orig_name = call_expr.callee->identifier.name;
         // Use mangled name for generic function calls (e.g., "identity$i32")
-        StringView func_name = call_expr.mangled_name.size() > 0 ? call_expr.mangled_name : call_expr.callee->identifier.name;
+        StringView func_name = call_expr.mangled_name.size() > 0 ? call_expr.mangled_name : orig_name;
         StringView lookup_name = func_name;
 
         // Check if this is an imported function (may have alias)
-        Symbol* sym = m_symbols.lookup(func_name);
+        Symbol* sym = m_symbols.lookup(orig_name);
         if (sym && sym->kind == SymbolKind::ImportedFunction) {
             // Use the original function name for native registry lookup
             lookup_name = sym->imported_func.original_name;
@@ -2794,7 +2806,14 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         if (native_idx >= 0) {
             result = emit_call_native(lookup_name, final_args, expr->resolved_type, static_cast<u8>(native_idx));
         } else {
-            result = emit_call(func_name, final_args, expr->resolved_type);
+            // Module-scope non-pub functions are mangled at definition (see build_function);
+            // calls to them must use the mangled name so they resolve within the same module.
+            StringView emit_name = func_name;
+            if (sym && sym->kind == SymbolKind::Function && !sym->is_pub
+                && orig_name != StringView("main", 4)) {
+                emit_name = mangle_module_local(func_name);
+            }
+            result = emit_call(emit_name, final_args, expr->resolved_type);
         }
 
         // For large struct returns, the result is the output pointer (already allocated)
@@ -4451,6 +4470,15 @@ StringView IRBuilder::mangle_constructor(StringView struct_name, StringView ctor
     } else {
         len = format_to(name_buf, sizeof(name_buf), "{}$$new$${}", struct_name, ctor_name);
     }
+    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(len) + 1, 1));
+    memcpy(name_ptr, name_buf, static_cast<u32>(len) + 1);
+    return StringView(name_ptr, static_cast<u32>(len));
+}
+
+StringView IRBuilder::mangle_module_local(StringView name) {
+    if (m_module_name.empty()) return name;
+    char name_buf[256];
+    i32 len = format_to(name_buf, sizeof(name_buf), "{}::{}", m_module_name, name);
     char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(len) + 1, 1));
     memcpy(name_ptr, name_buf, static_cast<u32>(len) + 1);
     return StringView(name_ptr, static_cast<u32>(len));
