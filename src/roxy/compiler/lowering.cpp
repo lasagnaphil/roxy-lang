@@ -120,6 +120,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_var_name_to_stack_slot.clear();
     m_value_types.clear();
     m_block_offsets.clear();
+    m_unfusable_cmp_pcs.clear();
     m_nullify_pcs.clear();
     m_jump_patches.clear();
     m_free_regs.clear();
@@ -1332,7 +1333,17 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             // scratch[1] first, then left into scratch[0] which becomes the dst.
             u8 right = ensure_in_register(inst->binary.right, 1);
             u8 left = ensure_in_register(inst->binary.left, 0);
+            u32 cmp_pc = m_current_func->code.size();
             emit_abc(get_opcode(inst->op), dst, left, right);
+            // Mark integer compares as unfusable when their SSA result is live past
+            // this block's terminator — otherwise fuse_compare_branch would drop the
+            // register write that the later block's read depends on.
+            bool is_int_cmp = (inst->op >= IROp::EqI && inst->op <= IROp::GeI);
+            if (is_int_cmp && inst->result.is_valid() &&
+                inst->result.id < m_value_same_block.size() &&
+                !m_value_same_block[inst->result.id]) {
+                m_unfusable_cmp_pcs.insert(cmp_pc);
+            }
             spill_if_needed(inst->result, dst);
             break;
         }
@@ -1941,6 +1952,11 @@ void BytecodeBuilder::fuse_compare_branch() {
         // Only fuse signed integer comparisons for now
         if (cmp_op < Opcode::EQ_I || cmp_op > Opcode::GE_I) continue;
         if (jmp_op != Opcode::JMP_IF_NOT && jmp_op != Opcode::JMP_IF) continue;
+
+        // Skip compares whose result is used beyond this block's terminator.
+        // Fusion drops the compare's register write, so a cross-block read would
+        // get stale/uninitialized bytes.
+        if (m_unfusable_cmp_pcs.count(i)) continue;
 
         // The comparison destination must match the branch condition register
         u8 cmp_dst = decode_a(code[i]);

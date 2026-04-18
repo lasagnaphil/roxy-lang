@@ -437,6 +437,52 @@ TEST_CASE("E2E - When move in some branches") {
     CHECK(module == nullptr);  // Should fail: use of possibly moved value
 }
 
+TEST_CASE("E2E - When arm bool reused after for-loop (compare/branch fusion)") {
+    // Regression: a bool local whose defining comparison is fused with the
+    // immediately-following JMP_IF used to leave the SSA value's register
+    // uninitialized for a later read on the other side of a `for` loop. With
+    // RPO block layout, the loop body sits AFTER the second read, so the
+    // register (reassigned inside the loop body at runtime) held stale bytes
+    // by the time control returned to the second `if`.
+    const char* source = R"(
+        struct Holder {
+            items: List<i32>;
+            a: i32 = 0;
+        }
+
+        enum Kind { A, B }
+
+        fun Holder.run(k: Kind): i32 {
+            when k {
+                case A: {
+                    var flag: bool = (self.a != 0);
+                    var hits: i32 = 0;
+                    if (flag) { hits = hits + 1; }
+                    for (var i: i32 = 0; i < self.items.len(); i = i + 1) {
+                        hits = hits + 10;
+                    }
+                    if (flag) { hits = hits + 100; }
+                    return hits;
+                }
+                case B: { return -1; }
+            }
+            return -2;
+        }
+
+        fun main(): i32 {
+            var h: Holder = Holder { items = List<i32>() };
+            h.a = 7;
+            h.items.push(1);
+            h.items.push(2);
+            return h.run(Kind::A);
+        }
+    )";
+
+    Value result = compile_and_run(source, "main");
+    // flag=true → 1 (first if) + 20 (two loop iters) + 100 (second if) = 121
+    CHECK(result.as_int == 121);
+}
+
 TEST_CASE("E2E - When no move in any branch") {
     // uniq untouched in all branches → Live after when → use is fine
     const char* source = R"(

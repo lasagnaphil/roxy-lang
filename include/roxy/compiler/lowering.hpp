@@ -7,6 +7,7 @@
 #include "roxy/vm/bytecode.hpp"
 
 #include "roxy/core/tsl/robin_map.h"
+#include "roxy/core/tsl/robin_set.h"
 
 namespace rx {
 
@@ -101,6 +102,13 @@ private:
 
     // Block offsets for jump resolution
     tsl::robin_map<u32, u32> m_block_offsets;  // BlockId.id -> code offset
+
+    // Bytecode PCs of integer-compare instructions whose SSA result is live past
+    // this block's terminator (i.e. !m_value_same_block). These must NOT be fused
+    // with the following JMP_IF/JMP_IF_NOT: the fusion drops the register write,
+    // so a later block's read of the same SSA value (e.g. the second `if (bool)`
+    // after a loop) would see an uninitialized/stale register.
+    tsl::robin_set<u32> m_unfusable_cmp_pcs;
 
     // Nullify positions: tracks where ownership was transferred for each value.
     // Used to narrow cleanup record scopes (Nullify is a compile-time annotation,
