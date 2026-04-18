@@ -2631,3 +2631,79 @@ TEST_CASE("E2E - Constructor: uniq field initialisation survives sequential call
     CHECK(result.success);
     CHECK(result.value == 7);
 }
+
+// ============================================================================
+// Constructor calls must consume/nullify noncopyable identifier arguments
+// (regression: gen_constructor_call didn't move-nullify identifier args like
+// gen_call_expr does, so `uniq T.name(leaf)` left `leaf` still pointing at
+// the slot the constructor stored into a field, causing a double-free at
+// scope exit).
+// ============================================================================
+
+TEST_CASE("E2E - Constructor call consumes noncopyable identifier argument stored in variant field") {
+    const char* source = R"ROXY(
+        enum K { A, B }
+        struct Node {
+            expr_id: i32;
+            when kind: K { case A: child: uniq Node; case B: val: i32; }
+        }
+        fun new Node.a(id: i32, c: uniq Node) {
+            self.expr_id = id;
+            self.kind = K::A;
+            self.child = c;
+        }
+        fun new Node.b(id: i32, v: i32) {
+            self.expr_id = id;
+            self.kind = K::B;
+            self.val = v;
+        }
+        fun main(): i32 {
+            var leaf: uniq Node = uniq Node.b(1, 42);
+            var parent: uniq Node = uniq Node.a(2, leaf);
+            when parent.kind {
+                case A: return parent.child.val;
+                case B: return -1;
+            }
+            return -2;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Constructor call consumes inline uniq rvalue argument stored in variant field") {
+    // Exercises the rvalue/temp path (not just identifiers): the inner
+    // `uniq Node.b(...)` is an rvalue temporary passed to Node.a. It must be
+    // consumed via the temp-nullify path, not the identifier path.
+    const char* source = R"ROXY(
+        enum K { A, B }
+        struct Node {
+            expr_id: i32;
+            when kind: K { case A: child: uniq Node; case B: val: i32; }
+        }
+        fun new Node.a(id: i32, c: uniq Node) {
+            self.expr_id = id;
+            self.kind = K::A;
+            self.child = c;
+        }
+        fun new Node.b(id: i32, v: i32) {
+            self.expr_id = id;
+            self.kind = K::B;
+            self.val = v;
+        }
+        fun main(): i32 {
+            var parent: uniq Node = uniq Node.a(2, uniq Node.b(1, 99));
+            when parent.kind {
+                case A: return parent.child.val;
+                case B: return -1;
+            }
+            return -2;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 99);
+}

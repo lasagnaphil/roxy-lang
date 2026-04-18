@@ -470,19 +470,37 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
     // the caller left in the return slot (often a pointer from a previous call
     // that has already been freed). Nulling them first makes the preamble's
     // `Delete(ptr)` a safe no-op. Inherited fields are left to the parent
-    // constructor that already ran above.
+    // constructor that already ran above. Variant (when-clause) fields live
+    // inside a shared union region in the same struct; they also go through
+    // `self.field = …` and need the same treatment. Multiple variants' fields
+    // may alias the same union offset — duplicate null-writes are harmless.
     {
         StructTypeInfo& struct_type_info = struct_type->struct_info;
         u32 inherited_field_count = parent_type ? parent_type->struct_info.fields.size() : 0;
         ValueId self_ptr = m_current_func->params[0].value;
         ValueId null_val = ValueId::invalid();
+        auto ensure_null = [&]() {
+            if (!null_val.is_valid()) null_val = emit_const_null();
+        };
         for (u32 i = inherited_field_count; i < struct_type_info.fields.size(); i++) {
             const FieldInfo& field = struct_type_info.fields[i];
             if (!field.type) continue;
             if (field.type->kind != TypeKind::Uniq && !field.type->noncopyable()) continue;
-            if (!null_val.is_valid()) null_val = emit_const_null();
+            ensure_null();
             emit_set_field(self_ptr, field.name, field.slot_offset, field.slot_count,
                            null_val, field.type);
+        }
+        for (const auto& clause : struct_type_info.when_clauses) {
+            for (const auto& variant : clause.variants) {
+                for (const auto& vf : variant.fields) {
+                    if (!vf.type) continue;
+                    if (vf.type->kind != TypeKind::Uniq && !vf.type->noncopyable()) continue;
+                    ensure_null();
+                    u32 actual_offset = clause.union_slot_offset + vf.slot_offset;
+                    emit_set_field(self_ptr, vf.name, actual_offset, vf.slot_count,
+                                   null_val, vf.type);
+                }
+            }
         }
     }
 
@@ -3626,20 +3644,62 @@ ValueId IRBuilder::gen_constructor_call(Expr* expr) {
     StructTypeInfo& struct_type_info = struct_type->struct_info;
     StringView ctor_name = mangle_constructor(struct_type_info.name, call_expr.constructor_name);
 
-    // Build arguments: 'self' pointer + constructor arguments
+    // Build arguments: 'self' pointer + constructor arguments.
+    //
+    // For noncopyable args, ownership transfers to the callee. gen_call_expr
+    // handles this with:
+    //   (a) `consume_temp_noncopyable` right after evaluation — nullifies the
+    //       temp's cleanup register so its caller-side Delete becomes a no-op.
+    //   (b) post-call nullify-replace for identifier args — replaces the
+    //       local's SSA binding with null and marks is_moved=true so scope
+    //       cleanup skips it.
+    //
+    // Constructor calls need the same fixup; without it `uniq T.name(arg)`
+    // where arg is a uniq-typed local (or a uniq rvalue temporary) leaves
+    // the caller still pointing at the slot the callee now owns — when the
+    // constructor stores arg into a field and the enclosing struct is
+    // destroyed, the field cleanup frees the slot AND the caller's scope-exit
+    // Delete frees it a second time (slab_allocator.cpp:286 ALIVE assert).
     Vector<ValueId> call_args;
     call_args.push_back(obj);  // 'self' pointer
 
     for (auto& arg : call_expr.arguments) {
+        ValueId arg_val;
         if (arg.modifier != ParamModifier::None) {
             // Pass address of lvalue for out/inout args
-            call_args.push_back(gen_lvalue_addr(arg.expr));
+            arg_val = gen_lvalue_addr(arg.expr);
         } else {
-            call_args.push_back(gen_expr(arg.expr));
+            arg_val = gen_expr(arg.expr);
+            if (arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
+                consume_temp_noncopyable(arg_val);
+            }
         }
+        call_args.push_back(arg_val);
     }
 
     emit_call(ctor_name, alloc_span(call_args), m_types.void_type());
+
+    // Post-call nullify-replace for noncopyable identifier arguments.
+    for (u32 i = 0; i < call_expr.arguments.size(); i++) {
+        const CallArg& arg = call_expr.arguments[i];
+        if (arg.modifier != ParamModifier::None) continue;
+        if (arg.expr->kind != AstKind::ExprIdentifier) continue;
+        Type* arg_type = arg.expr->resolved_type;
+        if (!arg_type || !arg_type->noncopyable()) continue;
+        StringView arg_name = arg.expr->identifier.name;
+        OwnedLocalInfo* owned_info = find_owned_local(arg_name);
+        if (owned_info && !owned_info->is_moved) {
+            if (arg_type->kind == TypeKind::Uniq) {
+                ValueId null_val_arg = emit_const_null();
+                define_local(arg_name, null_val_arg, arg_type);
+            }
+            if (owned_info->initial_value.is_valid()) {
+                IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+                if (nullify) nullify->unary = owned_info->initial_value;
+            }
+            owned_info->is_moved = true;
+        }
+    }
 
     return obj;
 }
