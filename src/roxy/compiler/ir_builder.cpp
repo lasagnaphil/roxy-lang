@@ -2531,21 +2531,36 @@ ValueId IRBuilder::gen_ternary_expr(Expr* expr) {
     IRBlock* else_block = create_block("tern.else");
     IRBlock* merge_block = create_block("tern.end");
 
+    // Merge block takes the ternary result as a phi parameter so both branches
+    // can contribute their value. Previously this returned else_val directly,
+    // leaving the merge block's register undefined on the then-path and
+    // producing garbage at runtime.
+    Type* result_type = expr->resolved_type;
+    ValueId phi = m_current_func->new_value();
+    merge_block->params.push_back({phi, result_type, StringView()});
+
     finish_block_branch(cond, then_block->id, else_block->id);
 
     // Then branch
     set_current_block(then_block);
     ValueId then_val = gen_expr(ternary_expr.then_expr);
-    finish_block_goto(merge_block->id);
+    {
+        Vector<BlockArgPair> args;
+        args.push_back({then_val});
+        finish_block_goto(merge_block->id, alloc_span(args));
+    }
 
     // Else branch
     set_current_block(else_block);
     ValueId else_val = gen_expr(ternary_expr.else_expr);
-    finish_block_goto(merge_block->id);
+    {
+        Vector<BlockArgPair> args;
+        args.push_back({else_val});
+        finish_block_goto(merge_block->id, alloc_span(args));
+    }
 
-    // Merge - simplified, proper SSA would use block arguments
     set_current_block(merge_block);
-    return else_val;  // Simplified
+    return phi;
 }
 
 ValueId IRBuilder::gen_call_expr(Expr* expr) {

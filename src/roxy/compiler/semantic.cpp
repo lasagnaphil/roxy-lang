@@ -3802,8 +3802,23 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
         check_boolean(cond_type, ternary_expr.condition->loc);
     }
 
+    // Save/restore/merge move states across the two branches, mirroring
+    // analyze_if_stmt. Only one branch executes at runtime, so an analysis
+    // that observed both linearly would produce spurious use-after-move
+    // errors and miss conditional moves. Ternary branches are expressions
+    // so they cannot contain return/throw/break/continue — no termination
+    // flag handling is required.
+    MoveStateSnapshot pre_branch_states = save_move_states();
+
     Type* then_type = analyze_expr(ternary_expr.then_expr);
+    MoveStateSnapshot then_states = save_move_states();
+
+    restore_move_states(pre_branch_states);
     Type* else_type = analyze_expr(ternary_expr.else_expr);
+    MoveStateSnapshot else_states = save_move_states();
+
+    restore_move_states(pre_branch_states);
+    merge_move_states(then_states, else_states);
 
     if (then_type->is_error()) return else_type;
     if (else_type->is_error()) return then_type;

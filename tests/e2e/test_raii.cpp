@@ -2251,3 +2251,111 @@ TEST_CASE("E2E - RAII: loop body return does not escape enclosing if") {
     BCModule* module = compile(allocator, source);
     CHECK(module == nullptr);
 }
+
+// ============================================================================
+// RAII Tests - Ternary move-state merging
+// ============================================================================
+// Ternary branches are evaluated conditionally at runtime, so the analyzer
+// must save/restore state across the branches and merge results — same
+// protocol used by if/else. A naive linear analysis would either produce
+// spurious use-after-move errors in the second branch, or miss conditional
+// moves that should mark a variable MaybeValid after the expression.
+
+TEST_CASE("E2E - RAII: ternary consumes different variables in each branch") {
+    // Each branch moves a different uniq variable. After the ternary, both
+    // should be MaybeValid; using either must be a compile error.
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun main(): i32 {
+            var a: uniq Point = uniq Point();
+            var b: uniq Point = uniq Point();
+            var r: i32 = true ? consume(a) : consume(b);
+            return a.x;  // error: a is MaybeValid
+        }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);
+}
+
+TEST_CASE("E2E - RAII: ternary consumes same variable in both branches") {
+    // Both branches move the same variable — post-ternary it is definitely
+    // Moved; use after must be a compile error.
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            var r: i32 = true ? consume(p) : consume(p);
+            return p.x;  // error: p is Moved
+        }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);
+}
+
+TEST_CASE("E2E - RAII: ternary consumes in only one branch is MaybeValid") {
+    // Without merge, the linear analysis would mark p as Moved after the
+    // ternary; with merge it is MaybeValid (one branch consumes, other
+    // does not). Either way, a post-ternary use must be rejected.
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            var r: i32 = true ? consume(p) : 0;
+            return p.x;  // error: p is MaybeValid
+        }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);
+}
+
+TEST_CASE("E2E - RAII: ternary with no moves keeps variable live") {
+    // Regression guard: a ternary over pure int branches must not affect
+    // the move state of uniq variables in scope.
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            p.x = 5;
+            var r: i32 = true ? 1 : 2;
+            return p.x + r;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 6);
+}
