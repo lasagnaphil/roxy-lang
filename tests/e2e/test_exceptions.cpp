@@ -1301,3 +1301,119 @@ TEST_CASE("E2E - Try/catch: non-throwing call still rebinds the pre-declared loc
     CHECK(result.value == 42);
 }
 
+// ============================================================================
+// Try bodies containing loops (regression: RPO reorder placed a loop body
+// block after the loop's fall-through in the bytecode layout, so the original
+// single-range handler table missed the call site inside the loop and the
+// exception surfaced as "Unhandled exception" instead of being caught.)
+// ============================================================================
+
+TEST_CASE("E2E - Try/catch around while loop catches throw from inside") {
+    const char* source = R"ROXY(
+        struct Err { code: i32; }
+        fun Err.message(): string for Exception { return "boom"; }
+
+        fun deep() {
+            throw Err { code = 1 };
+        }
+
+        fun main(): i32 {
+            try {
+                var i: i32 = 0;
+                while (i < 3) {
+                    deep();
+                    i = i + 1;
+                }
+            } catch (e: Err) {
+                return 42;
+            }
+            return 0;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Try/catch around for loop catches throw from inside") {
+    const char* source = R"ROXY(
+        struct Err { code: i32; }
+        fun Err.message(): string for Exception { return "boom"; }
+
+        fun deep() {
+            throw Err { code = 1 };
+        }
+
+        fun main(): i32 {
+            try {
+                for (var i: i32 = 0; i < 3; i = i + 1) {
+                    deep();
+                }
+            } catch (e: Err) {
+                return 42;
+            }
+            return 0;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Try/catch around loop: normal exit still reaches code after") {
+    // Make sure the per-range handler table doesn't accidentally catch past
+    // the try when the loop runs to completion without throwing.
+    const char* source = R"ROXY(
+        struct Err { code: i32; }
+        fun Err.message(): string for Exception { return "boom"; }
+
+        fun main(): i32 {
+            var sum: i32 = 0;
+            try {
+                for (var i: i32 = 1; i <= 3; i = i + 1) {
+                    sum = sum + i;
+                }
+            } catch (e: Err) {
+                return -1;
+            }
+            return sum;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 6);
+}
+
+TEST_CASE("E2E - Try/catch around nested loops catches throw from inner iteration") {
+    const char* source = R"ROXY(
+        struct Err { code: i32; }
+        fun Err.message(): string for Exception { return "boom"; }
+
+        fun deep(i: i32, j: i32) {
+            if (i == 1 && j == 2) {
+                throw Err { code = 99 };
+            }
+        }
+
+        fun main(): i32 {
+            try {
+                for (var i: i32 = 0; i < 3; i = i + 1) {
+                    for (var j: i32 = 0; j < 3; j = j + 1) {
+                        deep(i, j);
+                    }
+                }
+            } catch (e: Err) {
+                return e.code;
+            }
+            return -1;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 99);
+}
+

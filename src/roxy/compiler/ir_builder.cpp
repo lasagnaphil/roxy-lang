@@ -2224,6 +2224,7 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
 
     // Generate try body
     push_scope();
+    u32 try_body_start_idx = static_cast<u32>(m_current_func->blocks.size()) - 1;
     gen_stmt(ts.try_body);
     pop_scope();
 
@@ -2233,6 +2234,16 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
     // This ensures the handler covers ALL try body blocks, including resume blocks
     // created by yields inside the try body.
     BlockId try_exit_block_id = BlockId{static_cast<u32>(m_current_func->blocks.size()) - 1};
+
+    // Capture every IR block created during the try body. Handler lookup runs
+    // after RPO reorder, which can scatter these IDs (e.g. a loop body inside
+    // the try ends up laid out *after* the try's fall-through), so lowering
+    // needs the full set to emit the correct per-range handler table.
+    Vector<BlockId> try_body_block_ids;
+    try_body_block_ids.reserve(static_cast<u32>(m_current_func->blocks.size()) - try_body_start_idx);
+    for (u32 b = try_body_start_idx; b < m_current_func->blocks.size(); b++) {
+        try_body_block_ids.push_back(m_current_func->blocks[b]->id);
+    }
 
     // If try body didn't terminate (no throw/return/break), jump to after block
     // (or finally block if present)
@@ -2301,6 +2312,7 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
         if (clause.resolved_type) {
             handler.type_name = clause.resolved_type->struct_info.name;
         }
+        for (BlockId bid : try_body_block_ids) handler.try_body_blocks.push_back(bid);
         m_current_func->exception_handlers.push_back(handler);
     }
 
@@ -2343,6 +2355,7 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
         handler.handler_block = finally_catch_block->id;
         handler.type_id = 0;
         handler.type_name = StringView(nullptr, 0);
+        for (BlockId bid : try_body_block_ids) handler.try_body_blocks.push_back(bid);
         m_current_func->exception_handlers.push_back(handler);
     }
 

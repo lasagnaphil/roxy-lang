@@ -420,6 +420,7 @@ static void remap_all_block_ids(IRFunction* func, const tsl::robin_map<u32, u32>
         remap_id(handler.try_entry);
         remap_id(handler.try_exit);
         remap_id(handler.handler_block);
+        for (BlockId& bid : handler.try_body_blocks) remap_id(bid);
     }
 }
 

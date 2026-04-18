@@ -358,6 +358,13 @@ struct IRExceptionHandler {
     BlockId handler_block;   // Catch handler entry block
     u32 type_id = 0;         // Concrete type_id to match (0 = catch-all)
     StringView type_name = StringView(nullptr, 0);  // Struct name for the catch type (empty for catch-all)
+    // Every IR block that belongs to the try body. Populated in creation order
+    // in gen_try_stmt (before RPO reorder), then remapped by reorder_blocks_rpo.
+    // Lowering turns this set into one BCExceptionHandler per contiguous run
+    // of layout positions — without this, a try body containing a loop (whose
+    // body block lands after the layout fall-through in RPO order) falls
+    // outside a single [try_start_pc, try_end_pc) window.
+    Vector<BlockId> try_body_blocks;
 };
 
 // Finally handler metadata for IR

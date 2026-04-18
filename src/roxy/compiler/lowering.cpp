@@ -449,72 +449,104 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     // Fuse compare + conditional branch pairs into single two-word instructions
     fuse_compare_branch();
 
-    // Build exception handler table from IR exception handlers
+    // Build exception handler table from IR exception handlers.
+    //
+    // Blocks in the try body are not guaranteed to be contiguous in the final
+    // bytecode layout after reorder_blocks_rpo — e.g. a `while`'s body block
+    // sits AFTER the loop's fall-through when the loop lives inside a try, so
+    // a single `[try_start_pc, try_end_pc)` window would either miss the body
+    // or over-approximate and accidentally catch past the try. Instead, group
+    // the try-body blocks (from handler.try_body_blocks, which was populated
+    // in creation order by gen_try_stmt and remapped by reorder_blocks_rpo)
+    // into contiguous runs of layout positions, and emit one BCExceptionHandler
+    // per run that shares the same handler_pc / type_id.
     for (const auto& ir_handler : ir_func->exception_handlers) {
-        BCExceptionHandler bc_handler;
-
-        // Convert IR block IDs to PC offsets
-        auto try_entry_it = m_block_offsets.find(ir_handler.try_entry.id);
-        auto try_exit_it = m_block_offsets.find(ir_handler.try_exit.id);
         auto handler_it = m_block_offsets.find(ir_handler.handler_block.id);
+        if (handler_it == m_block_offsets.end()) continue;
 
-        if (try_entry_it == m_block_offsets.end() ||
-            try_exit_it == m_block_offsets.end() ||
-            handler_it == m_block_offsets.end()) {
-            continue;
-        }
-
-        bc_handler.try_start_pc = try_entry_it->second;
-
-        // try_end_pc is the offset AFTER the last instruction of the try_exit block
-        // Find the next block's offset or end of code
-        BlockId try_exit_id = ir_handler.try_exit;
-        if (try_exit_id.id + 1 < ir_func->blocks.size()) {
-            auto next_block_it = m_block_offsets.find(try_exit_id.id + 1);
-            if (next_block_it != m_block_offsets.end()) {
-                bc_handler.try_end_pc = next_block_it->second;
-            } else {
-                bc_handler.try_end_pc = m_current_func->code.size();
-            }
-        } else {
-            bc_handler.try_end_pc = m_current_func->code.size();
-        }
-
-        bc_handler.handler_pc = handler_it->second;
-
-        // Resolve type_id for typed catches
-        bc_handler.type_id = 0;  // 0 = catch-all
+        // Resolve type_id once (same for every BCExceptionHandler we'll emit).
+        u32 type_id = 0;
         if (!ir_handler.type_name.empty()) {
-            // Look up type_id from module's type table
             auto type_it = m_type_indices.find(ir_handler.type_name);
             if (type_it != m_type_indices.end()) {
-                // type_indices stores local index; we need the global type_id
-                // which is assigned at module load time. Store the local index + 1
-                // (0 is reserved for catch-all). The VM will resolve using type_ids[].
-                bc_handler.type_id = type_it->second + 1;
+                type_id = type_it->second + 1;
             } else {
-                // Type not yet in type table - register it
-                // Look up the struct type from the type env
                 Type* exc_type = m_type_env ? m_type_env->type_by_name(ir_handler.type_name) : nullptr;
                 if (exc_type && exc_type->is_struct()) {
                     u16 type_idx = m_module->types.size();
                     u32 size_bytes = exc_type->struct_info.slot_count * 4;
                     m_module->types.push_back({ir_handler.type_name, size_bytes, exc_type->struct_info.slot_count});
                     m_type_indices[ir_handler.type_name] = type_idx;
-                    bc_handler.type_id = type_idx + 1;
+                    type_id = type_idx + 1;
                 }
             }
         }
 
-        // Get the exception register for the handler block
+        u8 exception_reg = 0;
         IRBlock* handler_block = ir_func->blocks[ir_handler.handler_block.id];
         if (!handler_block->params.empty()) {
-            bc_handler.exception_reg = get_result_register(handler_block->params[0].value);
-        } else {
-            bc_handler.exception_reg = 0;
+            exception_reg = get_result_register(handler_block->params[0].value);
         }
 
-        m_current_func->exception_handlers.push_back(bc_handler);
+        // Collect the (post-reorder) layout positions for all try-body blocks.
+        // RPO remap makes each block's id equal to its position in ir_func->blocks,
+        // so we can sort the IDs directly.
+        Vector<u32> body_ids;
+        body_ids.reserve(ir_handler.try_body_blocks.size());
+        for (BlockId bid : ir_handler.try_body_blocks) {
+            if (bid.is_valid() && bid.id < ir_func->blocks.size()) {
+                body_ids.push_back(bid.id);
+            }
+        }
+        if (body_ids.empty()) continue;
+        // Insertion sort (counts are tiny — at most a few dozen blocks per try).
+        for (u32 i = 1; i < body_ids.size(); i++) {
+            u32 v = body_ids[i];
+            u32 j = i;
+            while (j > 0 && body_ids[j - 1] > v) {
+                body_ids[j] = body_ids[j - 1];
+                j--;
+            }
+            body_ids[j] = v;
+        }
+
+        // Walk sorted layout positions, collapsing runs of consecutive ids into a
+        // single [run_start_pc, run_end_pc) window.
+        u32 run_start = body_ids[0];
+        u32 run_end = body_ids[0];
+        auto emit_range = [&](u32 first_block_id, u32 last_block_id) {
+            auto start_it = m_block_offsets.find(first_block_id);
+            if (start_it == m_block_offsets.end()) return;
+            BCExceptionHandler bc_handler;
+            bc_handler.try_start_pc = start_it->second;
+
+            // End PC = offset of the block after the run's last block (or end of code).
+            u32 after_block_id = last_block_id + 1;
+            if (after_block_id < ir_func->blocks.size()) {
+                auto after_it = m_block_offsets.find(after_block_id);
+                bc_handler.try_end_pc = (after_it != m_block_offsets.end())
+                    ? after_it->second
+                    : m_current_func->code.size();
+            } else {
+                bc_handler.try_end_pc = m_current_func->code.size();
+            }
+
+            bc_handler.handler_pc = handler_it->second;
+            bc_handler.type_id = type_id;
+            bc_handler.exception_reg = exception_reg;
+            m_current_func->exception_handlers.push_back(bc_handler);
+        };
+
+        for (u32 i = 1; i < body_ids.size(); i++) {
+            if (body_ids[i] == run_end + 1) {
+                run_end = body_ids[i];
+            } else {
+                emit_range(run_start, run_end);
+                run_start = body_ids[i];
+                run_end = body_ids[i];
+            }
+        }
+        emit_range(run_start, run_end);
     }
 
     // Build cleanup records from IR cleanup info

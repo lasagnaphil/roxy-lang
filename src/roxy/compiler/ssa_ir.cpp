@@ -664,6 +664,7 @@ void IRFunction::reorder_blocks_rpo() {
         remap(handler.try_entry);
         remap(handler.try_exit);
         remap(handler.handler_block);
+        for (BlockId& bid : handler.try_body_blocks) remap(bid);
     }
 
     // Remap finally handler block IDs
