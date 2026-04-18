@@ -3760,12 +3760,16 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
                             emit_call_native(name, args, string_type, static_cast<u8>(native_idx)));
                     }
                 } else if (etype->is_struct()) {
-                    // Struct with to_string method: call the mangled method
+                    // Struct with to_string method: call the mangled method.
+                    // gen_expr already returns a struct pointer for struct rvalues — the
+                    // lowering pass unpacks struct returns into stack-allocated pointers
+                    // (see the note in gen_var_decl). Reusing `val` here avoids a second
+                    // pass through gen_lvalue_addr, which doesn't accept call/index/method
+                    // rvalues and would error with "expression is not a valid lvalue".
                     StringView mangled = mangle_method(etype->struct_info.name,
                                                        StringView("to_string", 9));
-                    ValueId self_ptr = gen_lvalue_addr(sub);
                     Span<ValueId> args = alloc_span<ValueId>(1);
-                    args[0] = self_ptr;
+                    args[0] = val;
 
                     i32 native_idx = m_registry.get_index(mangled);
                     if (native_idx >= 0) {

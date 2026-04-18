@@ -604,3 +604,116 @@ TEST_CASE("E2E - read_file basic") {
     CHECK(result.success);
     CHECK(result.stdout_output == "0\n");
 }
+
+// ============================================================================
+// F-string interpolation of user-defined Printable struct rvalues
+// ============================================================================
+
+TEST_CASE("E2E - F-string interp: Printable struct from function call") {
+    // Pre-fix: f"{make_pt()}" failed at IR gen with
+    // "Internal error: expression is not a valid lvalue".
+    const char* source = R"ROXY(
+        struct Pt {
+            x: i32;
+            y: i32;
+        }
+
+        fun Pt.to_string(): string for Printable {
+            return f"({self.x},{self.y})";
+        }
+
+        fun make_pt(): Pt {
+            return Pt { x = 3, y = 4 };
+        }
+
+        fun main(): i32 {
+            print(f"{make_pt()}");
+            return 0;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "(3,4)\n");
+}
+
+TEST_CASE("E2E - F-string interp: Printable struct from list index") {
+    const char* source = R"ROXY(
+        struct Pt {
+            x: i32;
+            y: i32;
+        }
+
+        fun Pt.to_string(): string for Printable {
+            return f"({self.x},{self.y})";
+        }
+
+        fun main(): i32 {
+            var pts: List<Pt> = List<Pt>();
+            pts.push(Pt { x = 1, y = 2 });
+            pts.push(Pt { x = 5, y = 6 });
+            print(f"{pts[0]}");
+            print(f"{pts[1]}");
+            return 0;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "(1,2)\n(5,6)\n");
+}
+
+TEST_CASE("E2E - F-string interp: Printable struct from method call") {
+    const char* source = R"ROXY(
+        struct Pt {
+            x: i32;
+            y: i32;
+        }
+
+        fun Pt.to_string(): string for Printable {
+            return f"({self.x},{self.y})";
+        }
+
+        struct Builder {
+            base: i32;
+        }
+
+        fun Builder.make(): Pt {
+            return Pt { x = self.base, y = self.base + 1 };
+        }
+
+        fun main(): i32 {
+            var b: Builder = Builder { base = 10 };
+            print(f"{b.make()}");
+            return 0;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "(10,11)\n");
+}
+
+TEST_CASE("E2E - F-string interp: Printable struct from local var still works") {
+    // Regression check for the workaround path (lvalue identifier).
+    const char* source = R"ROXY(
+        struct Pt {
+            x: i32;
+            y: i32;
+        }
+
+        fun Pt.to_string(): string for Printable {
+            return f"({self.x},{self.y})";
+        }
+
+        fun main(): i32 {
+            var p: Pt = Pt { x = 7, y = 8 };
+            print(f"{p}");
+            return 0;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "(7,8)\n");
+}
