@@ -1518,7 +1518,19 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
         }
     }
 
-    // 9. Continue from merge block, bind phi results
+    // 9. Continue from merge block, bind phi results.
+    // Restore pre-chain local-scope SSA bindings so the last branch's
+    // mutations (e.g. struct-literal nullify-replacing a moved local to nil)
+    // don't leak into post-chain code. Phi vars are immediately rebound from
+    // merge_param below; non-phi vars must agree across surviving paths by
+    // construction (semantic forbids divergent moves on them). is_moved is
+    // intentionally left alone — see the rationale in gen_try_stmt and
+    // gen_when_stmt.
+    m_local_scopes.clear();
+    for (auto& scope : saved_scopes) {
+        m_local_scopes.push_back(scope);
+    }
+
     set_current_block(merge_block);
     for (const auto& pi : phi_info) {
         define_local(pi.name, pi.merge_param, pi.type);
@@ -2027,7 +2039,20 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         }
     }
 
-    // 9. Continue from merge block, bind phi results
+    // 9. Continue from merge block, bind phi results.
+    // Restore pre-when local-scope SSA bindings: the last case body's
+    // mutations (e.g. a struct-literal nullify-replacing a moved local to
+    // nil) would otherwise leak into post-when code, even when that path
+    // came via the unmatched-fallthrough or a different case body. Phi vars
+    // are immediately rebound from merge_param below, so this only affects
+    // non-phi vars — which by construction must agree across all surviving
+    // paths (semantic forbids divergent moves on non-phi vars). is_moved is
+    // intentionally left alone, mirroring the rationale in gen_try_stmt.
+    m_local_scopes.clear();
+    for (auto& scope : saved_scopes) {
+        m_local_scopes.push_back(scope);
+    }
+
     set_current_block(merge_block);
     for (const auto& pi : phi_info) {
         define_local(pi.name, pi.merge_param, pi.type);

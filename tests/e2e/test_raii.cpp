@@ -2482,3 +2482,84 @@ TEST_CASE("E2E - RAII: terminating then-branch with else preserves else's post-s
     CHECK(result.success);
     CHECK(result.value == 3);
 }
+
+TEST_CASE("E2E - RAII: terminating when-case struct-literal move keeps local live for after-when struct literal") {
+    // Same shape as the if-stmt termination tests, but for when. Pre-fix the
+    // last case body's nullify-replace of `cond` to nil leaked into the
+    // merge block, segfaulting on dereference of the after-when struct
+    // literal's if_cond field.
+    const char* source = R"ROXY(
+        enum NodeKind { NLeaf, NIf }
+        enum K { KA, KB }
+
+        struct Node {
+            when kind: NodeKind {
+                case NLeaf: pub leaf_val: i32;
+                case NIf:   pub if_cond: uniq Node;
+            }
+        }
+
+        fun build_leaf(v: i32): uniq Node {
+            return uniq Node { kind = NodeKind::NLeaf, leaf_val = v };
+        }
+
+        fun build_via_when(k: K): uniq Node {
+            var cond: uniq Node = build_leaf(7);
+            when k {
+                case KA:
+                    // no-op, falls through
+                case KB:
+                    return uniq Node { kind = NodeKind::NIf, if_cond = cond };
+            }
+            return uniq Node { kind = NodeKind::NIf, if_cond = cond };
+        }
+
+        fun main(): i32 {
+            var n: uniq Node = build_via_when(K::KA);
+            return n.if_cond.leaf_val;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 7);
+}
+
+TEST_CASE("E2E - RAII: terminating else-if-chain branch struct-literal move keeps local live after chain") {
+    // Same shape but for an else-if cascade (gen_if_else_chain). The last
+    // chain branch's nullify-replace of `cond` would otherwise leak into the
+    // merge block.
+    const char* source = R"ROXY(
+        enum NodeKind { NLeaf, NIf }
+
+        struct Node {
+            when kind: NodeKind {
+                case NLeaf: pub leaf_val: i32;
+                case NIf:   pub if_cond: uniq Node;
+            }
+        }
+
+        fun build_leaf(v: i32): uniq Node {
+            return uniq Node { kind = NodeKind::NLeaf, leaf_val = v };
+        }
+
+        fun build_via_chain(which: i32): uniq Node {
+            var cond: uniq Node = build_leaf(7);
+            if (which == 1) {
+                return uniq Node { kind = NodeKind::NIf, if_cond = cond };
+            } else if (which == 2) {
+                return uniq Node { kind = NodeKind::NIf, if_cond = cond };
+            }
+            return uniq Node { kind = NodeKind::NIf, if_cond = cond };
+        }
+
+        fun main(): i32 {
+            var n: uniq Node = build_via_chain(0);
+            return n.if_cond.leaf_val;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 7);
+}
