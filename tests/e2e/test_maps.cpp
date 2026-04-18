@@ -263,3 +263,150 @@ TEST_CASE("E2E - Map keys and values") {
     CHECK(result.success);
     CHECK(result.stdout_output == "2\n2\n30\n300\n");
 }
+
+// ============================================================================
+// Map with struct-typed values (regression: Map<K, V> used to store a dangling
+// pointer to the caller's local stack for V larger than 8 bytes; as soon as
+// any subsequent method call reused the same local-stack region, the value
+// bytes decoded by get() were whatever the second frame had just written.)
+// ============================================================================
+
+TEST_CASE("E2E - Map<string, Struct>: value survives subsequent method call with local struct") {
+    const char* source = R"ROXY(
+        struct Val { pub a: i32; pub b: i32; pub c: i32; }
+        fun make_val(): Val { return Val { a = 43690, b = 48059, c = 52428 }; }
+
+        struct Env {
+            pub values: Map<string, Val>;
+            pub depth: i32;
+        }
+        fun new Env(d: i32) {
+            self.values = Map<string, Val>();
+            self.depth = d;
+        }
+
+        struct Interp { pub envs: List<Env>; }
+        fun new Interp() {
+            self.envs = List<Env>(256);
+            self.envs.push(Env(-1));
+        }
+        fun Interp.define(k: string, v: Val) {
+            self.envs[0].values.insert(k, v);
+        }
+        fun Interp.touch() {
+            var e: Env = Env(0);
+        }
+
+        fun main(): i32 {
+            var i: Interp = Interp();
+            i.define("x", make_val());
+            i.touch();
+            var v: Val = i.envs[0].values.get("x");
+            if (v.a == 43690 && v.b == 48059 && v.c == 52428) {
+                return 1;
+            }
+            return 0;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 1);
+}
+
+TEST_CASE("E2E - Map<string, Struct>: value preserved across List.push to enclosing list") {
+    // Original TODO-report pattern: method A inserts into a nested map,
+    // method B pushes to the enclosing list. Struct-valued map entries must
+    // stay valid across the list push.
+    const char* source = R"ROXY(
+        struct Val { pub a: i32; pub b: i32; pub c: i32; }
+        fun make_val(): Val { return Val { a = 1, b = 2, c = 3 }; }
+
+        struct Env {
+            pub values: Map<string, Val>;
+            pub depth: i32;
+        }
+        fun new Env(d: i32) {
+            self.values = Map<string, Val>();
+            self.depth = d;
+        }
+
+        struct Interp { pub envs: List<Env>; }
+        fun new Interp() {
+            self.envs = List<Env>(256);
+            self.envs.push(Env(-1));
+        }
+        fun Interp.define(k: string, v: Val) {
+            self.envs[0].values.insert(k, v);
+        }
+        fun Interp.push_block() {
+            self.envs.push(Env(0));
+        }
+
+        fun main(): i32 {
+            var i: Interp = Interp();
+            i.define("x", make_val());
+            i.push_block();
+            var v: Val = i.envs[0].values.get("x");
+            return v.a + v.b + v.c;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 6);
+}
+
+TEST_CASE("E2E - Map<i32, Struct>: rehash preserves struct values") {
+    // Exercises map_grow + map_insert_internal's Robin Hood swap on
+    // variable-sized values. Insert enough entries to trigger at least one
+    // grow, then verify every value is intact.
+    const char* source = R"ROXY(
+        struct Val { pub x: i32; pub y: i32; pub z: i32; }
+
+        fun main(): i32 {
+            var m: Map<i32, Val> = Map<i32, Val>();
+            var i: i32 = 0;
+            while (i < 50) {
+                m.insert(i, Val { x = i, y = i * 2, z = i * 3 });
+                i = i + 1;
+            }
+            var sum: i32 = 0;
+            var j: i32 = 0;
+            while (j < 50) {
+                var v: Val = m.get(j);
+                sum = sum + v.x + v.y + v.z;
+                j = j + 1;
+            }
+            return sum;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    // sum over j in [0,50) of (j + 2j + 3j) = 6 * sum(0..49) = 6 * 1225 = 7350
+    CHECK(result.value == 7350);
+}
+
+TEST_CASE("E2E - Map<i32, Struct>: remove keeps other entries intact") {
+    // Exercises backward-shift deletion with variable-sized values.
+    const char* source = R"ROXY(
+        struct Val { pub x: i32; pub y: i32; pub z: i32; }
+
+        fun main(): i32 {
+            var m: Map<i32, Val> = Map<i32, Val>();
+            m.insert(1, Val { x = 10, y = 20, z = 30 });
+            m.insert(2, Val { x = 40, y = 50, z = 60 });
+            m.insert(3, Val { x = 70, y = 80, z = 90 });
+            m.remove(2);
+            var v1: Val = m.get(1);
+            var v3: Val = m.get(3);
+            return v1.x + v1.y + v1.z + v3.x + v3.y + v3.z;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    // 10+20+30 + 70+80+90 = 300
+    CHECK(result.value == 300);
+}

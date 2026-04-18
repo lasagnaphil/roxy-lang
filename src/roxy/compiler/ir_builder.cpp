@@ -2758,11 +2758,23 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             user_args[i] = gen_expr(call_expr.arguments[i].expr);
         }
 
-        // Step 1: Allocate empty map (non-method native, 0 args)
+        // Step 1: Allocate empty map with value_slot_count + value_is_inline.
+        // Mirrors the List<T>() construction a few blocks up: we thread the
+        // value layout through to the allocator so the map's value storage can
+        // hold the full struct bytes instead of a single u64 (which previously
+        // stored a dangling stack pointer for struct values — see the "nested
+        // list-map corruption" fix).
         StringView alloc_name = map_resolved_type->map_info.alloc_native_name;
         i32 alloc_idx = m_registry.get_index(alloc_name);
-        Span<ValueId> empty = alloc_span<ValueId>(0);
-        ValueId map_ptr = emit_call_native(alloc_name, empty, expr->resolved_type,
+        Type* value_type = map_resolved_type->map_info.value_type;
+        u32 vsc = get_type_slot_count(value_type);
+        bool value_is_inline = !value_type->is_struct();
+        ValueId vsc_val = emit_const_int(static_cast<i64>(vsc), m_types.i32_type());
+        ValueId vii_val = emit_const_int(value_is_inline ? 1 : 0, m_types.i32_type());
+        Span<ValueId> alloc_args = alloc_span<ValueId>(2);
+        alloc_args[0] = vsc_val;
+        alloc_args[1] = vii_val;
+        ValueId map_ptr = emit_call_native(alloc_name, alloc_args, expr->resolved_type,
                                             static_cast<u8>(alloc_idx));
 
         // Step 2: Call constructor with [self, key_kind, user_args...]

@@ -485,10 +485,24 @@ static MapKeyKind key_kind_from_i32(i32 val) {
     return static_cast<MapKeyKind>(static_cast<u8>(val));
 }
 
+// argc == 2: first arg is value_slot_count (u32 slots per value); second is
+// value_is_inline (0 = struct-by-pointer, nonzero = primitive-by-value).
+// IR builder (Map<K, V>() construction) emits these from the type info.
+// Fallback: argc == 0 uses legacy defaults (2 slots, inline) for any callers
+// that predate the parameterized native.
 static void native_map_alloc(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
+    u8 value_slot_count = 2;
+    bool value_is_inline = true;
+    if (argc >= 1) {
+        i32 vsc = static_cast<i32>(regs[first_arg]);
+        if (vsc > 0 && vsc <= 255) value_slot_count = static_cast<u8>(vsc);
+    }
+    if (argc >= 2) {
+        value_is_inline = (regs[first_arg + 1] != 0);
+    }
     // Allocate with Integer key kind by default; constructor sets the real key_kind
-    void* map = map_alloc(vm, MapKeyKind::Integer, 0);
+    void* map = map_alloc(vm, MapKeyKind::Integer, 0, value_slot_count, value_is_inline);
     if (!map) {
         vm->error = "failed to allocate map";
         return;
@@ -527,11 +541,13 @@ static void native_map_init(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         if (cap > 0) {
             u32 actual = 8;
             while (actual < static_cast<u32>(cap)) actual *= 2;
-            // Allocate buckets
+            // Allocate buckets using the header's value_slot_count that was set
+            // during native_map_alloc (via IR-builder-generated arguments).
             header->capacity = actual;
             header->distances = static_cast<u8*>(calloc(actual, sizeof(u8)));
             header->keys = static_cast<u64*>(calloc(actual, sizeof(u64)));
-            header->values = static_cast<u64*>(calloc(actual, sizeof(u64)));
+            header->values = static_cast<u32*>(calloc(
+                static_cast<size_t>(actual) * header->value_slot_count, sizeof(u32)));
         }
     }
     regs[dst] = 0;
@@ -590,6 +606,33 @@ static void native_map_contains(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = map_contains(map_ptr, key) ? 1 : 0;
 }
 
+// Read the source pointer for an inserted value from the argument registers.
+// For inline (primitive) values, the value bytes live directly in the register
+// array starting at regs[first_arg + 2]. For struct values, the register holds
+// a pointer to the bytes (per the IR builder's struct-argument convention).
+static inline const u32* map_value_src_from_regs(const MapHeader* header, const u64* regs, u8 first_arg) {
+    if (header->value_is_inline) {
+        return reinterpret_cast<const u32*>(&regs[first_arg + 2]);
+    }
+    return reinterpret_cast<const u32*>(regs[first_arg + 2]);
+}
+
+// Pack the map's value bytes into the destination register(s). For inline
+// (primitive) values, pack into a single u64. For struct values, return a
+// pointer to the value bytes in the map's backing storage — stable until the
+// next insert/remove/clear; callers that materialize a struct copy via
+// STRUCT_LOAD_REGS do so immediately after the call.
+static inline void map_write_value_to_regs(const MapHeader* header, const u32* src,
+                                           u64* regs, u8 dst) {
+    if (header->value_is_inline) {
+        u64 packed = 0;
+        memcpy(&packed, src, sizeof(u32) * header->value_slot_count);
+        regs[dst] = packed;
+    } else {
+        regs[dst] = reinterpret_cast<u64>(src);
+    }
+}
+
 static void native_map_get(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
@@ -598,11 +641,11 @@ static void native_map_get(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
     u64 key = regs[first_arg + 1];
-    u64 value;
-    if (!map_get(map_ptr, key, value, &vm->error)) {
+    const u32* value_ptr = map_get_ptr(map_ptr, key, &vm->error);
+    if (!value_ptr) {
         return;
     }
-    regs[dst] = value;
+    map_write_value_to_regs(get_map_header(map_ptr), value_ptr, regs, dst);
 }
 
 static void native_map_insert(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
@@ -613,8 +656,9 @@ static void native_map_insert(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
     u64 key = regs[first_arg + 1];
-    u64 value = regs[first_arg + 2];
-    map_insert(map_ptr, key, value);
+    MapHeader* header = get_map_header(map_ptr);
+    const u32* value_src = map_value_src_from_regs(header, regs, first_arg);
+    map_insert(map_ptr, key, value_src);
     regs[dst] = 0;
 }
 
@@ -679,11 +723,11 @@ static void native_map_index(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
     u64 key = regs[first_arg + 1];
-    u64 value;
-    if (!map_get(map_ptr, key, value, &vm->error)) {
+    const u32* value_ptr = map_get_ptr(map_ptr, key, &vm->error);
+    if (!value_ptr) {
         return;
     }
-    regs[dst] = value;
+    map_write_value_to_regs(get_map_header(map_ptr), value_ptr, regs, dst);
 }
 
 // Native function: map index_mut (insert/update key-value pair)
@@ -695,8 +739,9 @@ static void native_map_index_mut(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
     u64 key = regs[first_arg + 1];
-    u64 value = regs[first_arg + 2];
-    map_insert(map_ptr, key, value);
+    MapHeader* header = get_map_header(map_ptr);
+    const u32* value_src = map_value_src_from_regs(header, regs, first_arg);
+    map_insert(map_ptr, key, value_src);
     regs[dst] = 0;
 }
 
@@ -739,7 +784,13 @@ static void native_map_iter_value_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) 
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     i32 idx = static_cast<i32>(regs[first_arg + 1]);
     const MapHeader* header = get_map_header(map_ptr);
-    regs[dst] = header->values[idx];
+    // Used only for cleanup of noncopyable values (which are always pointer-sized,
+    // 2 u32 slots). Return the pointer as a u64 regardless of value_slot_count.
+    u64 packed = 0;
+    u32 copy_slots = header->value_slot_count < 2 ? header->value_slot_count : 2;
+    memcpy(&packed, header->values + static_cast<size_t>(idx) * header->value_slot_count,
+           sizeof(u32) * copy_slots);
+    regs[dst] = packed;
 }
 
 // Native function: str_char_at(s: string, i: i32) -> i32

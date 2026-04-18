@@ -22,9 +22,11 @@ struct MapHeader {
     u32 length;          // Number of live entries
     u32 capacity;        // Number of buckets (always power of 2, 0 if not allocated)
     MapKeyKind key_kind; // Dispatch tag for hash/equality
+    u8 value_slot_count; // u32 slots per value (1 for primitives ≤ 4B, 2 for 8B, N for structs)
+    bool value_is_inline;// true = value fits in a single register (primitive); false = struct, source is a pointer
     u8* distances;       // Per-bucket Robin Hood distance+1 (0 = empty)
     u64* keys;           // Key storage (capacity entries)
-    u64* values;         // Value storage (capacity entries)
+    u32* values;         // Value storage: capacity * value_slot_count u32 slots
 };
 
 // Get the MapHeader from map data pointer
@@ -36,9 +38,15 @@ inline const MapHeader* get_map_header(const void* data) {
     return static_cast<const MapHeader*>(data);
 }
 
-// Allocate a new map
-// Returns pointer to map data (MapHeader)
-void* map_alloc(RoxyVM* vm, MapKeyKind key_kind, u32 capacity);
+// Allocate a new map.
+// `value_slot_count` is the number of u32 slots per value (1 for small primitives,
+// 2 for 8-byte types like i64/f64/string/pointers, N for structs).
+// `value_is_inline` indicates whether values pass through registers by value
+// (true, for primitives) or by pointer (false, for structs). This controls how
+// insert/get interpret their register arguments.
+// Returns pointer to map data (MapHeader).
+void* map_alloc(RoxyVM* vm, MapKeyKind key_kind, u32 capacity,
+                u8 value_slot_count = 2, bool value_is_inline = true);
 
 // Deep-copy a map
 void* map_copy(RoxyVM* vm, void* src);
@@ -51,11 +59,15 @@ inline u32 map_length(const void* data) {
 // Check if a key exists in the map
 bool map_contains(const void* data, u64 key);
 
-// Get value by key. Returns true on success, false if key not found (sets error).
-bool map_get(const void* data, u64 key, u64& out_value, const char** error);
+// Get value pointer by key. Returns pointer into the map's value storage on
+// success (valid until the next insert/remove/clear), nullptr if key not found
+// (sets *error). The caller reads `value_slot_count * 4` bytes from the returned
+// pointer. For primitive values, this is also convertible to u64 via memcpy.
+const u32* map_get_ptr(const void* data, u64 key, const char** error);
 
-// Insert or update a key-value pair
-void map_insert(void* data, u64 key, u64 value);
+// Insert or update a key-value pair. `value_src` points to
+// `value_slot_count * 4` bytes of value data that will be copied into the map.
+void map_insert(void* data, u64 key, const u32* value_src);
 
 // Remove a key. Returns true if key was present, false otherwise.
 bool map_remove(void* data, u64 key);

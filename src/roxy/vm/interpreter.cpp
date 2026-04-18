@@ -138,6 +138,7 @@ static void delete_value(RoxyVM* vm, void* ptr,
     case 4: { // MAP: iterate occupied buckets, recurse, free buffers, free header
         MapHeader* header = get_map_header(ptr);
         if (header->capacity > 0 && header->distances) {
+            u32 vsc = header->value_slot_count;
             for (u32 i = 0; i < header->capacity; i++) {
                 if (header->distances[i] == 0) continue;
                 if (desc.key_desc_idx != 0xFFFF) {
@@ -146,7 +147,16 @@ static void delete_value(RoxyVM* vm, void* ptr,
                 }
                 if (desc.elem_desc_idx != 0xFFFF) {
                     const BCDeleteDesc& val_desc = func->delete_descs[desc.elem_desc_idx];
-                    delete_value(vm, reinterpret_cast<void*>(header->values[i]), val_desc, func);
+                    // Pointer-typed values (uniq, list, map, etc.) occupy 2 u32 slots;
+                    // read them as a u64 and pass the pointer to delete_value. For
+                    // wider struct values, cleanup of nested noncopyable fields is
+                    // not yet supported here — this path predates struct-valued maps
+                    // and only fires for Map<K, noncopyable-primitive>.
+                    u64 val_bits = 0;
+                    u32 copy_slots = vsc < 2 ? vsc : 2;
+                    memcpy(&val_bits, header->values + static_cast<size_t>(i) * vsc,
+                           sizeof(u32) * copy_slots);
+                    delete_value(vm, reinterpret_cast<void*>(val_bits), val_desc, func);
                 }
             }
         }
@@ -1108,11 +1118,21 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             vm->error = "map index: null map reference";
             return false;
         }
-        u64 value;
-        if (!map_get(map_ptr, regs[decode_c(instr)], value, &vm->error)) {
+        const u32* value_ptr = map_get_ptr(map_ptr, regs[decode_c(instr)], &vm->error);
+        if (!value_ptr) {
             return false;
         }
-        regs[a] = value;
+        MapHeader* header = get_map_header(map_ptr);
+        if (header->value_is_inline) {
+            u64 packed = 0;
+            memcpy(&packed, value_ptr, sizeof(u32) * header->value_slot_count);
+            regs[a] = packed;
+        } else {
+            // Struct value: return a pointer into the map's backing storage.
+            // The caller's IR emits STRUCT_LOAD_REGS immediately after the index,
+            // so the pointer's stability (until next insert/remove) is sufficient.
+            regs[a] = reinterpret_cast<u64>(value_ptr);
+        }
         DISPATCH();
     }
 
@@ -1122,7 +1142,15 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             vm->error = "map index_mut: null map reference";
             return false;
         }
-        map_insert(map_ptr, regs[decode_b(instr)], regs[decode_c(instr)]);
+        MapHeader* header = get_map_header(map_ptr);
+        u8 c = decode_c(instr);
+        const u32* value_src;
+        if (header->value_is_inline) {
+            value_src = reinterpret_cast<const u32*>(&regs[c]);
+        } else {
+            value_src = reinterpret_cast<const u32*>(regs[c]);
+        }
+        map_insert(map_ptr, regs[decode_b(instr)], value_src);
         DISPATCH();
     }
 
