@@ -106,9 +106,21 @@ add_library(roxy_lsp
 )
 target_link_libraries(roxy_lsp roxy_compiler roxy_vm)
 
+# GNU ld / LLD resolve each archive in a single pass, so the bi-directional
+# dependency between roxy_compiler and roxy_vm (e.g. semantic.cpp references
+# NativeRegistry; compiler.cpp references register_builtin_natives) needs
+# --start-group/--end-group to be resolvable. Apple's ld64 doesn't need this.
+if(UNIX AND NOT APPLE)
+    set(ROXY_LINK_START "-Wl,--start-group")
+    set(ROXY_LINK_END "-Wl,--end-group")
+else()
+    set(ROXY_LINK_START "")
+    set(ROXY_LINK_END "")
+endif()
+
 # LSP server executable
 add_executable(roxy_lsp_server src/roxy_lsp_server.cpp)
-target_link_libraries(roxy_lsp_server roxy_lsp)
+target_link_libraries(roxy_lsp_server ${ROXY_LINK_START} roxy_lsp roxy_vm roxy_compiler roxy_shared roxy_core ${ROXY_LINK_END})
 
 # Single unified test executable
 add_executable(roxy_tests
@@ -168,9 +180,9 @@ add_executable(roxy_tests
     tests/e2e/test_c_backend.cpp
     tests/e2e/test_recursive_types.cpp
 )
-target_link_libraries(roxy_tests roxy_vm roxy_lsp)
+target_link_libraries(roxy_tests ${ROXY_LINK_START} roxy_vm roxy_lsp roxy_compiler roxy_shared roxy_core ${ROXY_LINK_END})
 target_compile_definitions(roxy_tests PRIVATE "ROXY_PROJECT_ROOT=\"${CMAKE_SOURCE_DIR}\"")
 
 # Standalone interpreter executable
 add_executable(roxy src/roxy.cpp)
-target_link_libraries(roxy roxy_vm)
+target_link_libraries(roxy ${ROXY_LINK_START} roxy_vm roxy_compiler roxy_shared roxy_core ${ROXY_LINK_END})

@@ -1,6 +1,8 @@
 #include "roxy/core/doctest/doctest.h"
 #include "roxy/core/json.hpp"
 
+#include <cmath>
+
 using namespace rx;
 
 // Helper: parse JSON source into a DOM value.
