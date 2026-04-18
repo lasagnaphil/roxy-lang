@@ -179,6 +179,7 @@ add_executable(roxy_tests
     tests/e2e/test_coroutines.cpp
     tests/e2e/test_c_backend.cpp
     tests/e2e/test_recursive_types.cpp
+    tests/e2e/test_lox.cpp
 )
 target_link_libraries(roxy_tests ${ROXY_LINK_START} roxy_vm roxy_lsp roxy_compiler roxy_shared roxy_core ${ROXY_LINK_END})
 target_compile_definitions(roxy_tests PRIVATE "ROXY_PROJECT_ROOT=\"${CMAKE_SOURCE_DIR}\"")

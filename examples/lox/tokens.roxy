@@ -1,0 +1,141 @@
+// Lox token types and Token struct.
+//
+// The Token struct uses a tagged union over LiteralKind to carry the
+// optional literal payload: a string for StringTok, an f64 for Number,
+// and nothing for every other token type.
+//
+// Construction goes through named constructors (Token(), Token.string_tok,
+// Token.number_tok). Stringification is a method — `for Printable` makes
+// Tokens usable inside f-strings.
+
+pub enum TokenType {
+    // Single-character tokens
+    LeftParen, RightParen, LeftBrace, RightBrace,
+    Comma, Dot, Minus, Plus, Semicolon, Slash, Star,
+
+    // One- or two-character tokens
+    Bang, BangEqual,
+    Equal, EqualEqual,
+    Greater, GreaterEqual,
+    Less, LessEqual,
+
+    // Literals
+    Identifier, StringTok, Number,
+
+    // Keywords
+    And, Class, Else, False, Fun, For, If, Nil,
+    Or, Print, Return, Super, This, True, Var, While,
+
+    Eof
+}
+
+pub enum LiteralKind {
+    LitNone,
+    LitStr,
+    LitNum
+}
+
+pub struct Token {
+    pub tok_type: TokenType;
+    pub lexeme: string;
+    pub line: i32;
+    when lit_kind: LiteralKind {
+        case LitNone:
+            _lit_pad: i32;
+        case LitStr:
+            pub lit_str: string;
+        case LitNum:
+            pub lit_num: f64;
+    }
+}
+
+// ── Constructors ──────────────────────────────────────────────────────────
+
+// Default constructor: a token with no literal payload.
+fun new Token(tok_type: TokenType, lexeme: string, line: i32) {
+    self.tok_type = tok_type;
+    self.lexeme = lexeme;
+    self.line = line;
+    self.lit_kind = LiteralKind::LitNone;
+    self._lit_pad = 0;
+}
+
+fun new Token.string_tok(lexeme: string, line: i32, value: string) {
+    self.tok_type = TokenType::StringTok;
+    self.lexeme = lexeme;
+    self.line = line;
+    self.lit_kind = LiteralKind::LitStr;
+    self.lit_str = value;
+}
+
+fun new Token.number_tok(lexeme: string, line: i32, value: f64) {
+    self.tok_type = TokenType::Number;
+    self.lexeme = lexeme;
+    self.line = line;
+    self.lit_kind = LiteralKind::LitNum;
+    self.lit_num = value;
+}
+
+// ── Pretty-printing ───────────────────────────────────────────────────────
+
+// jlox-style "TYPE lexeme literal" representation. Impls `Printable` so
+// tokens interpolate inside f-strings directly.
+pub fun Token.to_string(): string for Printable {
+    var name: string = token_type_name(self.tok_type);
+    when self.lit_kind {
+        case LitNone:
+            return f"{name} {self.lexeme}";
+        case LitStr:
+            return f"{name} {self.lexeme} {self.lit_str}";
+        case LitNum:
+            return f"{name} {self.lexeme} {self.lit_num}";
+    }
+    return name;
+}
+
+// ── Helpers on TokenType (enum — kept as a free function) ─────────────────
+
+pub fun token_type_name(tt: TokenType): string {
+    when tt {
+        case LeftParen:    return "LEFT_PAREN";
+        case RightParen:   return "RIGHT_PAREN";
+        case LeftBrace:    return "LEFT_BRACE";
+        case RightBrace:   return "RIGHT_BRACE";
+        case Comma:        return "COMMA";
+        case Dot:          return "DOT";
+        case Minus:        return "MINUS";
+        case Plus:         return "PLUS";
+        case Semicolon:    return "SEMICOLON";
+        case Slash:        return "SLASH";
+        case Star:         return "STAR";
+        case Bang:         return "BANG";
+        case BangEqual:    return "BANG_EQUAL";
+        case Equal:        return "EQUAL";
+        case EqualEqual:   return "EQUAL_EQUAL";
+        case Greater:      return "GREATER";
+        case GreaterEqual: return "GREATER_EQUAL";
+        case Less:         return "LESS";
+        case LessEqual:    return "LESS_EQUAL";
+        case Identifier:   return "IDENTIFIER";
+        case StringTok:    return "STRING";
+        case Number:       return "NUMBER";
+        case And:          return "AND";
+        case Class:        return "CLASS";
+        case Else:         return "ELSE";
+        case False:        return "FALSE";
+        case Fun:          return "FUN";
+        case For:          return "FOR";
+        case If:           return "IF";
+        case Nil:          return "NIL";
+        case Or:           return "OR";
+        case Print:        return "PRINT";
+        case Return:       return "RETURN";
+        case Super:        return "SUPER";
+        case This:         return "THIS";
+        case True:         return "TRUE";
+        case Var:          return "VAR";
+        case While:        return "WHILE";
+        case Eof:          return "EOF";
+    }
+    return "?";
+}

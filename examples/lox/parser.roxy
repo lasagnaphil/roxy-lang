@@ -1,0 +1,572 @@
+// Lox parser (Phase 3b: expressions + statements).
+//
+// Recursive-descent following the book's grammar:
+//   program     → declaration* EOF
+//   declaration → varDecl | statement
+//   varDecl     → "var" IDENTIFIER ( "=" expression )? ";"
+//   statement   → exprStmt | printStmt | block | ifStmt | whileStmt | forStmt
+//   exprStmt    → expression ";"
+//   printStmt   → "print" expression ";"
+//   block       → "{" declaration* "}"
+//   ifStmt      → "if" "(" expression ")" statement ( "else" statement )?
+//   whileStmt   → "while" "(" expression ")" statement
+//   forStmt     → "for" "(" ( varDecl | exprStmt | ";" ) expression? ";"
+//                       expression? ")" statement   // desugared to while
+//
+//   expression  → assignment
+//   assignment  → IDENTIFIER "=" assignment | logic_or
+//   logic_or    → logic_and ( "or" logic_and )*
+//   logic_and   → equality ( "and" equality )*
+//   equality    → comparison ( ( "!=" | "==" ) comparison )*
+//   comparison  → term ( ( ">" | ">=" | "<" | "<=" ) term )*
+//   term        → factor ( ( "-" | "+" ) factor )*
+//   factor      → unary ( ( "/" | "*" ) unary )*
+//   unary       → ( "!" | "-" ) unary | primary
+//   primary     → NUMBER | STRING | "true" | "false" | "nil"
+//               | IDENTIFIER | "(" expression ")"
+//
+// Implemented as methods on Parser so call sites read naturally
+// (`p.parse_program()`) and method names are type-qualified.
+
+from tokens import Token, TokenType;
+from value import LoxValue;
+from ast import Expr, ExprKind, Stmt, StmtKind, FunBody;
+
+pub struct Parser {
+    pub tokens: List<Token>;
+    pub current: i32;
+    pub next_expr_id: i32;
+    pub had_error: bool;
+    pub error_msg: string;
+    // Flat table of every `fun` body seen during parsing. The Interpreter
+    // takes ownership via a field-move out of a by-value Parser parameter
+    // (see Interpreter's constructor).
+    pub fun_bodies: List<uniq FunBody>;
+}
+
+fun new Parser(tokens: List<Token>) {
+    self.tokens = tokens;
+    self.current = 0;
+    self.next_expr_id = 0;
+    self.had_error = false;
+    self.error_msg = "";
+    self.fun_bodies = List<uniq FunBody>();
+}
+
+// ── Cursor helpers ────────────────────────────────────────────────────────
+
+fun Parser.peek(): Token {
+    return self.tokens[self.current];
+}
+
+fun Parser.previous(): Token {
+    return self.tokens[self.current - 1];
+}
+
+fun Parser.is_at_end(): bool {
+    return self.tokens[self.current].tok_type == TokenType::Eof;
+}
+
+fun Parser.check(tt: TokenType): bool {
+    if (self.is_at_end()) {
+        return false;
+    }
+    return self.tokens[self.current].tok_type == tt;
+}
+
+fun Parser.advance(): Token {
+    if (!self.is_at_end()) {
+        self.current = self.current + 1;
+    }
+    return self.tokens[self.current - 1];
+}
+
+fun Parser.match1(tt: TokenType): bool {
+    if (self.check(tt)) {
+        var t: Token = self.advance();
+        return true;
+    }
+    return false;
+}
+
+fun Parser.match2(tt1: TokenType, tt2: TokenType): bool {
+    return self.match1(tt1) || self.match1(tt2);
+}
+
+fun Parser.match4(a: TokenType, b: TokenType, c: TokenType, d: TokenType): bool {
+    return self.match1(a) || self.match1(b) || self.match1(c) || self.match1(d);
+}
+
+fun Parser.consume(tt: TokenType, msg: string) {
+    if (self.check(tt)) {
+        var t: Token = self.advance();
+        return;
+    }
+    self.report_error(msg);
+}
+
+fun Parser.report_error(msg: string) {
+    self.had_error = true;
+    if (str_len(self.error_msg) == 0) {
+        var tok: Token = self.tokens[self.current];
+        self.error_msg = f"[line {tok.line}] Error at '{tok.lexeme}': {msg}";
+    }
+}
+
+fun Parser.next_id(): i32 {
+    var id: i32 = self.next_expr_id;
+    self.next_expr_id = self.next_expr_id + 1;
+    return id;
+}
+
+// ── Expression productions ────────────────────────────────────────────────
+
+pub fun Parser.parse_expression(): uniq Expr {
+    return self.parse_assignment();
+}
+
+fun Parser.parse_assignment(): uniq Expr {
+    var expr: uniq Expr = self.parse_logic_or();
+
+    if (self.match1(TokenType::Equal)) {
+        var eq_tok: Token = self.previous();
+        var value: uniq Expr = self.parse_assignment();
+
+        if (expr.kind == ExprKind::EVariable) {
+            var name: string = expr.var_name;
+            return uniq Expr.assign(self.next_id(), name, value);
+        }
+        if (expr.kind == ExprKind::EGet) {
+            // `obj.name = value` — wrap the previously-parsed Get inside a
+            // Set so we don't need to destructure the Get's uniq children.
+            return uniq Expr.set(self.next_id(), expr, value);
+        }
+        self.report_error("Invalid assignment target.");
+        // Fall through; return the LHS as-is. `value` drops at scope exit.
+    }
+    return expr;
+}
+
+fun Parser.parse_logic_or(): uniq Expr {
+    var expr: uniq Expr = self.parse_logic_and();
+    while (self.match1(TokenType::Or)) {
+        var op_tok: Token = self.previous();
+        var right: uniq Expr = self.parse_logic_and();
+        expr = uniq Expr.logical(self.next_id(), expr, op_tok.tok_type, right);
+    }
+    return expr;
+}
+
+fun Parser.parse_logic_and(): uniq Expr {
+    var expr: uniq Expr = self.parse_equality();
+    while (self.match1(TokenType::And)) {
+        var op_tok: Token = self.previous();
+        var right: uniq Expr = self.parse_equality();
+        expr = uniq Expr.logical(self.next_id(), expr, op_tok.tok_type, right);
+    }
+    return expr;
+}
+
+fun Parser.parse_equality(): uniq Expr {
+    var expr: uniq Expr = self.parse_comparison();
+    while (self.match2(TokenType::BangEqual, TokenType::EqualEqual)) {
+        var op_tok: Token = self.previous();
+        var right: uniq Expr = self.parse_comparison();
+        expr = uniq Expr.binary(self.next_id(), expr, op_tok.tok_type, op_tok.line, right);
+    }
+    return expr;
+}
+
+fun Parser.parse_comparison(): uniq Expr {
+    var expr: uniq Expr = self.parse_term();
+    while (self.match4(TokenType::Greater, TokenType::GreaterEqual,
+                       TokenType::Less,    TokenType::LessEqual)) {
+        var op_tok: Token = self.previous();
+        var right: uniq Expr = self.parse_term();
+        expr = uniq Expr.binary(self.next_id(), expr, op_tok.tok_type, op_tok.line, right);
+    }
+    return expr;
+}
+
+fun Parser.parse_term(): uniq Expr {
+    var expr: uniq Expr = self.parse_factor();
+    while (self.match2(TokenType::Minus, TokenType::Plus)) {
+        var op_tok: Token = self.previous();
+        var right: uniq Expr = self.parse_factor();
+        expr = uniq Expr.binary(self.next_id(), expr, op_tok.tok_type, op_tok.line, right);
+    }
+    return expr;
+}
+
+fun Parser.parse_factor(): uniq Expr {
+    var expr: uniq Expr = self.parse_unary();
+    while (self.match2(TokenType::Slash, TokenType::Star)) {
+        var op_tok: Token = self.previous();
+        var right: uniq Expr = self.parse_unary();
+        expr = uniq Expr.binary(self.next_id(), expr, op_tok.tok_type, op_tok.line, right);
+    }
+    return expr;
+}
+
+fun Parser.parse_unary(): uniq Expr {
+    if (self.match2(TokenType::Bang, TokenType::Minus)) {
+        var op_tok: Token = self.previous();
+        var operand: uniq Expr = self.parse_unary();
+        return uniq Expr.unary(self.next_id(), op_tok.tok_type, op_tok.line, operand);
+    }
+    return self.parse_call();
+}
+
+//   call → primary ( "(" arguments? ")" | "." IDENT )*
+//   arguments → expression ( "," expression )*
+fun Parser.parse_call(): uniq Expr {
+    var expr: uniq Expr = self.parse_primary();
+    while (true) {
+        if (self.match1(TokenType::LeftParen)) {
+            var paren_tok: Token = self.previous();
+            var args: List<uniq Expr> = List<uniq Expr>();
+            if (!self.check(TokenType::RightParen)) {
+                args.push(self.parse_expression());
+                while (self.match1(TokenType::Comma)) {
+                    args.push(self.parse_expression());
+                }
+            }
+            self.consume(TokenType::RightParen, "Expected ')' after arguments.");
+            expr = uniq Expr.call(self.next_id(), expr, paren_tok.line, args);
+        } else if (self.match1(TokenType::Dot)) {
+            var dot_tok: Token = self.previous();
+            self.consume(TokenType::Identifier, "Expected property name after '.'.");
+            var name: string = self.previous().lexeme;
+            expr = uniq Expr.get(self.next_id(), expr, name, dot_tok.line);
+        } else {
+            break;
+        }
+    }
+    return expr;
+}
+
+fun Parser.parse_primary(): uniq Expr {
+    if (self.match1(TokenType::False)) {
+        return uniq Expr.literal(self.next_id(), LoxValue.of_bool(false));
+    }
+    if (self.match1(TokenType::True)) {
+        return uniq Expr.literal(self.next_id(), LoxValue.of_bool(true));
+    }
+    if (self.match1(TokenType::Nil)) {
+        return uniq Expr.literal(self.next_id(), LoxValue.of_nil());
+    }
+    if (self.match1(TokenType::Number)) {
+        var t: Token = self.previous();
+        return uniq Expr.literal(self.next_id(), LoxValue.of_number(t.lit_num));
+    }
+    if (self.match1(TokenType::StringTok)) {
+        var t: Token = self.previous();
+        return uniq Expr.literal(self.next_id(), LoxValue.of_string(t.lit_str));
+    }
+    if (self.match1(TokenType::This)) {
+        var t: Token = self.previous();
+        return uniq Expr.this_expr(self.next_id(), t.line);
+    }
+    if (self.match1(TokenType::Super)) {
+        var t: Token = self.previous();
+        self.consume(TokenType::Dot, "Expected '.' after 'super'.");
+        self.consume(TokenType::Identifier, "Expected superclass method name.");
+        var method_name: string = self.previous().lexeme;
+        return uniq Expr.super_method(self.next_id(), method_name, t.line);
+    }
+    if (self.match1(TokenType::Identifier)) {
+        var t: Token = self.previous();
+        return uniq Expr.variable(self.next_id(), t.lexeme, t.line);
+    }
+    if (self.match1(TokenType::LeftParen)) {
+        var inner: uniq Expr = self.parse_expression();
+        self.consume(TokenType::RightParen, "Expected ')' after expression.");
+        return uniq Expr.grouping(self.next_id(), inner);
+    }
+
+    // No production matched — report and return a placeholder so the caller
+    // can keep traversing (error-recovery mode).
+    self.report_error("Expected expression.");
+    return uniq Expr.literal(self.next_id(), LoxValue.of_nil());
+}
+
+// ── Statement productions ─────────────────────────────────────────────────
+//
+// Every `fun` declaration we parse appends a FunBody to `self.fun_bodies`.
+// The Interpreter takes ownership of the list when it consumes the Parser
+// at construction time.
+
+pub fun Parser.parse_program(): List<uniq Stmt> {
+    var stmts: List<uniq Stmt> = List<uniq Stmt>();
+    while (!self.is_at_end()) {
+        stmts.push(self.parse_declaration());
+    }
+    return stmts;
+}
+
+fun Parser.parse_declaration(): uniq Stmt {
+    if (self.match1(TokenType::Class)) {
+        return self.parse_class_decl();
+    }
+    if (self.match1(TokenType::Fun)) {
+        return self.parse_fun_decl();
+    }
+    if (self.match1(TokenType::Var)) {
+        return self.parse_var_decl();
+    }
+    return self.parse_statement();
+}
+
+//   classDecl → "class" IDENT ( "<" IDENT )? "{" method* "}"
+//   method    → IDENT "(" parameters? ")" "{" block "}"
+//
+// The optional `< Super` marker borrows the `<` token from the comparison
+// grammar — context alone disambiguates (jlox does the same).
+fun Parser.parse_class_decl(): uniq Stmt {
+    self.consume(TokenType::Identifier, "Expected class name.");
+    var name: string = self.previous().lexeme;
+
+    var superclass: uniq Expr = nil;
+    if (self.match1(TokenType::Less)) {
+        self.consume(TokenType::Identifier, "Expected superclass name.");
+        var super_tok: Token = self.previous();
+        superclass = uniq Expr.variable(self.next_id(), super_tok.lexeme, super_tok.line);
+    }
+
+    self.consume(TokenType::LeftBrace, "Expected '{' before class body.");
+
+    var methods: List<uniq Stmt> = List<uniq Stmt>();
+    while (!self.check(TokenType::RightBrace) && !self.is_at_end()) {
+        methods.push(self.parse_method_decl());
+    }
+    self.consume(TokenType::RightBrace, "Expected '}' after class body.");
+    return uniq Stmt.class_decl(name, superclass, methods);
+}
+
+// Like parse_fun_decl but without the leading `fun` keyword — method
+// declarations inside a class body are just `name(params) { body }`.
+fun Parser.parse_method_decl(): uniq Stmt {
+    self.consume(TokenType::Identifier, "Expected method name.");
+    var name: string = self.previous().lexeme;
+    self.consume(TokenType::LeftParen, "Expected '(' after method name.");
+
+    var params: List<string> = List<string>();
+    if (!self.check(TokenType::RightParen)) {
+        self.consume(TokenType::Identifier, "Expected parameter name.");
+        params.push(self.previous().lexeme);
+        while (self.match1(TokenType::Comma)) {
+            self.consume(TokenType::Identifier, "Expected parameter name.");
+            params.push(self.previous().lexeme);
+        }
+    }
+    self.consume(TokenType::RightParen, "Expected ')' after parameters.");
+    self.consume(TokenType::LeftBrace, "Expected '{' before method body.");
+
+    var body: List<uniq Stmt> = List<uniq Stmt>();
+    while (!self.check(TokenType::RightBrace) && !self.is_at_end()) {
+        body.push(self.parse_declaration());
+    }
+    self.consume(TokenType::RightBrace, "Expected '}' after method body.");
+
+    var body_id: i32 = self.fun_bodies.len();
+    self.fun_bodies.push(uniq FunBody(params, body));
+    return uniq Stmt.fun_decl(name, body_id);
+}
+
+//   funDecl    → "fun" IDENT "(" parameters? ")" "{" block "}"
+//   parameters → IDENT ( "," IDENT )*
+fun Parser.parse_fun_decl(): uniq Stmt {
+    self.consume(TokenType::Identifier, "Expected function name.");
+    var name: string = self.previous().lexeme;
+    self.consume(TokenType::LeftParen, "Expected '(' after function name.");
+
+    var params: List<string> = List<string>();
+    if (!self.check(TokenType::RightParen)) {
+        self.consume(TokenType::Identifier, "Expected parameter name.");
+        params.push(self.previous().lexeme);
+        while (self.match1(TokenType::Comma)) {
+            self.consume(TokenType::Identifier, "Expected parameter name.");
+            params.push(self.previous().lexeme);
+        }
+    }
+    self.consume(TokenType::RightParen, "Expected ')' after parameters.");
+    self.consume(TokenType::LeftBrace, "Expected '{' before function body.");
+
+    var body: List<uniq Stmt> = List<uniq Stmt>();
+    while (!self.check(TokenType::RightBrace) && !self.is_at_end()) {
+        body.push(self.parse_declaration());
+    }
+    self.consume(TokenType::RightBrace, "Expected '}' after function body.");
+
+    var body_id: i32 = self.fun_bodies.len();
+    self.fun_bodies.push(uniq FunBody(params, body));
+    return uniq Stmt.fun_decl(name, body_id);
+}
+
+fun Parser.parse_var_decl(): uniq Stmt {
+    self.consume(TokenType::Identifier, "Expected variable name.");
+    var name_tok: Token = self.previous();
+    var name: string = name_tok.lexeme;
+
+    if (self.match1(TokenType::Equal)) {
+        var init: uniq Expr = self.parse_expression();
+        self.consume(TokenType::Semicolon, "Expected ';' after variable declaration.");
+        return uniq Stmt.var_decl(name, init);
+    }
+    self.consume(TokenType::Semicolon, "Expected ';' after variable declaration.");
+    return uniq Stmt.var_decl(name, nil);
+}
+
+fun Parser.parse_statement(): uniq Stmt {
+    if (self.match1(TokenType::Print)) {
+        return self.parse_print_stmt();
+    }
+    if (self.match1(TokenType::LeftBrace)) {
+        return self.parse_block();
+    }
+    if (self.match1(TokenType::If)) {
+        return self.parse_if_stmt();
+    }
+    if (self.match1(TokenType::While)) {
+        return self.parse_while_stmt();
+    }
+    if (self.match1(TokenType::For)) {
+        return self.parse_for_stmt();
+    }
+    if (self.match1(TokenType::Return)) {
+        return self.parse_return_stmt();
+    }
+    return self.parse_expr_stmt();
+}
+
+//   returnStmt → "return" expression? ";"
+fun Parser.parse_return_stmt(): uniq Stmt {
+    if (self.match1(TokenType::Semicolon)) {
+        return uniq Stmt.return_stmt(nil);
+    }
+    var value: uniq Expr = self.parse_expression();
+    self.consume(TokenType::Semicolon, "Expected ';' after return value.");
+    return uniq Stmt.return_stmt(value);
+}
+
+fun Parser.parse_print_stmt(): uniq Stmt {
+    var value: uniq Expr = self.parse_expression();
+    self.consume(TokenType::Semicolon, "Expected ';' after value.");
+    return uniq Stmt.print_stmt(value);
+}
+
+fun Parser.parse_expr_stmt(): uniq Stmt {
+    var value: uniq Expr = self.parse_expression();
+    self.consume(TokenType::Semicolon, "Expected ';' after expression.");
+    return uniq Stmt.expr_stmt(value);
+}
+
+fun Parser.parse_block(): uniq Stmt {
+    var stmts: List<uniq Stmt> = List<uniq Stmt>();
+    while (!self.check(TokenType::RightBrace) && !self.is_at_end()) {
+        stmts.push(self.parse_declaration());
+    }
+    self.consume(TokenType::RightBrace, "Expected '}' after block.");
+    return uniq Stmt.block(stmts);
+}
+
+fun Parser.parse_if_stmt(): uniq Stmt {
+    self.consume(TokenType::LeftParen, "Expected '(' after 'if'.");
+    var cond: uniq Expr = self.parse_expression();
+    self.consume(TokenType::RightParen, "Expected ')' after if condition.");
+    var then_branch: uniq Stmt = self.parse_statement();
+    if (self.match1(TokenType::Else)) {
+        var else_branch: uniq Stmt = self.parse_statement();
+        return uniq Stmt.if_stmt(cond, then_branch, else_branch);
+    }
+    return uniq Stmt.if_stmt(cond, then_branch, nil);
+}
+
+fun Parser.parse_while_stmt(): uniq Stmt {
+    self.consume(TokenType::LeftParen, "Expected '(' after 'while'.");
+    var cond: uniq Expr = self.parse_expression();
+    self.consume(TokenType::RightParen, "Expected ')' after while condition.");
+    var body: uniq Stmt = self.parse_statement();
+    return uniq Stmt.while_stmt(cond, body);
+}
+
+// For-loops are desugared into while-loops in the parser, mirroring jlox:
+//   for (init; cond; incr) body
+//     →
+//   { init; while (cond) { body; incr; } }
+// Missing cond is treated as `true`; missing init/incr are just omitted.
+fun Parser.parse_for_stmt(): uniq Stmt {
+    self.consume(TokenType::LeftParen, "Expected '(' after 'for'.");
+
+    // Initializer (optional).
+    var has_init: bool = false;
+    var init: uniq Stmt = nil;
+    if (self.match1(TokenType::Semicolon)) {
+        // no initializer — leave init as nil
+    } else if (self.match1(TokenType::Var)) {
+        init = self.parse_var_decl();
+        has_init = true;
+    } else {
+        init = self.parse_expr_stmt();
+        has_init = true;
+    }
+
+    // Condition (optional; missing = literal true).
+    var cond: uniq Expr = nil;
+    if (!self.check(TokenType::Semicolon)) {
+        cond = self.parse_expression();
+    } else {
+        cond = uniq Expr.literal(self.next_id(), LoxValue.of_bool(true));
+    }
+    self.consume(TokenType::Semicolon, "Expected ';' after loop condition.");
+
+    // Increment (optional).
+    var has_incr: bool = false;
+    var incr: uniq Expr = nil;
+    if (!self.check(TokenType::RightParen)) {
+        incr = self.parse_expression();
+        has_incr = true;
+    }
+    self.consume(TokenType::RightParen, "Expected ')' after for clauses.");
+
+    var body: uniq Stmt = self.parse_statement();
+
+    // Append increment to body: { body; incr; }
+    if (has_incr) {
+        var wrapped: List<uniq Stmt> = List<uniq Stmt>();
+        wrapped.push(body);
+        wrapped.push(uniq Stmt.expr_stmt(incr));
+        body = uniq Stmt.block(wrapped);
+    }
+
+    // Wrap in while.
+    var loop: uniq Stmt = uniq Stmt.while_stmt(cond, body);
+
+    // Prepend init: { init; while (...) {...} }.
+    if (has_init) {
+        var outer: List<uniq Stmt> = List<uniq Stmt>();
+        outer.push(init);
+        outer.push(loop);
+        return uniq Stmt.block(outer);
+    }
+    return loop;
+}
+
+// Discard tokens until a likely statement boundary — used by main.roxy
+// after a parse error to keep producing diagnostics.
+pub fun Parser.synchronize() {
+    var t: Token = self.advance();
+    while (!self.is_at_end()) {
+        if (self.previous().tok_type == TokenType::Semicolon) {
+            return;
+        }
+        var tt: TokenType = self.peek().tok_type;
+        if (tt == TokenType::Class || tt == TokenType::Fun
+            || tt == TokenType::Var || tt == TokenType::For
+            || tt == TokenType::If || tt == TokenType::While
+            || tt == TokenType::Print || tt == TokenType::Return) {
+            return;
+        }
+        var ignored: Token = self.advance();
+    }
+}

@@ -1,0 +1,261 @@
+// Lox scanner. Walks the source string and produces a List<Token>.
+//
+// Implemented as methods on the Scanner struct so call sites read naturally
+// (`s.scan_tokens()`) and method names stay type-qualified, sidestepping the
+// cross-module function-name collision bug tracked in TODO.md.
+
+from tokens import Token, TokenType, LiteralKind;
+
+pub struct Scanner {
+    pub source: string;
+    pub tokens: List<Token>;
+    pub start: i32;
+    pub current: i32;
+    pub line: i32;
+    pub had_error: bool;
+    pub error_msg: string;
+}
+
+fun new Scanner(source: string) {
+    self.source = source;
+    self.tokens = List<Token>();
+    self.start = 0;
+    self.current = 0;
+    self.line = 1;
+    self.had_error = false;
+    self.error_msg = "";
+}
+
+// ── Character classification (free helpers) ───────────────────────────────
+
+fun is_digit(c: i32): bool {
+    return c >= 48 && c <= 57;   // '0' .. '9'
+}
+
+fun is_alpha(c: i32): bool {
+    return (c >= 65 && c <= 90)   // 'A' .. 'Z'
+        || (c >= 97 && c <= 122)  // 'a' .. 'z'
+        || c == 95;               // '_'
+}
+
+fun is_alpha_numeric(c: i32): bool {
+    return is_alpha(c) || is_digit(c);
+}
+
+fun keyword_or_identifier(name: string): TokenType {
+    if (str_eq(name, "and"))    { return TokenType::And; }
+    if (str_eq(name, "class"))  { return TokenType::Class; }
+    if (str_eq(name, "else"))   { return TokenType::Else; }
+    if (str_eq(name, "false"))  { return TokenType::False; }
+    if (str_eq(name, "for"))    { return TokenType::For; }
+    if (str_eq(name, "fun"))    { return TokenType::Fun; }
+    if (str_eq(name, "if"))     { return TokenType::If; }
+    if (str_eq(name, "nil"))    { return TokenType::Nil; }
+    if (str_eq(name, "or"))     { return TokenType::Or; }
+    if (str_eq(name, "print"))  { return TokenType::Print; }
+    if (str_eq(name, "return")) { return TokenType::Return; }
+    if (str_eq(name, "super"))  { return TokenType::Super; }
+    if (str_eq(name, "this"))   { return TokenType::This; }
+    if (str_eq(name, "true"))   { return TokenType::True; }
+    if (str_eq(name, "var"))    { return TokenType::Var; }
+    if (str_eq(name, "while"))  { return TokenType::While; }
+    return TokenType::Identifier;
+}
+
+// ── Cursor primitives ─────────────────────────────────────────────────────
+
+fun Scanner.is_at_end(): bool {
+    return self.current >= str_len(self.source);
+}
+
+fun Scanner.advance(): i32 {
+    var c: i32 = str_char_at(self.source, self.current);
+    self.current = self.current + 1;
+    return c;
+}
+
+fun Scanner.peek(): i32 {
+    if (self.is_at_end()) {
+        return 0;   // '\0'
+    }
+    return str_char_at(self.source, self.current);
+}
+
+fun Scanner.peek_next(): i32 {
+    if (self.current + 1 >= str_len(self.source)) {
+        return 0;
+    }
+    return str_char_at(self.source, self.current + 1);
+}
+
+fun Scanner.match_char(expected: i32): bool {
+    if (self.is_at_end()) {
+        return false;
+    }
+    if (str_char_at(self.source, self.current) != expected) {
+        return false;
+    }
+    self.current = self.current + 1;
+    return true;
+}
+
+// ── Token emission ────────────────────────────────────────────────────────
+
+fun Scanner.current_lexeme(): string {
+    return str_substr(self.source, self.start, self.current - self.start);
+}
+
+fun Scanner.add_token(tt: TokenType) {
+    self.tokens.push(Token(tt, self.current_lexeme(), self.line));
+}
+
+fun Scanner.add_string_token(value: string) {
+    self.tokens.push(Token.string_tok(self.current_lexeme(), self.line, value));
+}
+
+fun Scanner.add_number_token(value: f64) {
+    self.tokens.push(Token.number_tok(self.current_lexeme(), self.line, value));
+}
+
+fun Scanner.report_error(msg: string) {
+    self.had_error = true;
+    if (str_len(self.error_msg) == 0) {
+        self.error_msg = f"[line {self.line}] Error: {msg}";
+    }
+}
+
+// ── Multi-character scanners ──────────────────────────────────────────────
+
+fun Scanner.scan_string() {
+    // self.current is just past the opening quote.
+    while (!self.is_at_end() && self.peek() != 34) {   // '"'
+        if (self.peek() == 10) {                       // '\n'
+            self.line = self.line + 1;
+        }
+        var ignored: i32 = self.advance();
+    }
+    if (self.is_at_end()) {
+        self.report_error("Unterminated string.");
+        return;
+    }
+    // Consume the closing quote.
+    var closing: i32 = self.advance();
+    // Literal value excludes the quotes.
+    var value: string = str_substr(self.source, self.start + 1, self.current - self.start - 2);
+    self.add_string_token(value);
+}
+
+fun Scanner.scan_number() {
+    while (is_digit(self.peek())) {
+        var c: i32 = self.advance();
+    }
+    // Fractional part.
+    if (self.peek() == 46 && is_digit(self.peek_next())) {   // '.'
+        var dot: i32 = self.advance();
+        while (is_digit(self.peek())) {
+            var c: i32 = self.advance();
+        }
+    }
+    var text: string = self.current_lexeme();
+    self.add_number_token(str_to_f64(text));
+}
+
+fun Scanner.scan_identifier() {
+    while (is_alpha_numeric(self.peek())) {
+        var c: i32 = self.advance();
+    }
+    var text: string = self.current_lexeme();
+    var tt: TokenType = keyword_or_identifier(text);
+    self.add_token(tt);
+}
+
+// ── Main dispatch ─────────────────────────────────────────────────────────
+
+fun Scanner.scan_token() {
+    var c: i32 = self.advance();
+
+    // Single-character tokens.
+    if (c == 40) { self.add_token(TokenType::LeftParen);  return; }   // '('
+    if (c == 41) { self.add_token(TokenType::RightParen); return; }   // ')'
+    if (c == 123) { self.add_token(TokenType::LeftBrace);  return; }  // '{'
+    if (c == 125) { self.add_token(TokenType::RightBrace); return; }  // '}'
+    if (c == 44) { self.add_token(TokenType::Comma);     return; }    // ','
+    if (c == 46) { self.add_token(TokenType::Dot);       return; }    // '.'
+    if (c == 45) { self.add_token(TokenType::Minus);     return; }    // '-'
+    if (c == 43) { self.add_token(TokenType::Plus);      return; }    // '+'
+    if (c == 59) { self.add_token(TokenType::Semicolon); return; }    // ';'
+    if (c == 42) { self.add_token(TokenType::Star);      return; }    // '*'
+
+    // One- or two-character tokens.
+    if (c == 33) {   // '!'
+        if (self.match_char(61)) { self.add_token(TokenType::BangEqual); }   // '='
+        else                     { self.add_token(TokenType::Bang); }
+        return;
+    }
+    if (c == 61) {   // '='
+        if (self.match_char(61)) { self.add_token(TokenType::EqualEqual); }
+        else                     { self.add_token(TokenType::Equal); }
+        return;
+    }
+    if (c == 60) {   // '<'
+        if (self.match_char(61)) { self.add_token(TokenType::LessEqual); }
+        else                     { self.add_token(TokenType::Less); }
+        return;
+    }
+    if (c == 62) {   // '>'
+        if (self.match_char(61)) { self.add_token(TokenType::GreaterEqual); }
+        else                     { self.add_token(TokenType::Greater); }
+        return;
+    }
+
+    // '/' or line comment.
+    if (c == 47) {   // '/'
+        if (self.match_char(47)) {
+            // Line comment: skip to end of line (but don't consume the newline).
+            while (!self.is_at_end() && self.peek() != 10) {   // '\n'
+                var ignored: i32 = self.advance();
+            }
+        } else {
+            self.add_token(TokenType::Slash);
+        }
+        return;
+    }
+
+    // Whitespace.
+    if (c == 32 || c == 9 || c == 13) {   // ' ', '\t', '\r'
+        return;
+    }
+    if (c == 10) {   // '\n'
+        self.line = self.line + 1;
+        return;
+    }
+
+    // String literal.
+    if (c == 34) {   // '"'
+        self.scan_string();
+        return;
+    }
+
+    // Number literal.
+    if (is_digit(c)) {
+        self.scan_number();
+        return;
+    }
+
+    // Identifier or keyword.
+    if (is_alpha(c)) {
+        self.scan_identifier();
+        return;
+    }
+
+    self.report_error(f"Unexpected character: {str_from_code(c)}");
+}
+
+pub fun Scanner.scan_tokens() {
+    while (!self.is_at_end()) {
+        self.start = self.current;
+        self.scan_token();
+    }
+    // Synthetic EOF token with empty lexeme.
+    self.tokens.push(Token(TokenType::Eof, "", self.line));
+}

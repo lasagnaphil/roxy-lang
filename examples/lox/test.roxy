@@ -1,0 +1,898 @@
+// Scanner + parser tests. Run via `roxy lox/test.roxy` (exit 0 = pass).
+//
+// Each test case pushes assertions into a TestState. If any fail the program
+// prints "FAIL ..." lines and returns a non-zero exit code.
+
+from tokens import Token, TokenType, token_type_name;
+from scanner import Scanner;
+from ast import Expr, Stmt;
+from parser import Parser;
+from value import LoxValue, ValueKind;
+from interpreter import Interpreter;
+import resolver;
+
+pub struct TestState {
+    pub pass_count: i32;
+    pub fail_count: i32;
+}
+
+fun new TestState() {
+    self.pass_count = 0;
+    self.fail_count = 0;
+}
+
+fun TestState.expect_i32(name: string, expected: i32, actual: i32) {
+    if (expected == actual) {
+        self.pass_count = self.pass_count + 1;
+    } else {
+        self.fail_count = self.fail_count + 1;
+        print(f"FAIL {name}: expected {expected}, got {actual}");
+    }
+}
+
+fun TestState.expect_tt(name: string, expected: TokenType, actual: TokenType) {
+    if (expected == actual) {
+        self.pass_count = self.pass_count + 1;
+    } else {
+        self.fail_count = self.fail_count + 1;
+        print(f"FAIL {name}: expected {token_type_name(expected)}, got {token_type_name(actual)}");
+    }
+}
+
+fun TestState.expect_str(name: string, expected: string, actual: string) {
+    if (str_eq(expected, actual)) {
+        self.pass_count = self.pass_count + 1;
+    } else {
+        self.fail_count = self.fail_count + 1;
+        print(f"FAIL {name}: expected '{expected}', got '{actual}'");
+    }
+}
+
+fun TestState.expect_bool(name: string, expected: bool, actual: bool) {
+    if (expected == actual) {
+        self.pass_count = self.pass_count + 1;
+    } else {
+        self.fail_count = self.fail_count + 1;
+        print(f"FAIL {name}: expected {expected}, got {actual}");
+    }
+}
+
+// ── Scanner tests ─────────────────────────────────────────────────────────
+
+fun TestState.test_single_char_tokens() {
+    var s: Scanner = Scanner("(){},.-+;*/");
+    s.scan_tokens();
+    self.expect_bool("single_char: no error", false, s.had_error);
+    self.expect_i32("single_char: token count", 12, s.tokens.len());   // 11 + EOF
+    self.expect_tt("single_char: [0]",  TokenType::LeftParen,   s.tokens[0].tok_type);
+    self.expect_tt("single_char: [1]",  TokenType::RightParen,  s.tokens[1].tok_type);
+    self.expect_tt("single_char: [2]",  TokenType::LeftBrace,   s.tokens[2].tok_type);
+    self.expect_tt("single_char: [3]",  TokenType::RightBrace,  s.tokens[3].tok_type);
+    self.expect_tt("single_char: [4]",  TokenType::Comma,       s.tokens[4].tok_type);
+    self.expect_tt("single_char: [5]",  TokenType::Dot,         s.tokens[5].tok_type);
+    self.expect_tt("single_char: [6]",  TokenType::Minus,       s.tokens[6].tok_type);
+    self.expect_tt("single_char: [7]",  TokenType::Plus,        s.tokens[7].tok_type);
+    self.expect_tt("single_char: [8]",  TokenType::Semicolon,   s.tokens[8].tok_type);
+    self.expect_tt("single_char: [9]",  TokenType::Star,        s.tokens[9].tok_type);
+    self.expect_tt("single_char: [10]", TokenType::Slash,       s.tokens[10].tok_type);
+    self.expect_tt("single_char: eof",  TokenType::Eof,         s.tokens[11].tok_type);
+}
+
+fun TestState.test_two_char_tokens() {
+    var s: Scanner = Scanner("! != = == < <= > >=");
+    s.scan_tokens();
+    self.expect_bool("two_char: no error", false, s.had_error);
+    self.expect_i32("two_char: token count", 9, s.tokens.len());    // 8 + EOF
+    self.expect_tt("two_char: !",  TokenType::Bang,         s.tokens[0].tok_type);
+    self.expect_tt("two_char: !=", TokenType::BangEqual,    s.tokens[1].tok_type);
+    self.expect_tt("two_char: =",  TokenType::Equal,        s.tokens[2].tok_type);
+    self.expect_tt("two_char: ==", TokenType::EqualEqual,   s.tokens[3].tok_type);
+    self.expect_tt("two_char: <",  TokenType::Less,         s.tokens[4].tok_type);
+    self.expect_tt("two_char: <=", TokenType::LessEqual,    s.tokens[5].tok_type);
+    self.expect_tt("two_char: >",  TokenType::Greater,      s.tokens[6].tok_type);
+    self.expect_tt("two_char: >=", TokenType::GreaterEqual, s.tokens[7].tok_type);
+}
+
+fun TestState.test_string_literal() {
+    var s: Scanner = Scanner("\"hello world\"");
+    s.scan_tokens();
+    self.expect_bool("string: no error", false, s.had_error);
+    self.expect_i32("string: token count", 2, s.tokens.len());
+    self.expect_tt("string: tok type", TokenType::StringTok, s.tokens[0].tok_type);
+    self.expect_str("string: lexeme", "\"hello world\"", s.tokens[0].lexeme);
+    self.expect_str("string: lit_str", "hello world", s.tokens[0].lit_str);
+}
+
+fun TestState.test_unterminated_string() {
+    var s: Scanner = Scanner("\"oops");
+    s.scan_tokens();
+    self.expect_bool("unterminated: had_error", true, s.had_error);
+}
+
+fun TestState.test_number_literal() {
+    var s: Scanner = Scanner("123 45.67");
+    s.scan_tokens();
+    self.expect_bool("number: no error", false, s.had_error);
+    self.expect_i32("number: token count", 3, s.tokens.len());
+    self.expect_tt("number: [0] tt", TokenType::Number, s.tokens[0].tok_type);
+    self.expect_str("number: [0] lexeme", "123", s.tokens[0].lexeme);
+    self.expect_tt("number: [1] tt", TokenType::Number, s.tokens[1].tok_type);
+    self.expect_str("number: [1] lexeme", "45.67", s.tokens[1].lexeme);
+}
+
+fun TestState.test_identifiers_and_keywords() {
+    var s: Scanner = Scanner("var x = nil; if else while for class fun return true false print this super and or");
+    s.scan_tokens();
+    self.expect_bool("ident_kw: no error", false, s.had_error);
+    self.expect_tt("ident_kw: var",    TokenType::Var,        s.tokens[0].tok_type);
+    self.expect_tt("ident_kw: x",      TokenType::Identifier, s.tokens[1].tok_type);
+    self.expect_str("ident_kw: x lex", "x",                   s.tokens[1].lexeme);
+    self.expect_tt("ident_kw: =",      TokenType::Equal,      s.tokens[2].tok_type);
+    self.expect_tt("ident_kw: nil",    TokenType::Nil,        s.tokens[3].tok_type);
+    self.expect_tt("ident_kw: ;",      TokenType::Semicolon,  s.tokens[4].tok_type);
+    self.expect_tt("ident_kw: if",     TokenType::If,         s.tokens[5].tok_type);
+    self.expect_tt("ident_kw: else",   TokenType::Else,       s.tokens[6].tok_type);
+    self.expect_tt("ident_kw: while",  TokenType::While,      s.tokens[7].tok_type);
+    self.expect_tt("ident_kw: for",    TokenType::For,        s.tokens[8].tok_type);
+    self.expect_tt("ident_kw: class",  TokenType::Class,      s.tokens[9].tok_type);
+    self.expect_tt("ident_kw: fun",    TokenType::Fun,        s.tokens[10].tok_type);
+    self.expect_tt("ident_kw: return", TokenType::Return,     s.tokens[11].tok_type);
+    self.expect_tt("ident_kw: true",   TokenType::True,       s.tokens[12].tok_type);
+    self.expect_tt("ident_kw: false",  TokenType::False,      s.tokens[13].tok_type);
+    self.expect_tt("ident_kw: print",  TokenType::Print,      s.tokens[14].tok_type);
+    self.expect_tt("ident_kw: this",   TokenType::This,       s.tokens[15].tok_type);
+    self.expect_tt("ident_kw: super",  TokenType::Super,      s.tokens[16].tok_type);
+    self.expect_tt("ident_kw: and",    TokenType::And,        s.tokens[17].tok_type);
+    self.expect_tt("ident_kw: or",     TokenType::Or,         s.tokens[18].tok_type);
+}
+
+fun TestState.test_comment_ignored() {
+    var s: Scanner = Scanner("1 // trailing\n 2");
+    s.scan_tokens();
+    self.expect_bool("comment: no error", false, s.had_error);
+    self.expect_i32("comment: token count", 3, s.tokens.len());   // 1, 2, EOF
+    self.expect_tt("comment: [0]", TokenType::Number, s.tokens[0].tok_type);
+    self.expect_tt("comment: [1]", TokenType::Number, s.tokens[1].tok_type);
+}
+
+fun TestState.test_line_tracking() {
+    var s: Scanner = Scanner("a\nb\nc");
+    s.scan_tokens();
+    self.expect_bool("lines: no error", false, s.had_error);
+    self.expect_i32("lines: a line", 1, s.tokens[0].line);
+    self.expect_i32("lines: b line", 2, s.tokens[1].line);
+    self.expect_i32("lines: c line", 3, s.tokens[2].line);
+}
+
+fun TestState.test_lox_snippet() {
+    // A tiny but realistic Lox program — makes sure all pieces work together.
+    var src: string = "var x = 1 + 2;\nprint x;";
+    var s: Scanner = Scanner(src);
+    s.scan_tokens();
+    self.expect_bool("snippet: no error", false, s.had_error);
+    // var x = 1 + 2 ; print x ; EOF  →  11 tokens
+    self.expect_i32("snippet: token count", 11, s.tokens.len());
+    self.expect_tt("snippet: [0]", TokenType::Var,        s.tokens[0].tok_type);
+    self.expect_tt("snippet: [1]", TokenType::Identifier, s.tokens[1].tok_type);
+    self.expect_tt("snippet: [2]", TokenType::Equal,      s.tokens[2].tok_type);
+    self.expect_tt("snippet: [3]", TokenType::Number,     s.tokens[3].tok_type);
+    self.expect_tt("snippet: [4]", TokenType::Plus,       s.tokens[4].tok_type);
+    self.expect_tt("snippet: [5]", TokenType::Number,     s.tokens[5].tok_type);
+    self.expect_tt("snippet: [6]", TokenType::Semicolon,  s.tokens[6].tok_type);
+    self.expect_tt("snippet: [7]", TokenType::Print,      s.tokens[7].tok_type);
+    self.expect_tt("snippet: [8]", TokenType::Identifier, s.tokens[8].tok_type);
+    self.expect_tt("snippet: [9]", TokenType::Semicolon,  s.tokens[9].tok_type);
+}
+
+// ── Parser tests ──────────────────────────────────────────────────────────
+//
+// Scans + parses an expression and returns its Lisp-style AST dump so the
+// tests can compare against small expected strings.
+
+fun ast_of(src: string): string {
+    var s: Scanner = Scanner(src);
+    s.scan_tokens();
+    var p: Parser = Parser(s.tokens);
+    var e: uniq Expr = p.parse_expression();
+    return e.to_string();
+}
+
+fun TestState.expect_ast(name: string, src: string, expected: string) {
+    var actual: string = ast_of(src);
+    self.expect_str(name, expected, actual);
+}
+
+fun TestState.test_parser_literals() {
+    self.expect_ast("literal: number", "1",     "1");
+    self.expect_ast("literal: true",   "true",  "true");
+    self.expect_ast("literal: false",  "false", "false");
+    self.expect_ast("literal: nil",    "nil",   "nil");
+    self.expect_ast("literal: string", "\"hi\"", "hi");
+}
+
+fun TestState.test_parser_unary() {
+    self.expect_ast("unary: neg",     "-1",   "(- 1)");
+    self.expect_ast("unary: bang",    "!true", "(! true)");
+    self.expect_ast("unary: double",  "--1",  "(- (- 1))");
+}
+
+fun TestState.test_parser_binary() {
+    self.expect_ast("binary: plus",    "1 + 2",  "(+ 1 2)");
+    self.expect_ast("binary: times",   "2 * 3",  "(* 2 3)");
+    self.expect_ast("binary: minus",   "5 - 2",  "(- 5 2)");
+    self.expect_ast("binary: divide",  "6 / 2",  "(/ 6 2)");
+}
+
+fun TestState.test_parser_precedence() {
+    // * binds tighter than +
+    self.expect_ast("prec: + *",   "1 + 2 * 3", "(+ 1 (* 2 3))");
+    // Left-associativity of +
+    self.expect_ast("prec: + +",   "1 + 2 + 3", "(+ (+ 1 2) 3)");
+    // Unary before binary
+    self.expect_ast("prec: unary", "-1 * 2",    "(* (- 1) 2)");
+    // Comparison lower than +
+    self.expect_ast("prec: < +",   "1 + 2 < 5", "(< (+ 1 2) 5)");
+    // Equality lowest of those shown
+    self.expect_ast("prec: ==",    "1 == 2 + 3", "(== 1 (+ 2 3))");
+}
+
+fun TestState.test_parser_grouping() {
+    self.expect_ast("group: basic", "(1 + 2)",       "(group (+ 1 2))");
+    self.expect_ast("group: forces", "(1 + 2) * 3",  "(* (group (+ 1 2)) 3)");
+}
+
+fun TestState.test_parser_mixed() {
+    // The classic expression used in the book as a sanity print.
+    self.expect_ast("mixed: book", "-123 * (45.67)",
+                    "(* (- 123) (group 45.67))");
+}
+
+fun TestState.test_parser_error() {
+    // Missing expression after '+' should set had_error without crashing.
+    var s: Scanner = Scanner("1 +");
+    s.scan_tokens();
+    var p: Parser = Parser(s.tokens);
+    var e: uniq Expr = p.parse_expression();
+    self.expect_bool("parse_error: had_error", true, p.had_error);
+}
+
+// ── Statement tests ───────────────────────────────────────────────────────
+
+fun ast_of_program(src: string): string {
+    var s: Scanner = Scanner(src);
+    s.scan_tokens();
+    var p: Parser = Parser(s.tokens);
+    var stmts: List<uniq Stmt> = p.parse_program();
+    var joined: string = "";
+    for (var i: i32 = 0; i < stmts.len(); i = i + 1) {
+        if (i > 0) { joined = str_concat(joined, " "); }
+        joined = str_concat(joined, stmts[i].to_string());
+    }
+    return joined;
+}
+
+fun TestState.expect_prog(name: string, src: string, expected: string) {
+    var actual: string = ast_of_program(src);
+    self.expect_str(name, expected, actual);
+}
+
+fun TestState.test_stmt_print() {
+    self.expect_prog("print: literal", "print 1;", "(print 1)");
+    self.expect_prog("print: expr",    "print 1 + 2;", "(print (+ 1 2))");
+}
+
+fun TestState.test_stmt_var() {
+    self.expect_prog("var: with init", "var x = 1;",   "(var x 1)");
+    self.expect_prog("var: no init",   "var y;",       "(var y)");
+    self.expect_prog("var: expr init", "var z = 1+2;", "(var z (+ 1 2))");
+}
+
+fun TestState.test_stmt_expr() {
+    self.expect_prog("expr_stmt: bare", "1+2;", "(expr (+ 1 2))");
+}
+
+fun TestState.test_stmt_block() {
+    self.expect_prog("block: empty",     "{}",            "(block)");
+    self.expect_prog("block: one",       "{ print 1; }",  "(block (print 1))");
+    self.expect_prog("block: many",
+                     "{ var x = 1; print x; }",
+                     "(block (var x 1) (print x))");
+}
+
+fun TestState.test_stmt_if() {
+    self.expect_prog("if: no else",
+                     "if (true) print 1;",
+                     "(if true (print 1))");
+    self.expect_prog("if: else",
+                     "if (true) print 1; else print 2;",
+                     "(if true (print 1) (print 2))");
+}
+
+fun TestState.test_stmt_while() {
+    self.expect_prog("while: simple",
+                     "while (true) print 1;",
+                     "(while true (print 1))");
+}
+
+fun TestState.test_stmt_for_desugar() {
+    // for (var i=0; i<3; i = i+1) print i;
+    //   → (block (var i 0) (while (< i 3) (block (print i) (expr (= i (+ i 1))))))
+    self.expect_prog("for: full",
+                     "for (var i = 0; i < 3; i = i + 1) print i;",
+                     "(block (var i 0) (while (< i 3) (block (print i) (expr (= i (+ i 1))))))");
+    // for (;;) body    →  (while true body)
+    self.expect_prog("for: empty",
+                     "for (;;) print 1;",
+                     "(while true (print 1))");
+}
+
+fun TestState.test_expr_variable_and_assign() {
+    self.expect_prog("variable ref", "x;",           "(expr x)");
+    self.expect_prog("assign",       "x = 1;",       "(expr (= x 1))");
+    self.expect_prog("assign chain", "a = b = 1;",   "(expr (= a (= b 1)))");
+}
+
+fun TestState.test_expr_logical() {
+    self.expect_prog("and",          "a and b;",    "(expr (and a b))");
+    self.expect_prog("or",           "a or b;",     "(expr (or a b))");
+    // `or` is lower than `and` (and both lower than ==).
+    self.expect_prog("and vs or",    "a or b and c;", "(expr (or a (and b c)))");
+}
+
+fun TestState.test_invalid_assign_target() {
+    // `1 = 2;` is a parse error (lhs is not an identifier).
+    var s: Scanner = Scanner("1 = 2;");
+    s.scan_tokens();
+    var p: Parser = Parser(s.tokens);
+    var stmts: List<uniq Stmt> = p.parse_program();
+    self.expect_bool("invalid_assign: had_error", true, p.had_error);
+}
+
+// ── Expression-interpreter tests ──────────────────────────────────────────
+
+fun TestState.expect_eval_num(name: string, src: string, expected: f64) {
+    var s: Scanner = Scanner(src);
+    s.scan_tokens();
+    var p: Parser = Parser(s.tokens);
+    var e: uniq Expr = p.parse_expression();
+    var interp: Interpreter = Interpreter.empty();
+    var v: LoxValue = interp.interpret(e);
+    self.expect_bool(name, false, interp.had_runtime_error);
+    if (v.kind == ValueKind::VNumber && v.num_val == expected) {
+        self.pass_count = self.pass_count + 1;
+    } else {
+        self.fail_count = self.fail_count + 1;
+        print(f"FAIL {name}: expected number {expected}, got something else");
+    }
+}
+
+fun TestState.expect_eval_bool(name: string, src: string, expected: bool) {
+    var s: Scanner = Scanner(src);
+    s.scan_tokens();
+    var p: Parser = Parser(s.tokens);
+    var e: uniq Expr = p.parse_expression();
+    var interp: Interpreter = Interpreter.empty();
+    var v: LoxValue = interp.interpret(e);
+    self.expect_bool(name, false, interp.had_runtime_error);
+    if (v.kind == ValueKind::VBool && v.bool_val == expected) {
+        self.pass_count = self.pass_count + 1;
+    } else {
+        self.fail_count = self.fail_count + 1;
+        print(f"FAIL {name}: expected bool {expected}, got something else");
+    }
+}
+
+fun TestState.expect_eval_str(name: string, src: string, expected: string) {
+    var s: Scanner = Scanner(src);
+    s.scan_tokens();
+    var p: Parser = Parser(s.tokens);
+    var e: uniq Expr = p.parse_expression();
+    var interp: Interpreter = Interpreter.empty();
+    var v: LoxValue = interp.interpret(e);
+    self.expect_bool(name, false, interp.had_runtime_error);
+    if (v.kind == ValueKind::VStr && str_eq(v.str_val, expected)) {
+        self.pass_count = self.pass_count + 1;
+    } else {
+        self.fail_count = self.fail_count + 1;
+        print(f"FAIL {name}: expected string \"{expected}\", got something else");
+    }
+}
+
+fun TestState.expect_eval_nil(name: string, src: string) {
+    var s: Scanner = Scanner(src);
+    s.scan_tokens();
+    var p: Parser = Parser(s.tokens);
+    var e: uniq Expr = p.parse_expression();
+    var interp: Interpreter = Interpreter.empty();
+    var v: LoxValue = interp.interpret(e);
+    self.expect_bool(name, false, interp.had_runtime_error);
+    if (v.kind == ValueKind::VNil) {
+        self.pass_count = self.pass_count + 1;
+    } else {
+        self.fail_count = self.fail_count + 1;
+        print(f"FAIL {name}: expected nil");
+    }
+}
+
+fun TestState.expect_eval_runtime_error(name: string, src: string) {
+    var s: Scanner = Scanner(src);
+    s.scan_tokens();
+    var p: Parser = Parser(s.tokens);
+    var e: uniq Expr = p.parse_expression();
+    var interp: Interpreter = Interpreter.empty();
+    var v: LoxValue = interp.interpret(e);
+    self.expect_bool(name, true, interp.had_runtime_error);
+}
+
+fun TestState.test_eval_literals() {
+    self.expect_eval_num ("eval: num 1",     "1",      1.0);
+    self.expect_eval_num ("eval: decimal",   "3.14",   3.14);
+    self.expect_eval_bool("eval: true",      "true",   true);
+    self.expect_eval_bool("eval: false",     "false",  false);
+    self.expect_eval_nil ("eval: nil",       "nil");
+    self.expect_eval_str ("eval: string",    "\"hi\"", "hi");
+}
+
+fun TestState.test_eval_arithmetic() {
+    self.expect_eval_num("eval: 1 + 2",       "1 + 2",       3.0);
+    self.expect_eval_num("eval: 5 - 2",       "5 - 2",       3.0);
+    self.expect_eval_num("eval: 2 * 3",       "2 * 3",       6.0);
+    self.expect_eval_num("eval: 10 / 4",      "10 / 4",      2.5);
+    self.expect_eval_num("eval: precedence",  "1 + 2 * 3",   7.0);
+    self.expect_eval_num("eval: grouping",    "(1 + 2) * 3", 9.0);
+    self.expect_eval_num("eval: unary minus", "-5",          -5.0);
+    self.expect_eval_num("eval: neg unary",   "-(3 + 4)",    -7.0);
+}
+
+fun TestState.test_eval_string_concat() {
+    self.expect_eval_str("eval: str + str", "\"foo\" + \"bar\"", "foobar");
+}
+
+fun TestState.test_eval_comparison() {
+    self.expect_eval_bool("eval: <",  "1 < 2",  true);
+    self.expect_eval_bool("eval: <=", "2 <= 2", true);
+    self.expect_eval_bool("eval: >",  "3 > 1",  true);
+    self.expect_eval_bool("eval: >=", "3 >= 4", false);
+}
+
+fun TestState.test_eval_equality() {
+    self.expect_eval_bool("eval: 1 == 1",         "1 == 1",         true);
+    self.expect_eval_bool("eval: 1 == 2",         "1 == 2",         false);
+    self.expect_eval_bool("eval: 1 != 2",         "1 != 2",         true);
+    self.expect_eval_bool("eval: nil == nil",     "nil == nil",     true);
+    self.expect_eval_bool("eval: 1 == nil",       "1 == nil",       false);
+    self.expect_eval_bool("eval: true == 1",      "true == 1",      false);
+    self.expect_eval_bool("eval: \"a\" == \"a\"", "\"a\" == \"a\"", true);
+}
+
+fun TestState.test_eval_truthiness() {
+    self.expect_eval_bool("eval: !nil",     "!nil",     true);
+    self.expect_eval_bool("eval: !false",   "!false",   true);
+    self.expect_eval_bool("eval: !true",    "!true",    false);
+    self.expect_eval_bool("eval: !0",       "!0",       false);
+    self.expect_eval_bool("eval: !\"\"",    "!\"\"",    false);
+    self.expect_eval_bool("eval: !!nil",    "!!nil",    false);
+}
+
+fun TestState.test_eval_runtime_errors() {
+    self.expect_eval_runtime_error("eval: err unary -str",   "-\"hi\"");
+    self.expect_eval_runtime_error("eval: err num + str",    "1 + \"x\"");
+    self.expect_eval_runtime_error("eval: err str - num",    "\"a\" - 1");
+    self.expect_eval_runtime_error("eval: err < on strings", "\"a\" < \"b\"");
+}
+
+// ── Full-program execution tests ──────────────────────────────────────────
+//
+// Parse + run a source string, then assert on the interpreter's captured
+// output (joined with "\n") or on the runtime-error flag.
+
+// Inline the run pipeline in each helper — Interpreter now owns the parsed
+// program's stmts list (noncopyable), so passing it by `inout` to a helper
+// and then reading its fields confuses the move analyzer.
+
+fun TestState.expect_run_output(name: string, src: string, expected: string) {
+    var s: Scanner = Scanner(src);
+    s.scan_tokens();
+    var p: Parser = Parser(s.tokens);
+    var stmts: List<uniq Stmt> = p.parse_program();
+    var interp: Interpreter = Interpreter(p, stmts);
+    interp.resolve_program();
+    self.expect_bool(f"{name}: no resolver error", false, interp.resolver_had_error);
+    interp.run();
+
+    self.expect_bool(f"{name}: no runtime error", false, interp.had_runtime_error);
+    var joined: string = "";
+    for (var i: i32 = 0; i < interp.output.len(); i = i + 1) {
+        if (i > 0) { joined = str_concat(joined, "\n"); }
+        joined = str_concat(joined, interp.output[i]);
+    }
+    self.expect_str(name, expected, joined);
+}
+
+fun TestState.expect_run_runtime_error(name: string, src: string) {
+    var s: Scanner = Scanner(src);
+    s.scan_tokens();
+    var p: Parser = Parser(s.tokens);
+    var stmts: List<uniq Stmt> = p.parse_program();
+    var interp: Interpreter = Interpreter(p, stmts);
+    interp.resolve_program();
+    interp.run();
+    self.expect_bool(f"{name}: has runtime error", true, interp.had_runtime_error);
+}
+
+fun TestState.expect_resolver_error(name: string, src: string) {
+    var s: Scanner = Scanner(src);
+    s.scan_tokens();
+    var p: Parser = Parser(s.tokens);
+    var stmts: List<uniq Stmt> = p.parse_program();
+    var interp: Interpreter = Interpreter(p, stmts);
+    interp.resolve_program();
+    self.expect_bool(f"{name}: had resolver error", true, interp.resolver_had_error);
+}
+
+fun TestState.test_run_var_and_print() {
+    self.expect_run_output("run: var + print", "var x = 42; print x;", "42");
+    self.expect_run_output("run: string literal", "print \"hi\";", "hi");
+    self.expect_run_output("run: nil default", "var x; print x;", "nil");
+    self.expect_run_output("run: multi-print", "print 1; print 2;", "1\n2");
+}
+
+fun TestState.test_run_assignment() {
+    self.expect_run_output("run: reassign",
+                           "var x = 1; x = 2; print x;",
+                           "2");
+    self.expect_run_output("run: chained assign",
+                           "var a; var b; a = b = 3; print a; print b;",
+                           "3\n3");
+    self.expect_run_output("run: arithmetic",
+                           "var x = 10; x = x * 2; print x;",
+                           "20");
+}
+
+fun TestState.test_run_block_scope() {
+    // Inner var shadows; outer untouched after block.
+    self.expect_run_output("run: block shadow",
+                           "var x = 1; { var x = 2; print x; } print x;",
+                           "2\n1");
+    // Inner block can read and modify outer.
+    self.expect_run_output("run: block reads outer",
+                           "var x = 1; { x = 5; } print x;",
+                           "5");
+    // Inner-declared var doesn't leak out.
+    self.expect_run_runtime_error("run: inner var does not leak",
+                                  "{ var y = 1; } print y;");
+}
+
+fun TestState.test_run_if_else() {
+    self.expect_run_output("run: if true",
+                           "if (true) print 1; else print 2;",
+                           "1");
+    self.expect_run_output("run: if false",
+                           "if (false) print 1; else print 2;",
+                           "2");
+    self.expect_run_output("run: if truthy number",
+                           "if (0) print \"t\"; else print \"f\";",
+                           "t");   // 0 is truthy in Lox
+    self.expect_run_output("run: if nil is falsy",
+                           "if (nil) print \"t\"; else print \"f\";",
+                           "f");
+}
+
+fun TestState.test_run_while() {
+    self.expect_run_output("run: while countdown",
+                           "var i = 3; while (i > 0) { print i; i = i - 1; }",
+                           "3\n2\n1");
+}
+
+fun TestState.test_run_for() {
+    self.expect_run_output("run: for count",
+                           "for (var i = 0; i < 3; i = i + 1) print i;",
+                           "0\n1\n2");
+    self.expect_run_output("run: for sum",
+                           "var s = 0; for (var i = 1; i <= 4; i = i + 1) s = s + i; print s;",
+                           "10");
+}
+
+fun TestState.test_run_logical_short_circuit() {
+    // `or` returns first truthy, else second.
+    self.expect_run_output("run: or truthy-left",  "print 1 or 2;",     "1");
+    self.expect_run_output("run: or falsy-left",   "print nil or \"x\";", "x");
+    // `and` returns first falsy, else second.
+    self.expect_run_output("run: and truthy-left", "print 1 and 2;",    "2");
+    self.expect_run_output("run: and falsy-left",  "print nil and 2;",  "nil");
+}
+
+fun TestState.test_run_undefined_var() {
+    self.expect_run_runtime_error("run: undefined read",   "print x;");
+    self.expect_run_runtime_error("run: undefined assign", "x = 1;");
+}
+
+// ── Function tests ────────────────────────────────────────────────────────
+
+fun TestState.test_run_fun_basic() {
+    self.expect_run_output("fun: decl + call",
+                           "fun greet() { print \"hello\"; } greet();",
+                           "hello");
+    self.expect_run_output("fun: args + return",
+                           "fun add(a, b) { return a + b; } print add(3, 4);",
+                           "7");
+    self.expect_run_output("fun: multiple args",
+                           "fun avg3(a, b, c) { return (a + b + c) / 3; } print avg3(1, 2, 3);",
+                           "2");
+}
+
+fun TestState.test_run_fun_return() {
+    self.expect_run_output("fun: early return",
+                           "fun abs(x) { if (x < 0) return -x; return x; } print abs(-5); print abs(3);",
+                           "5\n3");
+    self.expect_run_output("fun: bare return",
+                           "fun f() { return; } print f();",
+                           "nil");
+    self.expect_run_output("fun: implicit nil",
+                           "fun f() {} print f();",
+                           "nil");
+}
+
+fun TestState.test_run_recursion() {
+    self.expect_run_output("fun: factorial",
+                           "fun fact(n) { if (n <= 1) return 1; return n * fact(n - 1); } print fact(6);",
+                           "720");
+    // fib(0)..fib(7) = 0 1 1 2 3 5 8 13
+    self.expect_run_output("fun: fibonacci",
+                           "fun fib(n) { if (n < 2) return n; return fib(n - 1) + fib(n - 2); } print fib(10);",
+                           "55");
+}
+
+fun TestState.test_run_arity_error() {
+    self.expect_run_runtime_error("fun: too few args",
+                                  "fun f(a, b) { return a; } f(1);");
+    self.expect_run_runtime_error("fun: too many args",
+                                  "fun f(a) { return a; } f(1, 2);");
+    self.expect_run_runtime_error("fun: call non-fun",
+                                  "var x = 1; x(2);");
+}
+
+fun TestState.test_run_clock() {
+    // clock() always returns a positive number; just check it runs and
+    // produces a number (truthy, > 0).
+    self.expect_run_output("clock: is positive",
+                           "if (clock() > 0) print \"ok\"; else print \"bad\";",
+                           "ok");
+    self.expect_run_runtime_error("clock: arity",
+                                  "clock(1);");
+}
+
+fun TestState.test_run_fun_mutual_recursion() {
+    // Two top-level funs calling each other — exercises SFunDecl execution
+    // that defines the fun in globals so the sibling can call it.
+    self.expect_run_output("fun: mutual recursion (even/odd)",
+                           "fun is_even(n) { if (n == 0) return true; return is_odd(n - 1); } fun is_odd(n) { if (n == 0) return false; return is_even(n - 1); } print is_even(4); print is_odd(7);",
+                           "true\ntrue");
+}
+
+// ── Closure / resolver tests (Phase 8) ────────────────────────────────────
+
+fun TestState.test_run_closures() {
+    // Nested fun captures outer local.
+    self.expect_run_output("closure: capture outer local",
+                           "fun outer() { var x = 10; fun inner() { print x; } inner(); } outer();",
+                           "10");
+    // Counter-maker: each call returns a fresh counter with its own state.
+    self.expect_run_output("closure: counter",
+                           "fun make_counter() { var i = 0; fun tick() { i = i + 1; return i; } return tick; } var c = make_counter(); print c(); print c(); print c();",
+                           "1\n2\n3");
+    // Two closures made from the same factory have independent state.
+    self.expect_run_output("closure: independent counters",
+                           "fun make_counter() { var i = 0; fun tick() { i = i + 1; return i; } return tick; } var a = make_counter(); var b = make_counter(); print a(); print a(); print b();",
+                           "1\n2\n1");
+}
+
+fun TestState.test_run_resolver_shadowing() {
+    // The classic Ch. 11 case: `showA` captures the outer `a`, not the
+    // block-local one declared after its definition.
+    self.expect_run_output("resolver: showA captures outer",
+                           "var a = \"global\"; { fun showA() { print a; } showA(); var a = \"block\"; showA(); }",
+                           "global\nglobal");
+}
+
+fun TestState.test_resolver_errors() {
+    // `var a = a;` — reading a local in its own initializer.
+    self.expect_resolver_error("resolver: self-init",
+                               "{ var a = a; }");
+    // Top-level `return` — illegal in Lox.
+    self.expect_resolver_error("resolver: top-level return",
+                               "return 1;");
+}
+
+// ── Classes (Phase 9) ─────────────────────────────────────────────────────
+
+fun TestState.test_run_class_basic() {
+    self.expect_run_output("class: decl + instance",
+                           "class Bagel {} var b = Bagel(); print b;",
+                           "Bagel instance");
+    self.expect_run_output("class: field set/get",
+                           "class Box {} var b = Box(); b.value = 42; print b.value;",
+                           "42");
+    self.expect_run_output("class: reassign field",
+                           "class T {} var t = T(); t.x = 1; t.x = t.x + 9; print t.x;",
+                           "10");
+}
+
+fun TestState.test_run_class_methods() {
+    self.expect_run_output("class: method call",
+                           "class Greeter { hello() { return \"hi\"; } } print Greeter().hello();",
+                           "hi");
+    self.expect_run_output("class: method uses this",
+                           "class Counter { inc() { this.n = this.n + 1; return this.n; } } var c = Counter(); c.n = 0; print c.inc(); print c.inc();",
+                           "1\n2");
+    self.expect_run_output("class: method reads field",
+                           "class Box { get() { return this.v; } } var b = Box(); b.v = \"ok\"; print b.get();",
+                           "ok");
+}
+
+fun TestState.test_run_class_init() {
+    self.expect_run_output("init: assigns fields",
+                           "class Pair { init(a, b) { this.a = a; this.b = b; } } var p = Pair(1, 2); print p.a; print p.b;",
+                           "1\n2");
+    self.expect_run_output("init: returns this",
+                           "class T { init() { this.x = 1; } } var t = T(); print t;",
+                           "T instance");
+    self.expect_run_output("init: bare return ok",
+                           "class T { init() { this.x = 1; return; this.x = 2; } } print T().x;",
+                           "1");
+}
+
+fun TestState.test_run_class_bound_method() {
+    // Method pulled out as a free-standing callable keeps `this` bound.
+    self.expect_run_output("class: bound method",
+                           "class C { greet() { return \"hello \" + this.name; } } var c = C(); c.name = \"world\"; var g = c.greet; print g();",
+                           "hello world");
+}
+
+fun TestState.test_run_class_errors() {
+    self.expect_run_runtime_error("class: only instances have properties",
+                                  "var x = 1; print x.y;");
+    self.expect_run_runtime_error("class: only instances have fields",
+                                  "var x = 1; x.y = 2;");
+    self.expect_run_runtime_error("class: undefined property",
+                                  "class C {} print C().missing;");
+}
+
+fun TestState.test_class_resolver_errors() {
+    self.expect_resolver_error("resolver: this outside class",
+                               "print this;");
+    self.expect_resolver_error("resolver: this in top-level fun",
+                               "fun f() { print this; }");
+    self.expect_resolver_error("resolver: return value in init",
+                               "class T { init() { return 1; } }");
+}
+
+// ── Inheritance (Phase 10) ────────────────────────────────────────────────
+
+fun TestState.test_run_inheritance_basic() {
+    // Subclass inherits methods from superclass.
+    self.expect_run_output("inherit: method from super",
+                           "class A { hello() { return \"hi\"; } } class B < A {} print B().hello();",
+                           "hi");
+    // Subclass override: subclass's method wins.
+    self.expect_run_output("inherit: override",
+                           "class A { greet() { return \"A\"; } } class B < A { greet() { return \"B\"; } } print B().greet();",
+                           "B");
+    // Superclass init inherited when subclass has none.
+    self.expect_run_output("inherit: init from super",
+                           "class A { init(x) { this.x = x; } } class B < A {} var b = B(42); print b.x;",
+                           "42");
+}
+
+fun TestState.test_run_super_method() {
+    // super.method() calls the superclass's version.
+    self.expect_run_output("super: basic",
+                           "class A { greet() { return \"A\"; } } class B < A { greet() { return super.greet() + \"B\"; } } print B().greet();",
+                           "AB");
+    // super with `this` — ensure `this` is the subclass instance.
+    self.expect_run_output("super: this is subclass",
+                           "class A { name() { return this.n; } } class B < A {} var b = B(); b.n = \"hello\"; print b.name();",
+                           "hello");
+    // Three-level chain: C → B → A. C.greet calls super.greet which is B.greet which calls super.greet which is A.greet.
+    self.expect_run_output("super: three-level chain",
+                           "class A { g() { return \"A\"; } } class B < A { g() { return super.g() + \"B\"; } } class C < B { g() { return super.g() + \"C\"; } } print C().g();",
+                           "ABC");
+    // super.init from subclass.
+    self.expect_run_output("super: init",
+                           "class A { init(x) { this.x = x; } } class B < A { init(x, y) { super.init(x); this.y = y; } } var b = B(1, 2); print b.x; print b.y;",
+                           "1\n2");
+}
+
+fun TestState.test_run_inheritance_errors() {
+    // Superclass must be a class (not e.g. a number).
+    self.expect_run_runtime_error("inherit: super is not a class",
+                                  "var NotAClass = 1; class B < NotAClass {}");
+}
+
+fun TestState.test_inheritance_resolver_errors() {
+    self.expect_resolver_error("resolver: self-inheritance",
+                               "class A < A {}");
+    self.expect_resolver_error("resolver: super outside class",
+                               "print super.foo;");
+    self.expect_resolver_error("resolver: super in non-subclass",
+                               "class A { m() { return super.x; } }");
+}
+
+
+fun main(): i32 {
+    var state: TestState = TestState();
+
+    state.test_single_char_tokens();
+    state.test_two_char_tokens();
+    state.test_string_literal();
+    state.test_unterminated_string();
+    state.test_number_literal();
+    state.test_identifiers_and_keywords();
+    state.test_comment_ignored();
+    state.test_line_tracking();
+    state.test_lox_snippet();
+
+    state.test_parser_literals();
+    state.test_parser_unary();
+    state.test_parser_binary();
+    state.test_parser_precedence();
+    state.test_parser_grouping();
+    state.test_parser_mixed();
+    state.test_parser_error();
+
+    state.test_stmt_print();
+    state.test_stmt_var();
+    state.test_stmt_expr();
+    state.test_stmt_block();
+    state.test_stmt_if();
+    state.test_stmt_while();
+    state.test_stmt_for_desugar();
+    state.test_expr_variable_and_assign();
+    state.test_expr_logical();
+    state.test_invalid_assign_target();
+
+    state.test_eval_literals();
+    state.test_eval_arithmetic();
+    state.test_eval_string_concat();
+    state.test_eval_comparison();
+    state.test_eval_equality();
+    state.test_eval_truthiness();
+    state.test_eval_runtime_errors();
+
+    state.test_run_var_and_print();
+    state.test_run_assignment();
+    state.test_run_block_scope();
+    state.test_run_if_else();
+    state.test_run_while();
+    state.test_run_for();
+    state.test_run_logical_short_circuit();
+    state.test_run_undefined_var();
+
+    state.test_run_fun_basic();
+    state.test_run_fun_return();
+    state.test_run_recursion();
+    state.test_run_arity_error();
+    state.test_run_clock();
+    state.test_run_fun_mutual_recursion();
+    state.test_run_closures();
+    state.test_run_resolver_shadowing();
+    state.test_resolver_errors();
+
+    state.test_run_class_basic();
+    state.test_run_class_methods();
+    state.test_run_class_init();
+    state.test_run_class_bound_method();
+    state.test_run_class_errors();
+    state.test_class_resolver_errors();
+
+    state.test_run_inheritance_basic();
+    state.test_run_super_method();
+    state.test_run_inheritance_errors();
+    state.test_inheritance_resolver_errors();
+
+    print(f"TESTS: {state.pass_count} passed, {state.fail_count} failed");
+    if (state.fail_count > 0) {
+        return 1;
+    }
+    return 0;
+}

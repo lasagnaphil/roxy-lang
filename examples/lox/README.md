@@ -1,6 +1,62 @@
-# Lox Interpreter in Roxy - Implementation Plan
+# Lox Interpreter in Roxy
 
-This document outlines the plan to reimplement the Lox tree-walk interpreter (from Part II of [Crafting Interpreters](https://craftinginterpreters.com/)) as a Roxy program. This serves as a real-world stress test of the Roxy language.
+A Roxy reimplementation of the tree-walk Lox interpreter from Part II of [Crafting Interpreters](https://craftinginterpreters.com/). This serves as a real-world stress test of the Roxy language — nearly every language feature (tagged unions, `uniq` ownership, generics, traits, pattern-matching, exceptions) gets exercised, and several compiler bugs were found along the way (see `TODO.md` at the repo root).
+
+All source lives in this directory. End-to-end tests run via `tests/e2e/test_lox.cpp`, which loads these `.roxy` files as modules and executes `test.roxy`'s Roxy-level assertions. To run a Lox script directly: `./build/roxy examples/lox/main.roxy path/to/script.lox`.
+
+## Current Status
+
+**Implemented** — Phases 1–10, the complete Crafting Interpreters Part II tree-walk interpreter (book Ch. 4 through Ch. 13):
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 1 | Native string helpers (`str_char_at`, `str_substr`, `str_to_f64`, `str_from_code`, `clock`, `read_file`) | ✅ |
+| 2 | Scanner — `TokenType` enum, `Token` struct (tagged union over `LiteralKind`), full Lox lexing | ✅ |
+| 3a | Expression parser — recursive descent for equality/comparison/term/factor/unary/primary; AST printer | ✅ |
+| 3b | Statement parser — var decls, blocks, if/else, while, for-desugaring, print, assignment, logical and/or, error recovery | ✅ |
+| 4 | Expression interpreter — literal/grouping/unary/binary with `RuntimeError` exception; `clock()` native | ✅ |
+| 5 | Statements + environments — `List<Environment>` pool with `Map<string, LoxValue>` bindings, block scoping via push/pop | ✅ |
+| 6 | Control flow | ✅ (folded into Phase 5 — if/while/for/logical all work) |
+| 7 | Functions — `LoxFunction` table, `ReturnException`, `clock()` native, recursion, arity checks, nested `fun`, genuine closures | ✅ |
+| 8 | Resolver — static variable resolution pass, per-`expr_id` scope-depth table, self-init ban, top-level-`return` ban, scope-depth-aware `env_get_at` / `env_assign_at` | ✅ |
+| 9 | Classes — class decls, `LoxClass` / `LoxInstance` pools, fields via `Map<string, LoxValue>`, methods, `this`, `init` (returns `this`, no explicit return value), bound-method creation | ✅ |
+| 10 | Inheritance — `class A < B {…}` syntax, `LoxClass.superclass_id`, method lookup walks chain via `find_method`, `super.method` resolved via per-subclass env containing `super`, self-inheritance ban, super-outside-class / non-subclass bans | ✅ |
+
+**Test coverage** — `test.roxy` holds 359 Roxy-level assertions (scanner/parser/evaluator/runner/closures/resolver/classes/inheritance); `tests/e2e/test_lox.cpp` wraps them as a single doctest case. All pass. End-to-end `.lox` scripts exercised via `./build/roxy examples/lox/main.roxy <script.lox>`: Fibonacci, factorial, mutual recursion, closure-based counters, the Ch. 11 `showA`/shadowing example, a class-based bank-account program, and a `Shape → Circle/Square` inheritance program using `super.init`.
+
+**Phase 7/8/9/10 design notes**:
+
+- *Flat function-body table.* `SFunDecl` no longer stores `params`/`body` inline; instead it carries a `fun_body_id: i32` into a flat `List<uniq FunBody>`. The parser fills the list during parsing (as a `Parser.fun_bodies` field); the Interpreter takes ownership at construction time via a field-move out of a by-value Parser parameter. This is what makes nested-`fun` work: a nested SFunDecl can live inside another function's body without the Interpreter needing to navigate arbitrary paths into the parent AST. Each `LoxFunction` stores a `fun_body_id` + the captured `closure_env`; at call time we look up `self.fun_bodies[id].params` / `.body`.
+- *Environment-as-pool, non-popping.* Environments live in `Interpreter.envs: List<Environment>` with an `enclosing: i32` parent index. Function calls and blocks push a new env but **never pop** — any closure created inside the scope may escape (returned, stored in a map, etc.) and still reference that env's index. This mirrors jlox's behavior where envs are reachable via GC for as long as they're referenced; in our pool, it just means the pool grows monotonically per script, which is fine for the book-style interpreter.
+- *Resolver runs between parse and run.* Methods live in `resolver.roxy` but are defined on `Interpreter` (so they can reuse the same `self.stmts[i]` / `self.fun_bodies[i]` borrow pattern the interpreter uses at runtime). Resolver state (`resolver_scopes`, `resolver_current_function`, `resolver_current_class`) is a set of transient `resolver_*` fields on the Interpreter, clobbered at each `resolve_program()` call. Output goes into `Interpreter.locals: Map<i32, i32>` keyed by `Expr.expr_id`; `lookup_variable` and `EAssign` branch on whether the id has a recorded distance.
+
+- *Classes share the closure/env infrastructure.* A `LoxClass` is a name plus `methods: Map<string, i32>` (name → index into `Interpreter.functions`). Each method is a plain `LoxFunction` whose `closure_env` is whatever env was active at class-decl-exec time. Instance fields live in `LoxInstance.fields: Map<string, LoxValue>`, and the interpreter keeps all instances in a flat `instances: List<LoxInstance>` so `VInstance(id)` values are cheap to copy (they're just indices). Accessing a method via `obj.method` calls `bind_method`, which pushes a new env containing `this`, wraps the method's original closure, and registers a fresh `LoxFunction` entry pointing at the same body but closing over the wrapper env — exactly the pattern from `LoxFunction.bind()` in jlox. `init` methods are tagged with `is_initializer = true` so `call_fun` can fetch `this` out of the wrapper env and return it regardless of what the body did. The resolver opens a `this`-scope around every method and bans `return <value>` inside `init` and all uses of `this` outside a class.
+
+- *ESet wraps its Get target.* In the book (Java) `parse_assignment` destructures a `Expr.Get` into `(object, name)` and builds an `Expr.Set(object, name, value)`. Roxy's move analyzer rejects moving a uniq field out of a uniq parent, so `ESet` instead carries `set_target: uniq Expr` (always of kind `EGet`) plus `set_value`; the interpreter reads `set_target.get_object` / `get_name` at eval time. Same runtime semantics, no destructuring needed.
+
+- *Inheritance slots naturally into the existing infrastructure.* `LoxClass` gains `superclass_id: i32` (-1 for no super). `find_method` walks the chain — subclasses shadow same-named methods. For `super.method`, each subclass's methods close over a dedicated env holding `super → VClass(super_id)`, pushed at class-decl-exec time. At eval time, `ESuper` uses the resolver-recorded distance to reach that env (`distance` → `super`) and the wrapper `this` one frame closer (`distance - 1` → `this`), then calls `find_method` on the super class and binds the result.
+
+**Bugs surfaced along the way** (the ones already fixed in `TODO.md` High Priority — what blocked each phase):
+- f-string interpolation of `Printable` struct rvalues
+- `if`/`when`/try-catch local-state restoration across branches (three variants)
+- struct-typed field assignment copying pointer bits instead of contents
+- cross-module non-pub function name collisions
+- `BCExceptionHandler` single-range-assumption breaking try/catch-around-a-loop after RPO block reordering
+- 1-slot integer field loads not sign-extending
+- `Map<K, struct V>` storing values as dangling stack pointers
+- variant-field visibility across modules
+- constructor-field assignment double-free for uniq and variant-uniq fields
+- Roxy's own `run()` took a noncopyable `List<uniq Stmt>` by move and mispassed it to throwing call paths
+
+Plus two **new** compiler bugs surfaced during Phase 8 (both now fixed upstream, see `TODO.md`):
+- `inout List<uniq T>` was incorrectly consumed by the call-arg move check in the semantic analyzer, and the IR builder had matching parallel bugs on owned-local tracking, post-call nullification, and loop-header phi merging.
+- Moving a noncopyable field out of a by-value struct parameter was permitted by `check_not_field_move` but the IR builder wasn't null-ing the source field, so the by-value parameter's scope-exit destructor double-freed the slot.
+
+Almost every phase hit at least one of these before progressing. Since each fix is upstream, future phases shouldn't re-hit them.
+
+## Original Plan
+
+
 
 ## Overview
 
@@ -142,7 +198,7 @@ These are small additions to `src/roxy/vm/natives.cpp`.
 
 **Goal:** Tokenize Lox source code into a list of tokens.
 
-**Files:** `lox/tokens.roxy`, `lox/scanner.roxy`
+**Files:** `examples/lox/tokens.roxy`, `examples/lox/scanner.roxy`
 
 **Token types (enum):**
 ```roxy
@@ -203,7 +259,7 @@ struct Token {
 
 **Goal:** Define expression and statement types as recursive tagged unions.
 
-**Files:** `lox/ast.roxy`
+**Files:** `examples/lox/ast.roxy`
 
 With recursive types, AST nodes own their children via `uniq` pointers. This eliminates the need for arena allocation and integer indices — the tree structure is direct and natural.
 
@@ -307,7 +363,7 @@ Optional fields use `nil` naturally: `if_else: uniq Stmt` is `nil` when there's 
 
 **Goal:** Recursive descent parser producing AST from tokens.
 
-**Files:** `lox/parser.roxy`
+**Files:** `examples/lox/parser.roxy`
 
 **Parser struct:**
 ```roxy
@@ -356,7 +412,7 @@ Each function returns an owned `uniq` pointer to the constructed node.
 
 **Goal:** Evaluate expressions to produce `LoxValue` results.
 
-**Files:** `lox/interpreter.roxy`
+**Files:** `examples/lox/interpreter.roxy`
 
 **Interpreter struct:**
 ```roxy
@@ -472,7 +528,7 @@ fun ReturnException.message(): string for Exception {
 
 **Goal:** Static variable resolution pass (pre-interpreter).
 
-**Files:** `lox/resolver.roxy`
+**Files:** `examples/lox/resolver.roxy`
 
 **Resolver struct:**
 ```roxy
@@ -561,16 +617,19 @@ struct LoxInstance {
 ## File Structure
 
 ```
-lox/
+examples/lox/
 ├── main.roxy          # Entry point: read file, run pipeline
 ├── tokens.roxy        # TokenType enum, Token struct
 ├── scanner.roxy       # Scanner: source string -> List<Token>
-├── ast.roxy           # ExprKind, StmtKind, Expr, Stmt (recursive types)
-├── value.roxy         # LoxValue, LoxFunction, LoxClass, LoxInstance
-├── environment.roxy   # Environment struct and operations
-├── interpreter.roxy   # Tree-walk interpreter
-└── resolver.roxy      # Static variable resolution
+├── ast.roxy           # ExprKind, StmtKind, Expr, Stmt, FunBody
+├── value.roxy         # LoxValue (and later LoxClass, LoxInstance)
+├── parser.roxy        # Token list -> AST, with error recovery
+├── interpreter.roxy   # Tree-walk interpreter (+ env pool, fn table, locals)
+├── resolver.roxy      # Static variable resolution (methods on Interpreter)
+└── test.roxy          # Roxy-level assertion suite
 ```
+
+Environment lives inside `interpreter.roxy` rather than getting its own file — it's just a struct + 3 methods and only the interpreter touches it. The original plan's `value.roxy` is smaller than expected since function/class metadata also sits in `interpreter.roxy`.
 
 > **Note:** Roxy's module system uses `import`/`from` for multi-file projects. If modules prove cumbersome, we can start with a single file and split later.
 
@@ -587,7 +646,7 @@ run(source);
 
 We can also create `.lox` test files and run them via the `read_file` native function:
 ```bash
-./cmake-build-relwithdebinfo/roxy lox/main.roxy test.lox
+./build/roxy examples/lox/main.roxy path/to/script.lox
 ```
 
 (Requires adding command-line argument support or `read_file` + hardcoded path for initial testing.)
@@ -613,25 +672,13 @@ We can also create `.lox` test files and run them via the `read_file` native fun
 
 ## Milestones
 
-1. **Milestone 1 (Prereqs):** Add native string functions to Roxy runtime
-2. **Milestone 2 (Scanner):** Tokenize Lox source into tokens - test with `print` output
-3. **Milestone 3 (Parser):** Parse tokens into recursive AST - test with AST printer
-4. **Milestone 4 (Eval):** Evaluate expressions (calculator mode)
-5. **Milestone 5 (Statements):** Variables, print, blocks, scoping
-6. **Milestone 6 (Control Flow):** if/else, while, for, logical operators
-7. **Milestone 7 (Functions):** Function declarations, calls, closures, return
-8. **Milestone 8 (Resolution):** Static variable resolution pass
-9. **Milestone 9 (Classes):** Class declarations, instances, methods, `this`
-10. **Milestone 10 (Inheritance):** Superclass, `super`, method inheritance
-
-## Risks and Mitigations
-
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| No `str_char_at` / `str_substr` | Blocks scanner | Add native functions first (small C++ change) |
-| Tagged union size (many variants) | Memory per AST node | Acceptable; recursive `uniq` means nodes are heap-allocated anyway |
-| No first-class functions | Can't directly model Lox callables | Function table + ID-based dispatch for natives |
-| Environment shared ownership | Can't use recursive `uniq` for env chain | Use index-based pool (proven pattern) |
-| Deep AST destruction | Stack overflow on very deep trees | Unlikely in practice; Lox programs aren't that deep |
-| Single-file may get large | Hard to navigate | Split into modules once core works |
-| No file reading from Roxy | Can't read .lox files | Add `read_file(path: string): string` native function |
+1. ✅ **Milestone 1 (Prereqs):** Add native string functions to Roxy runtime
+2. ✅ **Milestone 2 (Scanner):** Tokenize Lox source into tokens
+3. ✅ **Milestone 3 (Parser):** Parse tokens into recursive AST - test with AST printer
+4. ✅ **Milestone 4 (Eval):** Evaluate expressions (calculator mode)
+5. ✅ **Milestone 5 (Statements):** Variables, print, blocks, scoping
+6. ✅ **Milestone 6 (Control Flow):** if/else, while, for, logical operators
+7. ✅ **Milestone 7 (Functions):** Function declarations, calls, return — top-level + nested, real closures via captured env indices
+8. ✅ **Milestone 8 (Resolution):** Static variable resolution pass; per-`expr_id` scope-depth; self-init and top-level-`return` checks
+9. ✅ **Milestone 9 (Classes):** Class declarations, instances, fields, methods, `this`, `init`, bound methods
+10. ✅ **Milestone 10 (Inheritance):** Superclass, `super`, method inheritance — Lox book Part II complete.

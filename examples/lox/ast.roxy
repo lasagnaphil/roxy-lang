@@ -1,0 +1,391 @@
+// Lox AST, represented as recursive tagged unions using uniq children.
+//
+// All twelve expression kinds from the design doc are declared up front;
+// Phase 3a only wires up parsing/printing for Binary/Unary/Grouping/Literal
+// — the rest are dormant case variants that later phases will exercise.
+//
+// Construction goes through named constructors for readability. Printing
+// is a `to_string` method (impls Printable so Expr interpolates into
+// f-strings directly).
+
+from tokens import TokenType;
+from value import LoxValue;
+
+pub enum ExprKind {
+    EAssign,
+    EBinary,
+    ECall,
+    EGet,
+    EGrouping,
+    ELiteral,
+    ELogical,
+    ESet,
+    ESuper,
+    EThis,
+    EUnary,
+    EVariable
+}
+
+pub struct Expr {
+    pub expr_id: i32;
+
+    when kind: ExprKind {
+        case EAssign:
+            pub assign_name: string;
+            pub assign_value: uniq Expr;
+        case EBinary:
+            pub binary_left: uniq Expr;
+            pub binary_op: TokenType;
+            pub binary_line: i32;
+            pub binary_right: uniq Expr;
+        case ECall:
+            pub call_callee: uniq Expr;
+            pub call_line: i32;
+            pub call_args: List<uniq Expr>;
+        case EGet:
+            pub get_object: uniq Expr;
+            pub get_name: string;
+            pub get_line: i32;
+        case EGrouping:
+            pub group_expr: uniq Expr;
+        case ELiteral:
+            pub literal_value: LoxValue;
+        case ELogical:
+            pub logical_left: uniq Expr;
+            pub logical_op: TokenType;
+            pub logical_right: uniq Expr;
+        case ESet:
+            // `set_target` is a uniq Expr of kind EGet. We wrap (rather than
+            // destructure) the Get because Roxy can't move a uniq field out
+            // of a uniq parent. The interpreter reaches the object via
+            // `set_target.get_object`.
+            pub set_target: uniq Expr;
+            pub set_value: uniq Expr;
+        case ESuper:
+            pub super_method: string;
+            pub super_line: i32;
+        case EThis:
+            pub this_line: i32;
+        case EUnary:
+            pub unary_op: TokenType;
+            pub unary_line: i32;
+            pub unary_operand: uniq Expr;
+        case EVariable:
+            pub var_name: string;
+            pub var_line: i32;
+    }
+}
+
+// ── Named constructors ────────────────────────────────────────────────────
+
+fun new Expr.binary(id: i32, left: uniq Expr, op: TokenType, line: i32, right: uniq Expr) {
+    self.expr_id = id;
+    self.kind = ExprKind::EBinary;
+    self.binary_left = left;
+    self.binary_op = op;
+    self.binary_line = line;
+    self.binary_right = right;
+}
+
+fun new Expr.unary(id: i32, op: TokenType, line: i32, operand: uniq Expr) {
+    self.expr_id = id;
+    self.kind = ExprKind::EUnary;
+    self.unary_op = op;
+    self.unary_line = line;
+    self.unary_operand = operand;
+}
+
+fun new Expr.grouping(id: i32, inner: uniq Expr) {
+    self.expr_id = id;
+    self.kind = ExprKind::EGrouping;
+    self.group_expr = inner;
+}
+
+fun new Expr.literal(id: i32, value: LoxValue) {
+    self.expr_id = id;
+    self.kind = ExprKind::ELiteral;
+    self.literal_value = value;
+}
+
+fun new Expr.logical(id: i32, left: uniq Expr, op: TokenType, right: uniq Expr) {
+    self.expr_id = id;
+    self.kind = ExprKind::ELogical;
+    self.logical_left = left;
+    self.logical_op = op;
+    self.logical_right = right;
+}
+
+fun new Expr.variable(id: i32, name: string, line: i32) {
+    self.expr_id = id;
+    self.kind = ExprKind::EVariable;
+    self.var_name = name;
+    self.var_line = line;
+}
+
+fun new Expr.assign(id: i32, name: string, value: uniq Expr) {
+    self.expr_id = id;
+    self.kind = ExprKind::EAssign;
+    self.assign_name = name;
+    self.assign_value = value;
+}
+
+fun new Expr.call(id: i32, callee: uniq Expr, line: i32, args: List<uniq Expr>) {
+    self.expr_id = id;
+    self.kind = ExprKind::ECall;
+    self.call_callee = callee;
+    self.call_line = line;
+    self.call_args = args;
+}
+
+fun new Expr.get(id: i32, object: uniq Expr, name: string, line: i32) {
+    self.expr_id = id;
+    self.kind = ExprKind::EGet;
+    self.get_object = object;
+    self.get_name = name;
+    self.get_line = line;
+}
+
+// `target` must be a uniq Expr of kind EGet; parse_assignment enforces this.
+fun new Expr.set(id: i32, target: uniq Expr, value: uniq Expr) {
+    self.expr_id = id;
+    self.kind = ExprKind::ESet;
+    self.set_target = target;
+    self.set_value = value;
+}
+
+fun new Expr.this_expr(id: i32, line: i32) {
+    self.expr_id = id;
+    self.kind = ExprKind::EThis;
+    self.this_line = line;
+}
+
+fun new Expr.super_method(id: i32, method: string, line: i32) {
+    self.expr_id = id;
+    self.kind = ExprKind::ESuper;
+    self.super_method = method;
+    self.super_line = line;
+}
+
+// ── Pretty-printing ───────────────────────────────────────────────────────
+
+// Operator glyph for the binary/unary/logical variants.
+fun op_glyph(op: TokenType): string {
+    when op {
+        case Plus:         return "+";
+        case Minus:        return "-";
+        case Star:         return "*";
+        case Slash:        return "/";
+        case Bang:         return "!";
+        case BangEqual:    return "!=";
+        case EqualEqual:   return "==";
+        case Less:         return "<";
+        case LessEqual:    return "<=";
+        case Greater:      return ">";
+        case GreaterEqual: return ">=";
+        case And:          return "and";
+        case Or:           return "or";
+        else:              return "?";
+    }
+}
+
+// Lisp-style dump:
+//   1 + 2          →  (+ 1 2)
+//   -1 * (2 + 3)   →  (* (- 1) (group (+ 2 3)))
+//
+// Impls Printable so Exprs interpolate in f-strings.
+// ══ Stmt ══════════════════════════════════════════════════════════════════
+
+pub enum StmtKind {
+    SBlock,
+    SClassDecl,
+    SExprStmt,
+    SFunDecl,
+    SIfStmt,
+    SPrintStmt,
+    SReturnStmt,
+    SVarDecl,
+    SWhileStmt
+}
+
+// A function's parameters and body, hoisted out of the SFunDecl node so that
+// nested `fun` declarations can be reached via a flat table indexed by
+// `fun_body_id`. The parser emits one FunBody per `fun` it sees and the
+// Interpreter navigates to it at call time.
+pub struct FunBody {
+    pub params: List<string>;
+    pub body: List<uniq Stmt>;
+}
+
+fun new FunBody(params: List<string>, body: List<uniq Stmt>) {
+    self.params = params;
+    self.body = body;
+}
+
+pub struct Stmt {
+    when kind: StmtKind {
+        case SBlock:
+            pub block_stmts: List<uniq Stmt>;
+        case SClassDecl:
+            pub class_name: string;
+            pub class_superclass: uniq Expr;   // nil if no superclass
+            pub class_methods: List<uniq Stmt>;
+        case SExprStmt:
+            pub expr_stmt: uniq Expr;
+        case SFunDecl:
+            pub fun_name: string;
+            pub fun_body_id: i32;              // index into Program.fun_bodies
+        case SIfStmt:
+            pub if_condition: uniq Expr;
+            pub if_then: uniq Stmt;
+            pub if_else: uniq Stmt;            // nil if no else branch
+        case SPrintStmt:
+            pub print_expr: uniq Expr;
+        case SReturnStmt:
+            pub return_value: uniq Expr;       // nil if bare return
+        case SVarDecl:
+            pub var_decl_name: string;
+            pub var_decl_init: uniq Expr;      // nil if no initializer
+        case SWhileStmt:
+            pub while_condition: uniq Expr;
+            pub while_body: uniq Stmt;
+    }
+}
+
+// ── Stmt named constructors ───────────────────────────────────────────────
+
+fun new Stmt.block(stmts: List<uniq Stmt>) {
+    self.kind = StmtKind::SBlock;
+    self.block_stmts = stmts;
+}
+
+fun new Stmt.expr_stmt(expr: uniq Expr) {
+    self.kind = StmtKind::SExprStmt;
+    self.expr_stmt = expr;
+}
+
+fun new Stmt.print_stmt(expr: uniq Expr) {
+    self.kind = StmtKind::SPrintStmt;
+    self.print_expr = expr;
+}
+
+fun new Stmt.var_decl(name: string, init: uniq Expr) {
+    self.kind = StmtKind::SVarDecl;
+    self.var_decl_name = name;
+    self.var_decl_init = init;
+}
+
+fun new Stmt.if_stmt(cond: uniq Expr, then_branch: uniq Stmt, else_branch: uniq Stmt) {
+    self.kind = StmtKind::SIfStmt;
+    self.if_condition = cond;
+    self.if_then = then_branch;
+    self.if_else = else_branch;
+}
+
+fun new Stmt.while_stmt(cond: uniq Expr, body: uniq Stmt) {
+    self.kind = StmtKind::SWhileStmt;
+    self.while_condition = cond;
+    self.while_body = body;
+}
+
+fun new Stmt.return_stmt(value: uniq Expr) {
+    self.kind = StmtKind::SReturnStmt;
+    self.return_value = value;
+}
+
+fun new Stmt.fun_decl(name: string, body_id: i32) {
+    self.kind = StmtKind::SFunDecl;
+    self.fun_name = name;
+    self.fun_body_id = body_id;
+}
+
+fun new Stmt.class_decl(name: string, superclass: uniq Expr, methods: List<uniq Stmt>) {
+    self.kind = StmtKind::SClassDecl;
+    self.class_name = name;
+    self.class_superclass = superclass;
+    self.class_methods = methods;
+}
+
+// Lisp-style dump (matches the Expr.to_string style):
+//   var x = 1;         → (var x 1)
+//   print x;           → (print x)
+//   { ... }            → (block s1 s2 ...)
+//   if (c) a else b    → (if c a b)
+//   while (c) body     → (while c body)
+pub fun Stmt.to_string(): string for Printable {
+    when self.kind {
+        case SBlock: {
+            var parts: string = "(block";
+            for (var i: i32 = 0; i < self.block_stmts.len(); i = i + 1) {
+                parts = str_concat(parts, f" {self.block_stmts[i].to_string()}");
+            }
+            return str_concat(parts, ")");
+        }
+        case SExprStmt:
+            return f"(expr {self.expr_stmt.to_string()})";
+        case SPrintStmt:
+            return f"(print {self.print_expr.to_string()})";
+        case SVarDecl:
+            if (self.var_decl_init != nil) {
+                return f"(var {self.var_decl_name} {self.var_decl_init.to_string()})";
+            }
+            return f"(var {self.var_decl_name})";
+        case SIfStmt:
+            if (self.if_else != nil) {
+                return f"(if {self.if_condition.to_string()} {self.if_then.to_string()} {self.if_else.to_string()})";
+            }
+            return f"(if {self.if_condition.to_string()} {self.if_then.to_string()})";
+        case SWhileStmt:
+            return f"(while {self.while_condition.to_string()} {self.while_body.to_string()})";
+        case SReturnStmt:
+            if (self.return_value != nil) {
+                return f"(return {self.return_value.to_string()})";
+            }
+            return "(return)";
+        case SFunDecl:
+            // Body and params live in a separate flat table on the program
+            // (see FunBody), so the Stmt alone can't print them.
+            return f"(fun {self.fun_name} #{self.fun_body_id})";
+        case SClassDecl: {
+            if (self.class_superclass != nil) {
+                return f"(class {self.class_name} < {self.class_superclass.to_string()} ...)";
+            }
+            return f"(class {self.class_name} ...)";
+        }
+    }
+    return "?";
+}
+
+pub fun Expr.to_string(): string for Printable {
+    when self.kind {
+        case EBinary:
+            return f"({op_glyph(self.binary_op)} {self.binary_left.to_string()} {self.binary_right.to_string()})";
+        case EUnary:
+            return f"({op_glyph(self.unary_op)} {self.unary_operand.to_string()})";
+        case EGrouping:
+            return f"(group {self.group_expr.to_string()})";
+        case ELiteral:
+            return self.literal_value.to_string();
+        case ELogical:
+            return f"({op_glyph(self.logical_op)} {self.logical_left.to_string()} {self.logical_right.to_string()})";
+        case EVariable:
+            return self.var_name;
+        case EAssign:
+            return f"(= {self.assign_name} {self.assign_value.to_string()})";
+        case ECall: {
+            var args: string = "";
+            for (var i: i32 = 0; i < self.call_args.len(); i = i + 1) {
+                args = str_concat(args, f" {self.call_args[i].to_string()}");
+            }
+            return f"(call {self.call_callee.to_string()}{args})";
+        }
+        case EGet:
+            return f"(. {self.get_object.to_string()} {self.get_name})";
+        case ESet:
+            return f"(.= {self.set_target.get_object.to_string()} {self.set_target.get_name} {self.set_value.to_string()})";
+        case ESuper:
+            return f"(super {self.super_method})";
+        case EThis:
+            return "this";
+    }
+    return "?";
+}

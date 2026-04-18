@@ -1,0 +1,62 @@
+// Lox interpreter driver. Usage:
+//   roxy examples/lox/main.roxy <path-to-script.lox>
+//
+// Pipeline: scan → parse → resolve → run. Output produced by `print`
+// statements is collected by the interpreter and flushed to stdout when
+// the program finishes.
+
+from tokens import Token;
+from scanner import Scanner;
+from ast import Stmt;
+from parser import Parser;
+from interpreter import Interpreter;
+import resolver;
+
+fun main(args: List<string>): i32 {
+    // args[0] = path to this main.roxy (injected by the roxy CLI).
+    // args[1..] = user-supplied arguments.
+    if (args.len() < 2) {
+        print("Usage: roxy examples/lox/main.roxy <script.lox>");
+        return 64;   // EX_USAGE
+    }
+
+    var path: string = args[1];
+    var source: string = read_file(path);
+
+    // ── Scan ──────────────────────────────────────────────────────────────
+    var s: Scanner = Scanner(source);
+    s.scan_tokens();
+    if (s.had_error) {
+        print(s.error_msg);
+        return 65;   // EX_DATAERR
+    }
+
+    // ── Parse ─────────────────────────────────────────────────────────────
+    var p: Parser = Parser(s.tokens);
+    var stmts: List<uniq Stmt> = p.parse_program();
+    if (p.had_error) {
+        print(p.error_msg);
+        return 65;
+    }
+
+    // ── Resolve + run ─────────────────────────────────────────────────────
+    // Interpreter consumes the Parser to take ownership of its fun_bodies.
+    var interp: Interpreter = Interpreter(p, stmts);
+    interp.resolve_program();
+    if (interp.resolver_had_error) {
+        print(interp.resolver_error_msg);
+        return 65;
+    }
+    interp.run();
+
+    // Flush captured output.
+    for (var i: i32 = 0; i < interp.output.len(); i = i + 1) {
+        print(interp.output[i]);
+    }
+
+    if (interp.had_runtime_error) {
+        print(interp.error_msg);
+        return 70;   // EX_SOFTWARE
+    }
+    return 0;
+}

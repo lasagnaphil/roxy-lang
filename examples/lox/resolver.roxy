@@ -1,0 +1,274 @@
+// Lox Resolver (Phase 8, Ch. 11 of Crafting Interpreters).
+//
+// Walks the AST once before interpretation and, for each variable
+// reference, records how many scopes away the definition is. The
+// Interpreter consults this table (`interp.locals`) in `lookup_variable`
+// and `EAssign` to pick between `env_get_at(distance, …)` (local) and
+// `globals_get/assign(…)` (global). That's the standard jlox pattern and
+// it fixes the classic "variable captures the right binding" bug:
+//
+//     var a = "global";
+//     {
+//         fun showA() { print a; }      // captures the outer `a`
+//         showA();                      // "global"
+//         var a = "block";              // new binding in this scope
+//         showA();                      // still "global" with the resolver
+//     }
+//
+// Without a resolver, the second `showA()` would walk the env chain at
+// call time and pick up the block-scoped `a`.
+//
+// The resolve state (`scopes`, `current_function`) lives on the
+// Interpreter as transient `resolver_*` fields so we can keep the same
+// borrow pattern the runtime uses — methods on Interpreter taking
+// `ref Stmt` / `ref Expr` parameters, indexing into `self.stmts` /
+// `self.fun_bodies` directly.
+
+from ast import Expr, ExprKind, Stmt, StmtKind, FunBody;
+from interpreter import Interpreter;
+
+// ── Public entry point ────────────────────────────────────────────────────
+
+pub fun Interpreter.resolve_program() {
+    // Fresh state in case resolve is called more than once.
+    self.resolver_scopes = List<Map<string, bool>>();
+    self.resolver_current_function = 0;
+    self.resolver_current_class = 0;
+    self.resolver_had_error = false;
+    self.resolver_error_msg = "";
+
+    for (var i: i32 = 0; i < self.stmts.len(); i = i + 1) {
+        self.resolve_stmt(self.stmts[i]);
+    }
+}
+
+// ── Scope helpers ─────────────────────────────────────────────────────────
+
+fun Interpreter.resolver_report(msg: string, line: i32) {
+    self.resolver_had_error = true;
+    if (str_len(self.resolver_error_msg) == 0) {
+        self.resolver_error_msg = f"[line {line}] Resolver error: {msg}";
+    }
+}
+
+fun Interpreter.resolver_begin_scope() {
+    self.resolver_scopes.push(Map<string, bool>());
+}
+
+fun Interpreter.resolver_end_scope() {
+    var popped: Map<string, bool> = self.resolver_scopes.pop();
+}
+
+// declare: add `name` to the innermost scope as "not yet defined". This
+// catches `var a = a;` — the read of `a` in the init would find it but see
+// `false` and error out.
+fun Interpreter.resolver_declare(name: string, line: i32) {
+    if (self.resolver_scopes.len() == 0) { return; }
+    var top: i32 = self.resolver_scopes.len() - 1;
+    if (self.resolver_scopes[top].contains(name)) {
+        self.resolver_report(f"Variable '{name}' already declared in this scope.", line);
+    }
+    self.resolver_scopes[top].insert(name, false);
+}
+
+fun Interpreter.resolver_define(name: string) {
+    if (self.resolver_scopes.len() == 0) { return; }
+    var top: i32 = self.resolver_scopes.len() - 1;
+    self.resolver_scopes[top].insert(name, true);
+}
+
+// Find the enclosing scope that contains `name` and record the distance
+// (0 = innermost) in `self.locals[expr_id]`. If none matches, leave it
+// unrecorded — the runtime will treat it as a global lookup.
+fun Interpreter.resolver_resolve_local(expr_id: i32, name: string) {
+    var i: i32 = self.resolver_scopes.len() - 1;
+    while (i >= 0) {
+        if (self.resolver_scopes[i].contains(name)) {
+            self.locals.insert(expr_id, self.resolver_scopes.len() - 1 - i);
+            return;
+        }
+        i = i - 1;
+    }
+}
+
+// ── Statement traversal ───────────────────────────────────────────────────
+
+fun Interpreter.resolve_stmt(s: ref Stmt) {
+    when s.kind {
+        case SExprStmt:
+            self.resolve_expr(s.expr_stmt);
+        case SPrintStmt:
+            self.resolve_expr(s.print_expr);
+        case SVarDecl: {
+            self.resolver_declare(s.var_decl_name, 0);
+            if (s.var_decl_init != nil) {
+                self.resolve_expr(s.var_decl_init);
+            }
+            self.resolver_define(s.var_decl_name);
+        }
+        case SBlock: {
+            self.resolver_begin_scope();
+            for (var i: i32 = 0; i < s.block_stmts.len(); i = i + 1) {
+                self.resolve_stmt(s.block_stmts[i]);
+            }
+            self.resolver_end_scope();
+        }
+        case SIfStmt: {
+            self.resolve_expr(s.if_condition);
+            self.resolve_stmt(s.if_then);
+            if (s.if_else != nil) {
+                self.resolve_stmt(s.if_else);
+            }
+        }
+        case SWhileStmt: {
+            self.resolve_expr(s.while_condition);
+            self.resolve_stmt(s.while_body);
+        }
+        case SReturnStmt: {
+            if (self.resolver_current_function == 0) {
+                self.resolver_report("Can't return from top-level code.", 0);
+            }
+            if (s.return_value != nil) {
+                if (self.resolver_current_function == 3) {
+                    // 3 = initializer. `init` must not return a value.
+                    self.resolver_report("Can't return a value from an initializer.", 0);
+                }
+                self.resolve_expr(s.return_value);
+            }
+        }
+        case SFunDecl: {
+            // Declare + define the name immediately so the function can
+            // refer to itself in its body (enables recursion).
+            self.resolver_declare(s.fun_name, 0);
+            self.resolver_define(s.fun_name);
+            self.resolve_function(s.fun_body_id, 1);
+        }
+        case SClassDecl: {
+            var enclosing_class: i32 = self.resolver_current_class;
+            self.resolver_current_class = 1;
+            self.resolver_declare(s.class_name, 0);
+            self.resolver_define(s.class_name);
+
+            var has_super: bool = (s.class_superclass != nil);
+            if (has_super) {
+                if (str_eq(s.class_superclass.var_name, s.class_name)) {
+                    self.resolver_report(
+                        f"A class can't inherit from itself.",
+                        s.class_superclass.var_line);
+                }
+                self.resolver_current_class = 2;
+                self.resolve_expr(s.class_superclass);
+
+                self.resolver_begin_scope();
+                var super_top: i32 = self.resolver_scopes.len() - 1;
+                self.resolver_scopes[super_top].insert("super", true);
+            }
+
+            self.resolver_begin_scope();
+            var top: i32 = self.resolver_scopes.len() - 1;
+            self.resolver_scopes[top].insert("this", true);
+
+            for (var i: i32 = 0; i < s.class_methods.len(); i = i + 1) {
+                var m: ref Stmt = s.class_methods[i];
+                var ftype: i32 = 2;
+                if (str_eq(m.fun_name, "init")) {
+                    ftype = 3;
+                }
+                self.resolve_function(m.fun_body_id, ftype);
+            }
+
+            self.resolver_end_scope();
+            if (has_super) {
+                self.resolver_end_scope();
+            }
+            self.resolver_current_class = enclosing_class;
+        }
+        else: {}
+    }
+}
+
+fun Interpreter.resolve_function(body_id: i32, ftype: i32) {
+    var enclosing: i32 = self.resolver_current_function;
+    self.resolver_current_function = ftype;
+    self.resolver_begin_scope();
+
+    var params_len: i32 = self.fun_bodies[body_id].params.len();
+    for (var i: i32 = 0; i < params_len; i = i + 1) {
+        self.resolver_declare(self.fun_bodies[body_id].params[i], 0);
+        self.resolver_define(self.fun_bodies[body_id].params[i]);
+    }
+    var body_len: i32 = self.fun_bodies[body_id].body.len();
+    for (var i: i32 = 0; i < body_len; i = i + 1) {
+        self.resolve_stmt(self.fun_bodies[body_id].body[i]);
+    }
+
+    self.resolver_end_scope();
+    self.resolver_current_function = enclosing;
+}
+
+// ── Expression traversal ──────────────────────────────────────────────────
+
+fun Interpreter.resolve_expr(e: ref Expr) {
+    when e.kind {
+        case ELiteral: {}
+        case EGrouping: self.resolve_expr(e.group_expr);
+        case EUnary:    self.resolve_expr(e.unary_operand);
+        case EBinary: {
+            self.resolve_expr(e.binary_left);
+            self.resolve_expr(e.binary_right);
+        }
+        case ELogical: {
+            self.resolve_expr(e.logical_left);
+            self.resolve_expr(e.logical_right);
+        }
+        case EVariable: {
+            if (self.resolver_scopes.len() > 0) {
+                var top: i32 = self.resolver_scopes.len() - 1;
+                if (self.resolver_scopes[top].contains(e.var_name)) {
+                    if (!self.resolver_scopes[top].get(e.var_name)) {
+                        self.resolver_report(
+                            f"Can't read local variable '{e.var_name}' in its own initializer.",
+                            e.var_line);
+                    }
+                }
+            }
+            self.resolver_resolve_local(e.expr_id, e.var_name);
+        }
+        case EAssign: {
+            self.resolve_expr(e.assign_value);
+            self.resolver_resolve_local(e.expr_id, e.assign_name);
+        }
+        case ECall: {
+            self.resolve_expr(e.call_callee);
+            for (var i: i32 = 0; i < e.call_args.len(); i = i + 1) {
+                self.resolve_expr(e.call_args[i]);
+            }
+        }
+        case EGet: {
+            // The property name is resolved dynamically at eval time; only
+            // the object expression needs static resolution.
+            self.resolve_expr(e.get_object);
+        }
+        case ESet: {
+            self.resolve_expr(e.set_value);
+            self.resolve_expr(e.set_target.get_object);
+        }
+        case EThis: {
+            if (self.resolver_current_class == 0) {
+                self.resolver_report("Can't use 'this' outside of a class.", e.this_line);
+            } else {
+                self.resolver_resolve_local(e.expr_id, "this");
+            }
+        }
+        case ESuper: {
+            if (self.resolver_current_class == 0) {
+                self.resolver_report("Can't use 'super' outside of a class.", e.super_line);
+            } else if (self.resolver_current_class != 2) {
+                self.resolver_report("Can't use 'super' in a class with no superclass.", e.super_line);
+            } else {
+                self.resolver_resolve_local(e.expr_id, "super");
+            }
+        }
+        else: {}
+    }
+}

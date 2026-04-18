@@ -1,0 +1,713 @@
+// Lox tree-walk interpreter (Phases 4–8).
+//
+// Phase 4: expression evaluation (Ch. 7).
+// Phase 5: statement execution + environments (Ch. 8).
+// Phase 7: function declarations, calls, return, clock() (Ch. 10).
+// Phase 8: Resolver-driven variable lookup (Ch. 11).
+//
+// Environments live in a pool on the Interpreter. Each env holds a
+// Map<string, LoxValue> of its local bindings plus an `enclosing` index
+// (-1 for the globals env). Function bodies and parameters live in a flat
+// `fun_bodies` table keyed by `fun_body_id`, assigned by the parser, so
+// nested `fun` declarations (and therefore genuine closures) work.
+//
+// Variable lookups consult the Resolver's `locals` table first: if the
+// expression's id has a recorded scope depth, we walk that exact number of
+// environments up from `current_env`; otherwise we fall through to the
+// globals env. This is the standard jlox pattern from Ch. 11.
+
+from tokens import TokenType;
+from value import LoxValue, ValueKind;
+from ast import Expr, ExprKind, Stmt, StmtKind, FunBody;
+from parser import Parser;
+
+// ── Environment ──────────────────────────────────────────────────────────
+
+pub struct Environment {
+    pub values: Map<string, LoxValue>;
+    pub enclosing: i32;   // -1 for globals
+}
+
+fun new Environment(enclosing: i32) {
+    self.values = Map<string, LoxValue>();
+    self.enclosing = enclosing;
+}
+
+// ── LoxFunction ──────────────────────────────────────────────────────────
+//
+// A callable defined in Lox. `fun_body_id` indexes into `Interpreter.fun_bodies`
+// (a flat table built by the parser). `closure_env` is the environment index
+// captured when the enclosing SFunDecl was executed — this is what makes
+// closures work.
+
+pub struct LoxFunction {
+    pub name: string;
+    pub param_count: i32;
+    pub fun_body_id: i32;
+    pub closure_env: i32;
+    pub is_initializer: bool;   // true for a class's `init` method
+}
+
+fun new LoxFunction(name: string, param_count: i32, fun_body_id: i32, closure_env: i32) {
+    self.name = name;
+    self.param_count = param_count;
+    self.fun_body_id = fun_body_id;
+    self.closure_env = closure_env;
+    self.is_initializer = false;
+}
+
+pub fun new LoxFunction.as_init(name: string, param_count: i32, fun_body_id: i32, closure_env: i32) {
+    self.name = name;
+    self.param_count = param_count;
+    self.fun_body_id = fun_body_id;
+    self.closure_env = closure_env;
+    self.is_initializer = true;
+}
+
+// ── LoxClass + LoxInstance (Phase 9, Ch. 12) ──────────────────────────────
+//
+// A Lox class is a name plus a method table (name → index into
+// Interpreter.functions). A class declaration doesn't eagerly create env
+// entries per method; instead, methods are stored as regular LoxFunctions
+// whose `closure_env` is the env active at class-decl-exec time, and whose
+// params/body live in the shared `fun_bodies` table. When an instance's
+// method is accessed via `obj.method`, we build a *bound* LoxFunction: a
+// new env with `this` defined, wrapping the method's closure.
+
+pub struct LoxClass {
+    pub name: string;
+    pub superclass_id: i32;          // -1 if none
+    pub methods: Map<string, i32>;   // name → fun_id
+}
+
+fun new LoxClass(name: string, superclass_id: i32) {
+    self.name = name;
+    self.superclass_id = superclass_id;
+    self.methods = Map<string, i32>();
+}
+
+pub struct LoxInstance {
+    pub class_id: i32;
+    pub fields: Map<string, LoxValue>;
+}
+
+fun new LoxInstance(class_id: i32) {
+    self.class_id = class_id;
+    self.fields = Map<string, LoxValue>();
+}
+
+// Thrown by SReturnStmt; caught at the top of `call_fun`.
+pub struct ReturnException {
+    pub value: LoxValue;
+}
+
+fun new ReturnException(v: LoxValue) {
+    self.value = v;
+}
+
+pub fun ReturnException.message(): string for Exception {
+    return "return";
+}
+
+// ── Interpreter ───────────────────────────────────────────────────────────
+
+pub struct Interpreter {
+    pub envs: List<Environment>;
+    pub globals_env: i32;
+    pub current_env: i32;
+    pub stmts: List<uniq Stmt>;
+    pub fun_bodies: List<uniq FunBody>;
+    pub functions: List<LoxFunction>;
+    pub classes: List<LoxClass>;
+    pub instances: List<LoxInstance>;
+    // expr_id → scope depth (0 = innermost). Populated by the Resolver.
+    pub locals: Map<i32, i32>;
+    pub had_runtime_error: bool;
+    pub error_msg: string;
+    pub output: List<string>;
+
+    // ── Resolver pass state (transient). ──────────────────────────────────
+    // Populated only during `resolve_program()` (see resolver.roxy). Kept on
+    // the Interpreter so resolver methods can be `Interpreter.X(ref Stmt)`
+    // and reuse the same `self.stmts[i]` borrow pattern that `execute` uses.
+    pub resolver_scopes: List<Map<string, bool>>;
+    pub resolver_current_function: i32;   // 0 = none, 1 = function, 2 = method, 3 = initializer
+    pub resolver_current_class: i32;      // 0 = none, 1 = class
+    pub resolver_had_error: bool;
+    pub resolver_error_msg: string;
+}
+
+// The Parser is consumed by value — the Interpreter moves `parser.fun_bodies`
+// into `self.fun_bodies`. Moving a noncopyable field out of a by-value Parser
+// parameter is allowed by Roxy's move analysis (the parser is a local
+// value-struct in this constructor's scope).
+fun new Interpreter(parser: Parser, program: List<uniq Stmt>) {
+    self.envs = List<Environment>();
+    self.envs.push(Environment(-1));
+    self.globals_env = 0;
+    self.current_env = 0;
+    self.stmts = program;
+    self.fun_bodies = parser.fun_bodies;
+    self.functions = List<LoxFunction>();
+    self.classes = List<LoxClass>();
+    self.instances = List<LoxInstance>();
+    self.locals = Map<i32, i32>();
+    self.had_runtime_error = false;
+    self.error_msg = "";
+    self.output = List<string>();
+
+    self.resolver_scopes = List<Map<string, bool>>();
+    self.resolver_current_function = 0;
+    self.resolver_current_class = 0;
+    self.resolver_had_error = false;
+    self.resolver_error_msg = "";
+}
+
+// Convenience for expression-only tests that don't run a full program.
+// Leaves `stmts` and `fun_bodies` empty.
+pub fun new Interpreter.empty() {
+    self.envs = List<Environment>();
+    self.envs.push(Environment(-1));
+    self.globals_env = 0;
+    self.current_env = 0;
+    self.stmts = List<uniq Stmt>();
+    self.fun_bodies = List<uniq FunBody>();
+    self.functions = List<LoxFunction>();
+    self.classes = List<LoxClass>();
+    self.instances = List<LoxInstance>();
+    self.locals = Map<i32, i32>();
+    self.had_runtime_error = false;
+    self.error_msg = "";
+    self.output = List<string>();
+
+    self.resolver_scopes = List<Map<string, bool>>();
+    self.resolver_current_function = 0;
+    self.resolver_current_class = 0;
+    self.resolver_had_error = false;
+    self.resolver_error_msg = "";
+}
+
+// ── Runtime error ─────────────────────────────────────────────────────────
+
+pub struct RuntimeError {
+    pub message_str: string;
+    pub line: i32;
+}
+
+fun new RuntimeError(msg: string, line: i32) {
+    self.message_str = msg;
+    self.line = line;
+}
+
+pub fun RuntimeError.message(): string for Exception {
+    return f"[line {self.line}] RuntimeError: {self.message_str}";
+}
+
+// ── Semantic helpers ──────────────────────────────────────────────────────
+
+fun is_truthy(v: LoxValue): bool {
+    when v.kind {
+        case VNil:  return false;
+        case VBool: return v.bool_val;
+        else:       return true;
+    }
+}
+
+fun is_equal(a: LoxValue, b: LoxValue): bool {
+    if (a.kind != b.kind) { return false; }
+    when a.kind {
+        case VNil:    return true;
+        case VBool:   return a.bool_val == b.bool_val;
+        case VNumber: return a.num_val == b.num_val;
+        case VStr:    return str_eq(a.str_val, b.str_val);
+        else:         return false;
+    }
+}
+
+fun Interpreter.lox_stringify(v: LoxValue): string {
+    when v.kind {
+        case VNil:    return "nil";
+        case VBool:   if (v.bool_val) { return "true"; } else { return "false"; }
+        case VNumber: return f"{v.num_val}";
+        case VStr:    return v.str_val;
+        case VClass:  return self.classes[v.class_id].name;
+        case VInstance: {
+            var cls_id: i32 = self.instances[v.instance_id].class_id;
+            return f"{self.classes[cls_id].name} instance";
+        }
+        else:         return v.to_string();
+    }
+}
+
+// ── Environment operations ────────────────────────────────────────────────
+
+fun Interpreter.env_define(name: string, value: LoxValue) {
+    self.envs[self.current_env].values.insert(name, value);
+}
+
+// Walk `distance` envs up from current_env (0 = current).
+fun Interpreter.ancestor_idx(distance: i32): i32 {
+    var idx: i32 = self.current_env;
+    for (var i: i32 = 0; i < distance; i = i + 1) {
+        idx = self.envs[idx].enclosing;
+    }
+    return idx;
+}
+
+fun Interpreter.env_get_at(distance: i32, name: string, line: i32): LoxValue {
+    var idx: i32 = self.ancestor_idx(distance);
+    if (self.envs[idx].values.contains(name)) {
+        return self.envs[idx].values.get(name);
+    }
+    // Should not happen if the resolver did its job, but keep a safe default.
+    throw RuntimeError(f"Undefined variable '{name}'.", line);
+}
+
+fun Interpreter.env_assign_at(distance: i32, name: string, value: LoxValue, line: i32) {
+    var idx: i32 = self.ancestor_idx(distance);
+    self.envs[idx].values.insert(name, value);
+}
+
+fun Interpreter.globals_get(name: string, line: i32): LoxValue {
+    if (self.envs[self.globals_env].values.contains(name)) {
+        return self.envs[self.globals_env].values.get(name);
+    }
+    throw RuntimeError(f"Undefined variable '{name}'.", line);
+}
+
+fun Interpreter.globals_assign(name: string, value: LoxValue, line: i32) {
+    if (self.envs[self.globals_env].values.contains(name)) {
+        self.envs[self.globals_env].values.insert(name, value);
+        return;
+    }
+    throw RuntimeError(f"Undefined variable '{name}'.", line);
+}
+
+// ── Expression evaluation ─────────────────────────────────────────────────
+
+pub fun Interpreter.evaluate(e: ref Expr): LoxValue {
+    when e.kind {
+        case ELiteral:  return e.literal_value;
+        case EGrouping: return self.evaluate(e.group_expr);
+        case EUnary:    return self.eval_unary(e);
+        case EBinary:   return self.eval_binary(e);
+        case EVariable: return self.lookup_variable(e.var_name, e.expr_id, e.var_line);
+        case EAssign:
+            var v: LoxValue = self.evaluate(e.assign_value);
+            if (self.locals.contains(e.expr_id)) {
+                self.env_assign_at(self.locals.get(e.expr_id), e.assign_name, v, 0);
+            } else {
+                self.globals_assign(e.assign_name, v, 0);
+            }
+            return v;
+        case ELogical:  return self.eval_logical(e);
+        case ECall:     return self.eval_call(e);
+        case EGet:      return self.eval_get(e);
+        case ESet:      return self.eval_set(e);
+        case EThis:     return self.lookup_variable("this", e.expr_id, e.this_line);
+        case ESuper:    return self.eval_super(e);
+        else:
+            throw RuntimeError("Unsupported expression kind.", 0);
+    }
+    return LoxValue.of_nil();
+}
+
+// `super.method` — resolved via the env chain set up by the SClassDecl.
+// The resolver records the depth of `super` in the current method's scope;
+// `this` lives one frame closer (the method-bind wrapper env that encloses
+// the super-env).
+fun Interpreter.eval_super(e: ref Expr): LoxValue {
+    var distance: i32 = self.locals.get(e.expr_id);
+    var super_val: LoxValue = self.env_get_at(distance, "super", e.super_line);
+    var this_val: LoxValue = self.env_get_at(distance - 1, "this", e.super_line);
+    var method_fun_id: i32 = self.find_method(super_val.class_id, e.super_method);
+    if (method_fun_id < 0) {
+        throw RuntimeError(f"Undefined property '{e.super_method}'.", e.super_line);
+    }
+    return LoxValue.of_fun(self.bind_method(method_fun_id, this_val.instance_id));
+}
+
+fun Interpreter.eval_get(e: ref Expr): LoxValue {
+    var obj: LoxValue = self.evaluate(e.get_object);
+    if (obj.kind != ValueKind::VInstance) {
+        throw RuntimeError("Only instances have properties.", e.get_line);
+    }
+    // Field lookup wins over method lookup — a field shadows a same-named
+    // method (matches jlox).
+    if (self.instances[obj.instance_id].fields.contains(e.get_name)) {
+        return self.instances[obj.instance_id].fields.get(e.get_name);
+    }
+    var cls_id: i32 = self.instances[obj.instance_id].class_id;
+    var method_fun_id: i32 = self.find_method(cls_id, e.get_name);
+    if (method_fun_id >= 0) {
+        return LoxValue.of_fun(self.bind_method(method_fun_id, obj.instance_id));
+    }
+    throw RuntimeError(f"Undefined property '{e.get_name}'.", e.get_line);
+}
+
+// Walk the class chain looking for `name`. Returns the fun_id of the first
+// match, or -1 if none. Subclasses win over their ancestors — we check the
+// current class's own methods before recursing into the superclass.
+fun Interpreter.find_method(class_id: i32, name: string): i32 {
+    var cid: i32 = class_id;
+    while (cid >= 0) {
+        if (self.classes[cid].methods.contains(name)) {
+            return self.classes[cid].methods.get(name);
+        }
+        cid = self.classes[cid].superclass_id;
+    }
+    return -1;
+}
+
+fun Interpreter.eval_set(e: ref Expr): LoxValue {
+    var obj: LoxValue = self.evaluate(e.set_target.get_object);
+    if (obj.kind != ValueKind::VInstance) {
+        throw RuntimeError("Only instances have fields.", e.set_target.get_line);
+    }
+    var v: LoxValue = self.evaluate(e.set_value);
+    self.instances[obj.instance_id].fields.insert(e.set_target.get_name, v);
+    return v;
+}
+
+// Build a new env whose only binding is `this = instance`, enclosing the
+// method's original closure. Register a new LoxFunction that points at
+// the same body but closes over this wrapper env. Returns the new fun_id.
+// This mirrors jlox's `LoxFunction.bind()`.
+fun Interpreter.bind_method(method_fun_id: i32, instance_id: i32): i32 {
+    var method: LoxFunction = self.functions[method_fun_id];
+    self.envs.push(Environment(method.closure_env));
+    var wrapper_env: i32 = self.envs.len() - 1;
+    self.envs[wrapper_env].values.insert("this", LoxValue.of_instance(instance_id));
+    var bound_id: i32 = self.functions.len();
+    self.functions.push(LoxFunction(method.name, method.param_count, method.fun_body_id, wrapper_env));
+    return bound_id;
+}
+
+fun Interpreter.lookup_variable(name: string, expr_id: i32, line: i32): LoxValue {
+    if (self.locals.contains(expr_id)) {
+        return self.env_get_at(self.locals.get(expr_id), name, line);
+    }
+    return self.globals_get(name, line);
+}
+
+fun Interpreter.eval_unary(e: ref Expr): LoxValue {
+    var right: LoxValue = self.evaluate(e.unary_operand);
+    when e.unary_op {
+        case Minus:
+            check_number_operand(e.unary_line, right);
+            return LoxValue.of_number(-right.num_val);
+        case Bang:
+            return LoxValue.of_bool(!is_truthy(right));
+        else:
+            throw RuntimeError("Unknown unary operator.", e.unary_line);
+    }
+    return LoxValue.of_nil();
+}
+
+fun Interpreter.eval_binary(e: ref Expr): LoxValue {
+    var left:  LoxValue = self.evaluate(e.binary_left);
+    var right: LoxValue = self.evaluate(e.binary_right);
+    var line:  i32      = e.binary_line;
+    when e.binary_op {
+        case Minus:
+            check_number_operands(line, left, right);
+            return LoxValue.of_number(left.num_val - right.num_val);
+        case Slash:
+            check_number_operands(line, left, right);
+            return LoxValue.of_number(left.num_val / right.num_val);
+        case Star:
+            check_number_operands(line, left, right);
+            return LoxValue.of_number(left.num_val * right.num_val);
+        case Plus:
+            if (left.kind == ValueKind::VNumber && right.kind == ValueKind::VNumber) {
+                return LoxValue.of_number(left.num_val + right.num_val);
+            }
+            if (left.kind == ValueKind::VStr && right.kind == ValueKind::VStr) {
+                return LoxValue.of_string(str_concat(left.str_val, right.str_val));
+            }
+            throw RuntimeError("Operands must be two numbers or two strings.", line);
+        case Greater:
+            check_number_operands(line, left, right);
+            return LoxValue.of_bool(left.num_val > right.num_val);
+        case GreaterEqual:
+            check_number_operands(line, left, right);
+            return LoxValue.of_bool(left.num_val >= right.num_val);
+        case Less:
+            check_number_operands(line, left, right);
+            return LoxValue.of_bool(left.num_val < right.num_val);
+        case LessEqual:
+            check_number_operands(line, left, right);
+            return LoxValue.of_bool(left.num_val <= right.num_val);
+        case BangEqual:
+            return LoxValue.of_bool(!is_equal(left, right));
+        case EqualEqual:
+            return LoxValue.of_bool(is_equal(left, right));
+        else:
+            throw RuntimeError("Unknown binary operator.", line);
+    }
+    return LoxValue.of_nil();
+}
+
+fun Interpreter.eval_logical(e: ref Expr): LoxValue {
+    var left: LoxValue = self.evaluate(e.logical_left);
+    if (e.logical_op == TokenType::Or) {
+        if (is_truthy(left)) { return left; }
+    } else if (e.logical_op == TokenType::And) {
+        if (!is_truthy(left)) { return left; }
+    } else {
+        throw RuntimeError("Unknown logical operator.", 0);
+    }
+    return self.evaluate(e.logical_right);
+}
+
+fun Interpreter.eval_call(e: ref Expr): LoxValue {
+    var callee: LoxValue = self.evaluate(e.call_callee);
+    var args: List<LoxValue> = List<LoxValue>();
+    for (var i: i32 = 0; i < e.call_args.len(); i = i + 1) {
+        args.push(self.evaluate(e.call_args[i]));
+    }
+    if (callee.kind == ValueKind::VFun) {
+        return self.call_fun(callee.fun_id, args, e.call_line);
+    }
+    if (callee.kind == ValueKind::VNativeFun) {
+        return self.call_native(callee.native_id, args, e.call_line);
+    }
+    if (callee.kind == ValueKind::VClass) {
+        return self.call_class(callee.class_id, args, e.call_line);
+    }
+    throw RuntimeError("Can only call functions and classes.", e.call_line);
+}
+
+// Calling a class produces a fresh instance. If the class (or any of its
+// ancestors) has an `init` method, bind it to the new instance and invoke
+// with the args; otherwise the args must be empty.
+fun Interpreter.call_class(class_id: i32, args: List<LoxValue>, line: i32): LoxValue {
+    var instance_id: i32 = self.instances.len();
+    self.instances.push(LoxInstance(class_id));
+
+    var init_fun_id: i32 = self.find_method(class_id, "init");
+    if (init_fun_id >= 0) {
+        var bound_id: i32 = self.bind_method(init_fun_id, instance_id);
+        var init_result: LoxValue = self.call_fun(bound_id, args, line);
+    } else if (args.len() != 0) {
+        throw RuntimeError(f"Expected 0 arguments but got {args.len()}.", line);
+    }
+    return LoxValue.of_instance(instance_id);
+}
+
+fun Interpreter.call_fun(fun_id: i32, args: List<LoxValue>, line: i32): LoxValue {
+    var f: LoxFunction = self.functions[fun_id];
+    if (args.len() != f.param_count) {
+        throw RuntimeError(f"Expected {f.param_count} arguments but got {args.len()}.", line);
+    }
+
+    var saved_env: i32 = self.current_env;
+    self.envs.push(Environment(f.closure_env));
+    self.current_env = self.envs.len() - 1;
+
+    // Bind parameters via the flat fun_bodies table.
+    for (var i: i32 = 0; i < f.param_count; i = i + 1) {
+        self.env_define(self.fun_bodies[f.fun_body_id].params[i], args[i]);
+    }
+
+    var result: LoxValue = LoxValue.of_nil();
+    try {
+        for (var i: i32 = 0; i < self.fun_bodies[f.fun_body_id].body.len(); i = i + 1) {
+            self.execute(self.fun_bodies[f.fun_body_id].body[i]);
+        }
+    } catch (r: ReturnException) {
+        result = r.value;
+    }
+
+    // An `init` method implicitly returns `this` regardless of what its
+    // body does (a bare `return` in init is allowed; `return <value>` is
+    // rejected by the resolver). `this` is defined in the wrapper env
+    // created by `bind_method`, which is exactly the env we just pushed
+    // (at `saved_env + 1` through `self.envs.len() - 1` but specifically
+    // the wrapper_env = f.closure_env).
+    if (f.is_initializer) {
+        result = self.envs[f.closure_env].values.get("this");
+    }
+
+    // We don't pop the call-frame env: closures created inside this call
+    // (LoxFunctions whose `closure_env` = this env's index) might escape
+    // and be invoked later. The env pool grows unboundedly as a result,
+    // which is the same trade-off jlox makes (its envs live on the JVM
+    // heap until unreachable).
+    self.current_env = saved_env;
+    return result;
+}
+
+fun Interpreter.call_native(native_id: i32, args: List<LoxValue>, line: i32): LoxValue {
+    if (native_id == 0) {
+        // clock(): seconds since an arbitrary epoch.
+        if (args.len() != 0) {
+            throw RuntimeError(f"Expected 0 arguments but got {args.len()}.", line);
+        }
+        return LoxValue.of_number(clock());
+    }
+    throw RuntimeError("Unknown native function.", line);
+}
+
+fun check_number_operand(line: i32, v: LoxValue) {
+    if (v.kind != ValueKind::VNumber) {
+        throw RuntimeError("Operand must be a number.", line);
+    }
+}
+
+fun check_number_operands(line: i32, l: LoxValue, r: LoxValue) {
+    if (l.kind != ValueKind::VNumber || r.kind != ValueKind::VNumber) {
+        throw RuntimeError("Operands must be numbers.", line);
+    }
+}
+
+// ── Statement execution ───────────────────────────────────────────────────
+
+pub fun Interpreter.execute(s: ref Stmt) {
+    when s.kind {
+        case SExprStmt: {
+            var v: LoxValue = self.evaluate(s.expr_stmt);
+        }
+        case SPrintStmt: {
+            var v: LoxValue = self.evaluate(s.print_expr);
+            self.output.push(self.lox_stringify(v));
+        }
+        case SVarDecl: {
+            if (s.var_decl_init != nil) {
+                self.env_define(s.var_decl_name, self.evaluate(s.var_decl_init));
+            } else {
+                self.env_define(s.var_decl_name, LoxValue.of_nil());
+            }
+        }
+        case SBlock: {
+            self.execute_block(s);
+        }
+        case SIfStmt: {
+            if (is_truthy(self.evaluate(s.if_condition))) {
+                self.execute(s.if_then);
+            } else if (s.if_else != nil) {
+                self.execute(s.if_else);
+            }
+        }
+        case SWhileStmt: {
+            while (true) {
+                if (!is_truthy(self.evaluate(s.while_condition))) { break; }
+                self.execute(s.while_body);
+            }
+        }
+        case SReturnStmt: {
+            var v: LoxValue = LoxValue.of_nil();
+            if (s.return_value != nil) {
+                v = self.evaluate(s.return_value);
+            }
+            throw ReturnException(v);
+        }
+        case SFunDecl: {
+            // Executing an SFunDecl creates a new LoxFunction that captures
+            // the CURRENT environment as its closure. This is what lets
+            // nested funs see outer variables (Ch. 10 closures).
+            var fun_id: i32 = self.functions.len();
+            self.functions.push(LoxFunction(
+                s.fun_name,
+                self.fun_bodies[s.fun_body_id].params.len(),
+                s.fun_body_id,
+                self.current_env
+            ));
+            self.env_define(s.fun_name, LoxValue.of_fun(fun_id));
+        }
+        case SClassDecl: {
+            // Resolve superclass (if any). It must evaluate to a VClass.
+            var super_id: i32 = -1;
+            if (s.class_superclass != nil) {
+                var super_val: LoxValue = self.evaluate(s.class_superclass);
+                if (super_val.kind != ValueKind::VClass) {
+                    throw RuntimeError("Superclass must be a class.", 0);
+                }
+                super_id = super_val.class_id;
+            }
+
+            var cls_id: i32 = self.classes.len();
+            self.classes.push(LoxClass(s.class_name, super_id));
+
+            // For a subclass, methods close over a fresh env that holds the
+            // superclass bound to `super`. This matches jlox's behavior and
+            // is what makes `super.method()` resolvable via env lookup.
+            var method_closure_env: i32 = self.current_env;
+            if (super_id >= 0) {
+                self.envs.push(Environment(self.current_env));
+                method_closure_env = self.envs.len() - 1;
+                self.envs[method_closure_env].values.insert("super", LoxValue.of_class(super_id));
+            }
+
+            for (var i: i32 = 0; i < s.class_methods.len(); i = i + 1) {
+                var method: ref Stmt = s.class_methods[i];
+                var fun_id: i32 = self.functions.len();
+                if (str_eq(method.fun_name, "init")) {
+                    self.functions.push(LoxFunction.as_init(
+                        method.fun_name,
+                        self.fun_bodies[method.fun_body_id].params.len(),
+                        method.fun_body_id,
+                        method_closure_env
+                    ));
+                } else {
+                    self.functions.push(LoxFunction(
+                        method.fun_name,
+                        self.fun_bodies[method.fun_body_id].params.len(),
+                        method.fun_body_id,
+                        method_closure_env
+                    ));
+                }
+                self.classes[cls_id].methods.insert(method.fun_name, fun_id);
+            }
+            self.env_define(s.class_name, LoxValue.of_class(cls_id));
+        }
+        else:
+            throw RuntimeError("Unsupported statement kind.", 0);
+    }
+}
+
+fun Interpreter.execute_block(s: ref Stmt) {
+    var enclosing: i32 = self.current_env;
+    self.envs.push(Environment(enclosing));
+    self.current_env = self.envs.len() - 1;
+
+    for (var i: i32 = 0; i < s.block_stmts.len(); i = i + 1) {
+        self.execute(s.block_stmts[i]);
+    }
+
+    // Intentionally not popping — a `fun` declared inside this block may
+    // escape (be assigned to an outer variable, returned, stored somewhere)
+    // and later invoked; its closure_env still needs to resolve.
+    self.current_env = enclosing;
+}
+
+// ── Setup ────────────────────────────────────────────────────────────────
+
+fun Interpreter.register_natives() {
+    self.env_define("clock", LoxValue.of_native_fun(0));
+}
+
+// ── Entry points ──────────────────────────────────────────────────────────
+
+// Evaluate a single expression (Phase 4 tests).
+pub fun Interpreter.interpret(e: ref Expr): LoxValue {
+    try {
+        return self.evaluate(e);
+    } catch (err: RuntimeError) {
+        self.had_runtime_error = true;
+        self.error_msg = err.message();
+    }
+    return LoxValue.of_nil();
+}
+
+pub fun Interpreter.run() {
+    self.register_natives();
+    try {
+        for (var i: i32 = 0; i < self.stmts.len(); i = i + 1) {
+            self.execute(self.stmts[i]);
+        }
+    } catch (err: RuntimeError) {
+        self.had_runtime_error = true;
+        self.error_msg = err.message();
+    }
+}

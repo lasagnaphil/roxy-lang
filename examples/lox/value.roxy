@@ -1,0 +1,101 @@
+// Runtime Lox values, represented as a tagged union so the interpreter
+// (and AST literal nodes) can carry any kind of Lox value uniformly.
+//
+// Only the scalar kinds are populated for now. The callable kinds
+// (Fun/NativeFun/Class/Instance) will be added in later phases when
+// the interpreter grows function and class support.
+
+pub enum ValueKind {
+    VNil,
+    VBool,
+    VNumber,
+    VStr,
+    // Reserved for later phases:
+    VFun,
+    VNativeFun,
+    VClass,
+    VInstance
+}
+
+pub struct LoxValue {
+    when kind: ValueKind {
+        case VNil:
+            _nil_pad: i32;
+        case VBool:
+            pub bool_val: bool;
+        case VNumber:
+            pub num_val: f64;
+        case VStr:
+            pub str_val: string;
+        case VFun:
+            pub fun_id: i32;
+        case VNativeFun:
+            pub native_id: i32;
+        case VClass:
+            pub class_id: i32;
+        case VInstance:
+            pub instance_id: i32;
+    }
+}
+
+// ── Named constructors ────────────────────────────────────────────────────
+
+fun new LoxValue.of_nil() {
+    self.kind = ValueKind::VNil;
+    self._nil_pad = 0;
+}
+
+fun new LoxValue.of_bool(b: bool) {
+    self.kind = ValueKind::VBool;
+    self.bool_val = b;
+}
+
+fun new LoxValue.of_number(n: f64) {
+    self.kind = ValueKind::VNumber;
+    self.num_val = n;
+}
+
+fun new LoxValue.of_string(s: string) {
+    self.kind = ValueKind::VStr;
+    self.str_val = s;
+}
+
+fun new LoxValue.of_fun(fun_id: i32) {
+    self.kind = ValueKind::VFun;
+    self.fun_id = fun_id;
+}
+
+fun new LoxValue.of_native_fun(native_id: i32) {
+    self.kind = ValueKind::VNativeFun;
+    self.native_id = native_id;
+}
+
+fun new LoxValue.of_class(class_id: i32) {
+    self.kind = ValueKind::VClass;
+    self.class_id = class_id;
+}
+
+fun new LoxValue.of_instance(instance_id: i32) {
+    self.kind = ValueKind::VInstance;
+    self.instance_id = instance_id;
+}
+
+// ── Stringify for debugging / AST printer ─────────────────────────────────
+//
+// Lox number formatting trims a trailing `.0` for integral values to match
+// the jlox reference output. We'll tighten this when we wire up the real
+// interpreter's `lox_stringify` in Phase 5.
+
+pub fun LoxValue.to_string(): string for Printable {
+    when self.kind {
+        case VNil:       return "nil";
+        case VBool:      if (self.bool_val) { return "true"; } else { return "false"; }
+        case VNumber:    return f"{self.num_val}";
+        case VStr:       return self.str_val;
+        case VFun:       return f"<fn {self.fun_id}>";
+        case VNativeFun: return f"<native fn {self.native_id}>";
+        case VClass:     return f"<class {self.class_id}>";
+        case VInstance:  return f"<instance {self.instance_id}>";
+    }
+    return "?";
+}
