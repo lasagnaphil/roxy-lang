@@ -3369,6 +3369,22 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
         // Wrap uniq/ref → weak conversion for local assignment
         value = maybe_wrap_weak(value, assign_expr.value->resolved_type, assign_expr.target->resolved_type);
 
+        // For copyable struct rvalues that alias source storage, allocate fresh
+        // storage and emit a StructCopy — mirrors the gen_var_decl fix. Struct
+        // literals and calls already produce fresh storage, so skip them.
+        // Only applies to simple `=`; compound ops on structs dispatch through
+        // trait methods above, and primitive compound ops don't land here with
+        // a struct target.
+        bool value_is_fresh = assign_expr.value->kind == AstKind::ExprStructLiteral ||
+                              assign_expr.value->kind == AstKind::ExprCall;
+        if (assign_expr.op == AssignOp::Assign && target_type && target_type->is_struct()
+            && !target_type->noncopyable() && !value_is_fresh) {
+            u32 slot_count = target_type->struct_info.slot_count;
+            ValueId fresh = emit_stack_alloc(slot_count, target_type);
+            emit_struct_copy(fresh, value, slot_count);
+            value = fresh;
+        }
+
         // Normal variable assignment - in SSA, we create a new value
         define_local(name, value, expr->resolved_type);
 
@@ -4169,15 +4185,34 @@ void IRBuilder::gen_var_decl(Decl* decl) {
 
     // Check if this is a struct type - needs stack allocation
     if (type->is_struct()) {
-        // If the initializer is a struct literal, it already allocates and initializes
-        if (var_decl.initializer && var_decl.initializer->kind == AstKind::ExprStructLiteral) {
+        // If the initializer is a struct literal or a call, it already produces
+        // fresh storage (the literal stack-allocs; the call either writes to a
+        // hidden output slot for large structs or materializes a small-struct
+        // return through the return-unpack path). No copy needed — aliasing is
+        // impossible.
+        bool init_produces_fresh = var_decl.initializer &&
+            (var_decl.initializer->kind == AstKind::ExprStructLiteral ||
+             var_decl.initializer->kind == AstKind::ExprCall);
+        if (init_produces_fresh) {
             value = gen_expr(var_decl.initializer);
         } else if (var_decl.initializer) {
-            // Initializer is an expression returning a struct (e.g., function call)
-            // The call returns a pointer to struct data that we need to copy
-            value = gen_expr(var_decl.initializer);
-            // Note: The lowering handles struct return unpacking, so value is already
-            // a pointer to the struct data on the local stack
+            ValueId src = gen_expr(var_decl.initializer);
+            if (!type->noncopyable()) {
+                // The rvalue is a pointer into storage owned by some other entity
+                // (another local, a struct field, a list/map element). Binding
+                // `value` directly to `src` would make this variable alias that
+                // storage — mutations through the new variable would be visible
+                // in the source, and the pointer would dangle if the source
+                // storage is later invalidated (e.g. a list realloc). Allocate
+                // fresh storage and copy for copyable structs. Noncopyable
+                // types keep the direct rebind; semantic analysis has already
+                // validated the move.
+                u32 slot_count = type->struct_info.slot_count;
+                value = emit_stack_alloc(slot_count, type);
+                emit_struct_copy(value, src, slot_count);
+            } else {
+                value = src;
+            }
         } else {
             // No initializer - allocate stack space for the struct (zero-initialized by VM)
             u32 slot_count = type->struct_info.slot_count;
