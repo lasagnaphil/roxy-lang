@@ -1,0 +1,42 @@
+// Scaled-down variant of instantiation.lox: 500 × 30 (vs 500000 × 30).
+class Foo {
+  init() {}
+}
+
+var start = clock();
+var i = 0;
+while (i < 500) {
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  Foo();
+  i = i + 1;
+}
+
+print clock() - start;
