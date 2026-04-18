@@ -3518,6 +3518,34 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
             }
         }
 
+        // Field-move nullify: if the RHS is a field access on a local value-struct
+        // (e.g. `self.things = src.items` where `src` is a by-value noncopyable
+        // struct param), the semantic analyzer marked the RHS as moved, but nothing
+        // has actually cleared the source field. When the enclosing struct goes
+        // out of scope, its destructor walks its own fields and destroys
+        // `src.items` — freeing the list a second time after we stored the same
+        // pointer into `self.things`. Null the source field so the eventual
+        // destroy-on-scope-exit is a safe `Delete(null)`.
+        if (assign_expr.value->kind == AstKind::ExprGet && field_type &&
+            field_type->noncopyable()) {
+            Type* value_type = assign_expr.value->resolved_type;
+            if (value_type && value_type->noncopyable()) {
+                GetExpr& src_get = assign_expr.value->get;
+                Type* src_obj_type = src_get.object->resolved_type;
+                Type* src_struct_type = src_obj_type ? src_obj_type->base_type() : nullptr;
+                if (src_struct_type && src_struct_type->is_struct()) {
+                    const FieldInfo* src_field = src_struct_type->struct_info.find_field(src_get.name);
+                    if (src_field) {
+                        ValueId src_obj_ptr = gen_expr(src_get.object);
+                        ValueId null_val = emit_const_null();
+                        emit_set_field(src_obj_ptr, src_field->name,
+                                       src_field->slot_offset, src_field->slot_count,
+                                       null_val, m_types.void_type());
+                    }
+                }
+            }
+        }
+
         return result;
     }
     else if (assign_expr.target->kind == AstKind::ExprIndex) {

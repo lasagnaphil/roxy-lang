@@ -2748,3 +2748,68 @@ TEST_CASE("E2E - Synthesized default ctor null-inits variant uniq fields for sta
     CHECK(result.success);
     CHECK(result.value == 42);
 }
+
+// ============================================================================
+// Moving a noncopyable field out of a by-value struct parameter must null
+// the source field so the parameter's scope-exit destructor doesn't double-
+// free it. Semantic analysis already permits the move; IR gen was copying
+// the pointer into the target without clearing the source.
+// ============================================================================
+
+TEST_CASE("E2E - Field move from by-value struct param nulls the source field") {
+    const char* source = R"ROXY(
+        struct Thing { pub items: List<uniq Thing>; }
+        fun new Thing() { self.items = List<uniq Thing>(); }
+
+        struct Holder { pub things: List<uniq Thing>; }
+        fun new Holder(src: Thing) { self.things = src.items; }
+
+        fun main(): i32 {
+            var t: Thing = Thing();
+            t.items.push(uniq Thing());
+            t.items.push(uniq Thing());
+            var h: Holder = Holder(t);
+            return i32(h.things.len());
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 2);
+}
+
+TEST_CASE("E2E - Field move from by-value struct param preserves unrelated fields") {
+    // The source struct may have other fields that were NOT moved; they still
+    // belong to `src` and should be cleaned up by its destructor normally.
+    const char* source = R"ROXY(
+        struct Payload { pub items: List<uniq Payload>; }
+        fun new Payload() { self.items = List<uniq Payload>(); }
+
+        struct Bundle {
+            pub moved: List<uniq Payload>;
+            pub retained: List<uniq Payload>;
+        }
+        fun new Bundle() {
+            self.moved = List<uniq Payload>();
+            self.retained = List<uniq Payload>();
+        }
+
+        struct Target { pub owned: List<uniq Payload>; }
+        fun new Target(src: Bundle) { self.owned = src.moved; }
+
+        fun main(): i32 {
+            var b: Bundle = Bundle();
+            b.moved.push(uniq Payload());
+            b.moved.push(uniq Payload());
+            b.retained.push(uniq Payload());
+            var target: Target = Target(b);
+            // Target should own 2 (from moved); b.retained still has 1 and will
+            // clean up correctly at scope exit.
+            return i32(target.owned.len());
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 2);
+}
