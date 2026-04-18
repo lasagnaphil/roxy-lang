@@ -1064,7 +1064,11 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         if (header->element_is_inline) {
             u32* elem = header->elements + static_cast<u32>(idx) * header->element_slot_count;
             if (header->element_slot_count == 1) {
-                regs[a] = static_cast<u64>(elem[0]);
+                // Sign-extend 1-slot (≤ 32-bit) integer element to fill the
+                // 64-bit register — see the matching comment in GET_FIELD for
+                // the invariant. Without this, `lst[0]` on a List<i32> holding
+                // -1 loads 0x00000000FFFFFFFF, which compares as +4294967295.
+                regs[a] = static_cast<u64>(static_cast<i64>(static_cast<i32>(elem[0])));
             } else if (header->element_slot_count == 2) {
                 regs[a] = static_cast<u64>(elem[0]) | (static_cast<u64>(elem[1]) << 32);
             } else {
@@ -1124,9 +1128,14 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         }
         MapHeader* header = get_map_header(map_ptr);
         if (header->value_is_inline) {
-            u64 packed = 0;
-            memcpy(&packed, value_ptr, sizeof(u32) * header->value_slot_count);
-            regs[a] = packed;
+            if (header->value_slot_count == 1) {
+                // Sign-extend single-slot integer values (see GET_FIELD comment).
+                regs[a] = static_cast<u64>(static_cast<i64>(static_cast<i32>(value_ptr[0])));
+            } else {
+                u64 packed = 0;
+                memcpy(&packed, value_ptr, sizeof(u32) * header->value_slot_count);
+                regs[a] = packed;
+            }
         } else {
             // Struct value: return a pointer into the map's backing storage.
             // The caller's IR emits STRUCT_LOAD_REGS immediately after the index,
@@ -1175,7 +1184,18 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         u32* field = base + slot_offset;
 
         if (slot_count == 1) {
-            regs[a] = static_cast<u64>(*field);
+            // Sign-extend a 32-bit field to fill the 64-bit register. All
+            // integer ops read registers via reg_as_i64 (which treats them
+            // as sign-extended i64), and LOAD_INT/arithmetic already leave
+            // signed 32-bit values in sign-extended form. Zero-extending
+            // here breaks that invariant for negative i32 fields: `-1`
+            // round-trips through SET_FIELD(32) as 0xFFFFFFFF in memory,
+            // and the prior zero-extending load produced 0x00000000FFFFFFFF,
+            // which compares as +4294967295 rather than -1. Loads of u8/u16
+            // fields don't carry values above 2^31 (their max is < 2^32)
+            // and narrowing casts normalize via TRUNC_U when unsigned
+            // semantics are required.
+            regs[a] = static_cast<u64>(static_cast<i64>(static_cast<i32>(*field)));
         } else if (slot_count == 2) {
             regs[a] = static_cast<u64>(field[0]) | (static_cast<u64>(field[1]) << 32);
         } else {

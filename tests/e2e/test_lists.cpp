@@ -454,3 +454,74 @@ TEST_CASE("E2E - List of struct loop iteration") {
     CHECK(result.success);
     CHECK(result.stdout_output == "110\n");
 }
+
+// ============================================================================
+// Sign-extension of 1-slot integer elements (regression: INDEX_GET_LIST on an
+// inline 1-slot element zero-extended to 64 bits, so negative i32s compared
+// as a large positive 32-bit number despite printing correctly).
+// ============================================================================
+
+TEST_CASE("E2E - List<i32>: negative element compares as negative") {
+    const char* source = R"(
+        fun main(): i32 {
+            var lst: List<i32> = List<i32>();
+            lst.push(-1);
+            var v: i32 = lst[0];
+            if (v == -1 && v < 0) {
+                return 42;
+            }
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - List<Struct>: negative i32 field of struct element compares as negative") {
+    const char* source = R"(
+        struct E { enc: i32; }
+        fun main(): i32 {
+            var lst: List<E> = List<E>();
+            lst.push(E { enc = -1 });
+            var v: i32 = lst[0].enc;
+            if (v == -1 && v < 0) {
+                return 42;
+            }
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - List<i32>: while loop with negative-sentinel guard terminates") {
+    // The TODO note's "while-loop-doesn't-re-check-condition" symptom:
+    // assigning `idx = lst[idx].enc` where enc=-1 would silently give a large
+    // positive number under zero-extension, so `idx >= 0` stayed true and the
+    // loop re-entered with an out-of-bounds index. Should terminate cleanly now.
+    const char* source = R"(
+        struct Env { enc: i32; }
+        fun main(): i32 {
+            var envs: List<Env> = List<Env>();
+            envs.push(Env { enc = -1 });
+            envs.push(Env { enc = 0 });   // parent link at 0 points to first
+            envs.push(Env { enc = 1 });   // leaf points to parent
+
+            var idx: i32 = 2;
+            var hops: i32 = 0;
+            while (idx >= 0) {
+                idx = envs[idx].enc;
+                hops = hops + 1;
+            }
+            return hops;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 3);
+}

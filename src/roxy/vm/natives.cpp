@@ -625,9 +625,16 @@ static inline const u32* map_value_src_from_regs(const MapHeader* header, const 
 static inline void map_write_value_to_regs(const MapHeader* header, const u32* src,
                                            u64* regs, u8 dst) {
     if (header->value_is_inline) {
-        u64 packed = 0;
-        memcpy(&packed, src, sizeof(u32) * header->value_slot_count);
-        regs[dst] = packed;
+        if (header->value_slot_count == 1) {
+            // Sign-extend 1-slot (≤ 32-bit) integer values to fill the 64-bit
+            // register — matches the invariant maintained by LOAD_INT and the
+            // arithmetic ops (which read registers via reg_as_i64).
+            regs[dst] = static_cast<u64>(static_cast<i64>(static_cast<i32>(src[0])));
+        } else {
+            u64 packed = 0;
+            memcpy(&packed, src, sizeof(u32) * header->value_slot_count);
+            regs[dst] = packed;
+        }
     } else {
         regs[dst] = reinterpret_cast<u64>(src);
     }
