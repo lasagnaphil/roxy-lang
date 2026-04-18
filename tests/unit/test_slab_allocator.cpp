@@ -496,6 +496,37 @@ TEST_CASE("Stress - SlabAllocator memory zeroing verification") {
     allocator.shutdown();
 }
 
+TEST_CASE("Unit - SlabAllocator large object zeros full page-aligned range") {
+    // The slab path zeros the full slot_size on allocation; the large path
+    // must do the same for the full page-aligned alloc_size, not just the
+    // caller-requested size. Verifies that the padding between size and
+    // alloc_size is also zeroed.
+    SlabAllocator allocator;
+    REQUIRE(allocator.init());
+
+    u64 page_size = VirtualMemoryOps::page_size();
+    // Pick a request size that is not page-aligned so there IS padding,
+    // and that exceeds the largest slab size class so it takes the
+    // alloc_large path. One page plus a byte guarantees at least one full
+    // page of padding.
+    u32 request_size = static_cast<u32>(page_size + 1);
+    u32 page_count = (request_size + static_cast<u32>(page_size) - 1) /
+                     static_cast<u32>(page_size);
+    u64 alloc_size = static_cast<u64>(page_count) * page_size;
+
+    u64 gen;
+    void* ptr = allocator.alloc(request_size, &gen);
+    REQUIRE(ptr != nullptr);
+
+    u8* bytes = static_cast<u8*>(ptr);
+    for (u64 i = 0; i < alloc_size; i++) {
+        REQUIRE(bytes[i] == 0);
+    }
+
+    allocator.free(ptr);
+    allocator.shutdown();
+}
+
 TEST_CASE("Stress - SlabAllocator large objects") {
     SlabAllocator allocator;
     REQUIRE(allocator.init());

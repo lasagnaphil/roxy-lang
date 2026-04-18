@@ -16,7 +16,7 @@ Last updated: 2026-04-18
 
 - [x] Destructor throw during exception unwinding loses original exception — fixed: compile-time ban on `throw` in delete destructors + runtime safety net via `in_flight_exception` guard
 - [x] Ternary expressions skip move-state merging — fixed: `analyze_ternary_expr` now saves/restores/merges move states across both branches, mirroring the if-statement pattern. Also fixed a pre-existing IR-gen bug where `gen_ternary_expr` returned `else_val` directly instead of a phi-merged block argument, causing the then-path to produce garbage at runtime
-- [ ] `alloc_large()` only zeros `size` bytes, not page-aligned `alloc_size` bytes — padding between `size` and `alloc_size` contains uninitialized memory, unlike slab path which zeros the full slot (`slab_allocator.cpp:229`)
+- [x] `alloc_large()` only zeros `size` bytes, not page-aligned `alloc_size` bytes — fixed: `alloc_large` now zeros the full page-aligned `alloc_size`, matching the slab path which zeros the full `slot_size`
 - [x] Self-assignment of noncopyable values causes use-after-free — fixed: semantic analyzer rejects `x = x` when target is a noncopyable identifier resolving to the same symbol as the source
 - [x] No definite-termination analysis for move-state merging — fixed: terminating branches (return/throw/break/continue) are now excluded from move-state merges in if/when/try; also fixed an IR-gen bug where `gen_assign_expr` didn't adopt the RHS temporary for noncopyable identifier targets, which surfaced once the analysis started accepting catch-reassignment patterns
 

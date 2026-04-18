@@ -228,8 +228,11 @@ void* SlabAllocator::alloc_large(u32 size, u64* out_generation) {
     *out_generation = rng.next();
     if (*out_generation == 0) *out_generation = rng.next();
 
-    // Zero the memory
-    std::memset(mem, 0, size);
+    // Zero the full page-aligned allocation, not just the caller-requested
+    // size. Matches the slab path which zeros slot_size (not request size),
+    // and prevents the padding between `size` and `alloc_size` from leaking
+    // stale committed memory into user-visible reads.
+    std::memset(mem, 0, alloc_size);
 
     return mem;
 }
