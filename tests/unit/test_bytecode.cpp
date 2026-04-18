@@ -139,7 +139,7 @@ TEST_CASE("Disassemble instruction") {
 
     SUBCASE("LOAD_INT") {
         u32 instr = encode_abi(Opcode::LOAD_INT, 0, 42);
-        disassemble_instruction(instr, 0, out);
+        disassemble_instruction(instr, 0, 0, out);
         out.push_back('\0');
         CHECK(strstr(out.data(), "LOAD_INT") != nullptr);
         CHECK(strstr(out.data(), "R0") != nullptr);
@@ -149,7 +149,7 @@ TEST_CASE("Disassemble instruction") {
     SUBCASE("ADD_I") {
         out.clear();
         u32 instr = encode_abc(Opcode::ADD_I, 2, 0, 1);
-        disassemble_instruction(instr, 1, out);
+        disassemble_instruction(instr, 0, 1, out);
         out.push_back('\0');
         CHECK(strstr(out.data(), "ADD_I") != nullptr);
         CHECK(strstr(out.data(), "R2") != nullptr);
@@ -160,7 +160,7 @@ TEST_CASE("Disassemble instruction") {
     SUBCASE("JMP") {
         out.clear();
         u32 instr = encode_aoff(Opcode::JMP, 0, 5);
-        disassemble_instruction(instr, 10, out);
+        disassemble_instruction(instr, 0, 10, out);
         out.push_back('\0');
         CHECK(strstr(out.data(), "JMP") != nullptr);
         // Jump target should be 10 + 1 + 5 = 16

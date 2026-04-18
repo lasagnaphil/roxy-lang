@@ -146,13 +146,14 @@ const char* opcode_to_string(Opcode op) {
     }
 }
 
-void disassemble_instruction(u32 instr, u32 offset, String& out) {
+u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out) {
     Opcode op = decode_opcode(instr);
     u8 a = decode_a(instr);
     u8 b = decode_b(instr);
     u8 c = decode_c(instr);
     u16 imm = decode_imm16(instr);
     i16 soff = decode_offset(instr);
+    u32 words_consumed = 1;
 
     auto append = [&out](const char* str) {
         while (*str) out.push_back(*str++);
@@ -265,15 +266,19 @@ void disassemble_instruction(u32 instr, u32 offset, String& out) {
             buf.format("R{}, {:+} -> {}", a, (i32)soff, (u32)(offset + 1 + soff));
             break;
 
-        // Format: src1, src2 (two-word: next word is offset)
+        // Format: [_, src1, src2] + [JMP_IF offset] (2-word fused instruction)
         case Opcode::JMP_IF_LT_I:
         case Opcode::JMP_IF_LE_I:
         case Opcode::JMP_IF_GT_I:
         case Opcode::JMP_IF_GE_I:
         case Opcode::JMP_IF_EQ_I:
-        case Opcode::JMP_IF_NE_I:
-            buf.format("R{}, R{}  ; (two-word)", b, c);
+        case Opcode::JMP_IF_NE_I: {
+            i16 branch_offset = decode_offset(next_word);
+            buf.format("R{}, R{}, {:+} -> {}", b, c, (i32)branch_offset,
+                       (u32)(offset + 2 + branch_offset));
+            words_consumed = 2;
             break;
+        }
 
         // Format: reg
         case Opcode::RET:
@@ -298,11 +303,14 @@ void disassemble_instruction(u32 instr, u32 offset, String& out) {
             buf.format("R{}, R{}, R{}", a, b, c);
             break;
 
-        // Format: dst, src, field_idx
+        // Format: [base, value, slot_count] + [slot_offset] (2-word instruction)
         case Opcode::GET_FIELD:
-        case Opcode::SET_FIELD:
-            buf.format("R{}, R{}, field[{}]", a, b, imm);
+        case Opcode::SET_FIELD: {
+            u16 slot_offset = static_cast<u16>(next_word);
+            buf.format("R{}, R{}, slots={}, offset={}", a, b, c, slot_offset);
+            words_consumed = 2;
             break;
+        }
 
         // Format: dst, type_idx
         case Opcode::NEW_OBJ:
@@ -314,10 +322,13 @@ void disassemble_instruction(u32 instr, u32 offset, String& out) {
             buf.format("R{}, stack[{}]", a, imm);
             break;
 
-        // Format: dst, src, slot_offset (two-word instruction)
-        case Opcode::GET_FIELD_ADDR:
-            buf.format("R{}, R{}  ; (two-word)", a, b);
+        // Format: [dst, src, 0] + [slot_offset] (2-word instruction)
+        case Opcode::GET_FIELD_ADDR: {
+            u16 slot_offset = static_cast<u16>(next_word);
+            buf.format("R{}, R{}, offset={}", a, b, slot_offset);
+            words_consumed = 2;
             break;
+        }
 
         // Format: dst, src, slot_count (struct operations)
         case Opcode::STRUCT_LOAD_REGS:
@@ -354,6 +365,7 @@ void disassemble_instruction(u32 instr, u32 offset, String& out) {
 
     append(buf.c_str());
     out.push_back('\n');
+    return words_consumed;
 }
 
 void disassemble_function(const BCFunction* func, String& out) {
@@ -394,9 +406,11 @@ void disassemble_function(const BCFunction* func, String& out) {
 
     // Code
     append("  code:\n");
-    for (u32 i = 0; i < func->code.size(); i++) {
+    for (u32 i = 0; i < func->code.size(); ) {
+        u32 next_word = (i + 1 < func->code.size()) ? func->code[i + 1] : 0;
         append("    ");
-        disassemble_instruction(func->code[i], i, out);
+        u32 consumed = disassemble_instruction(func->code[i], next_word, i, out);
+        i += consumed;
     }
 }
 

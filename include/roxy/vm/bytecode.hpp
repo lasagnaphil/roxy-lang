@@ -365,8 +365,10 @@ struct BCModule {
     }
 };
 
-// Disassemble a single instruction
-void disassemble_instruction(u32 instr, u32 offset, String& out);
+// Disassemble a single instruction (may consume 1 or 2 words).
+// next_word is the following word in the code stream (for 2-word instructions).
+// Returns the number of words consumed (1 or 2).
+u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out);
 
 // Disassemble a function
 void disassemble_function(const BCFunction* func, String& out);

@@ -308,6 +308,7 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
     ValueId void_val = emit_const_int(allocator, dtor_func, entry, 0, types.void_type());
     finish_return(entry, void_val);
 
+    dtor_func->reorder_blocks_rpo();
     return dtor_func;
 }
 

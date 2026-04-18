@@ -4027,6 +4027,10 @@ void IRBuilder::consume_temp_noncopyable(ValueId val, bool adopted_by_variable) 
                 IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
                 if (nullify) nullify->unary = val;
             }
+            // Update the local mapping to null so yield/block-arg captures see null
+            // instead of the stale pointer (prevents double-free in coroutines).
+            ValueId null_val = emit_const_null();
+            define_local(info.name, null_val, info.type);
             return;
         }
     }
