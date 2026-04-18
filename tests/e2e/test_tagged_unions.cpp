@@ -587,3 +587,115 @@ TEST_CASE("E2E - Tagged unions with List<uniq T> field") {
     CHECK(result.success);
     CHECK(result.stdout_output == "60\n");
 }
+
+// ============================================================================
+// Field-assignment of struct values (regression: was copying pointer bits
+// instead of struct contents, corrupting nested when-discriminants)
+// ============================================================================
+
+TEST_CASE("E2E - Field assignment: struct value into a regular struct field") {
+    // Pre-fix: emit_set_field stored the source struct's pointer bits into the
+    // destination slots, so o.inner.x/y/z came back as garbage.
+    const char* source = R"ROXY(
+        struct Inner { x: i32; y: i32; z: i32; }
+        struct Outer { inner: Inner; }
+
+        fun main(): i32 {
+            var o: Outer = Outer { inner = Inner { x = 99, y = 88, z = 77 } };
+            var i: Inner = Inner { x = 1, y = 2, z = 3 };
+            o.inner = i;
+            print(f"{o.inner.x}");
+            print(f"{o.inner.y}");
+            print(f"{o.inner.z}");
+            return 0;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "1\n2\n3\n");
+}
+
+TEST_CASE("E2E - Field assignment: tagged-union struct into a variant field") {
+    // Pre-fix: assigning v (kind=IA) into o.inner clobbered the inner
+    // discriminant; `when o.inner.kind` matched neither IA nor IB.
+    const char* source = R"ROXY(
+        enum InnerKind { IA, IB }
+        enum OuterKind { OA, OB }
+
+        struct Inner {
+            when kind: InnerKind {
+                case IA: a_val: i32;
+                case IB: b_val: i32;
+            }
+        }
+
+        struct Outer {
+            when kind: OuterKind {
+                case OA: inner: Inner;
+                case OB: dummy: i32;
+            }
+        }
+
+        fun main(): i32 {
+            var i: Inner = Inner { kind = InnerKind::IA, a_val = 42 };
+            var o: Outer = Outer {
+                kind = OuterKind::OA,
+                inner = Inner { kind = InnerKind::IB, b_val = 99 }
+            };
+            o.inner = i;
+            when o.inner.kind {
+                case IA: print(f"IA={o.inner.a_val}");
+                case IB: print(f"IB={o.inner.b_val}");
+            }
+            return 0;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "IA=42\n");
+}
+
+TEST_CASE("E2E - Field assignment: struct value via 'self' inside a method") {
+    // Mirrors the original lox repro: assignment happens through `self.field`
+    // (a ref to the enclosing struct) rather than through a local variable.
+    const char* source = R"ROXY(
+        enum InnerKind { IA, IB }
+        enum OuterKind { OA }
+
+        struct Inner {
+            when kind: InnerKind {
+                case IA: a_val: i32;
+                case IB: b_val: i32;
+            }
+        }
+
+        struct Outer {
+            when kind: OuterKind {
+                case OA: inner: Inner;
+            }
+        }
+
+        fun Outer.replace(new_inner: Inner) {
+            self.inner = new_inner;
+        }
+
+        fun main(): i32 {
+            var o: Outer = Outer {
+                kind = OuterKind::OA,
+                inner = Inner { kind = InnerKind::IB, b_val = 7 }
+            };
+            o.replace(Inner { kind = InnerKind::IA, a_val = 13 });
+            when o.inner.kind {
+                case IA: print(f"IA={o.inner.a_val}");
+                case IB: print(f"IB={o.inner.b_val}");
+            }
+            return 0;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "IA=13\n");
+}

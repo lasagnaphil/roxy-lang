@@ -3298,7 +3298,19 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
         // Wrap uniq/ref → weak conversion for field assignment
         value = maybe_wrap_weak(value, assign_expr.value->resolved_type, field_type);
 
-        ValueId result = emit_set_field(obj, get_expr.name, slot_offset, slot_count, value, expr->resolved_type);
+        // For struct-typed fields the rvalue is a struct pointer (per IR convention),
+        // so we must copy slot-by-slot from the source struct. emit_set_field would
+        // otherwise stuff the raw pointer bits into the field slots, silently
+        // corrupting the field (e.g. losing nested when-discriminants). Mirror the
+        // struct-literal initialization path for consistency.
+        ValueId result;
+        if (field_type && field_type->is_struct()) {
+            ValueId field_addr = emit_get_field_addr(obj, get_expr.name, slot_offset, field_type);
+            emit_struct_copy(field_addr, value, slot_count);
+            result = value;
+        } else {
+            result = emit_set_field(obj, get_expr.name, slot_offset, slot_count, value, expr->resolved_type);
+        }
 
         // Consume noncopyable temporaries assigned to fields
         if (field_type && field_type->noncopyable()) {
