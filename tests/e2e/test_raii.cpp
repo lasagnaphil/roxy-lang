@@ -2563,3 +2563,71 @@ TEST_CASE("E2E - RAII: terminating else-if-chain branch struct-literal move keep
     CHECK(result.success);
     CHECK(result.value == 7);
 }
+
+// ============================================================================
+// User-defined constructors with noncopyable fields must not destroy stale
+// pre-call stack bytes (regression: Holder() assigning self.stmts hit the
+// destroy-old preamble with whatever pointer was left in the caller's return
+// slot from a previous call, double-freeing the previous Holder's list).
+// ============================================================================
+
+TEST_CASE("E2E - Constructor: reassigning a List<uniq T> field survives sequential calls") {
+    const char* source = R"ROXY(
+        struct Stmt { val: i32; }
+
+        pub struct Holder { pub stmts: List<uniq Stmt>; }
+        fun new Holder() { self.stmts = List<uniq Stmt>(); }
+
+        fun make_list(): List<uniq Stmt> {
+            var lst: List<uniq Stmt> = List<uniq Stmt>();
+            var s: uniq Stmt = uniq Stmt();
+            s.val = 42;
+            lst.push(s);
+            return lst;
+        }
+
+        fun go(): i32 {
+            var h: Holder = Holder();
+            h.stmts = make_list();
+            return h.stmts[0].val;
+        }
+
+        fun main(): i32 {
+            var a: i32 = go();
+            var b: i32 = go();
+            return a + b;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 84);
+}
+
+TEST_CASE("E2E - Constructor: uniq field initialisation survives sequential calls") {
+    // Same pattern for a plain uniq-typed field (no container wrapping).
+    const char* source = R"ROXY(
+        struct Payload { val: i32; }
+        pub struct Holder { pub p: uniq Payload; }
+
+        fun new Holder() {
+            self.p = uniq Payload();
+            self.p.val = 0;
+        }
+
+        fun go(v: i32): i32 {
+            var h: Holder = Holder();
+            h.p = uniq Payload();
+            h.p.val = v;
+            return h.p.val;
+        }
+
+        fun main(): i32 {
+            return go(3) + go(4);
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 7);
+}

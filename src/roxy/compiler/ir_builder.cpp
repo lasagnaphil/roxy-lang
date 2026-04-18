@@ -463,6 +463,29 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
         emit_call(parent_ctor_name, ctor_args, m_types.void_type());
     }
 
+    // Zero-init this struct's own uniq/noncopyable fields before the user body
+    // runs. `self.field = …` inside the body goes through gen_assign_expr, which
+    // emits a destroy-of-the-old-value preamble for uniq/noncopyable fields —
+    // but at entry to the constructor those fields hold whatever stale bytes
+    // the caller left in the return slot (often a pointer from a previous call
+    // that has already been freed). Nulling them first makes the preamble's
+    // `Delete(ptr)` a safe no-op. Inherited fields are left to the parent
+    // constructor that already ran above.
+    {
+        StructTypeInfo& struct_type_info = struct_type->struct_info;
+        u32 inherited_field_count = parent_type ? parent_type->struct_info.fields.size() : 0;
+        ValueId self_ptr = m_current_func->params[0].value;
+        ValueId null_val = ValueId::invalid();
+        for (u32 i = inherited_field_count; i < struct_type_info.fields.size(); i++) {
+            const FieldInfo& field = struct_type_info.fields[i];
+            if (!field.type) continue;
+            if (field.type->kind != TypeKind::Uniq && !field.type->noncopyable()) continue;
+            if (!null_val.is_valid()) null_val = emit_const_null();
+            emit_set_field(self_ptr, field.name, field.slot_offset, field.slot_count,
+                           null_val, field.type);
+        }
+    }
+
     // Generate body
     if (decl->body && decl->body->kind == AstKind::StmtBlock) {
         BlockStmt& block = decl->body->block;
