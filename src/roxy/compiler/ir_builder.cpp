@@ -717,6 +717,30 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
         emit_set_field(self_ptr, field_info->name, field_info->slot_offset, field_info->slot_count, value, field_info->type);
     }
 
+    // Null-init variant uniq/noncopyable fields. Stack allocation doesn't zero
+    // memory, so variant fields in the union slot can carry whatever bytes the
+    // previous owner of that local_stack region left behind. A later
+    // `self.variant_field = …` emits destroy-old on those stale bytes and
+    // crashes in `slab_allocator::free_in_slab`. The union region aliases
+    // across variants, so duplicate null-writes when two variants share an
+    // offset are harmless. (Mirrors the same treatment in `build_constructor`
+    // for user-defined constructors.)
+    {
+        ValueId null_val_variant = ValueId::invalid();
+        for (const auto& clause : struct_type_info.when_clauses) {
+            for (const auto& variant : clause.variants) {
+                for (const auto& vf : variant.fields) {
+                    if (!vf.type) continue;
+                    if (vf.type->kind != TypeKind::Uniq && !vf.type->noncopyable()) continue;
+                    if (!null_val_variant.is_valid()) null_val_variant = emit_const_null();
+                    u32 actual_offset = clause.union_slot_offset + vf.slot_offset;
+                    emit_set_field(self_ptr, vf.name, actual_offset, vf.slot_count,
+                                   null_val_variant, vf.type);
+                }
+            }
+        }
+    }
+
     // End function body (will add implicit return)
     end_function_body();
 

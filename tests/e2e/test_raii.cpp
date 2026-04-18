@@ -2707,3 +2707,44 @@ TEST_CASE("E2E - Constructor call consumes inline uniq rvalue argument stored in
     CHECK(result.success);
     CHECK(result.value == 99);
 }
+
+// ============================================================================
+// Synthesized default constructor must null-init variant uniq fields too — the
+// union region aliases with whatever bytes were in the caller's local_stack
+// from a previous stack-allocation; a later `self.variant_field = …` would
+// destroy that stale pointer and crash.
+// ============================================================================
+
+TEST_CASE("E2E - Synthesized default ctor null-inits variant uniq fields for stack-reuse safety") {
+    const char* source = R"ROXY(
+        enum K { A, B }
+        struct Node {
+            when kind: K {
+                case A: child: uniq Node;
+                case B: val: i32;
+            }
+        }
+        // pollute() leaves a real uniq Node pointer in the caller's local_stack
+        // slot. When go() then stack-allocates its own Node via `Node()`
+        // (synthesized default ctor), the union-region bytes overlap with the
+        // polluted pointer. Without null-init, the next `n.child = leaf`
+        // destroy-old preamble frees that stale pointer.
+        fun pollute(): Node {
+            return Node { kind = K::A, child = uniq Node { kind = K::B, val = 99 } };
+        }
+        fun go(): i32 {
+            var n: Node = Node();
+            var leaf: uniq Node = uniq Node { kind = K::B, val = 42 };
+            n.child = leaf;
+            return n.child.val;
+        }
+        fun main(): i32 {
+            var p: Node = pollute();
+            return go();
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
