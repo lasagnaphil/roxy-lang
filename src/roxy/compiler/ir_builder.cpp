@@ -463,44 +463,26 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
         emit_call(parent_ctor_name, ctor_args, m_types.void_type());
     }
 
-    // Zero-init this struct's own uniq/noncopyable fields before the user body
-    // runs. `self.field = …` inside the body goes through gen_assign_expr, which
+    // Zero-init this struct's own slot range before the user body runs.
+    // `self.field = …` inside the body goes through gen_assign_expr, which
     // emits a destroy-of-the-old-value preamble for uniq/noncopyable fields —
-    // but at entry to the constructor those fields hold whatever stale bytes
-    // the caller left in the return slot (often a pointer from a previous call
-    // that has already been freed). Nulling them first makes the preamble's
-    // `Delete(ptr)` a safe no-op. Inherited fields are left to the parent
-    // constructor that already ran above. Variant (when-clause) fields live
-    // inside a shared union region in the same struct; they also go through
-    // `self.field = …` and need the same treatment. Multiple variants' fields
-    // may alias the same union offset — duplicate null-writes are harmless.
+    // at constructor entry those fields hold whatever bytes the caller left
+    // in the return slot (often a pointer from a previous call that has
+    // already been freed on a reused local_stack slot). A bulk zero clears
+    // all own slots at once, which:
+    //   * makes the destroy-old preamble a safe `Delete(null)` no-op;
+    //   * doesn't need per-field / per-variant iteration, so variant fields
+    //     (whose slots alias across cases) and copyable fields all fall
+    //     under the same blanket;
+    //   * leaves inherited fields untouched — the parent constructor call
+    //     above has already populated those.
     {
-        StructTypeInfo& struct_type_info = struct_type->struct_info;
-        u32 inherited_field_count = parent_type ? parent_type->struct_info.fields.size() : 0;
-        ValueId self_ptr = m_current_func->params[0].value;
-        ValueId null_val = ValueId::invalid();
-        auto ensure_null = [&]() {
-            if (!null_val.is_valid()) null_val = emit_const_null();
-        };
-        for (u32 i = inherited_field_count; i < struct_type_info.fields.size(); i++) {
-            const FieldInfo& field = struct_type_info.fields[i];
-            if (!field.type) continue;
-            if (field.type->kind != TypeKind::Uniq && !field.type->noncopyable()) continue;
-            ensure_null();
-            emit_set_field(self_ptr, field.name, field.slot_offset, field.slot_count,
-                           null_val, field.type);
-        }
-        for (const auto& clause : struct_type_info.when_clauses) {
-            for (const auto& variant : clause.variants) {
-                for (const auto& vf : variant.fields) {
-                    if (!vf.type) continue;
-                    if (vf.type->kind != TypeKind::Uniq && !vf.type->noncopyable()) continue;
-                    ensure_null();
-                    u32 actual_offset = clause.union_slot_offset + vf.slot_offset;
-                    emit_set_field(self_ptr, vf.name, actual_offset, vf.slot_count,
-                                   null_val, vf.type);
-                }
-            }
+        u32 inherited_slot_count = parent_type ? parent_type->struct_info.slot_count : 0;
+        u32 total_slots = struct_type->struct_info.slot_count;
+        if (total_slots > inherited_slot_count) {
+            emit_zero_slots(m_current_func->params[0].value,
+                            inherited_slot_count,
+                            total_slots - inherited_slot_count);
         }
     }
 
@@ -717,28 +699,16 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
         emit_set_field(self_ptr, field_info->name, field_info->slot_offset, field_info->slot_count, value, field_info->type);
     }
 
-    // Null-init variant uniq/noncopyable fields. Stack allocation doesn't zero
-    // memory, so variant fields in the union slot can carry whatever bytes the
-    // previous owner of that local_stack region left behind. A later
-    // `self.variant_field = …` emits destroy-old on those stale bytes and
-    // crashes in `slab_allocator::free_in_slab`. The union region aliases
-    // across variants, so duplicate null-writes when two variants share an
-    // offset are harmless. (Mirrors the same treatment in `build_constructor`
-    // for user-defined constructors.)
-    {
-        ValueId null_val_variant = ValueId::invalid();
-        for (const auto& clause : struct_type_info.when_clauses) {
-            for (const auto& variant : clause.variants) {
-                for (const auto& vf : variant.fields) {
-                    if (!vf.type) continue;
-                    if (vf.type->kind != TypeKind::Uniq && !vf.type->noncopyable()) continue;
-                    if (!null_val_variant.is_valid()) null_val_variant = emit_const_null();
-                    u32 actual_offset = clause.union_slot_offset + vf.slot_offset;
-                    emit_set_field(self_ptr, vf.name, actual_offset, vf.slot_count,
-                                   null_val_variant, vf.type);
-                }
-            }
-        }
+    // Zero the whole union region of each when-clause. Stack allocation
+    // doesn't clear memory, so variant fields in the union slot can carry
+    // whatever bytes the previous owner of that local_stack region left
+    // behind. A later `self.variant_field = …` (in caller code) emits
+    // destroy-old on those stale bytes and crashes in
+    // `slab_allocator::free_in_slab`. Zeroing the union once covers every
+    // variant's fields — no per-variant iteration needed.
+    for (const auto& clause : struct_type_info.when_clauses) {
+        if (clause.union_slot_count == 0) continue;
+        emit_zero_slots(self_ptr, clause.union_slot_offset, clause.union_slot_count);
     }
 
     // End function body (will add implicit return)
@@ -4747,6 +4717,26 @@ StringView IRBuilder::mangle_module_local(StringView name) {
     char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(len) + 1, 1));
     memcpy(name_ptr, name_buf, static_cast<u32>(len) + 1);
     return StringView(name_ptr, static_cast<u32>(len));
+}
+
+void IRBuilder::emit_zero_slots(ValueId self_ptr, u32 start_slot, u32 slot_count) {
+    if (slot_count == 0) return;
+    ValueId null_val = emit_const_null();
+    Type* void_ty = m_types.void_type();
+    StringView tag("__zero", 6);
+    u32 offset = start_slot;
+    u32 remaining = slot_count;
+    // 2-slot writes cover 8 bytes per op by splitting the u64 null register
+    // across field[offset] and field[offset+1]. A trailing 1-slot write
+    // handles the odd tail.
+    while (remaining >= 2) {
+        emit_set_field(self_ptr, tag, offset, 2, null_val, void_ty);
+        offset += 2;
+        remaining -= 2;
+    }
+    if (remaining == 1) {
+        emit_set_field(self_ptr, tag, offset, 1, null_val, void_ty);
+    }
 }
 
 Type* IRBuilder::apply_ref_kind(Type* base_type, RefKind ref_kind) {

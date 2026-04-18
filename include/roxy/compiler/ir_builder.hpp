@@ -156,6 +156,14 @@ private:
     // Returns name unchanged if module is empty (single-file mode).
     StringView mangle_module_local(StringView name);
 
+    // Zero `slot_count` contiguous u32 slots of `self_ptr` starting at
+    // `start_slot`. Used by constructors to null-init a struct's own slot
+    // range so the destroy-old preamble in `self.field = …` never runs on
+    // the caller's stale local_stack bytes. Emits 2-slot SET_FIELDs in bulk
+    // with a single reusable null value, one trailing 1-slot write if the
+    // count is odd.
+    void emit_zero_slots(ValueId self_ptr, u32 start_slot, u32 slot_count);
+
     // Apply reference wrapper to base type based on RefKind
     Type* apply_ref_kind(Type* base_type, RefKind ref_kind);
 
