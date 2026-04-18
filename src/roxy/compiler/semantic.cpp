@@ -4972,6 +4972,23 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
         coerce_int_literal(assign_expr.value, target_type);
     }
 
+    // Reject self-assignment of noncopyables (e.g. `x = x` on a uniq variable):
+    // the target slot auto-deletes first and then the source "move" copies a
+    // dangling pointer back in — a guaranteed use-after-free.
+    if (assign_expr.op == AssignOp::Assign &&
+        target_type && target_type->noncopyable() &&
+        assign_expr.target->kind == AstKind::ExprIdentifier &&
+        assign_expr.value->kind == AstKind::ExprIdentifier) {
+        Symbol* tgt_sym = m_symbols.lookup(assign_expr.target->identifier.name);
+        Symbol* src_sym = m_symbols.lookup(assign_expr.value->identifier.name);
+        if (tgt_sym && tgt_sym == src_sym) {
+            error_fmt(expr->loc,
+                "self-assignment of noncopyable variable '{}' would cause use-after-free",
+                assign_expr.target->identifier.name);
+            return m_types.error_type();
+        }
+    }
+
     // Reassignment to owned variable: mark it live again (auto-destroy of old value happens in IR)
     if (assign_expr.target->kind == AstKind::ExprIdentifier &&
         target_type && target_type->noncopyable()) {

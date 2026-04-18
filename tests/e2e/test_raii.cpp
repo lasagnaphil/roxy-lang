@@ -338,6 +338,53 @@ TEST_CASE("E2E - RAII: use-after-delete compile error") {
     CHECK(module == nullptr);  // Should fail to compile
 }
 
+TEST_CASE("E2E - RAII: self-assignment of noncopyable compile error") {
+    // `x = x` on a uniq variable would delete the old value and then move the
+    // now-dangling pointer back into x — a guaranteed use-after-free. The
+    // semantic analyzer should reject it.
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            p.x = 42;
+            p = p;  // Error: self-assignment of noncopyable
+            return p.x;
+        }
+    )";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);  // Should fail to compile
+}
+
+TEST_CASE("E2E - RAII: cross-variable move still compiles") {
+    // Regression guard: the self-assignment check must only fire when source
+    // and target resolve to the same symbol. Moving between distinct uniq
+    // variables is a normal move and must still compile.
+    const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var a: uniq Point = uniq Point();
+            a.x = 7;
+            var b: uniq Point = uniq Point();
+            b = a;  // move a into b; a is consumed
+            return b.x;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 7);
+}
+
 TEST_CASE("E2E - RAII: conditional move compile error") {
     // Moving in one branch of if/else but not other causes MaybeValid error
     const char* source = R"(
