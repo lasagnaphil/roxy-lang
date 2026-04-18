@@ -1241,19 +1241,37 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
         finish_block_branch(cond, then_block->id, merge_block->id, {}, alloc_span(fallthrough_args));
     }
 
-    // Save variable state before then branch (so else branch sees original values)
-    Vector<tsl::robin_map<StringView, LocalVar>> saved_scopes;
-    if (else_block) {
-        saved_scopes.reserve(m_local_scopes.size());
-        for (auto& scope : m_local_scopes) {
-            saved_scopes.push_back(scope);
-        }
+    // Save pre-if local-scope and is_moved state. We must roll the IR builder's
+    // bookkeeping (nullify-replace, owned_local.is_moved) back across terminating
+    // branches so the merge block — reachable only via the surviving paths —
+    // doesn't see consumed/nil-replaced locals from a branch that returned. This
+    // mirrors the semantic-side definite-termination move-state merging.
+    Vector<tsl::robin_map<StringView, LocalVar>> saved_scopes_pre;
+    saved_scopes_pre.reserve(m_local_scopes.size());
+    for (auto& scope : m_local_scopes) {
+        saved_scopes_pre.push_back(scope);
     }
+    Vector<bool> saved_is_moved_pre;
+    saved_is_moved_pre.reserve(m_owned_locals.size());
+    for (auto& info : m_owned_locals) {
+        saved_is_moved_pre.push_back(info.is_moved);
+    }
+
+    auto restore_pre_if_state = [&]() {
+        m_local_scopes.clear();
+        for (auto& scope : saved_scopes_pre) {
+            m_local_scopes.push_back(scope);
+        }
+        for (u32 i = 0; i < saved_is_moved_pre.size() && i < m_owned_locals.size(); i++) {
+            m_owned_locals[i].is_moved = saved_is_moved_pre[i];
+        }
+    };
 
     // Generate then branch
     set_current_block(then_block);
     gen_stmt(is.then_branch);
-    if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+    bool then_terminated = !m_current_block || m_current_block->terminator.kind != TerminatorKind::None;
+    if (!then_terminated) {
         // Build args for merge block
         Vector<BlockArgPair> then_args;
         for (const auto& pi : phi_info) {
@@ -1263,14 +1281,31 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
         finish_block_goto(merge_block->id, alloc_span(then_args));
     }
 
+    // Snapshot post-then state in case the else branch terminates and we need to
+    // restore the then-branch's mutations for code after the merge.
+    Vector<tsl::robin_map<StringView, LocalVar>> saved_scopes_post_then;
+    Vector<bool> saved_is_moved_post_then;
+    if (else_block && !then_terminated) {
+        saved_scopes_post_then.reserve(m_local_scopes.size());
+        for (auto& scope : m_local_scopes) {
+            saved_scopes_post_then.push_back(scope);
+        }
+        saved_is_moved_post_then.reserve(m_owned_locals.size());
+        for (auto& info : m_owned_locals) {
+            saved_is_moved_post_then.push_back(info.is_moved);
+        }
+    }
+
     // Generate else branch
+    bool else_terminated = false;
     if (else_block) {
-        // Restore variable state so else branch sees original values
-        m_local_scopes = std::move(saved_scopes);
+        // Restore pre-if state so the else branch sees original values
+        restore_pre_if_state();
 
         set_current_block(else_block);
         gen_stmt(is.else_branch);
-        if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+        else_terminated = !m_current_block || m_current_block->terminator.kind != TerminatorKind::None;
+        if (!else_terminated) {
             // Build args for merge block
             Vector<BlockArgPair> else_args;
             for (const auto& pi : phi_info) {
@@ -1278,6 +1313,31 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
                 else_args.push_back({val});
             }
             finish_block_goto(merge_block->id, alloc_span(else_args));
+        }
+    }
+
+    // Pick the IR-builder state to use at the merge block:
+    //   - no else, then terminated: only the cond-false path reaches merge → pre-if state
+    //   - else exists, then terminated, else not: only else path → keep current (else's post-state)
+    //   - else exists, else terminated, then not: only then path → restore post-then snapshot
+    //   - both terminated: merge unreachable, state doesn't matter
+    //   - neither terminated: keep current (else's post-state); non-phi vars should match
+    //     by construction (semantic forbids divergent moves on non-phi vars), and phi
+    //     vars are rebound from merge-block params below.
+    if (!else_block) {
+        if (then_terminated) {
+            restore_pre_if_state();
+        }
+    } else if (then_terminated && !else_terminated) {
+        // Current state is post-else, which is correct.
+    } else if (else_terminated && !then_terminated) {
+        // Restore post-then snapshot.
+        m_local_scopes.clear();
+        for (auto& scope : saved_scopes_post_then) {
+            m_local_scopes.push_back(scope);
+        }
+        for (u32 i = 0; i < saved_is_moved_post_then.size() && i < m_owned_locals.size(); i++) {
+            m_owned_locals[i].is_moved = saved_is_moved_post_then[i];
         }
     }
 

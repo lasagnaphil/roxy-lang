@@ -2359,3 +2359,126 @@ TEST_CASE("E2E - RAII: ternary with no moves keeps variable live") {
     CHECK(result.success);
     CHECK(result.value == 6);
 }
+
+// ============================================================================
+// IR-builder companion to definite-termination merging:
+// the IR builder must roll back local-scope and is_moved bookkeeping when a
+// branch terminates, so the merge-block code (reachable only via surviving
+// paths) doesn't see the consumed-and-nullified locals from the dead branch.
+// ============================================================================
+
+TEST_CASE("E2E - RAII: terminating then-branch struct-literal move keeps local live for after-if struct literal") {
+    // Pre-fix: the then-branch struct literal nullify-replaced `cond` to nil;
+    // the after-if path then embedded nil into its own struct literal and
+    // segfaulted on the field dereference at main.
+    const char* source = R"ROXY(
+        enum NodeKind { NLeaf, NIf }
+
+        struct Node {
+            when kind: NodeKind {
+                case NLeaf: pub leaf_val: i32;
+                case NIf:   pub if_cond: uniq Node;
+            }
+        }
+
+        fun build_leaf(v: i32): uniq Node {
+            return uniq Node { kind = NodeKind::NLeaf, leaf_val = v };
+        }
+
+        fun build_if(has_else: bool): uniq Node {
+            var cond: uniq Node = build_leaf(1);
+            if (has_else) {
+                return uniq Node { kind = NodeKind::NIf, if_cond = cond };
+            }
+            return uniq Node { kind = NodeKind::NIf, if_cond = cond };
+        }
+
+        fun main(): i32 {
+            var n: uniq Node = build_if(false);
+            return n.if_cond.leaf_val;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 1);
+}
+
+TEST_CASE("E2E - RAII: terminating else-branch struct-literal move keeps local live for after-if struct literal") {
+    // Symmetric to the above: when the else-branch terminates, the merge block
+    // is reachable only via the then-branch (which here also moves the local).
+    // The IR builder must restore the post-then snapshot rather than carrying
+    // the else-branch's nullify-replace into the merge.
+    const char* source = R"ROXY(
+        enum NodeKind { NLeaf, NIf }
+
+        struct Node {
+            when kind: NodeKind {
+                case NLeaf: pub leaf_val: i32;
+                case NIf:   pub if_cond: uniq Node;
+            }
+        }
+
+        fun build_leaf(v: i32): uniq Node {
+            return uniq Node { kind = NodeKind::NLeaf, leaf_val = v };
+        }
+
+        fun build_if(go_then: bool): uniq Node {
+            var cond: uniq Node = build_leaf(2);
+            if (go_then) {
+                // then keeps cond live, just falls through to the after-if return
+            } else {
+                return uniq Node { kind = NodeKind::NIf, if_cond = cond };
+            }
+            return uniq Node { kind = NodeKind::NIf, if_cond = cond };
+        }
+
+        fun main(): i32 {
+            var n: uniq Node = build_if(true);
+            return n.if_cond.leaf_val;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 2);
+}
+
+TEST_CASE("E2E - RAII: terminating then-branch with else preserves else's post-state at merge") {
+    // then-branch terminates; the merge block is reachable only via the
+    // else-branch. The IR builder should keep the else's post-state at merge
+    // (not roll back to pre-if), so the after-if code sees the right values.
+    const char* source = R"ROXY(
+        enum NodeKind { NLeaf, NIf }
+
+        struct Node {
+            when kind: NodeKind {
+                case NLeaf: pub leaf_val: i32;
+                case NIf:   pub if_cond: uniq Node;
+            }
+        }
+
+        fun build_leaf(v: i32): uniq Node {
+            return uniq Node { kind = NodeKind::NLeaf, leaf_val = v };
+        }
+
+        fun build_if(go_then: bool): uniq Node {
+            var cond: uniq Node = build_leaf(3);
+            if (go_then) {
+                return uniq Node { kind = NodeKind::NIf, if_cond = cond };
+            } else {
+                // else falls through; the after-if return below consumes cond
+            }
+            return uniq Node { kind = NodeKind::NIf, if_cond = cond };
+        }
+
+        fun main(): i32 {
+            var n: uniq Node = build_if(false);
+            return n.if_cond.leaf_val;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 3);
+}
