@@ -3114,7 +3114,11 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     }
 
     // Move semantics: mark owned args passed to owned params as moved
-    // For uniq args, also null-ify the register so DEL_OBJ on scope exit is a safe no-op
+    // For uniq args, also null-ify the register so DEL_OBJ on scope exit is a safe no-op.
+    // Skip inout/out: those pass a pointer to the caller's slot, ownership stays
+    // with the caller. Marking them moved would trip a false "use-after-move"
+    // on the next loop iteration and (symmetrically, for noncopyable types)
+    // null out a local the caller still owns.
     Type* callee_func_type = call_expr.callee->resolved_type;
     if (callee_func_type && callee_func_type->is_function()) {
         Span<Type*> param_types = callee_func_type->func_info.param_types;
@@ -3122,11 +3126,13 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         // but call_expr.arguments only has user-visible arguments. Offset by 1.
         u32 param_offset = (call_expr.callee->kind == AstKind::ExprGet) ? 1 : 0;
         for (u32 i = 0; i < call_expr.arguments.size() && (i + param_offset) < param_types.size(); i++) {
-            if (call_expr.arguments[i].expr->kind == AstKind::ExprIdentifier) {
-                Type* arg_type = call_expr.arguments[i].expr->resolved_type;
+            const CallArg& arg = call_expr.arguments[i];
+            if (arg.modifier != ParamModifier::None) continue;
+            if (arg.expr->kind == AstKind::ExprIdentifier) {
+                Type* arg_type = arg.expr->resolved_type;
                 if (arg_type && arg_type->noncopyable() &&
                     param_types[i + param_offset] && param_types[i + param_offset]->noncopyable()) {
-                    StringView arg_name = call_expr.arguments[i].expr->identifier.name;
+                    StringView arg_name = arg.expr->identifier.name;
                     OwnedLocalInfo* owned_info = find_owned_local(arg_name);
                     if (owned_info && !owned_info->is_moved) {
                         if (arg_type->kind == TypeKind::Uniq) {
@@ -4610,6 +4616,22 @@ void IRBuilder::collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out) 
             collect_assigned_vars_expr(expr->call.callee, out);
             for (auto& arg : expr->call.arguments) {
                 collect_assigned_vars_expr(arg.expr, out);
+                // An `inout`/`out` argument stores through the caller's slot
+                // via the post-call reload (see gen_call_expr's inout_args).
+                // Treat it as a write to the identifier so loop variable
+                // collection phis the local at the loop header — otherwise
+                // the reload redefines `xs` inside the body but the SSA value
+                // never makes it back to the header, and post-loop uses read
+                // a stale register / trip register allocation.
+                if ((arg.modifier == ParamModifier::Inout || arg.modifier == ParamModifier::Out)
+                    && arg.expr && arg.expr->kind == AstKind::ExprIdentifier) {
+                    StringView name = arg.expr->identifier.name;
+                    bool found = false;
+                    for (const auto& existing : out) {
+                        if (existing == name) { found = true; break; }
+                    }
+                    if (!found) out.push_back(name);
+                }
             }
             break;
         case AstKind::ExprIndex:
@@ -4797,8 +4819,13 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
         BlockParam& bp = m_current_func->params[i];
         define_local(bp.name, bp.value, bp.type);
 
-        // Track owned parameters — callee now owns them (uniq refs and value structs with destructors)
-        if (bp.type && bp.type->noncopyable()) {
+        // Track owned parameters — callee now owns them (uniq refs and value
+        // structs with destructors). inout/out params are borrows through a
+        // pointer: the caller still owns the slot and the callee must not
+        // destroy it at scope exit — that would double-free the caller's
+        // value. `m_param_is_ptr` is exactly the set of inout/out params, so
+        // skip tracking when it contains `bp.name`.
+        if (bp.type && bp.type->noncopyable() && !m_param_is_ptr.count(bp.name)) {
             u32 scope_depth = static_cast<u32>(m_local_scopes.size());
             BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
             m_owned_locals.push_back({bp.name, bp.type, scope_depth, false, false, current_block_id, bp.value});

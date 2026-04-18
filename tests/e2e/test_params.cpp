@@ -507,3 +507,89 @@ TEST_CASE("E2E - Multiple four-slot structs with int in middle") {
     CHECK(result.success);
     CHECK(result.stdout_output == "60\n");  // (1+1+1+1)*10 + (5+5+5+5) = 40 + 20 = 60
 }
+
+// ============================================================================
+// inout noncopyable args in loop body (regression: semantic analyzer treated
+// inout identically to a by-value move and rejected the call with
+// "moved in loop body without reassignment"; the IR builder also marked the
+// local as moved after the call, tracked the inout param as owned, and
+// failed to phi-merge the caller's local at the loop header).
+// ============================================================================
+
+TEST_CASE("E2E - inout List<uniq T> in loop body compiles and runs") {
+    const char* source = R"ROXY(
+        struct Item { pub v: i32; }
+
+        fun add_one(xs: inout List<uniq Item>) {
+            xs.push(uniq Item());
+        }
+
+        fun main(): i32 {
+            var xs: List<uniq Item> = List<uniq Item>();
+            var i: i32 = 0;
+            while (i < 3) {
+                add_one(inout xs);
+                i = i + 1;
+            }
+            var n: i32 = i32(xs.len());
+            return n;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 3);
+}
+
+TEST_CASE("E2E - inout List<i32> in for loop body with post-loop read") {
+    const char* source = R"ROXY(
+        fun push_val(xs: inout List<i32>, v: i32) {
+            xs.push(v);
+        }
+
+        fun main(): i32 {
+            var xs: List<i32> = List<i32>();
+            for (var i: i32 = 0; i < 5; i = i + 1) {
+                push_val(inout xs, i * 10);
+            }
+            var sum: i32 = 0;
+            var j: i32 = 0;
+            var n: i32 = i32(xs.len());
+            while (j < n) {
+                sum = sum + xs[j];
+                j = j + 1;
+            }
+            return sum;
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 0 + 10 + 20 + 30 + 40);
+}
+
+TEST_CASE("E2E - inout noncopyable cleanup across multiple calls is not double-freed") {
+    // The caller still owns `xs` after an inout call — the callee must not
+    // mark xs as moved, or else post-call nullify would suppress cleanup.
+    // Conversely the inout param inside the callee must NOT be tracked as an
+    // owned local (borrow, not ownership).
+    const char* source = R"ROXY(
+        struct Item { pub v: i32; }
+
+        fun fill(xs: inout List<uniq Item>) {
+            xs.push(uniq Item());
+            xs.push(uniq Item());
+        }
+
+        fun main(): i32 {
+            var xs: List<uniq Item> = List<uniq Item>();
+            fill(inout xs);
+            fill(inout xs);
+            return i32(xs.len());
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 4);
+}

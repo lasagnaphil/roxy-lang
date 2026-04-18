@@ -3893,8 +3893,14 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
             coerce_int_literal(arg.expr, param_types[i]);
         }
 
-        // Move semantics: passing owned arg to owned param transfers ownership
-        if (param_types[i] && param_types[i]->noncopyable()) {
+        // Move semantics: passing owned arg to owned param transfers ownership —
+        // but only for by-value arguments. `inout` and `out` borrow through a
+        // pointer; the callee sees the same slot the caller still owns, so
+        // treating them as a move falsely rejects loops like
+        // `while (...) { fn(inout xs); }` with "moved in loop body without
+        // reassignment", even though `xs` stays live across iterations.
+        if (param_types[i] && param_types[i]->noncopyable()
+            && arg.modifier == ParamModifier::None) {
             consume_noncopyable(arg.expr, arg.expr->loc);
         }
     }
