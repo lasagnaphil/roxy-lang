@@ -2,6 +2,7 @@
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/object.hpp"
 #include "roxy/vm/slab_allocator.hpp"
+#include "roxy/vm/string_intern.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -31,6 +32,12 @@ RoxyVM::~RoxyVM() {
     // Clean up function pointer cache
     delete[] function_ptrs;
     function_ptrs = nullptr;
+
+    // Drop the intern table before the slab allocator shuts down (its stored
+    // StringView keys point into slab-backed string data that's about to go
+    // away). Explicit reset — UniquePtr's declaration order would still put
+    // `string_intern` after `allocator` for destruction.
+    string_intern.reset();
 
     // UniquePtr members are automatically cleaned up
     // But we need to call shutdown() on allocator first if it exists
@@ -80,6 +87,16 @@ bool vm_init(RoxyVM* vm, const VMConfig& config) {
         return false;
     }
 
+    // Initialize the string intern table. Used by string_alloc to dedup
+    // heap strings — same content = same StringObject pointer.
+    vm->string_intern = UniquePtr<StringInternTable>(new (std::nothrow) StringInternTable());
+    if (!vm->string_intern) {
+        vm->allocator.reset();
+        vm->register_file.reset();
+        vm->local_stack.reset();
+        return false;
+    }
+
     // Pre-allocate fixed-size call stack
     vm->call_stack_capacity = config.max_call_depth;
     vm->call_stack = UniquePtr<CallFrame[]>(new (std::nothrow) CallFrame[config.max_call_depth]);
@@ -105,6 +122,10 @@ void vm_destroy(RoxyVM* vm) {
     vm->local_stack.reset();
     vm->local_stack_size = 0;
     vm->local_stack_top = 0;
+
+    // Drop the intern table before shutting down the slab allocator, since
+    // the string pointers the table holds become invalid once slabs are freed.
+    vm->string_intern.reset();
 
     // Destroy slab allocator
     if (vm->allocator) {

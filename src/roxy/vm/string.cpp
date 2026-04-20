@@ -1,5 +1,7 @@
 #include "roxy/vm/string.hpp"
 #include "roxy/vm/object.hpp"
+#include "roxy/vm/string_intern.hpp"
+#include "roxy/vm/vm.hpp"
 
 #include <cstring>
 
@@ -23,6 +25,23 @@ u32 get_string_type_id() {
 }
 
 void* string_alloc(RoxyVM* vm, const char* data, u32 length) {
+    // Content-keyed interning. Probing before allocating dedups the hot cases:
+    // - LOAD_CONST of the same string literal across many call sites
+    // - f-string numeric conversions that repeat the same digit ("0", "1", ...)
+    // - str_substr / str_from_code slices that recur
+    // Strings are immutable copyable values in Roxy (TypeKind::String is not
+    // in Type::noncopyable()), so sharing a pointer across variables is safe.
+    // Skip the probe only for the length=0/data=null case that string_concat
+    // uses as a "give me a buffer" call — that path rewrites the bytes before
+    // anyone else sees the object.
+    if (vm->string_intern && data && length > 0) {
+        StringView key(data, length);
+        auto it = vm->string_intern->table.find(key);
+        if (it != vm->string_intern->table.end()) {
+            return it->second;
+        }
+    }
+
     // Calculate total data size: StringHeader + (chars + null terminator)
     u32 data_size = sizeof(StringHeader) + length + 1;
 
@@ -49,6 +68,12 @@ void* string_alloc(RoxyVM* vm, const char* data, u32 length) {
     // bits of a 64-bit hash would be discarded anyway.
     header->hash = static_cast<u32>(XXH3_64bits(chars, length));
 
+    // Register the new string in the intern table. Key is a StringView over
+    // the object's own chars — stable for the object's (= VM's) lifetime.
+    if (vm->string_intern && data && length > 0) {
+        vm->string_intern->table[StringView(chars, length)] = string_data;
+    }
+
     return string_data;
 }
 
@@ -61,23 +86,27 @@ void* string_concat(RoxyVM* vm, void* str1, void* str2) {
     u32 len2 = string_length(str2);
     u32 total_len = len1 + len2;
 
-    // Allocate new string with combined length
-    void* result = string_alloc(vm, nullptr, total_len);
-    if (!result) {
+    // Build the concatenated content in a temp buffer so we can intern on real
+    // bytes. Short strings use the stack; longer ones take a one-shot malloc.
+    char stack_buf[256];
+    char* buf = (total_len < sizeof(stack_buf))
+        ? stack_buf
+        : static_cast<char*>(malloc(total_len + 1));
+    if (!buf) {
         return nullptr;
     }
 
-    // Copy both strings into the result
-    char* result_chars = string_chars(result);
-    memcpy(result_chars, string_chars(str1), len1);
-    memcpy(result_chars + len1, string_chars(str2), len2);
-    result_chars[total_len] = '\0';
+    memcpy(buf, string_chars(str1), len1);
+    memcpy(buf + len1, string_chars(str2), len2);
+    // string_alloc doesn't read past `length`, but null-terminating costs
+    // nothing and keeps the buffer sane for any debug prints.
+    buf[total_len] = '\0';
 
-    // Re-hash now that the real bytes are in place (string_alloc hashed the
-    // zeroed buffer we asked for).
-    get_string_header(result)->hash =
-        static_cast<u32>(XXH3_64bits(result_chars, total_len));
+    void* result = string_alloc(vm, buf, total_len);
 
+    if (buf != stack_buf) {
+        free(buf);
+    }
     return result;
 }
 

@@ -7,8 +7,9 @@
 
 namespace rx {
 
-// Forward declaration
+// Forward declarations
 struct SlabAllocator;
+struct StringInternTable;
 
 // Call frame - represents an active function call
 struct CallFrame {
@@ -50,6 +51,7 @@ struct RoxyVM {
     u32 local_stack_top;            // Current top of local stack allocation
 
     UniquePtr<SlabAllocator> allocator;  // Slab allocator for heap objects
+    UniquePtr<StringInternTable> string_intern;  // Content-keyed dedup of heap strings
 
     UniquePtr<CallFrame[]> call_stack;  // Pre-allocated call stack
     u32 call_stack_size;                // Current call stack depth
