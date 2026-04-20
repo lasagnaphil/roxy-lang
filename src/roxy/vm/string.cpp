@@ -3,6 +3,9 @@
 
 #include <cstring>
 
+#define XXH_INLINE_ALL
+#include "roxy/core/xxhash.h"
+
 namespace rx {
 
 // Global string type ID (registered once at startup)
@@ -32,7 +35,6 @@ void* string_alloc(RoxyVM* vm, const char* data, u32 length) {
     // Initialize string header
     StringHeader* header = get_string_header(string_data);
     header->length = length;
-    header->capacity = length + 1;
 
     // Copy string data and null-terminate
     char* chars = string_chars(string_data);
@@ -40,6 +42,12 @@ void* string_alloc(RoxyVM* vm, const char* data, u32 length) {
         memcpy(chars, data, length);
     }
     chars[length] = '\0';
+
+    // Cache a 32-bit hash (low bits of XXH3_64bits) once at allocation so Map
+    // lookups don't walk the bytes on every op. The MapHeader's capacity is a
+    // u32 and the probe mask is computed as (capacity - 1), so the upper 32
+    // bits of a 64-bit hash would be discarded anyway.
+    header->hash = static_cast<u32>(XXH3_64bits(chars, length));
 
     return string_data;
 }
@@ -64,6 +72,11 @@ void* string_concat(RoxyVM* vm, void* str1, void* str2) {
     memcpy(result_chars, string_chars(str1), len1);
     memcpy(result_chars + len1, string_chars(str2), len2);
     result_chars[total_len] = '\0';
+
+    // Re-hash now that the real bytes are in place (string_alloc hashed the
+    // zeroed buffer we asked for).
+    get_string_header(result)->hash =
+        static_cast<u32>(XXH3_64bits(result_chars, total_len));
 
     return result;
 }

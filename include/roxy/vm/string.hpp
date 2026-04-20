@@ -9,9 +9,11 @@ struct RoxyVM;
 
 // String header - stored in object data after ObjectHeader
 // Memory layout: [ObjectHeader][StringHeader][char data + null terminator]
+// Strings are immutable, so capacity is always length + 1 — no need to store
+// it. Kept to 8 bytes so short strings still fit the slab's 32-byte class.
 struct StringHeader {
     u32 length;    // String length (excluding null terminator)
-    u32 capacity;  // Allocated capacity (including null terminator)
+    u32 hash;      // Low 32 bits of XXH3_64bits(chars, length); computed at alloc
 };
 
 // Get the StringHeader from string data pointer (data points to StringHeader)

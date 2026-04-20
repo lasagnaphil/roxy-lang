@@ -36,16 +36,6 @@ static u64 hash_integer(u64 x) {
     return x;
 }
 
-// FNV-1a hash for string keys
-static u64 hash_string_bytes(const char* data, u32 length) {
-    u64 h = 14695981039346656037ULL;
-    for (u32 i = 0; i < length; i++) {
-        h ^= static_cast<u64>(static_cast<u8>(data[i]));
-        h *= 1099511628211ULL;
-    }
-    return h;
-}
-
 static u64 map_hash_key(u64 key, MapKeyKind kind) {
     switch (kind) {
         case MapKeyKind::Integer:
@@ -71,7 +61,8 @@ static u64 map_hash_key(u64 key, MapKeyKind kind) {
         case MapKeyKind::String: {
             void* str = reinterpret_cast<void*>(key);
             if (!str) return 0;
-            return hash_string_bytes(string_chars(str), string_length(str));
+            // StringHeader caches the hash at allocation time; read it.
+            return get_string_header(str)->hash;
         }
     }
     return hash_integer(key);
