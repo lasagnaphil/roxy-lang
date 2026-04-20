@@ -51,7 +51,11 @@ static u64 load_constant(RoxyVM* vm, const BCFunction* func, u16 index) {
         case BCConstant::Float:
             return reg_from_f64(c.as_float);
         case BCConstant::String:
-            // Create a StringObject from the constant string data
+            // vm_load_module pre-interns every String constant into c.as_string.obj,
+            // so LOAD_CONST is just a pointer load here. The fallback covers any
+            // constant that happens to reach runtime un-interned (defense in depth;
+            // shouldn't happen in normal flow).
+            if (c.as_string.obj) return reg_from_ptr(c.as_string.obj);
             return reg_from_ptr(string_alloc(vm, c.as_string.data, c.as_string.length));
         default:
             return 0;

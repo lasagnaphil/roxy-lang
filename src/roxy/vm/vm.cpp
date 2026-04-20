@@ -2,6 +2,7 @@
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/object.hpp"
 #include "roxy/vm/slab_allocator.hpp"
+#include "roxy/vm/string.hpp"
 #include "roxy/vm/string_intern.hpp"
 
 #include <cstdlib>
@@ -167,6 +168,21 @@ bool vm_load_module(RoxyVM* vm, BCModule* module) {
     }
     for (u32 i = 0; i < vm->function_count; i++) {
         vm->function_ptrs[i] = module->functions[i].get();
+    }
+
+    // Pre-intern every string constant once at load time. Each BCConstant
+    // caches the resulting StringObject* so the LOAD_CONST opcode can return
+    // it directly — no per-execution hash, no per-execution probe. The
+    // interning call also populates the VM's intern table, so runtime-created
+    // strings with the same content will dedup to the same object.
+    for (u32 fi = 0; fi < vm->function_count; fi++) {
+        BCFunction* func = module->functions[fi].get();
+        for (u32 ci = 0; ci < func->constants.size(); ci++) {
+            BCConstant& c = func->constants[ci];
+            if (c.type == BCConstant::String && c.as_string.obj == nullptr) {
+                c.as_string.obj = string_alloc(vm, c.as_string.data, c.as_string.length);
+            }
+        }
     }
 
     return true;

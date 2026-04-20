@@ -224,6 +224,10 @@ struct BCConstant {
         struct {
             const char* data;
             u32 length;
+            // Cached StringObject pointer — populated once at vm_load_module.
+            // LOAD_CONST returns this directly, skipping the intern-table probe
+            // on the hot path. nullptr until the module is loaded.
+            void* obj;
         } as_string;
     };
 
@@ -261,6 +265,7 @@ struct BCConstant {
         c.type = String;
         c.as_string.data = data;
         c.as_string.length = length;
+        c.as_string.obj = nullptr;
         return c;
     }
 };
