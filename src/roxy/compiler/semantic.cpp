@@ -1442,21 +1442,33 @@ bool SemanticAnalyzer::check_not_field_move(Expr* expr, SourceLocation loc) {
     Type* field_type = expr->resolved_type;
     if (!field_type || !field_type->noncopyable()) return true;
 
-    // Allow moving a noncopyable field out of a local value-struct variable.
-    // After the move, the parent variable is marked as moved (unusable).
-    // The IR builder will emit cleanup for any remaining noncopyable fields.
-    GetExpr& get_expr = expr->get;
-    if (get_expr.object->kind == AstKind::ExprIdentifier) {
-        StringView parent_name = get_expr.object->identifier.name;
-        Type* parent_type = get_expr.object->resolved_type;
+    // Allow moving a noncopyable field out of a local value-struct variable,
+    // including nested chains like `obj.inner.field` provided every link in the
+    // chain is a value struct (no references). A reference type anywhere along
+    // the chain breaks the rule: we can read through `uniq`/`ref`/`weak` but
+    // can't take ownership of storage we don't own. After the move the root
+    // variable is marked moved (unusable); the IR builder skips its scope-exit
+    // destructor so the remaining noncopyable fields leak rather than
+    // double-free.
+    Expr* current = expr->get.object;
+    while (current->kind == AstKind::ExprGet) {
+        Type* parent_type = current->resolved_type;
+        if (!parent_type || parent_type->is_reference() || !parent_type->is_struct()) {
+            error(loc, "cannot move out of a struct field; consider borrowing with 'ref' instead");
+            return false;
+        }
+        current = current->get.object;
+    }
 
-        // Only allow for local value structs (not uniq/ref/weak references)
-        if (parent_type && !parent_type->is_reference() && parent_type->is_struct()) {
-            // Parent must be live (not already moved)
-            Symbol* parent_sym = m_symbols.lookup(parent_name);
-            auto it = parent_sym ? m_move_states.find(parent_sym) : m_move_states.end();
+    if (current->kind == AstKind::ExprIdentifier) {
+        StringView root_name = current->identifier.name;
+        Type* root_type = current->resolved_type;
+
+        if (root_type && !root_type->is_reference() && root_type->is_struct()) {
+            Symbol* root_sym = m_symbols.lookup(root_name);
+            auto it = root_sym ? m_move_states.find(root_sym) : m_move_states.end();
             if (it != m_move_states.end() && it->second == MoveState::Live) {
-                mark_moved(parent_name);
+                mark_moved(root_name);
                 return true;
             }
         }
@@ -3118,11 +3130,12 @@ void SemanticAnalyzer::analyze_for_stmt(Stmt* stmt) {
         }
     }
 
-    if (fs.increment) {
-        analyze_expr(fs.increment);
-    }
-
-    // Save move states after initializer/condition/increment, before loop body
+    // Save move states after initializer/condition, before loop body. The
+    // increment is analyzed AFTER the body to match runtime ordering: in
+    // iteration 1 the body runs against the post-init state, and only then
+    // does the increment fire. Analyzing the increment up-front would make
+    // any moves it performs visible to the body and produce a false positive
+    // on iteration 1 (the body actually sees a live value there).
     MoveStateSnapshot pre_loop_states = save_move_states();
 
     // The loop body may execute zero times — see note in analyze_while_stmt.
@@ -3134,6 +3147,10 @@ void SemanticAnalyzer::analyze_for_stmt(Stmt* stmt) {
     m_symbols.pop_scope();
 
     m_branch_terminates = pre_loop_terminates;
+
+    if (fs.increment) {
+        analyze_expr(fs.increment);
+    }
 
     MoveStateSnapshot post_body_states = save_move_states();
 

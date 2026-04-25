@@ -2813,3 +2813,86 @@ TEST_CASE("E2E - Field move from by-value struct param preserves unrelated field
     CHECK(result.success);
     CHECK(result.value == 2);
 }
+
+// ============================================================================
+// Nested field moves through value-struct chains. `obj.inner.field` is allowed
+// when every link in the chain is a value struct (no references); the root
+// identifier is marked moved.
+// ============================================================================
+
+TEST_CASE("E2E - Nested field move through value-struct chain") {
+    const char* source = R"ROXY(
+        struct Payload { pub items: List<uniq Payload>; }
+        fun new Payload() { self.items = List<uniq Payload>(); }
+
+        struct Inner { pub items: List<uniq Payload>; }
+        fun new Inner() { self.items = List<uniq Payload>(); }
+
+        struct Outer { pub inner: Inner; }
+        fun new Outer() { self.inner = Inner(); }
+
+        struct Target { pub owned: List<uniq Payload>; }
+        fun new Target(src: Outer) { self.owned = src.inner.items; }
+
+        fun main(): i32 {
+            var o: Outer = Outer();
+            o.inner.items.push(uniq Payload());
+            o.inner.items.push(uniq Payload());
+            o.inner.items.push(uniq Payload());
+            var target: Target = Target(o);
+            return i32(target.owned.len());
+        }
+    )ROXY";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 3);
+}
+
+TEST_CASE("E2E - Nested field move rejected when chain crosses a uniq reference") {
+    // A `uniq` link in the chain means the storage is owned through
+    // indirection; moving out from behind the reference is forbidden.
+    const char* source = R"ROXY(
+        struct Item { pub val: i32; }
+        struct Inner { pub items: List<uniq Item>; }
+        fun new Inner() { self.items = List<uniq Item>(); }
+        struct Outer { pub inner: uniq Inner; }
+        fun new Outer() { self.inner = uniq Inner(); }
+
+        fun main(): i32 {
+            var o: Outer = Outer();
+            var stolen: List<uniq Item> = o.inner.items;
+            return 0;
+        }
+    )ROXY";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);
+}
+
+TEST_CASE("E2E - Nested field move from already-moved root is rejected") {
+    // After moving a nested field, the root variable is marked moved. A
+    // subsequent move from the same root must be flagged as use-after-move.
+    const char* source = R"ROXY(
+        struct Payload { pub items: List<uniq Payload>; }
+        fun new Payload() { self.items = List<uniq Payload>(); }
+
+        struct Inner { pub items: List<uniq Payload>; }
+        fun new Inner() { self.items = List<uniq Payload>(); }
+
+        struct Outer { pub a: Inner; pub b: Inner; }
+        fun new Outer() { self.a = Inner(); self.b = Inner(); }
+
+        fun main(): i32 {
+            var o: Outer = Outer();
+            var first: List<uniq Payload> = o.a.items;
+            var second: List<uniq Payload> = o.b.items;
+            return 0;
+        }
+    )ROXY";
+
+    BumpAllocator allocator(65536);
+    BCModule* module = compile(allocator, source);
+    CHECK(module == nullptr);
+}
