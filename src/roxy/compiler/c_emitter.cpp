@@ -179,6 +179,27 @@ void CEmitter::collect_value_types(const IRFunction* func) {
             if (inst->op == IROp::New) {
                 m_pointer_values.insert(inst->result.id);
             }
+            // Container reads with struct value type return a pointer into
+            // the container's backing storage (matches Roxy's "all struct
+            // rvalues are pointers" convention). Tracked as pointer values
+            // so the local declaration emits `StructType* vN;`.
+            if (inst->op == IROp::IndexGet && inst->type && inst->type->is_struct()) {
+                m_pointer_values.insert(inst->result.id);
+            }
+            if (inst->op == IROp::CallNative && inst->type && inst->type->is_struct()) {
+                StringView fn = inst->call.func_name;
+                // The IR-side names for getter natives end in $$get / $$index
+                // / $$pop (post-mangling). Match by suffix.
+                auto ends_with = [](StringView s, const char* suffix) {
+                    u32 sl = static_cast<u32>(strlen(suffix));
+                    return s.size() >= sl &&
+                        memcmp(s.data() + s.size() - sl, suffix, sl) == 0;
+                };
+                if (ends_with(fn, "$$get") || ends_with(fn, "$$index") ||
+                    ends_with(fn, "$$pop")) {
+                    m_pointer_values.insert(inst->result.id);
+                }
+            }
         }
     }
 }
@@ -788,6 +809,35 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             return;
         }
         case IROp::SetField: {
+            // Synthetic `__zero` field: bulk-zero a slot range. The IR builder
+            // emits this from `emit_zero_slots` to clear self's own slots at
+            // constructor entry (and to clear union slots before initialising
+            // a `when`-clause variant). The Roxy IR slot layout matches the
+            // emitted C struct's byte layout (each slot is 4 bytes, fields
+            // declared in order with matching widths, anonymous unions sized
+            // to their largest variant), so slot_offset/slot_count map
+            // directly to byte offsets.
+            if (inst->field.field_name == StringView("__zero", 6)) {
+                out.append("    memset((char*)");
+                if (is_pointer_value(inst->field.object)) {
+                    emit_value(inst->field.object, out);
+                } else {
+                    out.append("&");
+                    emit_value(inst->field.object, out);
+                    if (is_stack_alloc_value(inst->field.object)) {
+                        out.append("_struct");
+                    }
+                }
+                if (inst->field.slot_offset > 0) {
+                    char buf[32];
+                    format_to(buf, sizeof(buf), " + {}", inst->field.slot_offset * 4);
+                    out.append(buf);
+                }
+                char buf[32];
+                format_to(buf, sizeof(buf), ", 0, {});\n", inst->field.slot_count * 4);
+                out.append(buf);
+                return;
+            }
             out.append("    ");
             if (is_scalar_stack_alloc(inst->field.object)) {
                 // Scalar StackAlloc (out/inout): store through pointer
@@ -925,35 +975,70 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         }
 
         case IROp::IndexGet: {
-            // container[index] — emit as roxy_list_get / roxy_map_get
+            // container[index] — runtime returns void* into backing storage.
+            // For struct value type, the result local is a struct pointer (via
+            // collect_value_types). For primitives, dereference at the call
+            // site so C's typed deref handles widening / sign-extension.
+            Type* val_type = inst->type;
+            bool is_struct_val = val_type && val_type->is_struct();
+            const char* fn = inst->index_data.kind == ContainerKind::List
+                ? "roxy_list_get" : "roxy_map_get";
             out.append("    ");
             emit_value(inst->result, out);
-            if (inst->index_data.kind == ContainerKind::List) {
-                out.append(" = roxy_list_get((void*)");
+            out.append(" = ");
+            if (is_struct_val) {
+                out.append("(");
+                emit_type(val_type, out);
+                out.append("*)");
             } else {
-                out.append(" = roxy_map_get((void*)");
+                out.append("*(");
+                emit_type(val_type, out);
+                out.append("*)");
             }
+            out.append(fn);
+            out.append("((void*)");
             emit_value(inst->index_data.container, out);
             out.append(", ");
+            if (inst->index_data.kind == ContainerKind::Map) out.append("(uint64_t)");
             emit_value(inst->index_data.index, out);
             out.append(");\n");
             return;
         }
 
         case IROp::IndexSet: {
-            // container[index] = value — emit as roxy_list_set / roxy_map_insert
-            out.append("    ");
-            if (inst->index_data.kind == ContainerKind::List) {
-                out.append("roxy_list_set((void*)");
+            // container[index] = value — runtime takes a `const void*` pointer
+            // to value bytes. Struct values pass `vN` directly (already a
+            // struct pointer). Primitive values get a brace-scoped stack temp
+            // whose address is passed in.
+            Type* val_type = get_value_type(inst->index_data.value);
+            bool is_struct_val = val_type && val_type->is_struct();
+            const char* fn = inst->index_data.kind == ContainerKind::List
+                ? "roxy_list_set" : "roxy_map_insert";
+            if (is_struct_val) {
+                out.append("    ");
+                out.append(fn);
+                out.append("((void*)");
+                emit_value(inst->index_data.container, out);
+                out.append(", ");
+                if (inst->index_data.kind == ContainerKind::Map) out.append("(uint64_t)");
+                emit_value(inst->index_data.index, out);
+                out.append(", ");
+                emit_value(inst->index_data.value, out);
+                out.append(");\n");
             } else {
-                out.append("roxy_map_insert((void*)");
+                out.append("    { ");
+                emit_type(val_type, out);
+                out.append(" _tmp = ");
+                emit_value(inst->index_data.value, out);
+                out.append("; ");
+                out.append(fn);
+                out.append("((void*)");
+                emit_value(inst->index_data.container, out);
+                out.append(", ");
+                if (inst->index_data.kind == ContainerKind::Map) out.append("(uint64_t)");
+                emit_value(inst->index_data.index, out);
+                out.append(", &_tmp); }\n");
             }
-            emit_value(inst->index_data.container, out);
-            out.append(", ");
-            emit_value(inst->index_data.index, out);
-            out.append(", ");
-            emit_value(inst->index_data.value, out);
-            out.append(");\n");
             return;
         }
 
@@ -1292,7 +1377,13 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
 
             out.append("    ");
             emit_type(inst->type, out);
-            out.push_back(' ');
+            // Struct-typed results that are pointer-tracked (IndexGet of a
+            // struct, getter natives) are stored as `StructType* vN;`.
+            if (is_pointer_value(inst->result) && inst->type && inst->type->is_struct()) {
+                out.append("* ");
+            } else {
+                out.push_back(' ');
+            }
             emit_value(inst->result, out);
             out.append(";\n");
         }
@@ -1555,24 +1646,58 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     bool is_map_index_mut = name_eq(c_func_name, "roxy_map_index_mut");
     bool is_map_iter_key_at = name_eq(c_func_name, "roxy_map_iter_key_at");
     bool is_map_iter_value_at = name_eq(c_func_name, "roxy_map_iter_value_at");
-    bool needs_result_cast = is_list_pop || is_list_get || is_map_get || is_map_index ||
-                             is_map_iter_key_at || is_map_iter_value_at;
 
-    // Determine which argument positions need uint64_t cast for type-erased container ops
-    // list_push(self, value) -> value at index 1
-    // list_set(self, index, value) -> value at index 2
-    // map_insert(self, key, value) -> key at 1, value at 2
-    // map_contains(self, key) -> key at 1
-    // map_get(self, key) -> key at 1
-    // map_index(self, key) -> key at 1
-    // map_index_mut(self, key, value) -> key at 1, value at 2
+    // Value-passing natives: arg index of the value (rest take fixed-width
+    // primitives or pointers and don't need pointer-passing).
+    int value_arg_idx = -1;
+    if (is_list_push)                          value_arg_idx = 1;
+    else if (is_list_set)                      value_arg_idx = 2;
+    else if (is_map_insert || is_map_index_mut) value_arg_idx = 2;
 
-    out.append("    ");
+    Type* value_arg_type = nullptr;
+    bool value_arg_is_struct = false;
+    if (value_arg_idx >= 0 && static_cast<u32>(value_arg_idx) < inst->call.args.size()) {
+        value_arg_type = get_value_type(inst->call.args[value_arg_idx]);
+        if (value_arg_type && value_arg_type->is_struct()) value_arg_is_struct = true;
+    }
+
+    // Pointer-returning natives: result is `void*` from runtime.
+    // For struct return type → cast to (T*); for primitive → deref via *(T*).
+    // map_iter_key_at / map_iter_value_at return uint64_t directly (need a
+    // C-style cast to inst->type so e.g. an int32_t result narrows correctly).
+    bool returns_value_ptr = is_list_pop || is_list_get || is_map_get || is_map_index;
+    bool returns_value_u64 = is_map_iter_key_at || is_map_iter_value_at;
+    bool result_is_struct = inst->type && inst->type->is_struct();
+
+    // Wrap primitive value args in a brace-scoped stack temp so we can pass
+    // its address. Only fires for void-returning value-passing natives.
+    bool needs_value_temp = value_arg_idx >= 0 && !value_arg_is_struct && value_arg_type;
+
+    if (needs_value_temp) {
+        out.append("    { ");
+        emit_type(value_arg_type, out);
+        out.append(" _tmp = ");
+        emit_value(inst->call.args[value_arg_idx], out);
+        out.append("; ");
+    } else {
+        out.append("    ");
+    }
+
     bool has_result = inst->result.is_valid() && inst->type && inst->type->kind != TypeKind::Void;
     if (has_result) {
         emit_value(inst->result, out);
         out.append(" = ");
-        if (needs_result_cast) {
+        if (returns_value_ptr) {
+            if (result_is_struct) {
+                out.append("(");
+                emit_type(inst->type, out);
+                out.append("*)");
+            } else {
+                out.append("*(");
+                emit_type(inst->type, out);
+                out.append("*)");
+            }
+        } else if (returns_value_u64) {
             out.append("(");
             emit_type(inst->type, out);
             out.append(")");
@@ -1583,18 +1708,25 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     for (u32 i = 0; i < inst->call.args.size(); i++) {
         if (i > 0) out.append(", ");
 
-        // Check if this argument needs a uint64_t cast
+        // Key arg of map ops: cast to uint64_t (key is always 8 bytes).
         bool cast_to_u64 = false;
-        if (is_list_push && i == 1) cast_to_u64 = true;
-        if (is_list_set && i == 2) cast_to_u64 = true;
-        if (is_map_insert && (i == 1 || i == 2)) cast_to_u64 = true;
+        if (is_map_insert && i == 1) cast_to_u64 = true;
         if (is_map_contains && i == 1) cast_to_u64 = true;
         if ((is_map_get || is_map_index) && i == 1) cast_to_u64 = true;
-        if (is_map_index_mut && (i == 1 || i == 2)) cast_to_u64 = true;
+        if (is_map_index_mut && i == 1) cast_to_u64 = true;
 
-        if (cast_to_u64) {
-            out.append("(uint64_t)");
+        // Value arg: if struct, pass the pointer directly. If primitive,
+        // pass &_tmp from the brace-scoped temp.
+        if (static_cast<int>(i) == value_arg_idx) {
+            if (value_arg_is_struct) {
+                emit_value(inst->call.args[i], out);
+            } else {
+                out.append("&_tmp");
+            }
+            continue;
         }
+
+        if (cast_to_u64) out.append("(uint64_t)");
         emit_value(inst->call.args[i], out);
     }
 
@@ -1607,7 +1739,9 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
         out.append(", 0");
     }
 
-    out.append(");\n");
+    out.append(");");
+    if (needs_value_temp) out.append(" }");
+    out.append("\n");
 }
 
 void CEmitter::emit_source(const IRModule* module, String& output) {

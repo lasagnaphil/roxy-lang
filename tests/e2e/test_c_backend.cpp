@@ -1032,3 +1032,99 @@ TEST_CASE("E2E - C Backend: Map len") {
     CHECK(result.run_success);
     CHECK(result.exit_code == 3);
 }
+
+// ===========================================================================
+// Variable-sized container values (ported from VM in roxy_rt.cpp)
+// ===========================================================================
+
+TEST_CASE("E2E - C Backend: Map<i32, i64> 2-slot value") {
+    // value_slot_count = 2, value_is_inline = 1.
+    const char* source = R"(
+        fun main(): i32 {
+            var m: Map<i32, i64> = Map<i32, i64>();
+            m.insert(1, 9000000000l);
+            m.insert(2, 33000000000l);
+            var v: i64 = m.get(1) + m.get(2);
+            return i32(v / 1000000000l);
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("E2E - C Backend: Map<i32, struct> value") {
+    // value_slot_count = 2 (Point has 2 i32 fields), value_is_inline = 0.
+    const char* source = R"(
+        struct Point { x: i32; y: i32; }
+        fun main(): i32 {
+            var m: Map<i32, Point> = Map<i32, Point>();
+            m.insert(1, Point { x = 10, y = 32 });
+            var got: Point = m.get(1);
+            return got.x + got.y;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("E2E - C Backend: Map<i32, struct> rehash exercises ping-pong scratch buffers") {
+    // Insert 25 entries to cross the 80% load threshold (default capacity 8 →
+    // grow to 16 → grow to 32). map_grow re-inserts every entry through
+    // map_insert_internal, where the value-being-placed aliases the OLD
+    // bucket array — without ping-pong scratch buffers this corrupts swaps.
+    const char* source = R"(
+        struct Pair { a: i32; b: i32; }
+        fun main(): i32 {
+            var m: Map<i32, Pair> = Map<i32, Pair>();
+            for (var i: i32 = 0; i < 25; i = i + 1) {
+                m.insert(i, Pair { a = i, b = i * 2 });
+            }
+            var p: Pair = m.get(7);
+            return p.a + p.b + 21;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("E2E - C Backend: List<struct> element") {
+    const char* source = R"(
+        struct Point { x: i32; y: i32; }
+        fun main(): i32 {
+            var lst: List<Point> = List<Point>();
+            lst.push(Point { x = 1, y = 10 });
+            lst.push(Point { x = 2, y = 20 });
+            lst.push(Point { x = 9, y = 0 });
+            return lst[0].x + lst[1].y + lst[2].x + 12;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("E2E - C Backend: Map<i32, i32> negative round-trip") {
+    // Sign-extension check: storing negative i32 values and reading them back
+    // must preserve the sign. The runtime returns void*; the emitter
+    // dereferences as `*(int32_t*)` so C's typed-deref does the right thing.
+    const char* source = R"(
+        fun main(): i32 {
+            var m: Map<i32, i32> = Map<i32, i32>();
+            m.insert(1, -1);
+            m.insert(2, -41);
+            var s: i32 = m.get(1) + m.get(2);
+            return -s;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}

@@ -186,21 +186,30 @@ void* roxy_string_to_string(void* val) {
 
 // ===== List Operations =====
 
+static inline uint32_t* list_element_ptr(roxy_list_header* hdr, uint32_t index) {
+    return hdr->elements + static_cast<size_t>(index) * hdr->element_slot_count;
+}
+
 void* roxy_list_alloc(int32_t element_slot_count, int32_t element_is_inline) {
-    (void)element_slot_count;  // C backend uses uint64_t elements; multi-slot deferred
-    (void)element_is_inline;
     void* data = roxy_alloc(sizeof(roxy_list_header), ROXY_TYPEID_LIST);
     if (!data) return nullptr;
-    // Already zero-initialized by roxy_alloc
+    auto* hdr = static_cast<roxy_list_header*>(data);
+    hdr->element_slot_count = element_slot_count > 0
+        ? static_cast<uint32_t>(element_slot_count) : 2u;
+    hdr->element_is_inline = element_is_inline != 0 ? 1 : 0;
+    // length/capacity/elements already zero-initialised by roxy_alloc.
     return data;
 }
 
 void roxy_list_init(void* self, int32_t capacity) {
     auto* hdr = static_cast<roxy_list_header*>(self);
     hdr->length = 0;
+    // Preserve element_slot_count / element_is_inline set by roxy_list_alloc.
     if (capacity > 0) {
         hdr->capacity = static_cast<uint32_t>(capacity);
-        hdr->elements = static_cast<uint64_t*>(calloc(capacity, sizeof(uint64_t)));
+        hdr->elements = static_cast<uint32_t*>(calloc(
+            static_cast<size_t>(capacity) * hdr->element_slot_count,
+            sizeof(uint32_t)));
     } else {
         hdr->capacity = 0;
         hdr->elements = nullptr;
@@ -223,49 +232,65 @@ int32_t roxy_list_cap(void* self) {
     return static_cast<int32_t>(static_cast<roxy_list_header*>(self)->capacity);
 }
 
-void roxy_list_push(void* self, uint64_t value) {
+void roxy_list_push(void* self, const void* value_src) {
     auto* hdr = static_cast<roxy_list_header*>(self);
+    uint32_t esc = hdr->element_slot_count;
     if (hdr->length >= hdr->capacity) {
         uint32_t new_cap = hdr->capacity == 0 ? 8 : hdr->capacity * 2;
-        auto* new_elements = static_cast<uint64_t*>(realloc(hdr->elements, new_cap * sizeof(uint64_t)));
+        // malloc + memcpy + free rather than realloc — keeps the path uniform
+        // for variable element widths and matches the VM's growth strategy.
+        auto* new_elements = static_cast<uint32_t*>(malloc(
+            sizeof(uint32_t) * esc * new_cap));
         if (!new_elements) return;
+        if (hdr->elements) {
+            memcpy(new_elements, hdr->elements, sizeof(uint32_t) * esc * hdr->length);
+            free(hdr->elements);
+        }
         hdr->elements = new_elements;
         hdr->capacity = new_cap;
     }
-    hdr->elements[hdr->length++] = value;
+    memcpy(list_element_ptr(hdr, hdr->length), value_src, sizeof(uint32_t) * esc);
+    hdr->length++;
 }
 
-uint64_t roxy_list_pop(void* self) {
+void* roxy_list_pop(void* self) {
     auto* hdr = static_cast<roxy_list_header*>(self);
     assert(hdr->length > 0);
-    return hdr->elements[--hdr->length];
+    hdr->length--;
+    // Return a pointer to the now-out-of-bounds slot; bytes remain valid until
+    // the next push (matches the VM's list_pop_ptr contract).
+    return list_element_ptr(hdr, hdr->length);
 }
 
-uint64_t roxy_list_get(void* self, int32_t index) {
+void* roxy_list_get(void* self, int32_t index) {
     auto* hdr = static_cast<roxy_list_header*>(self);
     assert(index >= 0 && static_cast<uint32_t>(index) < hdr->length);
-    return hdr->elements[index];
+    return list_element_ptr(hdr, static_cast<uint32_t>(index));
 }
 
-void roxy_list_set(void* self, int32_t index, uint64_t value) {
+void roxy_list_set(void* self, int32_t index, const void* value_src) {
     auto* hdr = static_cast<roxy_list_header*>(self);
     assert(index >= 0 && static_cast<uint32_t>(index) < hdr->length);
-    hdr->elements[index] = value;
+    memcpy(list_element_ptr(hdr, static_cast<uint32_t>(index)), value_src,
+           sizeof(uint32_t) * hdr->element_slot_count);
 }
 
 void* roxy_list_copy(void* src) {
     if (!src) return nullptr;
     auto* src_hdr = static_cast<roxy_list_header*>(src);
 
-    void* dst = roxy_list_alloc(2, 1);
+    void* dst = roxy_list_alloc(static_cast<int32_t>(src_hdr->element_slot_count),
+                                static_cast<int32_t>(src_hdr->element_is_inline));
     if (!dst) return nullptr;
 
     auto* dst_hdr = static_cast<roxy_list_header*>(dst);
     if (src_hdr->capacity > 0) {
         dst_hdr->length = src_hdr->length;
         dst_hdr->capacity = src_hdr->capacity;
-        dst_hdr->elements = static_cast<uint64_t*>(malloc(src_hdr->capacity * sizeof(uint64_t)));
-        memcpy(dst_hdr->elements, src_hdr->elements, src_hdr->length * sizeof(uint64_t));
+        dst_hdr->elements = static_cast<uint32_t*>(malloc(
+            sizeof(uint32_t) * src_hdr->element_slot_count * src_hdr->capacity));
+        memcpy(dst_hdr->elements, src_hdr->elements,
+               sizeof(uint32_t) * src_hdr->element_slot_count * src_hdr->length);
     }
     return dst;
 }
@@ -409,12 +434,17 @@ static bool map_keys_equal(uint64_t a, uint64_t b, uint8_t key_kind) {
     return a == b;
 }
 
+static inline uint32_t* map_value_ptr(const roxy_map_header* hdr, uint32_t pos) {
+    return hdr->values + static_cast<size_t>(pos) * hdr->value_slot_count;
+}
+
 static void map_alloc_buckets(roxy_map_header* hdr, uint32_t capacity) {
     assert(capacity > 0 && (capacity & (capacity - 1)) == 0);
     hdr->capacity = capacity;
     hdr->distances = static_cast<uint8_t*>(calloc(capacity, sizeof(uint8_t)));
     hdr->keys = static_cast<uint64_t*>(calloc(capacity, sizeof(uint64_t)));
-    hdr->values = static_cast<uint64_t*>(calloc(capacity, sizeof(uint64_t)));
+    hdr->values = static_cast<uint32_t*>(calloc(
+        static_cast<size_t>(capacity) * hdr->value_slot_count, sizeof(uint32_t)));
 }
 
 static void map_free_buckets(roxy_map_header* hdr) {
@@ -427,29 +457,52 @@ static void map_free_buckets(roxy_map_header* hdr) {
     hdr->capacity = 0;
 }
 
-static void map_insert_internal(roxy_map_header* hdr, uint64_t key, uint64_t value) {
+// Insert without grow check (used during rehash).
+// `value_src` points at `value_slot_count * 4` bytes to copy into the slot.
+//
+// Robin Hood with variable-sized values needs two scratch buffers so the
+// value being placed survives multiple displacements: each swap overwrites
+// one buffer with the evicted entry while the other keeps the value being
+// placed. Stack-allocate for small values; heap fallback for very wide
+// structs. The first memcpy of `value_src` into `buf_a` defends against
+// `value_src` aliasing the bucket array (the map_grow rehash case).
+static void map_insert_internal(roxy_map_header* hdr, uint64_t key, const uint32_t* value_src) {
     uint32_t mask = hdr->capacity - 1;
     uint64_t hash = map_hash_key(key, hdr->key_kind);
     uint32_t pos = static_cast<uint32_t>(hash) & mask;
     uint8_t dist = 1;
+    uint32_t vsc = hdr->value_slot_count;
+
+    uint32_t stack_a[16];
+    uint32_t stack_b[16];
+    uint32_t* buf_a = (vsc <= 16) ? stack_a : static_cast<uint32_t*>(malloc(sizeof(uint32_t) * vsc));
+    uint32_t* buf_b = (vsc <= 16) ? stack_b : static_cast<uint32_t*>(malloc(sizeof(uint32_t) * vsc));
+
+    memcpy(buf_a, value_src, sizeof(uint32_t) * vsc);
+    uint32_t* src = buf_a;
+    uint32_t* scratch = buf_b;
 
     while (true) {
         if (hdr->distances[pos] == 0) {
             hdr->distances[pos] = dist;
             hdr->keys[pos] = key;
-            hdr->values[pos] = value;
+            memcpy(map_value_ptr(hdr, pos), src, sizeof(uint32_t) * vsc);
+            if (buf_a != stack_a) free(buf_a);
+            if (buf_b != stack_b) free(buf_b);
             return;
         }
         if (hdr->distances[pos] < dist) {
             uint8_t tmp_dist = hdr->distances[pos];
             uint64_t tmp_key = hdr->keys[pos];
-            uint64_t tmp_val = hdr->values[pos];
+            memcpy(scratch, map_value_ptr(hdr, pos), sizeof(uint32_t) * vsc);
             hdr->distances[pos] = dist;
             hdr->keys[pos] = key;
-            hdr->values[pos] = value;
+            memcpy(map_value_ptr(hdr, pos), src, sizeof(uint32_t) * vsc);
             dist = tmp_dist;
             key = tmp_key;
-            value = tmp_val;
+            uint32_t* tmp = src;
+            src = scratch;
+            scratch = tmp;
         }
         pos = (pos + 1) & mask;
         dist++;
@@ -459,9 +512,10 @@ static void map_insert_internal(roxy_map_header* hdr, uint64_t key, uint64_t val
 
 static void map_grow(roxy_map_header* hdr) {
     uint32_t old_capacity = hdr->capacity;
-    uint8_t* old_distances = hdr->distances;
+    uint8_t*  old_distances = hdr->distances;
     uint64_t* old_keys = hdr->keys;
-    uint64_t* old_values = hdr->values;
+    uint32_t* old_values = hdr->values;
+    uint32_t vsc = hdr->value_slot_count;
 
     uint32_t new_capacity = old_capacity == 0 ? 8 : old_capacity * 2;
     map_alloc_buckets(hdr, new_capacity);
@@ -469,7 +523,8 @@ static void map_grow(roxy_map_header* hdr) {
 
     for (uint32_t i = 0; i < old_capacity; i++) {
         if (old_distances[i] != 0) {
-            map_insert_internal(hdr, old_keys[i], old_values[i]);
+            const uint32_t* old_val_ptr = old_values + static_cast<size_t>(i) * vsc;
+            map_insert_internal(hdr, old_keys[i], old_val_ptr);
             hdr->length++;
         }
     }
@@ -479,10 +534,13 @@ static void map_grow(roxy_map_header* hdr) {
     free(old_values);
 }
 
-void* roxy_map_alloc() {
+void* roxy_map_alloc(int32_t value_slot_count, int32_t value_is_inline) {
     void* data = roxy_alloc(sizeof(roxy_map_header), ROXY_TYPEID_MAP);
     if (!data) return nullptr;
-    // Already zero-initialized by roxy_alloc
+    auto* hdr = map_hdr(data);
+    hdr->value_slot_count = value_slot_count > 0
+        ? static_cast<uint8_t>(value_slot_count) : static_cast<uint8_t>(2);
+    hdr->value_is_inline = value_is_inline != 0 ? 1 : 0;
     return data;
 }
 
@@ -494,6 +552,7 @@ void roxy_map_init(void* self, int32_t key_kind, int32_t capacity) {
     hdr->keys = nullptr;
     hdr->values = nullptr;
     hdr->capacity = 0;
+    // value_slot_count / value_is_inline already set by roxy_map_alloc.
 
     if (capacity > 0) {
         uint32_t actual = 8;
@@ -533,11 +592,11 @@ bool roxy_map_contains(void* self, uint64_t key) {
     }
 }
 
-uint64_t roxy_map_get(void* self, uint64_t key) {
+void* roxy_map_get(void* self, uint64_t key) {
     auto* hdr = map_hdr(self);
     if (hdr->capacity == 0 || hdr->length == 0) {
         assert(false && "Map key not found");
-        return 0;
+        return nullptr;
     }
 
     uint32_t mask = hdr->capacity - 1;
@@ -548,19 +607,20 @@ uint64_t roxy_map_get(void* self, uint64_t key) {
     while (true) {
         if (hdr->distances[pos] == 0 || hdr->distances[pos] < dist) {
             assert(false && "Map key not found");
-            return 0;
+            return nullptr;
         }
         if (hdr->distances[pos] == dist &&
             map_keys_equal(hdr->keys[pos], key, hdr->key_kind)) {
-            return hdr->values[pos];
+            return map_value_ptr(hdr, pos);
         }
         pos = (pos + 1) & mask;
         dist++;
     }
 }
 
-void roxy_map_insert(void* self, uint64_t key, uint64_t value) {
+void roxy_map_insert(void* self, uint64_t key, const void* value_src) {
     auto* hdr = map_hdr(self);
+    uint32_t vsc = hdr->value_slot_count;
 
     // Check if key already exists — update in place
     if (hdr->capacity > 0 && hdr->length > 0) {
@@ -574,7 +634,7 @@ void roxy_map_insert(void* self, uint64_t key, uint64_t value) {
             if (hdr->distances[pos] < dist) break;
             if (hdr->distances[pos] == dist &&
                 map_keys_equal(hdr->keys[pos], key, hdr->key_kind)) {
-                hdr->values[pos] = value;
+                memcpy(map_value_ptr(hdr, pos), value_src, sizeof(uint32_t) * vsc);
                 return;
             }
             pos = (pos + 1) & mask;
@@ -587,7 +647,7 @@ void roxy_map_insert(void* self, uint64_t key, uint64_t value) {
         map_grow(hdr);
     }
 
-    map_insert_internal(hdr, key, value);
+    map_insert_internal(hdr, key, static_cast<const uint32_t*>(value_src));
     hdr->length++;
 }
 
@@ -599,6 +659,7 @@ bool roxy_map_remove(void* self, uint64_t key) {
     uint64_t hash = map_hash_key(key, hdr->key_kind);
     uint32_t pos = static_cast<uint32_t>(hash) & mask;
     uint8_t dist = 1;
+    uint32_t vsc = hdr->value_slot_count;
 
     while (true) {
         if (hdr->distances[pos] == 0) return false;
@@ -618,12 +679,13 @@ bool roxy_map_remove(void* self, uint64_t key) {
         if (hdr->distances[next] <= 1) {
             hdr->distances[pos] = 0;
             hdr->keys[pos] = 0;
-            hdr->values[pos] = 0;
+            memset(map_value_ptr(hdr, pos), 0, sizeof(uint32_t) * vsc);
             return true;
         }
         hdr->distances[pos] = hdr->distances[next] - 1;
         hdr->keys[pos] = hdr->keys[next];
-        hdr->values[pos] = hdr->values[next];
+        memcpy(map_value_ptr(hdr, pos), map_value_ptr(hdr, next),
+               sizeof(uint32_t) * vsc);
         pos = next;
     }
 }
@@ -634,19 +696,22 @@ void roxy_map_clear(void* self) {
     if (hdr->capacity > 0) {
         memset(hdr->distances, 0, sizeof(uint8_t) * hdr->capacity);
         memset(hdr->keys, 0, sizeof(uint64_t) * hdr->capacity);
-        memset(hdr->values, 0, sizeof(uint64_t) * hdr->capacity);
+        memset(hdr->values, 0,
+               sizeof(uint32_t) * static_cast<size_t>(hdr->capacity) * hdr->value_slot_count);
     }
 }
 
 void* roxy_map_keys(void* self) {
     auto* hdr = map_hdr(self);
+    // Keys are always u64-sized; the produced List is List<K> where K is one
+    // of the supported key kinds (all fit in u64 — matches VM behavior).
     void* lst = roxy_list_alloc(2, 1);
     if (!lst) return nullptr;
     roxy_list_init(lst, static_cast<int32_t>(hdr->length));
 
     for (uint32_t i = 0; i < hdr->capacity; i++) {
         if (hdr->distances[i] != 0) {
-            roxy_list_push(lst, hdr->keys[i]);
+            roxy_list_push(lst, &hdr->keys[i]);
         }
     }
     return lst;
@@ -654,13 +719,15 @@ void* roxy_map_keys(void* self) {
 
 void* roxy_map_values(void* self) {
     auto* hdr = map_hdr(self);
-    void* lst = roxy_list_alloc(2, 1);
+    // Mirror the value layout into the produced List<V>.
+    void* lst = roxy_list_alloc(static_cast<int32_t>(hdr->value_slot_count),
+                                static_cast<int32_t>(hdr->value_is_inline));
     if (!lst) return nullptr;
     roxy_list_init(lst, static_cast<int32_t>(hdr->length));
 
     for (uint32_t i = 0; i < hdr->capacity; i++) {
         if (hdr->distances[i] != 0) {
-            roxy_list_push(lst, hdr->values[i]);
+            roxy_list_push(lst, map_value_ptr(hdr, i));
         }
     }
     return lst;
@@ -670,7 +737,8 @@ void* roxy_map_copy(void* src) {
     if (!src) return nullptr;
     auto* src_hdr = map_hdr(src);
 
-    void* dst = roxy_map_alloc();
+    void* dst = roxy_map_alloc(static_cast<int32_t>(src_hdr->value_slot_count),
+                               static_cast<int32_t>(src_hdr->value_is_inline));
     if (!dst) return nullptr;
 
     auto* dst_hdr = map_hdr(dst);
@@ -680,17 +748,18 @@ void* roxy_map_copy(void* src) {
         dst_hdr->length = src_hdr->length;
         memcpy(dst_hdr->distances, src_hdr->distances, sizeof(uint8_t) * src_hdr->capacity);
         memcpy(dst_hdr->keys, src_hdr->keys, sizeof(uint64_t) * src_hdr->capacity);
-        memcpy(dst_hdr->values, src_hdr->values, sizeof(uint64_t) * src_hdr->capacity);
+        memcpy(dst_hdr->values, src_hdr->values,
+               sizeof(uint32_t) * static_cast<size_t>(src_hdr->capacity) * src_hdr->value_slot_count);
     }
     return dst;
 }
 
-uint64_t roxy_map_index(void* self, uint64_t key) {
+void* roxy_map_index(void* self, uint64_t key) {
     return roxy_map_get(self, key);
 }
 
-void roxy_map_index_mut(void* self, uint64_t key, uint64_t value) {
-    roxy_map_insert(self, key, value);
+void roxy_map_index_mut(void* self, uint64_t key, const void* value_src) {
+    roxy_map_insert(self, key, value_src);
 }
 
 // ===== Internal map iteration =====
@@ -712,5 +781,13 @@ uint64_t roxy_map_iter_key_at(void* self, int32_t idx) {
 }
 
 uint64_t roxy_map_iter_value_at(void* self, int32_t idx) {
-    return map_hdr(self)->values[idx];
+    // Cleanup-only path: noncopyable values are pointer-sized (≤ 2 slots).
+    // Pack up to 2 u32 slots into a u64 — matches VM's native_map_iter_value_at.
+    auto* hdr = map_hdr(self);
+    uint32_t copy_slots = hdr->value_slot_count <= 2 ? hdr->value_slot_count : 2u;
+    uint64_t packed = 0;
+    memcpy(&packed,
+           hdr->values + static_cast<size_t>(idx) * hdr->value_slot_count,
+           sizeof(uint32_t) * copy_slots);
+    return packed;
 }

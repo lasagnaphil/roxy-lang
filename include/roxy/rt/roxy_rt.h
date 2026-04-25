@@ -92,26 +92,34 @@ void* roxy_string_to_string(void* val);
 
 // ===== List Header =====
 
-// Stored in object data after roxy_object_header
+// Stored in object data after roxy_object_header.
 // Layout: [roxy_object_header][roxy_list_header]
-// Elements stored in a separate malloc'd buffer
+// Elements live in a separate malloc'd buffer of `capacity * element_slot_count`
+// u32 slots; element[i] starts at &elements[i * element_slot_count].
 typedef struct {
     uint32_t length;
     uint32_t capacity;
-    uint64_t* elements;  // Separate malloc'd buffer
+    uint32_t element_slot_count;  // u32 slots per element (1, 2, or N for structs)
+    uint8_t  element_is_inline;   // 1 = primitive packed in slots; 0 = struct (caller provides ptr)
+    uint8_t  _pad[3];
+    uint32_t* elements;
 } roxy_list_header;
 
 // ===== List Operations =====
+//
+// All element reads/writes use byte-pointer values: callers pass a pointer to
+// `element_slot_count * 4` bytes. `*_get` / `*_pop` return pointers into the
+// list's backing storage (valid until the next mutation).
 
 void* roxy_list_alloc(int32_t element_slot_count, int32_t element_is_inline);
-void roxy_list_init(void* self, int32_t capacity);
-void roxy_list_delete(void* self);
+void  roxy_list_init(void* self, int32_t capacity);
+void  roxy_list_delete(void* self);
 int32_t roxy_list_len(void* self);
 int32_t roxy_list_cap(void* self);
-void roxy_list_push(void* self, uint64_t value);
-uint64_t roxy_list_pop(void* self);
-uint64_t roxy_list_get(void* self, int32_t index);
-void roxy_list_set(void* self, int32_t index, uint64_t value);
+void  roxy_list_push(void* self, const void* value_src);
+void* roxy_list_pop(void* self);
+void* roxy_list_get(void* self, int32_t index);
+void  roxy_list_set(void* self, int32_t index, const void* value_src);
 void* roxy_list_copy(void* src);
 
 // ===== Map Key Kind =====
@@ -123,37 +131,45 @@ void* roxy_list_copy(void* src);
 
 // ===== Map Header =====
 
-// Stored in object data after roxy_object_header
+// Stored in object data after roxy_object_header.
 // Layout: [roxy_object_header][roxy_map_header]
-// Separate malloc'd arrays for distances, keys, values
+// Bucket arrays for distances/keys/values are separate malloc'd buffers; the
+// values array holds `capacity * value_slot_count` u32 slots so values bigger
+// than 8 bytes (struct values) live in line.
 typedef struct {
-    uint32_t length;          // Number of live entries
-    uint32_t capacity;        // Number of buckets (power of 2, or 0)
-    uint8_t key_kind;         // ROXY_MAP_KEY_* dispatch tag
-    uint8_t _pad[3];
-    uint8_t* distances;       // Per-bucket Robin Hood distance+1 (0 = empty)
+    uint32_t length;            // Number of live entries
+    uint32_t capacity;          // Number of buckets (power of 2, or 0)
+    uint8_t  key_kind;          // ROXY_MAP_KEY_* dispatch tag
+    uint8_t  value_slot_count;  // u32 slots per value (1, 2, or N for structs)
+    uint8_t  value_is_inline;   // 1 = primitive value; 0 = struct (caller provides ptr)
+    uint8_t  _pad;
+    uint8_t*  distances;        // Per-bucket Robin Hood distance+1 (0 = empty)
     uint64_t* keys;
-    uint64_t* values;
+    uint32_t* values;
 } roxy_map_header;
 
 // ===== Map Operations =====
+//
+// All value reads/writes use byte-pointer values: callers pass a pointer to
+// `value_slot_count * 4` bytes. `*_get` / `*_index` return pointers into the
+// map's backing storage (valid until the next insert/remove).
 
-void* roxy_map_alloc(void);
-void roxy_map_init(void* self, int32_t key_kind, int32_t capacity);
-void roxy_map_delete(void* self);
+void* roxy_map_alloc(int32_t value_slot_count, int32_t value_is_inline);
+void  roxy_map_init(void* self, int32_t key_kind, int32_t capacity);
+void  roxy_map_delete(void* self);
 int32_t roxy_map_len(void* self);
-bool roxy_map_contains(void* self, uint64_t key);
-uint64_t roxy_map_get(void* self, uint64_t key);
-void roxy_map_insert(void* self, uint64_t key, uint64_t value);
-bool roxy_map_remove(void* self, uint64_t key);
-void roxy_map_clear(void* self);
+bool  roxy_map_contains(void* self, uint64_t key);
+void* roxy_map_get(void* self, uint64_t key);
+void  roxy_map_insert(void* self, uint64_t key, const void* value_src);
+bool  roxy_map_remove(void* self, uint64_t key);
+void  roxy_map_clear(void* self);
 void* roxy_map_keys(void* self);
 void* roxy_map_values(void* self);
 void* roxy_map_copy(void* src);
 
-// Map index operators (same as get/insert but different native name)
-uint64_t roxy_map_index(void* self, uint64_t key);
-void roxy_map_index_mut(void* self, uint64_t key, uint64_t value);
+// Map index operators — same as get/insert under a different native name.
+void* roxy_map_index(void* self, uint64_t key);
+void  roxy_map_index_mut(void* self, uint64_t key, const void* value_src);
 
 // Internal map iteration (used by generated code for noncopyable element cleanup)
 int32_t roxy_map_iter_capacity(void* self);
