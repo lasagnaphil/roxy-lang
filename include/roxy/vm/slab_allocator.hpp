@@ -58,6 +58,22 @@ struct LargeObjectInfo {
     u32 tombstoned : 1;    // true after free_large; vaddr still mapped (zeros)
 };
 
+// Entry in the sorted slab-range index used by find_slab_containing().
+// Slab address ranges are non-overlapping (each is a separate vmem
+// reservation), so a vector sorted by `base` allows binary search:
+// upper_bound on the input pointer yields the first range whose base is
+// strictly greater; the previous entry is the only candidate, and its
+// `end` half-open bound either confirms or rejects containment in O(1).
+//
+// Entries are appended-then-sorted on slab creation; slabs are never
+// torn down outside shutdown(), so the index is monotonically growing
+// during normal operation.
+struct SlabRange {
+    void* base;     // slab base address (inclusive)
+    void* end;      // base + page_count * page_size (exclusive)
+    Slab* slab;     // owning slab pointer
+};
+
 // Main slab allocator
 // Provides memory allocation with tombstoning support for weak references
 struct SlabAllocator {
@@ -70,6 +86,12 @@ struct SlabAllocator {
 
     // Slabs for each size class
     Vector<UniquePtr<Slab>> size_classes[NUM_SIZE_CLASSES];
+
+    // Flat index of all slab ranges across every size class, kept sorted
+    // by base address. Populated by find_or_create_slab(), consulted by
+    // find_slab_containing(). Inline base/end fields make binary search
+    // cache-friendly compared to chasing the per-class UniquePtr<Slab>s.
+    Vector<SlabRange> sorted_slabs;
 
     // Large object tracking (> 4KB)
     // Maps pointer to page count + tombstone state for deallocation

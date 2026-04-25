@@ -653,6 +653,78 @@ TEST_CASE("Stress - Weak reference validation under heavy churn") {
     vm_destroy(&vm);
 }
 
+TEST_CASE("Stress - SlabAllocator sorted-range index correctness") {
+    // Allocate enough objects across every size class to force creation of
+    // many slabs, then verify both that owns()/free() route every pointer
+    // to the correct slab regardless of insertion vs. address order, and
+    // that pointers strictly outside every slab range are rejected.
+    SlabAllocator allocator;
+    REQUIRE(allocator.init());
+
+    constexpr u32 SIZE_CLASSES[] = {32, 64, 128, 256, 512, 1024, 2048, 4096};
+    constexpr u32 NUM_CLASSES = sizeof(SIZE_CLASSES) / sizeof(SIZE_CLASSES[0]);
+
+    // Allocate enough per class to force >=3 slabs of each class.
+    std::vector<void*> all_ptrs;
+    std::vector<u32> all_sizes;
+    for (u32 sc = 0; sc < NUM_CLASSES; sc++) {
+        u32 slots = calc_slots_per_slab(SIZE_CLASSES[sc]);
+        u32 to_alloc = slots * 3 + 7;
+        for (u32 i = 0; i < to_alloc; i++) {
+            u64 gen;
+            void* p = allocator.alloc(SIZE_CLASSES[sc], &gen);
+            REQUIRE(p != nullptr);
+            // Stamp size class index into the first byte so we can verify
+            // we read it back after the shuffled-free pass.
+            *static_cast<u8*>(p) = static_cast<u8>(sc);
+            all_ptrs.push_back(p);
+            all_sizes.push_back(SIZE_CLASSES[sc]);
+        }
+    }
+
+    // owns() must accept every live pointer regardless of allocation order.
+    for (size_t i = 0; i < all_ptrs.size(); i++) {
+        CHECK(allocator.owns(all_ptrs[i]));
+    }
+
+    // A stack-allocated pointer must NOT be reported as owned, exercising
+    // the upper_bound boundary at both ends of the sorted index.
+    int stack_var;
+    CHECK(!allocator.owns(&stack_var));
+
+    // Verify in-slab interior pointers route the same as base pointers.
+    // For a 256-byte slot, ptr+128 is still inside the same slab, so
+    // owns() should return true.
+    for (size_t i = 0; i < all_ptrs.size(); i++) {
+        u32 sz = all_sizes[i];
+        if (sz < 16) continue;
+        void* mid = static_cast<u8*>(all_ptrs[i]) + (sz / 2);
+        CHECK(allocator.owns(mid));
+    }
+
+    // Shuffle and free in random order; bug surface is highest when the
+    // free order is not the alloc order, since that's exactly the case
+    // where the old linear scan happened to short-circuit on the first
+    // size-class match by luck.
+    std::mt19937 rng(0xC0FFEE);
+    std::vector<size_t> order(all_ptrs.size());
+    for (size_t i = 0; i < order.size(); i++) order[i] = i;
+    std::shuffle(order.begin(), order.end(), rng);
+
+    for (size_t i : order) {
+        // Confirm the stamp survived between alloc and free — if free()
+        // routed to the wrong slab, the slot would be tombstoned in
+        // someone else's slab and this would mis-account live_count there.
+        CHECK(*static_cast<u8*>(all_ptrs[i]) ==
+              static_cast<u8>(std::find(std::begin(SIZE_CLASSES),
+                                        std::end(SIZE_CLASSES), all_sizes[i])
+                              - std::begin(SIZE_CLASSES)));
+        allocator.free(all_ptrs[i]);
+    }
+
+    allocator.shutdown();
+}
+
 TEST_CASE("Stress - SlabAllocator pointer alignment") {
     SlabAllocator allocator;
     REQUIRE(allocator.init());

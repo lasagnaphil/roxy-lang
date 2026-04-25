@@ -1,6 +1,7 @@
 #include "roxy/vm/slab_allocator.hpp"
 #include "roxy/vm/vmem.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <cassert>
 
@@ -104,6 +105,10 @@ void SlabAllocator::shutdown() {
         size_classes[i].clear();
     }
 
+    // Drop the sorted slab-range index — its entries point into Slab
+    // structs that the per-class UniquePtrs above just released.
+    sorted_slabs.clear();
+
     // Free large objects (both live and tombstoned)
     for (auto& [ptr, info] : large_objects) {
         VirtualMemoryOps::release(ptr, static_cast<u64>(info.page_count) * m_page_size);
@@ -175,6 +180,20 @@ Slab* SlabAllocator::find_or_create_slab(u32 class_idx) {
 
     Slab* result = slab.get();
     size_classes[class_idx].push_back(std::move(slab));
+
+    // Register the new range in the sorted index. Slab vmem reservations
+    // come back at arbitrary addresses, so we have to insert in order
+    // rather than appending. Insertion is O(N) for the shift but slab
+    // creation is rare relative to alloc/free traffic.
+    SlabRange range;
+    range.base = result->base_addr;
+    range.end = reinterpret_cast<u8*>(result->base_addr) + slab_size;
+    range.slab = result;
+    auto* insert_pos = std::upper_bound(
+        sorted_slabs.begin(), sorted_slabs.end(), range.base,
+        [](void* p, const SlabRange& r) { return p < r.base; });
+    sorted_slabs.insert(insert_pos, range);
+
     return result;
 }
 
@@ -251,34 +270,31 @@ void* SlabAllocator::alloc(u32 size, u64* out_generation) {
     }
 }
 
+// Binary search the sorted slab-range index. Slab address ranges never
+// overlap, so upper_bound on the input pointer either returns
+// sorted_slabs.begin() (no candidate — pointer falls before every range)
+// or points past the unique candidate range, which is the entry just
+// before. A final half-open bound check confirms membership.
 Slab* SlabAllocator::find_slab_containing(void* ptr) {
-    for (u32 i = 0; i < NUM_SIZE_CLASSES; i++) {
-        for (auto& slab : size_classes[i]) {
-            u8* base = reinterpret_cast<u8*>(slab->base_addr);
-            u8* end = base + static_cast<u64>(slab->page_count) * m_page_size;
-            u8* p = reinterpret_cast<u8*>(ptr);
+    if (sorted_slabs.empty()) return nullptr;
 
-            if (p >= base && p < end) {
-                return slab.get();
-            }
-        }
-    }
-    return nullptr;
+    auto* it = std::upper_bound(
+        sorted_slabs.begin(), sorted_slabs.end(), ptr,
+        [](void* p, const SlabRange& r) { return p < r.base; });
+    if (it == sorted_slabs.begin()) return nullptr;
+    --it;
+    return (ptr < it->end) ? it->slab : nullptr;
 }
 
 const Slab* SlabAllocator::find_slab_containing(void* ptr) const {
-    for (u32 i = 0; i < NUM_SIZE_CLASSES; i++) {
-        for (const auto& slab : size_classes[i]) {
-            const u8* base = reinterpret_cast<const u8*>(slab->base_addr);
-            const u8* end = base + static_cast<u64>(slab->page_count) * m_page_size;
-            const u8* p = reinterpret_cast<const u8*>(ptr);
+    if (sorted_slabs.empty()) return nullptr;
 
-            if (p >= base && p < end) {
-                return slab.get();
-            }
-        }
-    }
-    return nullptr;
+    auto* it = std::upper_bound(
+        sorted_slabs.begin(), sorted_slabs.end(), ptr,
+        [](void* p, const SlabRange& r) { return p < r.base; });
+    if (it == sorted_slabs.begin()) return nullptr;
+    --it;
+    return (ptr < it->end) ? it->slab : nullptr;
 }
 
 void SlabAllocator::free_in_slab(Slab* slab, u32 slot_idx) {
