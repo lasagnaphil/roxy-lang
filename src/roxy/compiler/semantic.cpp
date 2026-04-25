@@ -202,6 +202,47 @@ void SemanticAnalyzer::run_declaration_passes(Program* program) {
         }
     }
 
+    if (!m_type_env.eq_type()) {
+        Type* eq_trait_type = m_types.trait_type(StringView("Eq", 2), nullptr);
+        m_type_env.set_eq_type(eq_trait_type);
+        m_type_env.register_trait_type(StringView("Eq", 2), eq_trait_type);
+
+        // Required method: fun Eq.eq(other: Self): bool
+        // We don't have a Self placeholder type set up here, but the runtime
+        // doesn't enforce parameter types on trait methods (the trampoline
+        // generates the dispatch with the concrete type substituted). For
+        // primitives, we register a method that ignores `other`'s type — the
+        // bytecode-level eq op handles the actual comparison.
+        TraitMethodInfo trait_method_info;
+        trait_method_info.name = StringView("eq", 2);
+        trait_method_info.param_types = Span<Type*>(nullptr, 0);
+        trait_method_info.return_type = m_types.bool_type();
+        trait_method_info.decl = nullptr;
+        trait_method_info.has_default = false;
+
+        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
+            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
+        tmi_data[0] = trait_method_info;
+        eq_trait_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
+
+        TypeKind eq_kinds[] = {
+            TypeKind::Bool,
+            TypeKind::I8, TypeKind::I16, TypeKind::I32, TypeKind::I64,
+            TypeKind::U8, TypeKind::U16, TypeKind::U32, TypeKind::U64,
+            TypeKind::F32, TypeKind::F64,
+            TypeKind::String
+        };
+        for (TypeKind tk : eq_kinds) {
+            MethodInfo method_info;
+            method_info.name = StringView("eq", 2);
+            method_info.param_types = Span<Type*>(nullptr, 0);
+            method_info.return_type = m_types.bool_type();
+            method_info.decl = nullptr;
+            m_types.register_primitive_method(tk, method_info);
+            m_types.register_primitive_trait(tk, eq_trait_type);
+        }
+    }
+
     if (!m_type_env.exception_type()) {
         Type* exception_trait_type = m_types.trait_type(StringView("Exception", 9), nullptr);
         m_type_env.set_exception_type(exception_trait_type);
