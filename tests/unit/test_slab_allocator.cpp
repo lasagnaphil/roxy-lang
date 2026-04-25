@@ -653,6 +653,126 @@ TEST_CASE("Stress - Weak reference validation under heavy churn") {
     vm_destroy(&vm);
 }
 
+TEST_CASE("Unit - SlabAllocator recycles freed slots into the free list") {
+    // Mixed-lifetime workloads used to fragment slabs permanently because
+    // freed slots stayed tombstoned forever. After recycling, freeing a
+    // slot must make it available to the next alloc of the same size
+    // class, so a steady-state alloc/free loop should not grow the
+    // working-set slab count past the high-watermark.
+    SlabAllocator allocator;
+    REQUIRE(allocator.init());
+
+    u32 slots = calc_slots_per_slab(32);
+    constexpr u32 LIVE_AT_ONCE = 16;
+
+    // Fill enough to force exactly one slab. Then free + re-alloc many
+    // times — the slab count must not grow.
+    std::vector<void*> live(LIVE_AT_ONCE, nullptr);
+    u64 gen;
+    for (u32 i = 0; i < LIVE_AT_ONCE; i++) {
+        live[i] = allocator.alloc(32, &gen);
+        REQUIRE(live[i] != nullptr);
+    }
+
+    constexpr u32 CYCLES = 1000;
+    for (u32 c = 0; c < CYCLES; c++) {
+        u32 idx = c % LIVE_AT_ONCE;
+        allocator.free(live[idx]);
+        live[idx] = allocator.alloc(32, &gen);
+        REQUIRE(live[idx] != nullptr);
+    }
+
+    // After 1000 cycles with only LIVE_AT_ONCE live slots, the allocator
+    // must still fit inside a single slab — proves recycling actually
+    // worked rather than secretly growing fresh slabs each cycle.
+    CHECK(allocator.size_classes[0].size() == 1);
+    (void)slots;
+
+    for (u32 i = 0; i < LIVE_AT_ONCE; i++) {
+        allocator.free(live[i]);
+    }
+    allocator.shutdown();
+}
+
+TEST_CASE("Unit - SlabAllocator weak refs survive recycle correctly") {
+    // The recycle path's safety relies entirely on the 64-bit random
+    // weak_generation: after a slot is recycled to a new occupant, any
+    // outstanding weak ref to the old occupant must still reject. This
+    // test is the canary for that invariant.
+    RoxyVM vm;
+    REQUIRE(vm_init(&vm, VMConfig()));
+
+    u32 type_id = register_object_type("RecycleProbe", 16, nullptr);
+
+    void* a = object_alloc(&vm, type_id, 16);
+    REQUIRE(a != nullptr);
+    u64 gen_a = weak_ref_create(a);
+    REQUIRE(gen_a != 0);
+    CHECK(weak_ref_valid(a, gen_a));
+
+    object_free(&vm, a);
+    // Slot is now FREE; weak_generation reads as zero, is_alive() false.
+    CHECK(!weak_ref_valid(a, gen_a));
+
+    // Force the freshly-freed slot to be the next pop from the free list
+    // by allocating immediately. Same size class → same slab → recycling
+    // pops the most-recently-freed slot (LIFO).
+    void* b = object_alloc(&vm, type_id, 16);
+    REQUIRE(b != nullptr);
+    CHECK(b == a);  // confirm we actually recycled the slot
+    u64 gen_b = weak_ref_create(b);
+    CHECK(gen_b != 0);
+    CHECK(gen_b != gen_a);  // fresh random gen, distinct from old
+
+    // The old weak ref must now reject: slot reads as alive (b's gen)
+    // but the gen does not match the cached gen_a.
+    CHECK(!weak_ref_valid(a, gen_a));
+    // The new weak ref accepts.
+    CHECK(weak_ref_valid(b, gen_b));
+
+    object_free(&vm, b);
+    vm_destroy(&vm);
+}
+
+TEST_CASE("Unit - SlabAllocator reclaim drained slab with FREE slots") {
+    // The old reclaim condition required free_head == 0xFFFFFFFF (every
+    // slot transitioned through ALIVE at least once and stayed
+    // tombstoned). With recycling, a slab can have live_count == 0 while
+    // its free list is non-empty — that case must still be reclaimable,
+    // otherwise drained slabs never release physical memory.
+    SlabAllocator allocator;
+    REQUIRE(allocator.init());
+
+    u32 slots = calc_slots_per_slab(32);
+    // Use only half the slab capacity, then free all. The slab now has
+    // live_count == 0 with `slots / 2` slots still on the free list
+    // (the other half were never allocated to begin with).
+    u32 used = slots / 2;
+    std::vector<void*> ptrs(used);
+    u64 gen;
+    for (u32 i = 0; i < used; i++) {
+        ptrs[i] = allocator.alloc(32, &gen);
+        REQUIRE(ptrs[i] != nullptr);
+    }
+    for (u32 i = 0; i < used; i++) {
+        allocator.free(ptrs[i]);
+    }
+
+    u32 reclaimed = allocator.reclaim_tombstoned();
+    CHECK(reclaimed > 0);
+
+    // After reclaim, find_or_create_slab must skip the reclaimed slab
+    // (free_head was set to 0xFFFFFFFF). A subsequent alloc creates a
+    // new slab rather than handing out slots from remapped memory.
+    CHECK(allocator.size_classes[0].size() == 1);
+    void* fresh = allocator.alloc(32, &gen);
+    REQUIRE(fresh != nullptr);
+    CHECK(allocator.size_classes[0].size() == 2);
+
+    allocator.free(fresh);
+    allocator.shutdown();
+}
+
 TEST_CASE("Stress - SlabAllocator sorted-range index correctness") {
     // Allocate enough objects across every size class to force creation of
     // many slabs, then verify both that owns()/free() route every pointer

@@ -68,36 +68,33 @@ struct VirtualMemoryOps {
 };
 ```
 
-### Tombstoning
+### Tombstoning and Recycling
 
-When an object is freed, it becomes a "tombstone":
-1. `weak_generation` is set to 0 (marking the object as dead)
-2. The entire slot (header + data) is zeroed by the slab allocator
-3. Memory remains mapped (read-only zeros on some platforms)
-4. Weak references can safely check the tombstoned memory (`is_alive()` returns false)
+When an object is freed:
+1. The entire slot (header + data) is zeroed, so `weak_generation` reads as 0 and `is_alive()` returns false.
+2. The slot is pushed back onto its slab's intrusive free list, ready for the next allocation in that size class.
+3. Memory stays mapped throughout, so weak references can keep dereferencing safely (they will see `is_alive() == false` until the slot is re-allocated).
 
-This allows weak references to safely detect invalidation without crashes.
+The intrusive next-pointer is stored at offset `sizeof(ObjectHeader)` (past the header), not at offset 0, so `weak_generation` keeps reading as zero while the slot is parked on the free list.
+
+Safety against stale weak references after recycle is provided by the 64-bit random `weak_generation`: when the slot is reused, the new occupant gets a fresh random generation, so any weak reference still holding the old generation will mismatch and return false. Collision probability is 2⁻⁶⁴ per recycle.
 
 ### Slab Reclamation
 
-Over time, tombstoned slots accumulate and consume physical memory. The allocator provides a reclamation mechanism to release physical memory from fully tombstoned slabs:
+Recycling solves slot-level fragmentation, but a slab whose live set has shrunk to zero still occupies physical memory. The allocator exposes an explicit reclamation pass:
 
 ```cpp
-// Scan all slabs and reclaim fully tombstoned ones
+// Scan all slabs and reclaim drained ones (live_count == 0)
 // Returns number of pages reclaimed
 u32 reclaim_tombstoned();
 ```
 
-A slab is reclaimable when:
-- All slots have been allocated at some point (no free slots remaining)
-- All allocated objects have been freed (all slots are tombstoned)
+A slab is reclaimable when `live_count == 0` — no allocated objects remain. The slab may still have FREE slots reachable from its free list; reclamation:
+- Calls `remap_to_zero()` on the whole slab (releases physical memory, keeps vaddr mapped as zeros).
+- Sets `free_head = 0xFFFFFFFF` so `find_or_create_slab` will not hand out slots from this slab afterwards.
+- Marks the slab as `remapped` to avoid redundant reclamation.
 
-Reclamation calls `remap_to_zero()` on the slab, which:
-- Releases physical memory back to the OS
-- Keeps virtual addresses mapped for safe weak reference reads
-- Marks the slab as `remapped` to avoid redundant reclamation
-
-The `remapped` flag ensures idempotency - calling `reclaim_tombstoned()` multiple times is safe and efficient.
+The `remapped` flag ensures idempotency — calling `reclaim_tombstoned()` multiple times is safe and efficient.
 
 ## Random Generational References
 

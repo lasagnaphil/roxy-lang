@@ -1,4 +1,5 @@
 #include "roxy/vm/slab_allocator.hpp"
+#include "roxy/vm/object.hpp"
 #include "roxy/vm/vmem.hpp"
 
 #include <algorithm>
@@ -45,6 +46,20 @@ u64 RandomGen::next() {
     s1 ^= s1 << 23;
     state[1] = s1 ^ s0 ^ (s1 >> 18) ^ (s0 >> 5);
     return result;
+}
+
+// Free-list link for a recycled slot. Stored at offset sizeof(ObjectHeader)
+// rather than offset 0, because offset 0..7 holds weak_generation: that
+// field MUST read as zero while the slot sits on the free list so weak
+// refs see is_alive() == false during the gap between free and re-alloc.
+// Every size class has slot_size >= 32, so we always have room past the
+// 16-byte header for a u32 next-index. alloc_from_slab() zeroes the slot
+// before returning, clearing this scratch area before the user header
+// is written.
+static constexpr u32 FREE_LIST_OFFSET = sizeof(ObjectHeader);
+
+static inline u32* slot_next_link(void* slot) {
+    return reinterpret_cast<u32*>(static_cast<u8*>(slot) + FREE_LIST_OFFSET);
 }
 
 // SlabAllocator implementation
@@ -169,13 +184,14 @@ Slab* SlabAllocator::find_or_create_slab(u32 class_idx) {
     slab->live_count = 0;
     slab->remapped = false;
 
-    // Initialize slot states and free list
+    // Initialize slot states and free list. Fresh vmem is zeroed by the
+    // OS, so weak_generation at offset 0 is already 0; we only need to
+    // write the next-link past the header.
     slab->states.resize(slab->slot_count);
     for (u32 i = 0; i < slab->slot_count; i++) {
         slab->states[i] = SlotState::FREE;
-        // Store next free index in first bytes of slot (intrusive free list)
-        u32* slot = reinterpret_cast<u32*>(slab->slot_ptr(i));
-        *slot = (i + 1 < slab->slot_count) ? (i + 1) : 0xFFFFFFFF;
+        *slot_next_link(slab->slot_ptr(i)) =
+            (i + 1 < slab->slot_count) ? (i + 1) : 0xFFFFFFFF;
     }
 
     Slab* result = slab.get();
@@ -203,9 +219,10 @@ void* SlabAllocator::alloc_from_slab(Slab* slab, u64* out_generation) {
     // Pop from free list
     u32 slot_idx = slab->free_head;
     void* slot = slab->slot_ptr(slot_idx);
-    slab->free_head = *reinterpret_cast<u32*>(slot);
+    slab->free_head = *slot_next_link(slot);
 
     // Update state
+    assert(slab->states[slot_idx] == SlotState::FREE);
     slab->states[slot_idx] = SlotState::ALIVE;
     slab->live_count++;
     total_allocated++;
@@ -214,7 +231,8 @@ void* SlabAllocator::alloc_from_slab(Slab* slab, u64* out_generation) {
     *out_generation = rng.next();
     if (*out_generation == 0) *out_generation = rng.next();
 
-    // Zero the slot
+    // Zero the slot, including the recycled next-link past the header,
+    // so the freshly returned object starts from a clean state.
     std::memset(slot, 0, slab->slot_size);
 
     return slot;
@@ -299,18 +317,31 @@ const Slab* SlabAllocator::find_slab_containing(void* ptr) const {
 
 void SlabAllocator::free_in_slab(Slab* slab, u32 slot_idx) {
     assert(slot_idx < slab->slot_count);
+    // Catches double-free at this layer (a recycled-then-realloc'd slot
+    // would be ALIVE again, so this fires only if the same generation
+    // is freed twice without an intervening alloc — i.e., true
+    // double-free, not stale-pointer use-after-free).
     assert(slab->states[slot_idx] == SlotState::ALIVE);
 
-    // Zero the entire slot (header becomes all zeros = dead state)
-    std::memset(slab->slot_ptr(slot_idx), 0, slab->slot_size);
+    // Zero the entire slot. weak_generation at offset 0 is now 0, so
+    // any outstanding weak ref reads is_alive() == false until and
+    // unless the slot is re-allocated and stamped with a new gen.
+    void* slot = slab->slot_ptr(slot_idx);
+    std::memset(slot, 0, slab->slot_size);
 
-    // Mark as tombstone (not reusable - weak refs might still point here)
-    slab->states[slot_idx] = SlotState::TOMBSTONE;
+    // Push the slot back onto the intrusive free list. Recycling here
+    // is what closes the fragmentation hole — without it, mixed-lifetime
+    // workloads accumulate dead slots that never become reusable until
+    // every other slot in the slab also dies. Safety against stale weak
+    // refs is provided by the 64-bit random weak_generation: a fresh
+    // alloc into this slot writes a new gen that won't match a cached
+    // gen except by 2^-64 collision. The next-link sits past the header
+    // so weak_generation stays zero while the slot is parked here.
+    *slot_next_link(slot) = slab->free_head;
+    slab->free_head = slot_idx;
+    slab->states[slot_idx] = SlotState::FREE;
     slab->live_count--;
     total_tombstoned++;
-
-    // Note: We do NOT add the slot back to the free list
-    // This ensures weak references can safely read zeros from tombstoned memory
 }
 
 void SlabAllocator::free_large(void* ptr) {
@@ -383,12 +414,24 @@ u32 SlabAllocator::reclaim_tombstoned() {
                 continue;
             }
 
-            // Check if all slots are tombstoned
-            if (slab->all_tombstoned()) {
-                // Remap the slab memory to zeros, releasing physical memory
+            // A drained slab (live_count == 0) may still have FREE slots
+            // reachable from the free list — that was the whole point of
+            // recycling. Reclaiming releases their physical memory; we
+            // also have to disconnect the slab from allocation rotation,
+            // since alloc_from_slab would otherwise hand out slots that
+            // we just remapped. Setting free_head to 0xFFFFFFFF makes
+            // find_or_create_slab skip the slab; the per-slot states are
+            // updated for consistency (debug assertions and future
+            // diagnostic walks). The remapped vaddr stays mapped to
+            // zeros so weak refs continue to read is_alive() == false.
+            if (slab->is_drained()) {
                 u64 slab_size = static_cast<u64>(slab->page_count) * m_page_size;
                 VirtualMemoryOps::remap_to_zero(slab->base_addr, slab_size);
                 slab->remapped = true;
+                slab->free_head = 0xFFFFFFFF;
+                for (u32 s = 0; s < slab->slot_count; s++) {
+                    slab->states[s] = SlotState::FREE;
+                }
                 total_reclaimed += slab->page_count;
             }
         }

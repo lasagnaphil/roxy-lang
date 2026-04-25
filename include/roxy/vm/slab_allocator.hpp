@@ -7,11 +7,16 @@
 
 namespace rx {
 
-// State of a slot within a slab
+// State of a slot within a slab. Freed slots go straight back to FREE
+// and are recycled by future allocations. Weak references stay safe
+// across recycle because the 64-bit random weak_generation differs
+// (with overwhelming probability) between the old and new occupants;
+// during the gap between free and re-alloc the slot's weak_generation
+// reads as zero, so is_alive() returns false. There is no TOMBSTONE
+// bookkeeping state — see free_in_slab() for the freeing path.
 enum class SlotState : u8 {
     FREE,       // Available for allocation
     ALIVE,      // Currently in use
-    TOMBSTONE,  // Freed but not recyclable (weak refs may exist)
 };
 
 // Random number generator (xorshift128+)
@@ -46,9 +51,16 @@ struct Slab {
         return reinterpret_cast<u8*>(base_addr) + static_cast<u64>(index) * slot_size;
     }
 
-    // Check if all slots are tombstoned (can be remapped to zeros)
-    bool all_tombstoned() const {
-        return live_count == 0 && free_head == 0xFFFFFFFF;
+    // True when no live objects remain. Such a slab is eligible for
+    // physical-memory reclamation (remap_to_zero); future allocations
+    // will skip it once reclaim_tombstoned() unlinks it from the free
+    // list. This used to also require free_head == 0xFFFFFFFF (every
+    // slot transitioned through ALIVE at least once, none on free list)
+    // back when freed slots were never recycled — that condition was
+    // rarely met under mixed-lifetime workloads, leading to permanent
+    // fragmentation. With recycling, live_count == 0 alone is enough.
+    bool is_drained() const {
+        return live_count == 0;
     }
 };
 
