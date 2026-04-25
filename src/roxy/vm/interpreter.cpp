@@ -1126,11 +1126,18 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             vm->error = "map index: null map reference";
             return false;
         }
-        const u32* value_ptr = map_get_ptr(map_ptr, regs[decode_c(instr)], &vm->error);
+        MapHeader* header = get_map_header(map_ptr);
+        // Materialize key per the runtime's pointer-taking convention:
+        // inline keys (≤ 8 bytes) live in the register; struct keys hold a
+        // pointer in the register (per IR's struct-arg convention).
+        u8 key_reg = decode_c(instr);
+        const u32* key_src = header->key_is_inline
+            ? reinterpret_cast<const u32*>(&regs[key_reg])
+            : reinterpret_cast<const u32*>(regs[key_reg]);
+        const u32* value_ptr = map_get_ptr(map_ptr, key_src, &vm->error);
         if (!value_ptr) {
             return false;
         }
-        MapHeader* header = get_map_header(map_ptr);
         if (header->value_is_inline) {
             if (header->value_slot_count == 1) {
                 // Sign-extend single-slot integer values (see GET_FIELD comment).
@@ -1156,14 +1163,15 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             return false;
         }
         MapHeader* header = get_map_header(map_ptr);
+        u8 b = decode_b(instr);
         u8 c = decode_c(instr);
-        const u32* value_src;
-        if (header->value_is_inline) {
-            value_src = reinterpret_cast<const u32*>(&regs[c]);
-        } else {
-            value_src = reinterpret_cast<const u32*>(regs[c]);
-        }
-        map_insert(map_ptr, regs[decode_b(instr)], value_src);
+        const u32* key_src = header->key_is_inline
+            ? reinterpret_cast<const u32*>(&regs[b])
+            : reinterpret_cast<const u32*>(regs[b]);
+        const u32* value_src = header->value_is_inline
+            ? reinterpret_cast<const u32*>(&regs[c])
+            : reinterpret_cast<const u32*>(regs[c]);
+        map_insert(map_ptr, key_src, value_src);
         DISPATCH();
     }
 

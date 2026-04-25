@@ -36,9 +36,6 @@ public:
     Type* hash_type() const { return m_hash_type; }
     void set_hash_type(Type* type) { m_hash_type = type; }
 
-    Type* eq_type() const { return m_eq_type; }
-    void set_eq_type(Type* type) { m_eq_type = type; }
-
     Type* exception_type() const { return m_exception_type; }
     void set_exception_type(Type* type) { m_exception_type = type; }
 
@@ -52,7 +49,6 @@ private:
     tsl::robin_map<StringView, Type*> m_trait_types;
     Type* m_printable_type = nullptr;
     Type* m_hash_type = nullptr;
-    Type* m_eq_type = nullptr;
     Type* m_exception_type = nullptr;
 };
 

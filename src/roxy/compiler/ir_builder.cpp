@@ -2806,28 +2806,33 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             user_args[i] = gen_expr(call_expr.arguments[i].expr);
         }
 
-        // Step 1: Allocate empty map with value_slot_count + value_is_inline.
-        // Mirrors the List<T>() construction a few blocks up: we thread the
-        // value layout through to the allocator so the map's value storage can
-        // hold the full struct bytes instead of a single u64 (which previously
-        // stored a dangling stack pointer for struct values — see the "nested
-        // list-map corruption" fix).
+        // Step 1: Allocate empty map with key/value layout. Both keys and
+        // values support variable slot counts; for primitive keys the layout
+        // is 2-slot inline (the u64 register packs the value), for struct
+        // keys the layout matches the struct's slot count and the runtime
+        // expects a pointer to the bytes.
         StringView alloc_name = map_resolved_type->map_info.alloc_native_name;
         i32 alloc_idx = m_registry.get_index(alloc_name);
+        Type* key_type = map_resolved_type->map_info.key_type;
         Type* value_type = map_resolved_type->map_info.value_type;
+        u32 ksc = key_type->is_struct() ? get_type_slot_count(key_type) : 2u;
+        bool key_is_inline = !key_type->is_struct();
         u32 vsc = get_type_slot_count(value_type);
         bool value_is_inline = !value_type->is_struct();
+        ValueId ksc_val = emit_const_int(static_cast<i64>(ksc), m_types.i32_type());
+        ValueId kii_val = emit_const_int(key_is_inline ? 1 : 0, m_types.i32_type());
         ValueId vsc_val = emit_const_int(static_cast<i64>(vsc), m_types.i32_type());
         ValueId vii_val = emit_const_int(value_is_inline ? 1 : 0, m_types.i32_type());
-        Span<ValueId> alloc_args = alloc_span<ValueId>(2);
-        alloc_args[0] = vsc_val;
-        alloc_args[1] = vii_val;
+        Span<ValueId> alloc_args = alloc_span<ValueId>(4);
+        alloc_args[0] = ksc_val;
+        alloc_args[1] = kii_val;
+        alloc_args[2] = vsc_val;
+        alloc_args[3] = vii_val;
         ValueId map_ptr = emit_call_native(alloc_name, alloc_args, expr->resolved_type,
                                             static_cast<u8>(alloc_idx));
 
         // Step 2: Call constructor with [self, key_kind, user_args...]
         // Determine MapKeyKind from key type
-        Type* key_type = map_resolved_type->map_info.key_type;
         i32 key_kind_val = static_cast<i32>(MapKeyKind::Integer); // default
         if (key_type->kind == TypeKind::F32) {
             key_kind_val = static_cast<i32>(MapKeyKind::Float32);
@@ -2835,6 +2840,8 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             key_kind_val = static_cast<i32>(MapKeyKind::Float64);
         } else if (key_type->kind == TypeKind::String) {
             key_kind_val = static_cast<i32>(MapKeyKind::String);
+        } else if (key_type->is_struct()) {
+            key_kind_val = static_cast<i32>(MapKeyKind::Struct);
         }
 
         ValueId key_kind_const = emit_const_int(static_cast<i64>(key_kind_val), m_types.i32_type());

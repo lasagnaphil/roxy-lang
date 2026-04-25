@@ -410,3 +410,84 @@ TEST_CASE("E2E - Map<i32, Struct>: remove keeps other entries intact") {
     // 10+20+30 + 70+80+90 = 300
     CHECK(result.value == 300);
 }
+
+// ============================================================================
+// Struct keys (MapKeyKind::Struct, bytewise hash + memcmp).
+// Note: Roxy structs are slot-aligned with no compiler padding, so bytewise
+// equality is well-defined for POD struct keys.
+// ============================================================================
+
+TEST_CASE("E2E - Map<Struct, i32>: basic insert + get") {
+    const char* source = R"ROXY(
+        struct Point { x: i32; y: i32; }
+        fun main(): i32 {
+            var m: Map<Point, i32> = Map<Point, i32>();
+            m.insert(Point { x = 1, y = 2 }, 10);
+            m.insert(Point { x = 3, y = 4 }, 32);
+            return m.get(Point { x = 1, y = 2 }) + m.get(Point { x = 3, y = 4 });
+        }
+    )ROXY";
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Map<Struct, i32>: contains, remove, len") {
+    const char* source = R"ROXY(
+        struct Pair { a: i32; b: i32; }
+        fun main(): i32 {
+            var m: Map<Pair, i32> = Map<Pair, i32>();
+            m.insert(Pair { a = 1, b = 1 }, 100);
+            m.insert(Pair { a = 2, b = 2 }, 200);
+            m.insert(Pair { a = 3, b = 3 }, 300);
+            var len_before: i32 = m.len();
+            var has_two: bool = m.contains(Pair { a = 2, b = 2 });
+            var missing: bool = m.contains(Pair { a = 9, b = 9 });
+            m.remove(Pair { a = 2, b = 2 });
+            var len_after: i32 = m.len();
+            var bits: i32 = 0;
+            if (has_two) bits = bits + 1;
+            if (!missing) bits = bits + 2;
+            return len_before * 10 + len_after + bits;
+        }
+    )ROXY";
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    // len_before=3, len_after=2, has_two=1, missing=0 → 30 + 2 + 3 = 35
+    CHECK(result.value == 35);
+}
+
+TEST_CASE("E2E - Map<Struct, Struct>: both sides struct") {
+    const char* source = R"ROXY(
+        struct Pos { x: i32; y: i32; }
+        struct Color { r: i32; g: i32; b: i32; }
+        fun main(): i32 {
+            var m: Map<Pos, Color> = Map<Pos, Color>();
+            m.insert(Pos { x = 0, y = 0 }, Color { r = 1, g = 2, b = 3 });
+            m.insert(Pos { x = 1, y = 1 }, Color { r = 10, g = 20, b = 30 });
+            var c: Color = m.get(Pos { x = 1, y = 1 });
+            return c.r + c.g + c.b;
+        }
+    )ROXY";
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 60);
+}
+
+TEST_CASE("E2E - Map<Struct, i32>: rehash with struct keys") {
+    // Inserts cross the 80% load threshold and force map_grow; this exercises
+    // the ping-pong scratch buffers for variable-sized keys.
+    const char* source = R"ROXY(
+        struct Key { a: i32; b: i32; c: i32; }
+        fun main(): i32 {
+            var m: Map<Key, i32> = Map<Key, i32>();
+            for (var i: i32 = 0; i < 25; i = i + 1) {
+                m.insert(Key { a = i, b = i * 2, c = i * 3 }, i * 100);
+            }
+            return m.get(Key { a = 7, b = 14, c = 21 });
+        }
+    )ROXY";
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 700);
+}

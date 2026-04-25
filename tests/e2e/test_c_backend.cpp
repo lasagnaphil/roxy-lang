@@ -1128,3 +1128,84 @@ TEST_CASE("E2E - C Backend: Map<i32, i32> negative round-trip") {
     CHECK(result.run_success);
     CHECK(result.exit_code == 42);
 }
+
+// ===========================================================================
+// Struct keys (MapKeyKind::Struct, bytewise hash + memcmp)
+// ===========================================================================
+
+TEST_CASE("E2E - C Backend: Map<Struct, i32> basic insert + get") {
+    const char* source = R"(
+        struct Point { x: i32; y: i32; }
+        fun main(): i32 {
+            var m: Map<Point, i32> = Map<Point, i32>();
+            m.insert(Point { x = 1, y = 2 }, 10);
+            m.insert(Point { x = 3, y = 4 }, 32);
+            return m.get(Point { x = 1, y = 2 }) + m.get(Point { x = 3, y = 4 });
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("E2E - C Backend: Map<Struct, Struct>") {
+    const char* source = R"(
+        struct Pos { x: i32; y: i32; }
+        struct Color { r: i32; g: i32; b: i32; }
+        fun main(): i32 {
+            var m: Map<Pos, Color> = Map<Pos, Color>();
+            m.insert(Pos { x = 0, y = 0 }, Color { r = 1, g = 2, b = 3 });
+            m.insert(Pos { x = 1, y = 1 }, Color { r = 10, g = 20, b = 30 });
+            var c: Color = m.get(Pos { x = 1, y = 1 });
+            return c.r + c.g + c.b;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 60);
+}
+
+TEST_CASE("E2E - C Backend: Map<Struct, i32> rehash with struct keys") {
+    // Insert > 80% load to force map_grow; exercises ping-pong scratch
+    // buffers for variable-sized keys. Return a small value (exit codes
+    // are 1 byte on Unix).
+    const char* source = R"(
+        struct Key { a: i32; b: i32; c: i32; }
+        fun main(): i32 {
+            var m: Map<Key, i32> = Map<Key, i32>();
+            for (var i: i32 = 0; i < 25; i = i + 1) {
+                m.insert(Key { a = i, b = i * 2, c = i * 3 }, i + 1);
+            }
+            return m.get(Key { a = 7, b = 14, c = 21 });
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 8);
+}
+
+TEST_CASE("E2E - C Backend: Map<Struct, i32> contains + remove") {
+    const char* source = R"(
+        struct Pair { a: i32; b: i32; }
+        fun main(): i32 {
+            var m: Map<Pair, i32> = Map<Pair, i32>();
+            m.insert(Pair { a = 1, b = 1 }, 100);
+            m.insert(Pair { a = 2, b = 2 }, 200);
+            m.insert(Pair { a = 3, b = 3 }, 300);
+            var has_two: bool = m.contains(Pair { a = 2, b = 2 });
+            var missing: bool = m.contains(Pair { a = 9, b = 9 });
+            m.remove(Pair { a = 2, b = 2 });
+            var bits: i32 = 0;
+            if (has_two) bits = bits + 1;
+            if (!missing) bits = bits + 2;
+            return m.len() * 10 + bits;
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 23);  // len_after=2, bits=3 → 23
+}
