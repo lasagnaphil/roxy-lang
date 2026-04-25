@@ -2,7 +2,7 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-04-18
+Last updated: 2026-04-25
 
 
 ---
@@ -52,7 +52,7 @@ Last updated: 2026-04-18
 ## Planned Features
 
 - [ ] Closures and first-class functions — functions as values, lambda syntax, closure environment capture, `fun(params): ret` function type syntax
-- [ ] Recursive types — allow `uniq`/`ref` members to the same type or boxed/indirect fields for tree/graph data structures
+- [x] Recursive types — `uniq Self` fields work end-to-end (linked lists, binary trees, AST tagged unions, mutual recursion via `List<uniq T>`). Cycle detection rejects direct value-type recursion (`struct Node { next: Node; }`) and mutual value-type cycles (`A { b: B; }` / `B { a: A; }`) with a "use 'uniq T' for indirection" hint. Implementation: `resolve_type_members` (`semantic.cpp:444`) catches single-struct self-cycles at field-resolution time; the post-pass at `semantic.cpp:687` recomputes each struct's slot count after all structs are resolved and reports any field whose resolved slot count diverges, which is how mutual cycles surface (a forward-referenced not-yet-resolved struct contributes 0 slots to the first computation, so the recomputed total differs). Self-reference resolution and recursive destruction worked already through the existing pipeline — `uniq T` is always 2 slots regardless of `T`'s layout state, the auto-synthesized destructor recurses naturally through `uniq` fields, and `gen_assign_expr`'s destroy-old-value preamble handles reassignment to a non-null `uniq Self` field. Tests in `tests/e2e/test_recursive_types.cpp` (16 cases): basic compile, two-node list, ref param access, ref expression, ref of uniq field, list traversal, binary tree sum, implicit destruction, nil-assignment subtree cleanup, reassignment subtree cleanup, direct/mutual cycle errors, while-loop traversal, AST tagged union eval, Forest/Tree mutual recursion via `List<uniq Tree>`, deep linked list (500 nodes) construction and destruction.
 - [ ] Bounded quantification Phase B: declaration-site checking of generic bodies against trait bounds
 - [ ] Flow-sensitive typing for tagged union variant fields
 - [ ] Exhaustiveness checking for when statements

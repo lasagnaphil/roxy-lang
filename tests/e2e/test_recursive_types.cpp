@@ -391,3 +391,113 @@ TEST_CASE("E2E - Recursive types: list traversal with while loop") {
     CHECK(result.success);
     CHECK(result.value == 15);
 }
+
+TEST_CASE("E2E - Recursive types: tagged union AST eval") {
+    const char* source = R"CODE(
+        enum ExprKind { Literal, Negate, Add }
+
+        struct Expr {
+            when kind: ExprKind {
+                case Literal:
+                    value: i32;
+                case Negate:
+                    operand: uniq Expr;
+                case Add:
+                    left: uniq Expr;
+                    right: uniq Expr;
+            }
+        }
+
+        fun eval(e: ref Expr): i32 {
+            when e.kind {
+                case Literal: return e.value;
+                case Negate: return -eval(ref e.operand);
+                case Add: return eval(ref e.left) + eval(ref e.right);
+            }
+            return 0;
+        }
+
+        fun main(): i32 {
+            // (-7) + 5 = -2
+            var lit5: uniq Expr = uniq Expr { kind = ExprKind::Literal, value = 5 };
+            var lit7: uniq Expr = uniq Expr { kind = ExprKind::Literal, value = 7 };
+            var neg: uniq Expr = uniq Expr { kind = ExprKind::Negate, operand = lit7 };
+            var add: uniq Expr = uniq Expr { kind = ExprKind::Add, left = neg, right = lit5 };
+
+            return eval(ref add);
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == -2);
+}
+
+TEST_CASE("E2E - Recursive types: mutual recursion via List<uniq T>") {
+    const char* source = R"CODE(
+        struct Forest {
+            trees: List<uniq Tree>;
+        }
+
+        struct Tree {
+            value: i32;
+            children: Forest;
+        }
+
+        fun main(): i32 {
+            var leaf_a: uniq Tree = uniq Tree {
+                value = 2,
+                children = Forest { trees = List<uniq Tree>() }
+            };
+            var leaf_b: uniq Tree = uniq Tree {
+                value = 3,
+                children = Forest { trees = List<uniq Tree>() }
+            };
+
+            var root: uniq Tree = uniq Tree {
+                value = 1,
+                children = Forest { trees = List<uniq Tree>() }
+            };
+            root.children.trees.push(leaf_a);
+            root.children.trees.push(leaf_b);
+
+            var sum: i32 = root.value;
+            sum = sum + root.children.trees[0].value;
+            sum = sum + root.children.trees[1].value;
+            return sum;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 6);
+}
+
+TEST_CASE("E2E - Recursive types: deep linked list construction and destruction") {
+    const char* source = R"CODE(
+        struct Node {
+            value: i32;
+            next: uniq Node;
+        }
+
+        fun build(n: i32): uniq Node {
+            var head: uniq Node = uniq Node { value = 0, next = nil };
+            var i: i32 = 1;
+            while (i < n) {
+                var new_head: uniq Node = uniq Node { value = i, next = head };
+                head = new_head;
+                i = i + 1;
+            }
+            return head;
+        }
+
+        fun main(): i32 {
+            var list: uniq Node = build(500);
+            return list.value;
+        }
+    )CODE";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 499);
+}
