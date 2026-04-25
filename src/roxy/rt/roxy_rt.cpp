@@ -315,60 +315,60 @@ static uint64_t hash_fnv1a(const char* data, uint32_t length) {
     return h;
 }
 
-int64_t roxy_bool_hash(bool val) {
-    return static_cast<int64_t>(hash_splitmix64(val ? 1 : 0));
+uint64_t roxy_bool_hash(bool val) {
+    return hash_splitmix64(val ? 1u : 0u);
 }
 
-int64_t roxy_i8_hash(int8_t val) {
-    return static_cast<int64_t>(hash_splitmix64(static_cast<uint64_t>(val)));
+uint64_t roxy_i8_hash(int8_t val) {
+    return hash_splitmix64(static_cast<uint64_t>(val));
 }
 
-int64_t roxy_i16_hash(int16_t val) {
-    return static_cast<int64_t>(hash_splitmix64(static_cast<uint64_t>(val)));
+uint64_t roxy_i16_hash(int16_t val) {
+    return hash_splitmix64(static_cast<uint64_t>(val));
 }
 
-int64_t roxy_i32_hash(int32_t val) {
-    return static_cast<int64_t>(hash_splitmix64(static_cast<uint64_t>(val)));
+uint64_t roxy_i32_hash(int32_t val) {
+    return hash_splitmix64(static_cast<uint64_t>(val));
 }
 
-int64_t roxy_i64_hash(int64_t val) {
-    return static_cast<int64_t>(hash_splitmix64(static_cast<uint64_t>(val)));
+uint64_t roxy_i64_hash(int64_t val) {
+    return hash_splitmix64(static_cast<uint64_t>(val));
 }
 
-int64_t roxy_u8_hash(uint8_t val) {
-    return static_cast<int64_t>(hash_splitmix64(static_cast<uint64_t>(val)));
+uint64_t roxy_u8_hash(uint8_t val) {
+    return hash_splitmix64(static_cast<uint64_t>(val));
 }
 
-int64_t roxy_u16_hash(uint16_t val) {
-    return static_cast<int64_t>(hash_splitmix64(static_cast<uint64_t>(val)));
+uint64_t roxy_u16_hash(uint16_t val) {
+    return hash_splitmix64(static_cast<uint64_t>(val));
 }
 
-int64_t roxy_u32_hash(uint32_t val) {
-    return static_cast<int64_t>(hash_splitmix64(static_cast<uint64_t>(val)));
+uint64_t roxy_u32_hash(uint32_t val) {
+    return hash_splitmix64(static_cast<uint64_t>(val));
 }
 
-int64_t roxy_u64_hash(uint64_t val) {
-    return static_cast<int64_t>(hash_splitmix64(val));
+uint64_t roxy_u64_hash(uint64_t val) {
+    return hash_splitmix64(val);
 }
 
-int64_t roxy_f32_hash(float val) {
+uint64_t roxy_f32_hash(float val) {
     if (val == 0.0f) val = 0.0f;  // Normalize -0
     uint32_t bits;
     memcpy(&bits, &val, sizeof(uint32_t));
-    return static_cast<int64_t>(hash_splitmix64(static_cast<uint64_t>(bits)));
+    return hash_splitmix64(static_cast<uint64_t>(bits));
 }
 
-int64_t roxy_f64_hash(double val) {
+uint64_t roxy_f64_hash(double val) {
     if (val == 0.0) val = 0.0;  // Normalize -0
     uint64_t bits;
     memcpy(&bits, &val, sizeof(uint64_t));
-    return static_cast<int64_t>(hash_splitmix64(bits));
+    return hash_splitmix64(bits);
 }
 
-int64_t roxy_string_hash(void* val) {
+uint64_t roxy_string_hash(void* val) {
     if (!val) return 0;
-    return static_cast<int64_t>(hash_fnv1a(roxy_string_chars(val),
-                                            static_cast<uint32_t>(roxy_string_len(val))));
+    return hash_fnv1a(roxy_string_chars(val),
+                      static_cast<uint32_t>(roxy_string_len(val)));
 }
 
 // ===== Map Operations =====
@@ -385,9 +385,10 @@ static inline uint64_t read_packed_u64(const uint32_t* key_src) {
     return packed;
 }
 
-// Internal: hash a key based on key_kind
-static uint64_t map_hash_key(const uint32_t* key_src, uint8_t key_kind, uint8_t key_slot_count) {
-    switch (key_kind) {
+// Internal: hash a key based on key_kind. For Struct keys, dispatches through
+// the user-provided hash_fn if set; otherwise falls back to bytewise FNV-1a.
+static uint64_t map_hash_key(const uint32_t* key_src, const roxy_map_header* hdr) {
+    switch (hdr->key_kind) {
         case ROXY_MAP_KEY_INTEGER:
             return hash_splitmix64(read_packed_u64(key_src));
         case ROXY_MAP_KEY_FLOAT32: {
@@ -414,16 +415,25 @@ static uint64_t map_hash_key(const uint32_t* key_src, uint8_t key_kind, uint8_t 
                               static_cast<uint32_t>(roxy_string_len(str)));
         }
         case ROXY_MAP_KEY_STRUCT:
+            if (hdr->hash_fn) {
+                return hdr->hash_fn(key_src);
+            }
             return hash_fnv1a(reinterpret_cast<const char*>(key_src),
-                              static_cast<uint32_t>(key_slot_count) * 4);
+                              static_cast<uint32_t>(hdr->key_slot_count) * 4);
     }
     return hash_splitmix64(read_packed_u64(key_src));
 }
 
-// Internal: compare two keys for equality
+// Internal: compare two keys for equality. For Struct keys, dispatches through
+// the user-provided eq_fn if set; otherwise falls back to bytewise memcmp.
+// Note: in the C backend the user's `K__eq(K* self, K* other)` C signature
+// already takes both args as pointers (Roxy's `other: K` lowers to `K*` in
+// the C output via the existing struct-by-pointer convention) — no calling-
+// convention dance needed here, unlike the VM where `other: K` arrives as
+// packed-by-value bytes.
 static bool map_keys_equal(const uint32_t* a, const uint32_t* b,
-                           uint8_t key_kind, uint8_t key_slot_count) {
-    switch (key_kind) {
+                           const roxy_map_header* hdr) {
+    switch (hdr->key_kind) {
         case ROXY_MAP_KEY_INTEGER:
             return read_packed_u64(a) == read_packed_u64(b);
         case ROXY_MAP_KEY_FLOAT32: {
@@ -445,7 +455,10 @@ static bool map_keys_equal(const uint32_t* a, const uint32_t* b,
                                   reinterpret_cast<void*>(b_bits));
         }
         case ROXY_MAP_KEY_STRUCT:
-            return memcmp(a, b, static_cast<size_t>(key_slot_count) * 4) == 0;
+            if (hdr->eq_fn) {
+                return hdr->eq_fn(a, b);
+            }
+            return memcmp(a, b, static_cast<size_t>(hdr->key_slot_count) * 4) == 0;
     }
     return read_packed_u64(a) == read_packed_u64(b);
 }
@@ -491,7 +504,7 @@ static void map_insert_internal(roxy_map_header* hdr,
     uint32_t mask = hdr->capacity - 1;
     uint8_t ksc = hdr->key_slot_count;
     uint8_t vsc = hdr->value_slot_count;
-    uint64_t hash = map_hash_key(key_src, hdr->key_kind, ksc);
+    uint64_t hash = map_hash_key(key_src, hdr);
     uint32_t pos = static_cast<uint32_t>(hash) & mask;
     uint8_t dist = 1;
 
@@ -564,7 +577,8 @@ static void map_grow(roxy_map_header* hdr) {
 }
 
 void* roxy_map_alloc(int32_t key_slot_count, int32_t key_is_inline,
-                     int32_t value_slot_count, int32_t value_is_inline) {
+                     int32_t value_slot_count, int32_t value_is_inline,
+                     roxy_map_hash_fn hash_fn, roxy_map_eq_fn eq_fn) {
     void* data = roxy_alloc(sizeof(roxy_map_header), ROXY_TYPEID_MAP);
     if (!data) return nullptr;
     auto* hdr = map_hdr(data);
@@ -574,6 +588,8 @@ void* roxy_map_alloc(int32_t key_slot_count, int32_t key_is_inline,
     hdr->value_slot_count = value_slot_count > 0
         ? static_cast<uint8_t>(value_slot_count) : static_cast<uint8_t>(2);
     hdr->value_is_inline = value_is_inline != 0 ? 1 : 0;
+    hdr->hash_fn = hash_fn;
+    hdr->eq_fn = eq_fn;
     return data;
 }
 
@@ -611,7 +627,7 @@ bool roxy_map_contains(void* self, const void* key_src) {
     uint8_t ksc = hdr->key_slot_count;
     uint32_t mask = hdr->capacity - 1;
     auto* k = static_cast<const uint32_t*>(key_src);
-    uint64_t hash = map_hash_key(k, hdr->key_kind, ksc);
+    uint64_t hash = map_hash_key(k, hdr);
     uint32_t pos = static_cast<uint32_t>(hash) & mask;
     uint8_t dist = 1;
 
@@ -619,7 +635,7 @@ bool roxy_map_contains(void* self, const void* key_src) {
         if (hdr->distances[pos] == 0) return false;
         if (hdr->distances[pos] < dist) return false;
         if (hdr->distances[pos] == dist &&
-            map_keys_equal(map_key_ptr(hdr, pos), k, hdr->key_kind, ksc)) {
+            map_keys_equal(map_key_ptr(hdr, pos), k, hdr)) {
             return true;
         }
         pos = (pos + 1) & mask;
@@ -637,7 +653,7 @@ void* roxy_map_get(void* self, const void* key_src) {
     uint8_t ksc = hdr->key_slot_count;
     uint32_t mask = hdr->capacity - 1;
     auto* k = static_cast<const uint32_t*>(key_src);
-    uint64_t hash = map_hash_key(k, hdr->key_kind, ksc);
+    uint64_t hash = map_hash_key(k, hdr);
     uint32_t pos = static_cast<uint32_t>(hash) & mask;
     uint8_t dist = 1;
 
@@ -647,7 +663,7 @@ void* roxy_map_get(void* self, const void* key_src) {
             return nullptr;
         }
         if (hdr->distances[pos] == dist &&
-            map_keys_equal(map_key_ptr(hdr, pos), k, hdr->key_kind, ksc)) {
+            map_keys_equal(map_key_ptr(hdr, pos), k, hdr)) {
             return map_value_ptr(hdr, pos);
         }
         pos = (pos + 1) & mask;
@@ -665,7 +681,7 @@ void roxy_map_insert(void* self, const void* key_src, const void* value_src) {
     // Check if key already exists — update in place
     if (hdr->capacity > 0 && hdr->length > 0) {
         uint32_t mask = hdr->capacity - 1;
-        uint64_t hash = map_hash_key(k, hdr->key_kind, ksc);
+        uint64_t hash = map_hash_key(k, hdr);
         uint32_t pos = static_cast<uint32_t>(hash) & mask;
         uint8_t dist = 1;
 
@@ -673,7 +689,7 @@ void roxy_map_insert(void* self, const void* key_src, const void* value_src) {
             if (hdr->distances[pos] == 0) break;
             if (hdr->distances[pos] < dist) break;
             if (hdr->distances[pos] == dist &&
-                map_keys_equal(map_key_ptr(hdr, pos), k, hdr->key_kind, ksc)) {
+                map_keys_equal(map_key_ptr(hdr, pos), k, hdr)) {
                 memcpy(map_value_ptr(hdr, pos), v, sizeof(uint32_t) * vsc);
                 return;
             }
@@ -699,7 +715,7 @@ bool roxy_map_remove(void* self, const void* key_src) {
     uint8_t vsc = hdr->value_slot_count;
     uint32_t mask = hdr->capacity - 1;
     auto* k = static_cast<const uint32_t*>(key_src);
-    uint64_t hash = map_hash_key(k, hdr->key_kind, ksc);
+    uint64_t hash = map_hash_key(k, hdr);
     uint32_t pos = static_cast<uint32_t>(hash) & mask;
     uint8_t dist = 1;
 
@@ -707,7 +723,7 @@ bool roxy_map_remove(void* self, const void* key_src) {
         if (hdr->distances[pos] == 0) return false;
         if (hdr->distances[pos] < dist) return false;
         if (hdr->distances[pos] == dist &&
-            map_keys_equal(map_key_ptr(hdr, pos), k, hdr->key_kind, ksc)) {
+            map_keys_equal(map_key_ptr(hdr, pos), k, hdr)) {
             break;
         }
         pos = (pos + 1) & mask;
@@ -784,7 +800,8 @@ void* roxy_map_copy(void* src) {
     void* dst = roxy_map_alloc(static_cast<int32_t>(src_hdr->key_slot_count),
                                static_cast<int32_t>(src_hdr->key_is_inline),
                                static_cast<int32_t>(src_hdr->value_slot_count),
-                               static_cast<int32_t>(src_hdr->value_is_inline));
+                               static_cast<int32_t>(src_hdr->value_is_inline),
+                               src_hdr->hash_fn, src_hdr->eq_fn);
     if (!dst) return nullptr;
 
     auto* dst_hdr = map_hdr(dst);

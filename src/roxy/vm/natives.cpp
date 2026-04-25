@@ -351,47 +351,47 @@ static u64 splitmix64(u64 x) {
 
 static void native_bool_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
-    regs[dst] = static_cast<i64>(regs[first_arg] != 0 ? 1 : 0);
+    regs[dst] = regs[first_arg] != 0 ? 1u : 0u;
 }
 
 static void native_i8_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
-    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+    regs[dst] = splitmix64(regs[first_arg]);
 }
 
 static void native_i16_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
-    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+    regs[dst] = splitmix64(regs[first_arg]);
 }
 
 static void native_i32_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
-    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+    regs[dst] = splitmix64(regs[first_arg]);
 }
 
 static void native_i64_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
-    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+    regs[dst] = splitmix64(regs[first_arg]);
 }
 
 static void native_u8_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
-    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+    regs[dst] = splitmix64(regs[first_arg]);
 }
 
 static void native_u16_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
-    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+    regs[dst] = splitmix64(regs[first_arg]);
 }
 
 static void native_u32_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
-    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+    regs[dst] = splitmix64(regs[first_arg]);
 }
 
 static void native_u64_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
-    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(regs[first_arg])));
+    regs[dst] = splitmix64(regs[first_arg]);
 }
 
 static void native_f32_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
@@ -401,7 +401,7 @@ static void native_f32_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (val == 0.0f) val = 0.0f; // Normalize -0
     u32 bits;
     memcpy(&bits, &val, sizeof(u32));
-    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(static_cast<u64>(bits))));
+    regs[dst] = splitmix64(static_cast<u64>(bits));
 }
 
 static void native_f64_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
@@ -411,7 +411,7 @@ static void native_f64_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (val == 0.0) val = 0.0; // Normalize -0
     u64 bits;
     memcpy(&bits, &val, sizeof(u64));
-    regs[dst] = static_cast<u64>(static_cast<i64>(splitmix64(bits)));
+    regs[dst] = splitmix64(bits);
 }
 
 static void native_string_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
@@ -429,7 +429,7 @@ static void native_string_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         h ^= static_cast<u64>(static_cast<u8>(data[i]));
         h *= 1099511628211ULL;
     }
-    regs[dst] = static_cast<u64>(static_cast<i64>(h));
+    regs[dst] = h;
 }
 
 // ===== List index native functions =====
@@ -490,13 +490,17 @@ static MapKeyKind key_kind_from_i32(i32 val) {
 //   1: key_is_inline (0 = struct-by-pointer, nonzero = primitive-by-value)
 //   2: value_slot_count
 //   3: value_is_inline
-// Fallback: missing args use legacy defaults (2 slots, inline).
+//   4: hash_fn_index (i32; -1 = no custom Hash, runtime falls back to bytewise)
+//   5: eq_fn_index   (i32; -1 = no custom Eq)
+// Fallback: missing args use legacy defaults (2 slots, inline, no custom hash/eq).
 static void native_map_alloc(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
     u8 key_slot_count = 2;
     bool key_is_inline = true;
     u8 value_slot_count = 2;
     bool value_is_inline = true;
+    u32 hash_fn_index = UINT32_MAX;
+    u32 eq_fn_index = UINT32_MAX;
     if (argc >= 1) {
         i32 ksc = static_cast<i32>(regs[first_arg]);
         if (ksc > 0 && ksc <= 255) key_slot_count = static_cast<u8>(ksc);
@@ -511,10 +515,19 @@ static void native_map_alloc(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc >= 4) {
         value_is_inline = (regs[first_arg + 3] != 0);
     }
+    if (argc >= 5) {
+        i32 idx = static_cast<i32>(regs[first_arg + 4]);
+        if (idx >= 0) hash_fn_index = static_cast<u32>(idx);
+    }
+    if (argc >= 6) {
+        i32 idx = static_cast<i32>(regs[first_arg + 5]);
+        if (idx >= 0) eq_fn_index = static_cast<u32>(idx);
+    }
     // Allocate with Integer key kind by default; constructor sets the real key_kind
     void* map = map_alloc(vm, MapKeyKind::Integer, 0,
                           key_slot_count, key_is_inline,
-                          value_slot_count, value_is_inline);
+                          value_slot_count, value_is_inline,
+                          hash_fn_index, eq_fn_index);
     if (!map) {
         vm->error = "failed to allocate map";
         return;
@@ -639,7 +652,7 @@ static void native_map_contains(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     }
     const MapHeader* header = get_map_header(map_ptr);
     const u32* key_src = map_key_src_from_regs(header, regs, first_arg);
-    regs[dst] = map_contains(map_ptr, key_src) ? 1 : 0;
+    regs[dst] = map_contains(vm, map_ptr, key_src) ? 1 : 0;
 }
 
 // Pack the map's value bytes into the destination register(s). For inline
@@ -674,7 +687,7 @@ static void native_map_get(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     }
     const MapHeader* header = get_map_header(map_ptr);
     const u32* key_src = map_key_src_from_regs(header, regs, first_arg);
-    const u32* value_ptr = map_get_ptr(map_ptr, key_src, &vm->error);
+    const u32* value_ptr = map_get_ptr(vm, map_ptr, key_src, &vm->error);
     if (!value_ptr) {
         return;
     }
@@ -691,7 +704,7 @@ static void native_map_insert(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     MapHeader* header = get_map_header(map_ptr);
     const u32* key_src = map_key_src_from_regs(header, regs, first_arg);
     const u32* value_src = map_value_src_from_regs(header, regs, first_arg);
-    map_insert(map_ptr, key_src, value_src);
+    map_insert(vm, map_ptr, key_src, value_src);
     regs[dst] = 0;
 }
 
@@ -704,7 +717,7 @@ static void native_map_remove(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     }
     const MapHeader* header = get_map_header(map_ptr);
     const u32* key_src = map_key_src_from_regs(header, regs, first_arg);
-    regs[dst] = map_remove(map_ptr, key_src) ? 1 : 0;
+    regs[dst] = map_remove(vm, map_ptr, key_src) ? 1 : 0;
 }
 
 static void native_map_clear(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
@@ -758,7 +771,7 @@ static void native_map_index(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     }
     const MapHeader* header = get_map_header(map_ptr);
     const u32* key_src = map_key_src_from_regs(header, regs, first_arg);
-    const u32* value_ptr = map_get_ptr(map_ptr, key_src, &vm->error);
+    const u32* value_ptr = map_get_ptr(vm, map_ptr, key_src, &vm->error);
     if (!value_ptr) {
         return;
     }
@@ -776,7 +789,7 @@ static void native_map_index_mut(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     MapHeader* header = get_map_header(map_ptr);
     const u32* key_src = map_key_src_from_regs(header, regs, first_arg);
     const u32* value_src = map_value_src_from_regs(header, regs, first_arg);
-    map_insert(map_ptr, key_src, value_src);
+    map_insert(vm, map_ptr, key_src, value_src);
     regs[dst] = 0;
 }
 
@@ -997,18 +1010,18 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_native("string$$to_string", native_string_to_string, "fun to_string(val: string): string");
 
     // Hash natives for primitive types
-    registry.bind_native("bool$$hash",   native_bool_hash,   "fun hash(val: bool): i64");
-    registry.bind_native("i8$$hash",     native_i8_hash,     "fun hash(val: i8): i64");
-    registry.bind_native("i16$$hash",    native_i16_hash,    "fun hash(val: i16): i64");
-    registry.bind_native("i32$$hash",    native_i32_hash,    "fun hash(val: i32): i64");
-    registry.bind_native("i64$$hash",    native_i64_hash,    "fun hash(val: i64): i64");
-    registry.bind_native("u8$$hash",     native_u8_hash,     "fun hash(val: u8): i64");
-    registry.bind_native("u16$$hash",    native_u16_hash,    "fun hash(val: u16): i64");
-    registry.bind_native("u32$$hash",    native_u32_hash,    "fun hash(val: u32): i64");
-    registry.bind_native("u64$$hash",    native_u64_hash,    "fun hash(val: u64): i64");
-    registry.bind_native("f32$$hash",    native_f32_hash,    "fun hash(val: f32): i64");
-    registry.bind_native("f64$$hash",    native_f64_hash,    "fun hash(val: f64): i64");
-    registry.bind_native("string$$hash", native_string_hash, "fun hash(val: string): i64");
+    registry.bind_native("bool$$hash",   native_bool_hash,   "fun hash(val: bool): u64");
+    registry.bind_native("i8$$hash",     native_i8_hash,     "fun hash(val: i8): u64");
+    registry.bind_native("i16$$hash",    native_i16_hash,    "fun hash(val: i16): u64");
+    registry.bind_native("i32$$hash",    native_i32_hash,    "fun hash(val: i32): u64");
+    registry.bind_native("i64$$hash",    native_i64_hash,    "fun hash(val: i64): u64");
+    registry.bind_native("u8$$hash",     native_u8_hash,     "fun hash(val: u8): u64");
+    registry.bind_native("u16$$hash",    native_u16_hash,    "fun hash(val: u16): u64");
+    registry.bind_native("u32$$hash",    native_u32_hash,    "fun hash(val: u32): u64");
+    registry.bind_native("u64$$hash",    native_u64_hash,    "fun hash(val: u64): u64");
+    registry.bind_native("f32$$hash",    native_f32_hash,    "fun hash(val: f32): u64");
+    registry.bind_native("f64$$hash",    native_f64_hash,    "fun hash(val: f64): u64");
+    registry.bind_native("string$$hash", native_string_hash, "fun hash(val: string): u64");
 
     // Map<K, V> - registered as a generic native type with 2 type params
     registry.register_generic_type("Map<K, V>", "map_alloc", native_map_alloc);

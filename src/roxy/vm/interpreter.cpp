@@ -62,6 +62,59 @@ static u64 load_constant(RoxyVM* vm, const BCFunction* func, u16 index) {
     }
 }
 
+// Generic re-entrant function call from native code. Pushes a frame for the
+// target function with the given arg registers, runs the interpreter until
+// that frame returns, and recovers the return value via the slot RET writes
+// when stop_depth fires (see the OP(RET) handler).
+//
+// Returns the function's return value as a u64. For void-returning functions
+// the result is undefined (caller should ignore it).
+//
+// Used by Map's struct-key Hash/Eq dispatch to invoke user-defined `hash()`
+// / `eq()` methods from inside `map_hash_key` / `map_keys_equal`.
+u64 call_user_function(RoxyVM* vm, u32 func_idx, const u64* args, u32 argc) {
+    if (func_idx >= vm->function_count) return 0;
+    const BCFunction* fn = vm->function_ptrs[func_idx];
+    if (!fn) return 0;
+    if (vm->call_stack_size >= vm->call_stack_capacity) return 0;
+
+    u32 saved_register_top = vm->register_top;
+    if (saved_register_top + fn->register_count > vm->register_file_size) {
+        vm->error = "register file overflow in user function callback";
+        return 0;
+    }
+    vm->register_top += fn->register_count;
+
+    u64* call_regs = &vm->register_file[saved_register_top];
+    // Zero the window so unwritten args read as 0 (defensive).
+    memset(call_regs, 0, fn->register_count * sizeof(u64));
+    for (u32 i = 0; i < argc; i++) {
+        call_regs[i] = args[i];
+    }
+
+    u32 saved_local_stack_top = vm->local_stack_top;
+    u32 local_stack_base = vm->local_stack_top;
+    if (local_stack_base + fn->local_stack_slots > vm->local_stack_size) {
+        vm->register_top = saved_register_top;
+        vm->error = "local stack overflow in user function callback";
+        return 0;
+    }
+    vm->local_stack_top += fn->local_stack_slots;
+
+    u32 saved_depth = vm->call_stack_size;
+    vm->call_stack[vm->call_stack_size++] = CallFrame(fn, fn->code.data(), call_regs, 0, local_stack_base);
+
+    interpret(vm, saved_depth);
+
+    // RET writes the result to register_file[register_top] (now back to
+    // saved_register_top after RET decremented register_top). Read it.
+    u64 result = vm->register_file[saved_register_top];
+
+    // Defensive restoration (RET should have done this, but in case of error).
+    vm->local_stack_top = saved_local_stack_top;
+    return result;
+}
+
 // Call a destructor function on an object during exception cleanup.
 // Uses nested interpretation: pushes a call frame for the destructor,
 // runs the interpreter until it returns, then continues.
@@ -944,6 +997,12 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         }
 
         if (stop_depth > 0 && vm->call_stack_size <= stop_depth) {
+            // Re-entrant native call (caller used `interpret(vm, saved_depth)`).
+            // The slot at register_file[register_top] is one past the current
+            // top — it was regs[0] of the popped frame's window and is now
+            // free. Write the result there so the native can retrieve it via
+            // `vm->register_file[saved_register_top]`.
+            vm->register_file[vm->register_top] = result;
             return true;
         }
 
@@ -969,6 +1028,8 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         }
 
         if (stop_depth > 0 && vm->call_stack_size <= stop_depth) {
+            // Re-entrant native call: write 0 to the result slot (see RET).
+            vm->register_file[vm->register_top] = 0;
             return true;
         }
 
@@ -1134,7 +1195,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         const u32* key_src = header->key_is_inline
             ? reinterpret_cast<const u32*>(&regs[key_reg])
             : reinterpret_cast<const u32*>(regs[key_reg]);
-        const u32* value_ptr = map_get_ptr(map_ptr, key_src, &vm->error);
+        const u32* value_ptr = map_get_ptr(vm, map_ptr, key_src, &vm->error);
         if (!value_ptr) {
             return false;
         }
@@ -1171,7 +1232,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         const u32* value_src = header->value_is_inline
             ? reinterpret_cast<const u32*>(&regs[c])
             : reinterpret_cast<const u32*>(regs[c]);
-        map_insert(map_ptr, key_src, value_src);
+        map_insert(vm, map_ptr, key_src, value_src);
         DISPATCH();
     }
 

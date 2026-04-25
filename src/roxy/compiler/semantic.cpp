@@ -175,7 +175,7 @@ void SemanticAnalyzer::run_declaration_passes(Program* program) {
         TraitMethodInfo trait_method_info;
         trait_method_info.name = StringView("hash", 4);
         trait_method_info.param_types = Span<Type*>(nullptr, 0);
-        trait_method_info.return_type = m_types.i64_type();
+        trait_method_info.return_type = m_types.u64_type();
         trait_method_info.decl = nullptr;
         trait_method_info.has_default = false;
 
@@ -195,19 +195,46 @@ void SemanticAnalyzer::run_declaration_passes(Program* program) {
             MethodInfo method_info;
             method_info.name = StringView("hash", 4);
             method_info.param_types = Span<Type*>(nullptr, 0);
-            method_info.return_type = m_types.i64_type();
+            method_info.return_type = m_types.u64_type();
             method_info.decl = nullptr;
             m_types.register_primitive_method(tk, method_info);
             m_types.register_primitive_trait(tk, hash_trait_type);
         }
     }
 
-    // Note: an `Eq` trait was previously registered here as a builtin to gate
-    // struct map keys, but it collided with user-defined `trait Eq` declarations
-    // (existing tests register their own Eq trait for operator dispatch). The
-    // map runtime now uses bytewise hash + memcmp for struct keys (MapKeyKind::
-    // Struct), so no builtin Eq trait is needed. Custom Eq dispatch via runtime
-    // callbacks is a future enhancement.
+    // Builtin `Eq` trait used by Map's struct-key dispatch — `Map<K, V>` uses
+    // custom hash/eq runtime dispatch only when K explicitly implements both
+    // `Hash` and `Eq` (just defining `hash()` / `eq()` methods isn't enough).
+    // We declare `eq(other: Self): bool` as the required trait method so user
+    // `for Eq` impls match against it, but we don't register `eq` as a method
+    // on primitive types — that would shadow the native operator-dispatch
+    // path for `==` on primitives.
+    //
+    // Tests / user code may also write `trait Eq;` to declare the trait for
+    // operator overloading — the trait-decl handler below merges that with
+    // this builtin instead of erroring on duplicate.
+    if (!m_type_env.eq_type()) {
+        Type* eq_trait_type = m_types.trait_type(StringView("Eq", 2), nullptr);
+        m_type_env.set_eq_type(eq_trait_type);
+        m_type_env.register_trait_type(StringView("Eq", 2), eq_trait_type);
+
+        // Required method: fun Eq.eq(other: Self): bool
+        Type** eq_param_types = reinterpret_cast<Type**>(
+            m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
+        eq_param_types[0] = m_types.self_type();
+
+        TraitMethodInfo trait_method_info;
+        trait_method_info.name = StringView("eq", 2);
+        trait_method_info.param_types = Span<Type*>(eq_param_types, 1);
+        trait_method_info.return_type = m_types.bool_type();
+        trait_method_info.decl = nullptr;
+        trait_method_info.has_default = false;
+
+        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
+            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
+        tmi_data[0] = trait_method_info;
+        eq_trait_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
+    }
 
     if (!m_type_env.exception_type()) {
         Type* exception_trait_type = m_types.trait_type(StringView("Exception", 9), nullptr);
@@ -371,9 +398,23 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
         else if (decl->kind == AstKind::DeclTrait) {
             StringView name = decl->trait_decl.name;
 
+            // Allow user redeclaration of builtin traits (Hash, Eq, etc.):
+            // a builtin trait was registered with `decl == nullptr` at this
+            // pass's start; if the user writes `trait Eq;`, attach their decl
+            // to the existing trait type rather than erroring on duplicate.
+            // The user's trait method declarations (later in Pass 2) populate
+            // the trait's methods on the existing type.
+            Type* existing_trait = m_type_env.trait_type_by_name(name);
+            if (existing_trait != nullptr && existing_trait->trait_info.decl == nullptr) {
+                existing_trait->trait_info.decl = decl;
+                existing_trait->trait_info.type_params = decl->trait_decl.type_params;
+                m_symbols.define(SymbolKind::Trait, name, existing_trait, decl->loc, decl);
+                continue;
+            }
+
             // Check for duplicate type/trait names
             if (m_type_env.named_type_by_name(name) != nullptr ||
-                m_type_env.trait_type_by_name(name) != nullptr) {
+                existing_trait != nullptr) {
                 error_fmt(decl->loc, "duplicate type declaration '{}'", name);
                 continue;
             }
@@ -2005,10 +2046,20 @@ Type* SemanticAnalyzer::resolve_trait_type_expr(TypeExpr* type_expr,
 void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
     MethodDecl& method_decl = decl->method_decl;
 
-    // Check for duplicate method names in this trait
+    // Check for duplicate method names in this trait. Builtin traits (Hash,
+    // Eq, etc.) pre-register their required methods with `decl == nullptr`;
+    // if the user redeclares the same method (matching name + arity), allow
+    // it as an idempotent re-declaration so user `trait Eq; fun Eq.eq(other:
+    // Self): bool;` doesn't conflict with the builtin Eq registration.
     TraitTypeInfo& trait_type_info = trait_type->trait_info;
     for (const auto& trait_method : trait_type_info.methods) {
         if (trait_method.name == method_decl.name) {
+            bool is_builtin_redecl = trait_method.decl == nullptr &&
+                trait_method.param_types.size() == method_decl.params.size();
+            if (is_builtin_redecl) {
+                // The builtin shape stays; ignore the redeclaration silently.
+                return;
+            }
             error_fmt(decl->loc, "duplicate trait method '{}' in trait '{}'",
                      method_decl.name, trait_type_info.name);
             return;

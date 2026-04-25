@@ -132,6 +132,13 @@ void* roxy_list_copy(void* src);
 
 // ===== Map Header =====
 
+// Function-pointer types for custom Hash/Eq dispatch on struct keys.
+// hash_fn takes a pointer to key bytes (key_slot_count*4 bytes wide) and
+// returns a u64 hash. eq_fn takes two such pointers and returns bool.
+// nullptr = no custom dispatch; runtime falls back to bytewise.
+typedef uint64_t (*roxy_map_hash_fn)(const void* key_src);
+typedef bool     (*roxy_map_eq_fn)(const void* a, const void* b);
+
 // Stored in object data after roxy_object_header.
 // Layout: [roxy_object_header][roxy_map_header]
 // Bucket arrays for distances/keys/values are separate malloc'd buffers. Both
@@ -147,6 +154,8 @@ typedef struct {
     uint8_t  value_slot_count;  // u32 slots per value
     uint8_t  value_is_inline;   // 1 = primitive value; 0 = struct (caller provides ptr)
     uint8_t  _pad[3];
+    roxy_map_hash_fn hash_fn;   // nullptr = bytewise hash (Struct key kind only)
+    roxy_map_eq_fn   eq_fn;     // nullptr = bytewise eq (Struct key kind only)
     uint8_t*  distances;        // Per-bucket Robin Hood distance+1 (0 = empty)
     uint32_t* keys;             // capacity * key_slot_count u32 slots
     uint32_t* values;           // capacity * value_slot_count u32 slots
@@ -160,7 +169,8 @@ typedef struct {
 // next insert/remove).
 
 void* roxy_map_alloc(int32_t key_slot_count, int32_t key_is_inline,
-                     int32_t value_slot_count, int32_t value_is_inline);
+                     int32_t value_slot_count, int32_t value_is_inline,
+                     roxy_map_hash_fn hash_fn, roxy_map_eq_fn eq_fn);
 void  roxy_map_init(void* self, int32_t key_kind, int32_t capacity);
 void  roxy_map_delete(void* self);
 int32_t roxy_map_len(void* self);
@@ -185,18 +195,18 @@ uint64_t roxy_map_iter_value_at(void* self, int32_t idx);
 
 // ===== Hash Functions =====
 
-int64_t roxy_bool_hash(bool val);
-int64_t roxy_i8_hash(int8_t val);
-int64_t roxy_i16_hash(int16_t val);
-int64_t roxy_i32_hash(int32_t val);
-int64_t roxy_i64_hash(int64_t val);
-int64_t roxy_u8_hash(uint8_t val);
-int64_t roxy_u16_hash(uint16_t val);
-int64_t roxy_u32_hash(uint32_t val);
-int64_t roxy_u64_hash(uint64_t val);
-int64_t roxy_f32_hash(float val);
-int64_t roxy_f64_hash(double val);
-int64_t roxy_string_hash(void* val);
+uint64_t roxy_bool_hash(bool val);
+uint64_t roxy_i8_hash(int8_t val);
+uint64_t roxy_i16_hash(int16_t val);
+uint64_t roxy_i32_hash(int32_t val);
+uint64_t roxy_i64_hash(int64_t val);
+uint64_t roxy_u8_hash(uint8_t val);
+uint64_t roxy_u16_hash(uint16_t val);
+uint64_t roxy_u32_hash(uint32_t val);
+uint64_t roxy_u64_hash(uint64_t val);
+uint64_t roxy_f32_hash(float val);
+uint64_t roxy_f64_hash(double val);
+uint64_t roxy_string_hash(void* val);
 
 #ifdef __cplusplus
 }

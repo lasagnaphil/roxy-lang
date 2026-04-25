@@ -491,3 +491,125 @@ TEST_CASE("E2E - Map<Struct, i32>: rehash with struct keys") {
     CHECK(result.success);
     CHECK(result.value == 700);
 }
+
+// ============================================================================
+// Custom Hash / Eq dispatch for struct keys via runtime callback.
+// The runtime calls the user's `K.hash()` / `K.eq(other)` methods through
+// `call_user_function` (re-entrant interpreter call) when they're defined.
+// Detection is by method-name lookup — no `Eq` builtin trait required.
+// ============================================================================
+
+TEST_CASE("E2E - Map<Struct, i32>: custom hash dispatched") {
+    // The user's Vec2.hash() is dispatched during insert and get.
+    const char* source = R"ROXY(
+        struct Vec2 { x: i32; y: i32; }
+        fun Vec2.hash(): u64 for Hash {
+            return u64(self.x * 31 + self.y);
+        }
+        fun main(): i32 {
+            var m: Map<Vec2, i32> = Map<Vec2, i32>();
+            m.insert(Vec2 { x = 1, y = 2 }, 42);
+            return m.get(Vec2 { x = 1, y = 2 });
+        }
+    )ROXY";
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 42);
+}
+
+TEST_CASE("E2E - Map<Struct, i32>: custom eq collapses bytewise-different keys") {
+    // Custom Vec2.eq treats (a,b) and (b,a) as equal, so the second insert
+    // overwrites the first and the map ends up with one entry.
+    const char* source = R"ROXY(
+        struct Vec2 { x: i32; y: i32; }
+        fun Vec2.hash(): u64 for Hash {
+            // Symmetric hash so colliding pairs land in the same bucket.
+            return u64(self.x + self.y);
+        }
+        fun Vec2.eq(other: Vec2): bool for Eq {
+            return (self.x == other.x && self.y == other.y) ||
+                   (self.x == other.y && self.y == other.x);
+        }
+        fun main(): i32 {
+            var m: Map<Vec2, i32> = Map<Vec2, i32>();
+            m.insert(Vec2 { x = 1, y = 2 }, 100);
+            m.insert(Vec2 { x = 2, y = 1 }, 200);   // overwrites under custom eq
+            var len: i32 = i32(m.len());
+            var v: i32 = m.get(Vec2 { x = 1, y = 2 });
+            return len * 1000 + v;   // expect 1*1000 + 200 = 1200
+        }
+    )ROXY";
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 1200);
+}
+
+TEST_CASE("E2E - Map<Struct, i32>: only hash defined, eq falls back to bytewise") {
+    // No user-defined eq → bytewise memcmp. Two distinct-byte keys remain
+    // distinct entries even though they collide on hash.
+    const char* source = R"ROXY(
+        struct K { x: i32; y: i32; }
+        fun K.hash(): u64 for Hash {
+            return 42ul;  // everything collides
+        }
+        fun main(): i32 {
+            var m: Map<K, i32> = Map<K, i32>();
+            m.insert(K { x = 1, y = 2 }, 100);
+            m.insert(K { x = 3, y = 4 }, 200);
+            return i32(m.len()) * 1000 + m.get(K { x = 3, y = 4 });
+        }
+    )ROXY";
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 2200);
+}
+
+TEST_CASE("E2E - Map<Struct, i32>: hash method without `for Hash` is NOT dispatched") {
+    // Just defining `hash()` on a struct doesn't enable custom dispatch —
+    // the struct must explicitly `impl Hash`. Without `for Hash`, the runtime
+    // falls back to bytewise hash. This means two structs with different
+    // bytes are different keys regardless of what the user's hash() returns.
+    const char* source = R"ROXY(
+        struct Vec2 { x: i32; y: i32; }
+
+        // hash defined but NOT marked `for Hash` — runtime ignores it.
+        fun Vec2.hash(): u64 {
+            return u64(self.x);  // would collapse different ys if dispatched
+        }
+
+        fun main(): i32 {
+            var m: Map<Vec2, i32> = Map<Vec2, i32>();
+            m.insert(Vec2 { x = 1, y = 1 }, 100);
+            m.insert(Vec2 { x = 1, y = 2 }, 200);
+            // Bytewise treats these as distinct keys — len = 2.
+            return i32(m.len());
+        }
+    )ROXY";
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 2);
+}
+
+TEST_CASE("E2E - Map<Struct, i32>: custom hash survives rehash") {
+    // 30 inserts force map_grow, which rehashes via the user's Hash method
+    // (the runtime calls back into user code for each key during rehash).
+    const char* source = R"ROXY(
+        struct K { a: i32; b: i32; }
+        fun K.hash(): u64 for Hash {
+            return u64(self.a * 31 + self.b);  // simple mix
+        }
+        fun K.eq(other: K): bool for Eq {
+            return self.a == other.a && self.b == other.b;
+        }
+        fun main(): i32 {
+            var m: Map<K, i32> = Map<K, i32>();
+            for (var i: i32 = 0; i < 30; i = i + 1) {
+                m.insert(K { a = i, b = i * 7 }, i + 1);
+            }
+            return m.get(K { a = 17, b = 119 });
+        }
+    )ROXY";
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.value == 18);
+}

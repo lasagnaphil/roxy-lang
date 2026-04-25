@@ -131,6 +131,7 @@ void CEmitter::collect_value_types(const IRFunction* func) {
     m_stack_alloc_values.clear();
     m_pointer_values.clear();
     m_var_name_to_value.clear();
+    m_const_int_values.clear();
 
     for (u32 i = 0; i < func->params.size(); i++) {
         m_value_types[func->params[i].value.id] = func->params[i].type;
@@ -168,6 +169,9 @@ void CEmitter::collect_value_types(const IRFunction* func) {
             const IRInst* inst = block->instructions[i];
             if (inst->result.is_valid() && inst->type) {
                 m_value_types[inst->result.id] = inst->type;
+            }
+            if (inst->op == IROp::ConstInt) {
+                m_const_int_values[inst->result.id] = inst->const_data.int_val;
             }
             if (inst->op == IROp::StackAlloc) {
                 m_stack_alloc_values.insert(inst->result.id);
@@ -1693,6 +1697,7 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     bool is_map_remove = name_eq(c_func_name, "roxy_map_remove");
     bool is_map_iter_key_at = name_eq(c_func_name, "roxy_map_iter_key_at");
     bool is_map_iter_value_at = name_eq(c_func_name, "roxy_map_iter_value_at");
+    bool is_map_alloc = name_eq(c_func_name, "roxy_map_alloc");
 
     // Pointer-passing natives: which arg slots receive `const void*` to
     // bytes. Map keys live at index 1; values at index 2 (insert/index_mut).
@@ -1792,6 +1797,29 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
                 emit_value(inst->call.args[i], out);
             } else {
                 out.append("&_vtmp");
+            }
+            continue;
+        }
+
+        // roxy_map_alloc args 4 (hash_fn_index) and 5 (eq_fn_index): the IR
+        // builder passes these as ConstInt values (function indices into the
+        // IR module's function table, or -1 for "no custom impl"). The C
+        // runtime's signature wants function pointers (or nullptr). Resolve
+        // the int constant to the user's mangled C function name and emit
+        // its address (or nullptr for -1). The user's `K__hash(K*)` /
+        // `K__eq(K*, K*)` C signatures don't match `roxy_map_hash_fn` /
+        // `roxy_map_eq_fn` exactly (`K*` vs `const void*`), so we cast.
+        if (is_map_alloc && (i == 4 || i == 5)) {
+            auto const_it = m_const_int_values.find(inst->call.args[i].id);
+            i64 fn_idx = (const_it != m_const_int_values.end()) ? const_it->second : -1;
+            if (fn_idx < 0 || fn_idx >= static_cast<i64>(m_module->functions.size())) {
+                out.append("nullptr");
+            } else {
+                StringView fn_name = m_module->functions[static_cast<u32>(fn_idx)]->name;
+                const char* cast = (i == 4) ? "(roxy_map_hash_fn)" : "(roxy_map_eq_fn)";
+                out.append(cast);
+                out.append("&");
+                emit_mangled_name(fn_name, out);
             }
             continue;
         }

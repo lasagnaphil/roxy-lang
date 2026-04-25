@@ -70,6 +70,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
     m_module_name = program->module_name;
 
     IRModule* module = m_allocator.emplace<IRModule>();
+    m_module = module;
 
     // Track which struct types have user-defined default constructors
     tsl::robin_map<StringView, bool> has_default_ctor;
@@ -2811,6 +2812,11 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         // is 2-slot inline (the u64 register packs the value), for struct
         // keys the layout matches the struct's slot count and the runtime
         // expects a pointer to the bytes.
+        //
+        // For struct keys, we also look up the user's `hash()` / `eq()`
+        // methods (if defined) and pass their bytecode function indices to
+        // the runtime. The runtime calls them via call_user_function during
+        // bucket probing. -1 means "no custom impl, use bytewise dispatch".
         StringView alloc_name = map_resolved_type->map_info.alloc_native_name;
         i32 alloc_idx = m_registry.get_index(alloc_name);
         Type* key_type = map_resolved_type->map_info.key_type;
@@ -2819,15 +2825,62 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         bool key_is_inline = !key_type->is_struct();
         u32 vsc = get_type_slot_count(value_type);
         bool value_is_inline = !value_type->is_struct();
+
+        // Look up user-defined Hash/Eq methods for struct keys.
+        // Custom dispatch fires only when the struct EXPLICITLY implements
+        // both `Hash` and `Eq` via `for Hash` / `for Eq` impl annotations.
+        // Just defining `hash()` / `eq()` methods without the annotation is
+        // not enough — those only resolve via TypeCache::lookup_method, but
+        // the runtime won't dispatch through them. This matches Rust's
+        // behavior: HashMap requires `impl Hash` and `impl Eq`.
+        i32 hash_fn_index = -1;
+        i32 eq_fn_index = -1;
+        if (key_type->is_struct() && m_module) {
+            Type* hash_trait = m_type_env.hash_type();
+            Type* eq_trait = m_type_env.eq_type();
+            bool impls_hash = hash_trait && m_types.implements_trait(key_type, hash_trait);
+            bool impls_eq = eq_trait && m_types.implements_trait(key_type, eq_trait);
+            if (impls_hash) {
+                Type* found_in = nullptr;
+                const MethodInfo* hash_info = m_types.lookup_method(key_type, StringView("hash", 4), &found_in);
+                if (hash_info && found_in) {
+                    StringView mangled = mangle_method(found_in->struct_info.name, StringView("hash", 4));
+                    for (u32 fi = 0; fi < m_module->functions.size(); fi++) {
+                        if (m_module->functions[fi]->name == mangled) {
+                            hash_fn_index = static_cast<i32>(fi);
+                            break;
+                        }
+                    }
+                }
+            }
+            if (impls_eq) {
+                Type* found_in = nullptr;
+                const MethodInfo* eq_info = m_types.lookup_method(key_type, StringView("eq", 2), &found_in);
+                if (eq_info && found_in) {
+                    StringView mangled = mangle_method(found_in->struct_info.name, StringView("eq", 2));
+                    for (u32 fi = 0; fi < m_module->functions.size(); fi++) {
+                        if (m_module->functions[fi]->name == mangled) {
+                            eq_fn_index = static_cast<i32>(fi);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         ValueId ksc_val = emit_const_int(static_cast<i64>(ksc), m_types.i32_type());
         ValueId kii_val = emit_const_int(key_is_inline ? 1 : 0, m_types.i32_type());
         ValueId vsc_val = emit_const_int(static_cast<i64>(vsc), m_types.i32_type());
         ValueId vii_val = emit_const_int(value_is_inline ? 1 : 0, m_types.i32_type());
-        Span<ValueId> alloc_args = alloc_span<ValueId>(4);
+        ValueId hash_val = emit_const_int(static_cast<i64>(hash_fn_index), m_types.i32_type());
+        ValueId eq_val = emit_const_int(static_cast<i64>(eq_fn_index), m_types.i32_type());
+        Span<ValueId> alloc_args = alloc_span<ValueId>(6);
         alloc_args[0] = ksc_val;
         alloc_args[1] = kii_val;
         alloc_args[2] = vsc_val;
         alloc_args[3] = vii_val;
+        alloc_args[4] = hash_val;
+        alloc_args[5] = eq_val;
         ValueId map_ptr = emit_call_native(alloc_name, alloc_args, expr->resolved_type,
                                             static_cast<u8>(alloc_idx));
 

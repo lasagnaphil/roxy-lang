@@ -34,6 +34,12 @@ struct MapHeader {
     u8 value_slot_count; // u32 slots per value (1 for primitives ≤ 4B, 2 for 8B, N for structs)
     bool value_is_inline;// true = value fits in a single register (primitive); false = struct, source is a pointer
     u8 _pad;
+    // For Struct keys with user-defined Hash/Eq impls, these hold the bytecode
+    // function indices for the hash and eq methods. UINT32_MAX means "no
+    // custom impl" — runtime falls back to bytewise hash/eq. Unused for
+    // non-struct key kinds (primitives use the key_kind enum dispatch).
+    u32 hash_fn_index;
+    u32 eq_fn_index;
     u8* distances;       // Per-bucket Robin Hood distance+1 (0 = empty)
     u32* keys;           // Key storage: capacity * key_slot_count u32 slots
     u32* values;         // Value storage: capacity * value_slot_count u32 slots
@@ -52,10 +58,14 @@ inline const MapHeader* get_map_header(const void* data) {
 // `key_slot_count` / `key_is_inline` describe the key layout symmetrically to
 // values. For primitive keys, slot_count=2 + is_inline=true; for struct keys,
 // slot_count is the struct's slot count + is_inline=false.
+// `hash_fn_index` / `eq_fn_index` are bytecode function indices for the user's
+// Hash and Eq methods on Struct keys (UINT32_MAX = no custom impl, fall back
+// to bytewise). Ignored for non-struct key kinds.
 // Returns pointer to map data (MapHeader).
 void* map_alloc(RoxyVM* vm, MapKeyKind key_kind, u32 capacity,
                 u8 key_slot_count = 2, bool key_is_inline = true,
-                u8 value_slot_count = 2, bool value_is_inline = true);
+                u8 value_slot_count = 2, bool value_is_inline = true,
+                u32 hash_fn_index = UINT32_MAX, u32 eq_fn_index = UINT32_MAX);
 
 // Deep-copy a map
 void* map_copy(RoxyVM* vm, void* src);
@@ -67,22 +77,23 @@ inline u32 map_length(const void* data) {
 
 // All key reads now use byte pointers. `key_src` points to
 // `key_slot_count * 4` bytes that the runtime hashes/compares per the
-// configured key kind.
+// configured key kind. `vm` is required so the runtime can call user
+// Hash/Eq methods on Struct keys via call_user_function.
 
-bool map_contains(const void* data, const u32* key_src);
+bool map_contains(RoxyVM* vm, const void* data, const u32* key_src);
 
 // Get value pointer by key. Returns pointer into the map's value storage on
 // success (valid until the next insert/remove/clear), nullptr if key not found
 // (sets *error). The caller reads `value_slot_count * 4` bytes from the returned
 // pointer. For primitive values, this is also convertible to u64 via memcpy.
-const u32* map_get_ptr(const void* data, const u32* key_src, const char** error);
+const u32* map_get_ptr(RoxyVM* vm, const void* data, const u32* key_src, const char** error);
 
 // Insert or update a key-value pair. `key_src` and `value_src` each point to
 // `key_slot_count * 4` and `value_slot_count * 4` bytes respectively.
-void map_insert(void* data, const u32* key_src, const u32* value_src);
+void map_insert(RoxyVM* vm, void* data, const u32* key_src, const u32* value_src);
 
 // Remove a key. Returns true if key was present, false otherwise.
-bool map_remove(void* data, const u32* key_src);
+bool map_remove(RoxyVM* vm, void* data, const u32* key_src);
 
 // Remove all entries (keeps allocated memory)
 void map_clear(void* data);

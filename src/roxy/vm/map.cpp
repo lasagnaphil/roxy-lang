@@ -3,6 +3,7 @@
 #include "roxy/vm/list.hpp"
 #include "roxy/vm/string.hpp"
 #include "roxy/vm/value.hpp"
+#include "roxy/vm/interpreter.hpp"
 
 #include <cassert>
 #include <cstdlib>
@@ -55,8 +56,8 @@ static u64 read_packed_u64(const u32* key_src) {
     return packed;
 }
 
-static u64 map_hash_key(const u32* key_src, MapKeyKind kind, u8 key_slot_count) {
-    switch (kind) {
+static u64 map_hash_key(RoxyVM* vm, const u32* key_src, const MapHeader* hdr) {
+    switch (hdr->key_kind) {
         case MapKeyKind::Integer:
             return hash_integer(read_packed_u64(key_src));
         case MapKeyKind::Float32: {
@@ -83,16 +84,23 @@ static u64 map_hash_key(const u32* key_src, MapKeyKind kind, u8 key_slot_count) 
             return get_string_header(str)->hash;
         }
         case MapKeyKind::Struct:
+            // Custom Hash impl: dispatch through user-defined `hash()` method
+            // (the IR builder stored its function index in hdr at construction
+            // time). Otherwise fall back to bytewise FNV-1a.
+            if (vm && hdr->hash_fn_index != UINT32_MAX) {
+                u64 args[1] = { reinterpret_cast<u64>(key_src) };
+                return call_user_function(vm, hdr->hash_fn_index, args, 1);
+            }
             return hash_bytes(reinterpret_cast<const u8*>(key_src),
-                              static_cast<size_t>(key_slot_count) * sizeof(u32));
+                              static_cast<size_t>(hdr->key_slot_count) * sizeof(u32));
     }
     return hash_integer(read_packed_u64(key_src));
 }
 
 // --- Key equality ---
 
-static bool map_keys_equal(const u32* a, const u32* b, MapKeyKind kind, u8 key_slot_count) {
-    switch (kind) {
+static bool map_keys_equal(RoxyVM* vm, const u32* a, const u32* b, const MapHeader* hdr) {
+    switch (hdr->key_kind) {
         case MapKeyKind::Integer:
             return read_packed_u64(a) == read_packed_u64(b);
         case MapKeyKind::Float32: {
@@ -114,7 +122,40 @@ static bool map_keys_equal(const u32* a, const u32* b, MapKeyKind kind, u8 key_s
                                  reinterpret_cast<void*>(b_bits));
         }
         case MapKeyKind::Struct:
-            return memcmp(a, b, static_cast<size_t>(key_slot_count) * sizeof(u32)) == 0;
+            // Custom Eq impl: dispatch through user-defined `eq(other)` method.
+            // Otherwise fall back to bytewise memcmp.
+            //
+            // Calling-convention bridge: `self: ref K` is always a pointer
+            // (1 register). `other: K` follows Roxy's struct-arg ABI:
+            //   ≤2-slot K  → packed bytes in 1 register
+            //   3-4 slot K → packed bytes across 2 registers
+            //   5+ slot K  → pointer in 1 register (large struct convention)
+            // We pack `b`'s bytes accordingly before invoking via
+            // call_user_function (which copies args linearly into the called
+            // function's register window — the prologue then unpacks).
+            if (vm && hdr->eq_fn_index != UINT32_MAX) {
+                u8 ksc = hdr->key_slot_count;
+                u64 args[3];
+                args[0] = reinterpret_cast<u64>(a);
+                u32 argc;
+                if (ksc <= 2) {
+                    args[1] = 0;
+                    memcpy(&args[1], b, static_cast<size_t>(ksc) * sizeof(u32));
+                    argc = 2;
+                } else if (ksc <= 4) {
+                    args[1] = 0;
+                    args[2] = 0;
+                    memcpy(&args[1], b, sizeof(u64));
+                    memcpy(&args[2], b + 2, static_cast<size_t>(ksc - 2) * sizeof(u32));
+                    argc = 3;
+                } else {
+                    // Large struct: pass pointer (matches Roxy ABI for >4 slot).
+                    args[1] = reinterpret_cast<u64>(b);
+                    argc = 2;
+                }
+                return call_user_function(vm, hdr->eq_fn_index, args, argc) != 0;
+            }
+            return memcmp(a, b, static_cast<size_t>(hdr->key_slot_count) * sizeof(u32)) == 0;
     }
     return read_packed_u64(a) == read_packed_u64(b);
 }
@@ -155,12 +196,12 @@ static void map_free_buckets(MapHeader* header) {
 // Robin Hood with variable-sized keys AND values needs ping-pong scratch
 // buffers for both, so the entry being placed survives multiple displacements
 // in the chain. Stack-allocated for typical sizes; heap fallback otherwise.
-static void map_insert_internal(MapHeader* header,
+static void map_insert_internal(RoxyVM* vm, MapHeader* header,
                                 const u32* key_src, const u32* value_src) {
     u32 mask = header->capacity - 1;
     u8 ksc = header->key_slot_count;
     u8 vsc = header->value_slot_count;
-    u64 hash = map_hash_key(key_src, header->key_kind, ksc);
+    u64 hash = map_hash_key(vm, key_src, header);
     u32 pos = static_cast<u32>(hash) & mask;
     u8 dist = 1;
 
@@ -210,7 +251,7 @@ static void map_insert_internal(MapHeader* header,
     }
 }
 
-static void map_grow(MapHeader* header) {
+static void map_grow(RoxyVM* vm, MapHeader* header) {
     u32 old_capacity = header->capacity;
     u8* old_distances = header->distances;
     u32* old_keys = header->keys;
@@ -226,7 +267,7 @@ static void map_grow(MapHeader* header) {
         if (old_distances[i] != 0) {
             const u32* old_key_ptr = old_keys + static_cast<size_t>(i) * ksc;
             const u32* old_val_ptr = old_values + static_cast<size_t>(i) * vsc;
-            map_insert_internal(header, old_key_ptr, old_val_ptr);
+            map_insert_internal(vm, header, old_key_ptr, old_val_ptr);
             header->length++;
         }
     }
@@ -240,7 +281,8 @@ static void map_grow(MapHeader* header) {
 
 void* map_alloc(RoxyVM* vm, MapKeyKind key_kind, u32 capacity,
                 u8 key_slot_count, bool key_is_inline,
-                u8 value_slot_count, bool value_is_inline) {
+                u8 value_slot_count, bool value_is_inline,
+                u32 hash_fn_index, u32 eq_fn_index) {
     u32 data_size = sizeof(MapHeader);
     void* data = object_alloc(vm, g_map_type_id, data_size);
     if (!data) return nullptr;
@@ -253,6 +295,8 @@ void* map_alloc(RoxyVM* vm, MapKeyKind key_kind, u32 capacity,
     header->key_is_inline = key_is_inline;
     header->value_slot_count = value_slot_count > 0 ? value_slot_count : 2;
     header->value_is_inline = value_is_inline;
+    header->hash_fn_index = hash_fn_index;
+    header->eq_fn_index = eq_fn_index;
     header->distances = nullptr;
     header->keys = nullptr;
     header->values = nullptr;
@@ -272,7 +316,8 @@ void* map_copy(RoxyVM* vm, void* src) {
 
     void* dst = map_alloc(vm, src_header->key_kind, src_header->capacity,
                           src_header->key_slot_count, src_header->key_is_inline,
-                          src_header->value_slot_count, src_header->value_is_inline);
+                          src_header->value_slot_count, src_header->value_is_inline,
+                          src_header->hash_fn_index, src_header->eq_fn_index);
     if (!dst) return nullptr;
 
     MapHeader* dst_header = get_map_header(dst);
@@ -287,13 +332,12 @@ void* map_copy(RoxyVM* vm, void* src) {
     return dst;
 }
 
-bool map_contains(const void* data, const u32* key_src) {
+bool map_contains(RoxyVM* vm, const void* data, const u32* key_src) {
     const MapHeader* header = get_map_header(data);
     if (header->capacity == 0 || header->length == 0) return false;
 
-    u8 ksc = header->key_slot_count;
     u32 mask = header->capacity - 1;
-    u64 hash = map_hash_key(key_src, header->key_kind, ksc);
+    u64 hash = map_hash_key(vm, key_src, header);
     u32 pos = static_cast<u32>(hash) & mask;
     u8 dist = 1;
 
@@ -301,7 +345,7 @@ bool map_contains(const void* data, const u32* key_src) {
         if (header->distances[pos] == 0) return false;
         if (header->distances[pos] < dist) return false;
         if (header->distances[pos] == dist &&
-            map_keys_equal(map_key_ptr(header, pos), key_src, header->key_kind, ksc)) {
+            map_keys_equal(vm, map_key_ptr(header, pos), key_src, header)) {
             return true;
         }
         pos = (pos + 1) & mask;
@@ -309,7 +353,7 @@ bool map_contains(const void* data, const u32* key_src) {
     }
 }
 
-const u32* map_get_ptr(const void* data, const u32* key_src, const char** error) {
+const u32* map_get_ptr(RoxyVM* vm, const void* data, const u32* key_src, const char** error) {
     if (data == nullptr) {
         *error = "Null map reference";
         return nullptr;
@@ -321,9 +365,8 @@ const u32* map_get_ptr(const void* data, const u32* key_src, const char** error)
         return nullptr;
     }
 
-    u8 ksc = header->key_slot_count;
     u32 mask = header->capacity - 1;
-    u64 hash = map_hash_key(key_src, header->key_kind, ksc);
+    u64 hash = map_hash_key(vm, key_src, header);
     u32 pos = static_cast<u32>(hash) & mask;
     u8 dist = 1;
 
@@ -337,7 +380,7 @@ const u32* map_get_ptr(const void* data, const u32* key_src, const char** error)
             return nullptr;
         }
         if (header->distances[pos] == dist &&
-            map_keys_equal(map_key_ptr(header, pos), key_src, header->key_kind, ksc)) {
+            map_keys_equal(vm, map_key_ptr(header, pos), key_src, header)) {
             return map_value_ptr(header, pos);
         }
         pos = (pos + 1) & mask;
@@ -345,14 +388,13 @@ const u32* map_get_ptr(const void* data, const u32* key_src, const char** error)
     }
 }
 
-void map_insert(void* data, const u32* key_src, const u32* value_src) {
+void map_insert(RoxyVM* vm, void* data, const u32* key_src, const u32* value_src) {
     MapHeader* header = get_map_header(data);
-    u8 ksc = header->key_slot_count;
     u8 vsc = header->value_slot_count;
 
     if (header->capacity > 0 && header->length > 0) {
         u32 mask = header->capacity - 1;
-        u64 hash = map_hash_key(key_src, header->key_kind, ksc);
+        u64 hash = map_hash_key(vm, key_src, header);
         u32 pos = static_cast<u32>(hash) & mask;
         u8 dist = 1;
 
@@ -360,7 +402,7 @@ void map_insert(void* data, const u32* key_src, const u32* value_src) {
             if (header->distances[pos] == 0) break;
             if (header->distances[pos] < dist) break;
             if (header->distances[pos] == dist &&
-                map_keys_equal(map_key_ptr(header, pos), key_src, header->key_kind, ksc)) {
+                map_keys_equal(vm, map_key_ptr(header, pos), key_src, header)) {
                 memcpy(map_value_ptr(header, pos), value_src, sizeof(u32) * vsc);
                 return;
             }
@@ -370,21 +412,21 @@ void map_insert(void* data, const u32* key_src, const u32* value_src) {
     }
 
     if (header->capacity == 0 || (header->length + 1) > header->capacity * 4 / 5) {
-        map_grow(header);
+        map_grow(vm, header);
     }
 
-    map_insert_internal(header, key_src, value_src);
+    map_insert_internal(vm, header, key_src, value_src);
     header->length++;
 }
 
-bool map_remove(void* data, const u32* key_src) {
+bool map_remove(RoxyVM* vm, void* data, const u32* key_src) {
     MapHeader* header = get_map_header(data);
     if (header->capacity == 0 || header->length == 0) return false;
 
     u8 ksc = header->key_slot_count;
     u8 vsc = header->value_slot_count;
     u32 mask = header->capacity - 1;
-    u64 hash = map_hash_key(key_src, header->key_kind, ksc);
+    u64 hash = map_hash_key(vm, key_src, header);
     u32 pos = static_cast<u32>(hash) & mask;
     u8 dist = 1;
 
@@ -392,7 +434,7 @@ bool map_remove(void* data, const u32* key_src) {
         if (header->distances[pos] == 0) return false;
         if (header->distances[pos] < dist) return false;
         if (header->distances[pos] == dist &&
-            map_keys_equal(map_key_ptr(header, pos), key_src, header->key_kind, ksc)) {
+            map_keys_equal(vm, map_key_ptr(header, pos), key_src, header)) {
             break;
         }
         pos = (pos + 1) & mask;

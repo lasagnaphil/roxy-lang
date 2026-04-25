@@ -1209,3 +1209,73 @@ TEST_CASE("E2E - C Backend: Map<Struct, i32> contains + remove") {
     CHECK(result.run_success);
     CHECK(result.exit_code == 23);  // len_after=2, bits=3 → 23
 }
+
+// ===========================================================================
+// Custom Hash / Eq dispatch for struct keys (function-pointer dispatch in C
+// runtime). The C emitter passes &K__hash / &K__eq to roxy_map_alloc.
+// ===========================================================================
+
+TEST_CASE("E2E - C Backend: Map<Struct, i32> custom hash dispatched") {
+    const char* source = R"(
+        struct Vec2 { x: i32; y: i32; }
+        fun Vec2.hash(): u64 for Hash {
+            return u64(self.x * 31 + self.y);
+        }
+        fun main(): i32 {
+            var m: Map<Vec2, i32> = Map<Vec2, i32>();
+            m.insert(Vec2 { x = 1, y = 2 }, 42);
+            return m.get(Vec2 { x = 1, y = 2 });
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("E2E - C Backend: Map<Struct, i32> custom eq collapses keys") {
+    const char* source = R"(
+        struct Vec2 { x: i32; y: i32; }
+        fun Vec2.hash(): u64 for Hash {
+            return u64(self.x + self.y);
+        }
+        fun Vec2.eq(other: Vec2): bool for Eq {
+            return (self.x == other.x && self.y == other.y) ||
+                   (self.x == other.y && self.y == other.x);
+        }
+        fun main(): i32 {
+            var m: Map<Vec2, i32> = Map<Vec2, i32>();
+            m.insert(Vec2 { x = 1, y = 2 }, 100);
+            m.insert(Vec2 { x = 2, y = 1 }, 200);   // overwrites
+            return m.len() * 100 + m.get(Vec2 { x = 1, y = 2 });
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    // 1 * 100 + 200 = 300
+    CHECK(result.exit_code == 44);  // 300 % 256 = 44
+}
+
+TEST_CASE("E2E - C Backend: Map<Struct, i32> custom hash survives rehash") {
+    const char* source = R"(
+        struct K { a: i32; b: i32; }
+        fun K.hash(): u64 for Hash {
+            return u64(self.a * 31 + self.b);  // simple mix
+        }
+        fun K.eq(other: K): bool for Eq {
+            return self.a == other.a && self.b == other.b;
+        }
+        fun main(): i32 {
+            var m: Map<K, i32> = Map<K, i32>();
+            for (var i: i32 = 0; i < 30; i = i + 1) {
+                m.insert(K { a = i, b = i * 7 }, i + 1);
+            }
+            return m.get(K { a = 17, b = 119 });
+        }
+    )";
+    CBackendResult result = compile_and_run_cpp(source);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 18);
+}

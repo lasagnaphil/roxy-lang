@@ -190,6 +190,14 @@ private:
     // function names so they don't collide across modules at link time.
     StringView m_module_name;
 
+    // The IR module currently being built. Set at the top of build() and
+    // accessed by helpers that need to look up function indices (e.g. when
+    // emitting a call to native_map_alloc with a struct key, the IR builder
+    // looks up the user's hash/eq method indices from this module). Lowering
+    // preserves IR-module function order in the BCModule, so the index
+    // emitted here matches the bytecode function index at runtime.
+    IRModule* m_module = nullptr;
+
     // Current function being built
     IRFunction* m_current_func;
     IRBlock* m_current_block;
