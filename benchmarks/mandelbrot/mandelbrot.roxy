@@ -1,0 +1,56 @@
+// Mandelbrot set escape-time renderer.
+//
+// For each pixel in an 800x800 grid, iterate z = z*z + c starting from z=0
+// until |z|^2 > 4 or we hit the iteration cap. Aggregates a checksum (sum of
+// per-pixel iteration counts) so the C/Python/Roxy ports produce bit-identical
+// numbers when their f64 arithmetic agrees.
+
+fun main(): i32 {
+    var width: i32 = 800;
+    var height: i32 = 800;
+    var max_iter: i32 = 100;
+
+    var x_min: f64 = -2.0;
+    var x_max: f64 = 1.0;
+    var y_min: f64 = -1.5;
+    var y_max: f64 = 1.5;
+
+    var dx: f64 = (x_max - x_min) / f64(width);
+    var dy: f64 = (y_max - y_min) / f64(height);
+
+    var start: f64 = clock();
+
+    var in_set: i32 = 0;
+    var checksum: i64 = 0l;
+
+    for (var py: i32 = 0; py < height; py = py + 1) {
+        var cy: f64 = y_min + f64(py) * dy;
+        for (var px: i32 = 0; px < width; px = px + 1) {
+            var cx: f64 = x_min + f64(px) * dx;
+            var zx: f64 = 0.0;
+            var zy: f64 = 0.0;
+            var iter: i32 = 0;
+            while (iter < max_iter) {
+                var zx2: f64 = zx * zx;
+                var zy2: f64 = zy * zy;
+                if (zx2 + zy2 > 4.0) {
+                    break;
+                }
+                zy = 2.0 * zx * zy + cy;
+                zx = zx2 - zy2 + cx;
+                iter = iter + 1;
+            }
+            if (iter == max_iter) {
+                in_set = in_set + 1;
+            }
+            checksum = checksum + i64(iter);
+        }
+    }
+
+    var elapsed: f64 = (clock() - start) * 1000.0;
+    print(f"Time: {elapsed} ms");
+    print(f"In set: {in_set}");
+    print(f"Checksum: {checksum}");
+
+    return 0;
+}

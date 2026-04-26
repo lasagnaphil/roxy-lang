@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <chrono>
 
 namespace rx {
@@ -921,6 +922,15 @@ static void native_str_from_code(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = reinterpret_cast<u64>(result);
 }
 
+// Native function: sqrt(x: f64) -> f64
+static void native_sqrt(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack_back().registers;
+    f64 val;
+    memcpy(&val, &regs[first_arg], sizeof(f64));
+    f64 result = std::sqrt(val);
+    memcpy(&regs[dst], &result, sizeof(f64));
+}
+
 // Native function: clock() -> f64
 // Returns current time in seconds since an arbitrary epoch.
 static void native_clock(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
@@ -1000,6 +1010,9 @@ void register_builtin_natives(NativeRegistry& registry) {
     // Utility functions
     registry.bind_native(native_clock, "fun clock(): f64");
     registry.bind_native(native_read_file, "fun read_file(path: string): string");
+
+    // Math functions
+    registry.bind_native(native_sqrt, "fun sqrt(x: f64): f64");
 
     // to_string natives for primitive types ($$-mangled name override)
     registry.bind_native("bool$$to_string",   native_bool_to_string,   "fun to_string(val: bool): string");
