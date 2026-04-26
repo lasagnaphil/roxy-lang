@@ -116,6 +116,10 @@ bool vm_init(RoxyVM* vm, const VMConfig& config) {
 }
 
 void vm_destroy(RoxyVM* vm) {
+#if ROXY_PROFILE_BYTECODE
+    bc_profile_dump(stderr);
+#endif
+
     vm->register_file.reset();
     vm->register_file_size = 0;
     vm->register_top = 0;

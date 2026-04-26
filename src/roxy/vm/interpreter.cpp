@@ -6,9 +6,91 @@
 
 #include <cmath>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 
+#if ROXY_PROFILE_BYTECODE
+#include <algorithm>
+#if defined(__x86_64__) || defined(_M_X64)
+#include <x86intrin.h>
+#endif
+#endif
+
 namespace rx {
+
+#if ROXY_PROFILE_BYTECODE
+// Bytecode profiler — file-static accumulators. The dispatch loop attributes
+// the cycles spent between two consecutive DISPATCH()es to the previously
+// executed opcode. The cycle source itself has ~20-50 cycles overhead, so
+// treat results as a relative ranking, not an absolute measurement.
+static u64 g_bc_op_count[256] = {};
+static u64 g_bc_op_cycles[256] = {};
+
+static inline u64 bc_read_cycles() {
+#if defined(__x86_64__) || defined(_M_X64)
+    return __rdtsc();
+#elif defined(__aarch64__)
+    u64 v;
+    asm volatile("mrs %0, cntvct_el0" : "=r"(v));
+    return v;
+#else
+    return 0;
+#endif
+}
+
+void bc_profile_reset() {
+    for (int i = 0; i < 256; i++) {
+        g_bc_op_count[i] = 0;
+        g_bc_op_cycles[i] = 0;
+    }
+}
+
+void bc_profile_dump(FILE* out) {
+    u64 total_count = 0;
+    u64 total_cycles = 0;
+    for (int i = 0; i < 256; i++) {
+        total_count += g_bc_op_count[i];
+        total_cycles += g_bc_op_cycles[i];
+    }
+    if (total_count == 0) return;
+
+    struct Row { u8 op; u64 count; u64 cycles; };
+    Row rows[256];
+    int n = 0;
+    for (int i = 0; i < 256; i++) {
+        if (g_bc_op_count[i] == 0) continue;
+        rows[n++] = Row{static_cast<u8>(i), g_bc_op_count[i], g_bc_op_cycles[i]};
+    }
+    std::sort(rows, rows + n, [](const Row& a, const Row& b) {
+        return a.cycles > b.cycles;
+    });
+
+    fprintf(out, "\n=== Bytecode profile ===\n");
+    fprintf(out, "Total: %llu ops, %llu cycle-units\n",
+            (unsigned long long)total_count, (unsigned long long)total_cycles);
+    fprintf(out, "Cycle source: rdtsc (x86_64) / cntvct (aarch64). On virtualized\n");
+    fprintf(out, "hosts the cycle counter may run at a fixed nominal rate rather\n");
+    fprintf(out, "than the actual core frequency, so absolute numbers may be off;\n");
+    fprintf(out, "trust counts and percentages for ranking.\n\n");
+    fprintf(out, "%-22s %14s %16s %12s %8s\n",
+            "Opcode", "Count", "Cycles", "Cyc/Op", "%Cyc");
+    for (int i = 0; i < n; i++) {
+        const char* name = opcode_to_string(static_cast<Opcode>(rows[i].op));
+        double avg = static_cast<double>(rows[i].cycles) / static_cast<double>(rows[i].count);
+        double pct = total_cycles > 0
+            ? 100.0 * static_cast<double>(rows[i].cycles) / static_cast<double>(total_cycles)
+            : 0.0;
+        fprintf(out, "%-22s %14llu %16llu %12.3f %7.2f%%\n",
+                name,
+                (unsigned long long)rows[i].count,
+                (unsigned long long)rows[i].cycles,
+                avg, pct);
+    }
+}
+#else
+void bc_profile_reset() {}
+void bc_profile_dump(FILE*) {}
+#endif
 
 // Helper functions for type punning with untyped registers
 inline i64 reg_as_i64(u64 r) { return static_cast<i64>(r); }
@@ -280,10 +362,25 @@ static void execute_cleanup(RoxyVM* vm, const BCFunction* func,
 
 #if RX_USE_COMPUTED_GOTO
 #define OP(name) op_##name:
+#if ROXY_PROFILE_BYTECODE
+// Profiling DISPATCH: attribute (now - prev_tsc) to whichever opcode just
+// finished, then load + dispatch the next one. `bc_prev_op` and `bc_prev_tsc`
+// are local-scope variables initialized at interpret() entry.
+#define DISPATCH() do {                                \
+    u64 _now = bc_read_cycles();                       \
+    g_bc_op_cycles[bc_prev_op] += _now - bc_prev_tsc;  \
+    g_bc_op_count[bc_prev_op] += 1;                    \
+    instr = *pc++;                                     \
+    bc_prev_op = static_cast<u8>(instr >> 24);         \
+    bc_prev_tsc = _now;                                \
+    goto *dispatch_table[instr >> 24];                 \
+} while(0)
+#else
 #define DISPATCH() do {          \
     instr = *pc++;               \
     goto *dispatch_table[instr >> 24]; \
 } while(0)
+#endif
 #else
 #define OP(name) case Opcode::name:
 #define DISPATCH() break
@@ -302,6 +399,15 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
     u64* regs = frame->registers;
 
     u32 instr;
+
+#if ROXY_PROFILE_BYTECODE
+    // Profiler bookkeeping: which opcode is currently "in flight" and the
+    // cycle counter reading taken when it began executing. NOP (0xFE) is
+    // used as a no-op sentinel for the very first DISPATCH and absorbs the
+    // small slice of time spent setting up the dispatch table.
+    u8 bc_prev_op = 0xFE;
+    u64 bc_prev_tsc = bc_read_cycles();
+#endif
 
 #if RX_USE_COMPUTED_GOTO
     // 256-entry dispatch table, one per possible opcode byte value.

@@ -4,6 +4,16 @@ project(roxy)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Bytecode profiler option — adds per-opcode count + TSC cycle accounting in
+# the interpreter dispatch loop. Off by default (zero cost). When ON, the VM
+# prints a sorted opcode summary on destroy. Build under build-profile/ and
+# run any .roxy program; useful for finding hot opcodes when optimizing.
+option(ENABLE_BC_PROFILE "Enable bytecode profiler (per-opcode count + cycles)" OFF)
+if(ENABLE_BC_PROFILE)
+    message(STATUS "Bytecode profiler enabled")
+    add_compile_definitions(ROXY_PROFILE_BYTECODE=1)
+endif()
+
 # AddressSanitizer option
 option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
 if(ENABLE_ASAN)

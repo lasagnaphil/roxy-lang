@@ -2,7 +2,15 @@
 
 #include "roxy/vm/vm.hpp"
 
+#include <cstdio>
+
 namespace rx {
+
+// Bytecode profiler. With ROXY_PROFILE_BYTECODE enabled at compile time, the
+// dispatch loop accumulates per-opcode count and cycle totals. Without it,
+// these become no-ops and there is zero hot-path overhead.
+void bc_profile_reset();
+void bc_profile_dump(FILE* out);
 
 // Execute bytecode starting from the current call frame
 // Returns true on success, false on error
