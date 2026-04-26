@@ -333,6 +333,9 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **SSA IR** - Block arguments (not phi nodes), 43+ operations for all basic operations.
 **Details:** `docs/internals/ssa-ir.md` | **Files:** `compiler/ssa_ir.hpp`, `compiler/ir_builder.hpp`
 
+**IR Optimizations** - Phase 1 (constant folding, algebraic simplifications, cast folding) eagerly applied during IR building. Phase 2 (use-count computation, dead code elimination, copy propagation) and Phase 3 (branch folding, block merging, trivial block-argument elimination) as standalone passes between coroutine lowering and IR validation, iterated to a fixed point with a final RPO sweep. Phase 4 (local CSE) not yet implemented.
+**Details:** `docs/internals/optimization.md` | **Files:** `compiler/ir_optimize.hpp`, `compiler/ir_optimize.cpp`
+
 **Bytecode** - 32-bit fixed-width register-based, 64+ opcodes, three instruction formats (ABC, ABI, AOFF). Liveness-based register allocation with free-list reuse; register spilling via furthest-first eviction when pressure exceeds 255 registers.
 **Details:** `docs/internals/bytecode.md`, `docs/internals/ssa-ir.md` | **Files:** `vm/bytecode.hpp`, `compiler/lowering.hpp`
 
@@ -398,7 +401,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 - C backend Phases 3–5: runtime library, native function integration, polish (see `docs/internals/c-backend.md`)
 - LSP Phase 8: Full semantic analysis (TypeCache/TypeEnv integration)
 - LSP Phase 9: Polish (signature help, code actions, workspace symbols, semantic tokens)
-- Optimizations
+- Optimization Phase 4 (local CSE)
 
 ## Testing
 
@@ -450,3 +453,4 @@ On Windows, use `.exe` extension.
   - `coroutines.md` - Coroutines: Coro<T>, yield, state machine transformation, graph-preserving block cloning
   - `c-backend.md` - C backend (AOT compilation via SSA IR → C): Phases 1–2 implemented, Phases 3–5 design plan
   - `lsp-server.md` - LSP server architecture: map-reduce design, error-recovering parser, indexing, lazy analysis
+  - `optimization.md` - SSA IR optimization passes: Phase 1 (in IRBuilder), Phase 2 (DCE, copy propagation), and Phase 3 (branch folding, block merging, trivial block-arg elim) implemented; Phase 4 (local CSE) design plan

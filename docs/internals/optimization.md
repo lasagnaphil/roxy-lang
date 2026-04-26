@@ -2,7 +2,7 @@
 
 Design plan for optimization passes on Roxy's SSA IR. Passes are organized into phases by implementation complexity and infrastructure requirements.
 
-**Current state:** Phase 1 (constant folding, algebraic simplifications, cast folding) is implemented in `IRBuilder::emit_binary` / `emit_unary` / `gen_primitive_cast`. Phases 2–4 are not yet implemented. The only structural cleanup is `reorder_blocks_rpo()`, which removes unreachable blocks.
+**Current state:** Phase 1 (constant folding, algebraic simplifications, cast folding) is implemented in `IRBuilder::emit_binary` / `emit_unary` / `gen_primitive_cast`. Phase 2 (use-count computation, dead code elimination, copy propagation) and Phase 3 (branch folding, block merging, trivial block-argument elimination) are implemented as standalone passes in `compiler/ir_optimize.{hpp,cpp}`, run from `Compiler::link_modules()` between coroutine lowering and IR validation. The Phase 3 driver iterates `(branch fold → block merge → trivial-arg-elim → re-run Phase 2)` to a fixed point and finishes with `IRFunction::reorder_blocks_rpo()` to drop newly-unreachable blocks and remap BlockId references in exception/finally/cleanup metadata. Phase 4 is not yet implemented.
 
 ## Overview
 
@@ -84,9 +84,20 @@ Pattern-match and simplify operations with known identity/absorbing elements.
 
 **Implementation:** Same approach as constant folding — check patterns in `emit_binary()`/`emit_unary()` and emit simplified instructions.
 
-## Phase 2: Use-Count Based Passes
+## Phase 2: Use-Count Based Passes — IMPLEMENTED
 
 These passes require computing how many times each `ValueId` is used. This is a lightweight analysis: walk all instructions and terminators, count references to each value.
+
+### Implementation notes
+
+- **Files:** `include/roxy/compiler/ir_optimize.hpp`, `src/roxy/compiler/ir_optimize.cpp`. Tests in `tests/unit/test_ir_optimize.cpp`.
+- **Operand enumeration helper:** `for_each_operand(IRInst*, Fn)` and `for_each_terminator_operand(Terminator&, Fn)` are header-defined inline templates with a switch over every `IROp`. The callback receives a *mutable* `ValueId&`, so the same helper serves both reading (use-count, DCE) and rewriting (copy propagation). Block-argument operands inside `Goto`/`Branch` terminators are visited by `for_each_terminator_operand`. **`SetField` has TWO operands**: `inst->field.object` (in the field union) and `inst->store_value` (a top-level `IRInst` field — easy to miss).
+- **Side-effect classification:** `has_side_effect(IROp)` returns true for memory writes (`SetField`, `StorePtr`, `StructCopy`, `IndexSet`), reference counting (`RefInc`, `RefDec`), object lifecycle (`New`, `Delete` — Roxy supports user-defined constructors/destructors with arbitrary side effects), calls (`Call`, `CallNative`, `CallExternal`), control-flow / coroutine (`Throw`, `Yield`), and **`Nullify`**. `Nullify` is critical: lowering reads its position via `m_nullify_pcs` to narrow cleanup scope after a `uniq` move; removing it would re-destroy moved-from owned locals.
+- **DCE algorithm:** worklist-based. Seeds the worklist with every instruction whose result has zero uses, no side effect, and `op != BlockArg` (block-arg trimming is Phase 3). For each removed instruction, decrements the use counts of its operands; any operand whose count reaches zero is added to the worklist. Compacts each block's instruction vector via the two-finger write-index pattern, then truncates with `pop_back()` (Vector::resize() reallocates and would copy out-of-range slots when shrinking). Removed values get `values_by_id[id] = nullptr` (poisoning) so later passes catch stale lookups.
+- **Copy propagation algorithm:** union-find with path compression. `subst[id] = id` initially; for each `IROp::Copy` instruction, set `subst[copy.result.id] = copy.unary.id`; path-compress (halving). Then walk all blocks and rewrite operands of every non-Copy instruction (and every terminator) via the substitution. Skipping rewrite of Copy's own operand keeps DCE's operand-decrement debit pointing at the correct source. After copy-prop runs, dead Copies have zero uses → DCE removes them.
+- **Pure-Copy assumption:** every existing `IROp::Copy` is emitted by `gen_unary_expr` for `UnaryOp::Ref` (`ref expr` syntax) — a borrow that just retypes a uniq pointer as a ref pointer (same runtime representation, 1 slot). It is always semantically `result := source`. If a future change introduces a Copy with runtime meaning (e.g., a strong-ref bump), it must use a new opcode and be added to `has_side_effect()`.
+- **Iteration:** one ordered pass (copy-prop → DCE) reaches a fixed point for Phase 2 alone. Copy-prop is monotone (single union-find sweep is exhaustive); DCE's worklist already iterates internally. When Phase 3 (branch folding, block merging) lands, the driver becomes a `while (changed)` loop. The `BumpAllocator&` parameter is plumbed now (unused by Phase 2) so Phase 3+ branch folding can allocate new constants without an API churn.
+- **No CFG mutation:** Phase 2 only removes / rewrites in place; it never creates unreachable blocks, so a second `reorder_blocks_rpo()` call is not needed.
 
 ### Infrastructure: Use-Count Computation
 
@@ -133,9 +144,21 @@ Replace all uses of `v5 = copy v3` with `v3`, then remove the dead copy.
 
 **Implementation:** Requires a value replacement helper that walks all instructions and rewrites operands via a `ValueId → ValueId` substitution map.
 
-## Phase 3: Control Flow Optimizations
+## Phase 3: Control Flow Optimizations — IMPLEMENTED
 
 These passes simplify the control flow graph. They build on Phase 2's infrastructure.
+
+### Implementation notes
+
+- **Files:** `include/roxy/compiler/ir_optimize.hpp`, `src/roxy/compiler/ir_optimize.cpp`. Tests in `tests/unit/test_ir_optimize.cpp`.
+- **Predecessor computation:** `compute_predecessors(IRFunction*)` returns a `Vector<Vector<BlockId>>` indexed by block.id. We don't populate `IRBlock::predecessors` because that field is unused outside `reorder_blocks_rpo` and could go stale across passes. Each Phase 3 pass that needs predecessors recomputes them locally; block merging refreshes after each successful merge.
+- **Branch folding** (`run_branch_folding`): scans every `Branch` terminator. If the condition's defining instruction is `IROp::ConstBool`, rewrites the terminator to a `Goto` of the taken target's `JumpTarget` (preserving its args). Conditions that are constant-but-not-`ConstBool` (e.g. `ConstInt`) are NOT folded — Phase 1 doesn't normalize integer-truthy conditions. Copy chains are already collapsed by the Phase 2 copy-prop run that precedes Phase 3, so we never look through a Copy to find a constant.
+- **Block merging** (`run_block_merging`): finds block B whose sole predecessor A ends with an unconditional `Goto B(args)`. Substitutes `B.params[i] -> A.goto_target.args[i]` (using the same union-find substitution pattern as copy-prop), rewrites operands of B's instructions and terminator, appends B's instructions to A, and replaces A's terminator with B's. B is emptied in place (params/instructions cleared, terminator set to `None`); `reorder_blocks_rpo()` at the end of `optimize_function` drops it. Self-loops (A == B) and arg-count mismatches are skipped. **Conservative metadata safety:** `block_in_metadata(func, B)` returns true if B's `BlockId` appears in any `IRExceptionHandler` (try_entry, try_exit, handler_block, try_body_blocks), `IRFinallyInfo` (try_entry, try_exit, finally_block, finally_end_block), or `IRCleanupInfo` (start_block, end_block); we skip the merge in that case. Rewriting metadata across a merge is delicate (try_body_blocks is order-sensitive, try_exit is the inclusive end of a contiguous bytecode range), so v1 errs on the safe side. Most merges happen in non-exception, non-RAII code and are unaffected.
+- **Trivial block-argument elimination** (`run_trivial_block_arg_elim`): for each non-entry block B and each parameter `B.params[pi]`, walks every predecessor and uses `arg_for_target(P, B.id, pi)` to fetch the value passed for that parameter. Self-references (a predecessor passing the param itself, e.g. a loop back-edge) are stripped from the unanimity check. If all remaining predecessors agree on a single `common` value, the parameter is replaced (function-wide via union-find substitution), dropped from B's `params`, and the corresponding argument is dropped from each predecessor's jump target. Loop params (whose preds genuinely disagree — entry passes 0, back-edge passes the updated value) are preserved.
+- **Span shrinking:** when dropping arguments from a `Span<BlockArgPair>`, we compact in place and reconstruct the Span with a smaller size (`jt.args = Span<BlockArgPair>(jt.args.data(), w)`). Trailing slots leak in the bump allocator, which is fine — compile lifetime is bounded.
+- **Branch with both arms targeting the same block:** `arg_for_target` requires both arms to agree on the value for the parameter; if they disagree, the parameter is not trivial and is preserved.
+- **Driver fixed point:** Phase 3 passes are wrapped in a `while (changed)` loop that re-runs Phase 2 (copy-prop + DCE) inside the loop to clean up dead values exposed by the CFG mutations (a folded ConstBool condition becomes dead, eliminated params orphan their old argument expressions, etc.). Each pass strictly reduces the IR (fewer branches/blocks/params), so the loop is bounded.
+- **Final cleanup:** `func->reorder_blocks_rpo()` runs once at the end of `optimize_function`. It removes blocks unreachable from entry (folded-away arms, emptied merged-into blocks) and remaps every `BlockId` reference in terminators and in exception/finally/cleanup metadata.
 
 ### Branch Folding
 
@@ -279,5 +302,7 @@ Passes 2–9 can be iterated to a fixed point, but in practice one or two iterat
 - `src/roxy/compiler/ssa_ir.cpp` — IR utilities and printing
 - `include/roxy/compiler/ir_builder.hpp` — IR building (Phase 1 optimizations go here)
 - `src/roxy/compiler/ir_builder.cpp` — IR builder implementation
+- `include/roxy/compiler/ir_optimize.hpp` — Phase 2 passes (DCE, copy propagation, use-count infra)
+- `src/roxy/compiler/ir_optimize.cpp` — Phase 2 implementation
 - `include/roxy/compiler/lowering.hpp` — IR to bytecode lowering
 - `src/roxy/compiler/lowering.cpp` — Lowering implementation

@@ -6,6 +6,7 @@
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
 #include "roxy/compiler/ir_validator.hpp"
+#include "roxy/compiler/ir_optimize.hpp"
 #include "roxy/compiler/coroutine_lowering.hpp"
 #include "roxy/compiler/lowering.hpp"
 #include "roxy/vm/binding/registry.hpp"
@@ -319,6 +320,11 @@ BCModule* Compiler::link_modules() {
 
     // Coroutine lowering pass: transform coroutine functions into init/resume/done
     coroutine_lower(&merged_ir, m_allocator, m_type_env);
+
+    // Phase 2 IR optimizations: copy propagation + DCE. Runs after coroutine
+    // lowering so generated init/resume/done bodies also benefit, and before
+    // validation so the validator checks the post-optimization IR.
+    optimize_module(&merged_ir, m_allocator);
 
     // Validate merged IR before lowering
     IRValidator validator;
