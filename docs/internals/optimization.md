@@ -2,7 +2,7 @@
 
 Design plan for optimization passes on Roxy's SSA IR. Passes are organized into phases by implementation complexity and infrastructure requirements.
 
-**Current state:** Phase 1 (constant folding, algebraic simplifications, cast folding) is implemented in `IRBuilder::emit_binary` / `emit_unary` / `gen_primitive_cast`. Phase 2 (use-count computation, dead code elimination, copy propagation) and Phase 3 (branch folding, block merging, trivial block-argument elimination) are implemented as standalone passes in `compiler/ir_optimize.{hpp,cpp}`, run from `Compiler::link_modules()` between coroutine lowering and IR validation. The Phase 3 driver iterates `(branch fold → block merge → trivial-arg-elim → re-run Phase 2)` to a fixed point and finishes with `IRFunction::reorder_blocks_rpo()` to drop newly-unreachable blocks and remap BlockId references in exception/finally/cleanup metadata. Phase 4 is not yet implemented.
+**Current state:** Phase 1 (constant folding, algebraic simplifications, cast folding) is implemented in `IRBuilder::emit_binary` / `emit_unary` / `gen_primitive_cast`. Phases 2–4 are implemented as standalone passes in `compiler/ir_optimize.{hpp,cpp}`, run from `Compiler::link_modules()` between coroutine lowering and IR validation: Phase 2 (use-count computation, dead code elimination, copy propagation), Phase 3 (branch folding, block merging, trivial block-argument elimination), and Phase 4 (block-local Common Subexpression Elimination). The driver iterates `(branch fold → block merge → trivial-arg-elim → local CSE → re-run Phase 2)` to a fixed point and finishes with `IRFunction::reorder_blocks_rpo()` to drop newly-unreachable blocks and remap BlockId references in exception/finally/cleanup metadata.
 
 ## Overview
 
@@ -237,7 +237,18 @@ b3():
     ... uses v0 ...
 ```
 
-## Phase 4: Local Value Numbering
+## Phase 4: Local Value Numbering — IMPLEMENTED
+
+### Implementation notes
+
+- **Files:** `include/roxy/compiler/ir_optimize.hpp`, `src/roxy/compiler/ir_optimize.cpp`. Tests in `tests/unit/test_ir_optimize.cpp`.
+- **Eligibility** (`is_cse_eligible`): all `Const*`, all arithmetic (i32/i64/f32/f64), all comparisons, logical (`Not`/`And`/`Or`), bitwise (`BitAnd`/`BitOr`/`BitXor`/`BitNot`/`Shl`/`Shr`), conversions (`I_TO_F64`, `F64_TO_I`, `I_TO_B`, `B_TO_I`), and `Cast`. **Excluded** for safety: memory loads (`GetField`, `GetFieldAddr`, `LoadPtr`, `IndexGet`) — could alias intervening writes; weak-ref reads (`WeakCheck`, `WeakCreate`) — slab generation state changes; fresh-address ops (`StackAlloc`, `VarAddr`); `BlockArg` (not emitted as a real instruction); `Copy` (already removed by Phase 2 copy-prop); plus everything `has_side_effect` covers.
+- **Hash key** (`CSEKey`): `(IROp op, Type* result_type, u32 a, u32 b, u64 payload)`. Binary ops use `(left.id, right.id, 0)`; unary ops use `(operand.id, 0, 0)`; `Cast` carries `(source.id, 0, source_type ptr)` to disambiguate conversion strategy; constants encode their literal in `payload` (signed bits for `ConstInt`, bit-pattern for `ConstF`/`ConstD` so `+0.0` and `-0.0` keep distinct keys, `bool` as `0`/`1`); `ConstString` uses `(data_ptr, size, 0)` — interned string buffers from the lexer share identity, so identical literals collapse. `result_type` is needed only for `Cast` (different target types of the same source) but kept everywhere as a free safety check; `Type*` identity is reliable because types are interned in `TypeEnv`.
+- **Hash function** uses the FNV-1a prime `1099511628211ULL` as a multiplier rather than `* 31 + x` chains, which collide on small inputs.
+- **Algorithm**: for each block, build a `tsl::robin_map<CSEKey, ValueId, CSEKeyHash, CSEKeyEq>`. First-seen wins. Later equivalents are recorded in a function-wide `subst[id]` table (same shape as Phase 2 copy-prop and Phase 3 trivial-arg-elim). After scanning all blocks, path-compress the substitutions and rewrite all operands and terminator operands via `for_each_operand` / `for_each_terminator_operand`. The redirected duplicates have zero uses and are dropped by the next DCE run inside the driver loop.
+- **Block-local scope**: the hash map is cleared between blocks. Cross-block redundancy elimination needs dominator information (global CSE / GVN, deferred). Phase 3 block merging produces longer straight-line blocks where Phase 4 sees more opportunities — running CSE inside the same fixed-point loop catches them.
+- **Commutativity**: not exploited in v1 — `AddI a b` and `AddI b a` get distinct keys. Adding canonicalization (sort operands by `ValueId.id` for commutative ops) is a one-line change for later.
+- **Driver placement**: inside the Phase 3 fixed-point loop, after `run_trivial_block_arg_elim` and before the re-run of Phase 2. Phase 2's DCE then drops the dead duplicates, possibly freeing operands that expose further optimization opportunities on the next iteration.
 
 ### Common Subexpression Elimination (Local)
 

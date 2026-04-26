@@ -491,6 +491,167 @@ TEST_CASE("IR Optimize - Phase 3 driver is idempotent") {
     CHECK_FALSE(run_trivial_block_arg_elim(func));
 }
 
+// ===========================================================================
+// Phase 4 tests — local Common Subexpression Elimination.
+// ===========================================================================
+
+TEST_CASE("IR Optimize - is_cse_eligible classification") {
+    // Pure ops that CSE handles.
+    CHECK(is_cse_eligible(IROp::AddI));
+    CHECK(is_cse_eligible(IROp::MulD));
+    CHECK(is_cse_eligible(IROp::EqI));
+    CHECK(is_cse_eligible(IROp::Not));
+    CHECK(is_cse_eligible(IROp::BitAnd));
+    CHECK(is_cse_eligible(IROp::I_TO_F64));
+    CHECK(is_cse_eligible(IROp::Cast));
+    CHECK(is_cse_eligible(IROp::ConstInt));
+    CHECK(is_cse_eligible(IROp::ConstString));
+
+    // Memory loads — excluded (could alias intervening writes).
+    CHECK_FALSE(is_cse_eligible(IROp::GetField));
+    CHECK_FALSE(is_cse_eligible(IROp::GetFieldAddr));
+    CHECK_FALSE(is_cse_eligible(IROp::LoadPtr));
+    CHECK_FALSE(is_cse_eligible(IROp::IndexGet));
+    // Weak-ref reads — excluded (slab generation state changes).
+    CHECK_FALSE(is_cse_eligible(IROp::WeakCheck));
+    CHECK_FALSE(is_cse_eligible(IROp::WeakCreate));
+    // Side-effectful — excluded.
+    CHECK_FALSE(is_cse_eligible(IROp::SetField));
+    CHECK_FALSE(is_cse_eligible(IROp::Call));
+    CHECK_FALSE(is_cse_eligible(IROp::CallNative));
+    CHECK_FALSE(is_cse_eligible(IROp::New));
+    CHECK_FALSE(is_cse_eligible(IROp::Throw));
+    CHECK_FALSE(is_cse_eligible(IROp::Nullify));
+    // Stack alloc / addressing — fresh-address semantics.
+    CHECK_FALSE(is_cse_eligible(IROp::StackAlloc));
+    CHECK_FALSE(is_cse_eligible(IROp::VarAddr));
+    // BlockArg is not a real instruction in current IR.
+    CHECK_FALSE(is_cse_eligible(IROp::BlockArg));
+}
+
+TEST_CASE("IR Optimize - CSE deduplicates identical AddI in the same block") {
+    BumpAllocator allocator(4096);
+    const char* source = R"(
+        fun two_adds(a: i32, b: i32): i32 {
+            var x: i32 = a + b;
+            var y: i32 = a + b;
+            return x + y;
+        }
+    )";
+    IRModule* module = build_and_optimize(allocator, source);
+    REQUIRE(module != nullptr);
+    IRFunction* func = find_function(module, "two_adds");
+    REQUIRE(func != nullptr);
+
+    // Two AddI survive: one for the deduplicated `a+b`, one for `x+y`
+    // (which is `(a+b) + (a+b)`). The duplicate `a+b` is gone.
+    CHECK(count_op(func, IROp::AddI) == 2);
+}
+
+TEST_CASE("IR Optimize - CSE deduplicates identical constants") {
+    BumpAllocator allocator(4096);
+    // Use a non-foldable pattern: two `5` constants flowing into a non-
+    // commutative consumer that prevents Phase 1 from folding the whole
+    // expression away. `5 / a` and `5 / a` (same divisor) — Phase 1
+    // can't fold these because `a` is not a constant. After Phase 4,
+    // both `5` ConstInts and both `5/a` DivIs collapse into one each.
+    const char* source = R"(
+        fun two_divs(a: i32): i32 {
+            var x: i32 = 5 / a;
+            var y: i32 = 5 / a;
+            return x + y;
+        }
+    )";
+    IRModule* module = build_and_optimize(allocator, source);
+    REQUIRE(module != nullptr);
+    IRFunction* func = find_function(module, "two_divs");
+    REQUIRE(func != nullptr);
+
+    // Both `5` ConstInts collapse into one after CSE.
+    CHECK(count_op(func, IROp::ConstInt) == 1);
+    // Both `5 / a` DivIs collapse into one after CSE.
+    CHECK(count_op(func, IROp::DivI) == 1);
+}
+
+TEST_CASE("IR Optimize - CSE preserves dead duplicate Call") {
+    BumpAllocator allocator(4096);
+    const char* source = R"(
+        fun two_prints() {
+            print("hi");
+            print("hi");
+        }
+    )";
+    IRModule* module = build_and_optimize(allocator, source);
+    REQUIRE(module != nullptr);
+    IRFunction* func = find_function(module, "two_prints");
+    REQUIRE(func != nullptr);
+
+    // CallNative is NOT eligible for CSE — both prints must execute.
+    CHECK(count_op(func, IROp::CallNative) == 2);
+}
+
+TEST_CASE("IR Optimize - CSE preserves repeated GetField across SetField") {
+    BumpAllocator allocator(4096);
+    const char* source = R"(
+        struct Vec { x: i32 = 0; }
+        fun roundtrip(p: ref Vec): i32 {
+            var first: i32 = p.x;
+            p.x = first + 1;
+            var second: i32 = p.x;
+            return first + second;
+        }
+    )";
+    IRModule* module = build_and_optimize(allocator, source);
+    REQUIRE(module != nullptr);
+    IRFunction* func = find_function(module, "roundtrip");
+    REQUIRE(func != nullptr);
+
+    // GetField is NOT eligible for CSE — the SetField between the two
+    // reads can change the value, so both reads must be preserved.
+    CHECK(count_op(func, IROp::GetField) == 2);
+}
+
+TEST_CASE("IR Optimize - CSE plus block merging collapse cross-block redundancy") {
+    BumpAllocator allocator(4096);
+    // Phase 3 block merging collapses the if/else into a single block,
+    // and Phase 4 CSE then dedupes the resulting two `a+b` computations.
+    const char* source = R"(
+        fun branchy(c: bool, a: i32, b: i32): i32 {
+            if (true) {
+                return a + b;
+            } else {
+                return a + b;
+            }
+        }
+    )";
+    IRModule* module = build_and_optimize(allocator, source);
+    REQUIRE(module != nullptr);
+    IRFunction* func = find_function(module, "branchy");
+    REQUIRE(func != nullptr);
+
+    // After fold + merge, the dead arm is gone and only one path remains.
+    // Only one AddI should survive.
+    CHECK(count_op(func, IROp::AddI) == 1);
+}
+
+TEST_CASE("IR Optimize - run_local_cse is idempotent") {
+    BumpAllocator allocator(4096);
+    const char* source = R"(
+        fun two_adds(a: i32, b: i32): i32 {
+            var x: i32 = a + b;
+            var y: i32 = a + b;
+            return x + y;
+        }
+    )";
+    IRModule* module = build_and_optimize(allocator, source);
+    REQUIRE(module != nullptr);
+    IRFunction* func = find_function(module, "two_adds");
+    REQUIRE(func != nullptr);
+
+    // Re-running CSE on already-optimized IR must report no change.
+    CHECK_FALSE(run_local_cse(func));
+}
+
 TEST_CASE("IR Optimize - exception handler metadata survives optimization") {
     BumpAllocator allocator(8192);
     const char* source = R"(

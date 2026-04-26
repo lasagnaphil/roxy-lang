@@ -1,5 +1,9 @@
 #include "roxy/compiler/ir_optimize.hpp"
 
+#include "roxy/core/tsl/robin_map.h"
+
+#include <cstring>
+
 namespace rx {
 
 bool has_side_effect(IROp op) {
@@ -463,24 +467,220 @@ bool run_trivial_block_arg_elim(IRFunction* func) {
     return true;
 }
 
+// =====================================================================
+// Phase 4: block-local Common Subexpression Elimination.
+// =====================================================================
+
+bool is_cse_eligible(IROp op) {
+    switch (op) {
+        // Constants — same value, same payload, same type → same result.
+        case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
+        case IROp::ConstF:    case IROp::ConstD:    case IROp::ConstString:
+        // Arithmetic.
+        case IROp::AddI: case IROp::SubI: case IROp::MulI:
+        case IROp::DivI: case IROp::ModI: case IROp::NegI:
+        case IROp::AddF: case IROp::SubF: case IROp::MulF:
+        case IROp::DivF: case IROp::NegF:
+        case IROp::AddD: case IROp::SubD: case IROp::MulD:
+        case IROp::DivD: case IROp::NegD:
+        // Comparisons.
+        case IROp::EqI: case IROp::NeI: case IROp::LtI:
+        case IROp::LeI: case IROp::GtI: case IROp::GeI:
+        case IROp::EqF: case IROp::NeF: case IROp::LtF:
+        case IROp::LeF: case IROp::GtF: case IROp::GeF:
+        case IROp::EqD: case IROp::NeD: case IROp::LtD:
+        case IROp::LeD: case IROp::GtD: case IROp::GeD:
+        // Logical.
+        case IROp::Not: case IROp::And: case IROp::Or:
+        // Bitwise.
+        case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor:
+        case IROp::BitNot: case IROp::Shl:   case IROp::Shr:
+        // Conversions / Cast — pure functions of source value (+ result type).
+        case IROp::I_TO_F64: case IROp::F64_TO_I:
+        case IROp::I_TO_B:   case IROp::B_TO_I:
+        case IROp::Cast:
+            return true;
+        default:
+            return false;
+    }
+}
+
+namespace {
+
+struct CSEKey {
+    IROp op;
+    Type* result_type;   // disambiguates Cast; redundant elsewhere but harmless
+    u32 a;               // operand 1 ValueId.id, or 0
+    u32 b;               // operand 2 ValueId.id, or 0
+    u64 payload;         // const literal bits / Cast source_type pointer / 0
+};
+
+struct CSEKeyHash {
+    size_t operator()(const CSEKey& k) const noexcept {
+        // FNV-1a-style mix with a 64-bit prime to avoid the small-input
+        // collisions that `* 31 + x` chains exhibit.
+        u64 h = static_cast<u64>(k.op);
+        h = h * 1099511628211ULL + reinterpret_cast<uintptr_t>(k.result_type);
+        h = h * 1099511628211ULL + k.a;
+        h = h * 1099511628211ULL + k.b;
+        h = h * 1099511628211ULL + k.payload;
+        return static_cast<size_t>(h);
+    }
+};
+
+struct CSEKeyEq {
+    bool operator()(const CSEKey& l, const CSEKey& r) const noexcept {
+        return l.op == r.op && l.result_type == r.result_type
+            && l.a == r.a && l.b == r.b && l.payload == r.payload;
+    }
+};
+
+CSEKey make_cse_key(IRInst* inst) {
+    CSEKey k = {};
+    k.op = inst->op;
+    k.result_type = inst->type;
+    switch (inst->op) {
+        // Binary ops.
+        case IROp::AddI: case IROp::SubI: case IROp::MulI:
+        case IROp::DivI: case IROp::ModI:
+        case IROp::AddF: case IROp::SubF: case IROp::MulF: case IROp::DivF:
+        case IROp::AddD: case IROp::SubD: case IROp::MulD: case IROp::DivD:
+        case IROp::EqI: case IROp::NeI: case IROp::LtI:
+        case IROp::LeI: case IROp::GtI: case IROp::GeI:
+        case IROp::EqF: case IROp::NeF: case IROp::LtF:
+        case IROp::LeF: case IROp::GtF: case IROp::GeF:
+        case IROp::EqD: case IROp::NeD: case IROp::LtD:
+        case IROp::LeD: case IROp::GtD: case IROp::GeD:
+        case IROp::And: case IROp::Or:
+        case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor:
+        case IROp::Shl: case IROp::Shr:
+            k.a = inst->binary.left.id;
+            k.b = inst->binary.right.id;
+            break;
+        // Unary ops.
+        case IROp::NegI: case IROp::NegF: case IROp::NegD:
+        case IROp::BitNot: case IROp::Not:
+        case IROp::I_TO_F64: case IROp::F64_TO_I:
+        case IROp::I_TO_B:   case IROp::B_TO_I:
+            k.a = inst->unary.id;
+            break;
+        // Cast carries source_type to disambiguate conversion strategy.
+        case IROp::Cast:
+            k.a = inst->cast.source.id;
+            k.payload = reinterpret_cast<uintptr_t>(inst->cast.source_type);
+            break;
+        // Constants.
+        case IROp::ConstInt:
+            std::memcpy(&k.payload, &inst->const_data.int_val, sizeof(i64));
+            break;
+        case IROp::ConstBool:
+            k.payload = inst->const_data.bool_val ? 1ULL : 0ULL;
+            break;
+        case IROp::ConstF: {
+            // Bit-equality (preserves NaN payload, distinguishes +0/-0).
+            u32 bits = 0;
+            std::memcpy(&bits, &inst->const_data.f32_val, sizeof(u32));
+            k.payload = static_cast<u64>(bits);
+            break;
+        }
+        case IROp::ConstD:
+            std::memcpy(&k.payload, &inst->const_data.f64_val, sizeof(f64));
+            break;
+        case IROp::ConstString:
+            // Hash the StringView identity (data ptr + size). Equal-but-
+            // distinct buffers don't collapse, which is a safe under-
+            // approximation; in practice the lexer interns string
+            // literals into a shared source buffer so identical literals
+            // share identity.
+            k.a = static_cast<u32>(reinterpret_cast<uintptr_t>(
+                inst->const_data.string_val.data()));
+            k.b = static_cast<u32>(inst->const_data.string_val.size());
+            break;
+        case IROp::ConstNull:
+            // (op, result_type) alone is sufficient — null of a given type
+            // has no further payload.
+            break;
+        default:
+            // Should never happen — caller checked is_cse_eligible.
+            break;
+    }
+    return k;
+}
+
+}  // namespace
+
+bool run_local_cse(IRFunction* func) {
+    const u32 N = func->next_value_id;
+    if (N == 0) return false;
+
+    Vector<u32> subst(N);
+    for (u32 i = 0; i < N; i++) subst[i] = i;
+    bool any = false;
+
+    for (IRBlock* block : func->blocks) {
+        tsl::robin_map<CSEKey, ValueId, CSEKeyHash, CSEKeyEq> seen;
+        for (IRInst* inst : block->instructions) {
+            if (!is_cse_eligible(inst->op)) continue;
+            if (!inst->result.is_valid()) continue;
+            CSEKey key = make_cse_key(inst);
+            auto it = seen.find(key);
+            if (it != seen.end()) {
+                // Redirect this duplicate's uses to the first occurrence.
+                // Don't reinsert: keeps canonical chain shallow.
+                subst[inst->result.id] = it->second.id;
+                any = true;
+            } else {
+                seen.insert({key, inst->result});
+            }
+        }
+    }
+    if (!any) return false;
+
+    // Path-compress to flatten any redirect chains.
+    auto find = [&](u32 id) -> u32 {
+        while (subst[id] != id) { subst[id] = subst[subst[id]]; id = subst[id]; }
+        return id;
+    };
+    for (u32 i = 0; i < N; i++) (void)find(i);
+
+    // Function-wide operand rewrite. Same shape as copy propagation.
+    auto rewrite = [&](ValueId& v) {
+        if (!v.is_valid() || v.id >= N) return;
+        if (subst[v.id] != v.id) v = ValueId{subst[v.id]};
+    };
+    for (IRBlock* block : func->blocks) {
+        for (IRInst* inst : block->instructions) {
+            for_each_operand(inst, [&](ValueId& v) { rewrite(v); });
+        }
+        for_each_terminator_operand(block->terminator, [&](ValueId& v) { rewrite(v); });
+    }
+    return true;
+}
+
 void optimize_function(IRFunction* func, BumpAllocator& /*allocator*/) {
     // Phase 2 first to clean up Copy chains (so branch conditions resolve
     // to their underlying ConstBool, not a Copy of one) and dead values.
     run_copy_propagation(func);
     run_dce(func);
 
-    // Phase 3 to fixed point. Each pass can expose opportunities for the
-    // others (folded branch -> unreachable block, merged block -> exposed
-    // dead values, eliminated trivial param -> simplified operands).
+    // Phase 3 + Phase 4 to fixed point. Each pass can expose opportunities
+    // for the others:
+    //   - Branch folding -> unreachable blocks
+    //   - Block merging -> longer straight-line code (more CSE candidates)
+    //   - Trivial arg-elim -> collapsed converging values
+    //   - Local CSE -> dead duplicates that DCE then removes, possibly
+    //     exposing further fold/merge opportunities next iteration.
     bool changed = true;
     while (changed) {
         changed = false;
         if (run_branch_folding(func)) changed = true;
         if (run_block_merging(func)) changed = true;
         if (run_trivial_block_arg_elim(func)) changed = true;
+        if (run_local_cse(func)) changed = true;
         if (changed) {
             // Re-run Phase 2 to clean up dead values exposed by the CFG
-            // mutations (ConstBool conditions, eliminated params, etc.).
+            // mutations (ConstBool conditions, eliminated params, CSE-
+            // redirected duplicates, etc.).
             run_copy_propagation(func);
             run_dce(func);
         }

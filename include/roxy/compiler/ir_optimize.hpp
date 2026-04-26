@@ -29,6 +29,11 @@ namespace rx {
 // IRFunction::reorder_blocks_rpo() (called once at the end of
 // optimize_function) to drop newly-unreachable blocks and remap BlockId
 // references in exception/finally/cleanup metadata.
+//
+// Phase 4 (this file): block-local Common Subexpression Elimination.
+// Within each block, identical pure expressions are deduplicated and
+// redirected to the first occurrence. The next DCE round drops the
+// orphaned duplicates.
 
 // Run all currently-implemented optimization passes on every function in
 // `module`. Idempotent; safe to re-run.
@@ -83,6 +88,20 @@ bool run_trivial_block_arg_elim(IRFunction* func);
 // We do NOT populate IRBlock::predecessors because that field is currently
 // unused outside reorder_blocks_rpo() and could go stale across passes.
 Vector<Vector<BlockId>> compute_predecessors(IRFunction* func);
+
+// Phase 4: block-local Common Subexpression Elimination. Within each
+// block, builds a hash table keyed on (op, result_type, operands, const
+// payload) and redirects later occurrences of an equivalent expression
+// to the earlier value. Only applies to pure ops (no memory loads, no
+// calls, no side effects). Returns true if any redirection happened.
+// The resulting dead duplicates are cleaned up by the next DCE run.
+bool run_local_cse(IRFunction* func);
+
+// CSE eligibility classifier. Pure ops where (op, operands, const
+// payload) uniquely determines the result with no aliasing or
+// side-effect interactions. Excludes memory loads (GetField, LoadPtr,
+// IndexGet) and weak-ref operations.
+bool is_cse_eligible(IROp op);
 
 // Operand-enumeration helper. Visits each ValueId operand of `inst` (NOT
 // including the result, NOT including operands inside a terminator). The
