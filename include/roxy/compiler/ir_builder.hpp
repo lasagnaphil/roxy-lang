@@ -73,6 +73,14 @@ private:
     ValueId emit_unary(IROp op, ValueId operand, Type* result_type);
     ValueId emit_copy(ValueId value, Type* type);
 
+    // Phase 1 IR optimizations: applied during emission. Return invalid if no
+    // fold/simplification applies; the caller falls through to normal emission.
+    ValueId try_fold_binary(IROp op, ValueId left, ValueId right, Type* result_type);
+    ValueId try_fold_unary(IROp op, ValueId operand, Type* result_type);
+    ValueId try_fold_cast(ValueId source, Type* source_type, Type* target_type);
+    ValueId try_simplify_binary(IROp op, ValueId left, ValueId right, Type* result_type);
+    ValueId try_simplify_unary(IROp op, ValueId operand, Type* result_type);
+
     ValueId emit_call(StringView func_name, Span<ValueId> args, Type* result_type);
     ValueId emit_call_native(StringView func_name, Span<ValueId> args, Type* result_type, u8 native_index);
     ValueId emit_call_external(StringView module_name, StringView func_name, Span<ValueId> args, Type* result_type);

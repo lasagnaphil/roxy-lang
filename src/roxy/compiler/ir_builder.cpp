@@ -7,6 +7,7 @@
 #include "roxy/vm/map.hpp"
 
 #include <cassert>
+#include <climits>
 #include <cstring>
 
 namespace rx {
@@ -867,6 +868,7 @@ IRInst* IRBuilder::emit_inst(IROp op, Type* result_type) {
     inst->op = op;
     inst->result = m_current_func->new_value();
     inst->type = result_type;
+    m_current_func->values_by_id[inst->result.id] = inst;
     m_current_block->instructions.push_back(inst);
     return inst;
 }
@@ -926,7 +928,197 @@ ValueId IRBuilder::emit_const_string(StringView value) {
     return ValueId::invalid();
 }
 
+ValueId IRBuilder::try_fold_binary(IROp op, ValueId left, ValueId right, Type* result_type) {
+    if (!m_current_func) return ValueId::invalid();
+    IRInst* l = m_current_func->inst_for(left);
+    IRInst* r = m_current_func->inst_for(right);
+    if (!l || !r) return ValueId::invalid();
+
+    switch (op) {
+    case IROp::AddI:
+    case IROp::SubI:
+    case IROp::MulI:
+    case IROp::DivI:
+    case IROp::ModI: {
+        if (l->op != IROp::ConstInt || r->op != IROp::ConstInt) return ValueId::invalid();
+        i64 a = l->const_data.int_val;
+        i64 b = r->const_data.int_val;
+        u64 ua = static_cast<u64>(a);
+        u64 ub = static_cast<u64>(b);
+        i64 result;
+        switch (op) {
+            case IROp::AddI: result = static_cast<i64>(ua + ub); break;
+            case IROp::SubI: result = static_cast<i64>(ua - ub); break;
+            case IROp::MulI: result = static_cast<i64>(ua * ub); break;
+            case IROp::DivI:
+                if (b == 0 || (a == INT64_MIN && b == -1)) return ValueId::invalid();
+                result = a / b;
+                break;
+            case IROp::ModI:
+                if (b == 0 || (a == INT64_MIN && b == -1)) return ValueId::invalid();
+                result = a % b;
+                break;
+            default: return ValueId::invalid();
+        }
+        return emit_const_int(result, result_type);
+    }
+
+    case IROp::EqI:
+    case IROp::NeI:
+    case IROp::LtI:
+    case IROp::LeI:
+    case IROp::GtI:
+    case IROp::GeI: {
+        if (l->op != IROp::ConstInt || r->op != IROp::ConstInt) return ValueId::invalid();
+        i64 a = l->const_data.int_val;
+        i64 b = r->const_data.int_val;
+        bool result;
+        switch (op) {
+            case IROp::EqI: result = a == b; break;
+            case IROp::NeI: result = a != b; break;
+            case IROp::LtI: result = a < b; break;
+            case IROp::LeI: result = a <= b; break;
+            case IROp::GtI: result = a > b; break;
+            case IROp::GeI: result = a >= b; break;
+            default: return ValueId::invalid();
+        }
+        return emit_const_bool(result);
+    }
+
+    case IROp::BitAnd:
+    case IROp::BitOr:
+    case IROp::BitXor: {
+        if (l->op != IROp::ConstInt || r->op != IROp::ConstInt) return ValueId::invalid();
+        u64 a = static_cast<u64>(l->const_data.int_val);
+        u64 b = static_cast<u64>(r->const_data.int_val);
+        u64 result = (op == IROp::BitAnd) ? (a & b)
+                   : (op == IROp::BitOr)  ? (a | b)
+                                          : (a ^ b);
+        return emit_const_int(static_cast<i64>(result), result_type);
+    }
+
+    case IROp::Shl:
+    case IROp::Shr: {
+        if (l->op != IROp::ConstInt || r->op != IROp::ConstInt) return ValueId::invalid();
+        u64 a = static_cast<u64>(l->const_data.int_val);
+        u64 b = static_cast<u64>(r->const_data.int_val) & 63;
+        i64 result = (op == IROp::Shl) ? static_cast<i64>(a << b)
+                                       : (l->const_data.int_val >> b);  // arithmetic shift on signed
+        return emit_const_int(result, result_type);
+    }
+
+    // f32 / f64 arithmetic — IEEE-754 host assumed.
+    case IROp::AddF:
+    case IROp::SubF:
+    case IROp::MulF:
+    case IROp::DivF: {
+        if (l->op != IROp::ConstF || r->op != IROp::ConstF) return ValueId::invalid();
+        f32 a = l->const_data.f32_val;
+        f32 b = r->const_data.f32_val;
+        f32 result = (op == IROp::AddF) ? (a + b)
+                   : (op == IROp::SubF) ? (a - b)
+                   : (op == IROp::MulF) ? (a * b)
+                                        : (a / b);
+        return emit_const_float(static_cast<f64>(result), result_type);
+    }
+
+    case IROp::AddD:
+    case IROp::SubD:
+    case IROp::MulD:
+    case IROp::DivD: {
+        if (l->op != IROp::ConstD || r->op != IROp::ConstD) return ValueId::invalid();
+        f64 a = l->const_data.f64_val;
+        f64 b = r->const_data.f64_val;
+        f64 result = (op == IROp::AddD) ? (a + b)
+                   : (op == IROp::SubD) ? (a - b)
+                   : (op == IROp::MulD) ? (a * b)
+                                        : (a / b);
+        return emit_const_float(result, result_type);
+    }
+
+    case IROp::And:
+    case IROp::Or: {
+        if (l->op != IROp::ConstBool || r->op != IROp::ConstBool) return ValueId::invalid();
+        bool a = l->const_data.bool_val;
+        bool b = r->const_data.bool_val;
+        return emit_const_bool(op == IROp::And ? (a && b) : (a || b));
+    }
+
+    default:
+        return ValueId::invalid();
+    }
+}
+
+ValueId IRBuilder::try_simplify_binary(IROp op, ValueId left, ValueId right, Type* result_type) {
+    if (!m_current_func) return ValueId::invalid();
+    IRInst* l = m_current_func->inst_for(left);
+    IRInst* r = m_current_func->inst_for(right);
+
+    auto is_ci = [](IRInst* i, i64 val) {
+        return i && i->op == IROp::ConstInt && i->const_data.int_val == val;
+    };
+
+    switch (op) {
+    case IROp::AddI:
+        if (is_ci(r, 0)) return left;
+        if (is_ci(l, 0)) return right;
+        return ValueId::invalid();
+
+    case IROp::SubI:
+        if (is_ci(r, 0)) return left;
+        if (left == right) return emit_const_int(0, result_type);
+        return ValueId::invalid();
+
+    case IROp::MulI:
+        if (is_ci(r, 0)) return emit_const_int(0, result_type);
+        if (is_ci(l, 0)) return emit_const_int(0, result_type);
+        if (is_ci(r, 1)) return left;
+        if (is_ci(l, 1)) return right;
+        if (is_ci(r, 2)) return emit_binary(IROp::AddI, left, left, result_type);
+        if (is_ci(l, 2)) return emit_binary(IROp::AddI, right, right, result_type);
+        return ValueId::invalid();
+
+    case IROp::DivI:
+        if (is_ci(r, 1)) return left;
+        return ValueId::invalid();
+
+    case IROp::BitAnd:
+        if (is_ci(r, 0)) return emit_const_int(0, result_type);
+        if (is_ci(l, 0)) return emit_const_int(0, result_type);
+        if (is_ci(r, -1)) return left;
+        if (is_ci(l, -1)) return right;
+        return ValueId::invalid();
+
+    case IROp::BitOr:
+        if (is_ci(r, 0)) return left;
+        if (is_ci(l, 0)) return right;
+        if (is_ci(r, -1)) return emit_const_int(-1, result_type);
+        if (is_ci(l, -1)) return emit_const_int(-1, result_type);
+        return ValueId::invalid();
+
+    case IROp::BitXor:
+        if (is_ci(r, 0)) return left;
+        if (is_ci(l, 0)) return right;
+        if (left == right) return emit_const_int(0, result_type);
+        return ValueId::invalid();
+
+    case IROp::Shl:
+    case IROp::Shr:
+        if (is_ci(r, 0)) return left;
+        return ValueId::invalid();
+
+    default:
+        return ValueId::invalid();
+    }
+}
+
 ValueId IRBuilder::emit_binary(IROp op, ValueId left, ValueId right, Type* result_type) {
+    if (ValueId folded = try_fold_binary(op, left, right, result_type); folded.is_valid()) {
+        return folded;
+    }
+    if (ValueId simplified = try_simplify_binary(op, left, right, result_type); simplified.is_valid()) {
+        return simplified;
+    }
     IRInst* inst = emit_inst(op, result_type);
     if (inst) {
         inst->binary.left = left;
@@ -936,7 +1128,62 @@ ValueId IRBuilder::emit_binary(IROp op, ValueId left, ValueId right, Type* resul
     return ValueId::invalid();
 }
 
+ValueId IRBuilder::try_fold_unary(IROp op, ValueId operand, Type* result_type) {
+    if (!m_current_func) return ValueId::invalid();
+    IRInst* o = m_current_func->inst_for(operand);
+    if (!o) return ValueId::invalid();
+
+    switch (op) {
+    case IROp::NegI: {
+        if (o->op != IROp::ConstInt) return ValueId::invalid();
+        u64 v = static_cast<u64>(o->const_data.int_val);
+        return emit_const_int(static_cast<i64>(0 - v), result_type);
+    }
+    case IROp::NegF: {
+        if (o->op != IROp::ConstF) return ValueId::invalid();
+        return emit_const_float(static_cast<f64>(-o->const_data.f32_val), result_type);
+    }
+    case IROp::NegD: {
+        if (o->op != IROp::ConstD) return ValueId::invalid();
+        return emit_const_float(-o->const_data.f64_val, result_type);
+    }
+    case IROp::Not: {
+        if (o->op != IROp::ConstBool) return ValueId::invalid();
+        return emit_const_bool(!o->const_data.bool_val);
+    }
+    case IROp::BitNot: {
+        if (o->op != IROp::ConstInt) return ValueId::invalid();
+        u64 v = static_cast<u64>(o->const_data.int_val);
+        return emit_const_int(static_cast<i64>(~v), result_type);
+    }
+    default:
+        return ValueId::invalid();
+    }
+}
+
+ValueId IRBuilder::try_simplify_unary(IROp op, ValueId operand, Type* result_type) {
+    (void)result_type;
+    if (!m_current_func) return ValueId::invalid();
+    IRInst* o = m_current_func->inst_for(operand);
+    if (!o) return ValueId::invalid();
+
+    // Double-negation: only safe for integer / bool / bitwise. Float Neg is
+    // skipped because -(-0.0) = 0.0 distinguishes from -0.0 in IEEE-754.
+    if ((op == IROp::NegI && o->op == IROp::NegI) ||
+        (op == IROp::Not && o->op == IROp::Not) ||
+        (op == IROp::BitNot && o->op == IROp::BitNot)) {
+        return o->unary;
+    }
+    return ValueId::invalid();
+}
+
 ValueId IRBuilder::emit_unary(IROp op, ValueId operand, Type* result_type) {
+    if (ValueId folded = try_fold_unary(op, operand, result_type); folded.is_valid()) {
+        return folded;
+    }
+    if (ValueId simplified = try_simplify_unary(op, operand, result_type); simplified.is_valid()) {
+        return simplified;
+    }
     IRInst* inst = emit_inst(op, result_type);
     if (inst) {
         inst->unary = operand;
@@ -3677,6 +3924,77 @@ ValueId IRBuilder::gen_this_expr(Expr* expr) {
     return lookup_local("self");
 }
 
+// Narrow an i64 value to `bits` bits, sign- or zero-extending as appropriate.
+// Mirrors the runtime's TRUNC_S / TRUNC_U bytecode behavior.
+static i64 narrow_int_to_width(i64 v, u8 bits, bool is_signed) {
+    switch (bits) {
+        case 8:  return is_signed ? static_cast<i64>(static_cast<i8>(v))  : static_cast<i64>(static_cast<u8>(v));
+        case 16: return is_signed ? static_cast<i64>(static_cast<i16>(v)) : static_cast<i64>(static_cast<u16>(v));
+        case 32: return is_signed ? static_cast<i64>(static_cast<i32>(v)) : static_cast<i64>(static_cast<u32>(v));
+        default: return v;
+    }
+}
+
+static u8 type_int_bits(TypeKind k) {
+    switch (k) {
+        case TypeKind::I8:  case TypeKind::U8:  return 8;
+        case TypeKind::I16: case TypeKind::U16: return 16;
+        case TypeKind::I32: case TypeKind::U32: return 32;
+        case TypeKind::I64: case TypeKind::U64: return 64;
+        default: return 64;
+    }
+}
+
+ValueId IRBuilder::try_fold_cast(ValueId source, Type* source_type, Type* target_type) {
+    if (!m_current_func || !source_type || !target_type) return ValueId::invalid();
+    IRInst* o = m_current_func->inst_for(source);
+    if (!o) return ValueId::invalid();
+
+    bool src_int  = (o->op == IROp::ConstInt);
+    bool src_bool = (o->op == IROp::ConstBool);
+    bool src_f32  = (o->op == IROp::ConstF);
+    bool src_f64  = (o->op == IROp::ConstD);
+    if (!src_int && !src_bool && !src_f32 && !src_f64) return ValueId::invalid();
+
+    // Target = bool: nonzero/true
+    if (target_type->kind == TypeKind::Bool) {
+        bool result = src_int  ? (o->const_data.int_val != 0)
+                    : src_bool ? o->const_data.bool_val
+                    : src_f32  ? (o->const_data.f32_val != 0.0f)
+                               : (o->const_data.f64_val != 0.0);
+        return emit_const_bool(result);
+    }
+
+    // Target = integer
+    if (target_type->is_integer()) {
+        i64 v = src_int  ? o->const_data.int_val
+              : src_bool ? (o->const_data.bool_val ? 1 : 0)
+              : src_f32  ? static_cast<i64>(o->const_data.f32_val)
+                         : static_cast<i64>(o->const_data.f64_val);
+        v = narrow_int_to_width(v, type_int_bits(target_type->kind), target_type->is_signed_integer());
+        return emit_const_int(v, target_type);
+    }
+
+    // Target = f32 / f64
+    if (target_type->is_float()) {
+        f64 v;
+        if (src_int) {
+            v = source_type->is_unsigned_integer()
+                ? static_cast<f64>(static_cast<u64>(o->const_data.int_val))
+                : static_cast<f64>(o->const_data.int_val);
+        } else if (src_bool) {
+            v = o->const_data.bool_val ? 1.0 : 0.0;
+        } else if (src_f32) {
+            v = static_cast<f64>(o->const_data.f32_val);
+        } else {
+            v = o->const_data.f64_val;
+        }
+        return emit_const_float(v, target_type);
+    }
+
+    return ValueId::invalid();
+}
+
 ValueId IRBuilder::gen_primitive_cast(Expr* expr) {
     CallExpr& call_expr = expr->call;
 
@@ -3690,6 +4008,10 @@ ValueId IRBuilder::gen_primitive_cast(Expr* expr) {
     // If same type, no-op
     if (source_type == target_type) {
         return source;
+    }
+
+    if (ValueId folded = try_fold_cast(source, source_type, target_type); folded.is_valid()) {
+        return folded;
     }
 
     // Emit Cast instruction

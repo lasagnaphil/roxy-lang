@@ -2,7 +2,7 @@
 
 Design plan for optimization passes on Roxy's SSA IR. Passes are organized into phases by implementation complexity and infrastructure requirements.
 
-**Current state:** No optimization passes exist. IR is built from the AST and lowered directly to bytecode. The only structural cleanup is `reorder_blocks_rpo()`, which removes unreachable blocks.
+**Current state:** Phase 1 (constant folding, algebraic simplifications, cast folding) is implemented in `IRBuilder::emit_binary` / `emit_unary` / `gen_primitive_cast`. Phases 2–4 are not yet implemented. The only structural cleanup is `reorder_blocks_rpo()`, which removes unreachable blocks.
 
 ## Overview
 
@@ -12,9 +12,18 @@ Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA
 
 Optimizations slot in between IR building and lowering. Some optimizations (constant folding, algebraic simplifications) can also be applied eagerly during IR building for zero overhead.
 
-## Phase 1: IR Builder Optimizations (No New Infrastructure)
+## Phase 1: IR Builder Optimizations (No New Infrastructure) — IMPLEMENTED
 
 These optimizations are applied during IR construction by checking operands before emitting instructions. No separate pass or use-def analysis needed.
+
+### Implementation notes
+
+- **Infrastructure:** `IRFunction::values_by_id` is a `Vector<IRInst*>` indexed by `ValueId.id`, populated by `IRFunction::new_value()` (nullptr) and `IRBuilder::emit_inst()` (real pointer). Lookup via `IRFunction::inst_for(ValueId)` returns the defining instruction or nullptr (for function/block params, which fold treats as non-constant). This table is reused by later phases (DCE, CSE).
+- **`And` / `Or` IR ops** are folded too. They aren't emitted by short-circuit `&&`/`||` (those lower to branches), but they are emitted in case-condition merging (`gen_when_stmt`).
+- **Cast folding** is added to `gen_primitive_cast` in addition to fold/simplify on `emit_binary` / `emit_unary`. Folded casts mirror the runtime's `emit_cast_bytecode` semantics (TRUNC_S/TRUNC_U for narrowing, sign-extend on widening signed sources).
+- **Division by zero / `INT64_MIN / -1`:** not folded — the original `DivI` / `ModI` instruction is preserved so the runtime produces "Division by zero" (`src/roxy/vm/interpreter.cpp:585,595`). Compile-time error would require source-location threading through `emit_binary`.
+- **Float folding:** add/sub/mul/div/neg are folded for f32 and f64 using host arithmetic, assuming an IEEE-754 host (true on all currently-targeted platforms). Float comparisons are NOT folded in this phase to avoid NaN-ordering subtleties. Float double-negation (`-(-x)`) is NOT simplified because `-(-0.0)` differs from `-0.0` in sign bit, which matters for `1.0/x`.
+- **Strength reduction:** only `mul x, 2 → add x, x` is implemented. `mul x, pow2 → shl` is skipped (the register VM has no measurable advantage for SHL over MUL). `div x, pow2 → shr` is skipped because Roxy's `i32` / `i64` are signed and arithmetic shift right does not match signed division for negative values (e.g., `(-1) / 2 == 0` but `(-1) >> 1 == -1`).
 
 ### Constant Folding
 

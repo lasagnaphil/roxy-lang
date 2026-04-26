@@ -392,6 +392,12 @@ struct IRFunction {
     Vector<IRBlock*> blocks;            // Basic blocks, blocks[0] is entry
     u32 next_value_id;                  // Counter for generating unique value IDs
 
+    // Defining instruction for each ValueId (indexed by id). Slot is nullptr for
+    // ValueIds that don't correspond to an emitted IRInst* (function params, block
+    // params). Populated by new_value() (nullptr) and emit_inst() (real pointer).
+    // Used by Phase 1 fold/simplify and reused by later optimization phases.
+    Vector<IRInst*> values_by_id;
+
     // Exception handling metadata
     Vector<IRExceptionHandler> exception_handlers;
     Vector<IRFinallyInfo> finally_handlers;
@@ -408,7 +414,14 @@ struct IRFunction {
     IRFunction() : return_type(nullptr), next_value_id(0) {}
 
     ValueId new_value() {
-        return ValueId{next_value_id++};
+        ValueId v{next_value_id++};
+        values_by_id.push_back(nullptr);
+        return v;
+    }
+
+    IRInst* inst_for(ValueId v) const {
+        if (!v.is_valid() || v.id >= values_by_id.size()) return nullptr;
+        return values_by_id[v.id];
     }
 
     // Check if this function returns a large struct (>4 slots, >16 bytes)
