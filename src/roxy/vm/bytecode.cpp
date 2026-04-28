@@ -335,10 +335,11 @@ u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out) {
             buf.format("R{}", a);
             break;
 
-        // Format: dst, func_idx, arg_count (args at dst+1, dst+2, ...)
+        // Format: dst, arg_count (word 1) + func_idx (word 2) — two-word
         case Opcode::CALL:
         case Opcode::CALL_NATIVE:
-            buf.format("R{}, func[{}], {} args from R{}", a, b, c, (u32)(a + 1));
+            buf.format("R{}, func[{}], {} args from R{}", a, next_word, c, (u32)(a + 1));
+            words_consumed = 2;
             break;
 
         // Format: dst, obj, index/key

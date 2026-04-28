@@ -1212,7 +1212,7 @@ ValueId IRBuilder::emit_call(StringView func_name, Span<ValueId> args, Type* res
     return ValueId::invalid();
 }
 
-ValueId IRBuilder::emit_call_native(StringView func_name, Span<ValueId> args, Type* result_type, u8 native_index) {
+ValueId IRBuilder::emit_call_native(StringView func_name, Span<ValueId> args, Type* result_type, u32 native_index) {
     IRInst* inst = emit_inst(IROp::CallNative, result_type);
     if (inst) {
         inst->call.func_name = func_name;

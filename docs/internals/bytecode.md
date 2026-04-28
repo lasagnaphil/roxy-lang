@@ -51,7 +51,7 @@ Each function call allocates a new register window from the shared register file
 | 0x60-0x6F | Logical | `NOT`, `AND`, `OR` |
 | 0x80-0x8F | Type Conversions | `I_TO_F64`, `F64_TO_I`, `I_TO_B`, `B_TO_I`, `TRUNC_S`, `TRUNC_U`, `F32_TO_F64`, `F64_TO_F32`, `I_TO_F32`, `F32_TO_I` |
 | 0x90-0x9F | Control Flow | `JMP`, `JMP_IF`, `JMP_IF_NOT`, `RET`, `RET_VOID`, `RET_STRUCT_SMALL` |
-| 0xA0-0xAF | Function Calls | `CALL`, `CALL_NATIVE` |
+| 0xA0-0xAF | Function Calls (two-word) | `CALL`, `CALL_NATIVE` |
 | 0xB0-0xBF | Struct/Stack Access | `GET_FIELD`, `SET_FIELD`, `STACK_ADDR`, `GET_FIELD_ADDR`, `STRUCT_LOAD_REGS`, `STRUCT_STORE_REGS`, `STRUCT_COPY`, `RET_STRUCT_SMALL`, `SPILL_REG`, `RELOAD_REG` |
 | 0xC0-0xCF | RK Variants (arith + int cmp) | `ADD_I_RK`, `SUB_I_RK`, `ADD_D_RK`, `MUL_D_RK`, `LT_I_RK`, ... |
 | 0xD0-0xDF | Object Lifecycle + f64 cmp RK | `NEW_OBJ`, `DEL_OBJ`, `LT_D_RK`, `GT_D_RK`, ... |
@@ -162,6 +162,21 @@ STACK_ADDR: [STACK_ADDR dst][slot_offset:16]
 ```
 
 The `slot_count` (1 or 2) determines whether to read/write 32-bit or 64-bit values.
+
+### Function Calls (Two-Word Instructions)
+
+`CALL` and `CALL_NATIVE` are two-word instructions to lift the 256-function
+ceiling that an 8-bit operand-field func_idx would impose:
+
+```
+CALL:        [CALL:8 dst:8 _:8 arg_count:8][func_idx:32]
+CALL_NATIVE: [CALL_NATIVE:8 dst:8 _:8 arg_count:8][func_idx:32]
+```
+
+Args are passed in registers `dst+ret_reg_count`, `dst+ret_reg_count+1`, ...
+(see calling convention above). The full 32-bit func_idx is read directly
+into a register-sized temporary; the upper bits are reserved for future
+inline-cache slots or tail-call flags.
 
 ### Register Spill/Reload
 

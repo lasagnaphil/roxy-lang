@@ -185,7 +185,7 @@ struct ConstData {
 struct CallData {
     StringView func_name;
     Span<ValueId> args;
-    u8 native_index;  // For CallNative: index into module's native_functions
+    u32 native_index;  // For CallNative: index into module's native_functions
 };
 
 // External call instruction data (for cross-module calls)

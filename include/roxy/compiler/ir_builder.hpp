@@ -82,7 +82,7 @@ private:
     ValueId try_simplify_unary(IROp op, ValueId operand, Type* result_type);
 
     ValueId emit_call(StringView func_name, Span<ValueId> args, Type* result_type);
-    ValueId emit_call_native(StringView func_name, Span<ValueId> args, Type* result_type, u8 native_index);
+    ValueId emit_call_native(StringView func_name, Span<ValueId> args, Type* result_type, u32 native_index);
     ValueId emit_call_external(StringView module_name, StringView func_name, Span<ValueId> args, Type* result_type);
     ValueId emit_index_get(ValueId container, ValueId index, ContainerKind kind, Type* result_type);
     void emit_index_set(ValueId container, ValueId index, ValueId value, ContainerKind kind);

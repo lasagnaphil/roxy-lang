@@ -388,7 +388,9 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                     u8 copy_dst = bump_register();
                     u8 copy_arg = bump_register();  // = copy_dst + 1
                     emit_abc(Opcode::MOV, copy_arg, param_reg, 0);
-                    emit_abc(Opcode::CALL_NATIVE, copy_dst, static_cast<u8>(copy_fn_idx), 1);
+                    // Two-word CALL_NATIVE: word 1 holds dst+arg_count, word 2 holds func_idx.
+                    emit_abc(Opcode::CALL_NATIVE, copy_dst, 0, 1);
+                    emit(static_cast<u32>(copy_fn_idx));
                     // Remap parameter to the copied value
                     m_value_to_reg[param.value.id] = copy_dst;
                     prologue_param_reg_offset += reg_count;
@@ -1727,7 +1729,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 report_error("Internal error: function not found during bytecode lowering");
                 break;
             }
-            u8 func_idx = static_cast<u8>(it->second);
+            u32 func_idx = it->second;
             u8 arg_count = static_cast<u8>(inst->call.args.size());
 
             // Get callee function to check for pointer parameters
@@ -1798,9 +1800,9 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 }
             }
 
-            // Emit call: dst = call func_idx(args...)
-            // Format: [CALL][dst][func_idx][arg_count]
-            emit_abc(Opcode::CALL, dst, func_idx, arg_count);
+            // Emit two-word CALL: word 1 = [CALL][dst][_][arg_count], word 2 = [func_idx:32]
+            emit_abc(Opcode::CALL, dst, 0, arg_count);
+            emit(func_idx);
 
             // For small struct returns, dst now contains packed struct data in consecutive registers
             // Allocate stack space and unpack
@@ -1821,7 +1823,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
 
         case IROp::CallNative: {
             // Similar to Call but uses CALL_NATIVE opcode
-            u8 func_idx = inst->call.native_index;
+            u32 func_idx = inst->call.native_index;
             u8 arg_count = static_cast<u8>(inst->call.args.size());
 
             // Copy arguments to consecutive registers starting from dst+1
@@ -1833,8 +1835,9 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 }
             }
 
-            // Emit call: dst = call_native func_idx(args...)
-            emit_abc(Opcode::CALL_NATIVE, dst, func_idx, arg_count);
+            // Two-word CALL_NATIVE: word 1 = [op][dst][_][arg_count], word 2 = [func_idx:32]
+            emit_abc(Opcode::CALL_NATIVE, dst, 0, arg_count);
+            emit(func_idx);
             break;
         }
 
@@ -1850,7 +1853,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 report_error("Internal error: external function not found during linking");
                 break;
             }
-            u8 func_idx = static_cast<u8>(it->second);
+            u32 func_idx = it->second;
 
             // Get callee function to check for pointer parameters
             IRFunction* callee_func = m_ir_module->functions[func_idx];
@@ -1918,8 +1921,9 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 }
             }
 
-            // Emit regular CALL instruction (statically linked)
-            emit_abc(Opcode::CALL, dst, func_idx, arg_count);
+            // Emit regular two-word CALL instruction (statically linked).
+            emit_abc(Opcode::CALL, dst, 0, arg_count);
+            emit(func_idx);
 
             // For small struct returns, handle unpacking
             if (ret_slot_count > 0 && ret_slot_count <= 4) {

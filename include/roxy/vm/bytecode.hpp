@@ -118,8 +118,12 @@ enum class Opcode : u8 {
     JMP_IF_NE_I = 0x9A,    // if (src1 != src2) pc += offset (signed i32)
 
     // 0xA0-0xAF: Function Calls and Container Indexing
-    CALL        = 0xA0,     // dst = call func_idx(args...)
-    CALL_NATIVE = 0xA1,     // dst = call_native func_idx(args...)
+    // CALL/CALL_NATIVE are two-word: word 1 = [op:8][dst:8][_:8][arg_count:8],
+    // word 2 = [func_idx:32]. The 32-bit func_idx removes the 256-function ceiling
+    // a packed 8-bit b-field would impose; in practice modules with thousands of
+    // functions (e.g. linked-together game scripts) need the headroom.
+    CALL        = 0xA0,     // dst = call func_idx(args...) — two-word
+    CALL_NATIVE = 0xA1,     // dst = call_native func_idx(args...) — two-word
     INDEX_GET_LIST = 0xA2,  // dst = list[index]     — ABC: a=dst, b=obj, c=index
     INDEX_SET_LIST = 0xA3,  // list[index] = value    — ABC: a=obj, b=index, c=value
     INDEX_GET_MAP  = 0xA4,  // dst = map[key]         — ABC: a=dst, b=obj, c=key

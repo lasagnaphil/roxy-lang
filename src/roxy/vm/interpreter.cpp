@@ -1300,8 +1300,8 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
 
     OP(CALL) {
         u8 dst = decode_a(instr);
-        u8 func_idx = decode_b(instr);
         u8 arg_count = decode_c(instr);
+        u32 func_idx = *pc++;
 
         assert(func_idx < vm->function_count);
         const BCFunction* callee = vm->function_ptrs[func_idx];
@@ -1347,8 +1347,8 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
 
     OP(CALL_NATIVE) {
         u8 dst = decode_a(instr);
-        u8 func_idx = decode_b(instr);
         u8 arg_count = decode_c(instr);
+        u32 func_idx = *pc++;
         u8 first_arg = dst + 1;
 
         if (func_idx >= vm->module->native_functions.size()) {
