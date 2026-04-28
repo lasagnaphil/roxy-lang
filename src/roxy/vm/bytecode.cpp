@@ -161,6 +161,20 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::GT_D_RK:       return "GT_D_RK";
         case Opcode::GE_D_RK:       return "GE_D_RK";
 
+        // Fused f64 compare-and-branch
+        case Opcode::JMP_IF_LT_D:    return "JMP_IF_LT_D";
+        case Opcode::JMP_IF_LE_D:    return "JMP_IF_LE_D";
+        case Opcode::JMP_IF_GT_D:    return "JMP_IF_GT_D";
+        case Opcode::JMP_IF_GE_D:    return "JMP_IF_GE_D";
+        case Opcode::JMP_IF_EQ_D:    return "JMP_IF_EQ_D";
+        case Opcode::JMP_IF_NE_D:    return "JMP_IF_NE_D";
+        case Opcode::JMP_IF_LT_D_RK: return "JMP_IF_LT_D_RK";
+        case Opcode::JMP_IF_LE_D_RK: return "JMP_IF_LE_D_RK";
+        case Opcode::JMP_IF_GT_D_RK: return "JMP_IF_GT_D_RK";
+        case Opcode::JMP_IF_GE_D_RK: return "JMP_IF_GE_D_RK";
+        case Opcode::JMP_IF_EQ_D_RK: return "JMP_IF_EQ_D_RK";
+        case Opcode::JMP_IF_NE_D_RK: return "JMP_IF_NE_D_RK";
+
         // Debug/Error
         case Opcode::TRAP:          return "TRAP";
         case Opcode::NOP:           return "NOP";
@@ -322,9 +336,29 @@ u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out) {
         case Opcode::JMP_IF_GT_I:
         case Opcode::JMP_IF_GE_I:
         case Opcode::JMP_IF_EQ_I:
-        case Opcode::JMP_IF_NE_I: {
+        case Opcode::JMP_IF_NE_I:
+        case Opcode::JMP_IF_LT_D:
+        case Opcode::JMP_IF_LE_D:
+        case Opcode::JMP_IF_GT_D:
+        case Opcode::JMP_IF_GE_D:
+        case Opcode::JMP_IF_EQ_D:
+        case Opcode::JMP_IF_NE_D: {
             i16 branch_offset = decode_offset(next_word);
             buf.format("R{}, R{}, {:+} -> {}", b, c, (i32)branch_offset,
+                       (u32)(offset + 2 + branch_offset));
+            words_consumed = 2;
+            break;
+        }
+
+        // Format: [_, src1, const_idx] + [JMP_IF offset] (2-word fused-RK)
+        case Opcode::JMP_IF_LT_D_RK:
+        case Opcode::JMP_IF_LE_D_RK:
+        case Opcode::JMP_IF_GT_D_RK:
+        case Opcode::JMP_IF_GE_D_RK:
+        case Opcode::JMP_IF_EQ_D_RK:
+        case Opcode::JMP_IF_NE_D_RK: {
+            i16 branch_offset = decode_offset(next_word);
+            buf.format("R{}, K[{}], {:+} -> {}", b, c, (i32)branch_offset,
                        (u32)(offset + 2 + branch_offset));
             words_consumed = 2;
             break;

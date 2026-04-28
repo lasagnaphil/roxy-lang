@@ -129,6 +129,23 @@ enum class Opcode : u8 {
     INDEX_GET_MAP  = 0xA4,  // dst = map[key]         — ABC: a=dst, b=obj, c=key
     INDEX_SET_MAP  = 0xA5,  // map[key] = value       — ABC: a=obj, b=key, c=value
 
+    // 0xA6-0xAF: Fused f64 compare-and-branch.
+    //   Non-RK: [op:8][_:8][src1:8][src2:8] + [offset:i32]
+    //   RK:     [op:8][_:8][src1:8][const_idx:8] + [offset:i32]
+    // Saves the JMP_IF_NOT dispatch + register write that would otherwise follow
+    // a standalone compare. Mandelbrot's `if (zx2 + zy2 > 4.0)` collapses from
+    // (ADD_D + GT_D_RK + JMP_IF_NOT) to (ADD_D + JMP_IF_LE_D_RK).
+    JMP_IF_LT_D = 0xA6,     // if (src1 <  src2) pc += offset
+    JMP_IF_LE_D = 0xA7,     // if (src1 <= src2) pc += offset
+    JMP_IF_GT_D = 0xA8,     // if (src1 >  src2) pc += offset
+    JMP_IF_GE_D = 0xA9,     // if (src1 >= src2) pc += offset
+    JMP_IF_EQ_D = 0xAA,     // if (src1 == src2) pc += offset
+    JMP_IF_NE_D = 0xAB,     // if (src1 != src2) pc += offset
+    JMP_IF_LT_D_RK = 0xAC,  // if (src1 <  K[c]) pc += offset
+    JMP_IF_LE_D_RK = 0xAD,  // if (src1 <= K[c]) pc += offset
+    JMP_IF_GT_D_RK = 0xAE,  // if (src1 >  K[c]) pc += offset
+    JMP_IF_GE_D_RK = 0xAF,  // if (src1 >= K[c]) pc += offset
+
     // 0xB0-0xBF: Field and Stack Access
     GET_FIELD       = 0xB0, // dst = src1.field[slot_offset] (two-word: ABC + offset)
     SET_FIELD       = 0xB1, // dst.field[slot_offset] = src1 (two-word: ABC + offset)
@@ -186,6 +203,11 @@ enum class Opcode : u8 {
     LE_D_RK     = 0xD8,     // dst = src1 <= K[c] (f64)
     GT_D_RK     = 0xD9,     // dst = src1 >  K[c] (f64)
     GE_D_RK     = 0xDA,     // dst = src1 >= K[c] (f64)
+
+    // 0xDB-0xDC: f64 fused-RK compare-and-branch (extension of the 0xA6-0xAF
+    // block; placed here because 0xB0-0xCF were already taken).
+    JMP_IF_EQ_D_RK = 0xDB,  // if (src1 == K[c]) pc += offset
+    JMP_IF_NE_D_RK = 0xDC,  // if (src1 != K[c]) pc += offset
 
     // 0xF0-0xFD: Debug/Error
     TRAP        = 0xF0,     // runtime error trap (for variant field access checks)

@@ -574,18 +574,23 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         [0x9D] = &&op_DEFAULT, [0x9E] = &&op_DEFAULT,
         [0x9F] = &&op_DEFAULT,
 
-        // 0xA0-0xAF: Function Calls and Container Indexing
+        // 0xA0-0xAF: Function Calls, Container Indexing, Fused f64 cmp-branch
         [0xA0] = &&op_CALL,
         [0xA1] = &&op_CALL_NATIVE,
         [0xA2] = &&op_INDEX_GET_LIST,
         [0xA3] = &&op_INDEX_SET_LIST,
         [0xA4] = &&op_INDEX_GET_MAP,
         [0xA5] = &&op_INDEX_SET_MAP,
-        [0xA6] = &&op_DEFAULT, [0xA7] = &&op_DEFAULT,
-        [0xA8] = &&op_DEFAULT, [0xA9] = &&op_DEFAULT,
-        [0xAA] = &&op_DEFAULT, [0xAB] = &&op_DEFAULT,
-        [0xAC] = &&op_DEFAULT, [0xAD] = &&op_DEFAULT,
-        [0xAE] = &&op_DEFAULT, [0xAF] = &&op_DEFAULT,
+        [0xA6] = &&op_JMP_IF_LT_D,
+        [0xA7] = &&op_JMP_IF_LE_D,
+        [0xA8] = &&op_JMP_IF_GT_D,
+        [0xA9] = &&op_JMP_IF_GE_D,
+        [0xAA] = &&op_JMP_IF_EQ_D,
+        [0xAB] = &&op_JMP_IF_NE_D,
+        [0xAC] = &&op_JMP_IF_LT_D_RK,
+        [0xAD] = &&op_JMP_IF_LE_D_RK,
+        [0xAE] = &&op_JMP_IF_GT_D_RK,
+        [0xAF] = &&op_JMP_IF_GE_D_RK,
 
         // 0xB0-0xBF: Field and Stack Access
         [0xB0] = &&op_GET_FIELD,
@@ -632,8 +637,8 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         [0xD8] = &&op_LE_D_RK,
         [0xD9] = &&op_GT_D_RK,
         [0xDA] = &&op_GE_D_RK,
-        [0xDB] = &&op_DEFAULT,
-        [0xDC] = &&op_DEFAULT, [0xDD] = &&op_DEFAULT,
+        [0xDB] = &&op_JMP_IF_EQ_D_RK,
+        [0xDC] = &&op_JMP_IF_NE_D_RK, [0xDD] = &&op_DEFAULT,
         [0xDE] = &&op_DEFAULT, [0xDF] = &&op_DEFAULT,
 
         // 0xE0-0xEF: Reference Counting
@@ -1234,6 +1239,72 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         if (reg_as_i64(regs[decode_b(instr)]) != reg_as_i64(regs[decode_c(instr)])) {
             pc += offset;
         }
+        DISPATCH();
+    }
+
+    // ── Fused f64 compare-and-branch ──
+    // Two-word: word 1 = [op:8][_:8][src1:8][src2|const_idx:8], word 2 = [offset:i32].
+    // RK variants read src2 from the constant pool via rk_const_f64.
+
+    OP(JMP_IF_LT_D) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_f64(regs[decode_b(instr)]) < reg_as_f64(regs[decode_c(instr)])) pc += offset;
+        DISPATCH();
+    }
+    OP(JMP_IF_LE_D) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_f64(regs[decode_b(instr)]) <= reg_as_f64(regs[decode_c(instr)])) pc += offset;
+        DISPATCH();
+    }
+    OP(JMP_IF_GT_D) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_f64(regs[decode_b(instr)]) > reg_as_f64(regs[decode_c(instr)])) pc += offset;
+        DISPATCH();
+    }
+    OP(JMP_IF_GE_D) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_f64(regs[decode_b(instr)]) >= reg_as_f64(regs[decode_c(instr)])) pc += offset;
+        DISPATCH();
+    }
+    OP(JMP_IF_EQ_D) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_f64(regs[decode_b(instr)]) == reg_as_f64(regs[decode_c(instr)])) pc += offset;
+        DISPATCH();
+    }
+    OP(JMP_IF_NE_D) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_f64(regs[decode_b(instr)]) != reg_as_f64(regs[decode_c(instr)])) pc += offset;
+        DISPATCH();
+    }
+
+    OP(JMP_IF_LT_D_RK) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_f64(regs[decode_b(instr)]) < rk_const_f64(func, decode_c(instr))) pc += offset;
+        DISPATCH();
+    }
+    OP(JMP_IF_LE_D_RK) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_f64(regs[decode_b(instr)]) <= rk_const_f64(func, decode_c(instr))) pc += offset;
+        DISPATCH();
+    }
+    OP(JMP_IF_GT_D_RK) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_f64(regs[decode_b(instr)]) > rk_const_f64(func, decode_c(instr))) pc += offset;
+        DISPATCH();
+    }
+    OP(JMP_IF_GE_D_RK) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_f64(regs[decode_b(instr)]) >= rk_const_f64(func, decode_c(instr))) pc += offset;
+        DISPATCH();
+    }
+    OP(JMP_IF_EQ_D_RK) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_f64(regs[decode_b(instr)]) == rk_const_f64(func, decode_c(instr))) pc += offset;
+        DISPATCH();
+    }
+    OP(JMP_IF_NE_D_RK) {
+        i32 offset = static_cast<i32>(*pc++);
+        if (reg_as_f64(regs[decode_b(instr)]) != rk_const_f64(func, decode_c(instr))) pc += offset;
         DISPATCH();
     }
 

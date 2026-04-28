@@ -2,7 +2,7 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-04-28 (RK encoding + CALL widening landed, see Bytecode VM Opcode Improvements)
+Last updated: 2026-04-28 (fused f64 compare-branch landed, see Bytecode VM Opcode Improvements)
 
 
 ---
@@ -60,7 +60,7 @@ From a 2026-04-26 review comparing Roxy's opcode set against Lua 5.4, LuaJIT, CP
 
 - [x] **RK (register-or-constant) operand encoding.** *Landed 2026-04-26.* Chose opcode-variant RK (separate `*_RK` opcodes that read `c` as a constant pool index) over Lua's operand-bit RK to keep 8-bit register fields and avoid invasive spill rework. Added 22 RK opcodes covering arithmetic + f64 comparisons; deferred integer comparisons until the matching `JMP_IF_*_I_RK` fused variants land (current fusion beats RK+separate-branch). Pre-pass `compute_const_use_modes` skips `LOAD_INT`/`LOAD_CONST` when every use is RK-eligible. Specialized inline loaders (`rk_const_i64`/`f32`/`f64`) bypass the `load_constant` switch on hot paths. **Wall-time results:** Mandelbrot 357→305 ms (-14.6%), N-body 518→498 ms (-3.9%), Quicksort 52.2→48.6 ms (-6.9%). Mandelbrot's dynamic instruction count dropped 14% (302M→261M); LOAD_CONST emissions dropped 98% (28M→0.6M).
 - [x] **Widen `CALL` `func_idx` from 8 to 16 bits.** *Landed 2026-04-28.* Made `CALL`/`CALL_NATIVE` two-word: `[op dst _ arg_count][func_idx:32]`. Lifted not just to 16-bit but full 32-bit; upper bits reserved for future inline-cache slots / tail-call flags. Also widened `CallData::native_index` and `IRBuilder::emit_call_native` from u8 to u32 to remove the silent truncation upstream. Wall-time impact on benchmarks: within noise (Quicksort, the only call-heavy workload at 1.25M CALLs, pays one extra `*pc++` per call ≈ +1.6%).
-- [ ] **Add fused float compare+branch: `JMP_IF_LT_F/LE_F/...` and `JMP_IF_LT_D/LE_D/...`.** Currently only i64 has these (`bytecode.hpp:113`). Float loops pay full `LT_F` + `JMP_IF` cost. Cheap to add — same two-word encoding pattern.
+- [x] **Add fused float compare+branch.** *Landed 2026-04-28.* f64 only (12 new opcodes: 6 non-RK at `0xA6-0xAB`, 6 RK at `0xAC-0xAF` + `0xDB-0xDC`); f32 deferred since no benchmark uses it. The RK-fused variants (`JMP_IF_LE_D_RK` etc.) collapse mandelbrot's `GT_D_RK + JMP_IF_NOT` pattern into a single dispatch, **dropping mandelbrot wall time 45%** (340 ms → 185 ms on current machine state). Refactored `fuse_compare_branch()` with a unified `pick_fused()` helper covering all three families (int, f64-non-RK, f64-RK). Marked f64 compares as unfusable when their result outlives the block, mirroring the existing integer-compare guard; same logic added to `try_emit_rk_binary`.
 
 ### Medium-ROI
 

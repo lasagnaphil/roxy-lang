@@ -51,7 +51,7 @@ Each function call allocates a new register window from the shared register file
 | 0x60-0x6F | Logical | `NOT`, `AND`, `OR` |
 | 0x80-0x8F | Type Conversions | `I_TO_F64`, `F64_TO_I`, `I_TO_B`, `B_TO_I`, `TRUNC_S`, `TRUNC_U`, `F32_TO_F64`, `F64_TO_F32`, `I_TO_F32`, `F32_TO_I` |
 | 0x90-0x9F | Control Flow | `JMP`, `JMP_IF`, `JMP_IF_NOT`, `RET`, `RET_VOID`, `RET_STRUCT_SMALL` |
-| 0xA0-0xAF | Function Calls (two-word) | `CALL`, `CALL_NATIVE` |
+| 0xA0-0xAF | Function Calls (two-word) + Fused f64 cmp-branch | `CALL`, `CALL_NATIVE`, `JMP_IF_LT_D`, `JMP_IF_LE_D_RK`, ... |
 | 0xB0-0xBF | Struct/Stack Access | `GET_FIELD`, `SET_FIELD`, `STACK_ADDR`, `GET_FIELD_ADDR`, `STRUCT_LOAD_REGS`, `STRUCT_STORE_REGS`, `STRUCT_COPY`, `RET_STRUCT_SMALL`, `SPILL_REG`, `RELOAD_REG` |
 | 0xC0-0xCF | RK Variants (arith + int cmp) | `ADD_I_RK`, `SUB_I_RK`, `ADD_D_RK`, `MUL_D_RK`, `LT_I_RK`, ... |
 | 0xD0-0xDF | Object Lifecycle + f64 cmp RK | `NEW_OBJ`, `DEL_OBJ`, `LT_D_RK`, `GT_D_RK`, ... |
@@ -162,6 +162,26 @@ STACK_ADDR: [STACK_ADDR dst][slot_offset:16]
 ```
 
 The `slot_count` (1 or 2) determines whether to read/write 32-bit or 64-bit values.
+
+### Fused Compare-and-Branch
+
+Both integer and f64 comparisons can fuse with the following `JMP_IF`/`JMP_IF_NOT`
+into a single two-word instruction:
+
+```
+Non-RK: [op:8][_:8][src1:8][src2:8] + [offset:i32]
+RK:     [op:8][_:8][src1:8][const_idx:8] + [offset:i32]
+```
+
+Fusion runs as a post-emission peephole pass (`fuse_compare_branch`) that
+scans for adjacent compare + branch pairs whose registers match, then
+substitutes the fused opcode (negating the predicate when the branch is
+`JMP_IF_NOT`). Compares whose result is read in another block are tracked
+in `m_unfusable_cmp_pcs` and skipped — fusion drops the register write.
+
+Currently fused: `EQ_I`/`NE_I`/`LT_I`/`LE_I`/`GT_I`/`GE_I` (signed integer),
+`EQ_D`/`NE_D`/`LT_D`/`LE_D`/`GT_D`/`GE_D` (f64), and the f64 RK variants.
+f32 fused branches and integer-RK fused branches are not yet implemented.
 
 ### Function Calls (Two-Word Instructions)
 

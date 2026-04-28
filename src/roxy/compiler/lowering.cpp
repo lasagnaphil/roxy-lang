@@ -1532,7 +1532,18 @@ bool BytecodeBuilder::try_emit_rk_binary(IRInst* inst, u8 dst) {
     if (pool_idx < 0 || pool_idx > 0xFF) return false;
 
     u8 left_reg = ensure_in_register(left_id, 0);
+    u32 cmp_pc = m_current_func->code.size();
     emit_abc(rk_op, dst, left_reg, static_cast<u8>(pool_idx));
+
+    // Mark RK comparisons as unfusable when their result outlives this block.
+    // Same reason as the non-RK path: fusion drops the register write.
+    bool is_cmp = (inst->op >= IROp::EqI && inst->op <= IROp::GeI)
+               || (inst->op >= IROp::EqD && inst->op <= IROp::GeD);
+    if (is_cmp && inst->result.is_valid() &&
+        inst->result.id < m_value_same_block.size() &&
+        !m_value_same_block[inst->result.id]) {
+        m_unfusable_cmp_pcs.insert(cmp_pc);
+    }
     return true;
 }
 
@@ -1678,11 +1689,12 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             u8 left = ensure_in_register(inst->binary.left, 0);
             u32 cmp_pc = m_current_func->code.size();
             emit_abc(get_opcode(inst->op), dst, left, right);
-            // Mark integer compares as unfusable when their SSA result is live past
+            // Mark compares as unfusable when their SSA result is live past
             // this block's terminator — otherwise fuse_compare_branch would drop the
             // register write that the later block's read depends on.
-            bool is_int_cmp = (inst->op >= IROp::EqI && inst->op <= IROp::GeI);
-            if (is_int_cmp && inst->result.is_valid() &&
+            bool is_cmp = (inst->op >= IROp::EqI && inst->op <= IROp::GeI)
+                       || (inst->op >= IROp::EqD && inst->op <= IROp::GeD);
+            if (is_cmp && inst->result.is_valid() &&
                 inst->result.id < m_value_same_block.size() &&
                 !m_value_same_block[inst->result.id]) {
                 m_unfusable_cmp_pcs.insert(cmp_pc);
@@ -2290,13 +2302,93 @@ void BytecodeBuilder::fuse_compare_branch() {
     auto& code = m_current_func->code;
     if (code.size() < 2) return;
 
+    // Map a compare opcode + branch direction (taken-on-true vs taken-on-false)
+    // to its fused opcode. Returns Opcode::NOP if no fusion is available.
+    auto pick_fused = [](Opcode cmp_op, bool jmp_if_not) -> Opcode {
+        // Integer compares: 0x40-0x45
+        if (cmp_op >= Opcode::EQ_I && cmp_op <= Opcode::GE_I) {
+            if (jmp_if_not) {
+                switch (cmp_op) {
+                    case Opcode::EQ_I: return Opcode::JMP_IF_NE_I;
+                    case Opcode::NE_I: return Opcode::JMP_IF_EQ_I;
+                    case Opcode::LT_I: return Opcode::JMP_IF_GE_I;
+                    case Opcode::LE_I: return Opcode::JMP_IF_GT_I;
+                    case Opcode::GT_I: return Opcode::JMP_IF_LE_I;
+                    case Opcode::GE_I: return Opcode::JMP_IF_LT_I;
+                    default: break;
+                }
+            } else {
+                switch (cmp_op) {
+                    case Opcode::EQ_I: return Opcode::JMP_IF_EQ_I;
+                    case Opcode::NE_I: return Opcode::JMP_IF_NE_I;
+                    case Opcode::LT_I: return Opcode::JMP_IF_LT_I;
+                    case Opcode::LE_I: return Opcode::JMP_IF_LE_I;
+                    case Opcode::GT_I: return Opcode::JMP_IF_GT_I;
+                    case Opcode::GE_I: return Opcode::JMP_IF_GE_I;
+                    default: break;
+                }
+            }
+        }
+        // f64 non-RK: 0x56-0x5B
+        if (cmp_op >= Opcode::EQ_D && cmp_op <= Opcode::GE_D) {
+            if (jmp_if_not) {
+                switch (cmp_op) {
+                    case Opcode::EQ_D: return Opcode::JMP_IF_NE_D;
+                    case Opcode::NE_D: return Opcode::JMP_IF_EQ_D;
+                    case Opcode::LT_D: return Opcode::JMP_IF_GE_D;
+                    case Opcode::LE_D: return Opcode::JMP_IF_GT_D;
+                    case Opcode::GT_D: return Opcode::JMP_IF_LE_D;
+                    case Opcode::GE_D: return Opcode::JMP_IF_LT_D;
+                    default: break;
+                }
+            } else {
+                switch (cmp_op) {
+                    case Opcode::EQ_D: return Opcode::JMP_IF_EQ_D;
+                    case Opcode::NE_D: return Opcode::JMP_IF_NE_D;
+                    case Opcode::LT_D: return Opcode::JMP_IF_LT_D;
+                    case Opcode::LE_D: return Opcode::JMP_IF_LE_D;
+                    case Opcode::GT_D: return Opcode::JMP_IF_GT_D;
+                    case Opcode::GE_D: return Opcode::JMP_IF_GE_D;
+                    default: break;
+                }
+            }
+        }
+        // f64 RK: 0xD5-0xDA. Note negation flips inequality direction; the
+        // RK constant operand stays on the right since these all read K[c].
+        if (cmp_op >= Opcode::EQ_D_RK && cmp_op <= Opcode::GE_D_RK) {
+            if (jmp_if_not) {
+                switch (cmp_op) {
+                    case Opcode::EQ_D_RK: return Opcode::JMP_IF_NE_D_RK;
+                    case Opcode::NE_D_RK: return Opcode::JMP_IF_EQ_D_RK;
+                    case Opcode::LT_D_RK: return Opcode::JMP_IF_GE_D_RK;
+                    case Opcode::LE_D_RK: return Opcode::JMP_IF_GT_D_RK;
+                    case Opcode::GT_D_RK: return Opcode::JMP_IF_LE_D_RK;
+                    case Opcode::GE_D_RK: return Opcode::JMP_IF_LT_D_RK;
+                    default: break;
+                }
+            } else {
+                switch (cmp_op) {
+                    case Opcode::EQ_D_RK: return Opcode::JMP_IF_EQ_D_RK;
+                    case Opcode::NE_D_RK: return Opcode::JMP_IF_NE_D_RK;
+                    case Opcode::LT_D_RK: return Opcode::JMP_IF_LT_D_RK;
+                    case Opcode::LE_D_RK: return Opcode::JMP_IF_LE_D_RK;
+                    case Opcode::GT_D_RK: return Opcode::JMP_IF_GT_D_RK;
+                    case Opcode::GE_D_RK: return Opcode::JMP_IF_GE_D_RK;
+                    default: break;
+                }
+            }
+        }
+        return Opcode::NOP;
+    };
+
     for (u32 i = 0; i + 1 < code.size(); i++) {
         Opcode cmp_op = decode_opcode(code[i]);
         Opcode jmp_op = decode_opcode(code[i + 1]);
 
-        // Only fuse signed integer comparisons for now
-        if (cmp_op < Opcode::EQ_I || cmp_op > Opcode::GE_I) continue;
         if (jmp_op != Opcode::JMP_IF_NOT && jmp_op != Opcode::JMP_IF) continue;
+
+        Opcode fused_op = pick_fused(cmp_op, jmp_op == Opcode::JMP_IF_NOT);
+        if (fused_op == Opcode::NOP) continue;
 
         // Skip compares whose result is used beyond this block's terminator.
         // Fusion drops the compare's register write, so a cross-block read would
@@ -2309,35 +2401,10 @@ void BytecodeBuilder::fuse_compare_branch() {
         if (cmp_dst != jmp_reg) continue;
 
         u8 src1 = decode_b(code[i]);
-        u8 src2 = decode_c(code[i]);
+        u8 src2 = decode_c(code[i]);  // register or RK constant index
         i16 offset = decode_offset(code[i + 1]);
 
-        // Map comparison opcode to fused opcode
-        // JMP_IF_NOT negates the comparison; JMP_IF keeps it
-        Opcode fused_op;
-        if (jmp_op == Opcode::JMP_IF_NOT) {
-            switch (cmp_op) {
-                case Opcode::EQ_I: fused_op = Opcode::JMP_IF_NE_I; break;
-                case Opcode::NE_I: fused_op = Opcode::JMP_IF_EQ_I; break;
-                case Opcode::LT_I: fused_op = Opcode::JMP_IF_GE_I; break;
-                case Opcode::LE_I: fused_op = Opcode::JMP_IF_GT_I; break;
-                case Opcode::GT_I: fused_op = Opcode::JMP_IF_LE_I; break;
-                case Opcode::GE_I: fused_op = Opcode::JMP_IF_LT_I; break;
-                default: continue;
-            }
-        } else {
-            switch (cmp_op) {
-                case Opcode::EQ_I: fused_op = Opcode::JMP_IF_EQ_I; break;
-                case Opcode::NE_I: fused_op = Opcode::JMP_IF_NE_I; break;
-                case Opcode::LT_I: fused_op = Opcode::JMP_IF_LT_I; break;
-                case Opcode::LE_I: fused_op = Opcode::JMP_IF_LE_I; break;
-                case Opcode::GT_I: fused_op = Opcode::JMP_IF_GT_I; break;
-                case Opcode::GE_I: fused_op = Opcode::JMP_IF_GE_I; break;
-                default: continue;
-            }
-        }
-
-        // Replace: word 0 = fused opcode with src registers, word 1 = offset
+        // Replace: word 0 = fused opcode with src1+src2, word 1 = offset (i32)
         code[i] = encode_abc(fused_op, 0, src1, src2);
         code[i + 1] = static_cast<u32>(static_cast<i32>(offset));
 
