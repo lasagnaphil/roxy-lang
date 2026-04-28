@@ -2,7 +2,7 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-04-25
+Last updated: 2026-04-26 (RK encoding landed, see Bytecode VM Opcode Improvements)
 
 
 ---
@@ -49,6 +49,29 @@ Last updated: 2026-04-25
 
 - [ ] Document error type propagation pattern in semantic analysis
 - [ ] Document thread-safety limitations (single VM per thread assumed)
+
+---
+
+## Bytecode VM Opcode Improvements
+
+From a 2026-04-26 review comparing Roxy's opcode set against Lua 5.4, LuaJIT, CPython 3.13, Wren, JVM, and V8 Ignition. The base design (register-based, 32-bit fixed-width ABC/ABI/AOFF, computed-goto dispatch, type-specialized arithmetic, fused i64 compare+branch) is Lua-class and sound. Items below are concrete deltas, ordered roughly by ROI.
+
+### High-ROI
+
+- [x] **RK (register-or-constant) operand encoding.** *Landed 2026-04-26.* Chose opcode-variant RK (separate `*_RK` opcodes that read `c` as a constant pool index) over Lua's operand-bit RK to keep 8-bit register fields and avoid invasive spill rework. Added 22 RK opcodes covering arithmetic + f64 comparisons; deferred integer comparisons until the matching `JMP_IF_*_I_RK` fused variants land (current fusion beats RK+separate-branch). Pre-pass `compute_const_use_modes` skips `LOAD_INT`/`LOAD_CONST` when every use is RK-eligible. Specialized inline loaders (`rk_const_i64`/`f32`/`f64`) bypass the `load_constant` switch on hot paths. **Wall-time results:** Mandelbrot 357→305 ms (-14.6%), N-body 518→498 ms (-3.9%), Quicksort 52.2→48.6 ms (-6.9%). Mandelbrot's dynamic instruction count dropped 14% (302M→261M); LOAD_CONST emissions dropped 98% (28M→0.6M).
+- [ ] **Widen `CALL` `func_idx` from 8 to 16 bits.** Current 256-functions-per-module ceiling (`interpreter.cpp:1153`) is a hard wall any non-trivial program will hit. Lua uses 16-bit here. Either repack `CALL` as ABI format or add a `CALL_FAR` variant.
+- [ ] **Add fused float compare+branch: `JMP_IF_LT_F/LE_F/...` and `JMP_IF_LT_D/LE_D/...`.** Currently only i64 has these (`bytecode.hpp:113`). Float loops pay full `LT_F` + `JMP_IF` cost. Cheap to add — same two-word encoding pattern.
+
+### Medium-ROI
+
+- [ ] **Delete `AND` (0x61) and `OR` (0x62).** Identical semantics to `BIT_AND`/`BIT_OR` given Roxy's normalized 0/1 bool representation. Lua doesn't have these — short-circuit `&&`/`||` lowers to branches. Lower to `BIT_AND`/`BIT_OR` (or branches for short-circuit) instead.
+- [ ] **Specialized small-struct copy: `STRUCT_COPY_1`, `STRUCT_COPY_2`.** `STRUCT_COPY` is two-word and goes through a memcpy-style loop. In a value-semantics language, 1- and 2-slot copies dominate. Profile first to confirm before adding. Files: `bytecode.hpp`, `interpreter.cpp` `OP(STRUCT_COPY)` handler, `lowering.hpp/cpp`.
+- [ ] **Inline-cache slot in `CALL_METHOD` for trait/vtable dispatch.** Not needed today (no virtual dispatch yet), but cheap to design in now and painful to retrofit. Reserve 1–2 words per call site for resolved function pointer + monomorphic guard. Reference: V8 Ignition feedback vectors, Smalltalk PIC.
+
+### Low-ROI / Speculative
+
+- [ ] **Wider immediate for `LOAD_INT`.** Currently signed 16-bit; constants outside ±32K hit the constant pool. Lua 5.4 added `LOADI` with 24-bit signed sBx. Worth it only if profiler shows meaningful `LOAD_CONST` traffic for small-but-out-of-range integers.
+- [ ] **Verify i32 `DIV_I`/`MOD_I` edge cases.** All integer ops route through i64 (`interpreter.cpp:688-705`). Add/sub/mul are bit-identical between i32 and i64 wrapping, but `INT32_MIN / -1` differs (i64 path silently produces a different result; i32 hardware would trap). Confirm SSA lowering inserts a `TRUNC_S` or that this case is unreachable.
 
 ---
 

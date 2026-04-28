@@ -137,6 +137,29 @@ enum class Opcode : u8 {
     SPILL_REG         = 0xB8, // spill regs[reg] to local_stack[base + imm16] (2 u32 slots)
     RELOAD_REG        = 0xB9, // reload regs[reg] from local_stack[base + imm16] (2 u32 slots)
 
+    // 0xC0-0xDA: RK (register-or-constant) variants. Same ABC encoding as the
+    // base opcode, but `c` is a constant pool index (u8) instead of a register.
+    // Saves the LOAD_INT/LOAD_CONST + register op pair when the RHS is a
+    // compile-time constant. Lowering canonicalizes commutative ops so the
+    // constant lands on the RHS. Constant pool index >255 falls back to
+    // materialization. See docs/internals/bytecode.md.
+    ADD_I_RK    = 0xC0,     // dst = src1 + K[c]
+    SUB_I_RK    = 0xC1,     // dst = src1 - K[c]
+    MUL_I_RK    = 0xC2,     // dst = src1 * K[c]
+    ADD_F_RK    = 0xC3,     // dst = src1 + K[c] (f32)
+    SUB_F_RK    = 0xC4,     // dst = src1 - K[c] (f32)
+    MUL_F_RK    = 0xC5,     // dst = src1 * K[c] (f32)
+    ADD_D_RK    = 0xC6,     // dst = src1 + K[c] (f64)
+    SUB_D_RK    = 0xC7,     // dst = src1 - K[c] (f64)
+    MUL_D_RK    = 0xC8,     // dst = src1 * K[c] (f64)
+    DIV_D_RK    = 0xC9,     // dst = src1 / K[c] (f64)
+    EQ_I_RK     = 0xCA,     // dst = src1 == K[c]
+    NE_I_RK     = 0xCB,     // dst = src1 != K[c]
+    LT_I_RK     = 0xCC,     // dst = src1 <  K[c] (signed)
+    LE_I_RK     = 0xCD,     // dst = src1 <= K[c] (signed)
+    GT_I_RK     = 0xCE,     // dst = src1 >  K[c] (signed)
+    GE_I_RK     = 0xCF,     // dst = src1 >= K[c] (signed)
+
     // 0xD0-0xDF: Object Lifecycle
     NEW_OBJ     = 0xD0,     // dst = new type[imm16]
     DEL_OBJ     = 0xD1,     // delete reg
@@ -151,6 +174,14 @@ enum class Opcode : u8 {
     THROW       = 0xD2,     // throw regs[a] (exception object pointer)
     CALL_EXC_MSG = 0xD3,    // dst = exception_message(regs[src]) - call stored message fn ptr
     DELETE      = 0xD4,     // ABI: typed delete regs[a] using delete_descs[imm16]
+
+    // 0xD5-0xDA: f64 comparison RK variants (see RK comment above)
+    EQ_D_RK     = 0xD5,     // dst = src1 == K[c] (f64)
+    NE_D_RK     = 0xD6,     // dst = src1 != K[c] (f64)
+    LT_D_RK     = 0xD7,     // dst = src1 <  K[c] (f64)
+    LE_D_RK     = 0xD8,     // dst = src1 <= K[c] (f64)
+    GT_D_RK     = 0xD9,     // dst = src1 >  K[c] (f64)
+    GE_D_RK     = 0xDA,     // dst = src1 >= K[c] (f64)
 
     // 0xF0-0xFD: Debug/Error
     TRAP        = 0xF0,     // runtime error trap (for variant field access checks)

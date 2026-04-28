@@ -122,6 +122,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_block_offsets.clear();
     m_unfusable_cmp_pcs.clear();
     m_nullify_pcs.clear();
+    m_const_skip_load.clear();
     m_jump_patches.clear();
     m_free_regs.clear();
     m_active.clear();
@@ -135,6 +136,12 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     // Step 1: Compute liveness intervals for all SSA values
     // (blocks are already in RPO order from IR building)
     compute_liveness(ir_func);
+
+    // Step 1b: Identify constants whose every use is RK-eligible. These don't
+    // need a register or LOAD_INT/LOAD_CONST — the RK opcode reads them
+    // directly from the constant pool. Skipping their LOAD removes one dispatch
+    // per inner-loop constant (e.g. `2.0`, `4.0`, `1` in mandelbrot).
+    compute_const_use_modes(ir_func);
 
     // Step 2: Allocate registers for function parameters (pre-colored)
     u8 param_reg_offset = 0;
@@ -212,17 +219,22 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                                 inst->op == IROp::CallExternal);
 
                 if (inst->result.is_valid() && !has_register(inst->result)) {
-                    u32 reg_count = get_value_reg_count(inst->type);
-                    bool needs_bump = is_call || reg_count > 1;
-                    if (needs_bump) {
-                        // Calls and multi-register values (weak refs) must use bump
-                        // to ensure contiguous register allocation.
-                        u8 reg = bump_register();
-                        m_value_to_reg[inst->result.id] = reg;
-                        m_reg_to_value[reg] = inst->result.id;
-                        for (u32 r = 1; r < reg_count; r++) bump_register();
-                    } else {
-                        allocate_register(inst->result);
+                    // Skip register allocation for RK-only constants: the LOAD
+                    // is also skipped in lower_instruction, and try_emit_rk_binary
+                    // reads the value directly from the constant pool.
+                    if (m_const_skip_load.count(inst->result.id) == 0) {
+                        u32 reg_count = get_value_reg_count(inst->type);
+                        bool needs_bump = is_call || reg_count > 1;
+                        if (needs_bump) {
+                            // Calls and multi-register values (weak refs) must use bump
+                            // to ensure contiguous register allocation.
+                            u8 reg = bump_register();
+                            m_value_to_reg[inst->result.id] = reg;
+                            m_reg_to_value[reg] = inst->result.id;
+                            for (u32 r = 1; r < reg_count; r++) bump_register();
+                        } else {
+                            allocate_register(inst->result);
+                        }
                     }
                 }
                 if (inst->result.is_valid() && inst->type) {
@@ -837,6 +849,182 @@ static void mark_use(Vector<LiveRange>& live_ranges, ValueId value, u32 point) {
     }
 }
 
+void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
+    // Mark every value that has at least one use requiring a register. After
+    // the walk, ConstInt/ConstF/ConstD values not in `requires_register` get
+    // added to m_const_skip_load — their LOAD will not be emitted and no
+    // register will be allocated.
+    //
+    // Operand-position rules:
+    //   - Binary op with RK variant + commutative → both positions skippable
+    //     (canonicalization may swap to put constant on RHS)
+    //   - Binary op with RK variant + non-commutative → only RHS skippable
+    //   - All other op positions → require register
+    u32 num_values = ir_func->next_value_id;
+    Vector<bool> requires_register;
+    requires_register.reserve(num_values);
+    for (u32 i = 0; i < num_values; i++) requires_register.push_back(false);
+
+    auto mark_reg = [&](ValueId v) {
+        if (v.is_valid() && v.id < num_values) requires_register[v.id] = true;
+    };
+
+    for (IRBlock* block : ir_func->blocks) {
+        for (IRInst* inst : block->instructions) {
+            switch (inst->op) {
+                // RK-eligible binary ops
+                case IROp::AddI: case IROp::SubI: case IROp::MulI:
+                case IROp::AddF: case IROp::SubF: case IROp::MulF:
+                case IROp::AddD: case IROp::SubD: case IROp::MulD:
+                case IROp::DivD:
+                case IROp::EqD: case IROp::NeD:
+                case IROp::LtD: case IROp::LeD: case IROp::GtD: case IROp::GeD: {
+                    if (is_commutative_binary(inst->op)) {
+                        // Both sides can land in the RK slot — neither forces a register.
+                    } else {
+                        // RHS skippable, LHS forces register.
+                        mark_reg(inst->binary.left);
+                    }
+                    break;
+                }
+
+                // Non-RK binary ops still in the IR set: both sides require registers.
+                case IROp::DivI: case IROp::ModI:
+                case IROp::DivF:
+                case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor:
+                case IROp::Shl: case IROp::Shr:
+                case IROp::EqI: case IROp::NeI:
+                case IROp::LtI: case IROp::LeI: case IROp::GtI: case IROp::GeI:
+                case IROp::EqF: case IROp::NeF:
+                case IROp::LtF: case IROp::LeF: case IROp::GtF: case IROp::GeF:
+                case IROp::And: case IROp::Or:
+                    mark_reg(inst->binary.left);
+                    mark_reg(inst->binary.right);
+                    break;
+
+                // Unary ops, calls, indexing, fields, etc. — operand always reg.
+                case IROp::NegI: case IROp::NegF: case IROp::NegD:
+                case IROp::BitNot: case IROp::Not:
+                case IROp::I_TO_F64: case IROp::F64_TO_I:
+                case IROp::I_TO_B: case IROp::B_TO_I:
+                case IROp::Copy:
+                case IROp::RefInc: case IROp::RefDec:
+                case IROp::WeakCheck: case IROp::WeakCreate:
+                case IROp::Delete:
+                case IROp::Throw:
+                case IROp::Nullify:
+                    mark_reg(inst->unary);
+                    break;
+
+                case IROp::Call:
+                case IROp::CallNative:
+                    for (u32 i = 0; i < inst->call.args.size(); i++) {
+                        mark_reg(inst->call.args[i]);
+                    }
+                    break;
+
+                case IROp::CallExternal:
+                    for (u32 i = 0; i < inst->call_external.args.size(); i++) {
+                        mark_reg(inst->call_external.args[i]);
+                    }
+                    break;
+
+                case IROp::IndexGet:
+                    mark_reg(inst->index_data.container);
+                    mark_reg(inst->index_data.index);
+                    break;
+                case IROp::IndexSet:
+                    mark_reg(inst->index_data.container);
+                    mark_reg(inst->index_data.index);
+                    mark_reg(inst->index_data.value);
+                    break;
+
+                case IROp::GetField:
+                case IROp::GetFieldAddr:
+                    mark_reg(inst->field.object);
+                    break;
+                case IROp::SetField:
+                    mark_reg(inst->field.object);
+                    mark_reg(inst->store_value);
+                    break;
+
+                case IROp::StructCopy:
+                    mark_reg(inst->struct_copy.dest_ptr);
+                    mark_reg(inst->struct_copy.source_ptr);
+                    break;
+
+                case IROp::LoadPtr:
+                    mark_reg(inst->load_ptr.ptr);
+                    break;
+                case IROp::StorePtr:
+                    mark_reg(inst->store_ptr.ptr);
+                    mark_reg(inst->store_ptr.value);
+                    break;
+
+                case IROp::Cast:
+                    mark_reg(inst->cast.source);
+                    break;
+
+                case IROp::New:
+                    for (u32 i = 0; i < inst->new_data.args.size(); i++) {
+                        mark_reg(inst->new_data.args[i]);
+                    }
+                    break;
+
+                // Const ops have no operands; results are what we're testing.
+                case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
+                case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
+                case IROp::StackAlloc: case IROp::BlockArg: case IROp::VarAddr:
+                case IROp::Yield:
+                    break;
+            }
+        }
+
+        // Terminator operands — all require registers (Branch condition, Return
+        // value, Goto block-arg passes are handled via register-to-register MOVs).
+        const Terminator& term = block->terminator;
+        switch (term.kind) {
+            case TerminatorKind::Goto:
+                for (u32 i = 0; i < term.goto_target.args.size(); i++) {
+                    mark_reg(term.goto_target.args[i].value);
+                }
+                break;
+            case TerminatorKind::Branch:
+                mark_reg(term.branch.condition);
+                for (u32 i = 0; i < term.branch.then_target.args.size(); i++) {
+                    mark_reg(term.branch.then_target.args[i].value);
+                }
+                for (u32 i = 0; i < term.branch.else_target.args.size(); i++) {
+                    mark_reg(term.branch.else_target.args[i].value);
+                }
+                break;
+            case TerminatorKind::Return:
+                mark_reg(term.return_value);
+                break;
+            case TerminatorKind::None:
+            case TerminatorKind::Unreachable:
+                break;
+        }
+    }
+
+    // A constant is skip-load eligible iff it's a numeric Const* AND no use
+    // requires a register. Pre-add to constant pool here so the index is fixed
+    // before lowering walks; otherwise an int that fits in IMM16 (small) might
+    // be pool-added during the LHS visit but not visible until after the binop
+    // emit.
+    for (IRBlock* block : ir_func->blocks) {
+        for (IRInst* inst : block->instructions) {
+            if (!inst->result.is_valid() || inst->result.id >= num_values) continue;
+            bool is_numeric_const = inst->op == IROp::ConstInt
+                                 || inst->op == IROp::ConstF
+                                 || inst->op == IROp::ConstD;
+            if (!is_numeric_const) continue;
+            if (requires_register[inst->result.id]) continue;
+            m_const_skip_load.insert(inst->result.id);
+        }
+    }
+}
+
 void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     // Allocate live ranges for all SSA values in this function
     u32 num_values = ir_func->next_value_id;
@@ -1207,6 +1395,145 @@ u16 BytecodeBuilder::add_string_constant(const char* data, u32 length) {
     return add_constant(BCConstant::make_string(data, length));
 }
 
+// RK helpers: dedup against the existing pool so a single constant value reused
+// across many sites costs one pool slot, not N. Linear scan is fine — pools are
+// typically <100 entries per function.
+i32 BytecodeBuilder::get_or_add_int_constant(i64 value) {
+    const auto& constants = m_current_func->constants;
+    for (u32 i = 0; i < constants.size(); i++) {
+        if (constants[i].type == BCConstant::Int && constants[i].as_int == value) {
+            return static_cast<i32>(i);
+        }
+    }
+    return static_cast<i32>(add_constant(BCConstant::make_int(value)));
+}
+
+i32 BytecodeBuilder::get_or_add_float_constant(f64 value) {
+    const auto& constants = m_current_func->constants;
+    // Bitwise compare so -0.0 and +0.0 stay distinct (matches IEEE 754 identity,
+    // not equality — important for roundtripping).
+    u64 bits;
+    memcpy(&bits, &value, sizeof(bits));
+    for (u32 i = 0; i < constants.size(); i++) {
+        if (constants[i].type == BCConstant::Float) {
+            u64 existing_bits;
+            memcpy(&existing_bits, &constants[i].as_float, sizeof(existing_bits));
+            if (existing_bits == bits) {
+                return static_cast<i32>(i);
+            }
+        }
+    }
+    return static_cast<i32>(add_constant(BCConstant::make_float(value)));
+}
+
+Opcode BytecodeBuilder::rk_opcode_for(IROp op) const {
+    switch (op) {
+        case IROp::AddI: return Opcode::ADD_I_RK;
+        case IROp::SubI: return Opcode::SUB_I_RK;
+        case IROp::MulI: return Opcode::MUL_I_RK;
+        case IROp::AddF: return Opcode::ADD_F_RK;
+        case IROp::SubF: return Opcode::SUB_F_RK;
+        case IROp::MulF: return Opcode::MUL_F_RK;
+        case IROp::AddD: return Opcode::ADD_D_RK;
+        case IROp::SubD: return Opcode::SUB_D_RK;
+        case IROp::MulD: return Opcode::MUL_D_RK;
+        case IROp::DivD: return Opcode::DIV_D_RK;
+        // Integer comparisons intentionally absent: fuse_compare_branch() turns
+        // `LT_I + JMP_IF_NOT` into a single `JMP_IF_GE_I`, which is faster than
+        // `LT_I_RK + JMP_IF_NOT` (one dispatch vs two). Integer compares with
+        // constant RHS will become RK once `JMP_IF_*_I_RK` fused variants land.
+        // The Opcode::*_I_RK entries exist in bytecode.hpp for that future work.
+        case IROp::EqD:  return Opcode::EQ_D_RK;
+        case IROp::NeD:  return Opcode::NE_D_RK;
+        case IROp::LtD:  return Opcode::LT_D_RK;
+        case IROp::LeD:  return Opcode::LE_D_RK;
+        case IROp::GtD:  return Opcode::GT_D_RK;
+        case IROp::GeD:  return Opcode::GE_D_RK;
+        default:         return Opcode::NOP;
+    }
+}
+
+bool BytecodeBuilder::is_commutative_binary(IROp op) {
+    switch (op) {
+        case IROp::AddI: case IROp::MulI:
+        case IROp::AddF: case IROp::MulF:
+        case IROp::AddD: case IROp::MulD:
+        case IROp::EqI: case IROp::NeI:
+        case IROp::EqD: case IROp::NeD:
+        case IROp::EqF: case IROp::NeF:
+        case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor:
+        case IROp::And: case IROp::Or:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool BytecodeBuilder::try_emit_rk_binary(IRInst* inst, u8 dst) {
+    Opcode rk_op = rk_opcode_for(inst->op);
+    if (rk_op == Opcode::NOP) return false;
+
+    ValueId left_id = inst->binary.left;
+    ValueId right_id = inst->binary.right;
+
+    auto def_of = [this](ValueId v) -> IRInst* {
+        if (!v.is_valid() || v.id >= m_current_ir_func->values_by_id.size()) return nullptr;
+        return m_current_ir_func->values_by_id[v.id];
+    };
+
+    auto is_rk_eligible_const = [](IRInst* def) -> bool {
+        if (!def) return false;
+        return def->op == IROp::ConstInt || def->op == IROp::ConstF || def->op == IROp::ConstD;
+    };
+
+    IRInst* right_def = def_of(right_id);
+    IRInst* left_def = def_of(left_id);
+    bool right_const = is_rk_eligible_const(right_def);
+    bool left_const = is_rk_eligible_const(left_def);
+
+    // Canonicalize: for commutative ops with constant only on LHS, swap so the
+    // constant lands on RHS where RK reads it.
+    if (is_commutative_binary(inst->op) && left_const && !right_const) {
+        std::swap(left_id, right_id);
+        std::swap(left_def, right_def);
+        std::swap(left_const, right_const);
+    }
+
+    if (!right_const) return false;
+
+    // Resolve the constant to a pool index — either reuse or add.
+    i32 pool_idx = -1;
+    switch (right_def->op) {
+        case IROp::ConstInt:
+            pool_idx = get_or_add_int_constant(right_def->const_data.int_val);
+            break;
+        case IROp::ConstF: {
+            // f32 constants are stored as Int (raw bit pattern in low 32 bits)
+            // — the OP(*_F_RK) handlers reload via reg_as_f32, which reads the
+            // low 32 bits as f32 bit pattern.
+            f32 fval = right_def->const_data.f32_val;
+            u32 bits;
+            memcpy(&bits, &fval, sizeof(bits));
+            pool_idx = get_or_add_int_constant(static_cast<i64>(static_cast<u64>(bits)));
+            break;
+        }
+        case IROp::ConstD:
+            pool_idx = get_or_add_float_constant(right_def->const_data.f64_val);
+            break;
+        default:
+            return false;
+    }
+
+    // RK encoding has 8 bits for the constant index; pools larger than 256
+    // entries fall back to materialization. add_constant returns u16 so the
+    // pool can grow well past 256 — this guard is essential.
+    if (pool_idx < 0 || pool_idx > 0xFF) return false;
+
+    u8 left_reg = ensure_in_register(left_id, 0);
+    emit_abc(rk_op, dst, left_reg, static_cast<u8>(pool_idx));
+    return true;
+}
+
 void BytecodeBuilder::emit(u32 instr) {
     m_current_func->code.push_back(instr);
 }
@@ -1228,6 +1555,11 @@ void BytecodeBuilder::lower_block(IRBlock* block) {
 }
 
 void BytecodeBuilder::lower_instruction(IRInst* inst) {
+    // Skip-load constants have no register and no LOAD; bail before
+    // get_result_register, which would error on the missing allocation.
+    if (inst->result.is_valid() && m_const_skip_load.count(inst->result.id)) {
+        return;
+    }
     u8 dst = get_result_register(inst->result);
 
     switch (inst->op) {
@@ -1246,6 +1578,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             break;
 
         case IROp::ConstInt: {
+            // Skip-load case is handled at the top of lower_instruction.
             i64 value = inst->const_data.int_val;
             if (value >= IMM16_MIN && value <= IMM16_MAX) {
                 emit_abi(Opcode::LOAD_INT, dst, static_cast<u16>(static_cast<i16>(value)));
@@ -1328,6 +1661,14 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::GeD:
         case IROp::And:
         case IROp::Or: {
+            // Try RK lowering first: if RHS is a compile-time constant (or, for
+            // commutative ops, either side), emit the *_RK form which folds the
+            // LOAD_INT/LOAD_CONST into the constant-pool index field. Saves one
+            // dispatch + memory write per iteration in tight loops.
+            if (try_emit_rk_binary(inst, dst)) {
+                spill_if_needed(inst->result, dst);
+                break;
+            }
             // Reload operands first (scratch[1] for right, then scratch[0] for left)
             // Order matters: if dst is spilled, it uses scratch[0], so load right into
             // scratch[1] first, then left into scratch[0] which becomes the dst.

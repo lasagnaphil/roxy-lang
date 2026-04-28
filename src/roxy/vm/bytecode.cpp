@@ -137,6 +137,30 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::WEAK_CHECK:    return "WEAK_CHECK";
         case Opcode::WEAK_CREATE:   return "WEAK_CREATE";
 
+        // RK (register-or-constant) variants
+        case Opcode::ADD_I_RK:      return "ADD_I_RK";
+        case Opcode::SUB_I_RK:      return "SUB_I_RK";
+        case Opcode::MUL_I_RK:      return "MUL_I_RK";
+        case Opcode::ADD_F_RK:      return "ADD_F_RK";
+        case Opcode::SUB_F_RK:      return "SUB_F_RK";
+        case Opcode::MUL_F_RK:      return "MUL_F_RK";
+        case Opcode::ADD_D_RK:      return "ADD_D_RK";
+        case Opcode::SUB_D_RK:      return "SUB_D_RK";
+        case Opcode::MUL_D_RK:      return "MUL_D_RK";
+        case Opcode::DIV_D_RK:      return "DIV_D_RK";
+        case Opcode::EQ_I_RK:       return "EQ_I_RK";
+        case Opcode::NE_I_RK:       return "NE_I_RK";
+        case Opcode::LT_I_RK:       return "LT_I_RK";
+        case Opcode::LE_I_RK:       return "LE_I_RK";
+        case Opcode::GT_I_RK:       return "GT_I_RK";
+        case Opcode::GE_I_RK:       return "GE_I_RK";
+        case Opcode::EQ_D_RK:       return "EQ_D_RK";
+        case Opcode::NE_D_RK:       return "NE_D_RK";
+        case Opcode::LT_D_RK:       return "LT_D_RK";
+        case Opcode::LE_D_RK:       return "LE_D_RK";
+        case Opcode::GT_D_RK:       return "GT_D_RK";
+        case Opcode::GE_D_RK:       return "GE_D_RK";
+
         // Debug/Error
         case Opcode::TRAP:          return "TRAP";
         case Opcode::NOP:           return "NOP";
@@ -253,6 +277,32 @@ u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out) {
         case Opcode::AND:
         case Opcode::OR:
             buf.format("R{}, R{}, R{}", a, b, c);
+            break;
+
+        // RK variants: dst, src1 reg, src2 constant pool index
+        case Opcode::ADD_I_RK:
+        case Opcode::SUB_I_RK:
+        case Opcode::MUL_I_RK:
+        case Opcode::ADD_F_RK:
+        case Opcode::SUB_F_RK:
+        case Opcode::MUL_F_RK:
+        case Opcode::ADD_D_RK:
+        case Opcode::SUB_D_RK:
+        case Opcode::MUL_D_RK:
+        case Opcode::DIV_D_RK:
+        case Opcode::EQ_I_RK:
+        case Opcode::NE_I_RK:
+        case Opcode::LT_I_RK:
+        case Opcode::LE_I_RK:
+        case Opcode::GT_I_RK:
+        case Opcode::GE_I_RK:
+        case Opcode::EQ_D_RK:
+        case Opcode::NE_D_RK:
+        case Opcode::LT_D_RK:
+        case Opcode::LE_D_RK:
+        case Opcode::GT_D_RK:
+        case Opcode::GE_D_RK:
+            buf.format("R{}, R{}, K[{}]", a, b, c);
             break;
 
         // Format: offset

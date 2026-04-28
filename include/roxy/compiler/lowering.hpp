@@ -70,6 +70,13 @@ private:
     // Liveness analysis
     void compute_liveness(IRFunction* ir_func);
 
+    // Pre-pass: identifies Const{Int,F,D} SSA values whose every use lies in an
+    // RK-eligible operand position (RHS of any RK op, or either side of a
+    // commutative RK op). Such constants don't need a register or LOAD
+    // instruction — the RK opcode reads them directly from the constant pool.
+    // Populates m_const_skip_load.
+    void compute_const_use_modes(IRFunction* ir_func);
+
     // Free-list register allocation support
     void expire_before(u32 current_point);
 
@@ -78,6 +85,23 @@ private:
     u16 add_int_constant(i64 value);
     u16 add_float_constant(f64 value);
     u16 add_string_constant(const char* data, u32 length);
+
+    // RK (register-or-constant) helpers — return existing pool index or append.
+    // i32 result so caller can detect "would overflow u8 RK index" via < 0 check
+    // is unnecessary; use the boolean return from try_emit_rk_binary.
+    i32 get_or_add_int_constant(i64 value);
+    i32 get_or_add_float_constant(f64 value);
+
+    // Map IROp binary op to its RK opcode variant. Returns Opcode::NOP if the
+    // op has no RK variant.
+    Opcode rk_opcode_for(IROp op) const;
+    static bool is_commutative_binary(IROp op);
+
+    // If `inst`'s right (or, for commutative ops, either) operand is a constant
+    // SSA value AND fits in the 8-bit RK constant-pool index, emit the RK form
+    // and return true. Otherwise emit nothing and return false (caller falls
+    // back to the non-RK encoding).
+    bool try_emit_rk_binary(IRInst* inst, u8 dst);
 
     // Block lowering
     void lower_block(IRBlock* block);
@@ -153,6 +177,10 @@ private:
     // Liveness data (computed per function)
     Vector<LiveRange> m_live_ranges;
     Vector<bool> m_value_same_block;    // true if value's def and last use are in the same block
+
+    // Const SSA values whose LOAD_INT/LOAD_CONST emission can be skipped
+    // because every use is RK-eligible. Populated by compute_const_use_modes().
+    tsl::robin_set<u32> m_const_skip_load;
 
     // Free-list allocator state
     Vector<u8> m_free_regs;            // pool of available register numbers

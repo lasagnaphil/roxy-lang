@@ -53,9 +53,53 @@ Each function call allocates a new register window from the shared register file
 | 0x90-0x9F | Control Flow | `JMP`, `JMP_IF`, `JMP_IF_NOT`, `RET`, `RET_VOID`, `RET_STRUCT_SMALL` |
 | 0xA0-0xAF | Function Calls | `CALL`, `CALL_NATIVE` |
 | 0xB0-0xBF | Struct/Stack Access | `GET_FIELD`, `SET_FIELD`, `STACK_ADDR`, `GET_FIELD_ADDR`, `STRUCT_LOAD_REGS`, `STRUCT_STORE_REGS`, `STRUCT_COPY`, `RET_STRUCT_SMALL`, `SPILL_REG`, `RELOAD_REG` |
-| 0xD0-0xDF | Object Lifecycle | `NEW_OBJ`, `DEL_OBJ` |
+| 0xC0-0xCF | RK Variants (arith + int cmp) | `ADD_I_RK`, `SUB_I_RK`, `ADD_D_RK`, `MUL_D_RK`, `LT_I_RK`, ... |
+| 0xD0-0xDF | Object Lifecycle + f64 cmp RK | `NEW_OBJ`, `DEL_OBJ`, `LT_D_RK`, `GT_D_RK`, ... |
 | 0xE0-0xEF | Reference Counting | `REF_INC`, `REF_DEC`, `WEAK_CHECK` |
 | 0xFE-0xFF | Debug/Special | `NOP`, `HALT` |
+
+## RK (Register-or-Constant) Encoding
+
+To eliminate `LOAD_INT`/`LOAD_CONST` materialization for the common case of an
+arithmetic op or comparison against a compile-time constant (e.g. `i + 1`,
+`zx2 + zy2 > 4.0`), each RK-eligible opcode has a parallel `*_RK` variant:
+
+```
+Format: [op_RK:8][dst:8][src1:8][const_idx:8]
+            // dst = src1 OP K[const_idx]
+```
+
+The encoding mirrors ABC, but the `c` field is read as an 8-bit index into the
+function's constant pool (`BCFunction::constants`) rather than a register
+number. Specialized inline loaders in the interpreter (`rk_const_i64`,
+`rk_const_f32`, `rk_const_f64`) bypass the type-switch in `load_constant` —
+the lowering pass guarantees that `*_I_RK` opcodes only reference `Int`-typed
+constants, `*_D_RK` only `Float`, and `*_F_RK` references `Int` constants
+holding f32 bit patterns.
+
+**Lowering** (`compute_const_use_modes` in `lowering.cpp`): a pre-pass walks
+the IR and marks each constant SSA value with whether all its uses are
+RK-eligible (RHS of any RK op, or either side of a commutative RK op).
+Constants flagged "RK-only" skip both register allocation and `LOAD_*`
+emission — the RK opcode reads them straight from the constant pool.
+Commutative ops (`AddI`, `MulI`, `AddD`, etc.) are canonicalized so the
+constant lands on the RHS.
+
+**Why opcode-variant RK over Lua's operand-bit RK**: Lua steals a bit from
+each operand field for the K flag, shrinking register space to 128 entries
+and forcing aggressive spilling. Opcode-variant RK keeps Roxy's 8-bit
+register fields (256 entries) at the cost of more opcodes — still well within
+the 256-opcode budget.
+
+**Constant pool index limit**: 8 bits (256 entries). Functions exceeding 256
+constants fall back to materialization (the existing `LOAD_CONST` path uses
+16-bit `imm16` and is unaffected).
+
+**Integer comparison RK** (`*_I_RK` opcodes): defined but not currently emitted
+by the lowering pass. The existing `fuse_compare_branch()` turns `LT_I + JMP_IF_NOT`
+into a single `JMP_IF_GE_I` (one dispatch); RK comparisons would lose this
+fusion (two dispatches: `LT_I_RK + JMP_IF_NOT`). When `JMP_IF_*_I_RK` fused
+variants land, lowering will start emitting integer compare RK.
 
 ## Type Conversion Opcodes
 

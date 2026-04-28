@@ -116,6 +116,28 @@ inline u64 reg_from_ptr(void* p) { return reinterpret_cast<u64>(p); }
 inline u64 reg_from_bool(bool b) { return b ? 1 : 0; }
 inline bool reg_is_truthy(u64 r) { return r != 0; }
 
+// Specialized RK constant loaders. These bypass the load_constant() switch
+// because the lowering pass emits the matching opcode for each constant's
+// type — *_I_RK only references Int constants, *_F_RK references Int constants
+// holding f32 bit patterns, *_D_RK references Float constants. Trusts the
+// lowering to emit valid pool indices (no bounds check on hot path).
+inline i64 rk_const_i64(const BCFunction* func, u8 idx) {
+    return func->constants[idx].as_int;
+}
+
+inline f64 rk_const_f64(const BCFunction* func, u8 idx) {
+    return func->constants[idx].as_float;
+}
+
+inline f32 rk_const_f32(const BCFunction* func, u8 idx) {
+    // f32 constants are stored in BCConstant::Int's low 32 bits as the raw
+    // bit pattern (see lowering.cpp ConstF case).
+    u32 bits = static_cast<u32>(func->constants[idx].as_int);
+    f32 v;
+    memcpy(&v, &bits, sizeof(v));
+    return v;
+}
+
 // Helper to load constant from constant pool into a u64 register
 static u64 load_constant(RoxyVM* vm, const BCFunction* func, u16 index) {
     if (index >= func->constants.size()) {
@@ -580,25 +602,37 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         [0xBC] = &&op_DEFAULT, [0xBD] = &&op_DEFAULT,
         [0xBE] = &&op_DEFAULT, [0xBF] = &&op_DEFAULT,
 
-        // 0xC0-0xCF: Unused
-        [0xC0] = &&op_DEFAULT, [0xC1] = &&op_DEFAULT,
-        [0xC2] = &&op_DEFAULT, [0xC3] = &&op_DEFAULT,
-        [0xC4] = &&op_DEFAULT, [0xC5] = &&op_DEFAULT,
-        [0xC6] = &&op_DEFAULT, [0xC7] = &&op_DEFAULT,
-        [0xC8] = &&op_DEFAULT, [0xC9] = &&op_DEFAULT,
-        [0xCA] = &&op_DEFAULT, [0xCB] = &&op_DEFAULT,
-        [0xCC] = &&op_DEFAULT, [0xCD] = &&op_DEFAULT,
-        [0xCE] = &&op_DEFAULT, [0xCF] = &&op_DEFAULT,
+        // 0xC0-0xCF: RK (register-or-constant) variants — arithmetic + int cmp
+        [0xC0] = &&op_ADD_I_RK,
+        [0xC1] = &&op_SUB_I_RK,
+        [0xC2] = &&op_MUL_I_RK,
+        [0xC3] = &&op_ADD_F_RK,
+        [0xC4] = &&op_SUB_F_RK,
+        [0xC5] = &&op_MUL_F_RK,
+        [0xC6] = &&op_ADD_D_RK,
+        [0xC7] = &&op_SUB_D_RK,
+        [0xC8] = &&op_MUL_D_RK,
+        [0xC9] = &&op_DIV_D_RK,
+        [0xCA] = &&op_EQ_I_RK,
+        [0xCB] = &&op_NE_I_RK,
+        [0xCC] = &&op_LT_I_RK,
+        [0xCD] = &&op_LE_I_RK,
+        [0xCE] = &&op_GT_I_RK,
+        [0xCF] = &&op_GE_I_RK,
 
-        // 0xD0-0xDF: Object Lifecycle and Exceptions
+        // 0xD0-0xDF: Object Lifecycle, Exceptions, and f64 cmp RK
         [0xD0] = &&op_NEW_OBJ,
         [0xD1] = &&op_DEL_OBJ,
         [0xD2] = &&op_THROW,
         [0xD3] = &&op_CALL_EXC_MSG,
-        [0xD4] = &&op_DELETE, [0xD5] = &&op_DEFAULT,
-        [0xD6] = &&op_DEFAULT, [0xD7] = &&op_DEFAULT,
-        [0xD8] = &&op_DEFAULT, [0xD9] = &&op_DEFAULT,
-        [0xDA] = &&op_DEFAULT, [0xDB] = &&op_DEFAULT,
+        [0xD4] = &&op_DELETE,
+        [0xD5] = &&op_EQ_D_RK,
+        [0xD6] = &&op_NE_D_RK,
+        [0xD7] = &&op_LT_D_RK,
+        [0xD8] = &&op_LE_D_RK,
+        [0xD9] = &&op_GT_D_RK,
+        [0xDA] = &&op_GE_D_RK,
+        [0xDB] = &&op_DEFAULT,
         [0xDC] = &&op_DEFAULT, [0xDD] = &&op_DEFAULT,
         [0xDE] = &&op_DEFAULT, [0xDF] = &&op_DEFAULT,
 
@@ -914,6 +948,122 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
 
     OP(GE_D) {
         regs[decode_a(instr)] = reg_from_bool(reg_as_f64(regs[decode_b(instr)]) >= reg_as_f64(regs[decode_c(instr)]));
+        DISPATCH();
+    }
+
+    // ── RK (register-or-constant) variants ──
+    // Same ABC encoding as the base opcode, but `c` is a constant pool index
+    // (read via load_constant) instead of a register. Saves a LOAD_INT/LOAD_CONST
+    // when the RHS is a compile-time constant. Lowering canonicalizes commutative
+    // ops so the constant lands on the RHS.
+
+    OP(ADD_I_RK) {
+        regs[decode_a(instr)] = reg_from_i64(reg_as_i64(regs[decode_b(instr)]) + rk_const_i64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(SUB_I_RK) {
+        regs[decode_a(instr)] = reg_from_i64(reg_as_i64(regs[decode_b(instr)]) - rk_const_i64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(MUL_I_RK) {
+        regs[decode_a(instr)] = reg_from_i64(reg_as_i64(regs[decode_b(instr)]) * rk_const_i64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(ADD_F_RK) {
+        regs[decode_a(instr)] = reg_from_f32(reg_as_f32(regs[decode_b(instr)]) + rk_const_f32(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(SUB_F_RK) {
+        regs[decode_a(instr)] = reg_from_f32(reg_as_f32(regs[decode_b(instr)]) - rk_const_f32(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(MUL_F_RK) {
+        regs[decode_a(instr)] = reg_from_f32(reg_as_f32(regs[decode_b(instr)]) * rk_const_f32(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(ADD_D_RK) {
+        regs[decode_a(instr)] = reg_from_f64(reg_as_f64(regs[decode_b(instr)]) + rk_const_f64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(SUB_D_RK) {
+        regs[decode_a(instr)] = reg_from_f64(reg_as_f64(regs[decode_b(instr)]) - rk_const_f64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(MUL_D_RK) {
+        regs[decode_a(instr)] = reg_from_f64(reg_as_f64(regs[decode_b(instr)]) * rk_const_f64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(DIV_D_RK) {
+        regs[decode_a(instr)] = reg_from_f64(reg_as_f64(regs[decode_b(instr)]) / rk_const_f64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(EQ_I_RK) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_i64(regs[decode_b(instr)]) == rk_const_i64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(NE_I_RK) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_i64(regs[decode_b(instr)]) != rk_const_i64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(LT_I_RK) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_i64(regs[decode_b(instr)]) < rk_const_i64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(LE_I_RK) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_i64(regs[decode_b(instr)]) <= rk_const_i64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(GT_I_RK) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_i64(regs[decode_b(instr)]) > rk_const_i64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(GE_I_RK) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_i64(regs[decode_b(instr)]) >= rk_const_i64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(EQ_D_RK) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f64(regs[decode_b(instr)]) == rk_const_f64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(NE_D_RK) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f64(regs[decode_b(instr)]) != rk_const_f64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(LT_D_RK) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f64(regs[decode_b(instr)]) < rk_const_f64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(LE_D_RK) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f64(regs[decode_b(instr)]) <= rk_const_f64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(GT_D_RK) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f64(regs[decode_b(instr)]) > rk_const_f64(func, decode_c(instr)));
+        DISPATCH();
+    }
+
+    OP(GE_D_RK) {
+        regs[decode_a(instr)] = reg_from_bool(reg_as_f64(regs[decode_b(instr)]) >= rk_const_f64(func, decode_c(instr)));
         DISPATCH();
     }
 
