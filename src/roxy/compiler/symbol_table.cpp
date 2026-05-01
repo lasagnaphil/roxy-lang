@@ -82,6 +82,7 @@ Symbol* SymbolTable::define(SymbolKind kind, StringView name, Type* type, Source
     sym->loc = loc;
     sym->decl = decl;
     sym->is_pub = false;
+    sym->defining_scope = m_current;
 
     m_current->symbols.push_back(sym);
     m_lookup_cache[name] = sym;

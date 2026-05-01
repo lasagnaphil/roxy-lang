@@ -14,6 +14,7 @@ namespace rx {
 
 // Forward declarations
 struct Decl;
+struct Scope;
 
 enum class SymbolKind : u8 {
     Variable,
@@ -36,6 +37,7 @@ struct Symbol {
     SourceLocation loc;
     Decl* decl;           // AST node that declared this symbol (may be null for built-ins)
     bool is_pub;          // Public visibility
+    Scope* defining_scope;  // Scope where this symbol was defined; used for capture detection
 
     Symbol()
         : kind(SymbolKind::Variable)
@@ -44,6 +46,7 @@ struct Symbol {
         , loc{0, 0, 0}
         , decl(nullptr)
         , is_pub(false)
+        , defining_scope(nullptr)
     {
         // Zero-initialize the union
         param.index = 0;
@@ -83,6 +86,7 @@ enum class ScopeKind : u8 {
     Block,        // Block scope (if, while, for, etc.)
     Loop,         // Loop scope (while, for) - for break/continue validation
     Struct,       // Struct scope - for 'this' validation
+    Lambda,       // Lambda body boundary - any name resolved across this scope is captured
 };
 
 // A scope contains symbols and tracks context

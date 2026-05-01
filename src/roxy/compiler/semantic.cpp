@@ -61,9 +61,10 @@ static u32 get_type_slot_count(Type* type) {
         case TypeKind::Coroutine:
             return 2;
 
-        // Function types: type-erased closure wrapper (uniq env + call_idx + pad)
+        // Function types: closure wrapper is a single uniq pointer to the env struct
+        // (env's first field holds the call_idx; subsequent fields hold captures).
         case TypeKind::Function:
-            return 4;
+            return 2;
 
         default:
             return 0;

@@ -39,7 +39,7 @@ static u32 get_type_slot_count(Type* type) {
         case TypeKind::String:
             return 2;
         case TypeKind::Function:
-            return 4;
+            return 2;
         default:
             return 0;
     }
