@@ -61,6 +61,10 @@ static u32 get_type_slot_count(Type* type) {
         case TypeKind::Coroutine:
             return 2;
 
+        // Function types: type-erased closure wrapper (uniq env + call_idx + pad)
+        case TypeKind::Function:
+            return 4;
+
         default:
             return 0;
     }
@@ -1247,6 +1251,29 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
 
 Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
     if (!type_expr) return nullptr;
+
+    // Function type: fun(T1, T2) -> R
+    if (type_expr->kind == TypeExprKind::Function) {
+        Vector<Type*> params;
+        for (auto* param_expr : type_expr->type_args) {
+            Type* pt = resolve_type_expr(param_expr);
+            if (!pt || pt->is_error()) return m_types.error_type();
+            params.push_back(pt);
+        }
+        Type* ret = type_expr->return_type
+            ? resolve_type_expr(type_expr->return_type)
+            : m_types.void_type();
+        if (!ret || ret->is_error()) return m_types.error_type();
+        Type* base_type = m_types.function_type(m_allocator.alloc_span(params), ret);
+
+        switch (type_expr->ref_kind) {
+            case RefKind::Uniq: base_type = m_types.uniq_type(base_type); break;
+            case RefKind::Ref:  base_type = m_types.ref_type(base_type); break;
+            case RefKind::Weak: base_type = m_types.weak_type(base_type); break;
+            case RefKind::None: break;
+        }
+        return base_type;
+    }
 
     Type* base_type = nullptr;
 
@@ -3711,6 +3738,11 @@ Type* SemanticAnalyzer::analyze_expr(Expr* expr) {
             break;
         case AstKind::ExprStringInterp:
             result = analyze_string_interp_expr(expr);
+            break;
+        case AstKind::ExprLambda:
+            // Commit 2 will implement capture analysis and lambda lifting.
+            error(expr->loc, "lambda expressions are not yet supported (closures: capture analysis pending)");
+            result = m_types.error_type();
             break;
         default:
             result = m_types.error_type();

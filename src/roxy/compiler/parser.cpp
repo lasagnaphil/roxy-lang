@@ -484,6 +484,101 @@ Expr* Parser::primary() {
         return expr;
     }
 
+    // Lambda expression: fun(params): RetType { body } or fun(params): RetType => expr
+    // Optional capture list: fun[move x, move y](params)…
+    if (match(TokenKind::KwFun)) {
+        SourceLocation loc = m_previous.loc;
+
+        // Optional capture list. `move` is a contextual keyword — only a keyword inside `[...]`.
+        Vector<CaptureEntry> captures;
+        if (match(TokenKind::LeftBracket)) {
+            if (!check(TokenKind::RightBracket)) {
+                do {
+                    if (!check(TokenKind::Identifier) || m_current.text() != StringView("move", 4)) {
+                        report_error("Expected 'move' in capture list (only 'move' captures are supported)");
+                        return nullptr;
+                    }
+                    SourceLocation entry_loc = m_current.loc;
+                    advance();  // consume 'move'
+                    Token cap_name = consume(TokenKind::Identifier, "Expected captured variable name after 'move'");
+                    if (m_has_error) return nullptr;
+                    CaptureEntry entry;
+                    entry.name = cap_name.text();
+                    entry.mode = CaptureMode::Move;
+                    entry.loc = entry_loc;
+                    captures.push_back(entry);
+                } while (match(TokenKind::Comma));
+            }
+            consume(TokenKind::RightBracket, "Expected ']' after capture list");
+            if (m_has_error) return nullptr;
+        }
+
+        consume(TokenKind::LeftParen, "Expected '(' after 'fun' in lambda expression");
+        if (m_has_error) return nullptr;
+
+        Vector<Param> params = parse_parameters();
+        if (m_has_error) return nullptr;
+        consume(TokenKind::RightParen, "Expected ')' after lambda parameters");
+        if (m_has_error) return nullptr;
+
+        // Optional return type annotation: ': RetType'
+        TypeExpr* return_type = nullptr;
+        if (match(TokenKind::Colon)) {
+            return_type = type_expression();
+            if (m_has_error) return nullptr;
+        }
+
+        // Body: either '{ ... }' (block) or '=> expr' (expression body — desugars to '{ return expr; }')
+        Stmt* body = nullptr;
+        if (match(TokenKind::LeftBrace)) {
+            Vector<Decl*> decls;
+            while (!check(TokenKind::RightBrace) && !is_at_end()) {
+                Decl* d = declaration();
+                if (m_has_error) return nullptr;
+                decls.push_back(d);
+            }
+            consume(TokenKind::RightBrace, "Expected '}' after lambda body");
+            if (m_has_error) return nullptr;
+            body = alloc<Stmt>();
+            body->kind = AstKind::StmtBlock;
+            body->loc = loc;
+            body->block.declarations = alloc_span(decls);
+        } else if (match(TokenKind::Equal)) {
+            consume(TokenKind::Greater, "Expected '>' to form '=>' in lambda short body");
+            if (m_has_error) return nullptr;
+            SourceLocation arrow_loc = m_previous.loc;
+            Expr* expr_body = expression();
+            if (m_has_error) return nullptr;
+
+            // Desugar `=> expr` into `{ return expr; }`.
+            Decl* ret_decl = alloc<Decl>();
+            ret_decl->kind = AstKind::StmtReturn;
+            ret_decl->loc = arrow_loc;
+            ret_decl->stmt.kind = AstKind::StmtReturn;
+            ret_decl->stmt.loc = arrow_loc;
+            ret_decl->stmt.return_stmt.value = expr_body;
+
+            Vector<Decl*> decls;
+            decls.push_back(ret_decl);
+            body = alloc<Stmt>();
+            body->kind = AstKind::StmtBlock;
+            body->loc = loc;
+            body->block.declarations = alloc_span(decls);
+        } else {
+            report_error("Expected '{' or '=>' for lambda body");
+            return nullptr;
+        }
+
+        Expr* expr = alloc<Expr>();
+        expr->kind = AstKind::ExprLambda;
+        expr->loc = loc;
+        expr->lambda.captures = alloc_span(captures);
+        expr->lambda.params = alloc_span(params);
+        expr->lambda.return_type = return_type;
+        expr->lambda.body = body;
+        return expr;
+    }
+
     // ref expr - explicit borrow expression
     if (match(TokenKind::KwRef)) {
         SourceLocation loc = m_previous.loc;
@@ -2171,8 +2266,10 @@ bool Parser::consume_closing_angle() {
 
 TypeExpr* Parser::type_expression() {
     TypeExpr* type = alloc<TypeExpr>();
+    type->kind = TypeExprKind::Named;
     type->ref_kind = RefKind::None;
     type->type_args = Span<TypeExpr*>();
+    type->return_type = nullptr;
 
     // Check for reference modifiers
     if (match(TokenKind::KwUniq)) {
@@ -2181,6 +2278,37 @@ TypeExpr* Parser::type_expression() {
         type->ref_kind = RefKind::Ref;
     } else if (match(TokenKind::KwWeak)) {
         type->ref_kind = RefKind::Weak;
+    }
+
+    // Function type: fun(T1, T2) -> R   or   fun(T1) for void return
+    if (match(TokenKind::KwFun)) {
+        Token fun_token = m_previous;
+        type->kind = TypeExprKind::Function;
+        type->loc = fun_token.loc;
+        consume(TokenKind::LeftParen, "Expected '(' after 'fun' in function type");
+        if (m_has_error) return nullptr;
+
+        Vector<TypeExpr*> param_types;
+        if (!check(TokenKind::RightParen)) {
+            do {
+                TypeExpr* param_type = type_expression();
+                if (m_has_error) return nullptr;
+                param_types.push_back(param_type);
+            } while (match(TokenKind::Comma));
+        }
+        consume(TokenKind::RightParen, "Expected ')' in function type parameter list");
+        if (m_has_error) return nullptr;
+        type->type_args = alloc_span(param_types);
+
+        // Optional `-> ReturnType`. Absent means void.
+        if (match(TokenKind::Minus)) {
+            consume(TokenKind::Greater, "Expected '>' to form '->' in function type");
+            if (m_has_error) return nullptr;
+            type->return_type = type_expression();
+            if (m_has_error) return nullptr;
+        }
+
+        return type;
     }
 
     Token name_token = consume(TokenKind::Identifier, "Expected type name");

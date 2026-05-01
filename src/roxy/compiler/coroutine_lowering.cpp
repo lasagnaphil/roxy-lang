@@ -81,6 +81,8 @@ static u32 get_type_slot_count(Type* type) {
             return type->struct_info.slot_count;
         case TypeKind::String:
             return 2;
+        case TypeKind::Function:
+            return 4;
         default:
             return 0;
     }

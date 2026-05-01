@@ -32,6 +32,7 @@ enum class AstKind : u8 {
     ExprSuper,
     ExprStructLiteral,
     ExprStringInterp,
+    ExprLambda,
 
     // Statements
     StmtExpr,
@@ -130,6 +131,12 @@ enum class RefKind : u8 {
     Weak,   // weak<T> - weak reference
 };
 
+// Discriminator for TypeExpr variants.
+enum class TypeExprKind : u8 {
+    Named,     // Identifier with optional generic args: Foo, Box<T>
+    Function,  // Function type: fun(T1, T2) -> R or fun(T1) for void return
+};
+
 // Type parameter for generic declarations: <T, U> or <T: Trait1 + Trait2>
 struct TypeParam {
     StringView name;
@@ -137,12 +144,17 @@ struct TypeParam {
     Span<TypeExpr*> bounds;  // Trait bounds (empty if unconstrained)
 };
 
-// Type expression for type annotations
+// Type expression for type annotations.
+//   Named:    `name` is the type identifier; `type_args` are generic args.
+//   Function: `name` is empty; `type_args` are parameter types; `return_type`
+//             is the return type expression (nullptr for void).
 struct TypeExpr {
+    TypeExprKind kind = TypeExprKind::Named;
     StringView name;
     SourceLocation loc;
-    RefKind ref_kind;
-    Span<TypeExpr*> type_args;   // Generic type args: Box<i32>, Pair<i32, string>, List<i32>
+    RefKind ref_kind = RefKind::None;
+    Span<TypeExpr*> type_args;
+    TypeExpr* return_type = nullptr;  // Function only
 };
 
 // Literal expression: nil, true, false, 42, 3.14, "hello"
@@ -261,6 +273,33 @@ struct StringInterpExpr {
     Span<Expr*> expressions;      // N interpolated expressions
 };
 
+// How a captured variable enters the closure's environment.
+enum class CaptureMode : u8 {
+    Move,   // `[move name]` — ownership transferred from the outer scope
+};
+
+// One entry in an explicit capture list: `[move name]`.
+struct CaptureEntry {
+    StringView name;
+    CaptureMode mode;
+    SourceLocation loc;
+};
+
+// Forward declaration for LambdaExpr.
+struct Param;
+struct Stmt;
+
+// Lambda expression:
+//   fun(params): RetType { body }
+//   fun(params): RetType => expr
+//   fun[move x, move y](params): RetType { body }
+struct LambdaExpr {
+    Span<CaptureEntry> captures;  // Explicit capture list (empty for inferred-only)
+    Span<Param> params;
+    TypeExpr* return_type;        // nullptr means void
+    Stmt* body;                   // Always a BlockStmt; `=> expr` lowers to `{ return expr; }`
+};
+
 // Forward declaration
 struct Type;
 
@@ -285,6 +324,7 @@ struct Expr {
         SuperExpr super_expr;
         StructLiteralExpr struct_literal;
         StringInterpExpr string_interp;
+        LambdaExpr lambda;
     };
 
     Expr() : kind(AstKind::ExprLiteral), loc{0, 0, 0, 0}, resolved_type(nullptr) {

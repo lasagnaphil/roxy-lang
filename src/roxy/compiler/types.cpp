@@ -570,8 +570,12 @@ void type_to_string(const Type* type, String& out) {
                 if (i > 0) append_string(out, ", ");
                 type_to_string(type->func_info.param_types[i], out);
             }
-            append_string(out, "): ");
-            type_to_string(type->func_info.return_type, out);
+            append_string(out, ")");
+            // Match user-facing syntax: omit the arrow for void return.
+            if (type->func_info.return_type && !type->func_info.return_type->is_void()) {
+                append_string(out, " -> ");
+                type_to_string(type->func_info.return_type, out);
+            }
             break;
         }
 

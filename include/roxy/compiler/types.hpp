@@ -350,12 +350,14 @@ struct Type {
     // This includes:
     //   - uniq references
     //   - Coro<T> (heap-allocated state struct)
+    //   - Function types (own a uniq closure env via the type-erased wrapper)
     //   - structs with a default destructor (synthetic or user-defined)
     //   - List<T> where T is noncopyable
     //   - Map<K,V> where K or V is noncopyable
     bool noncopyable() const {
         if (kind == TypeKind::Uniq) return true;
         if (kind == TypeKind::Coroutine) return true;
+        if (kind == TypeKind::Function) return true;
         if (kind == TypeKind::Struct) {
             for (const auto& dtor : struct_info.destructors) {
                 if (dtor.name.empty()) return true;
