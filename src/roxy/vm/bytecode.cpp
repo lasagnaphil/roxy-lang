@@ -73,10 +73,8 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::GT_D:          return "GT_D";
         case Opcode::GE_D:          return "GE_D";
 
-        // Logical Operations
+        // Logical Operations (AND/OR removed — see bytecode.hpp)
         case Opcode::NOT:           return "NOT";
-        case Opcode::AND:           return "AND";
-        case Opcode::OR:            return "OR";
 
         // Type Conversions
         case Opcode::I_TO_F64:      return "I_TO_F64";
@@ -288,8 +286,6 @@ u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out) {
         case Opcode::LE_F:
         case Opcode::GT_F:
         case Opcode::GE_F:
-        case Opcode::AND:
-        case Opcode::OR:
             buf.format("R{}, R{}, R{}", a, b, c);
             break;
 

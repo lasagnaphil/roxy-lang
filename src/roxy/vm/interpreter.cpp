@@ -521,10 +521,10 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         [0x5C] = &&op_DEFAULT, [0x5D] = &&op_DEFAULT,
         [0x5E] = &&op_DEFAULT, [0x5F] = &&op_DEFAULT,
 
-        // 0x60-0x6F: Logical Operations
+        // 0x60-0x6F: Logical Operations (only NOT — AND/OR routed through
+        // BIT_AND/BIT_OR via the IROp::And/Or → bitwise mapping in lowering)
         [0x60] = &&op_NOT,
-        [0x61] = &&op_AND,
-        [0x62] = &&op_OR,
+        [0x61] = &&op_DEFAULT, [0x62] = &&op_DEFAULT,
         [0x63] = &&op_DEFAULT, [0x64] = &&op_DEFAULT,
         [0x65] = &&op_DEFAULT, [0x66] = &&op_DEFAULT,
         [0x67] = &&op_DEFAULT, [0x68] = &&op_DEFAULT,
@@ -1073,19 +1073,12 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
     }
 
     // ── Logical Operations ──
+    // AND/OR opcodes intentionally absent. Roxy's bool representation is
+    // normalized 0/1, so BIT_AND/BIT_OR produce identical results to logical
+    // && / || on bool operands. Lowering maps IROp::And/Or to BIT_AND/BIT_OR.
 
     OP(NOT) {
         regs[decode_a(instr)] = reg_from_bool(!reg_is_truthy(regs[decode_b(instr)]));
-        DISPATCH();
-    }
-
-    OP(AND) {
-        regs[decode_a(instr)] = reg_from_bool(reg_is_truthy(regs[decode_b(instr)]) && reg_is_truthy(regs[decode_c(instr)]));
-        DISPATCH();
-    }
-
-    OP(OR) {
-        regs[decode_a(instr)] = reg_from_bool(reg_is_truthy(regs[decode_b(instr)]) || reg_is_truthy(regs[decode_c(instr)]));
         DISPATCH();
     }
 

@@ -84,9 +84,12 @@ enum class Opcode : u8 {
     GE_D        = 0x5B,     // dst = src1 >= src2 (f64)
 
     // 0x60-0x6F: Logical Operations
+    // Note: no AND/OR opcodes — Roxy's bool representation is normalized 0/1
+    // (LOAD_TRUE/FALSE, comparison ops, NOT, I_TO_B all produce 0 or 1), so
+    // BIT_AND/BIT_OR are bit-equivalent to && / ||. Source-level && and ||
+    // lower to short-circuit branches in the IR builder. Lua follows the same
+    // pattern. Slots 0x61-0x62 are free for future logical ops.
     NOT         = 0x60,     // dst = !src1
-    AND         = 0x61,     // dst = src1 && src2 (not short-circuit in bytecode)
-    OR          = 0x62,     // dst = src1 || src2 (not short-circuit in bytecode)
 
     // 0x80-0x8F: Type Conversions
     I_TO_F64    = 0x80,     // dst = (f64)src - integer to f64

@@ -2478,10 +2478,17 @@ Opcode BytecodeBuilder::get_opcode(IROp op) const {
         case IROp::GtD:     return Opcode::GT_D;
         case IROp::GeD:     return Opcode::GE_D;
 
-        // Logical
+        // Logical. And/Or route through bitwise ops because Roxy's bool
+        // representation is normalized 0/1 (LOAD_TRUE/FALSE write 1/0,
+        // comparison opcodes use reg_from_bool, NOT/I_TO_B produce 0/1).
+        // BIT_AND/BIT_OR on 0/1 give identical results to logical && / ||.
+        // The only IR producer of IROp::Or is when-statement variant combining
+        // (ir_builder.cpp gen_when_stmt), which feeds it EqI results — always
+        // 0 or 1. Source-level && and || lower to short-circuit branches in
+        // gen_binary_expr and never reach this opcode mapping.
         case IROp::Not:     return Opcode::NOT;
-        case IROp::And:     return Opcode::AND;
-        case IROp::Or:      return Opcode::OR;
+        case IROp::And:     return Opcode::BIT_AND;
+        case IROp::Or:      return Opcode::BIT_OR;
 
         // Bitwise
         case IROp::BitAnd:  return Opcode::BIT_AND;
