@@ -603,8 +603,10 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         [0xB7] = &&op_RET_STRUCT_SMALL,
         [0xB8] = &&op_SPILL_REG,
         [0xB9] = &&op_RELOAD_REG,
-        [0xBA] = &&op_DEFAULT, [0xBB] = &&op_DEFAULT,
-        [0xBC] = &&op_DEFAULT, [0xBD] = &&op_DEFAULT,
+        [0xBA] = &&op_STRUCT_COPY_1,
+        [0xBB] = &&op_STRUCT_COPY_2,
+        [0xBC] = &&op_STRUCT_COPY_3,
+        [0xBD] = &&op_STRUCT_COPY_4,
         [0xBE] = &&op_DEFAULT, [0xBF] = &&op_DEFAULT,
 
         // 0xC0-0xCF: RK (register-or-constant) variants — arithmetic + int cmp
@@ -1679,6 +1681,42 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         for (u8 i = 0; i < slot_count; i++) {
             dst[i] = src[i];
         }
+        DISPATCH();
+    }
+
+    // Specialized small-struct copies — slot_count is implicit, body is a
+    // straight-line sequence of u32 loads/stores instead of a runtime loop.
+    OP(STRUCT_COPY_1) {
+        u32* dst = reinterpret_cast<u32*>(regs[decode_a(instr)]);
+        u32* src = reinterpret_cast<u32*>(regs[decode_b(instr)]);
+        dst[0] = src[0];
+        DISPATCH();
+    }
+
+    OP(STRUCT_COPY_2) {
+        u32* dst = reinterpret_cast<u32*>(regs[decode_a(instr)]);
+        u32* src = reinterpret_cast<u32*>(regs[decode_b(instr)]);
+        dst[0] = src[0];
+        dst[1] = src[1];
+        DISPATCH();
+    }
+
+    OP(STRUCT_COPY_3) {
+        u32* dst = reinterpret_cast<u32*>(regs[decode_a(instr)]);
+        u32* src = reinterpret_cast<u32*>(regs[decode_b(instr)]);
+        dst[0] = src[0];
+        dst[1] = src[1];
+        dst[2] = src[2];
+        DISPATCH();
+    }
+
+    OP(STRUCT_COPY_4) {
+        u32* dst = reinterpret_cast<u32*>(regs[decode_a(instr)]);
+        u32* src = reinterpret_cast<u32*>(regs[decode_b(instr)]);
+        dst[0] = src[0];
+        dst[1] = src[1];
+        dst[2] = src[2];
+        dst[3] = src[3];
         DISPATCH();
     }
 

@@ -120,6 +120,10 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::RET_STRUCT_SMALL:  return "RET_STRUCT_SMALL";
         case Opcode::SPILL_REG:         return "SPILL_REG";
         case Opcode::RELOAD_REG:        return "RELOAD_REG";
+        case Opcode::STRUCT_COPY_1:     return "STRUCT_COPY_1";
+        case Opcode::STRUCT_COPY_2:     return "STRUCT_COPY_2";
+        case Opcode::STRUCT_COPY_3:     return "STRUCT_COPY_3";
+        case Opcode::STRUCT_COPY_4:     return "STRUCT_COPY_4";
 
         // Object Lifecycle
         case Opcode::NEW_OBJ:       return "NEW_OBJ";
@@ -422,6 +426,13 @@ u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out) {
 
         case Opcode::STRUCT_COPY:
             buf.format("R{}, R{}, slots={}", a, b, c);
+            break;
+
+        case Opcode::STRUCT_COPY_1:
+        case Opcode::STRUCT_COPY_2:
+        case Opcode::STRUCT_COPY_3:
+        case Opcode::STRUCT_COPY_4:
+            buf.format("R{}, R{}", a, b);
             break;
 
         case Opcode::RET_STRUCT_SMALL:

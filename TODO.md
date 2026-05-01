@@ -2,7 +2,7 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-05-01 (AND/OR opcodes deleted, see Bytecode VM Opcode Improvements)
+Last updated: 2026-05-01 (small struct-copy specialization landed, see Bytecode VM Opcode Improvements)
 
 
 ---
@@ -65,7 +65,7 @@ From a 2026-04-26 review comparing Roxy's opcode set against Lua 5.4, LuaJIT, CP
 ### Medium-ROI
 
 - [x] **Delete `AND` (0x61) and `OR` (0x62).** *Landed 2026-05-01.* Audit confirmed: source-level `&&`/`||` lower to short-circuit branches in `gen_binary_expr`, never to `IROp::And/Or`. The only producer of `IROp::Or` in the codebase is `gen_when_stmt` combining `EqI` results — both operands are guaranteed 0/1, so `BIT_OR` is bit-identical to `OR`. `IROp::And` has zero producers. `get_opcode` now maps `IROp::And/Or` → `BIT_AND/BIT_OR`. Opcode slots 0x61-0x62 freed; handlers and dispatch entries removed. Tests pass; no benchmark regression.
-- [ ] **Specialized small-struct copy: `STRUCT_COPY_1`, `STRUCT_COPY_2`.** `STRUCT_COPY` is two-word and goes through a memcpy-style loop. In a value-semantics language, 1- and 2-slot copies dominate. Profile first to confirm before adding. Files: `bytecode.hpp`, `interpreter.cpp` `OP(STRUCT_COPY)` handler, `lowering.hpp/cpp`.
+- [x] **Specialized small-struct copy.** *Landed 2026-05-01.* Audit corrected the original note: `STRUCT_COPY` is one-word ABC (not two-word), with a runtime `for (i < slot_count) dst[i] = src[i]` loop. Existing benchmarks (mandelbrot, nbody, quicksort) hit it ≤35 times total — not a hot path. Added a struct-copy-heavy microbenchmark (`benchmarks/struct_copy/`) where `STRUCT_COPY` was 14.5% of cycles; specialization brings the 2-slot case from 0.042 → 0.029 cyc/op (-31% per-op) by replacing the loop with straight-line stores. Added `STRUCT_COPY_1/2/3/4` covering Vec2 / Vec3 / Color and similar shapes; lowering picks the specialized opcode in `IROp::StructCopy` when slot_count ∈ [1,4]. Function-prologue `STRUCT_COPY` is gated on `slot_count > 4` so doesn't need specialization. No measurable change on existing benchmarks (struct copies aren't on their hot paths).
 - [ ] **Inline-cache slot in `CALL_METHOD` for trait/vtable dispatch.** Not needed today (no virtual dispatch yet), but cheap to design in now and painful to retrofit. Reserve 1–2 words per call site for resolved function pointer + monomorphic guard. Reference: V8 Ignition feedback vectors, Smalltalk PIC.
 
 ### Low-ROI / Speculative

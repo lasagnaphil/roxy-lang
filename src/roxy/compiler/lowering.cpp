@@ -2091,11 +2091,21 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         }
 
         case IROp::StructCopy: {
-            // Memory-to-memory struct copy
+            // Memory-to-memory struct copy. Pick the specialized opcode for
+            // small slot counts (1-4 covers Vec2/Vec3/Color and similar);
+            // STRUCT_COPY's runtime loop becomes straight-line stores.
             u8 dest_ptr = ensure_in_register(inst->struct_copy.dest_ptr, 0);
             u8 src_ptr = ensure_in_register(inst->struct_copy.source_ptr, 1);
-            u8 slot_count = static_cast<u8>(inst->struct_copy.slot_count);
-            emit_abc(Opcode::STRUCT_COPY, dest_ptr, src_ptr, slot_count);
+            u32 slot_count = inst->struct_copy.slot_count;
+            Opcode op;
+            switch (slot_count) {
+                case 1: op = Opcode::STRUCT_COPY_1; break;
+                case 2: op = Opcode::STRUCT_COPY_2; break;
+                case 3: op = Opcode::STRUCT_COPY_3; break;
+                case 4: op = Opcode::STRUCT_COPY_4; break;
+                default: op = Opcode::STRUCT_COPY; break;
+            }
+            emit_abc(op, dest_ptr, src_ptr, op == Opcode::STRUCT_COPY ? static_cast<u8>(slot_count) : 0);
             break;
         }
 

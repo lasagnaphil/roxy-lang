@@ -1,0 +1,40 @@
+// Microbenchmark for STRUCT_COPY hot paths. Constructs nested struct
+// literals in a tight loop so the IR builder emits StructCopy for each
+// nested-field initialization. Outer.inner1 / .inner2 are 2-slot structs
+// (two i32 fields), exercising the STRUCT_COPY_2 specialization.
+
+struct Inner {
+    x: i32 = 0;
+    y: i32 = 0;
+}
+
+struct Outer {
+    inner1: Inner;
+    inner2: Inner;
+    tag: i32 = 0;
+}
+
+fun build(i: i32, j: i32): Outer {
+    return Outer {
+        inner1 = Inner { x = i, y = j },
+        inner2 = Inner { x = i + 1, y = j + 1 },
+        tag = i * j
+    };
+}
+
+fun main(): i32 {
+    var iters: i32 = 5000000;
+    var checksum: i64 = 0l;
+
+    var start: f64 = clock();
+
+    for (var i: i32 = 0; i < iters; i = i + 1) {
+        var o: Outer = build(i, i + 1);
+        checksum = checksum + i64(o.inner1.x) + i64(o.inner2.y) + i64(o.tag);
+    }
+
+    var elapsed: f64 = (clock() - start) * 1000.0;
+    print(f"Time: {elapsed} ms");
+    print(f"Checksum: {checksum}");
+    return 0;
+}

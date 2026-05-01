@@ -161,6 +161,16 @@ enum class Opcode : u8 {
     SPILL_REG         = 0xB8, // spill regs[reg] to local_stack[base + imm16] (2 u32 slots)
     RELOAD_REG        = 0xB9, // reload regs[reg] from local_stack[base + imm16] (2 u32 slots)
 
+    // Specialized STRUCT_COPY for small slot counts. Same ABC encoding as
+    // STRUCT_COPY but slot_count is implicit in the opcode, eliminating the
+    // per-call loop test/branch. Common struct shapes (Vec2 = 2 slots, Vec3 =
+    // 3 slots, Color = 4 slots, single i32 = 1 slot) all fit. Lowering picks
+    // these when slot_count ∈ [1, 4]; STRUCT_COPY remains for larger structs.
+    STRUCT_COPY_1     = 0xBA, // dst[0] = src[0]
+    STRUCT_COPY_2     = 0xBB, // dst[0..2] = src[0..2]
+    STRUCT_COPY_3     = 0xBC, // dst[0..3] = src[0..3]
+    STRUCT_COPY_4     = 0xBD, // dst[0..4] = src[0..4]
+
     // 0xC0-0xDA: RK (register-or-constant) variants. Same ABC encoding as the
     // base opcode, but `c` is a constant pool index (u8) instead of a register.
     // Saves the LOAD_INT/LOAD_CONST + register op pair when the RHS is a
