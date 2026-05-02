@@ -1,10 +1,25 @@
 # Closures and First-Class Functions
 
-This document describes the design for adding closures and first-class functions to Roxy.
+This document describes the design for closures and first-class functions in Roxy.
 
-## Current State
+## Status
 
-Functions are compile-time entities only:
+Implementation is incremental:
+
+- **Done** — `fun(...) -> R` type syntax, lambda expression parsing, zero-capture
+  lambdas end-to-end (creation, calling, passing as parameters, returning from
+  functions), `IROp::Closure` and `CALL_INDIRECT` opcode, capture detection
+  (cross-boundary identifier reference emits a clear error).
+- **Deferred (follow-up commits)** — implicit copy capture for copyable variables,
+  explicit `[move x]` for noncopyables, function references (`var f = double`),
+  capture-aware destructor codegen for envs holding noncopyable captures.
+
+The user-facing surface (syntax, capture rules, error messages) below describes
+the *full* design; implementation status is annotated where it differs.
+
+## Original State (pre-closures)
+
+Functions were compile-time entities only:
 - Registered as symbols with `SymbolKind::Function` during semantic analysis
 - Referenced by static index in bytecode (`CALL func_idx`)
 - No `Function` variant in the runtime `Value` union
@@ -231,46 +246,60 @@ A function value at runtime is a **pointer to a closure object** (or a thin wrap
 
 ## Runtime Representation
 
-### Closure Object
+A function value is a `uniq` pointer to a heap-allocated **env struct**. It
+occupies 2 u32 slots (8 bytes, pointer width) in the register file. The env
+struct is synthesized per-lambda by the semantic analyzer; its layout reuses the
+existing struct machinery — no new runtime mechanism.
 
-A closure is a heap-allocated object with the following layout:
+### Env struct layout
 
 ```
 [ObjectHeader]           16 bytes (weak_generation, ref_count, type_id)
-[func_idx: u32]           4 bytes (index into module's function table)
-[capture_count: u16]      2 bytes
-[padding: u16]            2 bytes
-[capture_0: u64]          8 bytes (first captured value)
-[capture_1: u64]          8 bytes
+[__call_idx: u32]         4 bytes (index into module's function table)
+[capture_0]                       (typed field — captures, declaration order)
+[capture_1]
 ...
-[capture_N: u64]          8 bytes
+[capture_N]
 ```
 
-Each captured value occupies one u64 slot (matching register width). Captured structs that span multiple registers require multiple capture slots.
+The `__call_idx` field is always first (slot offset 0). The runtime reads this
+single u32 in `CALL_INDIRECT` to dispatch. Captures occupy subsequent fields
+with their natural slot counts — multi-register captures (multi-slot structs,
+weak refs) are handled by existing struct-field codegen.
 
-### Bare Function References
+For zero-capture lambdas, the env is just `__call_idx` (1 slot = 4 bytes data,
+plus the 16-byte ObjectHeader).
 
-When a named function is referenced without captures, we can optimize by creating a **bare closure** - a closure object with `capture_count = 0`. This avoids special-casing in the call path.
+### Per-lambda synthesized types
 
-Alternatively, a bare function reference could be a tagged pointer (e.g., func_idx stored directly in the register with a sentinel bit), but this adds complexity. The simpler approach is to always allocate a closure object, even for bare references. The overhead is small (24 bytes for a zero-capture closure) and the uniform representation simplifies the VM.
+Each `LambdaExpr` produces (during semantic analysis):
 
-### Value Type Extension
+- A struct type `__lambda_<id>_env` registered in the type cache, with field
+  layout described above. Slot count = `1 + Σ capture.slot_count`.
+- A top-level `FunDecl __lambda_<id>_call(__env: ref __lambda_<id>_env, params...)`
+  whose body is the lambda body verbatim. Outer-variable references in the body
+  are rewritten to `__env.<field>` (capture lowering, deferred).
 
-Add a new variant to the runtime `Value` enum:
+The synthesized FunDecl is stashed in `m_synthetic_decls` so the IR builder picks
+it up alongside regular module declarations.
 
-```cpp
-struct Value {
-    enum Type : u8 {
-        Null, Bool, Int, Float, Ptr, Weak,
-        Closure,   // NEW: pointer to closure object
-    };
-    // ...
-};
-```
+### Function type (`fun(...) -> R`)
 
-Or, since closures are pointer-based, reuse `Ptr` with the `type_id` in the ObjectHeader distinguishing closure objects from other heap objects. This avoids adding a new Value variant and is consistent with how other heap objects (strings, lists, maps) are represented.
+`TypeKind::Function` represents the user-facing function-type signature. At
+codegen, function-typed values flow through the IR as 2-slot pointers — the IR
+builder types the result of `IROp::Closure` as `Function<sig>` even though the
+underlying SSA value is a `uniq __lambda_<id>_env`. This is the type-erasure
+boundary: nominally distinct lambda types collapse to a single value-level
+representation.
 
-**Decision: Reuse `Ptr`.** The `type_id` in ObjectHeader identifies the object as a closure. The VM checks `type_id` when performing an indirect call.
+`Type::noncopyable()` returns true for `TypeKind::Function`, so the existing
+move-state tracker, cleanup-record machinery, and slab-allocator typed delete
+take care of destruction at scope exit. **No closure-specific runtime code.**
+
+### `Value` variant
+
+Closures reuse the `Ptr` variant (the env's `type_id` in ObjectHeader identifies
+its concrete struct type). No new `Value` variant is added.
 
 ## Compiler Pipeline Changes
 
@@ -406,70 +435,75 @@ fun make_getter(items: List<i32>): fun(i32) -> i32 {
 **New IR operations:**
 
 ```
-CreateClosure(func_name, capture_0, capture_1, ...) -> closure_ptr
-    Allocates a closure object, stores func_idx and captured values.
+Closure(env_struct_name, call_function_name, capture_0, capture_1, ...) -> env_ptr
+    High-level construction op. Lowering expands to NEW_OBJ + SetField writes:
+    one for `__call_idx` (resolved to the call function's bytecode index at
+    lowering time) and one per capture (using the env struct's field layout).
+    Result is the env pointer typed as Function<sig>.
 
-CallIndirect(closure_ptr, arg_0, arg_1, ...) -> result
-    Loads func_idx from closure object, loads captured values,
-    calls the lifted function with captures prepended to arguments.
+CallIndirect(closure_value, arg_0, arg_1, ...) -> result
+    Indirect dispatch through a Function<sig>-typed value. The runtime reads
+    __call_idx from the env's first u32 field, places the env pointer at the
+    callee's first register (the lifted function's hidden __env parameter),
+    and copies explicit args after.
 ```
 
-**Function reference:** `CreateClosure(func_name)` with zero captures.
+**IR generation:**
 
-**IR generation for lambda expressions:**
-1. Emit the lifted function as a separate `IRFunction`
-2. At the lambda expression site, emit `CreateClosure` with the lifted function name and capture values
+- `gen_lambda_expr` emits a single `IROp::Closure` referencing the synthesized
+  env struct and call function names. The captures span is empty until capture
+  lowering lands.
+- `gen_call_expr`, when the callee is a local (variable or parameter) of
+  `is_function()` type, emits `IROp::CallIndirect` instead of the normal `Call`.
+  Direct calls to named functions continue to use `IROp::Call`.
 
 ### Phase 4: Lowering (IR to Bytecode)
 
 **New opcodes:**
 
 ```
-CREATE_CLOSURE = 0xA2
-    Format: [CREATE_CLOSURE:8][dst:8][func_idx:8][capture_count:8]
-    Followed by: capture_count bytes, each specifying a source register
+CALL_INDIRECT = 0xDD
+    Format (two-word):
+      word 1: [CALL_INDIRECT:8][dst:8][closure_reg:8][arg_count:8]
+      word 2: [reserved:32]   (future inline-cache slot)
 
-    Allocates a closure object on the heap.
-    Stores func_idx and copies register values into capture slots.
-    Result: pointer to closure object in dst.
-
-CALL_CLOSURE = 0xA3
-    Format: [CALL_CLOSURE:8][dst:8][closure_reg:8][arg_count:8]
-
-    Reads func_idx from closure object.
-    Loads captured values from closure into callee's initial registers.
-    Copies explicit arguments after captured values.
-    Sets up call frame and dispatches.
+    Reads __call_idx from the env at regs[closure_reg].
+    Sets up the callee frame with env_ptr as the first (hidden) argument,
+    copies arg_count explicit arguments after, and dispatches.
 ```
 
-**Alternative: Unified CALL.** Instead of a separate `CALL_CLOSURE`, we could make `CALL` polymorphic - check at runtime whether the operand is a static func_idx or a closure pointer. But this adds a branch to every function call. A dedicated opcode is cleaner and keeps the fast path (static calls) fast.
+`IROp::Closure` does not get its own opcode. Lowering expands it into:
+1. `NEW_OBJ dst, env_type_idx` — allocate the env (registers the env struct in
+   the module's type table on first use).
+2. `LOAD_INT idx_reg, call_idx` (or `LOAD_CONST` for indices > 32K) — materialize
+   the call function's bytecode index.
+3. `SET_FIELD dst, idx_reg, slot_count=1` at slot_offset 0 — store `__call_idx`.
+4. For each capture: load into a register, then `SET_FIELD dst, cap_reg,
+   slot_count=field.slot_count` at the field's slot_offset.
+
+Composition of existing ops, no new lowering primitives.
 
 ### Phase 5: Interpreter
 
-**CREATE_CLOSURE handler:**
-1. Compute closure object size: `sizeof(ObjectHeader) + 8 + capture_count * 8`
-2. Call `object_alloc(vm, closure_type_id, data_size)`
-3. Write `func_idx` (u32) and `capture_count` (u16) to the object data
-4. Copy each capture register value into the capture slots
-5. Store the resulting pointer in `regs[dst]`
+**CALL_INDIRECT handler:**
+1. Read `dst`, `closure_reg`, `arg_count` from word 1; skip the reserved word.
+2. Load `env_ptr = regs[closure_reg]` (null-check; error on null).
+3. Read `func_idx = *(u32*)env_ptr` (the env's first field).
+4. Resolve `BCFunction* callee = vm->function_ptrs[func_idx]`.
+5. Allocate callee_regs from the register file; place env_ptr at `callee_regs[0]`
+   and copy `param_register_count - 1` explicit args from `regs[first_arg]`.
+6. Push frame; dispatch.
 
-**CALL_CLOSURE handler:**
-1. Read closure pointer from `regs[closure_reg]`
-2. Load `func_idx` and `capture_count` from closure object
-3. Look up `BCFunction` via `module->functions[func_idx]`
-4. Allocate register window for callee
-5. Copy captured values into callee's first `capture_count` registers
-6. Copy explicit arguments into subsequent registers
-7. Push call frame and dispatch (same as regular CALL from here)
+**Cleanup:** Closure values are noncopyable `uniq` pointers, so the standard
+cleanup-record machinery emits a typed `DELETE` at scope exit. The slab
+allocator dispatches via the env's `type_id`. With captures, the env struct
+gets a synthetic default destructor (per the existing
+`Type::noncopyable()`-triggered codegen path) that runs each capture's
+destructor in reverse-LIFO order. **No closure-specific cleanup opcodes.**
 
-**Cleanup:** Closure objects are heap-allocated with `ObjectHeader`. They follow the same lifecycle as other heap objects:
-- `uniq fun(...)` closures: deleted at scope exit
-- `ref fun(...)` closures: ref-counted
-- Passing a closure by value: copies the pointer (shared reference)
-
-**Decision on default ownership:** A closure value behaves like a `ref`-counted pointer by default. When a closure is created, it has ref_count = 0 (owned by the creating scope, like `uniq`). When passed to a function parameter of type `fun(...)`, the ref is incremented. This matches how other heap objects work in Roxy.
-
-Actually, to keep things simple and consistent: **closure values are `uniq` by default**, just like `uniq` struct instances. A `fun(...)` typed variable owns the closure. Passing it to another function moves it. To share, use `ref fun(...)`.
+**Default ownership:** function values are `uniq`-flavored — the closure is
+owned by exactly one variable; passing to a function moves it; to share, use
+`ref fun(...)`. This mirrors `Coro<T>`.
 
 ## Detailed Example
 
@@ -580,55 +614,41 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
 
 ## Implementation Plan
 
-### Step 1: Function Types in Type System
-- Make `TypeKind::Function` types usable as value types
-- Define size (pointer-width) and register count (1) for function types
-- Add `FunTypeExpr` to the AST and parser
+### Done
 
-### Step 2: Lambda Parsing
-- Add `LambdaExpr` to AST (with `Span<CaptureEntry> captures`)
-- Parse optional capture list: `fun[move x, move y](params): type { body }`
-- Parse `fun(params): type { body }` and `fun(params): type => expr` in expression position
-- Disambiguate from `FunDecl` (expression context vs declaration context)
+- **Function-type syntax + AST**: `TypeExprKind::Named|Function`, `LambdaExpr`,
+  `CaptureEntry`. Parser handles `fun(T) -> R` in type position and
+  `fun[...](params): R { ... }` / `=> expr` in expression position.
+- **Type system**: `TypeKind::Function` is noncopyable, slot count 2, formatted
+  as `fun(T) -> R` (with `->` for non-void return) in error messages.
+- **Capture detection**: `ScopeKind::Lambda` boundary scope and
+  `Symbol::defining_scope` back-pointer; `analyze_identifier_expr` errors on
+  cross-boundary lookup.
+- **Synthesis**: `analyze_lambda_expr` generates the env struct type and the
+  lifted `__lambda_<id>_call` FunDecl during semantic analysis. The env type is
+  registered in TypeEnv; the FunDecl is added to `m_synthetic_decls`.
+- **IR**: `IROp::Closure` (constructs the env), `IROp::CallIndirect` (dispatches
+  through a Function-typed value).
+- **Bytecode**: `CALL_INDIRECT = 0xDD`, two-word format.
+- **Interpreter**: handler reads `__call_idx` from the env's first u32 field,
+  places the env pointer at `callee_regs[0]`, copies explicit args.
+- **Tests**: `tests/e2e/test_closures.cpp` covers lambda creation, multi-arg,
+  block body, void return, higher-order (pass and return), and the
+  no-yet-supported error paths.
 
-### Step 3: Capture Analysis and Lambda Lifting
-- Add capture boundary tracking to semantic analyzer's scope stack
-- Detect cross-boundary variable references and build capture lists
-- For copyable types: implicit capture by value
-- For noncopyable types: require explicit `move` in capture list, emit compile error otherwise
-- Lift lambdas to top-level functions with captures as extra parameters
-- Apply move-state tracking for `move`-captured variables
+### Deferred (follow-up commits)
 
-### Step 4: Function References
-- Allow bare function names in expression position to produce closure values
-- Create zero-capture closures for named function references
-
-### Step 5: IR Operations
-- Add `IROp::CreateClosure` and `IROp::CallIndirect`
-- Generate lifted functions as `IRFunction` entries
-- Emit closure creation and indirect calls in the IR builder
-
-### Step 6: Bytecode and Lowering
-- Add `CREATE_CLOSURE` and `CALL_CLOSURE` opcodes
-- Lower `CreateClosure` and `CallIndirect` IR ops to bytecode
-- Handle closure cleanup records for exception safety
-
-### Step 7: Interpreter
-- Register closure object type in the type registry
-- Implement `CREATE_CLOSURE` handler (allocate, store captures)
-- Implement `CALL_CLOSURE` handler (load captures, dispatch)
-- Add cleanup support for closure objects
-
-### Step 8: Testing
-- Basic lambda creation and calling
-- Closures capturing copyable variables (implicit value capture)
-- Closures capturing `uniq` variables (`move` capture)
-- Closures capturing `List`/`Map` (`move` capture)
-- Compile error when capturing noncopyable type without `move`
-- Higher-order functions (passing/returning closures)
-- Function references to named functions
-- Closures with generics
-- Closures inside loops (each iteration creates a fresh capture)
-- Mixed captures (implicit copyable + explicit `move` noncopyable)
-- Exception handling across closure boundaries
-- Nested closures (closure capturing a closure)
+- **Implicit copy capture** for copyable variables (primitives, copyable structs,
+  `ref`/`weak`). Body rewriting: outer-var refs → `__env.<field>`. Captures
+  populate the env's `closure.captures` span; `IROp::Closure` lowering already
+  iterates and emits `SET_FIELD` for each.
+- **Explicit `[move x]` capture** for noncopyables with move-state tracking.
+- **Function references** (`var f = double`) — desugar to a zero-capture lambda
+  whose body calls the named function with the lambda's params.
+- **Capture-aware destructors** — the env struct needs a synthetic default
+  destructor when any capture is noncopyable (extend the existing
+  coroutine_lowering `__coro_*$$delete` codegen pattern; gated on
+  `Type::noncopyable()`).
+- **Generics, exception unwinding through closure boundaries, nested closures**
+  — all should fall out from the existing struct/method machinery once the
+  capture path lands; needs explicit test coverage.
