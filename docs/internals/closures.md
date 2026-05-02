@@ -11,10 +11,12 @@ Implementation is incremental:
   capture for copyable variables (primitives, copyable structs, `ref`/`weak`),
   explicit `[move x]` capture for noncopyables (consumes outer with use-after-move
   enforcement), capture-aware destructor codegen for envs holding noncopyable
-  captures (via the synthetic-default-destructor path the IR builder auto-emits).
-- **Deferred (follow-up commits)** — function references (`var f = double`),
-  nested closures (lambda inside another lambda — the env-of-env aliasing for
-  moves needs separate design), `self` capture inside struct methods.
+  captures (via the synthetic-default-destructor path the IR builder auto-emits),
+  function references (`var f = double`) — bare named-function-as-value lowers
+  to a closure with a synthesized trampoline that forwards to the named function.
+- **Deferred (follow-up commits)** — nested closures (lambda inside another
+  lambda — the env-of-env aliasing for moves needs separate design), `self`
+  capture inside struct methods, native / imported / generic function references.
 
 The user-facing surface (syntax, capture rules, error messages) below describes
 the *full* design; implementation status is annotated where it differs.
@@ -650,22 +652,33 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
   using the env-struct field layout.
 - **Interpreter**: handler reads `__call_idx` from the env's first u32 field,
   places the env pointer at `callee_regs[0]`, copies explicit args.
+- **Function references** (`var f = double`): `gen_identifier_expr` falls
+  through to `gen_function_ref` when a bare identifier resolves to a
+  `SymbolKind::Function` (rather than a local variable). `gen_function_ref`
+  hand-builds a per-target trampoline IRFunction that takes
+  `(__env: ref EnvT, args...)` and emits a single `Call(target, args)`,
+  cached on `m_function_refs` keyed by the unmangled function name so multiple
+  references to the same function share one trampoline. The result is a normal
+  `IROp::Closure` with empty captures — calls go through the same
+  `CALL_INDIRECT` path as ordinary closures.
 - **Tests**: `tests/e2e/test_closures.cpp` covers lambda creation, multi-arg,
   block body, void return, higher-order (pass and return), implicit i32 / f64 /
   multi-capture / dedup'd capture / closure-from-parameter, `[move]` of
   `uniq T` with use-after-move enforcement, capture rule errors (implicit
-  noncopyable, `[move]` on copyable, `[move]` of unknown variable), and the
-  remaining deferred-error paths.
+  noncopyable, `[move]` on copyable, `[move]` of unknown variable), function
+  references in typed and inferred bindings (with cache-dedup and void return),
+  and the remaining deferred-error paths.
 
 ### Deferred (follow-up commits)
 
-- **Function references** (`var f = double`) — desugar to a zero-capture lambda
-  whose body calls the named function with the lambda's params.
 - **Nested closures** (lambda inside another lambda) — the env-of-env aliasing
   for moves and the multi-level capture chain need separate design; analyzer
   currently rejects with a clear error.
 - **`self` capture** inside struct methods — would need explicit handling for
   the `ref Self` parameter; out of scope for the current capture machinery.
+- **Native / imported / generic function references** — the trampoline body
+  emits `IROp::Call` only; `CallNative`, `CallExternal`, and monomorphization
+  routing aren't wired up. `gen_function_ref` rejects these with clear errors.
 - **Generics + exception unwinding through closure boundaries** — should fall
   out naturally from the existing struct/method machinery; needs explicit test
   coverage when those scenarios become relevant.

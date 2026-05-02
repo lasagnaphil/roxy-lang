@@ -146,6 +146,12 @@ private:
     ValueId gen_string_interp_expr(Expr* expr);
     ValueId gen_lambda_expr(Expr* expr);
 
+    // Bare named-function-as-value (`var f = double`). Synthesizes (or reuses
+    // a cached) trampoline IRFunction + empty env struct, then emits IROp::Closure
+    // pointing at them. Reports an error and returns invalid for native /
+    // imported / generic targets, which need different lowering.
+    ValueId gen_function_ref(Expr* expr, Symbol* fn_sym);
+
     // Declaration generation
     void gen_decl(Decl* decl);
     void gen_var_decl(Decl* decl);
@@ -260,6 +266,16 @@ private:
     Vector<OwnedLocalInfo> m_owned_locals;
 
     u32 m_next_temp_id = 0;  // Counter for generating unique temporary names (__tmp0, __tmp1, ...)
+
+    // Function-reference cache. Keyed by the unmangled function name; one
+    // trampoline + empty env struct per referenced function, deduped across
+    // multiple `var f = name` references in the same module.
+    struct FunctionRefInfo {
+        StringView env_struct_name;     // synthesized env struct's name
+        StringView trampoline_name;     // trampoline IRFunction's name (already mangled)
+    };
+    tsl::robin_map<StringView, FunctionRefInfo> m_function_refs;
+    u32 m_funref_id_counter = 0;
 
     // Consume a temporary noncopyable value (ownership transferred to callee/variable).
     // Finds the temporary OwnedLocalInfo entry by ValueId and marks it moved.

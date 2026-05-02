@@ -2754,6 +2754,157 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
     return inst->result;
 }
 
+ValueId IRBuilder::gen_function_ref(Expr* expr, Symbol* fn_sym) {
+    if (!fn_sym || !fn_sym->decl || fn_sym->decl->kind != AstKind::DeclFun) {
+        report_error("Internal error: gen_function_ref called for non-function symbol");
+        return ValueId::invalid();
+    }
+    FunDecl& target_decl = fn_sym->decl->fun_decl;
+    if (target_decl.is_native) {
+        report_error("native function references are not yet supported");
+        return ValueId::invalid();
+    }
+    if (target_decl.type_params.size() > 0) {
+        report_error("generic function references are not yet supported");
+        return ValueId::invalid();
+    }
+    if (!fn_sym->type || !fn_sym->type->is_function()) {
+        report_error("Internal error: function symbol has non-function type");
+        return ValueId::invalid();
+    }
+
+    // Reuse a previously synthesized trampoline if we've seen this function before.
+    auto cache_it = m_function_refs.find(fn_sym->name);
+    StringView env_struct_name;
+    StringView trampoline_name;
+    if (cache_it != m_function_refs.end()) {
+        env_struct_name = cache_it->second.env_struct_name;
+        trampoline_name = cache_it->second.trampoline_name;
+    } else {
+        u32 ref_id = m_funref_id_counter++;
+
+        // Synthesize an empty env struct (just `__call_idx: u32`). Same shape
+        // as a zero-capture lambda's env, just a different name so each
+        // function-ref maps to its own type_id.
+        char env_buf[64];
+        i32 env_len = format_to(env_buf, sizeof(env_buf), "__funref_{}_env", ref_id);
+        char* env_name_buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(env_len), 1));
+        memcpy(env_name_buf, env_buf, static_cast<u32>(env_len));
+        env_struct_name = StringView(env_name_buf, static_cast<u32>(env_len));
+
+        Type* env_type = m_types.struct_type(env_struct_name, nullptr);
+        FieldInfo* fields = reinterpret_cast<FieldInfo*>(
+            m_allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
+        fields[0].name = StringView("__call_idx", 10);
+        fields[0].type = m_types.u32_type();
+        fields[0].is_pub = false;
+        fields[0].index = 0;
+        fields[0].slot_offset = 0;
+        fields[0].slot_count = 1;
+        env_type->struct_info.fields = Span<FieldInfo>(fields, 1);
+        env_type->struct_info.slot_count = 1;
+        env_type->struct_info.constructors = Span<ConstructorInfo>();
+        env_type->struct_info.destructors = Span<DestructorInfo>();
+        env_type->struct_info.methods = Span<MethodInfo>();
+        env_type->struct_info.when_clauses = Span<WhenClauseInfo>();
+        env_type->struct_info.implemented_traits = Span<TraitImplRecord>();
+        env_type->struct_info.parent = nullptr;
+        env_type->struct_info.module_name = StringView(nullptr, 0);
+        m_type_env.register_named_type(env_struct_name, env_type);
+
+        // Synthesize the trampoline IRFunction. Following the convention in
+        // build_function (line 365-374), non-pub functions get
+        // mangle_module_local applied; "main" stays unmangled. The trampoline
+        // is non-pub by construction, so always mangle.
+        char tramp_buf[64];
+        i32 tramp_len = format_to(tramp_buf, sizeof(tramp_buf), "__funref_{}_call", ref_id);
+        char* tramp_name_buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(tramp_len), 1));
+        memcpy(tramp_name_buf, tramp_buf, static_cast<u32>(tramp_len));
+        StringView raw_tramp_name(tramp_name_buf, static_cast<u32>(tramp_len));
+        trampoline_name = mangle_module_local(raw_tramp_name);
+
+        // Determine the target's IRFunction name (matches what build_function set).
+        StringView target_name = fn_sym->name;
+        if (!fn_sym->is_pub && fn_sym->name != StringView("main", 4)) {
+            target_name = mangle_module_local(fn_sym->name);
+        }
+
+        FunctionTypeInfo& fti = fn_sym->type->func_info;
+        Type* ref_env_type = m_types.ref_type(env_type);
+
+        // Build the IRFunction in a hand-rolled fashion (mirrors the pattern
+        // in coroutine_lowering.cpp lines 996-1021). We must NOT use IRBuilder's
+        // emit_* helpers because those mutate m_current_func / m_current_block,
+        // which are owned by the caller's enclosing function-IR generation.
+        IRFunction* tramp = m_allocator.emplace<IRFunction>();
+        tramp->name = trampoline_name;
+        tramp->return_type = fti.return_type;
+
+        // Param 0: __env: ref EnvType (unused inside the body).
+        BlockParam env_param;
+        env_param.value = tramp->new_value();
+        env_param.type = ref_env_type;
+        env_param.name = StringView("__env", 5);
+        tramp->params.push_back(env_param);
+        tramp->param_is_ptr.push_back(false);
+
+        // Params 1..N: forwarded arguments named arg0, arg1, ...
+        Vector<ValueId> forwarded_arg_values;
+        for (u32 i = 0; i < fti.param_types.size(); i++) {
+            char arg_buf[16];
+            i32 arg_len = format_to(arg_buf, sizeof(arg_buf), "arg{}", i);
+            char* arg_name_buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(arg_len), 1));
+            memcpy(arg_name_buf, arg_buf, static_cast<u32>(arg_len));
+            StringView arg_name(arg_name_buf, static_cast<u32>(arg_len));
+
+            BlockParam p;
+            p.value = tramp->new_value();
+            p.type = fti.param_types[i];
+            p.name = arg_name;
+            tramp->params.push_back(p);
+            tramp->param_is_ptr.push_back(false);
+            forwarded_arg_values.push_back(p.value);
+        }
+
+        // Single entry block: Call(target_name, [arg0..argN]); Return result.
+        IRBlock* entry = m_allocator.emplace<IRBlock>();
+        entry->id = BlockId{0};
+        entry->name = StringView("entry", 5);
+        tramp->blocks.push_back(entry);
+
+        // Emit the Call instruction.
+        IRInst* call_inst = m_allocator.emplace<IRInst>();
+        call_inst->op = IROp::Call;
+        call_inst->type = fti.return_type;
+        call_inst->result = tramp->new_value();
+        tramp->values_by_id[call_inst->result.id] = call_inst;
+        call_inst->call.func_name = target_name;
+        call_inst->call.args = m_allocator.alloc_span(forwarded_arg_values);
+        call_inst->call.native_index = 0;
+        entry->instructions.push_back(call_inst);
+
+        // Return the call's result (or void).
+        entry->terminator.kind = TerminatorKind::Return;
+        if (fti.return_type && !fti.return_type->is_void()) {
+            entry->terminator.return_value = call_inst->result;
+        } else {
+            entry->terminator.return_value = ValueId::invalid();
+        }
+
+        m_module->functions.push_back(tramp);
+
+        FunctionRefInfo info{env_struct_name, trampoline_name};
+        m_function_refs[fn_sym->name] = info;
+    }
+
+    IRInst* inst = emit_inst(IROp::Closure, expr->resolved_type);
+    if (!inst) return ValueId::invalid();
+    inst->closure.env_struct_name = env_struct_name;
+    inst->closure.call_function_name = trampoline_name;
+    inst->closure.captures = Span<ValueId>();
+    return inst->result;
+}
+
 ValueId IRBuilder::gen_literal_expr(Expr* expr) {
     LiteralExpr& lit = expr->literal;
 
@@ -2785,6 +2936,19 @@ ValueId IRBuilder::gen_literal_expr(Expr* expr) {
 
 ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
     IdentifierExpr& id = expr->identifier;
+
+    // Function reference: if the identifier doesn't resolve to a local but does
+    // resolve to a top-level function symbol, materialize a closure value
+    // wrapping a synthesized trampoline. gen_call_expr's direct-call path
+    // doesn't recurse here for callee identifiers, so this only fires in value
+    // contexts (var init, argument passing, return, struct literal field, ...).
+    if (LocalVar* lv = find_local(id.name); !lv) {
+        if (Symbol* sym = m_symbols.lookup(id.name);
+            sym && sym->kind == SymbolKind::Function) {
+            return gen_function_ref(expr, sym);
+        }
+    }
+
     ValueId val = lookup_local(id.name);
 
     // If this is a pointer parameter (out/inout), handle specially

@@ -263,22 +263,83 @@ TEST_CASE("E2E - Closure: capture rule errors") {
     }
 }
 
-TEST_CASE("E2E - Closure: rejects unsupported features cleanly") {
-    BumpAllocator allocator(65536);
-
-    SUBCASE("Function reference (deferred to follow-up)") {
-        // Bare named-function-as-value is parsed and type-checks, but the IR
-        // builder hasn't yet been taught to lower it (function references will
-        // desugar to zero-capture lambdas in a follow-up commit).
+TEST_CASE("E2E - Closure: function references") {
+    SUBCASE("Bare function name to typed variable") {
         const char* source = R"(
             fun double(x: i32): i32 { return x * 2; }
             fun main() {
                 var f: fun(i32) -> i32 = double;
+                print(f"{f(21)}");
             }
         )";
-        BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
     }
+
+    SUBCASE("Type inference from function reference") {
+        const char* source = R"(
+            fun double(x: i32): i32 { return x * 2; }
+            fun main() {
+                var f = double;
+                print(f"{f(7)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "14\n");
+    }
+
+    SUBCASE("Pass function reference to higher-order") {
+        const char* source = R"(
+            fun double(x: i32): i32 { return x * 2; }
+            fun triple(x: i32): i32 { return x * 3; }
+            fun apply(f: fun(i32) -> i32, x: i32): i32 {
+                return f(x);
+            }
+            fun main() {
+                print(f"{apply(double, 5)}");
+                print(f"{apply(triple, 5)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n15\n");
+    }
+
+    SUBCASE("Multiple references to same function reuse one trampoline") {
+        // Cache dedup behavior — both bindings should compile to the same
+        // synthesized trampoline and produce correct results.
+        const char* source = R"(
+            fun double(x: i32): i32 { return x * 2; }
+            fun main() {
+                var a = double;
+                var b = double;
+                print(f"{a(3)}");
+                print(f"{b(4)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "6\n8\n");
+    }
+
+    SUBCASE("Void-returning function reference") {
+        const char* source = R"(
+            fun greet(name: string) { print(f"hi {name}"); }
+            fun main() {
+                var g = greet;
+                g("world");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "hi world\n");
+    }
+}
+
+TEST_CASE("E2E - Closure: rejects unsupported features cleanly") {
+    BumpAllocator allocator(65536);
 
     SUBCASE("Nested closures (deferred to follow-up)") {
         const char* source = R"(
