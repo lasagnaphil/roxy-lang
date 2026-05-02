@@ -250,6 +250,37 @@ bool IRValidator::validate_instruction(IRFunction* func, IRBlock* block, IRInst*
             break;
         }
 
+        // CallIndirect
+        case IROp::CallIndirect:
+        {
+            if (!value_in_range(inst->call_indirect.callee, next_id)) {
+                report_error_fmt("function '{}' block {}: call_indirect callee v{} invalid",
+                                 func->name, block->id.id, inst->call_indirect.callee.id);
+                return false;
+            }
+            for (u32 i = 0; i < inst->call_indirect.args.size(); i++) {
+                if (!value_in_range(inst->call_indirect.args[i], next_id)) {
+                    report_error_fmt("function '{}' block {}: call_indirect arg[{}] v{} invalid",
+                                     func->name, block->id.id, i, inst->call_indirect.args[i].id);
+                    return false;
+                }
+            }
+            break;
+        }
+
+        // Closure construction (captures must reference valid values)
+        case IROp::Closure:
+        {
+            for (u32 i = 0; i < inst->closure.captures.size(); i++) {
+                if (!value_in_range(inst->closure.captures[i], next_id)) {
+                    report_error_fmt("function '{}' block {}: closure capture[{}] v{} invalid",
+                                     func->name, block->id.id, i, inst->closure.captures[i].id);
+                    return false;
+                }
+            }
+            break;
+        }
+
         // Field access
         case IROp::GetField:
         case IROp::GetFieldAddr:

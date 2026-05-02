@@ -342,7 +342,12 @@ BCModule* Compiler::link_modules() {
     BCModule* module = bc_builder.build(&merged_ir);
 
     if (!module) {
-        add_error("Bytecode generation failed during linking");
+        const char* msg = bc_builder.error();
+        if (msg) {
+            add_error_fmt("Bytecode generation failed during linking: {}", msg);
+        } else {
+            add_error("Bytecode generation failed during linking");
+        }
         return nullptr;
     }
 

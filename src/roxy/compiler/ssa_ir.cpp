@@ -82,10 +82,12 @@ const char* ir_op_to_string(IROp op) {
 
         case IROp::New:    return "new";
         case IROp::Delete: return "delete";
+        case IROp::Closure: return "closure";
 
         case IROp::Call:         return "call";
         case IROp::CallNative:   return "call_native";
         case IROp::CallExternal: return "call_external";
+        case IROp::CallIndirect: return "call_indirect";
 
         case IROp::IndexGet:     return "index_get";
         case IROp::IndexSet:     return "index_set";
@@ -325,6 +327,30 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
                 append_value_id(out, inst->call_external.args[i]);
             }
             append_str(out, ")");
+            break;
+
+        case IROp::CallIndirect:
+            append_str(out, " ");
+            append_value_id(out, inst->call_indirect.callee);
+            append_str(out, "(");
+            for (u32 i = 0; i < inst->call_indirect.args.size(); i++) {
+                if (i > 0) append_str(out, ", ");
+                append_value_id(out, inst->call_indirect.args[i]);
+            }
+            append_str(out, ")");
+            break;
+
+        case IROp::Closure: {
+            append_str(out, " ");
+            append_string_view(out, inst->closure.env_struct_name);
+            append_str(out, "(call=");
+            append_string_view(out, inst->closure.call_function_name);
+            for (u32 i = 0; i < inst->closure.captures.size(); i++) {
+                append_str(out, ", ");
+                append_value_id(out, inst->closure.captures[i]);
+            }
+            append_str(out, ")");
+        }
             break;
 
         case IROp::BlockArg: {

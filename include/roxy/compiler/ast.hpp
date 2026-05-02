@@ -14,6 +14,7 @@ struct Expr;
 struct Stmt;
 struct Decl;
 struct TypeExpr;
+struct Type;
 
 enum class AstKind : u8 {
     // Expressions
@@ -298,6 +299,13 @@ struct LambdaExpr {
     Span<Param> params;
     TypeExpr* return_type;        // nullptr means void
     Stmt* body;                   // Always a BlockStmt; `=> expr` lowers to `{ return expr; }`
+
+    // Set by semantic analysis after synthesizing the env struct + lifted call function.
+    // The env struct's first u32 field (`__call_idx`) holds the call function's index;
+    // CALL_INDIRECT reads it at runtime to dispatch.
+    StringView env_struct_name;       // Name of the synthesized env struct ("__lambda_<id>_env")
+    StringView call_function_name;    // Name of the synthesized call function ("__lambda_<id>_call")
+    Type* env_struct_type;            // Resolved struct type pointer
 };
 
 // Forward declaration

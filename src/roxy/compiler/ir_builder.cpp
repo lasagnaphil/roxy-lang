@@ -142,13 +142,19 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
 
     if (m_has_error) return nullptr;
 
-    // Process synthetic (injected default method) declarations
+    // Process synthetic (injected default method, lifted lambda) declarations
     for (auto* decl : synthetic_decls) {
-        if (decl && decl->kind == AstKind::DeclMethod) {
+        if (!decl) continue;
+        if (decl->kind == AstKind::DeclMethod) {
             MethodDecl& method_decl = decl->method_decl;
             Type* struct_type = m_type_env.named_type_by_name(method_decl.struct_name);
             if (struct_type && struct_type->is_struct() && method_decl.body) {
                 IRFunction* func = build_method(&method_decl, struct_type);
+                module->functions.push_back(func);
+            }
+        } else if (decl->kind == AstKind::DeclFun) {
+            if (!decl->fun_decl.is_native && decl->fun_decl.body) {
+                IRFunction* func = build_function(&decl->fun_decl);
                 module->functions.push_back(func);
             }
         }
@@ -2685,10 +2691,30 @@ ValueId IRBuilder::gen_expr(Expr* expr) {
             return gen_static_get_expr(expr);
         case AstKind::ExprStringInterp:
             return gen_string_interp_expr(expr);
+        case AstKind::ExprLambda:
+            return gen_lambda_expr(expr);
         default:
             report_error("Internal error: unknown expression kind in IR generation");
             return ValueId::invalid();
     }
+}
+
+ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
+    LambdaExpr& le = expr->lambda;
+
+    // The lambda expression's resolved type is `Function<sig>`. Lowering treats it
+    // as a `uniq` pointer to the synthesized env struct. Capture lowering (commit 2b)
+    // will populate the captures span; for now it's empty (zero-capture lambdas).
+    //
+    // The synthesized call function is non-pub, so build_function applies
+    // mangle_module_local to its IRFunction name. We must reference it by the
+    // mangled name to find it in the bytecode lowering's m_func_indices map.
+    IRInst* inst = emit_inst(IROp::Closure, expr->resolved_type);
+    if (!inst) return ValueId::invalid();
+    inst->closure.env_struct_name = le.env_struct_name;
+    inst->closure.call_function_name = mangle_module_local(le.call_function_name);
+    inst->closure.captures = Span<ValueId>();
+    return inst->result;
 }
 
 ValueId IRBuilder::gen_literal_expr(Expr* expr) {
@@ -3286,10 +3312,19 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             lookup_name = sym->imported_func.original_name;
         }
 
+        // Indirect call: callee is a local (variable or parameter) holding a
+        // closure value (Function-typed). Detect via the IR builder's local scope
+        // map — symbol-table lookups don't see function-body locals.
+        if (LocalVar* lv = find_local(orig_name); lv && lv->type && lv->type->is_function()) {
+            ValueId closure_val = gen_identifier_expr(call_expr.callee);
+            IRInst* call_inst = emit_inst(IROp::CallIndirect, expr->resolved_type);
+            if (!call_inst) return ValueId::invalid();
+            call_inst->call_indirect.callee = closure_val;
+            call_inst->call_indirect.args = final_args;
+            result = call_inst->result;
+        }
         // Check if this is a native function
-        i32 native_idx = m_registry.get_index(lookup_name);
-
-        if (native_idx >= 0) {
+        else if (i32 native_idx = m_registry.get_index(lookup_name); native_idx >= 0) {
             result = emit_call_native(lookup_name, final_args, expr->resolved_type, static_cast<u8>(native_idx));
         } else {
             // Module-scope non-pub functions are mangled at definition (see build_function);

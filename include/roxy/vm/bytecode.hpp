@@ -222,6 +222,16 @@ enum class Opcode : u8 {
     JMP_IF_EQ_D_RK = 0xDB,  // if (src1 == K[c]) pc += offset
     JMP_IF_NE_D_RK = 0xDC,  // if (src1 != K[c]) pc += offset
 
+    // 0xDD: Indirect call (closures and first-class function values).
+    // dst = call closure(args...) — two-word
+    //   word 0: [CALL_INDIRECT][dst][closure_reg][arg_count]
+    //   word 1: [reserved:32]   (future inline-cache slot)
+    // The closure value is a uniq pointer to a heap-allocated env struct whose
+    // first u32 field holds the target function index. The interpreter reads
+    // that field, sets up the call frame with the env pointer as the first
+    // argument, copies the explicit args after it, and dispatches.
+    CALL_INDIRECT = 0xDD,
+
     // 0xF0-0xFD: Debug/Error
     TRAP        = 0xF0,     // runtime error trap (for variant field access checks)
 

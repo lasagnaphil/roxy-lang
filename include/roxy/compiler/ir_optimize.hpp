@@ -157,11 +157,22 @@ inline void for_each_operand(IRInst* inst, Fn&& fn) {
                 fn(inst->call_external.args[i]);
             }
             break;
+        case IROp::CallIndirect:
+            fn(inst->call_indirect.callee);
+            for (u32 i = 0; i < inst->call_indirect.args.size(); i++) {
+                fn(inst->call_indirect.args[i]);
+            }
+            break;
 
         // ── Object construction args ──
         case IROp::New:
             for (u32 i = 0; i < inst->new_data.args.size(); i++) {
                 fn(inst->new_data.args[i]);
+            }
+            break;
+        case IROp::Closure:
+            for (u32 i = 0; i < inst->closure.captures.size(); i++) {
+                fn(inst->closure.captures[i]);
             }
             break;
 

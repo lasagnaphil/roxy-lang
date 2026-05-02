@@ -20,10 +20,12 @@ bool has_side_effect(IROp op) {
         // mutate out params)
         case IROp::New:
         case IROp::Delete:
+        case IROp::Closure:  // Allocates and stores fields; same side-effect class as New
         // Calls — opaque, may do anything
         case IROp::Call:
         case IROp::CallNative:
         case IROp::CallExternal:
+        case IROp::CallIndirect:
         // Control-flow / exceptional / coroutine
         case IROp::Throw:
         case IROp::Yield:

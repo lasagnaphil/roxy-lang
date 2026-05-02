@@ -352,6 +352,15 @@ static void remap_inst_values(const tsl::robin_map<u32, ValueId>& value_map, IRI
             for (u32 i = 0; i < inst->call_external.args.size(); i++)
                 inst->call_external.args[i] = remap_value(value_map, inst->call_external.args[i]);
             break;
+        case IROp::CallIndirect:
+            inst->call_indirect.callee = remap_value(value_map, inst->call_indirect.callee);
+            for (u32 i = 0; i < inst->call_indirect.args.size(); i++)
+                inst->call_indirect.args[i] = remap_value(value_map, inst->call_indirect.args[i]);
+            break;
+        case IROp::Closure:
+            for (u32 i = 0; i < inst->closure.captures.size(); i++)
+                inst->closure.captures[i] = remap_value(value_map, inst->closure.captures[i]);
+            break;
         case IROp::StructCopy:
             inst->struct_copy.dest_ptr = remap_value(value_map, inst->struct_copy.dest_ptr);
             inst->struct_copy.source_ptr = remap_value(value_map, inst->struct_copy.source_ptr);

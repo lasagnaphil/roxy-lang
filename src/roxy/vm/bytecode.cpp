@@ -177,6 +177,8 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::JMP_IF_EQ_D_RK: return "JMP_IF_EQ_D_RK";
         case Opcode::JMP_IF_NE_D_RK: return "JMP_IF_NE_D_RK";
 
+        case Opcode::CALL_INDIRECT: return "CALL_INDIRECT";
+
         // Debug/Error
         case Opcode::TRAP:          return "TRAP";
         case Opcode::NOP:           return "NOP";
@@ -373,6 +375,12 @@ u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out) {
         case Opcode::CALL:
         case Opcode::CALL_NATIVE:
             buf.format("R{}, func[{}], {} args from R{}", a, next_word, c, (u32)(a + 1));
+            words_consumed = 2;
+            break;
+
+        // Format: dst, closure_reg, arg_count (word 1) + reserved (word 2)
+        case Opcode::CALL_INDIRECT:
+            buf.format("R{}, closure=R{}, {} args from R{}", a, b, c, (u32)(a + 1));
             words_consumed = 2;
             break;
 

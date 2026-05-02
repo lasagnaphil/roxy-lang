@@ -640,7 +640,8 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         [0xD9] = &&op_GT_D_RK,
         [0xDA] = &&op_GE_D_RK,
         [0xDB] = &&op_JMP_IF_EQ_D_RK,
-        [0xDC] = &&op_JMP_IF_NE_D_RK, [0xDD] = &&op_DEFAULT,
+        [0xDC] = &&op_JMP_IF_NE_D_RK,
+        [0xDD] = &&op_CALL_INDIRECT,
         [0xDE] = &&op_DEFAULT, [0xDF] = &&op_DEFAULT,
 
         // 0xE0-0xEF: Reference Counting
@@ -1429,6 +1430,73 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         if (vm->error != nullptr) {
             return false;
         }
+        DISPATCH();
+    }
+
+    // Indirect call through a closure value. The closure is a uniq pointer to a
+    // heap-allocated env struct whose first u32 field is `__call_idx`. We read
+    // that, dispatch to the resolved function, place the env pointer at the
+    // callee's first register (the synthesized lifted function takes
+    // `__env: ref EnvStruct` as its first param), and copy explicit args after.
+    OP(CALL_INDIRECT) {
+        u8 dst = decode_a(instr);
+        u8 closure_reg = decode_b(instr);
+        // arg_count: explicit args (does not include the env pointer prepended below)
+        u32 reserved = *pc++;  // future inline-cache slot
+        (void)reserved;
+
+        void* env_ptr = reg_as_ptr(regs[closure_reg]);
+        if (!env_ptr) {
+            vm->error = "indirect call on null closure";
+            return false;
+        }
+        u32 func_idx = *reinterpret_cast<const u32*>(env_ptr);
+        if (func_idx >= vm->function_count) {
+            vm->error = "indirect call: invalid function index in closure";
+            return false;
+        }
+        const BCFunction* callee = vm->function_ptrs[func_idx];
+        u8 first_arg = dst + callee->ret_reg_count;
+
+        if (vm->register_top + callee->register_count > vm->register_file_size) {
+            vm->error = "Register file overflow";
+            return false;
+        }
+
+        frame->pc = pc;
+
+        u64* callee_regs = &vm->register_file[vm->register_top];
+        vm->register_top += callee->register_count;
+
+        // Place the env pointer at callee_regs[0] (the hidden first param), then
+        // copy explicit args from the caller's argument register block.
+        callee_regs[0] = reg_from_ptr(env_ptr);
+        u32 explicit_param_regs = (callee->param_register_count > 0)
+            ? callee->param_register_count - 1
+            : 0;
+        if (explicit_param_regs > 0) {
+            memcpy(&callee_regs[1], &regs[first_arg], explicit_param_regs * sizeof(u64));
+        }
+
+#ifndef NDEBUG
+        for (u32 i = callee->param_register_count; i < callee->register_count; i++) {
+            callee_regs[i] = 0;
+        }
+#endif
+
+        u32 local_stack_base = (vm->local_stack_top + 3) & ~3u;
+        if (local_stack_base + callee->local_stack_slots > vm->local_stack_size) {
+            vm->error = "Local stack overflow";
+            return false;
+        }
+        vm->local_stack_top = local_stack_base + callee->local_stack_slots;
+
+        vm->call_stack[vm->call_stack_size++] = CallFrame(callee, callee->code.data(), callee_regs, dst, local_stack_base);
+
+        frame = &vm->call_stack_back();
+        func = frame->func;
+        pc = frame->pc;
+        regs = frame->registers;
         DISPATCH();
     }
 

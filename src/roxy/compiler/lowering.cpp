@@ -216,7 +216,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                 expire_before(alloc_point);
 
                 bool is_call = (inst->op == IROp::Call || inst->op == IROp::CallNative ||
-                                inst->op == IROp::CallExternal);
+                                inst->op == IROp::CallExternal || inst->op == IROp::CallIndirect);
 
                 if (inst->result.is_valid() && !has_register(inst->result)) {
                     // Skip register allocation for RK-only constants: the LOAD
@@ -292,6 +292,41 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                     }
                     u32 total_arg_regs = compute_call_arg_reg_count(inst, callee_func, m_value_types,
                         [this](Type* t) { return get_struct_slot_count(t); });
+
+                    u16 needed_regs = static_cast<u16>(dst) + static_cast<u16>(extra_regs_for_return) + 1 + static_cast<u16>(total_arg_regs);
+                    while (m_next_reg < needed_regs) {
+                        bump_register();
+                    }
+                }
+
+                // CallIndirect (closure dispatch): callee resolved at runtime, but the
+                // arg register block uses the same convention as direct CALL.
+                if (inst->op == IROp::CallIndirect && inst->result.is_valid()) {
+                    u8 dst = get_register(inst->result);
+                    u32 extra_regs_for_return = 0;
+                    u32 ret_reg_count = get_value_reg_count(inst->type);
+                    if (ret_reg_count > 1) {
+                        extra_regs_for_return = ret_reg_count;
+                    } else {
+                        u32 ret_slot_count = get_struct_slot_count(inst->type);
+                        if (ret_slot_count > 0 && ret_slot_count <= 4) {
+                            extra_regs_for_return = (ret_slot_count + 1) / 2;
+                        }
+                    }
+
+                    // No callee_func at IR time — sum register counts from explicit-arg types.
+                    u32 total_arg_regs = 0;
+                    for (auto arg_id : inst->call_indirect.args) {
+                        auto type_it = m_value_types.find(arg_id.id);
+                        Type* arg_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+                        u32 sc = get_struct_slot_count(arg_type);
+                        if (sc > 0 && sc <= 4) {
+                            total_arg_regs += (sc + 1) / 2;
+                        } else {
+                            total_arg_regs += get_value_reg_count(arg_type);
+                            if (total_arg_regs == 0) total_arg_regs = 1;
+                        }
+                    }
 
                     u16 needed_regs = static_cast<u16>(dst) + static_cast<u16>(extra_regs_for_return) + 1 + static_cast<u16>(total_arg_regs);
                     while (m_next_reg < needed_regs) {
@@ -931,6 +966,19 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
                     }
                     break;
 
+                case IROp::CallIndirect:
+                    mark_reg(inst->call_indirect.callee);
+                    for (u32 i = 0; i < inst->call_indirect.args.size(); i++) {
+                        mark_reg(inst->call_indirect.args[i]);
+                    }
+                    break;
+
+                case IROp::Closure:
+                    for (u32 i = 0; i < inst->closure.captures.size(); i++) {
+                        mark_reg(inst->closure.captures[i]);
+                    }
+                    break;
+
                 case IROp::IndexGet:
                     mark_reg(inst->index_data.container);
                     mark_reg(inst->index_data.index);
@@ -1102,6 +1150,21 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                 case IROp::CallExternal:
                     for (u32 i = 0; i < inst->call_external.args.size(); i++) {
                         mark_use(m_live_ranges, inst->call_external.args[i], point);
+                    }
+                    break;
+
+                // CallIndirect (closure dispatch)
+                case IROp::CallIndirect:
+                    mark_use(m_live_ranges, inst->call_indirect.callee, point);
+                    for (u32 i = 0; i < inst->call_indirect.args.size(); i++) {
+                        mark_use(m_live_ranges, inst->call_indirect.args[i], point);
+                    }
+                    break;
+
+                // Closure construction (captures)
+                case IROp::Closure:
+                    for (u32 i = 0; i < inst->closure.captures.size(); i++) {
+                        mark_use(m_live_ranges, inst->closure.captures[i], point);
                     }
                     break;
 
@@ -1952,6 +2015,78 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             break;
         }
 
+        case IROp::CallIndirect: {
+            // Indirect call through a closure value. The interpreter reads the
+            // call function index from the env's first u32 field and dispatches
+            // with the env pointer as the first (hidden) argument; explicit args
+            // follow at consecutive registers starting from first_arg_reg.
+            u8 closure_reg = ensure_in_register(inst->call_indirect.callee, 0);
+            u8 arg_count = static_cast<u8>(inst->call_indirect.args.size());
+
+            u8 ret_reg_count = static_cast<u8>(get_value_reg_count(inst->type));
+            u32 ret_slot_count = get_struct_slot_count(inst->type);
+            if (ret_slot_count > 0 && ret_slot_count <= 4) {
+                ret_reg_count = static_cast<u8>((ret_slot_count + 1) / 2);
+            }
+
+            u8 first_arg_reg = dst + ret_reg_count;
+            u8 arg_reg_offset = 0;
+            for (u32 i = 0; i < inst->call_indirect.args.size(); i++) {
+                ValueId arg_val = inst->call_indirect.args[i];
+                u8 arg_src = ensure_in_register(arg_val, 0);
+                auto type_it = m_value_types.find(arg_val.id);
+                Type* arg_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+
+                if (arg_type && arg_type->kind == TypeKind::Weak) {
+                    if (arg_src != first_arg_reg + arg_reg_offset) {
+                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                    }
+                    if ((arg_src + 1) != (first_arg_reg + arg_reg_offset + 1)) {
+                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset + 1, arg_src + 1, 0);
+                    }
+                    arg_reg_offset += 2;
+                } else {
+                    u32 arg_slot_count = get_struct_slot_count(arg_type);
+                    if (arg_slot_count > 0 && arg_slot_count <= 4) {
+                        u8 arg_reg_count = static_cast<u8>((arg_slot_count + 1) / 2);
+                        emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + arg_reg_offset, arg_src,
+                                 static_cast<u8>(arg_slot_count));
+                        emit(0);
+                        arg_reg_offset += arg_reg_count;
+                    } else if (arg_slot_count > 4) {
+                        if (arg_src != first_arg_reg + arg_reg_offset) {
+                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                        }
+                        arg_reg_offset += 1;
+                    } else {
+                        if (arg_src != first_arg_reg + arg_reg_offset) {
+                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                        }
+                        arg_reg_offset += 1;
+                    }
+                }
+            }
+
+            // Two-word CALL_INDIRECT: word 1 = [op][dst][closure_reg][arg_count],
+            // word 2 = reserved (future inline-cache slot).
+            emit_abc(Opcode::CALL_INDIRECT, dst, closure_reg, arg_count);
+            emit(0u);
+
+            // Small-struct return unpacking, mirroring IROp::Call.
+            if (ret_slot_count > 0 && ret_slot_count <= 4) {
+                u32 stack_offset = m_next_stack_slot;
+                m_next_stack_slot += ret_slot_count;
+                m_value_to_stack_slot[inst->result.id] = stack_offset;
+
+                u8 temp_reg = bump_register();
+                emit_abi(Opcode::STACK_ADDR, temp_reg, static_cast<u16>(stack_offset));
+                emit_abc(Opcode::STRUCT_STORE_REGS, temp_reg, dst, static_cast<u8>(ret_slot_count));
+                emit(0);
+                emit_abc(Opcode::MOV, dst, temp_reg, 0);
+            }
+            break;
+        }
+
         case IROp::IndexGet: {
             u8 obj_reg = ensure_in_register(inst->index_data.container, 0);
             u8 idx_reg = ensure_in_register(inst->index_data.index, 0);
@@ -2050,6 +2185,67 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             }
 
             emit_abi(Opcode::NEW_OBJ, dst, type_idx);
+            spill_if_needed(inst->result, dst);
+            break;
+        }
+
+        case IROp::Closure: {
+            // Allocate the env struct, store __call_idx in its first u32 field,
+            // then store any captured values in subsequent fields.
+            StringView env_name = inst->closure.env_struct_name;
+            Type* env_type = m_type_env->named_type_by_name(env_name);
+            if (!env_type || !env_type->is_struct()) {
+                report_error("Internal error: closure env struct type not registered");
+                break;
+            }
+
+            // Register the env type in the module's type table if needed.
+            auto type_it = m_type_indices.find(env_name);
+            u16 type_idx;
+            if (type_it != m_type_indices.end()) {
+                type_idx = type_it->second;
+            } else {
+                u32 size_bytes = env_type->struct_info.slot_count * sizeof(u32);
+                type_idx = static_cast<u16>(m_module->types.size());
+                m_module->types.push_back({env_name, size_bytes, env_type->struct_info.slot_count});
+                m_type_indices[env_name] = type_idx;
+            }
+
+            // Resolve the call function's index (added to m_func_indices when its
+            // IRFunction was lowered earlier in the pass).
+            auto func_it = m_func_indices.find(inst->closure.call_function_name);
+            if (func_it == m_func_indices.end()) {
+                report_error("Internal error: closure call function not found during lowering");
+                break;
+            }
+            u32 call_idx_value = func_it->second;
+
+            // NEW_OBJ — produces env pointer in `dst`.
+            emit_abi(Opcode::NEW_OBJ, dst, type_idx);
+
+            // Load call_idx as a constant (LOAD_INT if it fits, else LOAD_CONST).
+            u8 idx_reg = bump_register();
+            if (call_idx_value <= 0x7FFF) {
+                emit_abi(Opcode::LOAD_INT, idx_reg, static_cast<u16>(call_idx_value));
+            } else {
+                u16 const_idx = add_constant(BCConstant::make_int(static_cast<i64>(call_idx_value)));
+                emit_abi(Opcode::LOAD_CONST, idx_reg, const_idx);
+            }
+
+            // SET_FIELD(env, call_idx, slot_count=1) at slot_offset 0.
+            emit_abc(Opcode::SET_FIELD, dst, idx_reg, 1);
+            emit(0u);  // slot_offset = 0
+
+            // Store each capture into its corresponding field. The env struct's
+            // fields[0] is __call_idx (already populated); captures live at fields[1..].
+            for (u32 i = 0; i < inst->closure.captures.size(); i++) {
+                const FieldInfo& field = env_type->struct_info.fields[1 + i];
+                u8 cap_reg = ensure_in_register(inst->closure.captures[i], 0);
+                emit_abc(Opcode::SET_FIELD, dst, cap_reg,
+                         static_cast<u8>(field.slot_count));
+                emit(static_cast<u32>(field.slot_offset));
+            }
+
             spill_if_needed(inst->result, dst);
             break;
         }

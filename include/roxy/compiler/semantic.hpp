@@ -197,6 +197,7 @@ private:
     Type* analyze_super_expr(Expr* expr);
     Type* analyze_struct_literal_expr(Expr* expr);
     Type* analyze_string_interp_expr(Expr* expr);
+    Type* analyze_lambda_expr(Expr* expr);
 
     // Integer literal coercion: concretizes IntLiteral expressions to a target integer type
     void coerce_int_literal(Expr* expr, Type* target);
@@ -266,7 +267,10 @@ private:
     // branch's move-state snapshot instead of producing MaybeValid.
     bool m_branch_terminates = false;
 
-    Vector<Decl*> m_synthetic_decls;  // Injected default method declarations
+    Vector<Decl*> m_synthetic_decls;  // Injected default method declarations and lifted lambdas
+
+    // Counter for unique lambda IDs (used to name synthesized env structs and call functions).
+    u32 m_lambda_id_counter = 0;
 
     // Cycle detection for direct value-type recursion in struct fields
     tsl::robin_set<Type*> m_resolving_structs;

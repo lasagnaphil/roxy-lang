@@ -3741,9 +3741,7 @@ Type* SemanticAnalyzer::analyze_expr(Expr* expr) {
             result = analyze_string_interp_expr(expr);
             break;
         case AstKind::ExprLambda:
-            // Commit 2 will implement capture analysis and lambda lifting.
-            error(expr->loc, "lambda expressions are not yet supported (closures: capture analysis pending)");
-            result = m_types.error_type();
+            result = analyze_lambda_expr(expr);
             break;
         default:
             result = m_types.error_type();
@@ -3815,6 +3813,25 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
         return m_types.error_type();
     }
 
+    // Capture-boundary check: if we're inside a lambda body and this identifier
+    // resolves to a symbol defined in an enclosing scope past a `ScopeKind::Lambda`
+    // boundary, that's a capture. Captures aren't supported yet — emit a clear
+    // error pointing at the captured name.
+    if (sym->defining_scope && sym->kind != SymbolKind::Function &&
+        sym->kind != SymbolKind::Struct && sym->kind != SymbolKind::Enum &&
+        sym->kind != SymbolKind::Trait && sym->kind != SymbolKind::Module &&
+        sym->kind != SymbolKind::ImportedFunction) {
+        for (Scope* sc = m_symbols.current_scope(); sc; sc = sc->parent) {
+            if (sc == sym->defining_scope) break;
+            if (sc->kind == ScopeKind::Lambda) {
+                error_fmt(expr->loc,
+                    "captures of outer variable '{}' are not yet supported in closures",
+                    id.name);
+                return m_types.error_type();
+            }
+        }
+    }
+
     // Check move state for owned variables (uniq refs and value structs with destructors)
     // Note: we check here but the actual move marking happens at call sites, return, delete
     if (sym->type && sym->type->noncopyable()) {
@@ -3822,6 +3839,170 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
     }
 
     return sym->type;
+}
+
+// Helper: allocate a NUL-free StringView in the bump allocator.
+static StringView alloc_view(BumpAllocator& alloc, const char* str) {
+    u32 len = 0;
+    while (str[len]) ++len;
+    char* buf = reinterpret_cast<char*>(alloc.alloc_bytes(len, 1));
+    memcpy(buf, str, len);
+    return StringView(buf, len);
+}
+
+// Helper: format a name like "__lambda_42_env" via snprintf into the bump allocator.
+static StringView alloc_view_fmt(BumpAllocator& alloc, const char* fmt, u32 id) {
+    char tmp[64];
+    int n = snprintf(tmp, sizeof(tmp), fmt, id);
+    if (n < 0) n = 0;
+    if (n > (int)sizeof(tmp) - 1) n = (int)sizeof(tmp) - 1;
+    char* buf = reinterpret_cast<char*>(alloc.alloc_bytes(static_cast<u32>(n), 1));
+    memcpy(buf, tmp, static_cast<u32>(n));
+    return StringView(buf, static_cast<u32>(n));
+}
+
+Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
+    LambdaExpr& le = expr->lambda;
+
+    // Captures are deferred to a follow-up commit. Reject explicit capture lists
+    // here; cross-boundary identifier references are caught in analyze_identifier_expr.
+    if (le.captures.size() > 0) {
+        error(expr->loc, "explicit move captures are not yet supported in closures");
+        return m_types.error_type();
+    }
+
+    // Resolve user-facing param and return types (the `Function<sig>` type).
+    Vector<Type*> sig_param_types;
+    for (auto& p : le.params) {
+        Type* pt = resolve_type_expr(p.type);
+        if (!pt || pt->is_error()) return m_types.error_type();
+        sig_param_types.push_back(pt);
+    }
+    Type* ret_type = le.return_type ? resolve_type_expr(le.return_type) : m_types.void_type();
+    if (!ret_type || ret_type->is_error()) return m_types.error_type();
+
+    // ===== Synthesize the env struct type =====
+    // For zero-capture lambdas the env holds just the call-function index in its
+    // first u32 field. CALL_INDIRECT reads that field at runtime to dispatch.
+    u32 lambda_id = m_lambda_id_counter++;
+    StringView env_name = alloc_view_fmt(m_allocator, "__lambda_%u_env", lambda_id);
+    StringView fun_name = alloc_view_fmt(m_allocator, "__lambda_%u_call", lambda_id);
+
+    Type* env_type = m_types.struct_type(env_name, nullptr);
+    {
+        FieldInfo* fields = reinterpret_cast<FieldInfo*>(
+            m_allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
+        fields[0].name = alloc_view(m_allocator, "__call_idx");
+        fields[0].type = m_types.u32_type();
+        fields[0].is_pub = false;
+        fields[0].index = 0;
+        fields[0].slot_offset = 0;
+        fields[0].slot_count = 1;
+        env_type->struct_info.fields = Span<FieldInfo>(fields, 1);
+        env_type->struct_info.slot_count = 1;
+        env_type->struct_info.constructors = Span<ConstructorInfo>();
+        env_type->struct_info.destructors = Span<DestructorInfo>();
+        env_type->struct_info.methods = Span<MethodInfo>();
+        env_type->struct_info.when_clauses = Span<WhenClauseInfo>();
+        env_type->struct_info.implemented_traits = Span<TraitImplRecord>();
+        env_type->struct_info.parent = nullptr;
+        env_type->struct_info.module_name = StringView(nullptr, 0);
+    }
+    m_type_env.register_named_type(env_name, env_type);
+
+    // ===== Synthesize the lifted call function FunDecl =====
+    // Signature: fun __lambda_<id>_call(__env: ref __lambda_<id>_env, params...): R
+    Decl* synth_decl = m_allocator.emplace<Decl>();
+    synth_decl->kind = AstKind::DeclFun;
+    synth_decl->loc = expr->loc;
+    FunDecl& fd = synth_decl->fun_decl;
+    fd.name = fun_name;
+    fd.type_params = Span<TypeParam>();
+    fd.return_type = le.return_type;
+    fd.body = le.body;
+    fd.is_pub = false;
+    fd.is_native = false;
+
+    // Build the lifted parameter list: __env first, then the lambda's params verbatim.
+    {
+        u32 num_params = 1 + static_cast<u32>(le.params.size());
+        Param* params = reinterpret_cast<Param*>(
+            m_allocator.alloc_bytes(sizeof(Param) * num_params, alignof(Param)));
+
+        TypeExpr* env_te = m_allocator.emplace<TypeExpr>();
+        env_te->kind = TypeExprKind::Named;
+        env_te->name = env_name;
+        env_te->loc = expr->loc;
+        env_te->ref_kind = RefKind::Ref;
+        env_te->type_args = Span<TypeExpr*>();
+        env_te->return_type = nullptr;
+
+        params[0].name = alloc_view(m_allocator, "__env");
+        params[0].type = env_te;
+        params[0].modifier = ParamModifier::None;
+        params[0].loc = expr->loc;
+        params[0].resolved_type = nullptr;
+
+        for (u32 i = 0; i < le.params.size(); i++) {
+            params[1 + i] = le.params[i];
+        }
+        fd.params = Span<Param>(params, num_params);
+    }
+
+    // Analyze the lifted function body in a fresh function scope. Push a Lambda
+    // boundary scope first so analyze_identifier_expr can detect attempted captures.
+    m_symbols.push_scope(ScopeKind::Lambda);
+    {
+        // Save & reset move states for the lifted function body.
+        MoveStateSnapshot saved_move_states = save_move_states();
+        m_move_states.clear();
+
+        // Save coroutine flags — a lambda body is its own (non-coroutine) function.
+        bool prev_in_coroutine = m_in_coroutine;
+        Type* prev_coro_yield_type = m_coro_yield_type;
+        m_in_coroutine = false;
+        m_coro_yield_type = nullptr;
+
+        m_symbols.push_function_scope(ret_type);
+
+        for (u32 i = 0; i < fd.params.size(); i++) {
+            Param& p = fd.params[i];
+            Type* ptype = resolve_type_expr(p.type);
+            if (!ptype) ptype = m_types.error_type();
+            p.resolved_type = ptype;
+            if (m_symbols.lookup_local(p.name)) {
+                error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
+            } else {
+                m_symbols.define_parameter(p.name, ptype, p.loc, i);
+            }
+            if (ptype && ptype->noncopyable()) {
+                Symbol* psym = m_symbols.lookup(p.name);
+                if (psym) m_move_states[psym] = MoveState::Live;
+            }
+        }
+
+        analyze_stmt(fd.body);
+
+        check_scope_exit_uniq_destructors(m_symbols.current_scope(), expr->loc);
+        m_symbols.pop_scope();  // function scope
+
+        m_in_coroutine = prev_in_coroutine;
+        m_coro_yield_type = prev_coro_yield_type;
+        m_move_states = saved_move_states;
+    }
+    m_symbols.pop_scope();  // lambda boundary scope
+
+    // Stash the synthesized decl so the IR builder picks it up.
+    m_synthetic_decls.push_back(synth_decl);
+
+    // Annotate the LambdaExpr for downstream consumption (IR builder).
+    le.env_struct_name = env_name;
+    le.call_function_name = fun_name;
+    le.env_struct_type = env_type;
+
+    // The lambda expression's resolved type is the user-facing `Function<sig>`.
+    Span<Type*> sig_span = m_allocator.alloc_span(sig_param_types);
+    return m_types.function_type(sig_span, ret_type);
 }
 
 Type* SemanticAnalyzer::analyze_unary_expr(Expr* expr) {

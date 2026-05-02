@@ -130,10 +130,16 @@ enum class IROp : u8 {
     New,            // allocate new object
     Delete,         // deallocate object
 
+    // Closure construction: allocate env struct, store call_idx in first u32 field,
+    // store capture values in subsequent fields. Result is the env pointer typed as
+    // Function<sig>. Lowering expands to NEW_OBJ + a sequence of SetField writes.
+    Closure,
+
     // Function call
     Call,           // call function
     CallNative,     // call native function
     CallExternal,   // call function in another module
+    CallIndirect,   // call closure: read __call_idx from env's first u32 field, dispatch with env as first arg
 
     // Container indexing (List/Map)
     IndexGet,       // container[index] — for List/Map
@@ -193,6 +199,23 @@ struct CallExternalData {
     StringView module_name;
     StringView func_name;
     Span<ValueId> args;
+};
+
+// Indirect call data (for closures): callee is the env pointer (typed as Function<sig>);
+// the runtime loads __call_idx from the env's first u32 field and dispatches with the
+// env pointer prepended as the first argument.
+struct CallIndirectData {
+    ValueId callee;           // SSA value: env pointer (Function<sig>-typed)
+    Span<ValueId> args;       // Explicit arguments (do NOT include the env pointer)
+};
+
+// Closure construction data: lowering expands to NEW_OBJ(env_struct_name) plus a
+// sequence of SetField writes — first __call_idx (resolved at lowering time from
+// call_function_name) then any captured values (in declaration order).
+struct ClosureData {
+    StringView env_struct_name;
+    StringView call_function_name;
+    Span<ValueId> captures;
 };
 
 // Field access data
@@ -272,6 +295,8 @@ struct IRInst {
         ValueId unary;                  // For unary ops
         CallData call;                  // For Call/CallNative
         CallExternalData call_external; // For CallExternal
+        CallIndirectData call_indirect; // For CallIndirect
+        ClosureData closure;            // For Closure
         FieldData field;                // For GetField/SetField
         NewData new_data;               // For New
         StackAllocData stack_alloc;     // For StackAlloc
