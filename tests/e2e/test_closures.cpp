@@ -4,7 +4,7 @@
 using namespace rx;
 
 // ============================================================================
-// Closures (commit 2 scope: zero-capture lambdas only)
+// Closures
 // ============================================================================
 
 TEST_CASE("E2E - Closure: lambda creation and immediate call") {
@@ -102,21 +102,146 @@ TEST_CASE("E2E - Closure: higher-order functions") {
     }
 }
 
-TEST_CASE("E2E - Closure: rejects unsupported features cleanly") {
-    BumpAllocator allocator(65536);
-
-    SUBCASE("Implicit capture of outer variable") {
+TEST_CASE("E2E - Closure: implicit copy capture") {
+    SUBCASE("Capture i32 by value") {
         const char* source = R"(
             fun main() {
                 var n: i32 = 10;
-                var f = fun(x: i32): i32 => x + n;
+                var f = fun(): i32 => n + 1;
+                print(f"{f()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "11\n");
+    }
+
+    SUBCASE("Capture is by value, not by reference") {
+        // Mutating the outer variable after capture must NOT affect the closure.
+        const char* source = R"(
+            fun main() {
+                var n: i32 = 10;
+                var f = fun(): i32 => n;
+                n = 99;
+                print(f"{f()}");
+                print(f"{n}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n99\n");
+    }
+
+    SUBCASE("Capture f64") {
+        const char* source = R"(
+            fun main() {
+                var pi: f64 = 3.14;
+                var f = fun(): f64 => pi;
+                print(f"{f()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "3.14\n");
+    }
+
+    SUBCASE("Capture multiple variables") {
+        const char* source = R"(
+            fun main() {
+                var x: i32 = 100;
+                var y: i32 = 50;
+                var add = fun(a: i32): i32 => a + x + y;
+                print(f"{add(7)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "157\n");
+    }
+
+    SUBCASE("Capture used multiple times in body") {
+        // Each reference to `n` rewrites to `__env.n`; only one capture entry
+        // should be added (dedup'd by Symbol*).
+        const char* source = R"(
+            fun main() {
+                var n: i32 = 5;
+                var f = fun(): i32 => n + n + n;
+                print(f"{f()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "15\n");
+    }
+
+    SUBCASE("Closure returned from function captures parameter") {
+        const char* source = R"(
+            fun make_adder(n: i32): fun(i32) -> i32 {
+                return fun(x: i32): i32 => x + n;
+            }
+            fun main() {
+                var add5 = make_adder(5);
+                print(f"{add5(3)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "8\n");
+    }
+}
+
+TEST_CASE("E2E - Closure: explicit move capture") {
+    SUBCASE("Move uniq T into closure") {
+        const char* source = R"(
+            struct Counter {
+                value: i32 = 0;
+            }
+            fun main() {
+                var c: uniq Counter = uniq Counter { value = 42 };
+                var f = fun[move c](): i32 => c.value;
+                print(f"{f()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
+
+    SUBCASE("Move consumes outer (use-after-move)") {
+        const char* source = R"(
+            struct Counter {
+                value: i32 = 0;
+            }
+            fun main() {
+                var c: uniq Counter = uniq Counter { value = 42 };
+                var f = fun[move c](): i32 => c.value;
+                print(f"{c.value}");
+            }
+        )";
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail: 'c' is moved
+    }
+}
+
+TEST_CASE("E2E - Closure: capture rule errors") {
+    BumpAllocator allocator(65536);
+
+    SUBCASE("Implicit capture of noncopyable errors with hint") {
+        const char* source = R"(
+            struct Counter {
+                value: i32 = 0;
+            }
+            fun main() {
+                var c: uniq Counter = uniq Counter { value = 1 };
+                var f = fun(): i32 => c.value;
             }
         )";
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);
+        CHECK(module == nullptr);  // Must error: needs [move c]
     }
 
-    SUBCASE("Explicit move capture (deferred to follow-up)") {
+    SUBCASE("[move] on copyable type errors") {
         const char* source = R"(
             fun main() {
                 var n: i32 = 10;
@@ -124,8 +249,22 @@ TEST_CASE("E2E - Closure: rejects unsupported features cleanly") {
             }
         )";
         BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // [move] reserved for noncopyables
+    }
+
+    SUBCASE("[move] of unknown variable errors") {
+        const char* source = R"(
+            fun main() {
+                var f = fun[move ghost](): i32 => 0;
+            }
+        )";
+        BCModule* module = compile(allocator, source);
         CHECK(module == nullptr);
     }
+}
+
+TEST_CASE("E2E - Closure: rejects unsupported features cleanly") {
+    BumpAllocator allocator(65536);
 
     SUBCASE("Function reference (deferred to follow-up)") {
         // Bare named-function-as-value is parsed and type-checks, but the IR
@@ -135,6 +274,18 @@ TEST_CASE("E2E - Closure: rejects unsupported features cleanly") {
             fun double(x: i32): i32 { return x * 2; }
             fun main() {
                 var f: fun(i32) -> i32 = double;
+            }
+        )";
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
+
+    SUBCASE("Nested closures (deferred to follow-up)") {
+        const char* source = R"(
+            fun main() {
+                var f = fun(): fun() -> i32 {
+                    return fun(): i32 => 1;
+                };
             }
         )";
         BCModule* module = compile(allocator, source);

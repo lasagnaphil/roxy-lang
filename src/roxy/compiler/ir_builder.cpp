@@ -2703,17 +2703,54 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
     LambdaExpr& le = expr->lambda;
 
     // The lambda expression's resolved type is `Function<sig>`. Lowering treats it
-    // as a `uniq` pointer to the synthesized env struct. Capture lowering (commit 2b)
-    // will populate the captures span; for now it's empty (zero-capture lambdas).
+    // as a `uniq` pointer to the synthesized env struct.
     //
     // The synthesized call function is non-pub, so build_function applies
     // mangle_module_local to its IRFunction name. We must reference it by the
     // mangled name to find it in the bytecode lowering's m_func_indices map.
+    //
+    // Captures: emit gen_expr on a synthetic IdentifierExpr per capture (resolved
+    // via the IR builder's local-scope map — captures live in the OUTER function
+    // we're currently emitting IR for). For Move-mode captures, null-ify the
+    // local + Nullify the cleanup-record register (mirrors arg-passing pattern in
+    // gen_call_expr around line 3475-3494).
+    Vector<ValueId> capture_values;
+    capture_values.reserve(le.resolved_captures.size());
+    for (const CaptureInfo& cap : le.resolved_captures) {
+        // Synthesize an ExprIdentifier(cap.name) and gen it. The local-scope
+        // lookup picks up the captured variable's current SSA value.
+        Expr* id_expr = m_allocator.emplace<Expr>();
+        id_expr->kind = AstKind::ExprIdentifier;
+        id_expr->loc = cap.loc;
+        id_expr->identifier.name = cap.name;
+        id_expr->resolved_type = cap.type;
+        ValueId v = gen_expr(id_expr);
+        capture_values.push_back(v);
+
+        if (cap.mode == CaptureMode::Move) {
+            // The capture transfers ownership of the outer local into the env.
+            // Mirror the move-on-arg-pass machinery so scope-exit cleanup of the
+            // outer local is suppressed.
+            OwnedLocalInfo* owned_info = find_owned_local(cap.name);
+            if (owned_info && !owned_info->is_moved) {
+                if (cap.type && cap.type->kind == TypeKind::Uniq) {
+                    ValueId null_val = emit_const_null();
+                    define_local(cap.name, null_val, cap.type);
+                }
+                if (owned_info->initial_value.is_valid()) {
+                    IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+                    if (nullify) nullify->unary = owned_info->initial_value;
+                }
+                owned_info->is_moved = true;
+            }
+        }
+    }
+
     IRInst* inst = emit_inst(IROp::Closure, expr->resolved_type);
     if (!inst) return ValueId::invalid();
     inst->closure.env_struct_name = le.env_struct_name;
     inst->closure.call_function_name = mangle_module_local(le.call_function_name);
-    inst->closure.captures = Span<ValueId>();
+    inst->closure.captures = m_allocator.alloc_span(capture_values);
     return inst->result;
 }
 

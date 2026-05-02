@@ -276,6 +276,7 @@ struct StringInterpExpr {
 
 // How a captured variable enters the closure's environment.
 enum class CaptureMode : u8 {
+    Copy,   // implicit by-value capture (copyable type, ref/weak)
     Move,   // `[move name]` — ownership transferred from the outer scope
 };
 
@@ -289,6 +290,18 @@ struct CaptureEntry {
 // Forward declaration for LambdaExpr.
 struct Param;
 struct Stmt;
+struct Symbol;
+
+// Resolved capture: produced by capture analysis and consumed by IR generation.
+// One entry per distinct outer-scope variable referenced in the lambda body
+// (or listed in the explicit `[move]` list, even if unreferenced).
+struct CaptureInfo {
+    StringView name;            // captured variable name (also the env field name)
+    Type* type;                 // captured variable type (also the env field type)
+    CaptureMode mode;           // Copy or Move
+    Symbol* source_symbol;      // outer-scope symbol the capture refers to
+    SourceLocation loc;         // first reference site, for error attribution
+};
 
 // Lambda expression:
 //   fun(params): RetType { body }
@@ -302,10 +315,12 @@ struct LambdaExpr {
 
     // Set by semantic analysis after synthesizing the env struct + lifted call function.
     // The env struct's first u32 field (`__call_idx`) holds the call function's index;
-    // CALL_INDIRECT reads it at runtime to dispatch.
+    // CALL_INDIRECT reads it at runtime to dispatch. Subsequent fields hold captured
+    // values, in `resolved_captures` order.
     StringView env_struct_name;       // Name of the synthesized env struct ("__lambda_<id>_env")
     StringView call_function_name;    // Name of the synthesized call function ("__lambda_<id>_call")
     Type* env_struct_type;            // Resolved struct type pointer
+    Span<CaptureInfo> resolved_captures;  // Captures discovered by analysis (env fields 1..N)
 };
 
 // Forward declaration

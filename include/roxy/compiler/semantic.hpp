@@ -272,6 +272,16 @@ private:
     // Counter for unique lambda IDs (used to name synthesized env structs and call functions).
     u32 m_lambda_id_counter = 0;
 
+    // Active lambda-body capture context. Pushed when entering analyze_lambda_expr,
+    // popped on exit. analyze_identifier_expr inspects the topmost context to detect
+    // captures (the symbol's defining scope sits past a ScopeKind::Lambda boundary).
+    struct LambdaCaptureContext {
+        Scope* boundary_scope;                       // the ScopeKind::Lambda for this lambda
+        Vector<CaptureInfo> captures;                // ordered, env-field order
+        tsl::robin_map<Symbol*, u32> by_symbol;      // dedup + index lookup
+    };
+    Vector<LambdaCaptureContext*> m_lambda_contexts;
+
     // Cycle detection for direct value-type recursion in struct fields
     tsl::robin_set<Type*> m_resolving_structs;
 

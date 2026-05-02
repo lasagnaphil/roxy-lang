@@ -7,12 +7,14 @@ This document describes the design for closures and first-class functions in Rox
 Implementation is incremental:
 
 - **Done** — `fun(...) -> R` type syntax, lambda expression parsing, zero-capture
-  lambdas end-to-end (creation, calling, passing as parameters, returning from
-  functions), `IROp::Closure` and `CALL_INDIRECT` opcode, capture detection
-  (cross-boundary identifier reference emits a clear error).
-- **Deferred (follow-up commits)** — implicit copy capture for copyable variables,
-  explicit `[move x]` for noncopyables, function references (`var f = double`),
-  capture-aware destructor codegen for envs holding noncopyable captures.
+  lambdas end-to-end, `IROp::Closure` and `CALL_INDIRECT` opcode, implicit copy
+  capture for copyable variables (primitives, copyable structs, `ref`/`weak`),
+  explicit `[move x]` capture for noncopyables (consumes outer with use-after-move
+  enforcement), capture-aware destructor codegen for envs holding noncopyable
+  captures (via the synthetic-default-destructor path the IR builder auto-emits).
+- **Deferred (follow-up commits)** — function references (`var f = double`),
+  nested closures (lambda inside another lambda — the env-of-env aliasing for
+  moves needs separate design), `self` capture inside struct methods.
 
 The user-facing surface (syntax, capture rules, error messages) below describes
 the *full* design; implementation status is annotated where it differs.
@@ -617,38 +619,53 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
 ### Done
 
 - **Function-type syntax + AST**: `TypeExprKind::Named|Function`, `LambdaExpr`,
-  `CaptureEntry`. Parser handles `fun(T) -> R` in type position and
-  `fun[...](params): R { ... }` / `=> expr` in expression position.
+  `CaptureEntry`, `CaptureInfo`. Parser handles `fun(T) -> R` in type position
+  and `fun[...](params): R { ... }` / `=> expr` in expression position.
 - **Type system**: `TypeKind::Function` is noncopyable, slot count 2, formatted
   as `fun(T) -> R` (with `->` for non-void return) in error messages.
 - **Capture detection**: `ScopeKind::Lambda` boundary scope and
-  `Symbol::defining_scope` back-pointer; `analyze_identifier_expr` errors on
-  cross-boundary lookup.
-- **Synthesis**: `analyze_lambda_expr` generates the env struct type and the
-  lifted `__lambda_<id>_call` FunDecl during semantic analysis. The env type is
-  registered in TypeEnv; the FunDecl is added to `m_synthetic_decls`.
-- **IR**: `IROp::Closure` (constructs the env), `IROp::CallIndirect` (dispatches
-  through a Function-typed value).
-- **Bytecode**: `CALL_INDIRECT = 0xDD`, two-word format.
+  `Symbol::defining_scope` back-pointer; `analyze_identifier_expr` walks scopes,
+  detects boundary crossings, records into the active `LambdaCaptureContext`
+  (deduped by `Symbol*`), and rewrites the `IdentifierExpr` in-place to
+  `ExprGet(IdentifierExpr("__env"), name)` so the lifted body reads from the
+  env field.
+- **Implicit copy capture** for copyable variables (primitives, copyable structs,
+  `ref` / `weak`) — discovered lazily on first body reference; captured by value.
+- **Explicit `[move x]` capture** for noncopyables (`uniq`, structs with default
+  destructors, etc.) — pre-populated at the lambda's expression site, marks the
+  outer symbol moved via `mark_moved` so subsequent references fail with
+  use-after-move. `[move]` on a copyable type is a clear compile error.
+- **Synthesis**: `analyze_lambda_expr` registers the env struct type early
+  (placeholder layout), pushes a `LambdaCaptureContext`, runs body analysis,
+  then backfills the env's fields with `[__call_idx, captures...]` in
+  declaration order. If any capture is noncopyable, a `DestructorInfo{name=empty,
+  decl=nullptr}` is attached so the IR builder auto-emits a default destructor
+  via `build_synthesized_default_destructor` (cleans up captured noncopyables in
+  reverse-LIFO order).
+- **IR**: `IROp::Closure` populated with capture `ValueId`s (sourced via the IR
+  builder's local-scope map at the lambda's expression site). `IROp::CallIndirect`
+  dispatches through a Function-typed value.
+- **Bytecode**: `CALL_INDIRECT = 0xDD`, two-word format. `IROp::Closure` lowers
+  to `NEW_OBJ` + `SET_FIELD` for `__call_idx` and one `SET_FIELD` per capture
+  using the env-struct field layout.
 - **Interpreter**: handler reads `__call_idx` from the env's first u32 field,
   places the env pointer at `callee_regs[0]`, copies explicit args.
 - **Tests**: `tests/e2e/test_closures.cpp` covers lambda creation, multi-arg,
-  block body, void return, higher-order (pass and return), and the
-  no-yet-supported error paths.
+  block body, void return, higher-order (pass and return), implicit i32 / f64 /
+  multi-capture / dedup'd capture / closure-from-parameter, `[move]` of
+  `uniq T` with use-after-move enforcement, capture rule errors (implicit
+  noncopyable, `[move]` on copyable, `[move]` of unknown variable), and the
+  remaining deferred-error paths.
 
 ### Deferred (follow-up commits)
 
-- **Implicit copy capture** for copyable variables (primitives, copyable structs,
-  `ref`/`weak`). Body rewriting: outer-var refs → `__env.<field>`. Captures
-  populate the env's `closure.captures` span; `IROp::Closure` lowering already
-  iterates and emits `SET_FIELD` for each.
-- **Explicit `[move x]` capture** for noncopyables with move-state tracking.
 - **Function references** (`var f = double`) — desugar to a zero-capture lambda
   whose body calls the named function with the lambda's params.
-- **Capture-aware destructors** — the env struct needs a synthetic default
-  destructor when any capture is noncopyable (extend the existing
-  coroutine_lowering `__coro_*$$delete` codegen pattern; gated on
-  `Type::noncopyable()`).
-- **Generics, exception unwinding through closure boundaries, nested closures**
-  — all should fall out from the existing struct/method machinery once the
-  capture path lands; needs explicit test coverage.
+- **Nested closures** (lambda inside another lambda) — the env-of-env aliasing
+  for moves and the multi-level capture chain need separate design; analyzer
+  currently rejects with a clear error.
+- **`self` capture** inside struct methods — would need explicit handling for
+  the `ref Self` parameter; out of scope for the current capture machinery.
+- **Generics + exception unwinding through closure boundaries** — should fall
+  out naturally from the existing struct/method machinery; needs explicit test
+  coverage when those scenarios become relevant.
