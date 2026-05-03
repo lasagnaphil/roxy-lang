@@ -83,6 +83,7 @@ const char* ir_op_to_string(IROp op) {
         case IROp::New:    return "new";
         case IROp::Delete: return "delete";
         case IROp::Closure: return "closure";
+        case IROp::AssertHeap: return "assert_heap";
 
         case IROp::Call:         return "call";
         case IROp::CallNative:   return "call_native";

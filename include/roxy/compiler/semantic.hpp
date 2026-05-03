@@ -281,6 +281,12 @@ private:
         Type* env_struct_type;                       // the env struct (for cross-context __env typing)
         Vector<CaptureInfo> captures;                // ordered, env-field order
         tsl::robin_map<Symbol*, u32> by_symbol;      // dedup + index lookup
+        // Self-capture state. Tracks whether `self` has been captured into this
+        // lambda's env (and where in `captures`). When set by a [copy self] or
+        // [weak self] entry pre-validation, body references to `self` route
+        // through the existing entry rather than creating a duplicate.
+        bool has_self_capture = false;
+        u32 self_capture_index = 0;
     };
     Vector<LambdaCaptureContext*> m_lambda_contexts;
 

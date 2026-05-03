@@ -278,6 +278,7 @@ struct StringInterpExpr {
 enum class CaptureMode : u8 {
     Copy,   // implicit by-value capture (copyable type, ref/weak)
     Move,   // `[move name]` — ownership transferred from the outer scope
+    Weak,   // `[weak self]` — capture as a weak ref (auto-wraps ref/uniq → weak)
 };
 
 // One entry in an explicit capture list: `[move name]`.
@@ -298,16 +299,23 @@ struct Symbol;
 struct CaptureInfo {
     StringView name;            // captured variable name (also the env field name)
     Type* type;                 // captured variable type (also the env field type)
-    CaptureMode mode;           // Copy or Move
-    Symbol* source_symbol;      // outer-scope symbol the capture refers to
+    CaptureMode mode;           // Copy / Move / Weak
+    Symbol* source_symbol;      // outer-scope symbol the capture refers to (null for self)
     SourceLocation loc;         // first reference site, for error attribution
     // Expression evaluated in the lambda's *enclosing* scope to obtain the
     // capture's value at construction time. For lambdas captured directly from
     // a containing function/block, this is `IdentifierExpr(name)`. For nested
     // closures where the variable lives further out, it's
     // `ExprGet(IdentifierExpr("__env"), name)` accessing the enclosing
-    // lambda's env.
+    // lambda's env. For `self` captures, it's `ExprThis` (or a synthesized
+    // struct literal for `[copy self]`).
     Expr* source_expr;
+    // Set on implicit ref-self / [weak self] captures of a *copyable* struct,
+    // where the receiver may be stack-allocated. The IR builder emits a
+    // runtime slab-range check at the closure construction site that traps
+    // with an actionable error if the check fails. Noncopyable structs are
+    // provably heap-allocated and skip the check.
+    bool needs_heap_check = false;
 };
 
 // Lambda expression:

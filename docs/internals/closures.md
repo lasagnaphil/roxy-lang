@@ -16,11 +16,15 @@ Implementation is incremental:
   to a closure with a synthesized trampoline that forwards to the named function,
   nested closures with implicit copy captures (transitive captures flow through
   each enclosing lambda's env at any depth — `make_adder`-style and full curried
-  forms work).
-- **Deferred (follow-up commits)** — `self` capture inside struct methods,
-  transitive `[move]` captures across nested lambdas (would force every
-  enclosing lambda to also move, making the outer unusable), native / imported /
-  generic function references.
+  forms work), **`self` capture inside struct methods** with three modes:
+  implicit `ref self` (default; ref-counted; cycle-prone), `[copy self]`
+  (struct-value snapshot; copyable structs only), `[weak self]` (weak ref;
+  cycle-breaker). For copyable structs, ref/weak self captures emit a runtime
+  slab-range check that traps if the receiver is stack-allocated.
+- **Deferred (follow-up commits)** — `[move self]` (needs `fun uniq T.method(...)`
+  receiver-kind annotation), `[copy self]` / `[weak self]` in nested lambdas
+  (rejected today), transitive `[move]` captures across nested lambdas, native /
+  imported / generic function references.
 
 The user-facing surface (syntax, capture rules, error messages) below describes
 the *full* design; implementation status is annotated where it differs.
@@ -677,6 +681,28 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
   is constructed inside a function whose `__env` parameter is in scope. A
   general indirect-call path in `gen_call_expr` handles chained calls like
   `make()()` (callees that aren't bare identifiers but resolve to Function).
+- **`self` capture** inside struct methods. `analyze_this_expr` detects when an
+  `ExprThis` reference crosses a `ScopeKind::Lambda` boundary before reaching
+  the enclosing struct scope and routes through one of three modes:
+  - **Implicit ref-self** (default): captures `ref Self`. Ref-counted; safe for
+    heap receivers; cycle-prone. For *copyable* structs whose receiver could be
+    stack-allocated, the IR builder emits an `IROp::AssertHeap` instruction
+    (lowered to `ASSERT_HEAP = 0xDE`, which calls `vm->allocator->owns(ptr)`)
+    before storing the ref into the env. The trap message points the user at
+    `[copy self]`.
+  - **`[copy self]`**: synthesizes a struct literal `Self { f0 = self.f0, ... }`
+    as the source expression; the env field stores a value snapshot. Required
+    static checks: copyable struct, no when-clauses, lambda directly inside a
+    method (no nested lambdas).
+  - **`[weak self]`**: source is `ExprThis` (`ref Self`); the env field is
+    `weak Self` and the env-store auto-wraps via `maybe_wrap_weak`. For
+    copyable structs, the same `AssertHeap` runtime check fires (weak refs
+    require an `ObjectHeader.weak_generation` that stack values lack).
+- **`IROp::Closure` lowering** handles value-struct captures via `STRUCT_COPY`
+  (memory-to-memory) — the source SSA value is a pointer to the struct, and
+  the env field is value-typed with multi-slot layout. Primitive / ref / weak
+  captures continue to use `SET_FIELD` (the source value packs into one or
+  two registers).
 - **Tests**: `tests/e2e/test_closures.cpp` covers lambda creation, multi-arg,
   block body, void return, higher-order (pass and return), implicit i32 / f64 /
   multi-capture / dedup'd capture / closure-from-parameter, `[move]` of
@@ -684,13 +710,25 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
   noncopyable, `[move]` on copyable, `[move]` of unknown variable), function
   references in typed and inferred bindings (with cache-dedup and void return),
   nested closures (`make_adder`, fully curried two-level, three-level transitive
-  capture, capture from outer-body local), and the remaining deferred-error
-  paths.
+  capture, capture from outer-body local), self capture in all three modes
+  (implicit ref-self for noncopyable; copyable + uniq receiver heap-check pass;
+  copyable + stack receiver runtime trap; `[copy self]` snapshot semantics;
+  `[weak self]` for noncopyable and copyable+uniq cases; runtime trap for
+  copyable+stack `[weak self]`), and the remaining deferred-error paths.
 
 ### Deferred (follow-up commits)
 
-- **`self` capture** inside struct methods — would need explicit handling for
-  the `ref Self` parameter; out of scope for the current capture machinery.
+- **`[move self]`** — requires the receiver to be `uniq Self` and consumable
+  at the call site. Methods are declared as `fun Foo.method(...)` — there's no
+  syntax to declare "this method consumes its uniq receiver." Adding this is
+  bigger language work.
+- **`[copy self]` / `[weak self]` in nested lambdas** — rejected today. Would
+  require materializing the snapshot or weak ref through an outer env field,
+  similar to the multi-boundary capture machinery for ordinary identifiers
+  but with extra plumbing for the self-specific source synthesis.
+- **`fun uniq T.method(...)` receiver-kind annotation** — would let the body
+  statically know the receiver is heap-only, eliding the runtime
+  `AssertHeap` check for copyable structs.
 - **Transitive `[move]` captures** across nested lambdas — would force every
   enclosing lambda to also move, leaving them unable to use the variable.
   `analyze_lambda_expr` rejects this with a clear error today.

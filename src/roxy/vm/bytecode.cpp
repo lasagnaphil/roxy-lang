@@ -178,6 +178,7 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::JMP_IF_NE_D_RK: return "JMP_IF_NE_D_RK";
 
         case Opcode::CALL_INDIRECT: return "CALL_INDIRECT";
+        case Opcode::ASSERT_HEAP:   return "ASSERT_HEAP";
 
         // Debug/Error
         case Opcode::TRAP:          return "TRAP";
@@ -382,6 +383,11 @@ u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out) {
         case Opcode::CALL_INDIRECT:
             buf.format("R{}, closure=R{}, {} args from R{}", a, b, c, (u32)(a + 1));
             words_consumed = 2;
+            break;
+
+        // Format: assert R{a} is in slab range
+        case Opcode::ASSERT_HEAP:
+            buf.format("R{}", a);
             break;
 
         // Format: dst, obj, index/key

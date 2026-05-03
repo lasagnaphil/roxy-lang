@@ -3,6 +3,8 @@
 #include "roxy/vm/list.hpp"
 #include "roxy/vm/map.hpp"
 #include "roxy/vm/string.hpp"
+#include "roxy/vm/slab_allocator.hpp"
+#include "roxy/vm/vm.hpp"
 
 #include <cmath>
 #include <cassert>
@@ -642,7 +644,8 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         [0xDB] = &&op_JMP_IF_EQ_D_RK,
         [0xDC] = &&op_JMP_IF_NE_D_RK,
         [0xDD] = &&op_CALL_INDIRECT,
-        [0xDE] = &&op_DEFAULT, [0xDF] = &&op_DEFAULT,
+        [0xDE] = &&op_ASSERT_HEAP,
+        [0xDF] = &&op_DEFAULT,
 
         // 0xE0-0xEF: Reference Counting
         [0xE0] = &&op_REF_INC,
@@ -1497,6 +1500,21 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         func = frame->func;
         pc = frame->pc;
         regs = frame->registers;
+        DISPATCH();
+    }
+
+    // Trap if regs[a] is not a slab-owned heap pointer. Used by closure
+    // captures of `self` (ref / weak) on copyable structs, where the receiver
+    // may be stack-allocated.
+    OP(ASSERT_HEAP) {
+        u8 a = decode_a(instr);
+        void* ptr = reg_as_ptr(regs[a]);
+        if (!ptr || !vm->allocator->owns(ptr)) {
+            vm->error = "closure capture: cannot capture 'self' as a reference when "
+                        "the receiver is stack-allocated; use 'fun[copy self](...)' "
+                        "to snapshot the value, or call this method on a 'uniq' receiver.";
+            return false;
+        }
         DISPATCH();
     }
 

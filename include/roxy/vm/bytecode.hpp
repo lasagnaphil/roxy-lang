@@ -232,6 +232,11 @@ enum class Opcode : u8 {
     // argument, copies the explicit args after it, and dispatches.
     CALL_INDIRECT = 0xDD,
 
+    // 0xDE: Trap if pointer in regs[a] is not owned by the slab allocator.
+    // Used for self captures of copyable structs where the receiver may be
+    // stack-allocated. Single-word: [ASSERT_HEAP][a][_][_].
+    ASSERT_HEAP = 0xDE,
+
     // 0xF0-0xFD: Debug/Error
     TRAP        = 0xF0,     // runtime error trap (for variant field access checks)
 

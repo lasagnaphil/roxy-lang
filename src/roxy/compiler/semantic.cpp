@@ -4013,62 +4013,182 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
     env_type->struct_info.module_name = StringView(nullptr, 0);
     m_type_env.register_named_type(env_name, env_type);
 
-    // ===== Pre-validate explicit `[move]` captures =====
-    // Each must name a noncopyable variable in the outer scope; copyable types
-    // get a clear error since `[move]` is reserved for noncopyables.
-    // For nested closures, transitive moves are rejected — [move] must reference
-    // a variable in the immediately-enclosing scope (no Lambda boundaries between
-    // the lambda and the variable's defining scope).
+    // ===== Pre-validate explicit capture entries =====
+    // [move <name>]: noncopyable, no transitive moves, sets up a Move source.
+    // [copy self]:   copyable struct, no when-clauses; synthesizes a struct
+    //                literal source so the env field holds a value snapshot.
+    // [weak self]:   any struct kind; copyable structs get a runtime heap check
+    //                at construction time (receiver might be stack-allocated).
     LambdaCaptureContext context;
     context.boundary_scope = nullptr;       // set after pushing the Lambda scope
     context.env_struct_type = env_type;
+
+    // Helper to detect "[copy/weak self] inside a lambda directly inside a
+    // method": current_struct_type must be set, and the scope walk to the
+    // struct must cross EXACTLY one Lambda boundary (the one we'll push next).
+    // For this commit, nested-self capture is rejected.
+    auto self_lambda_is_method_direct = [this]() -> Type* {
+        if (!m_symbols.is_in_struct()) return nullptr;
+        // Already inside another lambda? (m_lambda_contexts is the active set
+        // BEFORE we push for the current lambda.)
+        if (m_lambda_contexts.size() > 0) return nullptr;
+        return m_symbols.current_struct_type();
+    };
+
     for (auto& entry : le.captures) {
-        if (entry.mode != CaptureMode::Move) continue;  // only Move is parsed today
-        Symbol* outer_sym = m_symbols.lookup(entry.name);
-        if (!outer_sym) {
-            error_fmt(entry.loc, "capture list references unknown variable '{}'", entry.name);
-            return m_types.error_type();
-        }
-        if (!outer_sym->type || !outer_sym->type->noncopyable()) {
-            error_fmt(entry.loc,
-                "move captures only apply to noncopyable types; '{}' is copyable, capture it implicitly",
-                entry.name);
-            return m_types.error_type();
-        }
-        // Reject transitive moves: walk from current scope toward the symbol's
-        // defining scope; if we cross a Lambda boundary, the variable lives
-        // outside the immediately-enclosing scope.
-        if (outer_sym->defining_scope) {
-            for (Scope* sc = m_symbols.current_scope(); sc; sc = sc->parent) {
-                if (sc == outer_sym->defining_scope) break;
-                if (sc->kind == ScopeKind::Lambda) {
-                    error_fmt(entry.loc,
-                        "transitive move captures are not yet supported; "
-                        "'{}' lives past an enclosing lambda boundary",
-                        entry.name);
-                    return m_types.error_type();
+        if (entry.mode == CaptureMode::Move) {
+            Symbol* outer_sym = m_symbols.lookup(entry.name);
+            if (!outer_sym) {
+                error_fmt(entry.loc, "capture list references unknown variable '{}'", entry.name);
+                return m_types.error_type();
+            }
+            if (!outer_sym->type || !outer_sym->type->noncopyable()) {
+                error_fmt(entry.loc,
+                    "move captures only apply to noncopyable types; '{}' is copyable, capture it implicitly",
+                    entry.name);
+                return m_types.error_type();
+            }
+            // Reject transitive moves.
+            if (outer_sym->defining_scope) {
+                for (Scope* sc = m_symbols.current_scope(); sc; sc = sc->parent) {
+                    if (sc == outer_sym->defining_scope) break;
+                    if (sc->kind == ScopeKind::Lambda) {
+                        error_fmt(entry.loc,
+                            "transitive move captures are not yet supported; "
+                            "'{}' lives past an enclosing lambda boundary",
+                            entry.name);
+                        return m_types.error_type();
+                    }
                 }
             }
+            if (context.by_symbol.find(outer_sym) != context.by_symbol.end()) {
+                error_fmt(entry.loc, "duplicate capture entry for '{}'", entry.name);
+                return m_types.error_type();
+            }
+            if (!check_not_moved(entry.name, entry.loc)) return m_types.error_type();
+
+            Expr* src = m_allocator.emplace<Expr>();
+            src->kind = AstKind::ExprIdentifier;
+            src->loc = entry.loc;
+            src->identifier.name = entry.name;
+            src->resolved_type = outer_sym->type;
+
+            u32 index = static_cast<u32>(context.captures.size());
+            CaptureInfo info{};
+            info.name = entry.name;
+            info.type = outer_sym->type;
+            info.mode = CaptureMode::Move;
+            info.source_symbol = outer_sym;
+            info.loc = entry.loc;
+            info.source_expr = src;
+            context.captures.push_back(info);
+            context.by_symbol[outer_sym] = index;
+            continue;
         }
-        if (context.by_symbol.find(outer_sym) != context.by_symbol.end()) {
-            error_fmt(entry.loc, "duplicate capture entry for '{}'", entry.name);
+
+        // [copy self] and [weak self] — both are self-only in this commit.
+        if (entry.name != StringView("self", 4)) {
+            error_fmt(entry.loc,
+                "[copy ...] / [weak ...] captures are currently restricted to 'self'");
             return m_types.error_type();
         }
-        // Use-before-move: don't allow `[move x]` if `x` is already moved/maybe-moved.
-        if (!check_not_moved(entry.name, entry.loc)) return m_types.error_type();
+        if (context.has_self_capture) {
+            error(entry.loc, "duplicate self capture in capture list");
+            return m_types.error_type();
+        }
 
-        // Move source: direct read of the outer's local at construction time.
-        Expr* src = m_allocator.emplace<Expr>();
-        src->kind = AstKind::ExprIdentifier;
-        src->loc = entry.loc;
-        src->identifier.name = entry.name;
-        src->resolved_type = outer_sym->type;
+        Type* struct_type = self_lambda_is_method_direct();
+        if (!struct_type) {
+            error_fmt(entry.loc,
+                "[{} self] is only valid inside a struct method (and not in a nested lambda)",
+                entry.mode == CaptureMode::Copy ? "copy" : "weak");
+            return m_types.error_type();
+        }
 
-        u32 index = static_cast<u32>(context.captures.size());
-        CaptureInfo info{entry.name, outer_sym->type, CaptureMode::Move,
-                         outer_sym, entry.loc, src};
-        context.captures.push_back(info);
-        context.by_symbol[outer_sym] = index;
+        if (entry.mode == CaptureMode::Copy) {
+            // Reject noncopyable: copying a struct with a destructor is not allowed.
+            if (struct_type->noncopyable()) {
+                error_fmt(entry.loc,
+                    "cannot [copy self] of noncopyable struct '{}'; use [weak self] instead",
+                    struct_type->struct_info.name);
+                return m_types.error_type();
+            }
+            // Reject tagged unions (variant fields require runtime layout knowledge).
+            if (struct_type->struct_info.when_clauses.size() > 0) {
+                error_fmt(entry.loc,
+                    "[copy self] on tagged-union struct '{}' is not yet supported",
+                    struct_type->struct_info.name);
+                return m_types.error_type();
+            }
+
+            // Synthesize the struct literal `Self { f0 = self.f0, f1 = self.f1, ... }`.
+            // Each field initializer is `ExprGet(ExprThis, fields[i].name)`.
+            const auto& fields = struct_type->struct_info.fields;
+            FieldInit* inits = reinterpret_cast<FieldInit*>(
+                m_allocator.alloc_bytes(sizeof(FieldInit) * fields.size(), alignof(FieldInit)));
+            for (u32 i = 0; i < fields.size(); i++) {
+                Expr* this_expr = m_allocator.emplace<Expr>();
+                this_expr->kind = AstKind::ExprThis;
+                this_expr->loc = entry.loc;
+                this_expr->resolved_type = m_types.ref_type(struct_type);
+
+                Expr* field_get = m_allocator.emplace<Expr>();
+                field_get->kind = AstKind::ExprGet;
+                field_get->loc = entry.loc;
+                field_get->get.object = this_expr;
+                field_get->get.name = fields[i].name;
+                field_get->resolved_type = fields[i].type;
+
+                inits[i].name = fields[i].name;
+                inits[i].value = field_get;
+                inits[i].loc = entry.loc;
+            }
+            Expr* src = m_allocator.emplace<Expr>();
+            src->kind = AstKind::ExprStructLiteral;
+            src->loc = entry.loc;
+            src->struct_literal.type_name = struct_type->struct_info.name;
+            src->struct_literal.fields = Span<FieldInit>(inits, fields.size());
+            src->struct_literal.type_args = Span<TypeExpr*>();
+            src->struct_literal.mangled_name = StringView();
+            src->struct_literal.is_heap = false;
+            src->resolved_type = struct_type;
+
+            CaptureInfo info{};
+            info.name = StringView("__self", 6);
+            info.type = struct_type;     // value-Self in env
+            info.mode = CaptureMode::Copy;
+            info.source_symbol = nullptr;
+            info.loc = entry.loc;
+            info.source_expr = src;
+            info.needs_heap_check = false;
+
+            context.self_capture_index = static_cast<u32>(context.captures.size());
+            context.captures.push_back(info);
+            context.has_self_capture = true;
+        } else {  // CaptureMode::Weak
+            // [weak self]: env field is `weak Self`. Source is ExprThis (ref Self);
+            // the IR/lowering wraps ref → weak via maybe_wrap_weak.
+            Type* weak_self = m_types.weak_type(struct_type);
+            bool copyable_struct = !struct_type->noncopyable();
+
+            Expr* src = m_allocator.emplace<Expr>();
+            src->kind = AstKind::ExprThis;
+            src->loc = entry.loc;
+            src->resolved_type = m_types.ref_type(struct_type);
+
+            CaptureInfo info{};
+            info.name = StringView("__self", 6);
+            info.type = weak_self;
+            info.mode = CaptureMode::Weak;
+            info.source_symbol = nullptr;
+            info.loc = entry.loc;
+            info.source_expr = src;
+            info.needs_heap_check = copyable_struct;
+
+            context.self_capture_index = static_cast<u32>(context.captures.size());
+            context.captures.push_back(info);
+            context.has_self_capture = true;
+        }
     }
 
     // ===== Synthesize the lifted call function FunDecl =====
@@ -5664,6 +5784,90 @@ Type* SemanticAnalyzer::analyze_this_expr(Expr* expr) {
     }
 
     Type* struct_type = m_symbols.current_struct_type();
+
+    // Closure capture: if we're inside a lambda body whose scope sits past a
+    // ScopeKind::Lambda boundary relative to the enclosing struct scope, this
+    // `self` reference must be captured into the lambda's env. Detect by
+    // walking from the current scope up — if we cross a Lambda before we
+    // reach the struct scope, this is a capture.
+    if (!m_lambda_contexts.empty()) {
+        bool crossed_lambda = false;
+        for (Scope* sc = m_symbols.current_scope(); sc; sc = sc->parent) {
+            if (sc->kind == ScopeKind::Struct) break;     // reached struct first → not a capture
+            if (sc->kind == ScopeKind::Lambda) { crossed_lambda = true; break; }
+        }
+
+        if (crossed_lambda) {
+            // Only the innermost lambda matters here for body-rewrite purposes.
+            // Nested-self captures are restricted by analyze_lambda_expr's
+            // pre-validation (rejected above one level for now).
+            LambdaCaptureContext& ctx = *m_lambda_contexts.back();
+
+            if (ctx.has_self_capture) {
+                // Already populated by [copy self] / [weak self], or by an
+                // earlier implicit-ref reference in the same body. Reuse the
+                // existing entry — its env field type drives the rewrite.
+                CaptureInfo& info = ctx.captures[ctx.self_capture_index];
+                Expr* env_id = m_allocator.emplace<Expr>();
+                env_id->kind = AstKind::ExprIdentifier;
+                env_id->loc = expr->loc;
+                env_id->identifier.name = StringView("__env", 5);
+                env_id->resolved_type = ctx.env_struct_type
+                    ? m_types.ref_type(ctx.env_struct_type)
+                    : nullptr;
+
+                expr->kind = AstKind::ExprGet;
+                expr->get.object = env_id;
+                expr->get.name = StringView("__self", 6);
+                return info.type;
+            }
+
+            // Implicit ref-self capture. The env field is `ref Self`. The
+            // source expression is a synthetic ExprThis (resolves to the
+            // method's `self` parameter at IR-build time, where the IR is
+            // emitted in the enclosing method's context).
+            //
+            // For copyable structs, the receiver may be stack-allocated, so
+            // mark needs_heap_check; the IR builder will emit a runtime
+            // slab-range trap before storing the ref into the env. Noncopyable
+            // structs are provably heap, skip the check.
+            Type* ref_self = m_types.ref_type(struct_type);
+            bool copyable_struct = !struct_type->noncopyable();
+
+            Expr* src = m_allocator.emplace<Expr>();
+            src->kind = AstKind::ExprThis;
+            src->loc = expr->loc;
+            src->resolved_type = ref_self;
+
+            CaptureInfo info{};
+            info.name = StringView("__self", 6);
+            info.type = ref_self;
+            info.mode = CaptureMode::Copy;       // ref pointer is bitwise-copied
+            info.source_symbol = nullptr;        // self isn't a Symbol
+            info.loc = expr->loc;
+            info.source_expr = src;
+            info.needs_heap_check = copyable_struct;
+
+            ctx.self_capture_index = static_cast<u32>(ctx.captures.size());
+            ctx.captures.push_back(info);
+            ctx.has_self_capture = true;
+
+            // Rewrite the ExprThis in-place to `__env.__self`.
+            Expr* env_id = m_allocator.emplace<Expr>();
+            env_id->kind = AstKind::ExprIdentifier;
+            env_id->loc = expr->loc;
+            env_id->identifier.name = StringView("__env", 5);
+            env_id->resolved_type = ctx.env_struct_type
+                ? m_types.ref_type(ctx.env_struct_type)
+                : nullptr;
+
+            expr->kind = AstKind::ExprGet;
+            expr->get.object = env_id;
+            expr->get.name = StringView("__self", 6);
+            return ref_self;
+        }
+    }
+
     // 'self' is a ref to the current struct
     return m_types.ref_type(struct_type);
 }

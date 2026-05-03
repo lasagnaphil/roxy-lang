@@ -375,6 +375,9 @@ static void remap_inst_values(const tsl::robin_map<u32, ValueId>& value_map, IRI
         case IROp::Cast:
             inst->cast.source = remap_value(value_map, inst->cast.source);
             break;
+        case IROp::AssertHeap:
+            inst->unary = remap_value(value_map, inst->unary);
+            break;
         default:
             // Unary/binary ops
             inst->unary = remap_value(value_map, inst->unary);

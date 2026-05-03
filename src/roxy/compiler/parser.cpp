@@ -489,23 +489,41 @@ Expr* Parser::primary() {
     if (match(TokenKind::KwFun)) {
         SourceLocation loc = m_previous.loc;
 
-        // Optional capture list. `move` is a contextual keyword — only a keyword inside `[...]`.
+        // Optional capture list. Recognized kinds:
+        //   `[move <Identifier>]` — move-capture a noncopyable named variable.
+        //   `[copy self]`         — copy-capture (value snapshot of) self.
+        //   `[weak self]`         — capture self as a weak reference.
+        // `move` and `copy` are contextual keywords (matched by text). `weak` is
+        // a real keyword (`KwWeak`).
         Vector<CaptureEntry> captures;
         if (match(TokenKind::LeftBracket)) {
             if (!check(TokenKind::RightBracket)) {
                 do {
-                    if (!check(TokenKind::Identifier) || m_current.text() != StringView("move", 4)) {
-                        report_error("Expected 'move' in capture list (only 'move' captures are supported)");
+                    SourceLocation entry_loc = m_current.loc;
+                    CaptureEntry entry;
+                    entry.loc = entry_loc;
+
+                    if (check(TokenKind::Identifier) && m_current.text() == StringView("move", 4)) {
+                        advance();  // consume 'move'
+                        Token cap_name = consume(TokenKind::Identifier, "Expected captured variable name after 'move'");
+                        if (m_has_error) return nullptr;
+                        entry.name = cap_name.text();
+                        entry.mode = CaptureMode::Move;
+                    } else if (check(TokenKind::Identifier) && m_current.text() == StringView("copy", 4)) {
+                        advance();  // consume 'copy'
+                        consume(TokenKind::KwSelf, "[copy ...] is currently restricted to 'self'");
+                        if (m_has_error) return nullptr;
+                        entry.name = StringView("self", 4);
+                        entry.mode = CaptureMode::Copy;
+                    } else if (match(TokenKind::KwWeak)) {
+                        consume(TokenKind::KwSelf, "[weak ...] is currently restricted to 'self'");
+                        if (m_has_error) return nullptr;
+                        entry.name = StringView("self", 4);
+                        entry.mode = CaptureMode::Weak;
+                    } else {
+                        report_error("Expected 'move <name>', '[copy self]', or '[weak self]' in capture list");
                         return nullptr;
                     }
-                    SourceLocation entry_loc = m_current.loc;
-                    advance();  // consume 'move'
-                    Token cap_name = consume(TokenKind::Identifier, "Expected captured variable name after 'move'");
-                    if (m_has_error) return nullptr;
-                    CaptureEntry entry;
-                    entry.name = cap_name.text();
-                    entry.mode = CaptureMode::Move;
-                    entry.loc = entry_loc;
                     captures.push_back(entry);
                 } while (match(TokenKind::Comma));
             }

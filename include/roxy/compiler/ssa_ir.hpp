@@ -135,6 +135,12 @@ enum class IROp : u8 {
     // Function<sig>. Lowering expands to NEW_OBJ + a sequence of SetField writes.
     Closure,
 
+    // Trap if `unary` (a pointer) is not owned by the slab allocator. Used for
+    // closure captures of `self` (ref or weak) where the receiver might be
+    // stack-allocated; copyable struct methods can't statically prove heap
+    // residence so we check at construction time.
+    AssertHeap,
+
     // Function call
     Call,           // call function
     CallNative,     // call native function

@@ -407,6 +407,190 @@ TEST_CASE("E2E - Closure: nested closures") {
     }
 }
 
+TEST_CASE("E2E - Closure: self capture") {
+    SUBCASE("Implicit ref-self on noncopyable struct") {
+        // Noncopyable struct ⇒ heap-only ⇒ ref counting protects; no runtime check.
+        const char* source = R"(
+            struct Counter {
+                value: i32 = 0;
+            }
+            fun delete Counter() {}
+            fun Counter.make_getter(): fun() -> i32 {
+                return fun(): i32 => self.value;
+            }
+            fun main() {
+                var c: uniq Counter = uniq Counter { value = 42 };
+                var g = c.make_getter();
+                print(f"{g()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
+
+    SUBCASE("Implicit ref-self on copyable + uniq receiver passes heap check") {
+        const char* source = R"(
+            struct V {
+                x: i32 = 0;
+            }
+            fun V.make(): fun() -> i32 {
+                return fun(): i32 => self.x;
+            }
+            fun main() {
+                var u: uniq V = uniq V { x = 99 };
+                var f = u.make();
+                print(f"{f()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "99\n");
+    }
+
+    SUBCASE("Implicit ref-self on copyable + stack receiver triggers runtime trap") {
+        const char* source = R"(
+            struct V {
+                x: i32 = 0;
+            }
+            fun V.make(): fun() -> i32 {
+                return fun(): i32 => self.x;
+            }
+            fun main() {
+                var v: V = V { x = 7 };
+                var f = v.make();
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);  // Runtime trap from ASSERT_HEAP
+    }
+
+    SUBCASE("[copy self] on copyable: snapshot semantics") {
+        // The closure holds a value snapshot; mutating the original after
+        // construction must not affect what the closure observes.
+        const char* source = R"(
+            struct Vec2 {
+                x: i32 = 0;
+                y: i32 = 0;
+            }
+            fun Vec2.snapshot(): fun() -> i32 {
+                return fun[copy self](): i32 => self.x + self.y;
+            }
+            fun main() {
+                var v: Vec2 = Vec2 { x = 3, y = 4 };
+                var f = v.snapshot();
+                v.x = 999;
+                v.y = 999;
+                print(f"{f()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "7\n");
+    }
+
+    SUBCASE("[weak self] on noncopyable struct") {
+        const char* source = R"(
+            struct Counter {
+                value: i32 = 0;
+            }
+            fun delete Counter() {}
+            fun Counter.make_getter(): fun() -> i32 {
+                return fun[weak self](): i32 => self.value;
+            }
+            fun main() {
+                var c: uniq Counter = uniq Counter { value = 99 };
+                var f = c.make_getter();
+                print(f"{f()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "99\n");
+    }
+
+    SUBCASE("[weak self] on copyable + uniq receiver passes heap check") {
+        const char* source = R"(
+            struct V {
+                x: i32 = 0;
+            }
+            fun V.make(): fun() -> i32 {
+                return fun[weak self](): i32 => self.x;
+            }
+            fun main() {
+                var u: uniq V = uniq V { x = 21 };
+                var f = u.make();
+                print(f"{f()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "21\n");
+    }
+
+    SUBCASE("[weak self] on copyable + stack receiver triggers runtime trap") {
+        const char* source = R"(
+            struct V {
+                x: i32 = 0;
+            }
+            fun V.make(): fun() -> i32 {
+                return fun[weak self](): i32 => self.x;
+            }
+            fun main() {
+                var v: V = V { x = 5 };
+                var f = v.make();
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
+}
+
+TEST_CASE("E2E - Closure: self capture compile-time rejections") {
+    BumpAllocator allocator(65536);
+
+    SUBCASE("[copy self] on noncopyable struct") {
+        const char* source = R"(
+            struct N {
+                v: i32 = 0;
+            }
+            fun delete N() {}
+            fun N.bad(): fun() -> i32 {
+                return fun[copy self](): i32 => self.v;
+            }
+            fun main() {}
+        )";
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
+
+    SUBCASE("[copy self] outside of a method") {
+        const char* source = R"(
+            fun main() {
+                var f = fun[copy self](): i32 => 0;
+            }
+        )";
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
+
+    SUBCASE("[copy self] in nested lambda inside method (deferred)") {
+        const char* source = R"(
+            struct V {
+                x: i32 = 0;
+            }
+            fun V.outer(): fun() -> fun() -> i32 {
+                return fun(): fun() -> i32 {
+                    return fun[copy self](): i32 => self.x;
+                };
+            }
+            fun main() {}
+        )";
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
+}
+
 TEST_CASE("E2E - Closure: rejects unsupported features cleanly") {
     BumpAllocator allocator(65536);
 

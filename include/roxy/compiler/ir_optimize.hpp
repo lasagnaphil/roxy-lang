@@ -142,6 +142,7 @@ inline void for_each_operand(IRInst* inst, Fn&& fn) {
         case IROp::Delete:
         case IROp::Throw: case IROp::Yield:
         case IROp::Nullify:
+        case IROp::AssertHeap:
             fn(inst->unary);
             break;
 

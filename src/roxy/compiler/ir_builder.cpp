@@ -2719,9 +2719,19 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
     for (const CaptureInfo& cap : le.resolved_captures) {
         // The capture's source expression was built at semantic time. For
         // top-level captures it's a direct IdentifierExpr; for nested closures
-        // it's an ExprGet on the enclosing lambda's __env. Either way, gen_expr
-        // produces a value in the enclosing function's IR scope.
+        // it's an ExprGet on the enclosing lambda's __env. For self captures
+        // it's an ExprThis (or a synthesized struct literal for [copy self]).
+        // gen_expr produces a value in the enclosing function's IR scope.
         ValueId v = gen_expr(cap.source_expr);
+
+        // Runtime heap check for self captures whose receiver may be stack-
+        // allocated (copyable struct + ref/weak self capture). The check fires
+        // on the source pointer before we store it into the env field.
+        if (cap.needs_heap_check) {
+            IRInst* assert_inst = emit_inst(IROp::AssertHeap, m_types.void_type());
+            if (assert_inst) assert_inst->unary = v;
+        }
+
         capture_values.push_back(v);
 
         if (cap.mode == CaptureMode::Move) {

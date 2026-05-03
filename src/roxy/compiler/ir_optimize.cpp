@@ -21,6 +21,7 @@ bool has_side_effect(IROp op) {
         case IROp::New:
         case IROp::Delete:
         case IROp::Closure:  // Allocates and stores fields; same side-effect class as New
+        case IROp::AssertHeap:  // Side-effecting trap
         // Calls — opaque, may do anything
         case IROp::Call:
         case IROp::CallNative:

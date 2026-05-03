@@ -214,6 +214,7 @@ bool IRValidator::validate_instruction(IRFunction* func, IRBlock* block, IRInst*
         case IROp::RefInc: case IROp::RefDec: case IROp::WeakCheck: case IROp::WeakCreate:
         case IROp::I_TO_F64: case IROp::F64_TO_I: case IROp::I_TO_B: case IROp::B_TO_I:
         case IROp::Throw:
+        case IROp::AssertHeap:
         {
             if (!value_in_range(inst->unary, next_id)) {
                 report_error_fmt("function '{}' block {}: unary op operand v{} invalid",

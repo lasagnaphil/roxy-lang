@@ -1180,7 +1180,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         case IROp::Throw:
         case IROp::Yield:
         case IROp::Closure:
-        case IROp::CallIndirect: {
+        case IROp::CallIndirect:
+        case IROp::AssertHeap: {
             out.append("    /* TODO: unsupported op: ");
             out.append(ir_op_to_string(inst->op));
             out.append(" */\n");

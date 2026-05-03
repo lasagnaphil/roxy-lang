@@ -950,6 +950,7 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
                 case IROp::Delete:
                 case IROp::Throw:
                 case IROp::Nullify:
+                case IROp::AssertHeap:
                     mark_reg(inst->unary);
                     break;
 
@@ -1135,6 +1136,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                 case IROp::Delete:
                 case IROp::Throw:
                 case IROp::Nullify:
+                case IROp::AssertHeap:
                     mark_use(m_live_ranges, inst->unary, point);
                     break;
 
@@ -2189,6 +2191,12 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             break;
         }
 
+        case IROp::AssertHeap: {
+            u8 src = ensure_in_register(inst->unary, 0);
+            emit_abc(Opcode::ASSERT_HEAP, src, 0, 0);
+            break;
+        }
+
         case IROp::Closure: {
             // Allocate the env struct, store __call_idx in its first u32 field,
             // then store any captured values in subsequent fields.
@@ -2238,12 +2246,35 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
 
             // Store each capture into its corresponding field. The env struct's
             // fields[0] is __call_idx (already populated); captures live at fields[1..].
+            // For value-struct fields, the source ValueId holds a pointer to the
+            // struct's bytes, so we use a memory-to-memory STRUCT_COPY (computing
+            // the dest via GET_FIELD_ADDR). For primitive / ref / weak fields,
+            // the source is in registers and SET_FIELD packs it directly.
             for (u32 i = 0; i < inst->closure.captures.size(); i++) {
                 const FieldInfo& field = env_type->struct_info.fields[1 + i];
                 u8 cap_reg = ensure_in_register(inst->closure.captures[i], 0);
-                emit_abc(Opcode::SET_FIELD, dst, cap_reg,
-                         static_cast<u8>(field.slot_count));
-                emit(static_cast<u32>(field.slot_offset));
+
+                if (field.type && field.type->is_struct()) {
+                    // dest_addr = env_ptr + field.slot_offset
+                    u8 dest_addr = bump_register();
+                    emit_abc(Opcode::GET_FIELD_ADDR, dest_addr, dst, 0);
+                    emit(static_cast<u32>(field.slot_offset));
+                    // STRUCT_COPY (specialized for small slot counts)
+                    Opcode op;
+                    switch (field.slot_count) {
+                        case 1: op = Opcode::STRUCT_COPY_1; break;
+                        case 2: op = Opcode::STRUCT_COPY_2; break;
+                        case 3: op = Opcode::STRUCT_COPY_3; break;
+                        case 4: op = Opcode::STRUCT_COPY_4; break;
+                        default: op = Opcode::STRUCT_COPY; break;
+                    }
+                    emit_abc(op, dest_addr, cap_reg,
+                             op == Opcode::STRUCT_COPY ? static_cast<u8>(field.slot_count) : 0);
+                } else {
+                    emit_abc(Opcode::SET_FIELD, dst, cap_reg,
+                             static_cast<u8>(field.slot_count));
+                    emit(static_cast<u32>(field.slot_offset));
+                }
             }
 
             spill_if_needed(inst->result, dst);
