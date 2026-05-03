@@ -497,7 +497,8 @@ TypeExpr* GenericInstantiator::substitute_type_expr(TypeExpr* type_expr, const T
         }
     }
 
-    // Handle generic type args (e.g., Box<T> -> Box<i32>, List<T> -> List<i32>)
+    // Handle generic type args (e.g., Box<T> -> Box<i32>, List<T> -> List<i32>,
+    // and the parameter list of a fun(T1, T2) -> R type expression)
     if (type_expr->type_args.size() > 0) {
         TypeExpr** args = reinterpret_cast<TypeExpr**>(
             m_allocator.alloc_bytes(sizeof(TypeExpr*) * type_expr->type_args.size(), alignof(TypeExpr*)));
@@ -505,6 +506,11 @@ TypeExpr* GenericInstantiator::substitute_type_expr(TypeExpr* type_expr, const T
             args[i] = substitute_type_expr(type_expr->type_args[i], subst);
         }
         result->type_args = Span<TypeExpr*>(args, type_expr->type_args.size());
+    }
+
+    // Function-kind type expressions store the return type separately; substitute it too.
+    if (type_expr->return_type) {
+        result->return_type = substitute_type_expr(type_expr->return_type, subst);
     }
 
     return result;

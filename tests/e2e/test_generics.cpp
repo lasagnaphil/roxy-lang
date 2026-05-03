@@ -1322,3 +1322,43 @@ TEST_CASE("E2E - Generic struct: constructor suppresses synthesized default") {
     CHECK(result.success);
     CHECK(result.value == 42);
 }
+
+TEST_CASE("E2E - Generic higher-order with closure") {
+    // Generic function taking a fun(T) -> T parameter, called with a closure
+    // that's stored in a local variable. Exercises three issues that all had to
+    // line up: (1) substitute_type_expr must recurse into Function-kind
+    // return_type so `fun(T) -> T` becomes `fun(i32) -> i32`; (2) the generic
+    // call site must consume noncopyable args (closure values are
+    // noncopyable); (3) analyze_generic_fun_call must set
+    // ce.callee->resolved_type so the IR builder emits Nullify (not Delete) on
+    // the moved closure local at scope exit.
+    SUBCASE("Explicit type args") {
+        const char* source = R"(
+            fun apply<T>(f: fun(T) -> T, x: T): T {
+                return f(x);
+            }
+            fun main(): i32 {
+                var double = fun(x: i32): i32 => x * 2;
+                return apply<i32>(double, 21);
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
+
+    SUBCASE("Inferred type args") {
+        const char* source = R"(
+            fun apply<T>(f: fun(T) -> T, x: T): T {
+                return f(x);
+            }
+            fun main(): i32 {
+                var double = fun(x: i32): i32 => x * 2;
+                return apply(double, 21);
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
+}

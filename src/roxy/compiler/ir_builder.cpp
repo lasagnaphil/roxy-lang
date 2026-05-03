@@ -3539,7 +3539,24 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             // Module-scope non-pub functions are mangled at definition (see build_function);
             // calls to them must use the mangled name so they resolve within the same module.
             StringView emit_name = func_name;
-            if (sym && sym->kind == SymbolKind::Function && !sym->is_pub
+            // For generic calls, the template lives in the GenericInstantiator
+            // rather than the symbol table, so `sym` will be null. Look up the
+            // template there to find its is_pub for the mangling decision —
+            // build_function uses the same is_pub when emitting the instance.
+            bool is_pub = false;
+            bool is_function_symbol = false;
+            if (sym && sym->kind == SymbolKind::Function) {
+                is_function_symbol = true;
+                is_pub = sym->is_pub;
+            } else if (call_expr.mangled_name.size() > 0 &&
+                       m_type_env.generics().is_generic_fun(orig_name)) {
+                Decl* template_decl = m_type_env.generics().get_generic_fun_decl(orig_name);
+                if (template_decl && template_decl->kind == AstKind::DeclFun) {
+                    is_function_symbol = true;
+                    is_pub = template_decl->fun_decl.is_pub;
+                }
+            }
+            if (is_function_symbol && !is_pub
                 && orig_name != StringView("main", 4)) {
                 emit_name = mangle_module_local(func_name);
             }

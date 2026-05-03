@@ -1802,7 +1802,6 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             StringView func_name = inst->call.func_name;
             auto it = m_func_indices.find(func_name);
             if (it == m_func_indices.end()) {
-                // Internal compiler error: function should have been resolved by semantic analysis
                 report_error("Internal error: function not found during bytecode lowering");
                 break;
             }

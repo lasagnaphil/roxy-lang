@@ -4719,6 +4719,28 @@ bool SemanticAnalyzer::unify_type_expr(TypeExpr* pattern, Type* concrete,
         return false;
     }
 
+    // Function-kind pattern: `fun(P1, P2) -> R` against a Function concrete type
+    if (pattern->kind == TypeExprKind::Function && concrete->kind == TypeKind::Function) {
+        Span<Type*> concrete_params = concrete->func_info.param_types;
+        if (pattern->type_args.size() != concrete_params.size()) return false;
+        for (u32 i = 0; i < pattern->type_args.size(); i++) {
+            if (!unify_type_expr(pattern->type_args[i], concrete_params[i],
+                                 type_params, bindings)) {
+                return false;
+            }
+        }
+        Type* concrete_ret = concrete->func_info.return_type;
+        if (pattern->return_type) {
+            if (!concrete_ret) return false;
+            if (!unify_type_expr(pattern->return_type, concrete_ret,
+                                 type_params, bindings)) return false;
+        } else {
+            // Pattern omits return type ⇒ void
+            if (concrete_ret && !concrete_ret->is_void()) return false;
+        }
+        return true;
+    }
+
     // Concrete name match (primitives, structs, enums)
     if (pattern->type_args.size() == 0) {
         // Resolve the pattern name to a type and compare
@@ -4839,6 +4861,8 @@ Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, Strin
         return m_types.error_type();
     }
 
+    Vector<Type*> resolved_param_types;
+    resolved_param_types.reserve(ce.arguments.size());
     for (u32 i = 0; i < ce.arguments.size(); i++) {
         CallArg& arg = ce.arguments[i];
         Type* arg_type = analyze_expr(arg.expr);
@@ -4848,10 +4872,18 @@ Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, Strin
         if (inst_fun_decl.params[i].type) {
             param_type = resolve_type_expr(inst_fun_decl.params[i].type);
         }
+        resolved_param_types.push_back(param_type ? param_type : m_types.error_type());
 
         if (param_type && !param_type->is_error() && arg_type && !arg_type->is_error()) {
             check_assignable(param_type, arg_type, arg.expr->loc);
             coerce_int_literal(arg.expr, param_type);
+        }
+
+        // Move semantics: passing an owned arg to a noncopyable param consumes it.
+        // Mirrors check_call_args; the non-generic path goes through that helper.
+        if (param_type && param_type->noncopyable()
+            && arg.modifier == ParamModifier::None) {
+            consume_noncopyable(arg.expr, arg.expr->loc);
         }
     }
 
@@ -4859,6 +4891,14 @@ Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, Strin
     Type* return_type = m_types.void_type();
     if (inst_fun_decl.return_type) {
         return_type = resolve_type_expr(inst_fun_decl.return_type);
+    }
+
+    // Set the callee's resolved_type to the instantiated function type so the IR
+    // builder can read param types for post-call move/nullify decisions on
+    // noncopyable arguments.
+    if (ce.callee) {
+        ce.callee->resolved_type = m_types.function_type(
+            m_allocator.alloc_span(resolved_param_types), return_type);
     }
 
     return return_type;
@@ -5370,22 +5410,37 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                     return m_types.error_type();
                 }
 
+                Vector<Type*> resolved_param_types;
+                resolved_param_types.reserve(call_expr.arguments.size());
                 for (u32 i = 0; i < call_expr.arguments.size(); i++) {
                     // Args were already analyzed in infer_type_args_from_call,
                     // so just resolve param type and check assignability
-                    Type* arg_type = call_expr.arguments[i].expr->resolved_type;
+                    CallArg& arg = call_expr.arguments[i];
+                    Type* arg_type = arg.expr->resolved_type;
                     Type* param_type = nullptr;
                     if (inst_fun_decl.params[i].type) {
                         param_type = resolve_type_expr(inst_fun_decl.params[i].type);
                     }
+                    resolved_param_types.push_back(param_type ? param_type : m_types.error_type());
                     if (param_type && !param_type->is_error() && arg_type && !arg_type->is_error()) {
-                        check_assignable(param_type, arg_type, call_expr.arguments[i].expr->loc);
+                        check_assignable(param_type, arg_type, arg.expr->loc);
+                    }
+
+                    // Move semantics: noncopyable args are consumed by the call.
+                    if (param_type && param_type->noncopyable()
+                        && arg.modifier == ParamModifier::None) {
+                        consume_noncopyable(arg.expr, arg.expr->loc);
                     }
                 }
 
                 Type* return_type = m_types.void_type();
                 if (inst_fun_decl.return_type) {
                     return_type = resolve_type_expr(inst_fun_decl.return_type);
+                }
+
+                if (call_expr.callee) {
+                    call_expr.callee->resolved_type = m_types.function_type(
+                        m_allocator.alloc_span(resolved_param_types), return_type);
                 }
                 return return_type;
             } else {
