@@ -13,10 +13,14 @@ Implementation is incremental:
   enforcement), capture-aware destructor codegen for envs holding noncopyable
   captures (via the synthetic-default-destructor path the IR builder auto-emits),
   function references (`var f = double`) — bare named-function-as-value lowers
-  to a closure with a synthesized trampoline that forwards to the named function.
-- **Deferred (follow-up commits)** — nested closures (lambda inside another
-  lambda — the env-of-env aliasing for moves needs separate design), `self`
-  capture inside struct methods, native / imported / generic function references.
+  to a closure with a synthesized trampoline that forwards to the named function,
+  nested closures with implicit copy captures (transitive captures flow through
+  each enclosing lambda's env at any depth — `make_adder`-style and full curried
+  forms work).
+- **Deferred (follow-up commits)** — `self` capture inside struct methods,
+  transitive `[move]` captures across nested lambdas (would force every
+  enclosing lambda to also move, making the outer unusable), native / imported /
+  generic function references.
 
 The user-facing surface (syntax, capture rules, error messages) below describes
 the *full* design; implementation status is annotated where it differs.
@@ -661,21 +665,35 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
   references to the same function share one trampoline. The result is a normal
   `IROp::Closure` with empty captures — calls go through the same
   `CALL_INDIRECT` path as ordinary closures.
+- **Nested closures** with implicit copy captures: `analyze_identifier_expr`
+  walks every `ScopeKind::Lambda` boundary between the use site and the
+  symbol's defining scope, recording the capture into each enclosing context
+  (deduped by `Symbol*`). `CaptureInfo::source_expr` is set per-context: the
+  outermost crossed lambda reads the value directly via `IdentifierExpr(name)`;
+  every inner one reads via `ExprGet(IdentifierExpr("__env"), name)` against the
+  enclosing context's env (typed using `LambdaCaptureContext::env_struct_type`).
+  At IR-build time, `gen_lambda_expr` evaluates `cap.source_expr` in the
+  enclosing function's IR scope, which resolves correctly because each lambda
+  is constructed inside a function whose `__env` parameter is in scope. A
+  general indirect-call path in `gen_call_expr` handles chained calls like
+  `make()()` (callees that aren't bare identifiers but resolve to Function).
 - **Tests**: `tests/e2e/test_closures.cpp` covers lambda creation, multi-arg,
   block body, void return, higher-order (pass and return), implicit i32 / f64 /
   multi-capture / dedup'd capture / closure-from-parameter, `[move]` of
   `uniq T` with use-after-move enforcement, capture rule errors (implicit
   noncopyable, `[move]` on copyable, `[move]` of unknown variable), function
   references in typed and inferred bindings (with cache-dedup and void return),
-  and the remaining deferred-error paths.
+  nested closures (`make_adder`, fully curried two-level, three-level transitive
+  capture, capture from outer-body local), and the remaining deferred-error
+  paths.
 
 ### Deferred (follow-up commits)
 
-- **Nested closures** (lambda inside another lambda) — the env-of-env aliasing
-  for moves and the multi-level capture chain need separate design; analyzer
-  currently rejects with a clear error.
 - **`self` capture** inside struct methods — would need explicit handling for
   the `ref Self` parameter; out of scope for the current capture machinery.
+- **Transitive `[move]` captures** across nested lambdas — would force every
+  enclosing lambda to also move, leaving them unable to use the variable.
+  `analyze_lambda_expr` rejects this with a clear error today.
 - **Native / imported / generic function references** — the trampoline body
   emits `IROp::Call` only; `CallNative`, `CallExternal`, and monomorphization
   routing aren't wired up. `gen_function_ref` rejects these with clear errors.

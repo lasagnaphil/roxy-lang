@@ -2717,20 +2717,18 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
     Vector<ValueId> capture_values;
     capture_values.reserve(le.resolved_captures.size());
     for (const CaptureInfo& cap : le.resolved_captures) {
-        // Synthesize an ExprIdentifier(cap.name) and gen it. The local-scope
-        // lookup picks up the captured variable's current SSA value.
-        Expr* id_expr = m_allocator.emplace<Expr>();
-        id_expr->kind = AstKind::ExprIdentifier;
-        id_expr->loc = cap.loc;
-        id_expr->identifier.name = cap.name;
-        id_expr->resolved_type = cap.type;
-        ValueId v = gen_expr(id_expr);
+        // The capture's source expression was built at semantic time. For
+        // top-level captures it's a direct IdentifierExpr; for nested closures
+        // it's an ExprGet on the enclosing lambda's __env. Either way, gen_expr
+        // produces a value in the enclosing function's IR scope.
+        ValueId v = gen_expr(cap.source_expr);
         capture_values.push_back(v);
 
         if (cap.mode == CaptureMode::Move) {
             // The capture transfers ownership of the outer local into the env.
             // Mirror the move-on-arg-pass machinery so scope-exit cleanup of the
-            // outer local is suppressed.
+            // outer local is suppressed. (Move sources are pre-validated to be
+            // direct ExprIdentifier — no nested-source handling needed here.)
             OwnedLocalInfo* owned_info = find_owned_local(cap.name);
             if (owned_info && !owned_info->is_moved) {
                 if (cap.type && cap.type->kind == TypeKind::Uniq) {
@@ -3646,6 +3644,17 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             }
             } // end else (struct method)
         } // end outer else (method call)
+    }
+    else if (call_expr.callee->resolved_type && call_expr.callee->resolved_type->is_function()) {
+        // General indirect call: the callee is some expression (call result,
+        // index, field access, ...) producing a Function-typed value. Evaluate
+        // it and dispatch through CALL_INDIRECT.
+        ValueId closure_val = gen_expr(call_expr.callee);
+        IRInst* call_inst = emit_inst(IROp::CallIndirect, expr->resolved_type);
+        if (!call_inst) return ValueId::invalid();
+        call_inst->call_indirect.callee = closure_val;
+        call_inst->call_indirect.args = final_args;
+        result = call_inst->result;
     }
     else {
         report_error("Internal error: unhandled call expression kind");

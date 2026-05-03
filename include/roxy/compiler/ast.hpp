@@ -301,6 +301,13 @@ struct CaptureInfo {
     CaptureMode mode;           // Copy or Move
     Symbol* source_symbol;      // outer-scope symbol the capture refers to
     SourceLocation loc;         // first reference site, for error attribution
+    // Expression evaluated in the lambda's *enclosing* scope to obtain the
+    // capture's value at construction time. For lambdas captured directly from
+    // a containing function/block, this is `IdentifierExpr(name)`. For nested
+    // closures where the variable lives further out, it's
+    // `ExprGet(IdentifierExpr("__env"), name)` accessing the enclosing
+    // lambda's env.
+    Expr* source_expr;
 };
 
 // Lambda expression:

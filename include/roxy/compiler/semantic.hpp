@@ -275,8 +275,10 @@ private:
     // Active lambda-body capture context. Pushed when entering analyze_lambda_expr,
     // popped on exit. analyze_identifier_expr inspects the topmost context to detect
     // captures (the symbol's defining scope sits past a ScopeKind::Lambda boundary).
+    // For nested closures, multiple contexts are stacked (innermost on top).
     struct LambdaCaptureContext {
         Scope* boundary_scope;                       // the ScopeKind::Lambda for this lambda
+        Type* env_struct_type;                       // the env struct (for cross-context __env typing)
         Vector<CaptureInfo> captures;                // ordered, env-field order
         tsl::robin_map<Symbol*, u32> by_symbol;      // dedup + index lookup
     };

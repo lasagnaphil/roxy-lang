@@ -338,14 +338,89 @@ TEST_CASE("E2E - Closure: function references") {
     }
 }
 
+TEST_CASE("E2E - Closure: nested closures") {
+    SUBCASE("Inner captures outer's parameter (make_adder)") {
+        const char* source = R"(
+            fun make_adder(x: i32): fun(i32) -> i32 {
+                return fun(y: i32): i32 => x + y;
+            }
+            fun main() {
+                var add5 = make_adder(5);
+                print(f"{add5(3)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "8\n");
+    }
+
+    SUBCASE("Curried two-level closure") {
+        const char* source = R"(
+            fun make_curried(): fun(i32) -> fun(i32) -> i32 {
+                return fun(x: i32): fun(i32) -> i32 {
+                    return fun(y: i32): i32 => x + y;
+                };
+            }
+            fun main() {
+                var c = make_curried();
+                print(f"{c(10)(20)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "30\n");
+    }
+
+    SUBCASE("Three-level nesting with transitive capture") {
+        // n is captured by all three lambdas; the innermost reads it through
+        // a chain of __env field accesses (innermost env <- middle env <- outer env <- main local).
+        const char* source = R"(
+            fun main() {
+                var n: i32 = 100;
+                var f = fun(): fun(i32) -> fun(i32) -> i32 {
+                    return fun(a: i32): fun(i32) -> i32 {
+                        return fun(b: i32): i32 => n + a + b;
+                    };
+                };
+                print(f"{f()(1)(2)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "103\n");
+    }
+
+    SUBCASE("Inner captures local from outer's body, not parameter") {
+        const char* source = R"(
+            fun main() {
+                var seed: i32 = 7;
+                var make = fun(): fun(i32) -> i32 {
+                    return fun(x: i32): i32 => seed * x;
+                };
+                var triple_seed = make();
+                print(f"{triple_seed(3)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "21\n");
+    }
+}
+
 TEST_CASE("E2E - Closure: rejects unsupported features cleanly") {
     BumpAllocator allocator(65536);
 
-    SUBCASE("Nested closures (deferred to follow-up)") {
+    SUBCASE("Transitive [move] capture (deferred to follow-up)") {
+        // [move c] in a nested lambda would force the outer to also move c,
+        // leaving it unable to use c. That coordination isn't implemented yet.
         const char* source = R"(
+            struct Counter {
+                value: i32 = 0;
+            }
             fun main() {
+                var c: uniq Counter = uniq Counter { value = 7 };
                 var f = fun(): fun() -> i32 {
-                    return fun(): i32 => 1;
+                    return fun[move c](): i32 => c.value;
                 };
             }
         )";
