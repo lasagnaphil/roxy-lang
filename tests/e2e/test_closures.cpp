@@ -574,20 +574,100 @@ TEST_CASE("E2E - Closure: self capture compile-time rejections") {
         CHECK(module == nullptr);
     }
 
-    SUBCASE("[copy self] in nested lambda inside method (deferred)") {
+}
+
+TEST_CASE("E2E - Closure: nested self capture") {
+    SUBCASE("Nested [copy self] on copyable + uniq receiver") {
+        // Outer takes implicit ref-self (heap check passes for uniq); inner's
+        // [copy self] reads via outer's __env.__self and snapshots into its
+        // own env field (value Vec2).
+        const char* source = R"(
+            struct Vec2 {
+                x: i32 = 0;
+                y: i32 = 0;
+            }
+            fun Vec2.factory(): fun() -> fun() -> i32 {
+                return fun(): fun() -> i32 {
+                    return fun[copy self](): i32 => self.x + self.y;
+                };
+            }
+            fun main() {
+                var v: uniq Vec2 = uniq Vec2 { x = 3, y = 4 };
+                var f = v.factory();
+                print(f"{f()()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "7\n");
+    }
+
+    SUBCASE("Nested [weak self] on noncopyable") {
+        const char* source = R"(
+            struct Counter {
+                value: i32 = 0;
+            }
+            fun delete Counter() {}
+            fun Counter.factory(): fun() -> fun() -> i32 {
+                return fun(): fun() -> i32 {
+                    return fun[weak self](): i32 => self.value;
+                };
+            }
+            fun main() {
+                var c: uniq Counter = uniq Counter { value = 99 };
+                var f = c.factory();
+                print(f"{f()()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "99\n");
+    }
+
+    SUBCASE("Nested implicit ref-self propagates through outer chain") {
+        // Innermost references `self`; analyze_this_expr propagates ref-self
+        // implicitly through every enclosing lambda's env so the chain works.
+        const char* source = R"(
+            struct Counter {
+                value: i32 = 0;
+            }
+            fun delete Counter() {}
+            fun Counter.factory(): fun() -> fun() -> i32 {
+                return fun(): fun() -> i32 {
+                    return fun(): i32 => self.value;
+                };
+            }
+            fun main() {
+                var c: uniq Counter = uniq Counter { value = 21 };
+                var f = c.factory();
+                print(f"{f()()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "21\n");
+    }
+
+    SUBCASE("Nested [copy self] on copyable + stack receiver still traps") {
+        // Outer's implicit ref-self capture has needs_heap_check = true; on
+        // a stack receiver the runtime trap fires, even though the inner
+        // wants snapshot semantics. Use uniq receiver to opt into the chain.
         const char* source = R"(
             struct V {
                 x: i32 = 0;
             }
-            fun V.outer(): fun() -> fun() -> i32 {
+            fun V.factory(): fun() -> fun() -> i32 {
                 return fun(): fun() -> i32 {
                     return fun[copy self](): i32 => self.x;
                 };
             }
-            fun main() {}
+            fun main() {
+                var v: V = V { x = 7 };
+                var f = v.factory();
+            }
         )";
-        BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
     }
 }
 

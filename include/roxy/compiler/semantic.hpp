@@ -199,6 +199,13 @@ private:
     Type* analyze_string_interp_expr(Expr* expr);
     Type* analyze_lambda_expr(Expr* expr);
 
+    // Recursively populates implicit ref-self captures in lambda contexts
+    // 0..target_idx (inclusive). Outermost reads `self` directly via ExprThis;
+    // every inner one reads via ExprGet(__env, __self) on the next-outer env.
+    // Idempotent (skips contexts that already have has_self_capture set).
+    void ensure_self_captured_through(u32 target_idx, Type* struct_type,
+                                      SourceLocation loc);
+
     // Integer literal coercion: concretizes IntLiteral expressions to a target integer type
     void coerce_int_literal(Expr* expr, Type* target);
 
