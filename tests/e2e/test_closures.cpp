@@ -692,3 +692,242 @@ TEST_CASE("E2E - Closure: rejects unsupported features cleanly") {
         CHECK(module == nullptr);
     }
 }
+
+TEST_CASE("E2E - Closure: edge cases") {
+    SUBCASE("Closure inside for-loop captures fresh i each iteration") {
+        // Each iteration creates a new closure whose `i` capture is the
+        // current loop value (by-value semantic — JS-style "all closures
+        // share the final i" trap doesn't happen here).
+        const char* source = R"(
+            fun main() {
+                var fs: List<fun() -> i32> = List<fun() -> i32>();
+                for (var i: i32 = 0; i < 5; i = i + 1) {
+                    fs.push(fun(): i32 => i);
+                }
+                var result: i32 = 0;
+                for (var j: i32 = 0; j < 5; j = j + 1) {
+                    result = result + fs[j]();
+                }
+                print(f"{result}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n");  // 0+1+2+3+4
+    }
+
+    SUBCASE("Closure stored in struct field (callable via field access)") {
+        // `obj.field()` where field is `fun(...)` is an indirect call, not a
+        // method dispatch. (Regression: was previously mangled as a method
+        // and failed at lowering.)
+        const char* source = R"(
+            struct Holder {
+                callback: fun(i32) -> i32;
+            }
+            fun main() {
+                var h: uniq Holder = uniq Holder {
+                    callback = fun(x: i32): i32 => x + 1
+                };
+                print(f"{h.callback(41)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
+
+    SUBCASE("Closure stored in struct field with captured locals") {
+        const char* source = R"(
+            struct Adder {
+                op: fun(i32) -> i32;
+            }
+            fun main() {
+                var n: i32 = 100;
+                var a: uniq Adder = uniq Adder {
+                    op = fun(x: i32): i32 => x + n
+                };
+                print(f"{a.op(5)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "105\n");
+    }
+
+    SUBCASE("Closures stored in List, indexed and called") {
+        const char* source = R"(
+            fun main() {
+                var fs: List<fun(i32) -> i32> = List<fun(i32) -> i32>();
+                fs.push(fun(x: i32): i32 => x + 1);
+                fs.push(fun(x: i32): i32 => x * 2);
+                print(f"{fs[0](10)} {fs[1](10)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "11 20\n");
+    }
+
+    SUBCASE("Closure capturing other closures via [move]") {
+        // `combine` consumes both `inc` and `dbl` and threads them through.
+        const char* source = R"(
+            fun main() {
+                var inc = fun(x: i32): i32 => x + 1;
+                var dbl = fun(x: i32): i32 => x * 2;
+                var combine = fun[move inc, move dbl](x: i32): i32 => dbl(inc(x));
+                print(f"{combine(5)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "12\n");  // (5+1)*2
+    }
+
+    SUBCASE("Closure mutates shared state via captured ref") {
+        // Captured `r: ref Counter` aliases `c`; the closure can mutate the
+        // underlying object and the change is visible to the caller.
+        const char* source = R"(
+            struct Counter {
+                value: i32 = 0;
+            }
+            fun delete Counter() {}
+            fun main() {
+                var c: uniq Counter = uniq Counter { value = 0 };
+                var r: ref Counter = c;
+                var bump = fun(): i32 {
+                    r.value = r.value + 1;
+                    return r.value;
+                };
+                print(f"{bump()}");
+                print(f"{bump()}");
+                print(f"{c.value}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n2\n");
+    }
+
+    SUBCASE("Closure with block body, locals, and explicit return") {
+        const char* source = R"(
+            fun main() {
+                var f = fun(x: i32): i32 {
+                    var doubled: i32 = x * 2;
+                    var plus_one: i32 = doubled + 1;
+                    return plus_one;
+                };
+                print(f"{f(10)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "21\n");
+    }
+
+    SUBCASE("Closure body uses try/catch") {
+        const char* source = R"(
+            struct OutOfBounds {
+                idx: i32;
+            }
+            fun OutOfBounds.message(): string for Exception {
+                return f"oob: {self.idx}";
+            }
+            fun main() {
+                var f = fun(idx: i32): i32 {
+                    try {
+                        if (idx < 0) {
+                            throw OutOfBounds { idx = idx };
+                        }
+                        return idx * 10;
+                    } catch (e: OutOfBounds) {
+                        return -1;
+                    }
+                };
+                print(f"{f(5)}");
+                print(f"{f(-3)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "50\n-1\n");
+    }
+
+    SUBCASE("Reassigning a closure variable") {
+        const char* source = R"(
+            fun main() {
+                var f = fun(x: i32): i32 => x + 1;
+                print(f"{f(10)}");
+                f = fun(x: i32): i32 => x * 100;
+                print(f"{f(10)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "11\n1000\n");
+    }
+
+    SUBCASE("Self capture mixed with ordinary parameter capture") {
+        const char* source = R"(
+            struct S {
+                base: i32 = 0;
+            }
+            fun delete S() {}
+            fun S.bump_by(amount: i32): fun() -> i32 {
+                return fun(): i32 => self.base + amount;
+            }
+            fun main() {
+                var s: uniq S = uniq S { base = 100 };
+                var f = s.bump_by(7);
+                print(f"{f()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "107\n");
+    }
+
+    SUBCASE("Self capture calls inherited method") {
+        // Closure captures self; body invokes a method defined on the parent
+        // struct — exercises method dispatch through the captured ref.
+        const char* source = R"(
+            struct Base {
+                x: i32 = 0;
+            }
+            fun delete Base() {}
+            fun Base.value(): i32 { return self.x; }
+
+            struct Derived : Base {}
+            fun delete Derived() {}
+
+            fun Derived.make_getter(): fun() -> i32 {
+                return fun(): i32 => self.value();
+            }
+
+            fun main() {
+                var d: uniq Derived = uniq Derived { x = 7 };
+                var g = d.make_getter();
+                print(f"{g()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "7\n");
+    }
+
+    SUBCASE("Void no-op closure and void closure that captures a string") {
+        const char* source = R"(
+            fun main() {
+                var msg: string = "hello";
+                var noop = fun() {};
+                var greet = fun() {
+                    print(msg);
+                };
+                noop();
+                greet();
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "hello\n");
+    }
+}

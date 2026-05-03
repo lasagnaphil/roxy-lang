@@ -3596,6 +3596,22 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
 
                 result = emit_call(method_name, method_args, expr->resolved_type);
             }
+            // Check for "field of function type": `obj.callback(args)` where
+            // callback is a struct field whose type is `fun(...) -> R`. This
+            // must be checked before method dispatch since the field name
+            // could collide with a method name (and we want the field).
+            else if (struct_type && struct_type->is_struct() &&
+                     struct_type->struct_info.find_field(get_expr.name) &&
+                     struct_type->struct_info.find_field(get_expr.name)->type &&
+                     struct_type->struct_info.find_field(get_expr.name)->type->is_function()) {
+                // Read the closure value from the field, then CALL_INDIRECT.
+                ValueId closure_val = gen_expr(call_expr.callee);
+                IRInst* call_inst = emit_inst(IROp::CallIndirect, expr->resolved_type);
+                if (!call_inst) return ValueId::invalid();
+                call_inst->call_indirect.callee = closure_val;
+                call_inst->call_indirect.args = final_args;
+                result = call_inst->result;
+            }
             // Check for List or Map method call (builtin native methods)
             else if (struct_type && struct_type->is_container()) {
                 StringView native_name = call_expr.mangled_name;
