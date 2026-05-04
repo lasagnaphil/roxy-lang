@@ -3820,15 +3820,30 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
 
     Symbol* sym = m_symbols.lookup(id.name);
     if (!sym) {
-        // Generic template name in value position: defer resolution to the
-        // surrounding coerce site (var init / arg passing / return / struct
-        // field). The expr is marked; if no coercion fires by use-time, the
-        // user gets a clear "no type context" error from the call/use site.
+        // Explicit-type-args generic ref: `identity<i32>`. The parser
+        // attached the type args; instantiate immediately, no inference.
+        if (id.generic_args.size() > 0
+            && m_type_env.generics().is_generic_fun(id.name)) {
+            return resolve_explicit_generic_template_ref(expr);
+        }
+        // Bare generic template name (no type args) in value position: defer
+        // resolution to the surrounding coerce site (var init / arg passing /
+        // return / struct field). The expr is marked; if no coercion fires by
+        // use-time, the user gets a clear "no type context" error from the
+        // call/use site.
         if (m_type_env.generics().is_generic_fun(id.name)) {
             id.is_generic_template_ref = true;
             // Use error_type as a sentinel "unresolved"; coerce_generic_template_ref
             // overwrites resolved_type with the concrete function type when it
             // fires.
+            return m_types.error_type();
+        }
+        // Helpful error for type names parsed as value-position generic refs.
+        if (id.generic_args.size() > 0
+            && m_type_env.generics().is_generic_struct(id.name)) {
+            error_fmt(expr->loc,
+                "'{}' is a struct type, not a value; cannot reference it with "
+                "type arguments in expression position", id.name);
             return m_types.error_type();
         }
         error_fmt(expr->loc, "undefined identifier '{}'", id.name);
@@ -6451,6 +6466,56 @@ bool SemanticAnalyzer::coerce_generic_template_ref(Expr* expr, Type* expected) {
     id.is_generic_template_ref = false;
     expr->resolved_type = expected;
     return true;
+}
+
+Type* SemanticAnalyzer::resolve_explicit_generic_template_ref(Expr* expr) {
+    IdentifierExpr& id = expr->identifier;
+    Decl* template_decl = m_type_env.generics().get_generic_fun_decl(id.name);
+    if (!template_decl || template_decl->kind != AstKind::DeclFun) {
+        error_fmt(expr->loc, "internal error: missing template decl for '{}'", id.name);
+        return m_types.error_type();
+    }
+    FunDecl& template_fun_decl = template_decl->fun_decl;
+    if (id.generic_args.size() != template_fun_decl.type_params.size()) {
+        error_fmt(expr->loc,
+            "generic function '{}' expects {} type arguments but got {}",
+            id.name, template_fun_decl.type_params.size(), id.generic_args.size());
+        return m_types.error_type();
+    }
+
+    Vector<Type*> type_arg_types;
+    type_arg_types.reserve(id.generic_args.size());
+    for (auto* arg_expr : id.generic_args) {
+        Type* arg_type = resolve_type_expr(arg_expr);
+        if (!arg_type || arg_type->is_error()) return m_types.error_type();
+        type_arg_types.push_back(arg_type);
+    }
+
+    Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
+    const ResolvedTypeParams* bounds = m_type_env.generics().get_fun_bounds(id.name);
+    if (!check_type_arg_bounds(id.name, type_args, bounds, expr->loc)) {
+        return m_types.error_type();
+    }
+
+    StringView mangled = m_type_env.generics().instantiate_fun(id.name, type_args);
+    id.mangled_name = mangled;
+
+    // Build the instantiated function type from the post-substitution decl,
+    // matching what gen_function_ref reads off expr->resolved_type.
+    GenericFunInstance* inst = m_type_env.generics().find_fun_instance(mangled);
+    FunDecl& inst_decl = inst->instantiated_decl->fun_decl;
+    Vector<Type*> param_types;
+    param_types.reserve(inst_decl.params.size());
+    for (auto& p : inst_decl.params) {
+        Type* pt = resolve_type_expr(p.type);
+        param_types.push_back(pt ? pt : m_types.error_type());
+    }
+    Type* ret_type = inst_decl.return_type
+        ? resolve_type_expr(inst_decl.return_type) : m_types.void_type();
+    Type* fn_type = m_types.function_type(
+        m_allocator.alloc_span(param_types), ret_type);
+    expr->resolved_type = fn_type;
+    return fn_type;
 }
 
 bool SemanticAnalyzer::check_numeric(Type* type, SourceLocation loc) {

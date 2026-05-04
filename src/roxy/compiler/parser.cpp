@@ -850,6 +850,17 @@ Expr* Parser::primary() {
                     expr->call.is_heap = false;
                     return expr;
                 }
+
+                // Value-position generic reference: `identity<i32>` followed
+                // by `;` `,` `)` `]` `}` `:` etc. Carry type args on the
+                // identifier expression; semantic analysis instantiates the
+                // template directly with these types.
+                Expr* expr = alloc<Expr>();
+                expr->kind = AstKind::ExprIdentifier;
+                expr->loc = name_token.loc;
+                expr->identifier.name = name_token.text();
+                expr->identifier.generic_args = type_args;
+                return expr;
             }
             // Fall through to non-generic paths
         }
@@ -2237,13 +2248,24 @@ Span<TypeExpr*> Parser::try_parse_generic_args() {
         return {};
     }
 
-    // Check if followed by '(' or '{' - confirms this is generic args, not comparison
-    if (check(TokenKind::LeftParen) || check(TokenKind::LeftBrace) || check(TokenKind::Dot)) {
-        // Commit - return the parsed type args
+    // Commit if the follow-token unambiguously confirms this was a generic-args
+    // list (and not a comparison chain).
+    //   - `(`, `{`, `.`           — generic call / struct lit / named ctor (existing)
+    //   - `;` `,` `)` `]` `}` `:` — value-position generic ref. None of these
+    //     can continue a comparison chain (`(a<b>) <op> X` would need `<op>` to
+    //     be a binary operator and `X` to be an expression — none of these
+    //     follow-tokens satisfy that), so committing is safe. The classic
+    //     `f(a<b, c>5)` ambiguity stays correct because `>` is followed by `5`,
+    //     which isn't in this set, so the trial parse falls back to comparison.
+    if (check(TokenKind::LeftParen) || check(TokenKind::LeftBrace) || check(TokenKind::Dot)
+        || check(TokenKind::Semicolon) || check(TokenKind::Comma)
+        || check(TokenKind::RightParen) || check(TokenKind::RightBracket)
+        || check(TokenKind::RightBrace) || check(TokenKind::Colon)) {
         return alloc_span(args);
     }
 
-    // Not followed by (, {, or . - this was a comparison, backtrack
+    // Anything else (binary operators, identifiers, literals): treat as
+    // comparison and backtrack.
     restore_state(saved);
     return {};
 }

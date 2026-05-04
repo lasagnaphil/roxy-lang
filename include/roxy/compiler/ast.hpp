@@ -177,10 +177,15 @@ struct IdentifierExpr {
     // the expression and defers to coerce_generic_template_ref at the
     // assignment site (var init, arg passing, return, struct field).
     bool is_generic_template_ref;
-    // Set after generic-template-ref coercion to the monomorphized name
-    // (e.g. "identity$i32"). The IR builder routes through gen_function_ref
-    // with this name as the call target.
+    // Set after generic-template-ref coercion (or by the parser for explicit
+    // `identity<i32>` syntax) to the monomorphized name (e.g. "identity$i32").
+    // The IR builder routes through gen_function_ref with this name as the
+    // call target.
     StringView mangled_name;
+    // Explicit type arguments parsed in value position: `identity<i32>`. When
+    // non-empty, semantic analysis instantiates the template with these types
+    // directly (no inference from surrounding context).
+    Span<TypeExpr*> generic_args;
 };
 
 // Unary expression: -x, !x, ~x

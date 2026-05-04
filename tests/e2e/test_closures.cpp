@@ -425,6 +425,73 @@ TEST_CASE("E2E - Closure: function references") {
         BCModule* module = compile(allocator, source);
         CHECK(module == nullptr);
     }
+
+    SUBCASE("Explicit type-args in value position: identity<i32>") {
+        // Parser commits the type-args list because `;` is in the safe
+        // follow-token set. No inference needed; semantic instantiates
+        // immediately with the explicit i32.
+        const char* source = R"(
+            fun identity<T>(value: T): T { return value; }
+            fun main() {
+                var f = identity<i32>;
+                print(f"{f(42)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
+
+    SUBCASE("Explicit type-args passed as call argument") {
+        const char* source = R"(
+            fun identity<T>(value: T): T { return value; }
+            fun apply(f: fun(i32) -> i32, x: i32): i32 { return f(x); }
+            fun main() {
+                print(f"{apply(identity<i32>, 21)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "21\n");
+    }
+
+    SUBCASE("Comparison still parses correctly with new commit set") {
+        // `a < b, c > x` inside call-args must still parse as TWO comparison
+        // expressions, not a generic ref. The trial parse is rejected because
+        // `>` is followed by `x` (an identifier), not a commit-token.
+        const char* source = R"(
+            fun choose(a: bool, b: bool): bool { return a || b; }
+            fun main() {
+                var a: i32 = 1;
+                var b: i32 = 2;
+                var c: i32 = 3;
+                var x: i32 = 5;
+                if (choose(a < b, c > x)) {
+                    print("ok");
+                } else {
+                    print("nope");
+                }
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "ok\n");
+    }
+
+    SUBCASE("Struct template in value position rejected with clear error") {
+        // Box<i32> followed by `;` would commit type-args; semantic rejects
+        // with a message that names the struct rather than the generic
+        // "undefined identifier".
+        const char* source = R"(
+            struct Box<T> { value: T; }
+            fun main() {
+                var x = Box<i32>;
+            }
+        )";
+        BumpAllocator allocator(16384);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
 }
 
 TEST_CASE("E2E - Closure: nested closures") {

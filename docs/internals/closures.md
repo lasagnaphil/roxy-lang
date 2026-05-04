@@ -27,8 +27,7 @@ Implementation is incremental:
   the outer's heap check still fires, so nested self-capture in copyable
   structs requires a `uniq` receiver.
 - **Deferred (follow-up commits)** — transitive `[move]` captures across nested
-  lambdas; cross-module generic-template function references; explicit
-  `identity<i32>` value-position syntax (inferred form is supported).
+  lambdas; cross-module generic-template function references.
 
   **Dropped (not implementing)** — `[move self]`. Would require receiver-kind
   annotations on methods (`fun uniq T.method(...)`) plus consumption-tracking
@@ -693,18 +692,34 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
   empty captures — calls go through the same `CALL_INDIRECT` path as
   ordinary closures.
 
-  **Generic templates** require monomorphization at the reference site. Since
-  there's no syntax for `identity<i32>` as a value (yet), inference relies on
-  surrounding type context: `analyze_identifier_expr` marks the identifier
-  with `is_generic_template_ref = true` and returns `error_type` as a
-  sentinel. A `coerce_generic_template_ref` helper fires at every assignment
-  site (var init with annotation, call-arg passing, return statement, struct
-  literal field) — it unifies the template's signature against the expected
-  function type via the existing `unify_type_expr` (Function-kind branch),
-  instantiates via `GenericInstantiator::instantiate_fun`, and stashes the
-  monomorphized name on the `IdentifierExpr`. The IR builder reads that
-  stashed name and routes through `gen_function_ref` with a Script-kind
-  descriptor whose target name is the (mangled) monomorphized function.
+  **Generic templates** require monomorphization at the reference site. Two
+  surface forms are supported:
+
+  - **Explicit type args**: `var f = identity<i32>;`. The parser's
+    `try_parse_generic_args` trial parse commits when `<types>` is followed
+    by a token that cannot continue a comparison chain — `; , ) ] } :` (in
+    addition to the existing `( { .` for call/struct-lit/named-ctor). The
+    classic `f(a<b, c>5)` ambiguity stays correct because `>` is followed
+    by `5` (a literal), which isn't in the commit set, so the trial parse
+    falls back to comparison. The parser stores the type args on
+    `IdentifierExpr.generic_args`; semantic analysis instantiates the
+    template directly via `resolve_explicit_generic_template_ref` (no
+    inference).
+
+  - **Inferred** (no explicit type args): `var f: fun(i32)->i32 = identity;`.
+    `analyze_identifier_expr` marks the identifier with
+    `is_generic_template_ref = true` and returns `error_type` as a sentinel.
+    A `coerce_generic_template_ref` helper fires at every assignment site
+    (var init with annotation, call-arg passing, return statement, struct
+    literal field) — it unifies the template's signature against the
+    expected function type via `unify_type_expr` (Function-kind branch),
+    instantiates via `GenericInstantiator::instantiate_fun`, and stashes the
+    monomorphized name on the `IdentifierExpr`.
+
+  Both paths converge on the same IR builder branch: when the
+  `IdentifierExpr` carries a `mangled_name`, `gen_identifier_expr` builds a
+  Script-kind `FunctionRefTarget` whose target name is the (mangled)
+  monomorphized function and routes through `gen_function_ref`.
 - **Nested closures** with implicit copy captures: `analyze_identifier_expr`
   walks every `ScopeKind::Lambda` boundary between the use site and the
   symbol's defining scope, recording the capture into each enclosing context
@@ -788,11 +803,6 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
   `var f: fun(i32) -> i32 = identity`) doesn't yet route through the
   monomorphization machinery, since the import only exposes the resolved
   symbol. Within-module generic refs work via context-driven inference.
-- **Explicit `identity<i32>` value-position syntax** — today only the
-  inferred form is wired (the parser commits `<types>` only when followed
-  by `(`, `{`, or `.`). The inferred form covers var-init annotations,
-  call-arg passing, return position, and struct-field initializers, which
-  cover the realistic uses.
 - **Generics + exception unwinding through closure boundaries** — should fall
   out naturally from the existing struct/method machinery; needs explicit test
   coverage when those scenarios become relevant.

@@ -218,6 +218,12 @@ private:
     // false if the expression is a template ref but inference failed.
     bool coerce_generic_template_ref(Expr* expr, Type* expected);
 
+    // Explicit-syntax generic ref: `identity<i32>` parsed in value position.
+    // The parser attached `generic_args` to the IdentifierExpr; this helper
+    // instantiates the template with those types (no inference), stashes the
+    // monomorphized name, and returns the resulting concrete function type.
+    Type* resolve_explicit_generic_template_ref(Expr* expr);
+
     // Type checking helpers
     bool is_assignable(Type* target, Type* source) const;
     bool check_assignable(Type* target, Type* source, SourceLocation loc);
