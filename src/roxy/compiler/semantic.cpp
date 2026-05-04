@@ -4184,30 +4184,103 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
                     entry.name);
                 return m_types.error_type();
             }
-            // Reject transitive moves.
-            if (outer_sym->defining_scope) {
-                for (Scope* sc = m_symbols.current_scope(); sc; sc = sc->parent) {
-                    if (sc == outer_sym->defining_scope) break;
-                    if (sc->kind == ScopeKind::Lambda) {
-                        error_fmt(entry.loc,
-                            "transitive move captures are not yet supported; "
-                            "'{}' lives past an enclosing lambda boundary",
-                            entry.name);
-                        return m_types.error_type();
-                    }
-                }
-            }
             if (context.by_symbol.find(outer_sym) != context.by_symbol.end()) {
                 error_fmt(entry.loc, "duplicate capture entry for '{}'", entry.name);
                 return m_types.error_type();
             }
             if (!check_not_moved(entry.name, entry.loc)) return m_types.error_type();
 
-            Expr* src = m_allocator.emplace<Expr>();
-            src->kind = AstKind::ExprIdentifier;
-            src->loc = entry.loc;
-            src->identifier.name = entry.name;
-            src->resolved_type = outer_sym->type;
+            // Walk crossed Lambda boundaries between this lambda and the
+            // symbol's defining scope. For each one, propagate a Move-mode
+            // capture so ownership flows down the chain: outermost lambda
+            // moves x from the function scope; each intermediate moves x
+            // out of its enclosing env's field; the innermost (this) lambda
+            // does the same. Mirrors the implicit-copy logic in
+            // analyze_identifier_expr but with Move mode + per-level
+            // ownership transfer.
+            Vector<u32> crossed_ctx_indices;
+            if (outer_sym->defining_scope) {
+                for (Scope* sc = m_symbols.current_scope(); sc; sc = sc->parent) {
+                    if (sc == outer_sym->defining_scope) break;
+                    if (sc->kind == ScopeKind::Lambda) {
+                        for (u32 i = 0; i < m_lambda_contexts.size(); i++) {
+                            if (m_lambda_contexts[i]->boundary_scope == sc) {
+                                crossed_ctx_indices.push_back(i);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Helper to build a source expression that reads the variable
+            // either directly from the enclosing scope (outermost) or from
+            // the next-outer lambda's env field (intermediate / innermost).
+            auto build_src_for_level = [&](i32 enclosing_ctx_idx) -> Expr* {
+                Expr* src = m_allocator.emplace<Expr>();
+                if (enclosing_ctx_idx < 0) {
+                    src->kind = AstKind::ExprIdentifier;
+                    src->loc = entry.loc;
+                    src->identifier.name = entry.name;
+                    src->resolved_type = outer_sym->type;
+                    return src;
+                }
+                LambdaCaptureContext& enclosing_ctx =
+                    *m_lambda_contexts[enclosing_ctx_idx];
+                Type* enclosing_env_ref = enclosing_ctx.env_struct_type
+                    ? m_types.ref_type(enclosing_ctx.env_struct_type)
+                    : nullptr;
+                Expr* env_id = m_allocator.emplace<Expr>();
+                env_id->kind = AstKind::ExprIdentifier;
+                env_id->loc = entry.loc;
+                env_id->identifier.name = StringView("__env", 5);
+                env_id->resolved_type = enclosing_env_ref;
+
+                src->kind = AstKind::ExprGet;
+                src->loc = entry.loc;
+                src->get.object = env_id;
+                src->get.name = entry.name;
+                src->resolved_type = outer_sym->type;
+                return src;
+            };
+
+            // Add Move captures to crossed enclosing contexts (outermost
+            // first). Each one's source reads from the next outer level.
+            for (i32 i = static_cast<i32>(crossed_ctx_indices.size()) - 1; i >= 0; i--) {
+                u32 ctx_idx = crossed_ctx_indices[i];
+                LambdaCaptureContext& ctx = *m_lambda_contexts[ctx_idx];
+                if (ctx.by_symbol.find(outer_sym) != ctx.by_symbol.end()) {
+                    error_fmt(entry.loc,
+                        "'{}' is already captured implicitly by an enclosing "
+                        "lambda; declare '[move {}]' on it (or refactor) so the "
+                        "ownership chain is consistent", entry.name, entry.name);
+                    return m_types.error_type();
+                }
+                bool is_outermost = (i == static_cast<i32>(crossed_ctx_indices.size()) - 1);
+                i32 enclosing_idx = is_outermost
+                    ? -1
+                    : static_cast<i32>(crossed_ctx_indices[i + 1]);
+                Expr* src = build_src_for_level(enclosing_idx);
+
+                u32 index = static_cast<u32>(ctx.captures.size());
+                CaptureInfo info{};
+                info.name = entry.name;
+                info.type = outer_sym->type;
+                info.mode = CaptureMode::Move;
+                info.source_symbol = outer_sym;
+                info.loc = entry.loc;
+                info.source_expr = src;
+                ctx.captures.push_back(info);
+                ctx.by_symbol[outer_sym] = index;
+            }
+
+            // This (innermost) lambda's own capture entry. Source reads from
+            // the immediate enclosing lambda's env (if any), else from the
+            // function scope directly.
+            i32 imm_enclosing_idx = crossed_ctx_indices.empty()
+                ? -1
+                : static_cast<i32>(crossed_ctx_indices[0]);
+            Expr* src = build_src_for_level(imm_enclosing_idx);
 
             u32 index = static_cast<u32>(context.captures.size());
             CaptureInfo info{};

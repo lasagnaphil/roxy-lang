@@ -26,8 +26,10 @@ Implementation is incremental:
   field (analogous to multi-boundary identifier capture). On copyable receivers
   the outer's heap check still fires, so nested self-capture in copyable
   structs requires a `uniq` receiver.
-- **Deferred (follow-up commits)** — transitive `[move]` captures across nested
-  lambdas.
+- **Deferred (follow-up commits)** — none of the closure surface remains.
+  Adjacent items (a `fun uniq T.method(...)` receiver-kind annotation;
+  generics + exception unwinding test coverage) are listed at the bottom of
+  this doc but are independent of closure capture machinery.
 
   **Dropped (not implementing)** — `[move self]`. Would require receiver-kind
   annotations on methods (`fun uniq T.method(...)`) plus consumption-tracking
@@ -802,15 +804,22 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
   users who need a closure to own a `uniq Self` can refactor to a free
   function that takes `uniq Self` and pass the value explicitly.
 
+Also done in this branch: **transitive `[move]` captures** across nested
+lambdas. `[move x]` in an inner lambda automatically propagates a
+Move-mode capture to every enclosing lambda whose boundary x crosses, so
+ownership flows step by step: function → outermost.env → ... →
+innermost.env. The user only writes `[move x]` on the level that consumes
+x; intermediate lambdas don't have to mention it. Re-invoking an outer
+lambda after its env field has been moved out by an inner construction is
+runtime-trapped via the existing slab null-check — the user should
+construct each level at most once on the move path.
+
 ### Deferred (follow-up commits)
 
 - **`fun uniq T.method(...)` receiver-kind annotation** — would let the body
   statically know the receiver is heap-only, eliding the runtime
   `AssertHeap` check for copyable structs (and unblocking nested self capture
   on copyable + stack-allocated receivers, which traps today).
-- **Transitive `[move]` captures** across nested lambdas — would force every
-  enclosing lambda to also move, leaving them unable to use the variable.
-  `analyze_lambda_expr` rejects this with a clear error today.
 - **Generics + exception unwinding through closure boundaries** — should fall
   out naturally from the existing struct/method machinery; needs explicit test
   coverage when those scenarios become relevant.

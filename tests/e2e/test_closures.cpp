@@ -827,25 +827,66 @@ TEST_CASE("E2E - Closure: nested self capture") {
     }
 }
 
-TEST_CASE("E2E - Closure: rejects unsupported features cleanly") {
-    BumpAllocator allocator(65536);
-
-    SUBCASE("Transitive [move] capture (deferred to follow-up)") {
-        // [move c] in a nested lambda would force the outer to also move c,
-        // leaving it unable to use c. That coordination isn't implemented yet.
+TEST_CASE("E2E - Closure: transitive [move] across nested lambdas") {
+    SUBCASE("Inner [move c] from a noncopyable across one outer lambda") {
+        // `c` lives in main's scope; the outer lambda doesn't reference it
+        // directly, but the inner lambda's [move c] propagates a Move
+        // capture through the outer so ownership flows: main → outer.env
+        // → inner.env.
         const char* source = R"(
-            struct Counter {
-                value: i32 = 0;
-            }
+            struct Counter { value: i32 = 0; }
+            fun delete Counter() {}
             fun main() {
                 var c: uniq Counter = uniq Counter { value = 7 };
-                var f = fun(): fun() -> i32 {
+                var make = fun(): fun() -> i32 {
                     return fun[move c](): i32 => c.value;
                 };
+                var inner = make();
+                print(f"{inner()}");
             }
         )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "7\n");
+    }
+
+    SUBCASE("Use-after-move in the enclosing scope is still rejected") {
+        const char* source = R"(
+            struct Counter { value: i32 = 0; }
+            fun delete Counter() {}
+            fun main() {
+                var c: uniq Counter = uniq Counter { value = 7 };
+                var make = fun(): fun() -> i32 {
+                    return fun[move c](): i32 => c.value;
+                };
+                var inner = make();
+                var leak: i32 = c.value;  // use-after-move
+            }
+        )";
+        BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
         CHECK(module == nullptr);
+    }
+
+    SUBCASE("Transitive [move] across two outer lambdas") {
+        const char* source = R"(
+            struct Counter { value: i32 = 0; }
+            fun delete Counter() {}
+            fun main() {
+                var c: uniq Counter = uniq Counter { value = 99 };
+                var lvl0 = fun(): fun() -> fun() -> i32 {
+                    return fun(): fun() -> i32 {
+                        return fun[move c](): i32 => c.value;
+                    };
+                };
+                var lvl1 = lvl0();
+                var inner = lvl1();
+                print(f"{inner()}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "99\n");
     }
 }
 
