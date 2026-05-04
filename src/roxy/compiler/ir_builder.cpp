@@ -162,12 +162,21 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
 
     if (m_has_error) return nullptr;
 
-    // Process generic function instances
+    // Process generic function instances. Each instance is emitted from its
+    // template's defining module only (so the body resolves against that
+    // module's symbol table), avoiding both duplicate emission across
+    // modules and cross-module symbol-resolution failures. Instances whose
+    // template_module is empty (e.g. before the cross-module pipeline ran,
+    // or in single-module compilations) fall through to the current module.
     for (auto* instance : m_type_env.generics().all_fun_instances()) {
-        if (instance->is_analyzed && instance->instantiated_decl) {
-            IRFunction* func = build_function(&instance->instantiated_decl->fun_decl);
-            module->functions.push_back(func);
-        }
+        if (!instance->is_analyzed || !instance->instantiated_decl) continue;
+        bool owns =
+            instance->template_module.empty() ||
+            m_module_name.empty() ||
+            instance->template_module == m_module_name;
+        if (!owns) continue;
+        IRFunction* func = build_function(&instance->instantiated_decl->fun_decl);
+        module->functions.push_back(func);
     }
 
     if (m_has_error) return nullptr;

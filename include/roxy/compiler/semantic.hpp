@@ -70,6 +70,18 @@ public:
     // Uses the already-populated TypeEnv for type lookups
     void analyze_single_function(Decl* decl);
 
+    // Set the program context (used by the post-pass below to know the
+    // analyzer's module name without re-running body analysis).
+    void set_program(Program* program);
+
+    // Analyze pending generic-function instances whose template lives in this
+    // analyzer's module. Used by the compiler's post-pass to handle
+    // cross-module instantiations (e.g. module B uses module A's `identity<T>`):
+    // each module's analyzer drains the instances it owns, ensuring the body
+    // resolves against the right symbol table. Returns the number of
+    // instances drained (the rest are re-queued for other modules).
+    u32 analyze_owned_pending_fun_instances();
+
     // LSP mode: more tolerant of errors, handles null AST children gracefully
     void set_lsp_mode(bool enable);
     bool lsp_mode() const;

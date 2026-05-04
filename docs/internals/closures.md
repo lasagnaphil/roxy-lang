@@ -27,7 +27,7 @@ Implementation is incremental:
   the outer's heap check still fires, so nested self-capture in copyable
   structs requires a `uniq` receiver.
 - **Deferred (follow-up commits)** — transitive `[move]` captures across nested
-  lambdas; cross-module generic-template function references.
+  lambdas.
 
   **Dropped (not implementing)** — `[move self]`. Would require receiver-kind
   annotations on methods (`fun uniq T.method(...)`) plus consumption-tracking
@@ -720,6 +720,19 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
   `IdentifierExpr` carries a `mangled_name`, `gen_identifier_expr` builds a
   Script-kind `FunctionRefTarget` whose target name is the (mangled)
   monomorphized function and routes through `gen_function_ref`.
+
+  **Cross-module instantiation** works because the `GenericInstantiator` is
+  shared across all modules via `TypeEnv`. Each template's *defining*
+  module is recorded at registration time
+  (`GenericFunInstance::template_module`); the body's semantic analysis and
+  IR emission both run in that module's context, regardless of which module
+  triggered the instantiation. Concretely: each module's analyzer drains
+  only pending instances it owns; cross-module instances are sidelined and
+  promoted by `Compiler::analyze_all`'s post-pass, which reuses each
+  module's persisted SymbolTable to drain the appropriate ones. Each
+  module's IR build similarly emits IR only for instances whose
+  `template_module` matches — avoiding duplicates and ensuring body
+  identifiers resolve in the right namespace.
 - **Nested closures** with implicit copy captures: `analyze_identifier_expr`
   walks every `ScopeKind::Lambda` boundary between the use site and the
   symbol's defining scope, recording the capture into each enclosing context
@@ -798,11 +811,6 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
 - **Transitive `[move]` captures** across nested lambdas — would force every
   enclosing lambda to also move, leaving them unable to use the variable.
   `analyze_lambda_expr` rejects this with a clear error today.
-- **Cross-module generic-template references** — referencing a generic
-  template imported from another module (`from mod import identity` then
-  `var f: fun(i32) -> i32 = identity`) doesn't yet route through the
-  monomorphization machinery, since the import only exposes the resolved
-  symbol. Within-module generic refs work via context-driven inference.
 - **Generics + exception unwinding through closure boundaries** — should fall
   out naturally from the existing struct/method machinery; needs explicit test
   coverage when those scenarios become relevant.

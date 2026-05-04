@@ -786,6 +786,59 @@ TEST_CASE("E2E - Module: imported script function as function reference") {
     delete module;
 }
 
+TEST_CASE("E2E - Module: cross-module generic function call and reference") {
+    // A generic template defined in module A and called/referenced from
+    // module B. Body analysis and IR emission for the instance must run
+    // against A's symbol table, since the body may reference helpers
+    // private to A (here `helper`).
+    BumpAllocator allocator(16384);
+
+    const char* a_source = R"(
+        fun helper(x: i32): i32 { return x + 100; }
+
+        pub fun identity<T>(value: T): T { return value; }
+
+        pub fun add_const<T>(x: i32): i32 {
+            return helper(x);
+        }
+    )";
+
+    const char* main_source = R"(
+        from a import identity, add_const;
+
+        fun apply(f: fun(i32) -> i32, x: i32): i32 { return f(x); }
+
+        fun main(): i32 {
+            // Direct cross-module generic call
+            var direct: i32 = identity<i32>(7);
+            // Inferred function-reference (var-init annotation)
+            var f1: fun(i32) -> i32 = identity;
+            // Explicit function-reference (value-position type-args)
+            var f2 = add_const<i32>;
+            return direct + f1(3) + f2(5) + apply(identity, 1);
+            // 7 + 3 + (5+100) + 1 = 116
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("a", a_source, static_cast<u32>(strlen(a_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+    REQUIRE(vm_call(&vm, "main", {}));
+
+    Value result = vm_get_result(&vm);
+    CHECK(result.as_int == 116);
+
+    vm_destroy(&vm);
+    delete module;
+}
+
 TEST_CASE("E2E - Module: error on unknown nested module") {
     BumpAllocator allocator(16384);
 

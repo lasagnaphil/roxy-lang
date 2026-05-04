@@ -32,6 +32,11 @@ struct GenericFunInstance {
     TypeSubstitution substitution;
     Decl* instantiated_decl;         // Cloned + substituted AST
     bool is_analyzed;
+    // Module that defined the template. Owns body analysis and IR emission
+    // for this instance — references inside the body resolve against this
+    // module's symbol table, not the module that triggered the
+    // instantiation.
+    StringView template_module;
 };
 
 // A concrete instantiation of a generic struct
@@ -53,8 +58,11 @@ public:
     explicit GenericInstantiator(BumpAllocator& allocator, TypeCache& types);
 
     // Register generic templates
-    void register_generic_fun(StringView name, Decl* decl);
+    void register_generic_fun(StringView name, Decl* decl, StringView module_name = {});
     void register_generic_struct(StringView name, Decl* decl);
+
+    // Look up the module that registered this template (empty if unknown).
+    StringView get_fun_template_module(StringView name) const;
 
     // Register/query external method templates for generic structs
     void register_generic_struct_method(StringView struct_name, Decl* method_decl);
@@ -83,6 +91,15 @@ public:
     // Pending instances that need semantic analysis
     bool has_pending_funs() const;
     Vector<GenericFunInstance*> take_pending_funs();
+
+    // Sideline an instance whose template lives in another module — the
+    // current analyzer's per-module worklist would loop forever on it. The
+    // compiler's post-pass calls promote_cross_module_funs to move them back
+    // into the pending queue, then runs each module's analyzer to drain its
+    // own.
+    void sideline_cross_module_fun(GenericFunInstance* inst);
+    void promote_cross_module_funs();
+    bool has_cross_module_funs() const;
 
     bool has_pending_structs() const;
     Vector<GenericStructInstance*> take_pending_structs();
@@ -140,6 +157,10 @@ private:
     // Generic function templates
     tsl::robin_map<StringView, Decl*> m_generic_funs;
 
+    // Defining module for each generic function template (cross-module
+    // ownership — body analysis and IR emission belong to this module).
+    tsl::robin_map<StringView, StringView> m_fun_template_modules;
+
     // Generic struct templates
     tsl::robin_map<StringView, Decl*> m_generic_structs;
 
@@ -159,6 +180,11 @@ private:
     // Pending instances that need analysis
     Vector<GenericFunInstance*> m_pending_funs;
     Vector<GenericStructInstance*> m_pending_structs;
+
+    // Sidelined instances whose template belongs to a different module than
+    // the analyzer that drained them. The compiler's post-pass moves these
+    // back into m_pending_funs once the per-module worklists finish.
+    Vector<GenericFunInstance*> m_cross_module_funs;
 
     // Cache: mangled_name -> instance (to avoid duplicate instantiation)
     tsl::robin_map<StringView, GenericFunInstance*> m_fun_instance_cache;

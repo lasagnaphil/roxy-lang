@@ -249,6 +249,46 @@ bool Compiler::analyze_all() {
         }
     }
 
+    // Cross-module generic-fun instances: a use site in module B may have
+    // queued an instance whose template was registered by module A. Each
+    // module's own analyze() left such instances in the global pending queue
+    // because the body needs to resolve against A's symbol table. Drain them
+    // now by re-running each module's analyzer (cheap — it just holds
+    // references) and asking it to handle only its own templates' instances.
+    // Iterate to a fixed point: an A-owned instance's body might instantiate
+    // a B-owned template that nobody had referenced before.
+    while (m_type_env.generics().has_cross_module_funs()
+           || m_type_env.generics().has_pending_funs()) {
+        // Promote any sidelined cross-module instances back into the pending
+        // queue so the per-module analyzers below can pick them up.
+        m_type_env.generics().promote_cross_module_funs();
+
+        u32 total_drained = 0;
+        for (u32 idx : m_compile_order) {
+            if (!m_type_env.generics().has_pending_funs()) break;
+            const SourceModule& src = m_sources[idx];
+            Program* program = m_module_states[idx].program;
+            SymbolTable* symbols = m_module_states[idx].symbols;
+            if (!program || !symbols) continue;
+
+            // Fresh analyzer using this module's persisted SymbolTable. It
+            // shares the global TypeEnv (with the pending queue) and only
+            // drains instances whose template belongs to this module.
+            SemanticAnalyzer analyzer(m_allocator, m_type_env, m_module_registry, *symbols);
+            analyzer.set_program(program);  // seeds m_program for module-name lookup
+            total_drained += analyzer.analyze_owned_pending_fun_instances();
+            if (analyzer.has_errors()) {
+                for (const auto& err : analyzer.errors()) {
+                    add_error_fmt("Semantic error in module '{}' at line {}: {}",
+                                  src.name, err.loc.line, err.message);
+                }
+                return false;
+            }
+        }
+        // No module owned any of the pending — break to avoid infinite loop.
+        if (total_drained == 0) break;
+    }
+
     return true;
 }
 

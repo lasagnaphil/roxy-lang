@@ -24,8 +24,16 @@ GenericInstantiator::GenericInstantiator(BumpAllocator& allocator, TypeCache& ty
 {
 }
 
-void GenericInstantiator::register_generic_fun(StringView name, Decl* decl) {
+void GenericInstantiator::register_generic_fun(StringView name, Decl* decl, StringView module_name) {
     m_generic_funs[name] = decl;
+    if (!module_name.empty()) {
+        m_fun_template_modules[name] = module_name;
+    }
+}
+
+StringView GenericInstantiator::get_fun_template_module(StringView name) const {
+    auto it = m_fun_template_modules.find(name);
+    return it != m_fun_template_modules.end() ? it->second : StringView{};
 }
 
 void GenericInstantiator::register_generic_struct(StringView name, Decl* decl) {
@@ -250,6 +258,7 @@ StringView GenericInstantiator::instantiate_fun(StringView name, Span<Type*> typ
     instance->substitution = subst;
     instance->instantiated_decl = instantiated;
     instance->is_analyzed = false;
+    instance->template_module = get_fun_template_module(name);
 
     m_all_fun_instances.push_back(instance);
     m_pending_funs.push_back(instance);
@@ -345,6 +354,21 @@ Vector<GenericFunInstance*> GenericInstantiator::take_pending_funs() {
     Vector<GenericFunInstance*> result;
     swap(result, m_pending_funs);
     return result;
+}
+
+void GenericInstantiator::sideline_cross_module_fun(GenericFunInstance* inst) {
+    m_cross_module_funs.push_back(inst);
+}
+
+void GenericInstantiator::promote_cross_module_funs() {
+    for (auto* inst : m_cross_module_funs) {
+        m_pending_funs.push_back(inst);
+    }
+    m_cross_module_funs.clear();
+}
+
+bool GenericInstantiator::has_cross_module_funs() const {
+    return !m_cross_module_funs.empty();
 }
 
 bool GenericInstantiator::has_pending_structs() const {

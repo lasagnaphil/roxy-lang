@@ -281,6 +281,35 @@ void SemanticAnalyzer::run_body_analysis(Program* program) {
     analyze_function_bodies(program);
 }
 
+void SemanticAnalyzer::set_program(Program* program) {
+    m_program = program;
+}
+
+u32 SemanticAnalyzer::analyze_owned_pending_fun_instances() {
+    // Drain pending generic-fun instances whose template was registered by
+    // this analyzer's module. Cross-module-owned instances are sidelined
+    // for the next compiler-level pass; new instances triggered by analysis
+    // (which land back in m_pending_funs) get drained on the next iteration
+    // of the compiler's outer loop.
+    if (!m_type_env.generics().has_pending_funs()) return 0;
+    StringView this_module = m_program ? m_program->module_name : StringView{};
+    auto pending = m_type_env.generics().take_pending_funs();
+    u32 drained = 0;
+    for (auto* inst : pending) {
+        bool owns = inst->template_module.empty()
+                 || this_module.empty()
+                 || inst->template_module == this_module;
+        if (owns) {
+            analyze_fun_decl(inst->instantiated_decl);
+            inst->is_analyzed = true;
+            drained++;
+        } else {
+            m_type_env.generics().sideline_cross_module_fun(inst);
+        }
+    }
+    return drained;
+}
+
 void SemanticAnalyzer::analyze_single_function(Decl* decl) {
     if (!decl) return;
 
@@ -357,7 +386,8 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
 
         // Register generic functions as templates (not concrete functions)
         if (decl->kind == AstKind::DeclFun && decl->fun_decl.type_params.size() > 0) {
-            m_type_env.generics().register_generic_fun(decl->fun_decl.name, decl);
+            m_type_env.generics().register_generic_fun(
+                decl->fun_decl.name, decl, m_program ? m_program->module_name : StringView{});
             continue;
         }
 
@@ -1087,12 +1117,25 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
             }
         }
 
-        // Process pending function instances
+        // Process pending function instances. Only handle instances whose
+        // template was defined in THIS module — cross-module instances are
+        // sidelined for the compiler's post-pass to drain in the right
+        // module's context (re-queueing them here would infinite-loop the
+        // outer worklist).
         if (m_type_env.generics().has_pending_funs()) {
+            StringView this_module = m_program ? m_program->module_name : StringView{};
             auto pending_funs = m_type_env.generics().take_pending_funs();
             for (auto* inst : pending_funs) {
-                analyze_fun_decl(inst->instantiated_decl);
-                inst->is_analyzed = true;
+                bool owns_template =
+                    inst->template_module.empty() ||
+                    this_module.empty() ||
+                    inst->template_module == this_module;
+                if (owns_template) {
+                    analyze_fun_decl(inst->instantiated_decl);
+                    inst->is_analyzed = true;
+                } else {
+                    m_type_env.generics().sideline_cross_module_fun(inst);
+                }
             }
         }
     }
@@ -3818,26 +3861,24 @@ Type* SemanticAnalyzer::analyze_literal_expr(Expr* expr) {
 Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
     IdentifierExpr& id = expr->identifier;
 
-    Symbol* sym = m_symbols.lookup(id.name);
-    if (!sym) {
-        // Explicit-type-args generic ref: `identity<i32>`. The parser
-        // attached the type args; instantiate immediately, no inference.
-        if (id.generic_args.size() > 0
-            && m_type_env.generics().is_generic_fun(id.name)) {
+    // Generic-template refs are resolved via the global GenericInstantiator
+    // (shared across all modules), regardless of whether the template is
+    // local or imported via `from M import identity`. The check fires before
+    // the symbol-table lookup because for imports the SymbolTable carries an
+    // ImportedFunction with null type — useless for template instantiation.
+    if (m_type_env.generics().is_generic_fun(id.name)) {
+        // Explicit-type-args: `identity<i32>`. Instantiate immediately.
+        if (id.generic_args.size() > 0) {
             return resolve_explicit_generic_template_ref(expr);
         }
-        // Bare generic template name (no type args) in value position: defer
-        // resolution to the surrounding coerce site (var init / arg passing /
-        // return / struct field). The expr is marked; if no coercion fires by
-        // use-time, the user gets a clear "no type context" error from the
-        // call/use site.
-        if (m_type_env.generics().is_generic_fun(id.name)) {
-            id.is_generic_template_ref = true;
-            // Use error_type as a sentinel "unresolved"; coerce_generic_template_ref
-            // overwrites resolved_type with the concrete function type when it
-            // fires.
-            return m_types.error_type();
-        }
+        // Bare template name: defer to the surrounding coerce site
+        // (var-init annotation / call-arg / return / struct-field).
+        id.is_generic_template_ref = true;
+        return m_types.error_type();
+    }
+
+    Symbol* sym = m_symbols.lookup(id.name);
+    if (!sym) {
         // Helpful error for type names parsed as value-position generic refs.
         if (id.generic_args.size() > 0
             && m_type_env.generics().is_generic_struct(id.name)) {
