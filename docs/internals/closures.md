@@ -4,41 +4,21 @@ This document describes the design for closures and first-class functions in Rox
 
 ## Status
 
-Implementation is incremental:
+Closures are **feature-complete**. The full surface is implemented:
+`fun(...) -> R` type syntax, lambda expressions, captures (implicit
+copy / `[move]` / `[copy self]` / `[weak self]`) with use-after-move
+enforcement, function references (script / native / imported / generic),
+nested closures (transitive captures and transitive `[move]`), self
+capture in struct methods (with runtime heap check on copyable
+receivers), and cross-module generic-template references.
 
-- **Done** — `fun(...) -> R` type syntax, lambda expression parsing, zero-capture
-  lambdas end-to-end, `IROp::Closure` and `CALL_INDIRECT` opcode, implicit copy
-  capture for copyable variables (primitives, copyable structs, `ref`/`weak`),
-  explicit `[move x]` capture for noncopyables (consumes outer with use-after-move
-  enforcement), capture-aware destructor codegen for envs holding noncopyable
-  captures (via the synthetic-default-destructor path the IR builder auto-emits),
-  function references (`var f = double`) — bare named-function-as-value lowers
-  to a closure with a synthesized trampoline that forwards to the named function,
-  nested closures with implicit copy captures (transitive captures flow through
-  each enclosing lambda's env at any depth — `make_adder`-style and full curried
-  forms work), **`self` capture inside struct methods** with three modes:
-  implicit `ref self` (default; ref-counted; cycle-prone), `[copy self]`
-  (struct-value snapshot; copyable structs only), `[weak self]` (weak ref;
-  cycle-breaker). For copyable structs, ref/weak self captures emit a runtime
-  slab-range check that traps if the receiver is stack-allocated. **`[copy self]`
-  and `[weak self]` work in nested lambdas** — the outer chain gets implicit
-  ref-self captures so the inner can read self via the enclosing env's `__self`
-  field (analogous to multi-boundary identifier capture). On copyable receivers
-  the outer's heap check still fires, so nested self-capture in copyable
-  structs requires a `uniq` receiver.
-- **Deferred (follow-up commits)** — none of the closure surface remains.
-  Adjacent items (a `fun uniq T.method(...)` receiver-kind annotation;
-  generics + exception unwinding test coverage) are listed at the bottom of
-  this doc but are independent of closure capture machinery.
-
-  **Dropped (not implementing)** — `[move self]`. Would require receiver-kind
-  annotations on methods (`fun uniq T.method(...)`) plus consumption-tracking
-  at the call site. The use cases are niche enough that the language complexity
-  isn't worth it; users who need a closure to own a `uniq Self` can refactor
-  to a free function that takes `uniq Self` and pass the value explicitly.
-
-The user-facing surface (syntax, capture rules, error messages) below describes
-the *full* design; implementation status is annotated where it differs.
+The "Implementation Plan" section near the bottom of this doc has the
+detailed Done list with file:line references. Two adjacent items remain
+deferred but are independent of closure capture machinery: a
+`fun uniq T.method(...)` receiver-kind annotation (would elide some
+runtime heap checks), and explicit test coverage for
+generics-plus-exception interaction. `[move self]` is dropped (see
+"Dropped" section below for rationale).
 
 ## Original State (pre-closures)
 
@@ -796,6 +776,16 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
   ref-self propagation; nested `[copy self]` on copyable+stack runtime trap),
   and the remaining deferred-error paths.
 
+- **Transitive `[move]` captures** across nested lambdas. `[move x]` in
+  an inner lambda automatically propagates a Move-mode capture to every
+  enclosing lambda whose boundary x crosses, so ownership flows step by
+  step: function → outermost.env → ... → innermost.env. The user only
+  writes `[move x]` on the level that consumes x; intermediate lambdas
+  don't have to mention it. Re-invoking an outer after its env field has
+  been moved out by an inner construction is runtime-trapped via the
+  existing slab null-check — the user should construct each level at
+  most once on the move path.
+
 ### Dropped (not implementing)
 
 - **`[move self]`** — would require receiver-kind annotations on methods
@@ -804,17 +794,7 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
   users who need a closure to own a `uniq Self` can refactor to a free
   function that takes `uniq Self` and pass the value explicitly.
 
-Also done in this branch: **transitive `[move]` captures** across nested
-lambdas. `[move x]` in an inner lambda automatically propagates a
-Move-mode capture to every enclosing lambda whose boundary x crosses, so
-ownership flows step by step: function → outermost.env → ... →
-innermost.env. The user only writes `[move x]` on the level that consumes
-x; intermediate lambdas don't have to mention it. Re-invoking an outer
-lambda after its env field has been moved out by an inner construction is
-runtime-trapped via the existing slab null-check — the user should
-construct each level at most once on the move path.
-
-### Deferred (follow-up commits)
+### Deferred (independent of closure capture machinery)
 
 - **`fun uniq T.method(...)` receiver-kind annotation** — would let the body
   statically know the receiver is heap-only, eliding the runtime
