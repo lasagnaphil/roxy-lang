@@ -611,6 +611,9 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
 
             if (var_decl.initializer) {
                 Type* init_type = analyze_expr(var_decl.initializer);
+                if (var_type && coerce_generic_template_ref(var_decl.initializer, var_type)) {
+                    init_type = var_decl.initializer->resolved_type;
+                }
                 if (!var_type) {
                     // Type inference
                     var_type = init_type;
@@ -1437,6 +1440,11 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
 
     if (var_decl.initializer) {
         Type* init_type = analyze_expr(var_decl.initializer);
+        // Resolve generic-template-ref initializers against the declared type
+        // before assignability checking; updates init_type via resolved_type.
+        if (var_type && coerce_generic_template_ref(var_decl.initializer, var_type)) {
+            init_type = var_decl.initializer->resolved_type;
+        }
         if (!var_type) {
             // Type inference
             var_type = init_type;
@@ -3285,6 +3293,9 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
 
     if (rs.value) {
         Type* actual = analyze_expr(rs.value);
+        if (expected && coerce_generic_template_ref(rs.value, expected)) {
+            actual = rs.value->resolved_type;
+        }
         if (!check_assignable(expected, actual, stmt->loc)) {
             // Error already reported
         } else {
@@ -3809,6 +3820,17 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
 
     Symbol* sym = m_symbols.lookup(id.name);
     if (!sym) {
+        // Generic template name in value position: defer resolution to the
+        // surrounding coerce site (var init / arg passing / return / struct
+        // field). The expr is marked; if no coercion fires by use-time, the
+        // user gets a clear "no type context" error from the call/use site.
+        if (m_type_env.generics().is_generic_fun(id.name)) {
+            id.is_generic_template_ref = true;
+            // Use error_type as a sentinel "unresolved"; coerce_generic_template_ref
+            // overwrites resolved_type with the concrete function type when it
+            // fires.
+            return m_types.error_type();
+        }
         error_fmt(expr->loc, "undefined identifier '{}'", id.name);
         return m_types.error_type();
     }
@@ -4611,6 +4633,12 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
         // Analyze argument expression
         Type* arg_type = analyze_expr(arg.expr);
 
+        // Resolve generic-template-ref arg against param type before
+        // assignability checking. Updates arg_type via resolved_type.
+        if (param_types[i] && coerce_generic_template_ref(arg.expr, param_types[i])) {
+            arg_type = arg.expr->resolved_type;
+        }
+
         // Type check (skip for 'out' since it's write-only)
         if (arg.modifier != ParamModifier::Out) {
             check_assignable(param_types[i], arg_type, arg.expr->loc);
@@ -4873,6 +4901,11 @@ Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, Strin
             param_type = resolve_type_expr(inst_fun_decl.params[i].type);
         }
         resolved_param_types.push_back(param_type ? param_type : m_types.error_type());
+
+        // Generic-template-ref arg against the substituted param type.
+        if (param_type && coerce_generic_template_ref(arg.expr, param_type)) {
+            arg_type = arg.expr->resolved_type;
+        }
 
         if (param_type && !param_type->is_error() && arg_type && !arg_type->is_error()) {
             check_assignable(param_type, arg_type, arg.expr->loc);
@@ -5422,6 +5455,12 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                         param_type = resolve_type_expr(inst_fun_decl.params[i].type);
                     }
                     resolved_param_types.push_back(param_type ? param_type : m_types.error_type());
+
+                    // Generic-template-ref arg against the substituted param type.
+                    if (param_type && coerce_generic_template_ref(arg.expr, param_type)) {
+                        arg_type = arg.expr->resolved_type;
+                    }
+
                     if (param_type && !param_type->is_error() && arg_type && !arg_type->is_error()) {
                         check_assignable(param_type, arg_type, arg.expr->loc);
                     }
@@ -6144,6 +6183,9 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
             // Type-check field value
             Type* value_type = analyze_expr(fi.value);
             Type* field_type = type->struct_info.fields[field_idx].type;
+            if (field_type && coerce_generic_template_ref(fi.value, field_type)) {
+                value_type = fi.value->resolved_type;
+            }
             check_assignable(field_type, value_type, fi.loc);
             coerce_int_literal(fi.value, field_type);
 
@@ -6330,6 +6372,85 @@ void SemanticAnalyzer::coerce_int_literal(Expr* expr, Type* target) {
         coerce_int_literal(expr->grouping.expr, target);
     else if (expr->kind == AstKind::ExprUnary)
         coerce_int_literal(expr->unary.operand, target);
+}
+
+bool SemanticAnalyzer::coerce_generic_template_ref(Expr* expr, Type* expected) {
+    if (!expr || expr->kind != AstKind::ExprIdentifier) return true;
+    IdentifierExpr& id = expr->identifier;
+    if (!id.is_generic_template_ref) return true;
+    if (!expected || !expected->is_function()) {
+        error_fmt(expr->loc,
+            "cannot use generic function '{}' as a value here; it needs a "
+            "concrete function-type context (e.g. a typed variable or a "
+            "typed function parameter) to bind the type parameters", id.name);
+        return false;
+    }
+
+    Decl* template_decl = m_type_env.generics().get_generic_fun_decl(id.name);
+    if (!template_decl || template_decl->kind != AstKind::DeclFun) {
+        error_fmt(expr->loc, "internal error: missing template decl for '{}'", id.name);
+        return false;
+    }
+    FunDecl& template_fun_decl = template_decl->fun_decl;
+    FunctionTypeInfo& expected_fti = expected->func_info;
+
+    // Param-count mismatch ⇒ no plausible binding.
+    if (template_fun_decl.params.size() != expected_fti.param_types.size()) {
+        error_fmt(expr->loc,
+            "generic function '{}' has {} parameters but expected function "
+            "type takes {}", id.name,
+            template_fun_decl.params.size(), expected_fti.param_types.size());
+        return false;
+    }
+
+    // Bind type params by unifying each template param TypeExpr against the
+    // corresponding concrete param type, then the return TypeExpr against the
+    // concrete return type. unify_type_expr already handles Function-kind
+    // patterns (semantic.cpp:4719) so nested fun(T)->T params bind too.
+    Vector<Type*> bindings;
+    bindings.resize(template_fun_decl.type_params.size());
+    for (u32 i = 0; i < bindings.size(); i++) bindings[i] = nullptr;
+    for (u32 i = 0; i < template_fun_decl.params.size(); i++) {
+        if (!unify_type_expr(template_fun_decl.params[i].type,
+                             expected_fti.param_types[i],
+                             template_fun_decl.type_params, bindings)) {
+            error_fmt(expr->loc,
+                "cannot bind type parameters of '{}' against expected "
+                "function type at parameter {}", id.name, i);
+            return false;
+        }
+    }
+    if (template_fun_decl.return_type) {
+        Type* concrete_ret = expected_fti.return_type
+            ? expected_fti.return_type : m_types.void_type();
+        if (!unify_type_expr(template_fun_decl.return_type, concrete_ret,
+                             template_fun_decl.type_params, bindings)) {
+            error_fmt(expr->loc,
+                "cannot bind type parameters of '{}' against expected return type",
+                id.name);
+            return false;
+        }
+    }
+    for (u32 i = 0; i < bindings.size(); i++) {
+        if (!bindings[i]) {
+            error_fmt(expr->loc,
+                "cannot infer type parameter '{}' of generic function '{}'",
+                template_fun_decl.type_params[i].name, id.name);
+            return false;
+        }
+    }
+
+    // Check trait bounds, instantiate, and stash the monomorphized name.
+    Span<Type*> type_args = m_allocator.alloc_span(bindings);
+    const ResolvedTypeParams* bounds = m_type_env.generics().get_fun_bounds(id.name);
+    if (!check_type_arg_bounds(id.name, type_args, bounds, expr->loc)) {
+        return false;
+    }
+    StringView mangled = m_type_env.generics().instantiate_fun(id.name, type_args);
+    id.mangled_name = mangled;
+    id.is_generic_template_ref = false;
+    expr->resolved_type = expected;
+    return true;
 }
 
 bool SemanticAnalyzer::check_numeric(Type* type, SourceLocation loc) {

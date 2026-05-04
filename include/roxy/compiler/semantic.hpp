@@ -209,6 +209,15 @@ private:
     // Integer literal coercion: concretizes IntLiteral expressions to a target integer type
     void coerce_int_literal(Expr* expr, Type* target);
 
+    // Generic-template-ref coercion: when an identifier was deferred by
+    // analyze_identifier_expr (it named a generic function template), and the
+    // surrounding context expects a concrete function type, infer the type
+    // arguments from `expected`, instantiate the template, stash the
+    // monomorphized name on the identifier, and overwrite resolved_type.
+    // Returns true on successful coercion (or no-op when no coercion needed),
+    // false if the expression is a template ref but inference failed.
+    bool coerce_generic_template_ref(Expr* expr, Type* expected);
+
     // Type checking helpers
     bool is_assignable(Type* target, Type* source) const;
     bool check_assignable(Type* target, Type* source, SourceLocation loc);

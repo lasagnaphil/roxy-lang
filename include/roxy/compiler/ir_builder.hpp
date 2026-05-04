@@ -147,10 +147,23 @@ private:
     ValueId gen_lambda_expr(Expr* expr);
 
     // Bare named-function-as-value (`var f = double`). Synthesizes (or reuses
-    // a cached) trampoline IRFunction + empty env struct, then emits IROp::Closure
-    // pointing at them. Reports an error and returns invalid for native /
-    // imported / generic targets, which need different lowering.
-    ValueId gen_function_ref(Expr* expr, Symbol* fn_sym);
+    // a cached) trampoline IRFunction + empty env struct, then emits
+    // IROp::Closure pointing at them. The target descriptor selects the body
+    // call op (Call / CallNative / CallExternal) and the cache key.
+    struct FunctionRefTarget {
+        enum class Kind {
+            Script,           // user-defined script function (incl. generic instances)
+            Native,           // top-level native function (declared with `native`)
+            ImportedScript,   // cross-module script function
+            ImportedNative,   // cross-module native function
+        };
+        Kind kind = Kind::Script;
+        StringView name;            // body call target + cache key (mangled where applicable)
+        StringView module_name;     // ImportedScript only
+        u32 native_index = 0;       // Native / ImportedNative
+        Type* function_type = nullptr;
+    };
+    ValueId gen_function_ref(Expr* expr, const FunctionRefTarget& target);
 
     // Declaration generation
     void gen_decl(Decl* decl);

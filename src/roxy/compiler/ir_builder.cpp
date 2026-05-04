@@ -2762,27 +2762,31 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
     return inst->result;
 }
 
-ValueId IRBuilder::gen_function_ref(Expr* expr, Symbol* fn_sym) {
-    if (!fn_sym || !fn_sym->decl || fn_sym->decl->kind != AstKind::DeclFun) {
-        report_error("Internal error: gen_function_ref called for non-function symbol");
-        return ValueId::invalid();
-    }
-    FunDecl& target_decl = fn_sym->decl->fun_decl;
-    if (target_decl.is_native) {
-        report_error("native function references are not yet supported");
-        return ValueId::invalid();
-    }
-    if (target_decl.type_params.size() > 0) {
-        report_error("generic function references are not yet supported");
-        return ValueId::invalid();
-    }
-    if (!fn_sym->type || !fn_sym->type->is_function()) {
-        report_error("Internal error: function symbol has non-function type");
+ValueId IRBuilder::gen_function_ref(Expr* expr, const FunctionRefTarget& target) {
+    if (!target.function_type || !target.function_type->is_function()) {
+        report_error("Internal error: gen_function_ref target has non-function type");
         return ValueId::invalid();
     }
 
-    // Reuse a previously synthesized trampoline if we've seen this function before.
-    auto cache_it = m_function_refs.find(fn_sym->name);
+    // Cache key: target.name is unique per IR-level function (mangled scripts,
+    // monomorphized generics) or per native registry entry, so it dedupes
+    // across alias paths. Imported script trampolines key on the unique
+    // module::name form composed below.
+    StringView cache_key = target.name;
+    StringView ext_module_name;
+    if (target.kind == FunctionRefTarget::Kind::ImportedScript) {
+        u32 mod_len = target.module_name.size();
+        u32 nm_len = target.name.size();
+        u32 total = mod_len + 2 + nm_len;
+        char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(total, 1));
+        memcpy(buf, target.module_name.data(), mod_len);
+        buf[mod_len] = ':'; buf[mod_len + 1] = ':';
+        memcpy(buf + mod_len + 2, target.name.data(), nm_len);
+        cache_key = StringView(buf, total);
+        ext_module_name = target.module_name;
+    }
+
+    auto cache_it = m_function_refs.find(cache_key);
     StringView env_struct_name;
     StringView trampoline_name;
     if (cache_it != m_function_refs.end()) {
@@ -2831,13 +2835,7 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, Symbol* fn_sym) {
         StringView raw_tramp_name(tramp_name_buf, static_cast<u32>(tramp_len));
         trampoline_name = mangle_module_local(raw_tramp_name);
 
-        // Determine the target's IRFunction name (matches what build_function set).
-        StringView target_name = fn_sym->name;
-        if (!fn_sym->is_pub && fn_sym->name != StringView("main", 4)) {
-            target_name = mangle_module_local(fn_sym->name);
-        }
-
-        FunctionTypeInfo& fti = fn_sym->type->func_info;
+        FunctionTypeInfo& fti = target.function_type->func_info;
         Type* ref_env_type = m_types.ref_type(env_type);
 
         // Build the IRFunction in a hand-rolled fashion (mirrors the pattern
@@ -2874,21 +2872,39 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, Symbol* fn_sym) {
             forwarded_arg_values.push_back(p.value);
         }
 
-        // Single entry block: Call(target_name, [arg0..argN]); Return result.
+        // Single entry block: <body call>; Return result. The body op is
+        // chosen by target kind so the same trampoline shell forwards to
+        // script / native / external functions uniformly.
         IRBlock* entry = m_allocator.emplace<IRBlock>();
         entry->id = BlockId{0};
         entry->name = StringView("entry", 5);
         tramp->blocks.push_back(entry);
 
-        // Emit the Call instruction.
         IRInst* call_inst = m_allocator.emplace<IRInst>();
-        call_inst->op = IROp::Call;
         call_inst->type = fti.return_type;
         call_inst->result = tramp->new_value();
         tramp->values_by_id[call_inst->result.id] = call_inst;
-        call_inst->call.func_name = target_name;
-        call_inst->call.args = m_allocator.alloc_span(forwarded_arg_values);
-        call_inst->call.native_index = 0;
+        switch (target.kind) {
+            case FunctionRefTarget::Kind::Script:
+                call_inst->op = IROp::Call;
+                call_inst->call.func_name = target.name;
+                call_inst->call.args = m_allocator.alloc_span(forwarded_arg_values);
+                call_inst->call.native_index = 0;
+                break;
+            case FunctionRefTarget::Kind::Native:
+            case FunctionRefTarget::Kind::ImportedNative:
+                call_inst->op = IROp::CallNative;
+                call_inst->call.func_name = target.name;
+                call_inst->call.args = m_allocator.alloc_span(forwarded_arg_values);
+                call_inst->call.native_index = target.native_index;
+                break;
+            case FunctionRefTarget::Kind::ImportedScript:
+                call_inst->op = IROp::CallExternal;
+                call_inst->call_external.module_name = ext_module_name;
+                call_inst->call_external.func_name = target.name;
+                call_inst->call_external.args = m_allocator.alloc_span(forwarded_arg_values);
+                break;
+        }
         entry->instructions.push_back(call_inst);
 
         // Return the call's result (or void).
@@ -2902,7 +2918,7 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, Symbol* fn_sym) {
         m_module->functions.push_back(tramp);
 
         FunctionRefInfo info{env_struct_name, trampoline_name};
-        m_function_refs[fn_sym->name] = info;
+        m_function_refs[cache_key] = info;
     }
 
     IRInst* inst = emit_inst(IROp::Closure, expr->resolved_type);
@@ -2951,9 +2967,67 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
     // doesn't recurse here for callee identifiers, so this only fires in value
     // contexts (var init, argument passing, return, struct literal field, ...).
     if (LocalVar* lv = find_local(id.name); !lv) {
-        if (Symbol* sym = m_symbols.lookup(id.name);
-            sym && sym->kind == SymbolKind::Function) {
-            return gen_function_ref(expr, sym);
+        // Generic-template ref: semantic analysis stashed the monomorphized
+        // name on the identifier post-coercion. The instantiated function
+        // type lives in expr->resolved_type. Apply module-local mangling
+        // when the template is non-pub, mirroring what build_function does
+        // when emitting the IR for the instance.
+        if (id.mangled_name.size() > 0) {
+            FunctionRefTarget target;
+            target.kind = FunctionRefTarget::Kind::Script;
+            target.function_type = expr->resolved_type;
+            bool template_is_pub = false;
+            if (Decl* tdecl = m_type_env.generics().get_generic_fun_decl(id.name);
+                tdecl && tdecl->kind == AstKind::DeclFun) {
+                template_is_pub = tdecl->fun_decl.is_pub;
+            }
+            target.name = template_is_pub
+                ? id.mangled_name
+                : mangle_module_local(id.mangled_name);
+            return gen_function_ref(expr, target);
+        }
+        Symbol* sym = m_symbols.lookup(id.name);
+        if (sym && sym->kind == SymbolKind::Function) {
+            FunctionRefTarget target;
+            target.function_type = sym->type;
+            bool is_native = sym->decl && sym->decl->kind == AstKind::DeclFun
+                && sym->decl->fun_decl.is_native;
+            if (is_native) {
+                target.kind = FunctionRefTarget::Kind::Native;
+                target.name = sym->name;
+                i32 idx = m_registry.get_index(sym->name);
+                if (idx < 0) {
+                    report_error("Internal error: native function not in registry");
+                    return ValueId::invalid();
+                }
+                target.native_index = static_cast<u32>(idx);
+            } else {
+                target.kind = FunctionRefTarget::Kind::Script;
+                target.name = sym->name;
+                if (!sym->is_pub && sym->name != StringView("main", 4)) {
+                    target.name = mangle_module_local(sym->name);
+                }
+            }
+            return gen_function_ref(expr, target);
+        }
+        if (sym && sym->kind == SymbolKind::ImportedFunction) {
+            FunctionRefTarget target;
+            target.function_type = sym->type;
+            if (sym->imported_func.is_native) {
+                target.kind = FunctionRefTarget::Kind::ImportedNative;
+                target.name = sym->imported_func.original_name;
+                i32 idx = m_registry.get_index(target.name);
+                if (idx < 0) {
+                    report_error("Internal error: imported native not in registry");
+                    return ValueId::invalid();
+                }
+                target.native_index = static_cast<u32>(idx);
+            } else {
+                target.kind = FunctionRefTarget::Kind::ImportedScript;
+                target.name = sym->imported_func.original_name;
+                target.module_name = sym->imported_func.module_name;
+            }
+            return gen_function_ref(expr, target);
         }
     }
 

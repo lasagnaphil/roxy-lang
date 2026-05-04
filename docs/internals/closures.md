@@ -27,7 +27,8 @@ Implementation is incremental:
   the outer's heap check still fires, so nested self-capture in copyable
   structs requires a `uniq` receiver.
 - **Deferred (follow-up commits)** — transitive `[move]` captures across nested
-  lambdas, native / imported / generic function references.
+  lambdas; cross-module generic-template function references; explicit
+  `identity<i32>` value-position syntax (inferred form is supported).
 
   **Dropped (not implementing)** — `[move self]`. Would require receiver-kind
   annotations on methods (`fun uniq T.method(...)`) plus consumption-tracking
@@ -669,15 +670,41 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
   using the env-struct field layout.
 - **Interpreter**: handler reads `__call_idx` from the env's first u32 field,
   places the env pointer at `callee_regs[0]`, copies explicit args.
-- **Function references** (`var f = double`): `gen_identifier_expr` falls
-  through to `gen_function_ref` when a bare identifier resolves to a
-  `SymbolKind::Function` (rather than a local variable). `gen_function_ref`
-  hand-builds a per-target trampoline IRFunction that takes
-  `(__env: ref EnvT, args...)` and emits a single `Call(target, args)`,
-  cached on `m_function_refs` keyed by the unmangled function name so multiple
-  references to the same function share one trampoline. The result is a normal
-  `IROp::Closure` with empty captures — calls go through the same
-  `CALL_INDIRECT` path as ordinary closures.
+- **Function references** (`var f = double`, `var p = print`,
+  `var f: fun(i32)->i32 = identity`): `gen_identifier_expr` falls through to
+  `gen_function_ref` when a bare identifier resolves to a top-level function
+  symbol. The function builds a `FunctionRefTarget` descriptor that captures
+  the call kind, then `gen_function_ref` synthesizes a per-target trampoline
+  IRFunction `(__env: ref EnvT, args...)` whose single body instruction is
+  selected from the descriptor:
+
+  | Source kind                    | Symbol                                        | Body op                  |
+  |--------------------------------|-----------------------------------------------|--------------------------|
+  | Script function                | `Function`, `is_native=false`                 | `IROp::Call`             |
+  | Native function                | `Function`, `is_native=true`                  | `IROp::CallNative`       |
+  | Imported native                | `ImportedFunction`, `is_native=true`          | `IROp::CallNative`       |
+  | Imported script (cross-module) | `ImportedFunction`, `is_native=false`         | `IROp::CallExternal`     |
+  | Generic instantiation          | template name + monomorphized name on the AST | `IROp::Call`             |
+
+  Trampolines are cached on `m_function_refs` keyed by the unique target name
+  (the mangled IRFunction name for scripts, `module::name` for cross-module
+  imports, the registry name for natives) so multiple references to the same
+  target share one trampoline. The result is a normal `IROp::Closure` with
+  empty captures — calls go through the same `CALL_INDIRECT` path as
+  ordinary closures.
+
+  **Generic templates** require monomorphization at the reference site. Since
+  there's no syntax for `identity<i32>` as a value (yet), inference relies on
+  surrounding type context: `analyze_identifier_expr` marks the identifier
+  with `is_generic_template_ref = true` and returns `error_type` as a
+  sentinel. A `coerce_generic_template_ref` helper fires at every assignment
+  site (var init with annotation, call-arg passing, return statement, struct
+  literal field) — it unifies the template's signature against the expected
+  function type via the existing `unify_type_expr` (Function-kind branch),
+  instantiates via `GenericInstantiator::instantiate_fun`, and stashes the
+  monomorphized name on the `IdentifierExpr`. The IR builder reads that
+  stashed name and routes through `gen_function_ref` with a Script-kind
+  descriptor whose target name is the (mangled) monomorphized function.
 - **Nested closures** with implicit copy captures: `analyze_identifier_expr`
   walks every `ScopeKind::Lambda` boundary between the use site and the
   symbol's defining scope, recording the capture into each enclosing context
@@ -756,9 +783,16 @@ Closures can be used inside coroutines. If a closure is captured in a coroutine'
 - **Transitive `[move]` captures** across nested lambdas — would force every
   enclosing lambda to also move, leaving them unable to use the variable.
   `analyze_lambda_expr` rejects this with a clear error today.
-- **Native / imported / generic function references** — the trampoline body
-  emits `IROp::Call` only; `CallNative`, `CallExternal`, and monomorphization
-  routing aren't wired up. `gen_function_ref` rejects these with clear errors.
+- **Cross-module generic-template references** — referencing a generic
+  template imported from another module (`from mod import identity` then
+  `var f: fun(i32) -> i32 = identity`) doesn't yet route through the
+  monomorphization machinery, since the import only exposes the resolved
+  symbol. Within-module generic refs work via context-driven inference.
+- **Explicit `identity<i32>` value-position syntax** — today only the
+  inferred form is wired (the parser commits `<types>` only when followed
+  by `(`, `{`, or `.`). The inferred form covers var-init annotations,
+  call-arg passing, return position, and struct-field initializers, which
+  cover the realistic uses.
 - **Generics + exception unwinding through closure boundaries** — should fall
   out naturally from the existing struct/method machinery; needs explicit test
   coverage when those scenarios become relevant.

@@ -172,6 +172,15 @@ struct LiteralExpr {
 // Identifier expression: foo, bar
 struct IdentifierExpr {
     StringView name;
+    // Set when `name` resolves to a generic function template — analysis
+    // can't pick the instantiation without surrounding context, so it marks
+    // the expression and defers to coerce_generic_template_ref at the
+    // assignment site (var init, arg passing, return, struct field).
+    bool is_generic_template_ref;
+    // Set after generic-template-ref coercion to the monomorphized name
+    // (e.g. "identity$i32"). The IR builder routes through gen_function_ref
+    // with this name as the call target.
+    StringView mangled_name;
 };
 
 // Unary expression: -x, !x, ~x
@@ -366,7 +375,11 @@ struct Expr {
     };
 
     Expr() : kind(AstKind::ExprLiteral), loc{0, 0, 0, 0}, resolved_type(nullptr) {
-        memset(&literal, 0, sizeof(literal));
+        // Zero the entire union so any subsequently-activated variant starts
+        // from a clean slate. Computing the size from the byte distance
+        // between Expr and the union's first member keeps this correct as
+        // variants grow (e.g. adding fields to IdentifierExpr).
+        memset(&literal, 0, sizeof(*this) - (reinterpret_cast<char*>(&literal) - reinterpret_cast<char*>(this)));
     }
     ~Expr() {}
 };

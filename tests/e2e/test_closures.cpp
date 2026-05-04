@@ -336,6 +336,95 @@ TEST_CASE("E2E - Closure: function references") {
         CHECK(result.success);
         CHECK(result.stdout_output == "hi world\n");
     }
+
+    SUBCASE("Builtin native (str_concat) as function reference") {
+        // Native functions get IROp::CallNative inside the trampoline body
+        // instead of plain Call. Builtins like str_concat are auto-imported
+        // as ImportedNative symbols.
+        const char* source = R"(
+            fun main() {
+                var c = str_concat;
+                print(c("hi-", "lo"));
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "hi-lo\n");
+    }
+
+    SUBCASE("Native function reference (print) passed to higher-order") {
+        const char* source = R"(
+            fun greet_via(f: fun(string), name: string) { f(name); }
+            fun main() {
+                greet_via(print, "hello");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "hello\n");
+    }
+
+    SUBCASE("Generic function reference via type annotation") {
+        // `identity` is a template; the surrounding `var f: fun(i32)->i32`
+        // annotation drives inference, which monomorphizes to identity$i32
+        // and synthesizes a trampoline targeting it.
+        const char* source = R"(
+            fun identity<T>(value: T): T { return value; }
+            fun main() {
+                var f: fun(i32) -> i32 = identity;
+                print(f"{f(42)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
+
+    SUBCASE("Generic function reference via call-arg inference") {
+        // `apply`'s param type drives the inference at the reference site.
+        const char* source = R"(
+            fun identity<T>(value: T): T { return value; }
+            fun apply(f: fun(i32) -> i32, x: i32): i32 { return f(x); }
+            fun main() {
+                print(f"{apply(identity, 21)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "21\n");
+    }
+
+    SUBCASE("Same generic template referenced at two type instantiations") {
+        // Two distinct expected function types ⇒ two monomorphized
+        // instances + two trampolines, both correct.
+        const char* source = R"(
+            fun identity<T>(value: T): T { return value; }
+            fun main() {
+                var i: fun(i32) -> i32 = identity;
+                var f: fun(f64) -> f64 = identity;
+                print(f"{i(7)}");
+                print(f"{f(3.5)}");
+            }
+        )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "7\n3.5\n");
+    }
+
+    SUBCASE("Generic function reference without type context is rejected") {
+        // No annotation, no call-arg context ⇒ inference can't bind T;
+        // user gets an actionable error instead of a silent default.
+        const char* source = R"(
+            fun identity<T>(value: T): T { return value; }
+            fun main() {
+                var f = identity;
+                f(1);
+            }
+        )";
+        BumpAllocator allocator(16384);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
 }
 
 TEST_CASE("E2E - Closure: nested closures") {

@@ -129,6 +129,25 @@ TEST_CASE("E2E - Module: from import multiple functions") {
     CHECK(result == 20);  // (2+3) * 4 = 20
 }
 
+TEST_CASE("E2E - Module: imported native used as function reference") {
+    // Imported natives reach gen_function_ref via SymbolKind::ImportedFunction
+    // and lower their trampoline body to IROp::CallNative.
+    ModuleTestContext ctx;
+
+    const char* source = R"(
+        from math import add, square;
+
+        fun main(): i32 {
+            var a = add;
+            var s = square;
+            return a(s(3), 1);     // square(3)=9, add(9,1)=10
+        }
+    )";
+
+    i64 result = ctx.compile_and_run(source);
+    CHECK(result == 10);
+}
+
 TEST_CASE("E2E - Module: from import with alias") {
     ModuleTestContext ctx;
 
@@ -723,6 +742,45 @@ TEST_CASE("E2E - Module: cross-module call result in variable") {
 
     Value result = vm_get_result(&vm);
     CHECK(result.as_int == 12);  // triple(double(2)) = triple(4) = 12
+
+    vm_destroy(&vm);
+    delete module;
+}
+
+TEST_CASE("E2E - Module: imported script function as function reference") {
+    // Imported script (cross-module) functions reach gen_function_ref via
+    // SymbolKind::ImportedFunction with is_native=false, and lower their
+    // trampoline body to IROp::CallExternal carrying the source module name.
+    BumpAllocator allocator(16384);
+
+    const char* utils_source = R"(
+        pub fun double(x: i32): i32 { return x * 2; }
+    )";
+    const char* main_source = R"(
+        from utils import double;
+
+        fun apply(f: fun(i32) -> i32, x: i32): i32 { return f(x); }
+
+        fun main(): i32 {
+            var d = double;
+            return apply(d, 21);
+        }
+    )";
+
+    Compiler compiler(allocator);
+    compiler.add_source("utils", utils_source, static_cast<u32>(strlen(utils_source)));
+    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+    BCModule* module = compiler.compile();
+    REQUIRE(module != nullptr);
+
+    RoxyVM vm;
+    vm_init(&vm);
+    vm_load_module(&vm, module);
+    REQUIRE(vm_call(&vm, "main", {}));
+
+    Value result = vm_get_result(&vm);
+    CHECK(result.as_int == 42);
 
     vm_destroy(&vm);
     delete module;
