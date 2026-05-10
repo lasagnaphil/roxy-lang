@@ -1,6 +1,6 @@
 # C Backend (AOT Compilation)
 
-> **Status:** Phases 1–3 fully implemented; Phase 4 partial (runtime context plumbing and AOT wrapper `main()` are landed — `roxy_ctx`, thread-local set/get, `roxy::ScopedContext`, `RoxyVM` ctx member, AOT entry calls `roxy_ctx_init`/`roxy_set_ctx` around `main_entry()`). Remaining Phase 4 work: drop `RoxyVM*` from native signatures, AOT dispatch for user-registered natives, alias the `rx::Roxy*` wrappers to `roxy::*`. Phase 5 not yet implemented.
+> **Status:** Phases 1–3 fully implemented; Phase 4 mostly implemented — runtime context plumbing, AOT wrapper `main()`, AND the runtime unification refactor (slab + vmem moved to `roxy_rt`, unified `ObjectHeader`/`StringHeader`/`ListHeader`/`MapHeader`, ctx-dispatched allocation, string interning through ctx, single map-dispatch path with VM trampolines for bytecode Hash/Eq, `rx::RoxyString`/`RoxyList`/`RoxyMap` aliased to `roxy::String`/`List`/`Map`). Remaining Phase 4 work: drop `RoxyVM*` from native function signatures (now a small targeted commit since allocation, intern, and map dispatch all flow through ctx), AOT dispatch for user-registered natives. Phase 5 not yet implemented.
 
 The C backend translates Roxy's SSA IR into a `.cpp` file. The core logic is C-style (structs, gotos, typed variables), while native function bindings use C++ to interface directly with the embedder's C++ code. The output can be compiled by any C++ compiler (g++, clang++, MSVC).
 
@@ -1035,14 +1035,23 @@ This way existing embedder code using `rx::RoxyString` continues to work, while 
 
 ### Memory Management Strategy
 
-Two options for the runtime allocator:
+Allocation flows through `roxy_ctx.allocator`, a vtable defined in `roxy_rt.h`:
 
-1. **Simplified `malloc`-based**: Use `malloc`/`free` with `ObjectHeader` prepended. Simple, portable, good starting point.
-2. **Full slab allocator**: Port the existing slab allocator from `vm/slab_allocator.hpp` to C. Better performance and tombstoning semantics for weak references.
+```c
+typedef struct roxy_allocator {
+    void* (*alloc)(void* userdata, uint32_t total_size, uint64_t* out_generation);
+    void  (*free)(void* userdata, void* header_ptr);
+    bool  (*owns)(void* userdata, void* ptr);
+    void* userdata;
+} roxy_allocator;
+```
 
-**Recommendation:** Start with `malloc`-based. The slab allocator can be ported later for production use.
+Two built-in implementations live in `roxy_rt`:
 
-With `malloc`-based allocation, tombstoning for weak references requires keeping freed objects mapped. A simple approach: on `roxy_free()`, zero the `weak_generation` but don't call `free()` immediately — defer to a sweep phase or accept the leak for short-lived programs.
+1. **Slab allocator** (`include/roxy/rt/slab_allocator.hpp`, moved out of `vm/` during the runtime unification refactor). Used by both VM and AOT-compiled programs. Provides generation-based weak-ref soundness — freed slots stay mapped (zeroed) so stale weak refs reliably observe "dead", and slot recycle uses fresh random generations to avoid collision. AOT mode brings up a process-wide slab via `roxy_rt_init`/`roxy_rt_shutdown`; VM mode allocates a per-VM `SlabAllocator` and plugs it in via `make_slab_allocator_vtable(...)`.
+2. **Malloc allocator** (`roxy_malloc_allocator` in `roxy_rt.cpp`): defensive fallback when `roxy_get_ctx()` returns null or `ctx->allocator` is null (e.g. static initializers running before `roxy_rt_init`). Generations come from a thread-local xorshift64; weak-ref soundness is best-effort because libc may reuse freed addresses.
+
+`roxy_alloc(data_size, type_id)` writes the `roxy_object_header` itself with the generation produced by the allocator and returns the data pointer. `roxy_free(data)` looks up the active allocator, lets it tombstone `weak_generation` (slab does this by zeroing the slot; malloc does it explicitly), and reclaims memory.
 
 ## Emitter Architecture
 
@@ -1519,8 +1528,9 @@ already use `roxy_get_ctx()` regardless of which path invoked them.
 - [x] Activate the VM's context on entry: `vm_call_index` brackets `interpret(vm)` with a `roxy::ScopedContext`
 - [x] Emit standalone `main()` entry point: user's `fun main` is renamed to `main_entry()` and the generated wrapper `int main(int argc, char** argv)` calls `roxy_ctx_init` / `roxy_set_ctx` before forwarding and `roxy_ctx_destroy` after
 - [x] Unit tests for the ctx API (`tests/unit/test_runtime_ctx.cpp`) and source-structure tests for the AOT wrapper (`E2E - C Backend AOT: …` in `tests/e2e/test_c_backend.cpp`)
-- [ ] Update `FunctionBinder` to set thread-local ctx instead of passing `vm` to native functions (drops `RoxyVM*` from native function signatures — breaking change for embedder bindings)
-- [ ] Refactor `rx::RoxyString` / `rx::RoxyList<T>` / `rx::RoxyMap<K, V>` to alias `roxy::String` / `roxy::List<T>` / `roxy::Map<K, V>` (drops the `RoxyVM*` parameter from the factories — relies on TLS ctx for allocation)
+- [x] **Runtime unification refactor** (12 commits, see Files table below). Moved slab + vmem to `roxy_rt`; collapsed `ObjectHeader`/`StringHeader`/`ListHeader`/`MapHeader` to one definition; `roxy_alloc` dispatches through `roxy_ctx.allocator` (slab in both modes); string intern table moved into ctx; `vm/string.cpp`/`list.cpp`/`map.cpp` are thin shims over `roxy_rt`'s implementations; VM-mode struct-key Hash/Eq routes through a thread-local trampoline (`vm/map_dispatch.cpp`); `rx::RoxyString` / `rx::RoxyList<T>` / `rx::RoxyMap<K, V>` are now `using` aliases of `roxy::String` / `roxy::List<T>` / `roxy::Map<K, V>`.
+- [x] Refactor `rx::RoxyString` / `rx::RoxyList<T>` / `rx::RoxyMap<K, V>` to alias `roxy::String` / `roxy::List<T>` / `roxy::Map<K, V>` (landed as part of the runtime unification above)
+- [ ] Update `FunctionBinder` to set thread-local ctx instead of passing `vm` to native functions (drops `RoxyVM*` from native function signatures — breaking change for embedder bindings; **now unblocked** because allocation, intern, and map dispatch all flow through ctx)
 - [ ] Store AOT function pointer/symbol name in `NativeRegistry` entries for `bind<FnPtr>` bindings
 - [ ] Add `bind_native(vm_fn, aot_fn, sig)` overload for dual VM/AOT registration
 - [ ] Emit `extern` declarations for user-registered native functions in generated `.cpp`
@@ -1530,6 +1540,8 @@ already use `roxy_get_ctx()` regardless of which path invoked them.
 - [ ] Handle generic native type methods (List/Map) → call type-erased `roxy_rt` functions with `uint64_t` casts
 - [ ] Cross-module calls (`CallExternal`) → already resolved during linking, emit as regular calls
 - [ ] E2E tests for native function calls (both auto-bound and built-in)
+- [ ] Drop `hash_fn_index`/`eq_fn_index` fields from `MapHeader` (currently part of the bridge layout for VM dispatch; move to a per-VM side-table for ~8 B savings per map)
+- [ ] Migrate remaining `object_alloc(vm, ...)`/`object_free(vm, ...)` callers (NEW_OBJ in interpreter + 7 cleanup sites) to `roxy_alloc`/`roxy_free`
 
 ### Phase 5: Polish
 
@@ -1605,7 +1617,15 @@ The two paths complement each other: interpreter for development, C backend for 
 | `include/roxy/compiler/ssa_ir.hpp` | `IRModule::struct_types` / `enum_types` for type emission | Implemented |
 | `src/roxy/compiler/ir_builder.cpp` | Populates `struct_types` / `enum_types` in `build()` | Implemented |
 | `tests/e2e/test_c_backend.cpp` | E2E tests (68 tests, including AOT main wrapper) | Implemented |
-| `tests/unit/test_runtime_ctx.cpp` | Unit tests for `roxy_ctx_init`/`roxy_set_ctx`/`roxy_get_ctx`/`ScopedContext` | Implemented |
+| `tests/unit/test_runtime_ctx.cpp` | Unit tests for `roxy_ctx_init`/`roxy_set_ctx`/`roxy_get_ctx`/`ScopedContext` + allocator defaulting | Implemented |
+| `include/roxy/rt/slab_allocator.hpp` | Slab allocator + `make_slab_allocator_vtable` adapter (moved from `vm/`) | Implemented |
+| `src/roxy/rt/slab_allocator.cpp` | Slab allocator impl + vtable factory | Implemented |
+| `include/roxy/rt/vmem.hpp` | Virtual memory ops (moved from `vm/`) | Implemented |
+| `src/roxy/rt/vmem_unix.cpp`, `src/roxy/rt/vmem_win32.cpp` | Platform vmem impls | Implemented |
+| `include/roxy/rt/string_intern.hpp` | `StringInternTable` definition | Implemented |
+| `src/roxy/rt/string_intern.cpp` | C-callable `roxy_string_intern_lookup`/`_insert` | Implemented |
+| `include/roxy/vm/map_dispatch.hpp` | `MapDispatchFrame` + trampoline-getter declarations | Implemented |
+| `src/roxy/vm/map_dispatch.cpp` | Thread-local dispatch stack + `vm_hash_trampoline`/`vm_eq_trampoline` | Implemented |
 | `tests/e2e/test_helpers.hpp` | `compile_to_cpp()`, `compile_to_hpp()`, `compile_and_run_cpp()`, `header_compiles()` helpers | Implemented |
 | `include/roxy/rt/roxy_rt.h` | C runtime library header + C++ RAII templates / container wrappers | Implemented |
 | `src/roxy/rt/roxy_rt.cpp` | C runtime library implementation | Implemented |

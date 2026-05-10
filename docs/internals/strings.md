@@ -28,9 +28,11 @@ Strings are allocated through the object system with the following memory layout
 ```cpp
 struct StringHeader {
     u32 length;    // String length (excluding null terminator)
-    u32 capacity;  // Allocated capacity (including null terminator)
+    u32 hash;      // Low 32 bits of XXH3_64bits(chars, length); cached at alloc
 };
 ```
+
+`StringHeader` is the unified `roxy_string_header` from `roxy_rt.h`; both VM and AOT-compiled programs share the same layout. Strings are immutable, so capacity is always `length+1` and isn't stored. The 8-byte slot is reused for a cached hash — `Map<string, V>` lookups read this field directly to avoid re-hashing on every probe.
 
 The character data immediately follows the header and is always null-terminated for C interoperability.
 
@@ -234,10 +236,10 @@ All string operations are implemented as native functions:
 
 When the interpreter encounters a `LOAD_CONST` instruction for a string constant, it:
 1. Reads the string data and length from the constant pool
-2. Calls `string_alloc()` to create a new StringObject
-3. Stores the pointer in the destination register
+2. Calls `string_alloc()` (a thin shim over `roxy_string_from_literal`) which probes the active context's intern table
+3. On a hit, returns the existing pointer; on a miss, allocates a new string object and inserts it into the intern table
 
-This means each string constant load creates a new string object (no string interning).
+The intern table lives in `roxy_ctx.string_intern` — populated by VM mode at `vm_init`, optional in AOT mode. Repeated LOAD_CONST of the same literal returns the same pointer.
 
 ### IR Builder Rewriting
 
@@ -255,8 +257,8 @@ This is done in `gen_binary_expr()` by checking if `left_type->kind == TypeKind:
 
 ### Memory Management
 
-Strings are managed through the object system:
-- Allocated via `object_alloc()` with the registered string type ID
+Strings are managed through the unified runtime:
+- Allocated via `roxy_alloc()` (with `ROXY_TYPEID_STRING`), which dispatches through `roxy_ctx.allocator` — the slab in both VM mode and AOT mode (after `roxy_rt_init`)
 - Reference counted via `ObjectHeader`
 - Memory layout includes `ObjectHeader` for ref counting support
 
@@ -264,8 +266,12 @@ Strings are managed through the object system:
 
 | File | Purpose |
 |------|---------|
-| `include/roxy/vm/string.hpp` | StringHeader struct, function declarations |
-| `src/roxy/vm/string.cpp` | string_alloc, string_concat, string_equals |
+| `include/roxy/rt/roxy_rt.h` | `roxy_string_header` (unified layout), C string API |
+| `src/roxy/rt/roxy_rt.cpp` | `roxy_string_from_literal` / `roxy_string_concat` / `roxy_string_*` impls |
+| `include/roxy/rt/string_intern.hpp` | `StringInternTable` definition |
+| `src/roxy/rt/string_intern.cpp` | `roxy_string_intern_lookup` / `_insert` — C-callable bridges |
+| `include/roxy/vm/string.hpp` | `StringHeader` typedef alias of `roxy_string_header`, VM-side helpers |
+| `src/roxy/vm/string.cpp` | Thin shim — `string_alloc(vm, ...)` → `roxy_string_from_literal(...)` |
 | `src/roxy/vm/natives.cpp` | Native function wrappers and registration (incl. `to_string`) |
 | `src/roxy/compiler/ir_builder.cpp` | String operator rewriting, f-string IR generation |
 | `src/roxy/compiler/parser.cpp` | String literal and f-string parsing, escape processing |

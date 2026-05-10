@@ -10,18 +10,31 @@
 [ObjectHeader (16 bytes)] [MapHeader] [separate malloc'd distance/key/value arrays]
 ```
 
-```cpp
-struct MapHeader {
-    u32 length;          // Number of live entries
-    u32 capacity;        // Number of buckets (always power of 2, 0 if not allocated)
-    MapKeyKind key_kind; // Dispatch tag for hash/equality
-    u8* distances;       // Per-bucket Robin Hood distance+1 (0 = empty)
-    u64* keys;           // Key storage (capacity entries, stored as u64)
-    u64* values;         // Value storage (capacity entries, stored as u64)
-};
+`MapHeader` is the unified `roxy_map_header` from `roxy_rt.h` — both the VM and AOT-compiled programs share one definition. The relevant fields:
+
+```c
+typedef struct {
+    uint32_t length;            // Number of live entries
+    uint32_t capacity;          // Number of buckets (power of 2, or 0)
+    uint8_t  key_kind;          // ROXY_MAP_KEY_INTEGER/FLOAT32/FLOAT64/STRING/STRUCT
+    uint8_t  key_slot_count;    // u32 slots per key (2 for primitives, N for structs)
+    uint8_t  key_is_inline;     // 1 = primitive packed in slots; 0 = struct (caller passes ptr)
+    uint8_t  value_slot_count;  // u32 slots per value
+    uint8_t  value_is_inline;
+    uint8_t  _pad[3];
+    roxy_map_hash_fn hash_fn;   // C function pointer for custom Hash on Struct keys (or null)
+    roxy_map_eq_fn   eq_fn;     // Same for Eq
+    uint32_t hash_fn_index;     // VM-only bytecode dispatch index; UINT32_MAX = unused
+    uint32_t eq_fn_index;
+    uint8_t*  distances;        // Per-bucket Robin Hood distance+1 (0 = empty)
+    uint32_t* keys;             // Key storage: capacity * key_slot_count u32 slots
+    uint32_t* values;           // Value storage: capacity * value_slot_count u32 slots
+} roxy_map_header;
 ```
 
-The distance/key/value arrays are separately malloc'd (like List's element buffer), allowing reallocation without moving the header. Keys and values are stored as `u64` (same as register file representation).
+The distance/key/value arrays are separately malloc'd (like List's element buffer), allowing reallocation without moving the header. Keys and values live in variable-sized u32-slot arrays so struct keys (and struct values) can be stored inline.
+
+For VM-mode `Map<Struct, V>` with user-defined `impl Hash` / `impl Eq`, `hash_fn`/`eq_fn` are set to the trampolines defined in `vm/map_dispatch.cpp`. The trampolines pop the topmost `MapDispatchFrame` from a thread-local stack — pushed by the VM-side map ops in `vm/map.cpp` before calling into `roxy_map_*` — and re-enter the bytecode interpreter via `call_user_function` with the struct-arg ABI packing for the user's `K::eq(self, other)` method.
 
 ## Robin Hood Open Addressing
 
@@ -121,9 +134,13 @@ When a noncopyable map goes out of scope, the compiler emits cleanup IR:
 
 | File | Description |
 |------|-------------|
-| `include/roxy/vm/map.hpp` | MapHeader, MapKeyKind, C API declarations |
-| `src/roxy/vm/map.cpp` | Robin Hood hash table implementation |
-| `include/roxy/vm/binding/roxy_map.hpp` | RoxyMap<K,V> C++ wrapper |
+| `include/roxy/rt/roxy_rt.h` | Unified `roxy_map_header`, `roxy_map_*` C API |
+| `src/roxy/rt/roxy_rt.cpp` | Robin Hood hash table impl shared between VM and AOT |
+| `include/roxy/vm/map.hpp` | `MapHeader` typedef alias of `roxy_map_header`, MapKeyKind, VM-side declarations |
+| `src/roxy/vm/map.cpp` | Thin shims around `roxy_map_*` that push/pop dispatch frames |
+| `include/roxy/vm/map_dispatch.hpp` | `MapDispatchFrame`, trampoline getters |
+| `src/roxy/vm/map_dispatch.cpp` | Thread-local dispatch stack + `vm_hash_trampoline`/`vm_eq_trampoline` |
+| `include/roxy/vm/binding/roxy_map.hpp` | `RoxyMap<K,V>` typedef alias of `roxy::Map<K,V>` |
 | `include/roxy/vm/binding/registry.hpp` | NativeParamWrapper for container returns |
 | `src/roxy/vm/binding/registry.cpp` | resolve_param_desc wrapper support |
 | `include/roxy/compiler/types.hpp` | TypeKind::Map, MapTypeInfo |

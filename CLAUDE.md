@@ -229,10 +229,11 @@ cmake .. -G Ninja -DENABLE_ASAN=ON
 
 ### CMake Libraries
 
-The project is organized into 5 libraries:
+The project is organized into 6 libraries:
 - `roxy_core` - File utilities, rx::String, rx::format_to, JSON parser/writer
 - `roxy_shared` - Lexer and tokens
 - `roxy_compiler` - Parser, AST, semantic analysis, SSA IR, IR builder
+- `roxy_rt` - Unified runtime (allocation, slab allocator, vmem, strings, lists, maps, intern). Used by both `roxy_vm` and AOT-compiled programs.
 - `roxy_vm` - Bytecode, value, object, VM, interpreter, lowering
 - `roxy_lsp` - Error-recovering parser, LSP transport, LSP server
 
@@ -257,7 +258,8 @@ roxy-v2/
 │   ├── shared/         # Lexer and tokens
 │   ├── compiler/       # Parser, AST, types, semantic, SSA IR, IR builder, lowering
 │   ├── lsp/            # LSP server (syntax_tree, lsp_parser, protocol, transport, server)
-│   └── vm/             # Bytecode, value, object, VM, interpreter, binding/
+│   ├── rt/             # Unified runtime (roxy_rt.h, slab_allocator, vmem, string_intern) — used by both VM and AOT-compiled programs
+│   └── vm/             # Bytecode, value, object, VM, interpreter, binding/, map_dispatch
 ├── src/roxy/           # Implementation files matching include/ structure
 ├── tests/
 │   ├── test_main.cpp   # Single doctest entry point
@@ -386,9 +388,9 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Closures** - First-class functions and closures via `fun(...) -> R` type syntax and lambda expressions. `IROp::Closure` + `CALL_INDIRECT` opcode for indirect dispatch. Implicit copy capture for copyable values (primitives, copyable structs, `ref`/`weak`); explicit `[move x]` capture for noncopyables with use-after-move enforcement. Function references (`var f = double`) lower to per-target trampoline closures. Nested closures with transitive captures (captures flow through enclosing envs at any depth). `self` capture in methods with three modes: implicit `ref self` (default), `[copy self]` (struct-value snapshot), `[weak self]` (cycle-breaker); ref/weak self on copyable receivers emits a runtime slab-range check that traps on stack-allocated receivers. Capture-aware destructor codegen for envs holding noncopyable captures.
 **Details:** `docs/internals/closures.md` | **Tests:** `tests/e2e/test_closures.cpp`
 
-### C Backend (Phases 1–3 + Phase 4 partial)
-**CEmitter** - AOT compilation via SSA IR → C/C++ transpilation. Phases 1–2 cover primitives, arithmetic, comparisons, logical/bitwise operations, type conversions, control flow (goto/branch/return with block arguments), function calls, struct/enum type definitions (dependency-sorted), struct field access (StackAlloc, GetField, SetField, GetFieldAddr, StructCopy), pointer operations (LoadPtr, StorePtr, VarAddr for out/inout params), large struct returns (hidden output pointer), struct inheritance (explicit pointer casts), tagged unions, Cast, and Nullify. Phase 3 adds the runtime library (`roxy_rt.h`/`.cpp`) with allocation, ref counting, weak refs, strings, lists, maps (incl. struct keys with custom hash/eq), `to_string` conversions, and `print`; C++ RAII templates (`roxy::uniq<T>` / `roxy::ref<T>` / `roxy::weak<T>`) and container wrappers (`roxy::String` / `roxy::List<T>` / `roxy::Map<K,V>`); IR ops `New`/`Delete`/`RefInc`/`RefDec`/`WeakCheck`/`ConstString`/`CallNative`; and `emit_header()` producing a public `.hpp` with pub enum typedefs, pub struct definitions with inline C++ method wrappers, `make_<T>` / `make_<T>__<ctor>` factories returning `roxy::uniq<T>`, and pub function declarations. Phase 4 (partial): `roxy_ctx` thread-local context with `roxy_ctx_init`/`roxy_set_ctx`/`roxy_get_ctx` and `roxy::ScopedContext` RAII guard; `RoxyVM` embeds `roxy_ctx ctx` as its first member and the interpreter activates it via `ScopedContext` on every public entry; AOT-generated `int main(int argc, char** argv)` initializes a stack-allocated `roxy_ctx`, calls the user's renamed `main_entry()`, and tears down. Remaining Phase 4: drop `RoxyVM*` from native function signatures, AOT dispatch for user-registered natives via `NativeRegistry`, alias `rx::Roxy*` wrappers to `roxy::*`.
-**Details:** `docs/internals/c-backend.md` | **Files:** `compiler/c_emitter.hpp`, `compiler/c_emitter.cpp`, `rt/roxy_rt.h`, `rt/roxy_rt.cpp` | **Tests:** `tests/e2e/test_c_backend.cpp`, `tests/unit/test_runtime_ctx.cpp`
+### C Backend (Phases 1–3 + Phase 4 mostly done)
+**CEmitter** - AOT compilation via SSA IR → C/C++ transpilation. Phases 1–2 cover primitives, arithmetic, comparisons, logical/bitwise operations, type conversions, control flow (goto/branch/return with block arguments), function calls, struct/enum type definitions (dependency-sorted), struct field access (StackAlloc, GetField, SetField, GetFieldAddr, StructCopy), pointer operations (LoadPtr, StorePtr, VarAddr for out/inout params), large struct returns (hidden output pointer), struct inheritance (explicit pointer casts), tagged unions, Cast, and Nullify. Phase 3 adds the runtime library (`roxy_rt.h`/`.cpp`) with allocation, ref counting, weak refs, strings, lists, maps (incl. struct keys with custom hash/eq), `to_string` conversions, and `print`; C++ RAII templates (`roxy::uniq<T>` / `roxy::ref<T>` / `roxy::weak<T>`) and container wrappers (`roxy::String` / `roxy::List<T>` / `roxy::Map<K,V>`); IR ops `New`/`Delete`/`RefInc`/`RefDec`/`WeakCheck`/`ConstString`/`CallNative`; and `emit_header()` producing a public `.hpp` with pub enum typedefs, pub struct definitions with inline C++ method wrappers, `make_<T>` / `make_<T>__<ctor>` factories returning `roxy::uniq<T>`, and pub function declarations. Phase 4 wires `roxy_ctx` (thread-local context with `roxy_ctx_init`/`roxy_set_ctx`/`roxy_get_ctx` + `roxy::ScopedContext` RAII guard); `RoxyVM` embeds `roxy_ctx ctx` as its first member and the interpreter activates it on every public entry; AOT-generated `main()` brackets `main_entry()` with `roxy_rt_init`/`roxy_rt_shutdown`. **Runtime unification (Phase 4 follow-up)**: slab allocator + vmem moved to `roxy_rt`; `roxy_alloc` dispatches through `roxy_ctx.allocator` (slab in both VM and AOT modes — AOT gains generation-based weak-ref soundness); `ObjectHeader` / `StringHeader` (now `{length, hash}` with cached XXH3) / `ListHeader` / `MapHeader` are unified definitions in `roxy_rt.h`; string intern table moved into ctx; `vm/string.cpp` / `list.cpp` / `map.cpp` are thin shims over `roxy_rt`'s implementations; VM-side struct-key Hash/Eq dispatch routes through a thread-local trampoline (`vm/map_dispatch.cpp`) that bridges into `call_user_function`; `rx::RoxyString` / `rx::RoxyList<T>` / `rx::RoxyMap<K,V>` are now `using` aliases of `roxy::String` / `roxy::List<T>` / `roxy::Map<K,V>`. **Remaining Phase 4**: drop `RoxyVM*` from native function signatures (now a small targeted commit), AOT dispatch for user-registered natives via `NativeRegistry`.
+**Details:** `docs/internals/c-backend.md` | **Files:** `compiler/c_emitter.hpp`, `compiler/c_emitter.cpp`, `rt/roxy_rt.h`, `rt/roxy_rt.cpp`, `rt/slab_allocator.{hpp,cpp}`, `rt/vmem.hpp`, `rt/vmem_{unix,win32}.cpp`, `rt/string_intern.{hpp,cpp}`, `vm/map_dispatch.{hpp,cpp}` | **Tests:** `tests/e2e/test_c_backend.cpp`, `tests/unit/test_runtime_ctx.cpp`
 
 ### LSP Server (Phases 1–7)
 **LSP Parser** - Error-recovering parser producing a lossless CST. Three recovery strategies: synthetic token insertion, statement boundary synchronization, bracket-aware skipping. Handles all grammar productions from the compiler parser.
@@ -402,7 +404,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 
 ## Planned Components (Not Yet Implemented)
 
-- C backend Phase 4 remainder: drop `RoxyVM*` from native function signatures (breaking change), AOT dispatch for user-registered natives via `NativeRegistry`, alias `rx::Roxy*` wrappers to `roxy::*`. Phase 5: polish — see `docs/internals/c-backend.md`
+- C backend Phase 4 remainder: drop `RoxyVM*` from native function signatures (breaking change, now a small targeted commit since allocation, intern, and map dispatch all flow through ctx); AOT dispatch for user-registered natives via `NativeRegistry`. Phase 5: polish — see `docs/internals/c-backend.md`
 - LSP Phase 8: Full semantic analysis (TypeCache/TypeEnv integration)
 - LSP Phase 9: Polish (signature help, code actions, workspace symbols, semantic tokens)
 - Optimization future phases: global CSE / GVN, loop-invariant code motion, function inlining, tail-call optimization, escape analysis (see `docs/internals/optimization.md`)

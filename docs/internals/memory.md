@@ -242,10 +242,14 @@ p = uniq Point();                   // Point A is implicitly deleted, p now owns
 
 ## Files
 
-- `include/roxy/vm/object.hpp` - Object header and ref counting declarations
+- `include/roxy/vm/object.hpp` - `ObjectHeader` (alias of `roxy_object_header`), ref counting declarations
 - `src/roxy/vm/object.cpp` - Object allocation and ref counting implementation
-- `include/roxy/vm/vmem.hpp` - Virtual memory operations interface
-- `src/roxy/vm/vmem_win32.cpp` - Windows virtual memory implementation
-- `src/roxy/vm/vmem_unix.cpp` - Unix virtual memory implementation
-- `include/roxy/vm/slab_allocator.hpp` - Slab allocator declarations
-- `src/roxy/vm/slab_allocator.cpp` - Slab allocator implementation
+- `include/roxy/rt/roxy_rt.h` - Unified `roxy_object_header` + `roxy_allocator` vtable type
+- `src/roxy/rt/roxy_rt.cpp` - `roxy_alloc`/`roxy_free` dispatching through ctx; default malloc allocator
+- `include/roxy/rt/vmem.hpp` - Virtual memory operations interface
+- `src/roxy/rt/vmem_win32.cpp` - Windows virtual memory implementation
+- `src/roxy/rt/vmem_unix.cpp` - Unix virtual memory implementation
+- `include/roxy/rt/slab_allocator.hpp` - Slab allocator declarations + vtable adapter
+- `src/roxy/rt/slab_allocator.cpp` - Slab allocator implementation; `make_slab_allocator_vtable`
+
+The slab allocator lives in `roxy_rt` (was previously under `vm/`). VM mode plugs a per-VM `SlabAllocator` into `roxy_ctx.allocator` via the vtable; AOT mode does the same with a process-wide slab created by `roxy_rt_init`. Both paths get identical generation-based weak-ref soundness — the malloc fallback only kicks in when `roxy_rt_init` hasn't been called and no ctx is active.

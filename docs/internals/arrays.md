@@ -4,17 +4,20 @@ Roxy supports dynamically-sized lists with bounds checking, using generic syntax
 
 ## List Layout
 
-Lists are stored as objects with a ListHeader. Elements are in a separate malloc'd buffer:
+Lists are stored as objects with a ListHeader. `ListHeader` is the unified `roxy_list_header` from `roxy_rt.h` — both VM and AOT-compiled programs share one definition. Elements are in a separate malloc'd buffer:
 
-```cpp
-struct ListHeader {
-    u32 length;    // Number of elements
-    u32 capacity;  // Allocated capacity
-    Value* elements; // Separate malloc'd buffer (nullptr if capacity == 0)
-};
+```c
+typedef struct {
+    uint32_t length;
+    uint32_t capacity;
+    uint32_t element_slot_count;  // u32 slots per element (1, 2, or N for structs)
+    uint8_t  element_is_inline;   // 1 = primitive packed in slots; 0 = struct (caller passes ptr)
+    uint8_t  _pad[3];
+    uint32_t* elements;           // capacity * element_slot_count u32 slots
+} roxy_list_header;
 
 // Memory layout: [ObjectHeader][ListHeader]
-// Elements buffer: [Value * capacity] (separate allocation)
+// Elements buffer: [u32 * capacity * element_slot_count] (separate allocation)
 ```
 
 The key design choice: elements are stored in a **separate buffer** rather than inline after the header. This allows `push` to realloc the elements buffer without moving the ObjectHeader (which would invalidate all pointers to the list).
@@ -113,8 +116,10 @@ fun main(): i32 {
 
 ## Files
 
-- `include/roxy/vm/list.hpp` - ListHeader and list operations
-- `src/roxy/vm/list.cpp` - List allocation and access implementation
+- `include/roxy/rt/roxy_rt.h` - Unified `roxy_list_header` + `roxy_list_*` C API
+- `src/roxy/rt/roxy_rt.cpp` - List allocation/push/pop/get/set implementation shared between VM and AOT
+- `include/roxy/vm/list.hpp` - `ListHeader` typedef alias of `roxy_list_header`, VM-side declarations
+- `src/roxy/vm/list.cpp` - Thin shim around `roxy_list_*` (preserves the VM's nullptr+error contract on bounds violations)
 - `include/roxy/vm/natives.hpp` - Built-in native function constants
 - `src/roxy/vm/natives.cpp` - Native function implementations (List<T> generic type registration)
 - `include/roxy/vm/binding/registry.hpp` - Generic type registration API
