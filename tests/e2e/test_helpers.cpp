@@ -210,6 +210,62 @@ String compile_to_cpp(const char* source, bool debug) {
     return output;
 }
 
+// Variant of compile_to_ir that uses an externally-supplied NativeRegistry
+// (so the caller can pre-bind user functions). Must be called with a registry
+// whose builtin natives are already registered.
+static IRModule* compile_to_ir_with_registry(BumpAllocator& allocator,
+                                             const char* source,
+                                             NativeRegistry& registry,
+                                             TypeEnv& type_env,
+                                             bool debug) {
+    u32 len = 0;
+    while (source[len]) len++;
+
+    ModuleRegistry modules(allocator);
+    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, type_env.types());
+
+    Lexer lexer(source, len);
+    Parser parser(lexer, allocator);
+    Program* program = parser.parse();
+    if (!program || parser.has_error()) return nullptr;
+
+    SemanticAnalyzer analyzer(allocator, type_env, modules);
+    if (!analyzer.analyze(program)) {
+        if (debug) {
+            fprintf(stderr, "Semantic errors:\n");
+            for (const auto& err : analyzer.errors()) {
+                fprintf(stderr, "  Line %u: %s\n", err.loc.line, err.message);
+            }
+        }
+        return nullptr;
+    }
+
+    const auto& syn_vec = analyzer.synthetic_decls();
+    Span<Decl*> synthetic_decls;
+    if (!syn_vec.empty()) {
+        Decl** data = reinterpret_cast<Decl**>(allocator.alloc_bytes(
+            sizeof(Decl*) * syn_vec.size(), alignof(Decl*)));
+        for (u32 j = 0; j < syn_vec.size(); j++) {
+            data[j] = syn_vec[j];
+        }
+        synthetic_decls = Span<Decl*>(data, static_cast<u32>(syn_vec.size()));
+    }
+
+    IRBuilder ir_builder(allocator, type_env, registry, analyzer.symbols(), modules);
+    IRModule* ir_module = ir_builder.build(program, synthetic_decls);
+    if (!ir_module) return nullptr;
+
+    coroutine_lower(ir_module, allocator, type_env);
+
+    IRValidator validator;
+    if (!validator.validate(ir_module)) {
+        if (debug) fprintf(stderr, "IR validation failed: %s\n", validator.error());
+        return nullptr;
+    }
+
+    return ir_module;
+}
+
 String compile_to_hpp(const char* source, bool debug) {
     BumpAllocator allocator(8192);
     IRModule* ir_module = compile_to_ir(allocator, source, debug);
@@ -403,6 +459,161 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     remove(src_path);
     remove(bin_path);
 
+    return result;
+}
+
+CBackendResult compile_and_run_cpp_with_registry(const char* source,
+                                                 NativeRegistry* registry,
+                                                 const char* native_header_text,
+                                                 bool debug) {
+    CBackendResult result;
+    result.exit_code = -1;
+    result.compile_success = false;
+    result.run_success = false;
+
+    if (!registry) return result;
+
+    // Build the IR with the caller-supplied registry, then emit C++ with the
+    // registry plumbed into CEmitterConfig so user-bound names dispatch to
+    // direct calls.
+    BumpAllocator allocator(16384);
+    TypeEnv type_env(allocator);
+    IRModule* ir_module = compile_to_ir_with_registry(allocator, source, *registry, type_env, debug);
+    if (!ir_module) {
+        fprintf(stderr, "[C Backend+Registry] IR build failed\n");
+        return result;
+    }
+
+    const char* tmpdir = getenv("TMPDIR");
+    if (!tmpdir) tmpdir = "/tmp";
+
+    // Optional inline native header — written to a temp file so the generated
+    // .cpp can `#include` it via `native_include_paths`.
+    char header_path[256];
+    header_path[0] = '\0';
+    if (native_header_text) {
+        snprintf(header_path, sizeof(header_path), "%s/roxy_native_XXXXXX.h", tmpdir);
+        int fd = mkstemps(header_path, 2);  // .h
+        if (fd < 0) return result;
+        size_t hlen = strlen(native_header_text);
+        write(fd, native_header_text, hlen);
+        close(fd);
+    }
+
+    CEmitterConfig config;
+    config.emit_main_entry = true;
+    config.native_registry = registry;
+    if (header_path[0] != '\0') {
+        String include_path(header_path);
+        config.native_include_paths.push_back(include_path);
+    }
+
+    CEmitter emitter(allocator, config);
+    String cpp_source;
+    emitter.emit_source(ir_module, cpp_source);
+
+    if (debug) {
+        printf("=== Generated C++ ===\n%s\n", cpp_source.c_str());
+    }
+
+    const char* project_root = get_project_root();
+    if (!project_root) {
+        if (header_path[0] != '\0') remove(header_path);
+        return result;
+    }
+
+    char rt_include_dir[512];
+    char rt_include_dir_root[512];
+    char rt_src_path[512];
+    char slab_src_path[512];
+    char intern_src_path[512];
+    char vmem_src_path[512];
+    snprintf(rt_include_dir, sizeof(rt_include_dir), "%s/include/roxy/rt", project_root);
+    snprintf(rt_include_dir_root, sizeof(rt_include_dir_root), "%s/include", project_root);
+    snprintf(rt_src_path, sizeof(rt_src_path), "%s/src/roxy/rt/roxy_rt.cpp", project_root);
+    snprintf(slab_src_path, sizeof(slab_src_path), "%s/src/roxy/rt/slab_allocator.cpp", project_root);
+    snprintf(intern_src_path, sizeof(intern_src_path), "%s/src/roxy/rt/string_intern.cpp", project_root);
+#ifdef _WIN32
+    snprintf(vmem_src_path, sizeof(vmem_src_path), "%s/src/roxy/rt/vmem_win32.cpp", project_root);
+#else
+    snprintf(vmem_src_path, sizeof(vmem_src_path), "%s/src/roxy/rt/vmem_unix.cpp", project_root);
+#endif
+
+    char src_path[256];
+    char bin_path[256];
+    snprintf(src_path, sizeof(src_path), "%s/roxy_cbackend_reg_XXXXXX.cpp", tmpdir);
+    snprintf(bin_path, sizeof(bin_path), "%s/roxy_cbackend_reg_bin_XXXXXX", tmpdir);
+
+    int src_fd = mkstemps(src_path, 4);
+    if (src_fd < 0) {
+        if (header_path[0] != '\0') remove(header_path);
+        return result;
+    }
+    write(src_fd, cpp_source.data(), cpp_source.size());
+    close(src_fd);
+
+    int bin_fd = mkstemp(bin_path);
+    if (bin_fd < 0) {
+        remove(src_path);
+        if (header_path[0] != '\0') remove(header_path);
+        return result;
+    }
+    close(bin_fd);
+
+    char compile_cmd[2048];
+    snprintf(compile_cmd, sizeof(compile_cmd),
+             "c++ -std=c++17 -I%s -I%s -o %s %s %s %s %s %s 2>&1",
+             rt_include_dir, rt_include_dir_root, bin_path, src_path,
+             rt_src_path, slab_src_path, intern_src_path, vmem_src_path);
+
+    if (debug) printf("Compile command: %s\n", compile_cmd);
+
+    bool compile_ok = false;
+    {
+        FILE* compile_pipe = popen(compile_cmd, "r");
+        if (compile_pipe) {
+            char buf[1024];
+            String compile_errors;
+            while (fgets(buf, sizeof(buf), compile_pipe)) {
+                compile_errors.append(buf, static_cast<u32>(strlen(buf)));
+            }
+            int status = pclose(compile_pipe);
+            if (status == 0) {
+                compile_ok = true;
+            } else {
+                fprintf(stderr, "[C Backend+Registry] compile failed:\n%s\n",
+                        compile_errors.c_str());
+                if (debug) {
+                    fprintf(stderr, "=== Generated C++ ===\n%s\n", cpp_source.c_str());
+                }
+            }
+        }
+    }
+
+    if (compile_ok) {
+        result.compile_success = true;
+        char run_cmd[512];
+        snprintf(run_cmd, sizeof(run_cmd), "%s 2>&1", bin_path);
+        FILE* run_pipe = popen(run_cmd, "r");
+        if (run_pipe) {
+            char rbuf[1024];
+            while (fgets(rbuf, sizeof(rbuf), run_pipe)) {
+                result.stdout_output.append(rbuf, static_cast<u32>(strlen(rbuf)));
+            }
+            int run_status = pclose(run_pipe);
+#ifdef _WIN32
+            result.exit_code = run_status;
+#else
+            if (WIFEXITED(run_status)) result.exit_code = WEXITSTATUS(run_status);
+            else result.exit_code = -1;
+#endif
+            result.run_success = true;
+        }
+    }
+
+    remove(src_path);
+    remove(bin_path);
+    if (header_path[0] != '\0') remove(header_path);
     return result;
 }
 

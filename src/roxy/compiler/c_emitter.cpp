@@ -1,6 +1,7 @@
 #include "roxy/compiler/c_emitter.hpp"
 #include "roxy/compiler/ast.hpp"
 #include "roxy/core/format.hpp"
+#include "roxy/vm/binding/registry.hpp"
 
 namespace rx {
 
@@ -2125,6 +2126,27 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     }
 
     if (!c_func_name) {
+        // No static-table match. If the embedder registered this name via
+        // `NativeRegistry`, emit a direct call to the user's C++ function —
+        // the caller's `native_include_paths` header is responsible for
+        // declaring it. Otherwise fall back to a warning.
+        if (m_config.native_registry &&
+            m_config.native_registry->is_native(name)) {
+            out.append("    ");
+            if (inst->result.is_valid() && inst->type && inst->type->kind != TypeKind::Void) {
+                emit_value(inst->result, out);
+                out.append(" = ");
+            }
+            emit_mangled_name(name, out);
+            out.push_back('(');
+            for (u32 i = 0; i < inst->call.args.size(); i++) {
+                if (i > 0) out.append(", ");
+                emit_value(inst->call.args[i], out);
+            }
+            out.append(");\n");
+            return;
+        }
+
         // Fallback: emit as mangled name with a warning comment
         out.append("    /* WARNING: unmapped native '");
         out.append(name.data(), name.size());

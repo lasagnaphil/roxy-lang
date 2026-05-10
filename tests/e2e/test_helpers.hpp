@@ -12,6 +12,7 @@
 namespace rx {
 
 struct IRModule;
+class NativeRegistry;
 
 // Result of running a test, includes return value and captured output
 struct TestResult {
@@ -43,6 +44,17 @@ String compile_to_hpp(const char* source, bool debug = false);
 
 // Helper to compile Roxy source all the way through C backend and run the binary
 CBackendResult compile_and_run_cpp(const char* source, bool debug = false);
+
+// Compile Roxy source via the C backend with a custom NativeRegistry, plus an
+// optional inline native-header text (written to a temp file and passed as a
+// `native_include_paths` entry so generated code can call user-bound natives
+// declared/defined inline there). Used to test AOT NativeRegistry dispatch
+// end-to-end.
+CBackendResult compile_and_run_cpp_with_registry(
+    const char* source,
+    NativeRegistry* registry,
+    const char* native_header_text = nullptr,
+    bool debug = false);
 
 // Compile only the generated header (with a tiny driver `#include`-ing it).
 // Returns true if the header is valid C++ that compiles standalone against the

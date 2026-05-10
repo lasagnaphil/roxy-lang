@@ -10,9 +10,18 @@
 
 namespace rx {
 
+// Forward declaration — full type lives in roxy/vm/binding/registry.hpp.
+class NativeRegistry;
+
 struct CEmitterConfig {
     Vector<String> native_include_paths;
     bool emit_main_entry = true;
+    // Optional. When set, `emit_native_call` consults the registry for any
+    // CallNative name that doesn't match the static built-in mapping. Hits
+    // emit a direct call to the user's C++ function (assumed to be declared
+    // by one of the `native_include_paths` headers); misses fall through to
+    // the warning fallback.
+    const NativeRegistry* native_registry = nullptr;
 };
 
 class CEmitter {

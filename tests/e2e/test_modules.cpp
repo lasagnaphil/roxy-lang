@@ -13,10 +13,10 @@
 namespace rx {
 
 // Native math functions for testing (all take RoxyVM* as first parameter)
-static i32 math_add(RoxyVM* vm, i32 a, i32 b) { (void)vm; return a + b; }
-static i32 math_mul(RoxyVM* vm, i32 a, i32 b) { (void)vm; return a * b; }
-static i32 math_square(RoxyVM* vm, i32 x) { (void)vm; return x * x; }
-static i32 math_negate(RoxyVM* vm, i32 x) { (void)vm; return -x; }
+static i32 math_add(i32 a, i32 b) { return a + b; }
+static i32 math_mul(i32 a, i32 b) { return a * b; }
+static i32 math_square(i32 x) { return x * x; }
+static i32 math_negate(i32 x) { return -x; }
 
 // Helper to compile and run with module support
 struct ModuleTestContext {

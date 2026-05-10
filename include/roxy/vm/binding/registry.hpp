@@ -111,7 +111,9 @@ public:
     {}
 
     // Register a C++ function with automatic wrapper generation.
-    // The C++ function must take RoxyVM* as its first parameter.
+    // The bound C++ function takes its logical arguments only — no
+    // `RoxyVM*` prefix. Functions that need runtime context call
+    // `roxy_get_ctx()` directly.
     // Usage: registry.bind<my_function>("my_function")
     template<auto FnPtr>
     void bind(const char* name) {
@@ -120,7 +122,7 @@ public:
         NativeFunctionEntry entry;
         entry.name = make_string_view(name);
         entry.func = FunctionBinder<FnPtr>::get();
-        entry.param_count = Traits::arity - 1;  // exclude RoxyVM*
+        entry.param_count = Traits::arity;
         entry.min_args = entry.param_count;
         entry.type_info_mode = NativeTypeInfoMode::Resolver;
         entry.is_method = false;
@@ -128,8 +130,8 @@ public:
 
         // Store resolver functions for deferred type resolution
         entry.return_resolver = &RoxyType<typename Traits::return_type>::get;
-        entry.param_resolvers = get_param_resolvers_skip_first<typename Traits::args_tuple>(
-            std::make_index_sequence<Traits::arity - 1>{});
+        entry.param_resolvers = get_param_resolvers_all<typename Traits::args_tuple>(
+            std::make_index_sequence<Traits::arity>{});
 
         m_function_entries.push_back(entry);
 
@@ -149,29 +151,30 @@ public:
     void register_struct(const char* name, std::initializer_list<NativeFieldEntry> fields);
 
     // Auto-bind a method on a native struct (C++ function with automatic wrapper).
-    // The C++ function must take (RoxyVM*, SelfPtr*, ...) as its first two parameters.
+    // The C++ function takes the self pointer as its first parameter, followed
+    // by the method's logical arguments. No `RoxyVM*` prefix.
     // Usage: registry.bind_method<point_sum>("Point", "sum")
     template<auto FnPtr>
     void bind_method(const char* struct_name, const char* method_name) {
         using Traits = FunctionPointerTraits<FnPtr>;
-        static_assert(Traits::arity >= 2,
-                      "Method must have RoxyVM* and self pointer as first two parameters");
+        static_assert(Traits::arity >= 1,
+                      "Method must have a self pointer as its first parameter");
 
         NativeFunctionEntry entry;
         entry.struct_name = make_string_view(struct_name);
         entry.method_name = make_string_view(method_name);
         entry.name = mangle_method_name(entry.struct_name, entry.method_name);
         entry.func = FunctionBinder<FnPtr>::get();
-        entry.param_count = Traits::arity - 2;  // Exclude RoxyVM* and self
+        entry.param_count = Traits::arity - 1;  // Exclude self
         entry.min_args = entry.param_count;
         entry.type_info_mode = NativeTypeInfoMode::Resolver;
         entry.is_method = true;
         entry.method_kind = GenericMethodKind::Method;
 
-        // Store resolver functions, skipping RoxyVM* and self
+        // Store resolver functions, skipping self
         entry.return_resolver = &RoxyType<typename Traits::return_type>::get;
-        entry.param_resolvers = get_param_resolvers_skip_two<typename Traits::args_tuple>(
-            std::make_index_sequence<Traits::arity - 2>{});
+        entry.param_resolvers = get_param_resolvers_skip_first<typename Traits::args_tuple>(
+            std::make_index_sequence<Traits::arity - 1>{});
 
         m_function_entries.push_back(entry);
         m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
@@ -267,19 +270,21 @@ private:
         return StringView(ptr, len);
     }
 
-    // Extract param resolvers, skipping the first element (RoxyVM*)
+    // Extract param resolvers for every element of the args tuple. Used by
+    // `bind<>` since natives no longer prepend `RoxyVM*`.
+    template<typename Tuple, std::size_t... Is>
+    static Vector<TypeResolverFn> get_param_resolvers_all(std::index_sequence<Is...>) {
+        Vector<TypeResolverFn> resolvers;
+        (resolvers.push_back(&RoxyType<std::tuple_element_t<Is, Tuple>>::get), ...);
+        return resolvers;
+    }
+
+    // Extract param resolvers, skipping the first element (self pointer).
+    // Used by `bind_method<>`.
     template<typename Tuple, std::size_t... Is>
     static Vector<TypeResolverFn> get_param_resolvers_skip_first(std::index_sequence<Is...>) {
         Vector<TypeResolverFn> resolvers;
         (resolvers.push_back(&RoxyType<std::tuple_element_t<Is + 1, Tuple>>::get), ...);
-        return resolvers;
-    }
-
-    // Extract param resolvers, skipping the first two elements (RoxyVM* and self)
-    template<typename Tuple, std::size_t... Is>
-    static Vector<TypeResolverFn> get_param_resolvers_skip_two(std::index_sequence<Is...>) {
-        Vector<TypeResolverFn> resolvers;
-        (resolvers.push_back(&RoxyType<std::tuple_element_t<Is + 2, Tuple>>::get), ...);
         return resolvers;
     }
 
