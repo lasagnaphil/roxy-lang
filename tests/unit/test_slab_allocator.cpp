@@ -214,7 +214,7 @@ TEST_CASE("Unit - ObjectHeader alive state") {
     ObjectHeader* header = get_header_from_data(data);
 
     // Object should be alive after allocation
-    CHECK(header->is_alive());
+    CHECK(is_alive(header));
 
     // Free the object
     object_free(&vm, data);
@@ -943,7 +943,7 @@ TEST_CASE("Stress - ObjectHeader integrity under allocation pressure") {
         records[i].expected_type_id = header->type_id;
 
         // Verify header state
-        CHECK(header->is_alive());
+        CHECK(is_alive(header));
         CHECK(header->ref_count == 0);
         CHECK(header->type_id == type_id);
     }
@@ -953,7 +953,7 @@ TEST_CASE("Stress - ObjectHeader integrity under allocation pressure") {
         ObjectHeader* header = get_header_from_data(records[i].data);
         CHECK(header->weak_generation == records[i].expected_gen);
         CHECK(header->type_id == records[i].expected_type_id);
-        CHECK(header->is_alive());
+        CHECK(is_alive(header));
     }
 
     // Free all

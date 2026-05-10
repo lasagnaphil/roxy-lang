@@ -61,7 +61,7 @@ void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size) {
 
     // Object data is already zeroed by the allocator
 
-    return header->data();
+    return header_data(header);
 }
 
 bool ref_dec(RoxyVM* vm, void* data) {
@@ -91,7 +91,7 @@ bool weak_ref_valid(void* data, u64 generation) {
     // Safe to read: memory is always mapped (active or tombstoned)
     // Tombstoned memory returns zeros, so is_alive() will be false
     ObjectHeader* header = get_header_from_data(data);
-    return header->is_alive() && (header->weak_generation == generation);
+    return is_alive(header) && (header->weak_generation == generation);
 }
 
 void object_free(RoxyVM* vm, void* data) {

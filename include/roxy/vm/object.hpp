@@ -1,40 +1,32 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
+#include "roxy/rt/roxy_rt.h"
 
 namespace rx {
 
-// Object header - precedes all heap-allocated objects
-// Memory layout: [ObjectHeader][object data...]
-// Size: 16 bytes
-struct ObjectHeader {
-    u64 weak_generation;    // 64-bit random generation for weak refs; 0 = dead/tombstoned
-    u32 ref_count;          // Reference count for ref borrows
-    u32 type_id;            // Type identifier for runtime type info
+// `ObjectHeader` is the unified runtime header used by both the VM and AOT-
+// compiled programs. It's a typedef for the C struct in `roxy_rt.h` (16 bytes:
+// u64 weak_generation, u32 ref_count, u32 type_id) so memory layout matches
+// across both runtimes.
+using ObjectHeader = roxy_object_header;
 
-    // ref_count starts at 0 for constraint reference model:
-    // uniq doesn't affect ref_count, only ref borrows increment it
-    ObjectHeader()
-        : weak_generation(0)
-        , ref_count(0)
-        , type_id(0)
-    {}
+// Check if the object is alive (not tombstoned).
+// `weak_generation == 0` means dead; non-zero means alive.
+inline bool is_alive(const ObjectHeader* hdr) {
+    return hdr && hdr->weak_generation != 0;
+}
 
-    // Check if the object is alive (not tombstoned)
-    // weak_generation == 0 means dead; non-zero means alive
-    bool is_alive() const { return weak_generation != 0; }
+// Get pointer to object data (immediately after the header).
+inline void* header_data(ObjectHeader* hdr) {
+    return reinterpret_cast<u8*>(hdr) + sizeof(ObjectHeader);
+}
 
-    // Get pointer to object data (after header)
-    void* data() {
-        return reinterpret_cast<u8*>(this) + sizeof(ObjectHeader);
-    }
+inline const void* header_data(const ObjectHeader* hdr) {
+    return reinterpret_cast<const u8*>(hdr) + sizeof(ObjectHeader);
+}
 
-    const void* data() const {
-        return reinterpret_cast<const u8*>(this) + sizeof(ObjectHeader);
-    }
-};
-
-// Get object header from a data pointer
+// Get object header from a data pointer.
 inline ObjectHeader* get_header_from_data(void* data) {
     return reinterpret_cast<ObjectHeader*>(
         reinterpret_cast<u8*>(data) - sizeof(ObjectHeader));

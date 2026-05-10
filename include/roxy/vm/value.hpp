@@ -1,11 +1,14 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
+#include "roxy/rt/roxy_rt.h"
 
 namespace rx {
 
-// Forward declarations
-struct ObjectHeader;
+// `ObjectHeader` is now a typedef of the C runtime header (see vm/object.hpp).
+// Pull in the type so `Value::get_object_header()` can return `ObjectHeader*`
+// without needing the full vm/object.hpp dependency.
+using ObjectHeader = roxy_object_header;
 
 // Runtime value representation - tagged union
 // Uses NaN-boxing for efficient storage (8 bytes total)
