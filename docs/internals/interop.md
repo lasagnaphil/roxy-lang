@@ -53,19 +53,26 @@ template<> struct RoxyType<i32> {
 ### Function Binder
 
 ```cpp
-// Automatically generates native wrapper for any C++ function.
-// The C++ function must take RoxyVM* as its first parameter.
+// Automatically generates a native wrapper for any C++ function.
+// The bound function takes only its logical args — no `RoxyVM*` prefix.
+// Functions that need runtime state (allocator, intern table, embedder
+// `user_data`) call `roxy_get_ctx()` directly; the interpreter activates
+// the active VM's context via `roxy::ScopedContext` on every entry, so
+// the context is always reachable.
 template<auto FnPtr>
 struct FunctionBinder {
     static void invoke(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         u64* regs = vm->call_stack.back().registers;
-        // Pass vm as first arg, extract remaining args from registers, store result
-        auto result = FnPtr(vm, RoxyType<Arg1>::from_reg(regs[first_arg]), ...);
+        // Extract args from registers, call the user function, store result.
+        auto result = FnPtr(RoxyType<Arg0>::from_reg(regs[first_arg]),
+                            RoxyType<Arg1>::from_reg(regs[first_arg + 1]), ...);
         regs[dst] = RoxyType<decltype(result)>::to_reg(result);
     }
     static NativeFunction get() { return &invoke; }
 };
 ```
+
+The same C++ function works in both VM mode and AOT mode without modification. In VM mode, `FunctionBinder<FnPtr>::invoke` is registered as the `NativeFunction` and called by `CALL_NATIVE`. In AOT mode, the C emitter consults the same `NativeRegistry` (via `CEmitterConfig::native_registry`) and emits a typed direct call to `FnPtr` at every call site — assuming the function is declared/defined in a header passed via `CEmitterConfig::native_include_paths`.
 
 ### NativeRegistry
 
@@ -170,9 +177,9 @@ registry.bind_generic_copy_constructor("List", "list_copy", native_list_copy);
 ## Usage Example
 
 ```cpp
-// Simple C++ functions (all take RoxyVM* as first parameter)
-i32 my_add(RoxyVM* vm, i32 a, i32 b) { return a + b; }
-f64 my_sqrt(RoxyVM* vm, f64 x) { return std::sqrt(x); }
+// Simple C++ functions — no `RoxyVM*` prefix; logical args only.
+i32 my_add(i32 a, i32 b) { return a + b; }
+f64 my_sqrt(f64 x) { return std::sqrt(x); }
 
 // Setup
 BumpAllocator allocator(8192);
@@ -266,14 +273,14 @@ Native structs have `decl = nullptr` (no AST node) since they are defined from C
 
 ### Auto-Binding Methods
 
-Write a free C++ function where the first parameter is `RoxyVM*` and the second is a pointer to the struct:
+Write a free C++ function where the first parameter is a pointer to the struct, followed by the method's logical arguments:
 
 ```cpp
 struct CppPoint { i32 x, y; };
 
-i32 point_sum(RoxyVM* vm, CppPoint* self) { return self->x + self->y; }
-i32 point_scaled(RoxyVM* vm, CppPoint* self, i32 scale) { return (self->x + self->y) * scale; }
-bool point_is_origin(RoxyVM* vm, CppPoint* self) { return self->x == 0 && self->y == 0; }
+i32 point_sum(CppPoint* self) { return self->x + self->y; }
+i32 point_scaled(CppPoint* self, i32 scale) { return (self->x + self->y) * scale; }
+bool point_is_origin(CppPoint* self) { return self->x == 0 && self->y == 0; }
 ```
 
 Then bind with `bind_method<FnPtr>`:
@@ -284,7 +291,7 @@ registry.bind_method<point_scaled>("Point", "scaled");
 registry.bind_method<point_is_origin>("Point", "is_origin");
 ```
 
-The `RoxyVM*` parameter is provided automatically by the binding system. The `RoxyType<T*>` specialization handles pointer extraction from registers automatically. Both `RoxyVM*` and the self parameter are excluded from the Roxy-visible parameter count -- `point_scaled` appears as a 1-parameter method in Roxy:
+`RoxyType<T*>` handles pointer extraction from registers automatically. The self parameter is excluded from the Roxy-visible parameter count -- `point_scaled` appears as a 1-parameter method in Roxy:
 
 ```roxy
 fun test(): i32 {
@@ -338,7 +345,7 @@ v3 = call_native "Point$$sum" [v2]   // v2 = pointer to p
 ```cpp
 // C++ side
 struct CppPoint { i32 x, y; };
-i32 point_sum(RoxyVM* vm, CppPoint* self) { return self->x + self->y; }
+i32 point_sum(CppPoint* self) { return self->x + self->y; }
 
 BumpAllocator allocator(8192);
 TypeCache types(allocator);
@@ -441,7 +448,7 @@ Built-in functions are registered during semantic analysis initialization. The I
 
 ```cpp
 // C++ function that reads a list created by Roxy
-i32 list_sum(RoxyVM* vm, RoxyList<i32> list) {
+i32 list_sum(RoxyList<i32> list) {
     i32 total = 0;
     for (u32 i = 0; i < list.len(); i++) {
         total += list.get(static_cast<i64>(i));
@@ -450,7 +457,7 @@ i32 list_sum(RoxyVM* vm, RoxyList<i32> list) {
 }
 
 // C++ function that modifies a list
-void list_push_42(RoxyVM* vm, RoxyList<i32> list) {
+void list_push_42(RoxyList<i32> list) {
     list.push(42);
 }
 
@@ -463,7 +470,7 @@ registry.bind<list_push_42>("list_push_42");
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `alloc` | `static RoxyList<T> alloc(RoxyVM*, u32 cap)` | Factory: allocate a new list |
+| `alloc` | `static RoxyList<T> alloc(i32 cap = 0)` | Factory: allocate a new list (uses ctx allocator) |
 | `get` | `T get(i64 index) const` | Bounds-checked element access |
 | `set` | `void set(i64 index, T value)` | Bounds-checked element write |
 | `push` | `void push(T value)` | Append element (grows if needed) |
@@ -487,18 +494,18 @@ The `RoxyType<RoxyList<T>>` specialization enables automatic type resolution:
 
 ```cpp
 // C++ function that reads a string from Roxy
-i32 str_get_len(RoxyVM* vm, RoxyString str) {
+i32 str_get_len(RoxyString str) {
     return static_cast<i32>(str.length());
 }
 
 // C++ function that creates a string for Roxy
-RoxyString str_make_greeting(RoxyVM* vm) {
-    return RoxyString::alloc(vm, "hello from C++");
+RoxyString str_make_greeting() {
+    return RoxyString::alloc("hello from C++");
 }
 
 // C++ function that concatenates two strings
-RoxyString str_join(RoxyVM* vm, RoxyString a, RoxyString b) {
-    return a.concat(vm, b);
+RoxyString str_join(RoxyString a, RoxyString b) {
+    return a.concat(b);
 }
 
 // Register
@@ -511,12 +518,12 @@ registry.bind<str_join>("str_join");
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `alloc` | `static RoxyString alloc(RoxyVM*, const char*, u32 length)` | Factory: allocate a new string |
-| `alloc` | `static RoxyString alloc(RoxyVM*, const char*)` | Factory: allocate (uses strlen) |
-| `length` | `u32 length() const` | String length (excluding null terminator) |
+| `alloc` | `static RoxyString alloc(const char*, u32 length)` | Factory: allocate a new string (uses ctx allocator + intern table) |
+| `alloc` | `static RoxyString alloc(const char*)` | Factory: allocate (uses strlen) |
+| `length` | `i32 length() const` | String length (excluding null terminator) |
 | `c_str` | `const char* c_str() const` | Null-terminated character data |
-| `equals` | `bool equals(const RoxyString&) const` | Equality comparison |
-| `concat` | `RoxyString concat(RoxyVM*, RoxyString) const` | Concatenate, returns new string |
+| `equals` | `bool equals(RoxyString) const` | Equality comparison |
+| `concat` | `RoxyString concat(RoxyString) const` | Concatenate, returns new string |
 | `is_valid` | `bool is_valid() const` | Check for null data pointer |
 | `data` | `void* data() const` | Raw string data pointer |
 

@@ -24,8 +24,6 @@ typedef struct {
     uint8_t  _pad[3];
     roxy_map_hash_fn hash_fn;   // C function pointer for custom Hash on Struct keys (or null)
     roxy_map_eq_fn   eq_fn;     // Same for Eq
-    uint32_t hash_fn_index;     // VM-only bytecode dispatch index; UINT32_MAX = unused
-    uint32_t eq_fn_index;
     uint8_t*  distances;        // Per-bucket Robin Hood distance+1 (0 = empty)
     uint32_t* keys;             // Key storage: capacity * key_slot_count u32 slots
     uint32_t* values;           // Value storage: capacity * value_slot_count u32 slots
@@ -35,6 +33,8 @@ typedef struct {
 The distance/key/value arrays are separately malloc'd (like List's element buffer), allowing reallocation without moving the header. Keys and values live in variable-sized u32-slot arrays so struct keys (and struct values) can be stored inline.
 
 For VM-mode `Map<Struct, V>` with user-defined `impl Hash` / `impl Eq`, `hash_fn`/`eq_fn` are set to the trampolines defined in `vm/map_dispatch.cpp`. The trampolines pop the topmost `MapDispatchFrame` from a thread-local stack — pushed by the VM-side map ops in `vm/map.cpp` before calling into `roxy_map_*` — and re-enter the bytecode interpreter via `call_user_function` with the struct-arg ABI packing for the user's `K::eq(self, other)` method.
+
+The frame's bytecode-function indices (`hash_fn_idx` / `eq_fn_idx`) live in a per-VM side-table — `tsl::robin_map<void*, MapDispatchInfo> map_dispatch` on `RoxyVM` — keyed by map pointer. Entries are inserted at `map_alloc` and removed by the map type's destructor when the slab reclaims the header, so a recycled slab slot can't inherit stale dispatch indices.
 
 ## Robin Hood Open Addressing
 

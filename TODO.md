@@ -2,7 +2,7 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-05-10 (closures landed end-to-end; bounded quantification Phase B landed; C backend Phase 3 landed — runtime library, C++ RAII/container wrappers, header generation with `make_<T>` factories; C backend Phase 4 steps 1–3 landed — `roxy_ctx` thread-local context, `RoxyVM` ctx member, AOT main wrapper; **runtime unification landed** — slab + strings + lists + maps + headers + intern unified across VM and AOT, `rx::RoxyString` etc. now alias `roxy::String` etc.)
+Last updated: 2026-05-10 (closures landed end-to-end; bounded quantification Phase B landed; C backend Phase 3 landed — runtime library, C++ RAII/container wrappers, header generation with `make_<T>` factories; **C backend Phase 4 fully landed** — `roxy_ctx` thread-local context, `RoxyVM` ctx member, AOT main wrapper, runtime unification across VM and AOT (`rx::RoxyString` etc. alias `roxy::*`), `RoxyVM*` dropped from embedder native signatures, AOT NativeRegistry dispatch, `MapHeader` slimmed via per-VM dispatch side-table)
 
 
 ---
@@ -32,7 +32,7 @@ Last updated: 2026-05-10 (closures landed end-to-end; bounded quantification Pha
 - [ ] Variant constructors (`Type.Variant { ... }` syntax)
 - [ ] LSP server Phase 8: full semantic analysis (TypeCache/TypeEnv integration)
 - [ ] LSP server Phase 9: polish (signature help, code actions, workspace symbols, semantic tokens)
-- [ ] AOT compilation to C — Phases 1–3 complete; Phase 4 mostly complete (`roxy_ctx` thread-local context, `RoxyVM` ctx member, AOT wrapper `main()`, **runtime unification: one `roxy_rt` implementation of strings/lists/maps/intern/slab serving both VM and AOT, with `rx::Roxy*` aliasing `roxy::*`**). Phase 4 remainder: drop `RoxyVM*` from native function signatures (now a small targeted commit), AOT dispatch for user-registered natives via `NativeRegistry`. Smaller cleanup: drop `hash_fn_index`/`eq_fn_index` from MapHeader (move to per-VM side-table); migrate `object_alloc(vm,...)`/`object_free(vm,...)` callers to `roxy_alloc`/`roxy_free`. Phase 5 (polish: `#line` directives, DCE, debug-name locals) still planned. See `docs/internals/c-backend.md`.
+- [ ] AOT compilation to C — Phases 1–4 complete: codegen, runtime library + C++ wrappers, header generation, runtime unification across VM/AOT, `RoxyVM*` dropped from native signatures, AOT NativeRegistry dispatch, `MapHeader` slimmed via per-VM dispatch side-table. Loose ends: explicit `extern` decls for AOT user natives (currently relies on `native_include_paths` headers), `bind_native(vm_fn, aot_fn, sig)` dual-mode overload, AOT fn-pointer/symbol metadata in `NativeRegistry` entries. Phase 5 (polish: `#line` directives, DCE, debug-name locals) still planned. See `docs/internals/c-backend.md`.
 
 ---
 
