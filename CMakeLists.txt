@@ -98,9 +98,11 @@ else()
     target_sources(roxy_vm PRIVATE src/roxy/vm/vmem_unix.cpp)
 endif()
 
-target_link_libraries(roxy_vm roxy_compiler)
+target_link_libraries(roxy_vm roxy_compiler roxy_rt)
 
-# Runtime library (for AOT-compiled C backend binaries)
+# Runtime library (used by both AOT-compiled C backend binaries and the VM —
+# RoxyVM embeds `roxy_ctx` and the interpreter sets the thread-local context
+# via `roxy::ScopedContext` on every public entry).
 add_library(roxy_rt
     src/roxy/rt/roxy_rt.cpp
 )
@@ -161,6 +163,7 @@ add_executable(roxy_tests
     tests/unit/test_lsp_hover.cpp
     tests/unit/test_lsp_references.cpp
     tests/unit/test_lsp_analysis_context.cpp
+    tests/unit/test_runtime_ctx.cpp
 
     # E2E tests
     tests/e2e/test_helpers.cpp

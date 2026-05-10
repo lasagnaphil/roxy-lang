@@ -50,6 +50,8 @@ RoxyVM::~RoxyVM() {
 bool vm_init(RoxyVM* vm, const VMConfig& config) {
     init_type_registry();
 
+    roxy_ctx_init(&vm->ctx);
+
     vm->module = nullptr;
     vm->running = false;
     vm->error = nullptr;
@@ -149,6 +151,8 @@ void vm_destroy(RoxyVM* vm) {
     vm->module = nullptr;
     vm->running = false;
     vm->error = nullptr;
+
+    roxy_ctx_destroy(&vm->ctx);
 }
 
 bool vm_load_module(RoxyVM* vm, BCModule* module) {
@@ -257,6 +261,11 @@ bool vm_call_index(RoxyVM* vm, u32 func_index, Span<Value> args) {
     // Push call frame
     // For top-level call, return_reg is 0 (result goes to R0 of this frame)
     vm->call_stack[vm->call_stack_size++] = CallFrame(func, func->code.data(), registers, 0, local_stack_base);
+
+    // Activate this VM's context for the duration of the call so native
+    // functions and runtime helpers can fetch it via `roxy_get_ctx()`. The
+    // RAII guard restores the previous (typically null) context on return.
+    roxy::ScopedContext ctx_guard(&vm->ctx);
 
     // Execute
     vm->running = true;

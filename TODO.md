@@ -2,7 +2,7 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-05-10 (closures landed end-to-end; bounded quantification Phase B landed; C backend Phase 3 landed — runtime library, C++ RAII/container wrappers, header generation with `make_<T>` factories)
+Last updated: 2026-05-10 (closures landed end-to-end; bounded quantification Phase B landed; C backend Phase 3 landed — runtime library, C++ RAII/container wrappers, header generation with `make_<T>` factories; C backend Phase 4 steps 1–3 landed — `roxy_ctx` thread-local context, `RoxyVM` ctx member, AOT main wrapper)
 
 
 ---
@@ -32,7 +32,7 @@ Last updated: 2026-05-10 (closures landed end-to-end; bounded quantification Pha
 - [ ] Variant constructors (`Type.Variant { ... }` syntax)
 - [ ] LSP server Phase 8: full semantic analysis (TypeCache/TypeEnv integration)
 - [ ] LSP server Phase 9: polish (signature help, code actions, workspace symbols, semantic tokens)
-- [ ] AOT compilation to C — Phases 1–3 complete (codegen, runtime library, header generation with `make_<T>` factories). Phase 4 (native function integration via `roxy_ctx` + TLS, user-registered natives) and Phase 5 (polish: `#line` directives, DCE, debug-name locals) still planned. See `docs/internals/c-backend.md`.
+- [ ] AOT compilation to C — Phases 1–3 complete; Phase 4 partial (`roxy_ctx` thread-local context, `RoxyVM` ctx member, AOT wrapper `main()` that calls `main_entry()`). Phase 4 remainder: drop `RoxyVM*` from native signatures, AOT dispatch for user-registered natives via `NativeRegistry`, alias `rx::Roxy*` wrappers to `roxy::*`. Phase 5 (polish: `#line` directives, DCE, debug-name locals) still planned. See `docs/internals/c-backend.md`.
 
 ---
 

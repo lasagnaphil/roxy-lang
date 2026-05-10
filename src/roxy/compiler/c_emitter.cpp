@@ -76,6 +76,17 @@ void CEmitter::emit_mangled_name(StringView name, String& out) {
     }
 }
 
+void CEmitter::emit_function_symbol(StringView name, String& out) {
+    if (m_config.emit_main_entry && name == StringView("main")) {
+        // The user's `main` becomes `main_entry`; the synthetic C `main()`
+        // wrapper at the bottom of the source initializes the runtime context
+        // and forwards to it.
+        out.append("main_entry");
+    } else {
+        emit_mangled_name(name, out);
+    }
+}
+
 // --- Value helpers ---
 
 void CEmitter::emit_value(ValueId id, String& out) {
@@ -731,7 +742,7 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 emit_value(inst->result, out);
                 out.append(" = ");
             }
-            emit_mangled_name(inst->call.func_name, out);
+            emit_function_symbol(inst->call.func_name, out);
             out.push_back('(');
             for (u32 i = 0; i < inst->call.args.size(); i++) {
                 if (i > 0) out.append(", ");
@@ -1300,20 +1311,14 @@ void CEmitter::emit_block(const IRBlock* block, const IRFunction* func, String& 
 // --- Function prototype ---
 
 void CEmitter::emit_function_prototype(const IRFunction* func, String& out) {
-    // When emit_main_entry is true and this is the "main" function,
-    // use `int` return type for C/C++ standard compliance
-    bool is_main = m_config.emit_main_entry && func->name == StringView("main");
-
-    if (is_main) {
-        out.append("int");
-    } else if (func->returns_large_struct()) {
+    if (func->returns_large_struct()) {
         // Large struct returns use hidden output pointer — return void
         out.append("void");
     } else {
         emit_type(func->return_type, out);
     }
     out.push_back(' ');
-    emit_mangled_name(func->name, out);
+    emit_function_symbol(func->name, out);
     out.push_back('(');
 
     if (func->params.empty()) {
@@ -2344,6 +2349,41 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
     for (u32 i = 0; i < module->functions.size(); i++) {
         emit_function(module->functions[i], output);
         output.append("\n");
+    }
+
+    // Emit the standalone C `main()` wrapper that initializes the runtime
+    // context and forwards to the user's renamed `main_entry()`.
+    if (m_config.emit_main_entry) {
+        const IRFunction* user_main = nullptr;
+        for (u32 i = 0; i < module->functions.size(); i++) {
+            if (module->functions[i]->name == StringView("main")) {
+                user_main = module->functions[i];
+                break;
+            }
+        }
+        if (user_main) {
+            bool main_returns_void = !user_main->return_type
+                || user_main->return_type->kind == TypeKind::Void;
+            output.append("int main(int argc, char** argv) {\n");
+            output.append("    (void)argc; (void)argv;\n");
+            output.append("    roxy_ctx ctx;\n");
+            output.append("    roxy_ctx_init(&ctx);\n");
+            output.append("    roxy_set_ctx(&ctx);\n");
+            if (main_returns_void) {
+                output.append("    main_entry();\n");
+                output.append("    roxy_ctx_destroy(&ctx);\n");
+                output.append("    roxy_set_ctx(NULL);\n");
+                output.append("    return 0;\n");
+            } else {
+                output.append("    ");
+                emit_type(user_main->return_type, output);
+                output.append(" result = main_entry();\n");
+                output.append("    roxy_ctx_destroy(&ctx);\n");
+                output.append("    roxy_set_ctx(NULL);\n");
+                output.append("    return (int)result;\n");
+            }
+            output.append("}\n");
+        }
     }
 }
 

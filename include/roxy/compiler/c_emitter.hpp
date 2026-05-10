@@ -29,6 +29,12 @@ private:
     // Name mangling: $$ -> __, $ -> _
     void emit_mangled_name(StringView name, String& out);
 
+    // Emit the C symbol name for a function. Behaves like `emit_mangled_name`
+    // except that the user's `main` is renamed to `main_entry` when
+    // `emit_main_entry` is true, so the generator can wrap it with a C `main()`
+    // that initializes the runtime context.
+    void emit_function_symbol(StringView name, String& out);
+
     // Type definition emission
     void emit_enum_typedefs(const IRModule* module, String& out);
     void emit_struct_forward_declarations(const IRModule* module, String& out);

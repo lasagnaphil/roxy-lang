@@ -2,6 +2,7 @@
 
 #include "roxy/core/types.hpp"
 #include "roxy/core/unique_ptr.hpp"
+#include "roxy/rt/roxy_rt.h"
 #include "roxy/vm/bytecode.hpp"
 #include "roxy/vm/value.hpp"
 
@@ -41,6 +42,12 @@ struct VMConfig {
 
 // Roxy Virtual Machine
 struct RoxyVM {
+    // Embedded first so a `RoxyVM*` can be reinterpreted as `roxy_ctx*`.
+    // Native functions and runtime helpers fetch the current context via
+    // `roxy_get_ctx()`; the interpreter sets the TLS pointer to `&this->ctx`
+    // on every public entry.
+    roxy_ctx ctx;
+
     BCModule* module;               // Loaded module
     UniquePtr<u64[]> register_file; // Register file (untyped 8-byte slots)
     u32 register_file_size;         // Total register capacity

@@ -1,6 +1,6 @@
 # C Backend (AOT Compilation)
 
-> **Status:** Phases 1–3 implemented (primitives, arithmetic, control flow, structs, enums, pointer operations, runtime library, strings, lists, maps, heap allocation, ref counting, weak refs, header generation with inline method wrappers and `make_<T>` factories). Phases 4–5 not yet implemented.
+> **Status:** Phases 1–3 fully implemented; Phase 4 partial (runtime context plumbing and AOT wrapper `main()` are landed — `roxy_ctx`, thread-local set/get, `roxy::ScopedContext`, `RoxyVM` ctx member, AOT entry calls `roxy_ctx_init`/`roxy_set_ctx` around `main_entry()`). Remaining Phase 4 work: drop `RoxyVM*` from native signatures, AOT dispatch for user-registered natives, alias the `rx::Roxy*` wrappers to `roxy::*`. Phase 5 not yet implemented.
 
 The C backend translates Roxy's SSA IR into a `.cpp` file. The core logic is C-style (structs, gotos, typed variables), while native function bindings use C++ to interface directly with the embedder's C++ code. The output can be compiled by any C++ compiler (g++, clang++, MSVC).
 
@@ -1506,23 +1506,29 @@ The `--native-includes` flag maps to `CEmitterConfig::native_include_paths`, tel
 
 ### Phase 4: Native Function Integration
 
-- [ ] Define `roxy_ctx` struct in `roxy_rt.h` with allocator, exception state, user data fields
-- [ ] Implement thread-local `roxy_set_ctx`/`roxy_get_ctx` in runtime library
-- [ ] Implement `roxy::ScopedContext` RAII guard
-- [ ] Add `roxy_ctx ctx` as first member of `RoxyVM` for compatibility
-- [ ] Implement `roxy_ctx_init`/`roxy_ctx_destroy` in runtime library
-- [ ] Update VM interpreter to call `roxy_set_ctx(&vm->ctx)` before entering Roxy code
-- [ ] Update `FunctionBinder` to set thread-local ctx instead of passing `vm` to native functions
+**Step 1–3 landed:** runtime context plumbing and AOT entry. The interpreter
+calls `roxy::ScopedContext(&vm->ctx)` on every public entry, and AOT-generated
+binaries do the same in their wrapper `main()`. Native runtime functions can
+already use `roxy_get_ctx()` regardless of which path invoked them.
+
+- [x] Define `roxy_ctx` struct in `roxy_rt.h` (`allocator` / `exception_state` / `user_data` placeholders)
+- [x] Implement thread-local `roxy_set_ctx`/`roxy_get_ctx` in runtime library
+- [x] Implement `roxy::ScopedContext` RAII guard
+- [x] Implement `roxy_ctx_init`/`roxy_ctx_destroy` in runtime library
+- [x] Add `roxy_ctx ctx` as first member of `RoxyVM`
+- [x] Activate the VM's context on entry: `vm_call_index` brackets `interpret(vm)` with a `roxy::ScopedContext`
+- [x] Emit standalone `main()` entry point: user's `fun main` is renamed to `main_entry()` and the generated wrapper `int main(int argc, char** argv)` calls `roxy_ctx_init` / `roxy_set_ctx` before forwarding and `roxy_ctx_destroy` after
+- [x] Unit tests for the ctx API (`tests/unit/test_runtime_ctx.cpp`) and source-structure tests for the AOT wrapper (`E2E - C Backend AOT: …` in `tests/e2e/test_c_backend.cpp`)
+- [ ] Update `FunctionBinder` to set thread-local ctx instead of passing `vm` to native functions (drops `RoxyVM*` from native function signatures — breaking change for embedder bindings)
 - [ ] Refactor `rx::RoxyString` / `rx::RoxyList<T>` / `rx::RoxyMap<K, V>` to alias `roxy::String` / `roxy::List<T>` / `roxy::Map<K, V>` (drops the `RoxyVM*` parameter from the factories — relies on TLS ctx for allocation)
 - [ ] Store AOT function pointer/symbol name in `NativeRegistry` entries for `bind<FnPtr>` bindings
 - [ ] Add `bind_native(vm_fn, aot_fn, sig)` overload for dual VM/AOT registration
 - [ ] Emit `extern` declarations for user-registered native functions in generated `.cpp`
 - [ ] Handle `CallNative` for auto-bound natives → direct typed call to C++ function
-- [ ] Handle `CallNative` for built-in natives → call `roxy_rt` functions
+- [ ] Handle `CallNative` for built-in natives → call `roxy_rt` functions (already wired for the static name table; user-registered entries still hit the warning fallback)
 - [ ] Handle native struct methods → direct call with typed `self*` parameter
 - [ ] Handle generic native type methods (List/Map) → call type-erased `roxy_rt` functions with `uint64_t` casts
 - [ ] Cross-module calls (`CallExternal`) → already resolved during linking, emit as regular calls
-- [ ] Emit standalone `main()` entry point (optional, for standalone binary mode)
 - [ ] E2E tests for native function calls (both auto-bound and built-in)
 
 ### Phase 5: Polish
@@ -1560,7 +1566,7 @@ Helper functions (in `tests/e2e/test_helpers.hpp`):
 
 Pass `debug=true` to print the IR and generated C++ source for debugging.
 
-Current test count: 66 tests (12 Phase 1 + 15 Phase 2 + 31 Phase 3 covering strings, lists, maps, heap allocation, ref params, struct keys with custom hash/eq, and 8 header-emission tests).
+Current test count: 68 C-backend E2E tests (12 Phase 1 + 15 Phase 2 + 31 Phase 3 + 2 Phase 4 step-3 tests covering the AOT main wrapper and ctx initialization), plus 5 unit tests for the runtime context API in `tests/unit/test_runtime_ctx.cpp`.
 
 ## Name Mangling in C
 
@@ -1598,7 +1604,8 @@ The two paths complement each other: interpreter for development, C backend for 
 | `src/roxy/compiler/c_emitter.cpp` | C emission implementation (`emit_header`, `emit_source`) | Implemented |
 | `include/roxy/compiler/ssa_ir.hpp` | `IRModule::struct_types` / `enum_types` for type emission | Implemented |
 | `src/roxy/compiler/ir_builder.cpp` | Populates `struct_types` / `enum_types` in `build()` | Implemented |
-| `tests/e2e/test_c_backend.cpp` | E2E tests (66 tests) | Implemented |
+| `tests/e2e/test_c_backend.cpp` | E2E tests (68 tests, including AOT main wrapper) | Implemented |
+| `tests/unit/test_runtime_ctx.cpp` | Unit tests for `roxy_ctx_init`/`roxy_set_ctx`/`roxy_get_ctx`/`ScopedContext` | Implemented |
 | `tests/e2e/test_helpers.hpp` | `compile_to_cpp()`, `compile_to_hpp()`, `compile_and_run_cpp()`, `header_compiles()` helpers | Implemented |
 | `include/roxy/rt/roxy_rt.h` | C runtime library header + C++ RAII templates / container wrappers | Implemented |
 | `src/roxy/rt/roxy_rt.cpp` | C runtime library implementation | Implemented |

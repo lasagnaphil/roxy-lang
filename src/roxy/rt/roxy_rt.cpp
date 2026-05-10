@@ -5,6 +5,34 @@
 #include <cstdio>
 #include <cassert>
 
+// ===== Runtime Context =====
+
+// Thread-local pointer to the currently-active context. Each native VM thread
+// or AOT entry point sets this before calling into Roxy code. Defaulted to
+// nullptr — `roxy_get_ctx()` returns nullptr if nothing has been set.
+static thread_local roxy_ctx* tls_current_ctx = nullptr;
+
+void roxy_ctx_init(roxy_ctx* ctx) {
+    if (!ctx) return;
+    ctx->allocator = nullptr;
+    ctx->exception_state = nullptr;
+    ctx->user_data = nullptr;
+}
+
+void roxy_ctx_destroy(roxy_ctx* ctx) {
+    // No owned state to release yet. Defined so the lifecycle pairs with
+    // `roxy_ctx_init` and embedder/host code can call it unconditionally.
+    (void)ctx;
+}
+
+void roxy_set_ctx(roxy_ctx* ctx) {
+    tls_current_ctx = ctx;
+}
+
+roxy_ctx* roxy_get_ctx(void) {
+    return tls_current_ctx;
+}
+
 // ===== Random generation for weak references =====
 
 static uint64_t roxy_random_generation() {

@@ -18,6 +18,38 @@ typedef struct {
     uint32_t type_id;           // Type identifier for runtime type info
 } roxy_object_header;
 
+// ===== Runtime Context =====
+//
+// `roxy_ctx` carries the per-call-site state native runtime functions need —
+// allocator handle, exception bookkeeping, and an embedder-defined `user_data`
+// pointer (typically a game engine handle). It is accessed via thread-local
+// storage so generated AOT code and runtime helpers don't need to thread a
+// `roxy_ctx*` parameter through every call.
+//
+// In VM mode `roxy_ctx` is the first member of `RoxyVM`, and the interpreter
+// calls `roxy_set_ctx(&vm->ctx)` before entering Roxy code. In AOT mode the
+// generated `main()` (or the embedder, via `roxy::ScopedContext`) does the
+// same. All three fields are `void*` placeholders today; future Phase 4 work
+// will populate them with real allocator / exception-handler state.
+typedef struct roxy_ctx {
+    void* allocator;
+    void* exception_state;
+    void* user_data;
+} roxy_ctx;
+
+// Zero-initialize a context. Safe to call again after `roxy_ctx_destroy`.
+void roxy_ctx_init(roxy_ctx* ctx);
+
+// Tear down any owned state. Currently a no-op; reserved for future
+// allocator/exception-state cleanup.
+void roxy_ctx_destroy(roxy_ctx* ctx);
+
+// Replace the current thread's active context. Pass `nullptr` to clear it.
+void roxy_set_ctx(roxy_ctx* ctx);
+
+// Retrieve the current thread's active context, or `nullptr` if none is set.
+roxy_ctx* roxy_get_ctx(void);
+
 // ===== Builtin type IDs =====
 #define ROXY_TYPEID_STRING  1
 #define ROXY_TYPEID_LIST    2
@@ -228,6 +260,34 @@ uint64_t roxy_weak_generation(void* data);
 #include <utility>
 
 namespace roxy {
+
+// RAII guard for thread-local context activation.
+//
+// Saves the previous context on construction, swaps in `ctx`, and restores the
+// previous context on destruction. Use this in embedder code to scope a Roxy
+// call sequence:
+//
+//     roxy_ctx ctx;
+//     roxy_ctx_init(&ctx);
+//     ctx.user_data = &my_game_engine;
+//     {
+//         roxy::ScopedContext guard(&ctx);
+//         update_player(entity, dt);
+//     }
+//     roxy_ctx_destroy(&ctx);
+class ScopedContext {
+public:
+    explicit ScopedContext(roxy_ctx* ctx) : m_prev(roxy_get_ctx()) {
+        roxy_set_ctx(ctx);
+    }
+    ~ScopedContext() { roxy_set_ctx(m_prev); }
+
+    ScopedContext(const ScopedContext&) = delete;
+    ScopedContext& operator=(const ScopedContext&) = delete;
+
+private:
+    roxy_ctx* m_prev;
+};
 
 using destructor_fn = void (*)(void*);
 

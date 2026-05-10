@@ -1422,6 +1422,49 @@ TEST_CASE("E2E - C Backend Header: header compiles standalone as valid C++") {
     CHECK(header_compiles(source));
 }
 
+// ===== AOT main entry tests (Phase 4 step 3) =====
+//
+// The standalone `main()` emitted in AOT mode renames the user's `fun main`
+// to `main_entry()` and wraps it in a real C `main` that initializes the
+// thread-local `roxy_ctx`. The runtime tests in test_runtime_ctx.cpp cover
+// the TLS API; the existing 66 C-backend tests cover the runtime path. These
+// pin down the generated source structure.
+
+TEST_CASE("E2E - C Backend AOT: generated main wraps user main_entry with ctx init") {
+    const char* source = R"(
+        fun main(): i32 {
+            return 7;
+        }
+    )";
+    String cpp = compile_to_cpp(source);
+    REQUIRE(!cpp.empty());
+
+    // User's `fun main` is renamed
+    CHECK(cpp.find("int32_t main_entry(") != String::npos);
+
+    // Generated wrapper exists, sets up TLS context, calls main_entry, tears down
+    CHECK(cpp.find("int main(int argc, char** argv)") != String::npos);
+    CHECK(cpp.find("roxy_ctx ctx;") != String::npos);
+    CHECK(cpp.find("roxy_ctx_init(&ctx);") != String::npos);
+    CHECK(cpp.find("roxy_set_ctx(&ctx);") != String::npos);
+    CHECK(cpp.find("main_entry()") != String::npos);
+    CHECK(cpp.find("roxy_ctx_destroy(&ctx);") != String::npos);
+}
+
+TEST_CASE("E2E - C Backend AOT: void-returning user main wrapper returns 0") {
+    const char* source = R"(
+        fun main() {
+            print("hi");
+        }
+    )";
+    String cpp = compile_to_cpp(source);
+    REQUIRE(!cpp.empty());
+
+    CHECK(cpp.find("void main_entry(") != String::npos);
+    CHECK(cpp.find("int main(int argc, char** argv)") != String::npos);
+    CHECK(cpp.find("return 0;") != String::npos);
+}
+
 TEST_CASE("E2E - C Backend Header: non-pub struct's methods don't produce orphaned prototypes") {
     // A non-pub struct's methods would create prototypes referencing a type
     // not in the header; emit_header must skip them.
