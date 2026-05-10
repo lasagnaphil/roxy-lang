@@ -831,8 +831,13 @@ void* roxy_map_get(void* self, const void* key_src) {
     uint8_t dist = 1;
 
     while (true) {
+        // Robin Hood termination: if the bucket is empty, or holds an
+        // entry with smaller probe distance, the key isn't present.
+        // Returns nullptr on miss — VM-side wrappers turn this into a
+        // "Map key not found" error message; AOT-generated code is
+        // expected to call `roxy_map_contains` first when missing keys
+        // are possible.
         if (hdr->distances[pos] == 0 || hdr->distances[pos] < dist) {
-            assert(false && "Map key not found");
             return nullptr;
         }
         if (hdr->distances[pos] == dist &&

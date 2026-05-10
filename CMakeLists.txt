@@ -84,6 +84,7 @@ add_library(roxy_vm
     src/roxy/vm/interpreter.cpp
     src/roxy/vm/list.cpp
     src/roxy/vm/map.cpp
+    src/roxy/vm/map_dispatch.cpp
     src/roxy/vm/string.cpp
     src/roxy/vm/natives.cpp
     src/roxy/vm/binding/registry.cpp
