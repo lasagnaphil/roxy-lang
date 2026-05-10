@@ -1,6 +1,6 @@
 #ifdef _WIN32
 
-#include "roxy/vm/vmem.hpp"
+#include "roxy/rt/vmem.hpp"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX

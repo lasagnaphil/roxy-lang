@@ -1,6 +1,6 @@
 #if !defined(_WIN32)
 
-#include "roxy/vm/vmem.hpp"
+#include "roxy/rt/vmem.hpp"
 
 #include <sys/mman.h>
 #include <unistd.h>

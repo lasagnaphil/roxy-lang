@@ -3,7 +3,7 @@
 #include "roxy/vm/list.hpp"
 #include "roxy/vm/map.hpp"
 #include "roxy/vm/string.hpp"
-#include "roxy/vm/slab_allocator.hpp"
+#include "roxy/rt/slab_allocator.hpp"
 #include "roxy/vm/vm.hpp"
 
 #include <cmath>

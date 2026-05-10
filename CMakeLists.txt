@@ -86,26 +86,28 @@ add_library(roxy_vm
     src/roxy/vm/map.cpp
     src/roxy/vm/string.cpp
     src/roxy/vm/natives.cpp
-    src/roxy/vm/slab_allocator.cpp
     src/roxy/vm/binding/registry.cpp
     src/roxy/compiler/lowering.cpp
 )
-
-# Platform-specific virtual memory implementations
-if(WIN32)
-    target_sources(roxy_vm PRIVATE src/roxy/vm/vmem_win32.cpp)
-else()
-    target_sources(roxy_vm PRIVATE src/roxy/vm/vmem_unix.cpp)
-endif()
 
 target_link_libraries(roxy_vm roxy_compiler roxy_rt)
 
 # Runtime library (used by both AOT-compiled C backend binaries and the VM —
 # RoxyVM embeds `roxy_ctx` and the interpreter sets the thread-local context
-# via `roxy::ScopedContext` on every public entry).
+# via `roxy::ScopedContext` on every public entry; the slab allocator lives
+# here so AOT-compiled programs get the same generation-based weak-ref
+# soundness as VM-mode programs).
 add_library(roxy_rt
     src/roxy/rt/roxy_rt.cpp
+    src/roxy/rt/slab_allocator.cpp
 )
+
+# Platform-specific virtual memory implementations (used by the slab allocator)
+if(WIN32)
+    target_sources(roxy_rt PRIVATE src/roxy/rt/vmem_win32.cpp)
+else()
+    target_sources(roxy_rt PRIVATE src/roxy/rt/vmem_unix.cpp)
+endif()
 
 # LSP library
 add_library(roxy_lsp

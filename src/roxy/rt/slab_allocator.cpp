@@ -1,6 +1,6 @@
-#include "roxy/vm/slab_allocator.hpp"
+#include "roxy/rt/slab_allocator.hpp"
 #include "roxy/vm/object.hpp"
-#include "roxy/vm/vmem.hpp"
+#include "roxy/rt/vmem.hpp"
 
 #include <algorithm>
 #include <cstring>

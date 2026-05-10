@@ -1,7 +1,7 @@
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/object.hpp"
-#include "roxy/vm/slab_allocator.hpp"
+#include "roxy/rt/slab_allocator.hpp"
 #include "roxy/vm/string.hpp"
 #include "roxy/vm/string_intern.hpp"
 
