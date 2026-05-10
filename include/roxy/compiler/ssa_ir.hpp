@@ -436,6 +436,11 @@ struct IRFunction {
     // Cleanup records for owned locals (for exception-path cleanup)
     Vector<IRCleanupInfo> cleanup_info;
 
+    // True for `pub` declarations; consulted by the C backend to decide what
+    // belongs in the generated public header. Synthesized default ctors/dtors
+    // inherit visibility from their struct decl.
+    bool is_pub = false;
+
     // Coroutine metadata (set by IR builder for functions returning Coro<T>)
     bool is_coroutine = false;
     Type* coro_yield_type = nullptr;     // T in Coro<T>

@@ -78,6 +78,11 @@ bool roxy_weak_valid(void* ptr, uint64_t generation) {
     return roxy_get_header(ptr)->weak_generation == generation;
 }
 
+uint64_t roxy_weak_generation(void* data) {
+    if (!data) return 0;
+    return roxy_get_header(data)->weak_generation;
+}
+
 // ===== String Operations =====
 
 static roxy_string_header* string_hdr(void* s) {

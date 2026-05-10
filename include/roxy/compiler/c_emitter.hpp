@@ -71,6 +71,18 @@ private:
     void emit_escaped_string(StringView str, String& out);
     void emit_native_call(const IRInst* inst, String& out);
 
+    // Header emission helpers
+    bool is_pub_struct(Type* struct_type) const;
+    bool is_pub_enum(Type* enum_type) const;
+    void emit_pub_struct_definitions(const IRModule* module, String& out);
+    void emit_inline_method_wrapper(Type* struct_type, const MethodInfo& method,
+                                    const IRFunction* func, String& out);
+    void emit_pub_make_factories(const IRModule* module, String& out);
+    void emit_make_factory(Type* struct_type, u32 type_id,
+                           const IRFunction* ctor, const IRFunction* dtor,
+                           String& out);
+    const IRFunction* find_function_by_mangled(StringView mangled);
+
     // Configuration
     CEmitterConfig m_config;
     BumpAllocator& m_alloc;

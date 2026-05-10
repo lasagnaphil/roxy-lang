@@ -38,8 +38,16 @@ IRModule* compile_to_ir(BumpAllocator& allocator, const char* source, bool debug
 // Helper to compile Roxy source to C++ source string via CEmitter
 String compile_to_cpp(const char* source, bool debug = false);
 
+// Helper to compile Roxy source to a generated public header (.hpp) string
+String compile_to_hpp(const char* source, bool debug = false);
+
 // Helper to compile Roxy source all the way through C backend and run the binary
 CBackendResult compile_and_run_cpp(const char* source, bool debug = false);
+
+// Compile only the generated header (with a tiny driver `#include`-ing it).
+// Returns true if the header is valid C++ that compiles standalone against the
+// runtime. Used by header-emission tests.
+bool header_compiles(const char* source, bool debug = false);
 
 // Helper to compile and run, returning result
 // Set debug=true to print generated IR for debugging

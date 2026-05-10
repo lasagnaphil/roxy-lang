@@ -210,6 +210,27 @@ String compile_to_cpp(const char* source, bool debug) {
     return output;
 }
 
+String compile_to_hpp(const char* source, bool debug) {
+    BumpAllocator allocator(8192);
+    IRModule* ir_module = compile_to_ir(allocator, source, debug);
+    if (!ir_module) {
+        return String();
+    }
+
+    CEmitterConfig config;
+    config.emit_main_entry = false;  // header is for embedder use
+    CEmitter emitter(allocator, config);
+
+    String output;
+    emitter.emit_header(ir_module, output);
+
+    if (debug) {
+        printf("=== Generated .hpp ===\n%s\n", output.c_str());
+    }
+
+    return output;
+}
+
 // Get the project root directory
 // Uses ROXY_PROJECT_ROOT define set by CMake, falls back to __FILE__-based detection
 static const char* get_project_root() {
@@ -371,6 +392,92 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     remove(bin_path);
 
     return result;
+}
+
+bool header_compiles(const char* source, bool debug) {
+    String hpp_source = compile_to_hpp(source, debug);
+    if (hpp_source.empty()) {
+        if (debug) fprintf(stderr, "[Header] compile_to_hpp returned empty\n");
+        return false;
+    }
+
+    const char* project_root = get_project_root();
+    if (!project_root) {
+        fprintf(stderr, "[Header] Failed to find project root\n");
+        return false;
+    }
+
+    char rt_include_dir[512];
+    char rt_include_dir_root[512];
+    snprintf(rt_include_dir, sizeof(rt_include_dir), "%s/include/roxy/rt", project_root);
+    snprintf(rt_include_dir_root, sizeof(rt_include_dir_root), "%s/include", project_root);
+
+    const char* tmpdir = getenv("TMPDIR");
+    if (!tmpdir) tmpdir = "/tmp";
+
+    char hpp_path[256];
+    char drv_path[256];
+    char obj_path[256];
+    snprintf(hpp_path, sizeof(hpp_path), "%s/roxy_header_XXXXXX.hpp", tmpdir);
+    snprintf(drv_path, sizeof(drv_path), "%s/roxy_driver_XXXXXX.cpp", tmpdir);
+    snprintf(obj_path, sizeof(obj_path), "%s/roxy_header_XXXXXX.o", tmpdir);
+
+    int hpp_fd = mkstemps(hpp_path, 4);  // .hpp
+    if (hpp_fd < 0) return false;
+    write(hpp_fd, hpp_source.data(), hpp_source.size());
+    close(hpp_fd);
+
+    int drv_fd = mkstemps(drv_path, 4);  // .cpp
+    if (drv_fd < 0) {
+        remove(hpp_path);
+        return false;
+    }
+    char driver[768];
+    int dn = snprintf(driver, sizeof(driver),
+                      "#include \"%s\"\nint main() { return 0; }\n", hpp_path);
+    write(drv_fd, driver, static_cast<size_t>(dn));
+    close(drv_fd);
+
+    int obj_fd = mkstemps(obj_path, 2);  // .o
+    if (obj_fd < 0) {
+        remove(hpp_path);
+        remove(drv_path);
+        return false;
+    }
+    close(obj_fd);
+
+    char compile_cmd[1536];
+    snprintf(compile_cmd, sizeof(compile_cmd),
+             "c++ -std=c++17 -I%s -I%s -c -o %s %s 2>&1",
+             rt_include_dir, rt_include_dir_root, obj_path, drv_path);
+
+    if (debug) printf("[Header] Compile command: %s\n", compile_cmd);
+
+    FILE* pipe = popen(compile_cmd, "r");
+    if (!pipe) {
+        remove(hpp_path);
+        remove(drv_path);
+        remove(obj_path);
+        return false;
+    }
+
+    char buf[1024];
+    String errors;
+    while (fgets(buf, sizeof(buf), pipe)) {
+        errors.append(buf, static_cast<u32>(strlen(buf)));
+    }
+    int status = pclose(pipe);
+
+    bool ok = (status == 0);
+    if (!ok) {
+        fprintf(stderr, "[Header] Compilation failed:\n%s\n", errors.c_str());
+        if (debug) fprintf(stderr, "=== Generated .hpp ===\n%s\n", hpp_source.c_str());
+    }
+
+    remove(hpp_path);
+    remove(drv_path);
+    remove(obj_path);
+    return ok;
 }
 
 Value compile_and_run(const char* source, StringView func_name, Span<Value> args, bool debug) {

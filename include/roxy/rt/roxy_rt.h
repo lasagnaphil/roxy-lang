@@ -208,6 +208,297 @@ uint64_t roxy_f32_hash(float val);
 uint64_t roxy_f64_hash(double val);
 uint64_t roxy_string_hash(void* val);
 
+// Read the weak generation field from an object header.
+// Returns 0 if data is null or already tombstoned.
+uint64_t roxy_weak_generation(void* data);
+
 #ifdef __cplusplus
-}
-#endif
+} // extern "C"
+
+// ===== C++ RAII Wrappers =====
+//
+// Embedder-facing C++ types mirroring Roxy's reference categories. They wrap
+// `roxy_alloc`/`roxy_free`/`roxy_ref_inc`/`roxy_ref_dec`/`roxy_weak_*` so
+// generated headers can hand the embedder typed factory functions instead of
+// raw pointers.
+
+#include <cassert>
+#include <cstddef>
+#include <cstring>
+#include <utility>
+
+namespace roxy {
+
+using destructor_fn = void (*)(void*);
+
+// Unique ownership: owns one allocation, calls user destructor + roxy_free
+// on scope exit. Move-only, no copy.
+template <typename T>
+class uniq {
+public:
+    uniq() : m_ptr(nullptr), m_destructor(nullptr) {}
+
+    uniq(T* ptr, void (*dtor)(T*))
+        : m_ptr(ptr), m_destructor(reinterpret_cast<destructor_fn>(dtor)) {}
+
+    ~uniq() { reset(); }
+
+    uniq(uniq&& other) noexcept
+        : m_ptr(other.m_ptr), m_destructor(other.m_destructor) {
+        other.m_ptr = nullptr;
+    }
+
+    uniq& operator=(uniq&& other) noexcept {
+        if (this != &other) {
+            reset();
+            m_ptr = other.m_ptr;
+            m_destructor = other.m_destructor;
+            other.m_ptr = nullptr;
+        }
+        return *this;
+    }
+
+    uniq(const uniq&) = delete;
+    uniq& operator=(const uniq&) = delete;
+
+    T* get() const { return m_ptr; }
+    T* operator->() const { return m_ptr; }
+    T& operator*() const { return *m_ptr; }
+    explicit operator bool() const { return m_ptr != nullptr; }
+
+    // Release ownership without running the destructor.
+    T* release() {
+        T* p = m_ptr;
+        m_ptr = nullptr;
+        return p;
+    }
+
+    void reset() {
+        if (m_ptr) {
+            if (m_destructor) m_destructor(m_ptr);
+            roxy_free(m_ptr);
+            m_ptr = nullptr;
+        }
+    }
+
+private:
+    T* m_ptr;
+    destructor_fn m_destructor;
+};
+
+// Shared reference: increments ref count on copy, decrements on destruction.
+// Last reference triggers `roxy_ref_dec` which frees if there is no outstanding
+// `uniq` owner.
+template <typename T>
+class ref {
+public:
+    ref() : m_ptr(nullptr) {}
+
+    explicit ref(T* ptr) : m_ptr(ptr) {
+        if (m_ptr) roxy_ref_inc(m_ptr);
+    }
+
+    ~ref() {
+        if (m_ptr) roxy_ref_dec(m_ptr);
+    }
+
+    ref(const ref& other) : m_ptr(other.m_ptr) {
+        if (m_ptr) roxy_ref_inc(m_ptr);
+    }
+
+    ref& operator=(const ref& other) {
+        if (this != &other) {
+            if (m_ptr) roxy_ref_dec(m_ptr);
+            m_ptr = other.m_ptr;
+            if (m_ptr) roxy_ref_inc(m_ptr);
+        }
+        return *this;
+    }
+
+    ref(ref&& other) noexcept : m_ptr(other.m_ptr) {
+        other.m_ptr = nullptr;
+    }
+
+    ref& operator=(ref&& other) noexcept {
+        if (this != &other) {
+            if (m_ptr) roxy_ref_dec(m_ptr);
+            m_ptr = other.m_ptr;
+            other.m_ptr = nullptr;
+        }
+        return *this;
+    }
+
+    T* get() const { return m_ptr; }
+    T* operator->() const { return m_ptr; }
+    T& operator*() const { return *m_ptr; }
+    explicit operator bool() const { return m_ptr != nullptr; }
+
+private:
+    T* m_ptr;
+};
+
+// Weak reference: non-owning, generation-checked. `valid()` returns false once
+// the referenced object has been freed.
+template <typename T>
+class weak {
+public:
+    weak() : m_ptr(nullptr), m_generation(0) {}
+
+    explicit weak(T* ptr)
+        : m_ptr(ptr)
+        , m_generation(ptr ? roxy_weak_generation(ptr) : 0) {}
+
+    bool valid() const {
+        return m_ptr != nullptr && roxy_weak_valid(m_ptr, m_generation);
+    }
+
+    T* lock() const {
+        assert(valid() && "weak reference is dangling");
+        return m_ptr;
+    }
+
+    T* lock_or_null() const {
+        return valid() ? m_ptr : nullptr;
+    }
+
+    weak(const weak&) = default;
+    weak& operator=(const weak&) = default;
+    weak(weak&&) noexcept = default;
+    weak& operator=(weak&&) noexcept = default;
+
+private:
+    T* m_ptr;
+    uint64_t m_generation;
+};
+
+// ===== Container / String Wrappers =====
+//
+// Thin non-owning facades over the type-erased roxy_rt C functions. These
+// match the existing `rx::RoxyString`/`rx::RoxyList`/`rx::RoxyMap` shape but
+// drop the VM dependency, so generated AOT code and embedder C++ can use them
+// uniformly.
+
+class String {
+public:
+    String() : m_data(nullptr) {}
+    explicit String(void* data) : m_data(data) {}
+
+    static String alloc(const char* data, uint32_t length) {
+        return String(roxy_string_from_literal(data, length));
+    }
+    static String alloc(const char* data) {
+        return alloc(data, static_cast<uint32_t>(std::strlen(data)));
+    }
+
+    int32_t length() const { return roxy_string_len(m_data); }
+    const char* c_str() const { return roxy_string_chars(m_data); }
+
+    bool equals(String other) const {
+        return roxy_string_eq(m_data, other.m_data);
+    }
+    String concat(String other) const {
+        return String(roxy_string_concat(m_data, other.m_data));
+    }
+
+    bool is_valid() const { return m_data != nullptr; }
+    void* data() const { return m_data; }
+
+private:
+    void* m_data;
+};
+
+template <typename T>
+class List {
+public:
+    static constexpr int32_t slot_count =
+        static_cast<int32_t>((sizeof(T) + sizeof(uint32_t) - 1) / sizeof(uint32_t));
+
+    static List<T> alloc(int32_t capacity = 0) {
+        void* data = roxy_list_alloc(slot_count, /*element_is_inline=*/1);
+        if (data) roxy_list_init(data, capacity);
+        return List<T>(data);
+    }
+
+    List() : m_data(nullptr) {}
+    explicit List(void* data) : m_data(data) {}
+
+    void push(const T& value) {
+        roxy_list_push(m_data, &value);
+    }
+    T pop() {
+        T value;
+        std::memcpy(&value, roxy_list_pop(m_data), sizeof(T));
+        return value;
+    }
+    T get(int32_t index) const {
+        T value;
+        std::memcpy(&value, roxy_list_get(m_data, index), sizeof(T));
+        return value;
+    }
+    void set(int32_t index, const T& value) {
+        roxy_list_set(m_data, index, &value);
+    }
+
+    int32_t len() const { return roxy_list_len(m_data); }
+    int32_t cap() const { return roxy_list_cap(m_data); }
+
+    bool is_valid() const { return m_data != nullptr; }
+    void* data() const { return m_data; }
+
+private:
+    void* m_data;
+};
+
+template <typename K, typename V>
+class Map {
+public:
+    static constexpr int32_t key_slot_count =
+        static_cast<int32_t>((sizeof(K) + sizeof(uint32_t) - 1) / sizeof(uint32_t));
+    static constexpr int32_t value_slot_count =
+        static_cast<int32_t>((sizeof(V) + sizeof(uint32_t) - 1) / sizeof(uint32_t));
+
+    static Map<K, V> alloc(int32_t key_kind,
+                           int32_t capacity = 0,
+                           roxy_map_hash_fn hash_fn = nullptr,
+                           roxy_map_eq_fn eq_fn = nullptr) {
+        void* data = roxy_map_alloc(key_slot_count, /*key_is_inline=*/1,
+                                    value_slot_count, /*value_is_inline=*/1,
+                                    hash_fn, eq_fn);
+        if (data) roxy_map_init(data, key_kind, capacity);
+        return Map<K, V>(data);
+    }
+
+    Map() : m_data(nullptr) {}
+    explicit Map(void* data) : m_data(data) {}
+
+    void insert(const K& key, const V& value) {
+        roxy_map_insert(m_data, &key, &value);
+    }
+    V get(const K& key) const {
+        V value;
+        std::memcpy(&value, roxy_map_get(m_data, &key), sizeof(V));
+        return value;
+    }
+    bool contains(const K& key) const {
+        return roxy_map_contains(m_data, &key);
+    }
+    bool remove(const K& key) {
+        return roxy_map_remove(m_data, &key);
+    }
+    void clear() { roxy_map_clear(m_data); }
+
+    List<K> keys() const { return List<K>(roxy_map_keys(m_data)); }
+    List<V> values() const { return List<V>(roxy_map_values(m_data)); }
+
+    int32_t len() const { return roxy_map_len(m_data); }
+
+    bool is_valid() const { return m_data != nullptr; }
+    void* data() const { return m_data; }
+
+private:
+    void* m_data;
+};
+
+} // namespace roxy
+
+#endif // __cplusplus

@@ -1279,3 +1279,161 @@ TEST_CASE("E2E - C Backend: Map<Struct, i32> custom hash survives rehash") {
     CHECK(result.run_success);
     CHECK(result.exit_code == 18);
 }
+
+// ===== Header emission tests (Phase 3 leftovers) =====
+//
+// The generated `.hpp` is the public API the embedder consumes. It contains
+// `pub` struct typedefs, inline C++ method wrappers, `make_<T>` RAII factories,
+// and `pub` free-function declarations. Non-`pub` items must NOT leak into it.
+
+TEST_CASE("E2E - C Backend Header: pub struct and method emitted, non-pub omitted") {
+    const char* source = R"(
+        pub struct Foo {
+            x: i32 = 0;
+        }
+        pub fun Foo.get_x(): i32 {
+            return self.x;
+        }
+        struct Hidden {
+            secret: i32 = 0;
+        }
+        fun Hidden.peek(): i32 {
+            return self.secret;
+        }
+        fun main(): i32 { return 0; }
+    )";
+    String hpp = compile_to_hpp(source);
+    REQUIRE(!hpp.empty());
+
+    // Pub struct definition + inline method wrapper present
+    CHECK(hpp.find("struct Foo {") != String::npos);
+    CHECK(hpp.find("int32_t get_x()") != String::npos);
+    CHECK(hpp.find("Foo__get_x(this)") != String::npos);
+
+    // Non-pub struct must not appear
+    CHECK(hpp.find("struct Hidden") == String::npos);
+    CHECK(hpp.find("Hidden__peek") == String::npos);
+}
+
+TEST_CASE("E2E - C Backend Header: pub free function declaration emitted") {
+    const char* source = R"(
+        pub fun add(a: i32, b: i32): i32 {
+            return a + b;
+        }
+        fun helper(): i32 { return 7; }
+        fun main(): i32 { return 0; }
+    )";
+    String hpp = compile_to_hpp(source);
+    REQUIRE(!hpp.empty());
+
+    CHECK(hpp.find("int32_t add(") != String::npos);
+    CHECK(hpp.find("int32_t helper(") == String::npos);
+}
+
+TEST_CASE("E2E - C Backend Header: make_<T> factory for pub struct with pub constructor") {
+    const char* source = R"(
+        pub struct Player {
+            health: i32 = 0;
+        }
+        pub fun new Player(hp: i32) {
+            self.health = hp;
+        }
+        fun main(): i32 { return 0; }
+    )";
+    String hpp = compile_to_hpp(source);
+    REQUIRE(!hpp.empty());
+
+    CHECK(hpp.find("inline roxy::uniq<Player> make_Player(") != String::npos);
+    CHECK(hpp.find("roxy_alloc(sizeof(Player)") != String::npos);
+    CHECK(hpp.find("Player__new(ptr") != String::npos);
+}
+
+TEST_CASE("E2E - C Backend Header: make_<T> factory for pub struct without user constructor") {
+    // The synthesized default constructor inherits the struct's pub-ness, so
+    // a pub struct with no user `fun new` should still get make_<T>().
+    const char* source = R"(
+        pub struct Point {
+            x: i32 = 0;
+            y: i32 = 0;
+        }
+        fun main(): i32 { return 0; }
+    )";
+    String hpp = compile_to_hpp(source);
+    REQUIRE(!hpp.empty());
+
+    CHECK(hpp.find("inline roxy::uniq<Point> make_Point(") != String::npos);
+    CHECK(hpp.find("Point__new(ptr") != String::npos);
+}
+
+TEST_CASE("E2E - C Backend Header: pub enum typedef emitted") {
+    const char* source = R"(
+        pub enum Color { Red, Green, Blue }
+        enum Hidden { A, B }
+        fun main(): i32 { return 0; }
+    )";
+    String hpp = compile_to_hpp(source);
+    REQUIRE(!hpp.empty());
+
+    CHECK(hpp.find("Color_Red") != String::npos);
+    CHECK(hpp.find("Color_Blue") != String::npos);
+    CHECK(hpp.find("Hidden_A") == String::npos);
+}
+
+TEST_CASE("E2E - C Backend Header: non-pub method on pub struct omitted from inline wrappers") {
+    const char* source = R"(
+        pub struct Foo {
+            x: i32 = 0;
+        }
+        pub fun Foo.shown(): i32 { return self.x; }
+        fun Foo.hidden(): i32 { return self.x + 1; }
+        fun main(): i32 { return 0; }
+    )";
+    String hpp = compile_to_hpp(source);
+    REQUIRE(!hpp.empty());
+
+    CHECK(hpp.find("int32_t shown()") != String::npos);
+    // Non-pub method should not have an inline wrapper (its mangled body lives in .cpp)
+    CHECK(hpp.find("int32_t hidden()") == String::npos);
+    CHECK(hpp.find("Foo__hidden") == String::npos);
+}
+
+TEST_CASE("E2E - C Backend Header: header compiles standalone as valid C++") {
+    const char* source = R"(
+        pub struct Vec2 {
+            x: f32 = 0.0f;
+            y: f32 = 0.0f;
+        }
+        pub fun Vec2.length_sq(): f32 {
+            return self.x * self.x + self.y * self.y;
+        }
+        pub fun new Vec2(x: f32, y: f32) {
+            self.x = x;
+            self.y = y;
+        }
+        pub struct Player {
+            health: i32 = 0;
+        }
+        pub fun new Player(hp: i32) {
+            self.health = hp;
+        }
+        pub fun add(a: i32, b: i32): i32 { return a + b; }
+        fun main(): i32 { return 0; }
+    )";
+    CHECK(header_compiles(source));
+}
+
+TEST_CASE("E2E - C Backend Header: non-pub struct's methods don't produce orphaned prototypes") {
+    // A non-pub struct's methods would create prototypes referencing a type
+    // not in the header; emit_header must skip them.
+    const char* source = R"(
+        struct Hidden {
+            x: i32 = 0;
+        }
+        pub fun Hidden.touch(): i32 { return self.x; }
+        fun main(): i32 { return 0; }
+    )";
+    String hpp = compile_to_hpp(source);
+    REQUIRE(!hpp.empty());
+    CHECK(hpp.find("Hidden") == String::npos);
+    CHECK(header_compiles(source));
+}

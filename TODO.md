@@ -2,7 +2,7 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-05-01 (small struct-copy specialization landed, see Bytecode VM Opcode Improvements)
+Last updated: 2026-05-10 (closures landed end-to-end; bounded quantification Phase B landed; C backend Phase 3 landed — runtime library, C++ RAII/container wrappers, header generation with `make_<T>` factories)
 
 
 ---
@@ -27,14 +27,12 @@ Last updated: 2026-05-01 (small struct-copy specialization landed, see Bytecode 
 
 ## Planned Features
 
-- [ ] Closures and first-class functions — functions as values, lambda syntax, closure environment capture, `fun(params): ret` function type syntax
-- [ ] Bounded quantification Phase B: declaration-site checking of generic bodies against trait bounds
 - [ ] Flow-sensitive typing for tagged union variant fields
 - [ ] Exhaustiveness checking for when statements
 - [ ] Variant constructors (`Type.Variant { ... }` syntax)
 - [ ] LSP server Phase 8: full semantic analysis (TypeCache/TypeEnv integration)
 - [ ] LSP server Phase 9: polish (signature help, code actions, workspace symbols, semantic tokens)
-- [ ] AOT compilation to C (design plan complete in `docs/internals/c-backend.md`)
+- [ ] AOT compilation to C — Phases 1–3 complete (codegen, runtime library, header generation with `make_<T>` factories). Phase 4 (native function integration via `roxy_ctx` + TLS, user-registered natives) and Phase 5 (polish: `#line` directives, DCE, debug-name locals) still planned. See `docs/internals/c-backend.md`.
 
 ---
 

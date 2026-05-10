@@ -1467,10 +1467,464 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
 
 // --- Top-level emission ---
 
-void CEmitter::emit_header(const IRModule* module, String& output) {
-    output.append("#pragma once\n\n");
-    output.append("#include <stdint.h>\n");
-    output.append("#include <stdbool.h>\n\n");
+// --- Header emission helpers ---
+
+bool CEmitter::is_pub_struct(Type* struct_type) const {
+    if (!struct_type || !struct_type->is_struct()) return false;
+    Decl* decl = struct_type->struct_info.decl;
+    return decl && decl->struct_decl.is_pub;
+}
+
+bool CEmitter::is_pub_enum(Type* enum_type) const {
+    if (!enum_type || !enum_type->is_enum()) return false;
+    Decl* decl = enum_type->enum_info.decl;
+    return decl && decl->enum_decl.is_pub;
+}
+
+const IRFunction* CEmitter::find_function_by_mangled(StringView mangled) {
+    if (!m_module) return nullptr;
+    for (u32 i = 0; i < m_module->functions.size(); i++) {
+        if (m_module->functions[i]->name == mangled) {
+            return m_module->functions[i];
+        }
+    }
+    return nullptr;
+}
+
+// Splits "Foo$$bar" into ("Foo", "bar"). Returns false if no `$$` present.
+static bool split_mangled(StringView name, StringView& before, StringView& after) {
+    const char* data = name.data();
+    u32 len = name.size();
+    for (u32 i = 0; i + 1 < len; i++) {
+        if (data[i] == '$' && data[i + 1] == '$') {
+            before = StringView(data, i);
+            after = StringView(data + i + 2, len - i - 2);
+            return true;
+        }
+    }
+    return false;
+}
+
+void CEmitter::emit_inline_method_wrapper(Type* struct_type, const MethodInfo& method,
+                                          const IRFunction* func, String& out) {
+    // The IRFunction holds the canonical lowered signature, but for the C++
+    // wrapper we want clean parameter names from the method declaration.
+    MethodDecl* method_decl = method.decl ? &method.decl->method_decl : nullptr;
+    bool large_return = func->returns_large_struct();
+
+    out.append("    ");
+    if (large_return) {
+        // For a large struct return the IR appends a hidden output pointer and
+        // the function returns void. Skip the inline wrapper — embedders should
+        // call the mangled function directly with their own out-pointer.
+        out.append("// (large-struct return — call ");
+        emit_mangled_name(func->name, out);
+        out.append(" directly)\n");
+        return;
+    }
+    emit_type(method.return_type, out);
+    out.push_back(' ');
+    out.append(method.name.data(), method.name.size());
+    out.push_back('(');
+
+    if (method_decl) {
+        for (u32 i = 0; i < method_decl->params.size(); i++) {
+            if (i > 0) out.append(", ");
+            Type* param_type = method.param_types[i];
+            emit_type(param_type, out);
+            // Match the lowering convention: struct/out/inout params come in
+            // through a pointer at the C ABI boundary.
+            bool is_struct_param = param_type && param_type->is_struct();
+            // For methods, params start at index 1 in the IRFunction (self is index 0).
+            bool is_ptr_param = (i + 1) < func->param_is_ptr.size()
+                && func->param_is_ptr[i + 1];
+            if (is_struct_param) out.push_back('*');
+            else if (is_ptr_param && param_type && !param_type->is_reference()) out.push_back('*');
+            out.push_back(' ');
+            out.append(method_decl->params[i].name.data(),
+                       method_decl->params[i].name.size());
+        }
+    }
+    out.append(") { ");
+    if (method.return_type && !method.return_type->is_void()) {
+        out.append("return ");
+    }
+    emit_mangled_name(func->name, out);
+    out.append("(this");
+    if (method_decl) {
+        for (u32 i = 0; i < method_decl->params.size(); i++) {
+            out.append(", ");
+            out.append(method_decl->params[i].name.data(),
+                       method_decl->params[i].name.size());
+        }
+    }
+    out.append("); }\n");
+}
+
+void CEmitter::emit_make_factory(Type* struct_type, u32 type_id,
+                                 const IRFunction* ctor, const IRFunction* dtor,
+                                 String& out) {
+    StringView struct_name = struct_type->struct_info.name;
+
+    // Resolve the user-facing factory name. For the default ctor the name
+    // ends in `$$new`; named ctors carry an extra `$$<name>` segment that
+    // becomes `__<name>` in the C identifier.
+    StringView before, after;
+    bool has_split = split_mangled(ctor->name, before, after);
+    StringView ctor_suffix;  // empty for default ctor
+    if (has_split) {
+        StringView dummy_before, after_inner;
+        if (split_mangled(after, dummy_before, after_inner)) {
+            ctor_suffix = after_inner;
+        }
+    }
+
+    out.append("inline roxy::uniq<");
+    emit_mangled_name(struct_name, out);
+    out.append("> make_");
+    emit_mangled_name(struct_name, out);
+    if (!ctor_suffix.empty()) {
+        out.append("__");
+        out.append(ctor_suffix.data(), ctor_suffix.size());
+    }
+    out.push_back('(');
+
+    // Constructor params: the IR ctor function takes self as the first param.
+    // Skip it when emitting the factory's signature.
+    ConstructorDecl* ctor_decl = nullptr;
+    if (has_split && !ctor_suffix.empty()) {
+        // Look up the named-constructor decl through struct_info.
+        for (const auto& ci : struct_type->struct_info.constructors) {
+            if (ci.name == ctor_suffix && ci.decl) {
+                ctor_decl = &ci.decl->constructor_decl;
+                break;
+            }
+        }
+    } else {
+        // Default ctor — find one with empty `name`.
+        for (const auto& ci : struct_type->struct_info.constructors) {
+            if (ci.name.empty() && ci.decl) {
+                ctor_decl = &ci.decl->constructor_decl;
+                break;
+            }
+        }
+    }
+
+    // Param names default to argN if no decl is available (synthesized default
+    // ctor takes no args, so the loop simply produces nothing in that case).
+    u32 user_param_count = ctor->params.size() > 0 ? ctor->params.size() - 1 : 0;
+    for (u32 i = 0; i < user_param_count; i++) {
+        if (i > 0) out.append(", ");
+        Type* param_type = ctor->params[i + 1].type;
+        emit_type(param_type, out);
+        bool is_struct_param = param_type && param_type->is_struct();
+        bool is_ptr_param = (i + 1) < ctor->param_is_ptr.size()
+            && ctor->param_is_ptr[i + 1];
+        if (is_struct_param) out.push_back('*');
+        else if (is_ptr_param && param_type && !param_type->is_reference()) out.push_back('*');
+        out.push_back(' ');
+        if (ctor_decl && i < ctor_decl->params.size()) {
+            out.append(ctor_decl->params[i].name.data(),
+                       ctor_decl->params[i].name.size());
+        } else {
+            char buf[16];
+            format_to(buf, sizeof(buf), "arg{}", i);
+            out.append(buf);
+        }
+    }
+    out.append(") {\n    ");
+    emit_mangled_name(struct_name, out);
+    out.append("* ptr = (");
+    emit_mangled_name(struct_name, out);
+    char tid_buf[64];
+    format_to(tid_buf, sizeof(tid_buf), "*)roxy_alloc(sizeof(");
+    out.append(tid_buf);
+    emit_mangled_name(struct_name, out);
+    format_to(tid_buf, sizeof(tid_buf), "), {});\n    ", type_id);
+    out.append(tid_buf);
+
+    emit_mangled_name(ctor->name, out);
+    out.append("(ptr");
+    for (u32 i = 0; i < user_param_count; i++) {
+        out.append(", ");
+        if (ctor_decl && i < ctor_decl->params.size()) {
+            out.append(ctor_decl->params[i].name.data(),
+                       ctor_decl->params[i].name.size());
+        } else {
+            char buf[16];
+            format_to(buf, sizeof(buf), "arg{}", i);
+            out.append(buf);
+        }
+    }
+    out.append(");\n    return roxy::uniq<");
+    emit_mangled_name(struct_name, out);
+    out.append(">(ptr, ");
+    if (dtor) {
+        emit_mangled_name(dtor->name, out);
+    } else {
+        out.append("nullptr");
+    }
+    out.append(");\n}\n\n");
+}
+
+void CEmitter::emit_pub_struct_definitions(const IRModule* module, String& out) {
+    // Reuse the topological sort from emit_struct_typedefs to stay consistent
+    // with field-dependency ordering, but only emit pub structs.
+    u32 count = module->struct_types.size();
+    if (count == 0) return;
+
+    tsl::robin_map<Type*, u32> type_to_index;
+    for (u32 i = 0; i < count; i++) {
+        type_to_index[module->struct_types[i]] = i;
+    }
+
+    Vector<Vector<u32>> depends_on(count);
+    Vector<u32> in_degree(count, 0);
+    for (u32 i = 0; i < count; i++) {
+        Type* st = module->struct_types[i];
+        for (u32 f = 0; f < st->struct_info.fields.size(); f++) {
+            Type* ft = st->struct_info.fields[f].type;
+            if (ft && ft->is_struct()) {
+                auto it = type_to_index.find(ft);
+                if (it != type_to_index.end()) {
+                    depends_on[i].push_back(it->second);
+                    in_degree[i]++;
+                }
+            }
+        }
+    }
+
+    Vector<u32> order;
+    Vector<u32> queue;
+    for (u32 i = 0; i < count; i++) {
+        if (in_degree[i] == 0) queue.push_back(i);
+    }
+    while (!queue.empty()) {
+        u32 current = queue.back();
+        queue.pop_back();
+        order.push_back(current);
+        for (u32 i = 0; i < count; i++) {
+            for (u32 d = 0; d < depends_on[i].size(); d++) {
+                if (depends_on[i][d] == current) {
+                    in_degree[i]--;
+                    if (in_degree[i] == 0) queue.push_back(i);
+                }
+            }
+        }
+    }
+    if (order.size() < count) {
+        for (u32 i = 0; i < count; i++) {
+            bool found = false;
+            for (u32 j = 0; j < order.size(); j++) {
+                if (order[j] == i) { found = true; break; }
+            }
+            if (!found) order.push_back(i);
+        }
+    }
+
+    for (u32 o = 0; o < order.size(); o++) {
+        Type* struct_type = module->struct_types[order[o]];
+        if (!is_pub_struct(struct_type)) continue;
+        const StructTypeInfo& info = struct_type->struct_info;
+
+        out.append("struct ");
+        emit_mangled_name(info.name, out);
+        out.append(" {\n");
+
+        for (u32 f = 0; f < info.fields.size(); f++) {
+            const FieldInfo& field = info.fields[f];
+            out.append("    ");
+            emit_type(field.type, out);
+            out.push_back(' ');
+            out.append(field.name.data(), field.name.size());
+            out.append(";\n");
+        }
+
+        for (u32 w = 0; w < info.when_clauses.size(); w++) {
+            const WhenClauseInfo& clause = info.when_clauses[w];
+            out.append("    union {\n");
+            for (u32 v = 0; v < clause.variants.size(); v++) {
+                const VariantInfo& variant = clause.variants[v];
+                if (variant.fields.size() == 0) continue;
+                out.append("        struct { ");
+                for (u32 vf = 0; vf < variant.fields.size(); vf++) {
+                    emit_type(variant.fields[vf].type, out);
+                    out.push_back(' ');
+                    out.append(variant.fields[vf].name.data(),
+                               variant.fields[vf].name.size());
+                    out.append("; ");
+                }
+                out.append("}; /* ");
+                out.append(variant.case_name.data(), variant.case_name.size());
+                out.append(" */\n");
+            }
+            out.append("    };\n");
+        }
+
+        // Inline C++ method wrappers for pub methods.
+        bool any_method_emitted = false;
+        for (u32 m = 0; m < info.methods.size(); m++) {
+            const MethodInfo& method = info.methods[m];
+            if (!method.decl) continue;  // builtin methods have no Roxy decl
+            if (!method.decl->method_decl.is_pub) continue;
+            StringView mangled = StringView();  // built lazily below
+            char buf[256];
+            i32 mlen = format_to(buf, sizeof(buf), "{}$${}", info.name, method.name);
+            char* mptr = reinterpret_cast<char*>(m_alloc.alloc_bytes(static_cast<u32>(mlen) + 1, 1));
+            memcpy(mptr, buf, static_cast<u32>(mlen) + 1);
+            mangled = StringView(mptr, static_cast<u32>(mlen));
+
+            const IRFunction* func = find_function_by_mangled(mangled);
+            if (!func) continue;
+            if (!any_method_emitted) out.append("\n");
+            any_method_emitted = true;
+            emit_inline_method_wrapper(struct_type, method, func, out);
+        }
+
+        out.append("};\n\n");
+    }
+}
+
+void CEmitter::emit_pub_make_factories(const IRModule* module, String& out) {
+    for (u32 i = 0; i < module->struct_types.size(); i++) {
+        Type* struct_type = module->struct_types[i];
+        if (!is_pub_struct(struct_type)) continue;
+
+        StringView struct_name = struct_type->struct_info.name;
+        u32 type_id = 100 + i;
+
+        // Locate the pub default destructor (used by every factory). If absent,
+        // pass nullptr so `roxy::uniq` only frees without running a destructor.
+        char buf[256];
+        i32 dlen = format_to(buf, sizeof(buf), "{}$$delete", struct_name);
+        char* dptr = reinterpret_cast<char*>(m_alloc.alloc_bytes(static_cast<u32>(dlen) + 1, 1));
+        memcpy(dptr, buf, static_cast<u32>(dlen) + 1);
+        StringView dtor_mangled(dptr, static_cast<u32>(dlen));
+        const IRFunction* dtor = find_function_by_mangled(dtor_mangled);
+        if (dtor && !dtor->is_pub) dtor = nullptr;
+
+        // Iterate IRFunctions matching `Struct$$new` or `Struct$$new$$<name>`.
+        for (u32 f = 0; f < module->functions.size(); f++) {
+            const IRFunction* func = module->functions[f];
+            if (!func->is_pub) continue;
+            StringView before, after;
+            if (!split_mangled(func->name, before, after)) continue;
+            if (before != struct_name) continue;
+            if (after == StringView("new") ||
+                (after.size() > 5 && memcmp(after.data(), "new$$", 5) == 0)) {
+                emit_make_factory(struct_type, type_id, func, dtor, out);
+            }
+        }
+    }
+}
+
+// --- Top-level emission ---
+
+void CEmitter::emit_header(const IRModule* module, String& out) {
+    m_module = module;
+
+    out.append("#pragma once\n\n");
+    out.append("#include <stdint.h>\n");
+    out.append("#include <stdbool.h>\n");
+    out.append("#include \"roxy_rt.h\"\n\n");
+
+    // Type IDs for pub structs (indexed by position in module->struct_types so
+    // they match the IDs the .cpp uses for roxy_alloc).
+    bool any_typeids = false;
+    for (u32 i = 0; i < module->struct_types.size(); i++) {
+        Type* st = module->struct_types[i];
+        if (!is_pub_struct(st)) continue;
+        if (!any_typeids) {}
+        any_typeids = true;
+        out.append("#define TYPEID_");
+        emit_mangled_name(st->struct_info.name, out);
+        char buf[16];
+        format_to(buf, sizeof(buf), " {}\n", 100 + i);
+        out.append(buf);
+    }
+    if (any_typeids) out.append("\n");
+
+    // Pub enum typedefs
+    bool any_enum = false;
+    for (u32 e = 0; e < module->enum_types.size(); e++) {
+        Type* enum_type = module->enum_types[e];
+        if (!is_pub_enum(enum_type)) continue;
+        any_enum = true;
+        const EnumTypeInfo& info = enum_type->enum_info;
+        out.append("typedef enum { ");
+        if (info.decl) {
+            const EnumDecl& enum_decl = info.decl->enum_decl;
+            i64 next_value = 0;
+            for (u32 v = 0; v < enum_decl.variants.size(); v++) {
+                if (v > 0) out.append(", ");
+                emit_mangled_name(info.name, out);
+                out.push_back('_');
+                out.append(enum_decl.variants[v].name.data(),
+                           enum_decl.variants[v].name.size());
+                i64 value = next_value;
+                if (enum_decl.variants[v].value) {
+                    value = enum_decl.variants[v].value->literal.int_value;
+                }
+                char buf[32];
+                format_to(buf, sizeof(buf), " = {}", value);
+                out.append(buf);
+                next_value = value + 1;
+            }
+        }
+        out.append(" } ");
+        emit_mangled_name(info.name, out);
+        out.append(";\n");
+    }
+    if (any_enum) out.append("\n");
+
+    // Pub struct forward declarations
+    bool any_struct_fwd = false;
+    for (u32 i = 0; i < module->struct_types.size(); i++) {
+        Type* st = module->struct_types[i];
+        if (!is_pub_struct(st)) continue;
+        any_struct_fwd = true;
+        out.append("typedef struct ");
+        emit_mangled_name(st->struct_info.name, out);
+        out.push_back(' ');
+        emit_mangled_name(st->struct_info.name, out);
+        out.append(";\n");
+    }
+    if (any_struct_fwd) out.append("\n");
+
+    // Forward declarations for all pub IRFunctions (free functions, ctors,
+    // dtors, methods on pub structs). The inline method wrappers and factories
+    // emitted below reference these prototypes; the embedder may also call them
+    // directly. Methods on non-pub structs are skipped because their owner
+    // type isn't in the header.
+    bool any_proto = false;
+    for (u32 i = 0; i < module->functions.size(); i++) {
+        const IRFunction* func = module->functions[i];
+        if (!func->is_pub) continue;
+        if (m_config.emit_main_entry && func->name == StringView("main")) continue;
+        StringView before, after;
+        if (split_mangled(func->name, before, after)) {
+            // method/ctor/dtor — owner must be a pub struct in this module
+            bool owner_is_pub = false;
+            for (u32 s = 0; s < module->struct_types.size(); s++) {
+                Type* st = module->struct_types[s];
+                if (st->struct_info.name == before && is_pub_struct(st)) {
+                    owner_is_pub = true;
+                    break;
+                }
+            }
+            if (!owner_is_pub) continue;
+        }
+        any_proto = true;
+        emit_function_prototype(func, out);
+        out.append(";\n");
+    }
+    if (any_proto) out.append("\n");
+
+    // Pub struct definitions with inline method wrappers
+    emit_pub_struct_definitions(module, out);
+
+    // RAII factories for pub structs (`make_<T>` / `make_<T>__<ctor>`)
+    emit_pub_make_factories(module, out);
 }
 
 // --- Phase 3: Runtime library support ---

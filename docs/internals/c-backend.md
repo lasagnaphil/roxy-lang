@@ -1,6 +1,6 @@
 # C Backend (AOT Compilation)
 
-> **Status:** Phases 1–2 implemented (primitives, arithmetic, control flow, structs, enums, pointer operations). Phases 3–5 not yet implemented.
+> **Status:** Phases 1–3 implemented (primitives, arithmetic, control flow, structs, enums, pointer operations, runtime library, strings, lists, maps, heap allocation, ref counting, weak refs, header generation with inline method wrappers and `make_<T>` factories). Phases 4–5 not yet implemented.
 
 The C backend translates Roxy's SSA IR into a `.cpp` file. The core logic is C-style (structs, gotos, typed variables), while native function bindings use C++ to interface directly with the embedder's C++ code. The output can be compiled by any C++ compiler (g++, clang++, MSVC).
 
@@ -1474,34 +1474,35 @@ The `--native-includes` flag maps to `CEmitterConfig::native_include_paths`, tel
 - [x] Handle enum-typed `ConstInt` → explicit cast `(EnumType)N`
 - [x] Handle struct return values → dereference StackAlloc pointer in `return *v`
 - [x] E2E tests for structs, enums, tagged unions, out/inout, large struct return, cast (15 tests)
-- [ ] Emit inline C++ method wrappers on pub structs in `.hpp` header (deferred to Phase 3+)
-- [ ] Emit static `create()` constructor wrapper for pub structs (deferred to Phase 3+)
+- [x] Emit inline C++ method wrappers on pub structs in `.hpp` header (Phase 3)
+- [x] Emit `make_<T>` / `make_<T>__<ctor>` RAII factory functions returning `roxy::uniq<T>` (Phase 3 — superseded the static `create()` wrapper sketch with a heap-allocating factory better matched to embedder use)
 
-### Phase 3: Runtime Library
+### Phase 3: Runtime Library ✓
 
-- [ ] Create `roxy_rt.h` and `roxy_rt.c`
-- [ ] Implement `roxy_alloc`/`roxy_free` (malloc-based with `ObjectHeader`)
-- [ ] Implement `roxy_ref_inc`/`roxy_ref_dec`
-- [ ] Implement `roxy_weak_create`/`roxy_weak_valid`
-- [ ] Implement `roxy::uniq<T>` template (move-only, destructor + free on scope exit)
-- [ ] Implement `roxy::ref<T>` template (ref-counted, copyable)
-- [ ] Implement `roxy::weak<T>` template (non-owning, generation-checked validity)
-- [ ] Implement `roxy::String` wrapper (refactored from `rx::RoxyString`)
-- [ ] Implement `roxy::List<T>` wrapper (refactored from `rx::RoxyList<T>`)
-- [ ] Implement `roxy::Map<K, V>` wrapper (refactored from `rx::RoxyMap<K, V>`)
-- [ ] Refactor `rx::RoxyString` / `rx::RoxyList<T>` / `rx::RoxyMap<K, V>` to alias `roxy::` versions
-- [ ] Implement string C functions (`roxy_string_from_literal`, `roxy_string_concat`, `roxy_string_eq`, etc.)
-- [ ] Implement `to_string` conversions for primitives
-- [ ] Implement list C functions (`roxy_list_new`, `roxy_list_push`, `roxy_list_pop`, etc.)
-- [ ] Implement map C functions (`roxy_map_new`, `roxy_map_insert`, `roxy_map_get`, etc.)
-- [ ] Implement print functions
-- [ ] Handle `New`/`Delete` IR ops → `roxy_alloc`/`roxy_free` + constructor/destructor calls
-- [ ] Handle `RefInc`/`RefDec`/`WeakCheck` IR ops
-- [ ] Handle `ConstString` → `roxy_string_from_literal`
-- [ ] Handle `CallNative` → dispatch to runtime functions
-- [ ] Emit `roxy::uniq<T>` factory functions in `.hpp` for pub structs usable with `uniq`
-- [ ] Emit `roxy::ref<T>` factory functions in `.hpp` for pub structs usable with `ref`
-- [ ] E2E tests for strings, lists, heap allocation, ref counting, RAII wrappers
+- [x] Create `roxy_rt.h` and `roxy_rt.cpp`
+- [x] Implement `roxy_alloc`/`roxy_free` (malloc-based with `ObjectHeader`)
+- [x] Implement `roxy_ref_inc`/`roxy_ref_dec`
+- [x] Implement `roxy_weak_create`/`roxy_weak_valid`/`roxy_weak_generation`
+- [x] Implement `roxy::uniq<T>` template (move-only, destructor + free on scope exit)
+- [x] Implement `roxy::ref<T>` template (ref-counted, copyable)
+- [x] Implement `roxy::weak<T>` template (non-owning, generation-checked validity)
+- [x] Implement `roxy::String` wrapper (thin facade over `roxy_string_*` C functions)
+- [x] Implement `roxy::List<T>` wrapper (`sizeof(T)`-derived `element_slot_count`, byte-pointer push/get/set)
+- [x] Implement `roxy::Map<K, V>` wrapper (caller-supplied `key_kind` + optional `hash_fn`/`eq_fn`)
+- [x] Implement string C functions (`roxy_string_from_literal`, `roxy_string_concat`, `roxy_string_eq`, etc.)
+- [x] Implement `to_string` conversions for primitives
+- [x] Implement list C functions (variable-sized: `roxy_list_alloc`/`init`/`push`/`pop`/`get`/`set`/`copy`/`delete`)
+- [x] Implement map C functions including struct-key variants (`roxy_map_alloc`/`init`/`insert`/`get`/`contains`/`remove`/`clear`/`keys`/`values`/`copy`/iteration)
+- [x] Implement print functions
+- [x] Handle `New`/`Delete` IR ops → `roxy_alloc`/`roxy_free` + constructor/destructor calls
+- [x] Handle `RefInc`/`RefDec`/`WeakCheck` IR ops
+- [x] Handle `ConstString` → `roxy_string_from_literal`
+- [x] Handle `CallNative` → dispatch to runtime functions
+- [x] Add `is_pub` to `IRFunction` (populated from `FunDecl`/`MethodDecl`/`ConstructorDecl`/`DestructorDecl::is_pub`; synthesized default ctors/dtors inherit visibility from their struct decl)
+- [x] Implement `emit_header()`: pub enum typedefs, pub struct forward declarations, pub struct definitions with inline C++ method wrappers (pub methods only), pub function prototypes, `make_<T>` / `make_<T>__<ctor>` factories returning `roxy::uniq<T>`
+- [x] E2E tests for strings, lists, heap allocation, ref counting, header emission
+
+**Deferred to Phase 4:** Refactoring `rx::RoxyString` / `rx::RoxyList<T>` / `rx::RoxyMap<K, V>` to alias `roxy::String` / `roxy::List<T>` / `roxy::Map<K, V>`. The existing VM bindings take `RoxyVM*` for allocation; the AOT wrappers don't (they call the context-free `roxy_rt` C functions directly). A clean alias requires Phase 4's `roxy_ctx` so allocation is uniformly TLS-driven across both modes.
 
 ### Phase 4: Native Function Integration
 
@@ -1512,6 +1513,7 @@ The `--native-includes` flag maps to `CEmitterConfig::native_include_paths`, tel
 - [ ] Implement `roxy_ctx_init`/`roxy_ctx_destroy` in runtime library
 - [ ] Update VM interpreter to call `roxy_set_ctx(&vm->ctx)` before entering Roxy code
 - [ ] Update `FunctionBinder` to set thread-local ctx instead of passing `vm` to native functions
+- [ ] Refactor `rx::RoxyString` / `rx::RoxyList<T>` / `rx::RoxyMap<K, V>` to alias `roxy::String` / `roxy::List<T>` / `roxy::Map<K, V>` (drops the `RoxyVM*` parameter from the factories — relies on TLS ctx for allocation)
 - [ ] Store AOT function pointer/symbol name in `NativeRegistry` entries for `bind<FnPtr>` bindings
 - [ ] Add `bind_native(vm_fn, aot_fn, sig)` overload for dual VM/AOT registration
 - [ ] Emit `extern` declarations for user-registered native functions in generated `.cpp`
@@ -1558,7 +1560,7 @@ Helper functions (in `tests/e2e/test_helpers.hpp`):
 
 Pass `debug=true` to print the IR and generated C++ source for debugging.
 
-Current test count: 27 tests (12 Phase 1 + 15 Phase 2).
+Current test count: 66 tests (12 Phase 1 + 15 Phase 2 + 31 Phase 3 covering strings, lists, maps, heap allocation, ref params, struct keys with custom hash/eq, and 8 header-emission tests).
 
 ## Name Mangling in C
 
@@ -1596,12 +1598,12 @@ The two paths complement each other: interpreter for development, C backend for 
 | `src/roxy/compiler/c_emitter.cpp` | C emission implementation (`emit_header`, `emit_source`) | Implemented |
 | `include/roxy/compiler/ssa_ir.hpp` | `IRModule::struct_types` / `enum_types` for type emission | Implemented |
 | `src/roxy/compiler/ir_builder.cpp` | Populates `struct_types` / `enum_types` in `build()` | Implemented |
-| `tests/e2e/test_c_backend.cpp` | E2E tests (27 tests) | Implemented |
-| `tests/e2e/test_helpers.hpp` | `compile_to_cpp()`, `compile_and_run_cpp()` helpers | Implemented |
-| `include/roxy/rt/roxy_rt.h` | C runtime library header (Phase 3+) | Planned |
-| `src/roxy/rt/roxy_rt.c` | C runtime library implementation (Phase 3+) | Planned |
-| *(generated)* `<name>.hpp` | Public API header: pub structs, enums, function declarations | Planned |
-| *(generated)* `<name>.cpp` | Implementation: includes, native decls, all function bodies | Implemented (source emission) |
+| `tests/e2e/test_c_backend.cpp` | E2E tests (66 tests) | Implemented |
+| `tests/e2e/test_helpers.hpp` | `compile_to_cpp()`, `compile_to_hpp()`, `compile_and_run_cpp()`, `header_compiles()` helpers | Implemented |
+| `include/roxy/rt/roxy_rt.h` | C runtime library header + C++ RAII templates / container wrappers | Implemented |
+| `src/roxy/rt/roxy_rt.cpp` | C runtime library implementation | Implemented |
+| *(generated)* `<name>.hpp` | Public API header: pub structs, enums, inline method wrappers, `make_<T>` factories, pub function declarations | Implemented |
+| *(generated)* `<name>.cpp` | Implementation: includes, native decls, all function bodies | Implemented |
 
 ## Dependencies
 

@@ -381,6 +381,7 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     } else {
         m_current_func->name = decl->name;
     }
+    m_current_func->is_pub = decl->is_pub;
 
     // Set up parameters
     setup_parameters(decl->params);
@@ -443,6 +444,7 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
 IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_type) {
     m_current_func = m_allocator.emplace<IRFunction>();
     m_current_func->name = mangle_constructor(decl->struct_name, decl->name);
+    m_current_func->is_pub = decl->is_pub;
 
     // Set up parameters with 'self' as first parameter
     setup_parameters(decl->params, struct_type);
@@ -525,6 +527,7 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
 IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type) {
     m_current_func = m_allocator.emplace<IRFunction>();
     m_current_func->name = mangle_destructor(decl->struct_name, decl->name);
+    m_current_func->is_pub = decl->is_pub;
 
     // Set up parameters with 'self' as first parameter
     setup_parameters(decl->params, struct_type);
@@ -570,6 +573,7 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
 IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
     m_current_func = m_allocator.emplace<IRFunction>();
     m_current_func->name = mangle_method(decl->struct_name, decl->name);
+    m_current_func->is_pub = decl->is_pub;
 
     // Set up parameters with 'self' as first parameter
     setup_parameters(decl->params, struct_type);
@@ -620,6 +624,8 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
 
     StructTypeInfo& struct_type_info = struct_type->struct_info;
     m_current_func->name = mangle_constructor(struct_type_info.name);
+    m_current_func->is_pub = struct_type_info.decl
+        && struct_type_info.decl->struct_decl.is_pub;
 
     // Set up parameters - only 'self'
     setup_parameters({}, struct_type);
@@ -744,6 +750,8 @@ IRFunction* IRBuilder::build_synthesized_default_destructor(Type* struct_type) {
 
     StructTypeInfo& struct_type_info = struct_type->struct_info;
     m_current_func->name = mangle_destructor(struct_type_info.name);
+    m_current_func->is_pub = struct_type_info.decl
+        && struct_type_info.decl->struct_decl.is_pub;
 
     // Set up parameters - only 'self'
     setup_parameters({}, struct_type);
