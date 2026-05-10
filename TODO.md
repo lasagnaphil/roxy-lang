@@ -32,7 +32,7 @@ Last updated: 2026-05-10 (closures landed end-to-end; bounded quantification Pha
 - [ ] Variant constructors (`Type.Variant { ... }` syntax)
 - [ ] LSP server Phase 8: full semantic analysis (TypeCache/TypeEnv integration)
 - [ ] LSP server Phase 9: polish (signature help, code actions, workspace symbols, semantic tokens)
-- [ ] AOT compilation to C — Phases 1–4 complete: codegen, runtime library + C++ wrappers, header generation, runtime unification across VM/AOT, `RoxyVM*` dropped from native signatures, AOT NativeRegistry dispatch, `MapHeader` slimmed via per-VM dispatch side-table. Loose ends: explicit `extern` decls for AOT user natives (currently relies on `native_include_paths` headers), `bind_native(vm_fn, aot_fn, sig)` dual-mode overload, AOT fn-pointer/symbol metadata in `NativeRegistry` entries. Phase 5 (polish: `#line` directives, DCE, debug-name locals) still planned. See `docs/internals/c-backend.md`.
+- [ ] AOT compilation to C — Phases 1–4 fully complete: codegen, runtime library + C++ wrappers, header generation, runtime unification across VM/AOT, `RoxyVM*` dropped from native signatures, AOT NativeRegistry dispatch with `aot_symbol_name` override + dual-mode `bind_native` + auto-emitted extern decls (AOT binaries link against inline-defined headers OR separately-compiled `.cpp` files), `MapHeader` slimmed via per-VM dispatch side-table. Phase 5 (polish: `#line` directives mapping back to Roxy source for debugger support, dead-code elimination of unreachable blocks, optional Relooper/Stackifier for structured C output, optional `switch` for large enums, optional readable variable names) still planned. See `docs/internals/c-backend.md`.
 
 ---
 

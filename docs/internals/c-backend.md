@@ -1,6 +1,6 @@
 # C Backend (AOT Compilation)
 
-> **Status:** Phases 1–4 fully implemented. Phase 4 covers runtime context plumbing, AOT wrapper `main()`, the runtime unification refactor (slab + vmem moved to `roxy_rt`, unified `ObjectHeader`/`StringHeader`/`ListHeader`/`MapHeader`, ctx-dispatched allocation, string interning through ctx, single map-dispatch path with VM trampolines for bytecode Hash/Eq, `rx::RoxyString`/`RoxyList`/`RoxyMap` aliased to `roxy::String`/`List`/`Map`), `RoxyVM*` dropped from embedder native function signatures, AOT NativeRegistry dispatch for user-registered natives, and `MapHeader` slimmed back to its pre-bridge size by moving VM-only dispatch indices to a per-VM side-table. Remaining loose ends: explicit `extern` decls for AOT user natives (currently relies on `native_include_paths` headers), `bind_native(vm_fn, aot_fn, sig)` dual-mode overload, and storing AOT fn-pointer/symbol metadata in `NativeRegistry` entries. Phase 5 not yet implemented.
+> **Status:** Phases 1–4 fully implemented. Phase 4 covers runtime context plumbing, AOT wrapper `main()`, the runtime unification refactor (slab + vmem moved to `roxy_rt`, unified `ObjectHeader`/`StringHeader`/`ListHeader`/`MapHeader`, ctx-dispatched allocation, string interning through ctx, single map-dispatch path with VM trampolines for bytecode Hash/Eq, `rx::RoxyString`/`RoxyList`/`RoxyMap` aliased to `roxy::String`/`List`/`Map`), `RoxyVM*` dropped from embedder native function signatures, AOT NativeRegistry dispatch for user-registered natives, `MapHeader` slimmed back to its pre-bridge size by moving VM-only dispatch indices to a per-VM side-table, AOT symbol metadata in `NativeRegistry` (`aot_symbol_name` on each entry; `bind<>(roxy_name, aot_symbol)` overload for renamed AOT symbols; dual-mode `bind_native(func, sig, aot_symbol)` overload), and automatic `extern` declarations in generated AOT source so user natives can be supplied either via inline-definition headers OR separately-compiled `.cpp` translation units. Phase 5 not yet implemented.
 
 The C backend translates Roxy's SSA IR into a `.cpp` file. The core logic is C-style (structs, gotos, typed variables), while native function bindings use C++ to interface directly with the embedder's C++ code. The output can be compiled by any C++ compiler (g++, clang++, MSVC).
 
@@ -1534,9 +1534,9 @@ already use `roxy_get_ctx()` regardless of which path invoked them.
 - [x] Drop `hash_fn_index`/`eq_fn_index` from `MapHeader`. Moved to a per-VM side-table (`tsl::robin_map<void*, MapDispatchInfo>` on `RoxyVM`); `MapDispatchScope` looks them up there. The map type's destructor unregisters the entry on free so a recycled slab slot can't inherit stale dispatch indices.
 - [x] Migrate `object_alloc`/`object_free` to route through `vm->slab_vtable` (the `roxy_allocator` adapter) instead of calling `vm->allocator->alloc/free` directly. Same slab, same behaviour — but VM allocations now share the same code path AOT-compiled programs use.
 - [x] CEmitter NativeRegistry dispatch: when `emit_native_call`'s static-table lookup misses, consult `CEmitterConfig::native_registry`; hits emit a typed direct call to the user's C++ function (assumed declared via `native_include_paths`). Test infra `compile_and_run_cpp_with_registry` writes an inline native-header to a temp file and links it with the generated source. Two E2E tests verify a user-bound `my_aot_add(40, 2)` returns 42 from an AOT binary.
-- [ ] Store AOT function pointer/symbol name in `NativeRegistry` entries for `bind<FnPtr>` bindings (current dispatch uses the registered name as the C++ symbol name — works as long as the user's function is declared in a header reachable from `native_include_paths`)
-- [ ] Add `bind_native(vm_fn, aot_fn, sig)` overload for dual VM/AOT registration
-- [ ] Emit `extern` declarations for user-registered native functions in generated `.cpp` (currently the embedder is responsible for declaring them via `native_include_paths`; explicit extern decls would let the AOT binary link against compiled-elsewhere natives without inline definitions)
+- [x] Store AOT function-pointer/symbol metadata in `NativeRegistry` entries: `NativeFunctionEntry::aot_symbol_name` carries the C++ symbol name (defaults to the registered Roxy name; `bind<FnPtr>(roxy_name, aot_symbol)` lets them diverge).
+- [x] Add `bind_native(vm_fn, sig, aot_symbol)` overload for dual VM/AOT registration — VM-side wrapper and AOT-side typed function can have different C++ symbols.
+- [x] Emit `extern` declarations for user-registered native functions: `CEmitter::collect_extern_native_decls` pre-scans IR for `CallNative` ops; `emit_extern_native_decls` writes `extern Ret name(Args...);` lines in the source preamble. AOT binaries link against either inline-defined `native_include_paths` headers or separately-compiled `.cpp` translation units.
 - [x] Cross-module calls (`CallExternal`) → emit as `module__func(args...)`; resolved at C-compile time across the bundled module set (handled in `c_emitter.cpp` since Phase 1)
 
 ### Phase 5: Polish
@@ -1574,7 +1574,7 @@ Helper functions (in `tests/e2e/test_helpers.hpp`):
 
 Pass `debug=true` to print the IR and generated C++ source for debugging.
 
-Current test count: 70 C-backend E2E tests (12 Phase 1 + 15 Phase 2 + 31 Phase 3 + 2 Phase 4 step-3 tests covering the AOT main wrapper + 2 Phase 4 step-4 tests covering AOT NativeRegistry dispatch), plus 5 unit tests for the runtime context API in `tests/unit/test_runtime_ctx.cpp`.
+Current test count: 73 C-backend E2E tests (12 Phase 1 + 15 Phase 2 + 31 Phase 3 + 2 Phase 4 step-3 tests covering the AOT main wrapper + 5 Phase 4 step-4 tests covering AOT NativeRegistry dispatch, AOT symbol override, and cross-TU linkage against extern decls), plus 5 unit tests for the runtime context API in `tests/unit/test_runtime_ctx.cpp`.
 
 ## Name Mangling in C
 

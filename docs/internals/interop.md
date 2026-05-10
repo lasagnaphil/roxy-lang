@@ -72,7 +72,7 @@ struct FunctionBinder {
 };
 ```
 
-The same C++ function works in both VM mode and AOT mode without modification. In VM mode, `FunctionBinder<FnPtr>::invoke` is registered as the `NativeFunction` and called by `CALL_NATIVE`. In AOT mode, the C emitter consults the same `NativeRegistry` (via `CEmitterConfig::native_registry`) and emits a typed direct call to `FnPtr` at every call site — assuming the function is declared/defined in a header passed via `CEmitterConfig::native_include_paths`.
+The same C++ function works in both VM mode and AOT mode without modification. In VM mode, `FunctionBinder<FnPtr>::invoke` is registered as the `NativeFunction` and called by `CALL_NATIVE`. In AOT mode, the C emitter consults the same `NativeRegistry` (via `CEmitterConfig::native_registry`) and emits a typed direct call to the entry's `aot_symbol_name` (defaults to the registered Roxy name; `bind<FnPtr>(roxy_name, aot_symbol)` lets them diverge) at every call site. The CEmitter also pre-scans the IR and writes `extern Ret name(Args...);` declarations in the source preamble, so the binary links against either an inline-defined header passed via `CEmitterConfig::native_include_paths` or a separately-compiled `.cpp` translation unit containing the definition.
 
 ### NativeRegistry
 
