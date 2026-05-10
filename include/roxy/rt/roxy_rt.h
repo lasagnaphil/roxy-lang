@@ -141,11 +141,17 @@ bool roxy_weak_valid(void* ptr, uint64_t generation);
 
 // ===== String Header =====
 
-// Stored in object data after roxy_object_header
+// Stored in object data after roxy_object_header.
 // Layout: [roxy_object_header][roxy_string_header][char data + null terminator]
+//
+// Strings are immutable in Roxy, so capacity is always `length+1` and isn't
+// stored. The 8-byte slot is reused for a cached hash — `hash` holds the low
+// 32 bits of XXH3_64 over the character bytes, computed at allocation time.
+// `Map<string, V>` lookups read this field directly to avoid re-hashing on
+// every probe.
 typedef struct {
-    uint32_t length;    // String length (excluding null terminator)
-    uint32_t capacity;  // Allocated capacity (including null terminator)
+    uint32_t length;
+    uint32_t hash;
 } roxy_string_header;
 
 // ===== String Operations =====

@@ -7,6 +7,9 @@
 #include <cassert>
 #include <new>
 
+#define XXH_INLINE_ALL
+#include "roxy/core/xxhash.h"
+
 // ===== Runtime Context =====
 
 // Thread-local pointer to the currently-active context. Each native VM thread
@@ -229,13 +232,17 @@ void* roxy_string_from_literal(const char* data, uint32_t length) {
 
     auto* hdr = string_hdr(s);
     hdr->length = length;
-    hdr->capacity = length + 1;
 
     char* chars = reinterpret_cast<char*>(reinterpret_cast<uint8_t*>(s) + sizeof(roxy_string_header));
     if (length > 0) {
         memcpy(chars, data, length);
     }
     chars[length] = '\0';
+
+    // Cache a 32-bit hash over the character bytes so `Map<string, V>`
+    // lookups (and `roxy_string_hash`) don't walk the string on every op.
+    // Low 32 bits of XXH3_64 — matches the VM's vm/string.cpp behaviour.
+    hdr->hash = static_cast<uint32_t>(XXH3_64bits(chars, length));
     return s;
 }
 
@@ -267,12 +274,16 @@ void* roxy_string_concat(void* a, void* b) {
 
     auto* hdr = string_hdr(s);
     hdr->length = total;
-    hdr->capacity = total + 1;
 
     char* chars = roxy_string_chars(s);
     memcpy(chars, roxy_string_chars(a), len_a);
     memcpy(chars + len_a, roxy_string_chars(b), len_b);
     chars[total] = '\0';
+
+    // Hash the concatenated bytes, not the inputs' hashes — XXH3 isn't a
+    // homomorphism, and mixing two cached values would diverge from the
+    // hash a fresh allocation of the same content would produce.
+    hdr->hash = static_cast<uint32_t>(XXH3_64bits(chars, total));
     return s;
 }
 
@@ -505,8 +516,9 @@ uint64_t roxy_f64_hash(double val) {
 
 uint64_t roxy_string_hash(void* val) {
     if (!val) return 0;
-    return hash_fnv1a(roxy_string_chars(val),
-                      static_cast<uint32_t>(roxy_string_len(val)));
+    // Read the cached low-32 hash. The high bits are filled with 0; the
+    // map's probe mask only uses the low 32 bits anyway (capacity is u32).
+    return static_cast<uint64_t>(string_hdr(val)->hash);
 }
 
 // ===== Map Operations =====
@@ -549,8 +561,9 @@ static uint64_t map_hash_key(const uint32_t* key_src, const roxy_map_header* hdr
             uint64_t ptr_bits = read_packed_u64(key_src);
             void* str = reinterpret_cast<void*>(ptr_bits);
             if (!str) return 0;
-            return hash_fnv1a(roxy_string_chars(str),
-                              static_cast<uint32_t>(roxy_string_len(str)));
+            // Read the cached hash from the string header — same field the
+            // VM-side `Map<string,V>` lookup at vm/map.cpp:84 uses.
+            return static_cast<uint64_t>(string_hdr(str)->hash);
         }
         case ROXY_MAP_KEY_STRUCT:
             if (hdr->hash_fn) {
