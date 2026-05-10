@@ -48,12 +48,15 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug = false);
 // Compile Roxy source via the C backend with a custom NativeRegistry, plus an
 // optional inline native-header text (written to a temp file and passed as a
 // `native_include_paths` entry so generated code can call user-bound natives
-// declared/defined inline there). Used to test AOT NativeRegistry dispatch
-// end-to-end.
+// declared/defined inline there) and an optional extra `.cpp` source (compiled
+// as a separate translation unit and linked into the final binary — used to
+// verify cross-TU linkage against AOT extern decls). Used to test AOT
+// NativeRegistry dispatch end-to-end.
 CBackendResult compile_and_run_cpp_with_registry(
     const char* source,
     NativeRegistry* registry,
     const char* native_header_text = nullptr,
+    const char* extra_cpp_text = nullptr,
     bool debug = false);
 
 // Compile only the generated header (with a tiny driver `#include`-ing it).

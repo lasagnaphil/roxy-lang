@@ -65,6 +65,13 @@ enum class NativeTypeInfoMode : u8 {
 // Entry for a registered native function (unified for both concrete and generic types)
 struct NativeFunctionEntry {
     StringView name;                           // Mangled name for methods (e.g., "Point$$sum")
+    // C++ symbol name the AOT C backend emits at call sites and declares
+    // via `extern` in generated source. Defaults to the same StringView as
+    // `name`; callers can override via the 2-string `bind<>` overload (e.g.
+    // when the Roxy-visible name differs from the C++ symbol, or when a
+    // legacy `bind_native` registration's NativeFunction wrapper is named
+    // separately from the typed AOT function).
+    StringView aot_symbol_name;
     NativeFunction func;
     NativeTypeInfoMode type_info_mode = NativeTypeInfoMode::Parsed;
     // Type info path: Resolver (deferred type resolution for cross-TypeCache compatibility)
@@ -115,12 +122,18 @@ public:
     // `RoxyVM*` prefix. Functions that need runtime context call
     // `roxy_get_ctx()` directly.
     // Usage: registry.bind<my_function>("my_function")
+    //        registry.bind<my_function>("roxy_name", "cpp_symbol")  // 2-arg form
     template<auto FnPtr>
     void bind(const char* name) {
+        bind<FnPtr>(name, name);
+    }
+    template<auto FnPtr>
+    void bind(const char* name, const char* aot_symbol_name) {
         using Traits = FunctionPointerTraits<FnPtr>;
 
         NativeFunctionEntry entry;
         entry.name = make_string_view(name);
+        entry.aot_symbol_name = make_string_view(aot_symbol_name);
         entry.func = FunctionBinder<FnPtr>::get();
         entry.param_count = Traits::arity;
         entry.min_args = entry.param_count;
@@ -139,9 +152,15 @@ public:
         m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
     }
 
-    // Register a native function from a Roxy signature string.
+    // Register a native function from a Roxy signature string. The AOT
+    // symbol name defaults to the function name parsed from the signature;
+    // pass `aot_symbol_name` to override (use case: the VM-side wrapper
+    // `func` and the AOT-side typed function have different C++ symbols).
     // Usage: registry.bind_native(func, "fun print(s: string)")
+    //        registry.bind_native(func, "fun add(a: i32, b: i32): i32", "engine_add")
     void bind_native(NativeFunction func, const char* signature);
+    void bind_native(NativeFunction func, const char* signature,
+                     const char* aot_symbol_name);
 
     // Register a native function with a name override (for $$-mangled names).
     // Usage: registry.bind_native("bool$$to_string", func, "fun to_string(val: bool): string")
@@ -154,8 +173,14 @@ public:
     // The C++ function takes the self pointer as its first parameter, followed
     // by the method's logical arguments. No `RoxyVM*` prefix.
     // Usage: registry.bind_method<point_sum>("Point", "sum")
+    //        registry.bind_method<point_sum>("Point", "sum", "cpp_symbol")  // 3-arg
     template<auto FnPtr>
     void bind_method(const char* struct_name, const char* method_name) {
+        bind_method<FnPtr>(struct_name, method_name, /*aot_symbol_name=*/nullptr);
+    }
+    template<auto FnPtr>
+    void bind_method(const char* struct_name, const char* method_name,
+                     const char* aot_symbol_name) {
         using Traits = FunctionPointerTraits<FnPtr>;
         static_assert(Traits::arity >= 1,
                       "Method must have a self pointer as its first parameter");
@@ -164,6 +189,12 @@ public:
         entry.struct_name = make_string_view(struct_name);
         entry.method_name = make_string_view(method_name);
         entry.name = mangle_method_name(entry.struct_name, entry.method_name);
+        // For methods the default AOT symbol matches `name` (e.g. "Point$$sum"),
+        // which the C emitter then mangles to "Point__sum". Callers can
+        // override to a different C++ symbol (e.g. a free function in their
+        // engine namespace).
+        entry.aot_symbol_name = aot_symbol_name
+            ? make_string_view(aot_symbol_name) : entry.name;
         entry.func = FunctionBinder<FnPtr>::get();
         entry.param_count = Traits::arity - 1;  // Exclude self
         entry.min_args = entry.param_count;

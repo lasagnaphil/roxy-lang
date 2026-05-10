@@ -1980,10 +1980,11 @@ void CEmitter::emit_escaped_string(StringView str, String& out) {
     out.push_back('"');
 }
 
-void CEmitter::emit_native_call(const IRInst* inst, String& out) {
-    StringView name = inst->call.func_name;
-
-    // Static name mapping table
+// Static name mapping for built-in natives (declared in roxy_rt.h, so the
+// AOT pre-scan should NOT emit `extern` decls for them). Returns the C
+// function name on a hit, nullptr otherwise. Both `emit_native_call` and
+// `is_static_mapped_native` share this lookup.
+static const char* lookup_static_native_mapping(StringView name) {
     struct NativeMapping {
         const char* roxy_name;
         const char* c_name;
@@ -2050,94 +2051,91 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
         {"__map_iter_value_at", "roxy_map_iter_value_at"},
     };
 
-    const char* c_func_name = nullptr;
-
-    // Check exact matches first
+    // Exact matches
     for (const auto& m : mappings) {
-        if (name == StringView(m.roxy_name)) {
-            c_func_name = m.c_name;
-            break;
-        }
+        if (name == StringView(m.roxy_name)) return m.c_name;
     }
 
-    // If no exact match found, check for pattern-based matches
-    // (e.g., monomorphized generic names like "List$i32$$$push")
-    if (!c_func_name) {
-        // Check for List methods with monomorphized names (List$<type>$$method)
-        if (name.size() > 4 && name.data()[0] == 'L' && name.data()[1] == 'i' &&
-            name.data()[2] == 's' && name.data()[3] == 't') {
-            // Find the last $$ in the name to get the method part
-            const char* data = name.data();
-            u32 len = name.size();
-            for (u32 i = len - 1; i >= 2; i--) {
-                if (data[i - 1] == '$' && data[i] == '$' && i + 1 < len) {
-                    StringView method_part(data + i + 1, len - i - 1);
-                    if (method_part == StringView("new")) { c_func_name = "roxy_list_init"; break; }
-                    if (method_part == StringView("delete")) { c_func_name = "roxy_list_delete"; break; }
-                    if (method_part == StringView("len")) { c_func_name = "roxy_list_len"; break; }
-                    if (method_part == StringView("cap")) { c_func_name = "roxy_list_cap"; break; }
-                    if (method_part == StringView("push")) { c_func_name = "roxy_list_push"; break; }
-                    if (method_part == StringView("pop")) { c_func_name = "roxy_list_pop"; break; }
-                    if (method_part == StringView("index")) { c_func_name = "roxy_list_get"; break; }
-                    if (method_part == StringView("index_mut")) { c_func_name = "roxy_list_set"; break; }
-                    break;
-                }
+    // Pattern-based matches (monomorphized generic names like "List$i32$$push")
+    auto suffix_after_last_dollar_dollar = [](StringView n) -> StringView {
+        const char* data = n.data();
+        u32 len = n.size();
+        for (u32 i = len - 1; i >= 2; i--) {
+            if (data[i - 1] == '$' && data[i] == '$' && i + 1 < len) {
+                return StringView(data + i + 1, len - i - 1);
             }
         }
+        return StringView();
+    };
 
-        // Check for Map methods with monomorphized names
-        if (!c_func_name && name.size() > 3 && name.data()[0] == 'M' && name.data()[1] == 'a' &&
-            name.data()[2] == 'p') {
-            const char* data = name.data();
-            u32 len = name.size();
-            for (u32 i = len - 1; i >= 2; i--) {
-                if (data[i - 1] == '$' && data[i] == '$' && i + 1 < len) {
-                    StringView method_part(data + i + 1, len - i - 1);
-                    if (method_part == StringView("new")) { c_func_name = "roxy_map_init"; break; }
-                    if (method_part == StringView("delete")) { c_func_name = "roxy_map_delete"; break; }
-                    if (method_part == StringView("len")) { c_func_name = "roxy_map_len"; break; }
-                    if (method_part == StringView("contains")) { c_func_name = "roxy_map_contains"; break; }
-                    if (method_part == StringView("get")) { c_func_name = "roxy_map_get"; break; }
-                    if (method_part == StringView("insert")) { c_func_name = "roxy_map_insert"; break; }
-                    if (method_part == StringView("remove")) { c_func_name = "roxy_map_remove"; break; }
-                    if (method_part == StringView("clear")) { c_func_name = "roxy_map_clear"; break; }
-                    if (method_part == StringView("keys")) { c_func_name = "roxy_map_keys"; break; }
-                    if (method_part == StringView("values")) { c_func_name = "roxy_map_values"; break; }
-                    if (method_part == StringView("index")) { c_func_name = "roxy_map_index"; break; }
-                    if (method_part == StringView("index_mut")) { c_func_name = "roxy_map_index_mut"; break; }
-                    break;
-                }
-            }
-        }
-
-        // Check for monomorphized list_alloc / list_copy / map_alloc / map_copy
-        if (!c_func_name) {
-            // list_alloc$<type> or map_alloc$<type>
-            if (name.size() > 10 && StringView(name.data(), 10) == StringView("list_alloc")) {
-                c_func_name = "roxy_list_alloc";
-            } else if (name.size() > 9 && StringView(name.data(), 9) == StringView("list_copy")) {
-                c_func_name = "roxy_list_copy";
-            } else if (name.size() > 9 && StringView(name.data(), 9) == StringView("map_alloc")) {
-                c_func_name = "roxy_map_alloc";
-            } else if (name.size() > 8 && StringView(name.data(), 8) == StringView("map_copy")) {
-                c_func_name = "roxy_map_copy";
-            }
-        }
+    if (name.size() > 4 && name.data()[0] == 'L' && name.data()[1] == 'i' &&
+        name.data()[2] == 's' && name.data()[3] == 't') {
+        StringView m = suffix_after_last_dollar_dollar(name);
+        if (m == StringView("new")) return "roxy_list_init";
+        if (m == StringView("delete")) return "roxy_list_delete";
+        if (m == StringView("len")) return "roxy_list_len";
+        if (m == StringView("cap")) return "roxy_list_cap";
+        if (m == StringView("push")) return "roxy_list_push";
+        if (m == StringView("pop")) return "roxy_list_pop";
+        if (m == StringView("index")) return "roxy_list_get";
+        if (m == StringView("index_mut")) return "roxy_list_set";
     }
+
+    if (name.size() > 3 && name.data()[0] == 'M' && name.data()[1] == 'a' &&
+        name.data()[2] == 'p') {
+        StringView m = suffix_after_last_dollar_dollar(name);
+        if (m == StringView("new")) return "roxy_map_init";
+        if (m == StringView("delete")) return "roxy_map_delete";
+        if (m == StringView("len")) return "roxy_map_len";
+        if (m == StringView("contains")) return "roxy_map_contains";
+        if (m == StringView("get")) return "roxy_map_get";
+        if (m == StringView("insert")) return "roxy_map_insert";
+        if (m == StringView("remove")) return "roxy_map_remove";
+        if (m == StringView("clear")) return "roxy_map_clear";
+        if (m == StringView("keys")) return "roxy_map_keys";
+        if (m == StringView("values")) return "roxy_map_values";
+        if (m == StringView("index")) return "roxy_map_index";
+        if (m == StringView("index_mut")) return "roxy_map_index_mut";
+    }
+
+    // Monomorphized list_alloc / list_copy / map_alloc / map_copy
+    if (name.size() > 10 && StringView(name.data(), 10) == StringView("list_alloc"))
+        return "roxy_list_alloc";
+    if (name.size() > 9 && StringView(name.data(), 9) == StringView("list_copy"))
+        return "roxy_list_copy";
+    if (name.size() > 9 && StringView(name.data(), 9) == StringView("map_alloc"))
+        return "roxy_map_alloc";
+    if (name.size() > 8 && StringView(name.data(), 8) == StringView("map_copy"))
+        return "roxy_map_copy";
+
+    return nullptr;
+}
+
+bool CEmitter::is_static_mapped_native(StringView name) {
+    return lookup_static_native_mapping(name) != nullptr;
+}
+
+void CEmitter::emit_native_call(const IRInst* inst, String& out) {
+    StringView name = inst->call.func_name;
+    const char* c_func_name = lookup_static_native_mapping(name);
 
     if (!c_func_name) {
         // No static-table match. If the embedder registered this name via
         // `NativeRegistry`, emit a direct call to the user's C++ function —
-        // the caller's `native_include_paths` header is responsible for
-        // declaring it. Otherwise fall back to a warning.
+        // the extern declaration emitted in the source preamble (see
+        // `emit_extern_native_decls`) makes the linker happy whether the
+        // user provided an inline header or a separately-compiled .cpp.
+        // Otherwise fall back to a warning.
         if (m_config.native_registry &&
             m_config.native_registry->is_native(name)) {
+            i32 idx = m_config.native_registry->get_index(name);
+            const NativeFunctionEntry& entry = m_config.native_registry->get_entry(static_cast<u32>(idx));
             out.append("    ");
             if (inst->result.is_valid() && inst->type && inst->type->kind != TypeKind::Void) {
                 emit_value(inst->result, out);
                 out.append(" = ");
             }
-            emit_mangled_name(name, out);
+            emit_mangled_name(entry.aot_symbol_name, out);
             out.push_back('(');
             for (u32 i = 0; i < inst->call.args.size(); i++) {
                 if (i > 0) out.append(", ");
@@ -2325,6 +2323,79 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     out.append("\n");
 }
 
+void CEmitter::collect_extern_native_decls(const IRModule* module) {
+    if (!m_config.native_registry) return;
+
+    for (u32 fi = 0; fi < module->functions.size(); fi++) {
+        const IRFunction* func = module->functions[fi];
+        // The pre-scan needs `get_value_type` for each instruction's args.
+        collect_value_types(func);
+
+        for (u32 b = 0; b < func->blocks.size(); b++) {
+            const IRBlock* block = func->blocks[b];
+            for (u32 j = 0; j < block->instructions.size(); j++) {
+                const IRInst* inst = block->instructions[j];
+                if (inst->op != IROp::CallNative) continue;
+
+                StringView name = inst->call.func_name;
+                if (is_static_mapped_native(name)) continue;
+                i32 idx = m_config.native_registry->get_index(name);
+                if (idx < 0) continue;
+
+                const NativeFunctionEntry& entry =
+                    m_config.native_registry->get_entry(static_cast<u32>(idx));
+                if (m_extern_native_decls.find(entry.aot_symbol_name)
+                    != m_extern_native_decls.end()) {
+                    continue;  // already collected
+                }
+
+                ExternNativeDecl decl;
+                decl.aot_symbol_name = entry.aot_symbol_name;
+                decl.return_type = inst->type;
+                for (u32 ai = 0; ai < inst->call.args.size(); ai++) {
+                    decl.arg_types.push_back(get_value_type(inst->call.args[ai]));
+                }
+                m_extern_native_decls[entry.aot_symbol_name] = std::move(decl);
+            }
+        }
+    }
+}
+
+void CEmitter::emit_extern_native_decls(String& out) {
+    if (m_extern_native_decls.empty()) return;
+
+    out.append("/* Embedder-registered native functions (declared here so the\n"
+               " * AOT binary links against either an inline-defined header or a\n"
+               " * separately-compiled .cpp containing the definition). */\n");
+    for (auto it = m_extern_native_decls.begin();
+         it != m_extern_native_decls.end(); ++it) {
+        const ExternNativeDecl& decl = it->second;
+        out.append("extern ");
+        if (!decl.return_type || decl.return_type->kind == TypeKind::Void) {
+            out.append("void");
+        } else {
+            emit_type(decl.return_type, out);
+        }
+        out.push_back(' ');
+        emit_mangled_name(decl.aot_symbol_name, out);
+        out.push_back('(');
+        if (decl.arg_types.empty()) {
+            out.append("void");
+        } else {
+            for (u32 i = 0; i < decl.arg_types.size(); i++) {
+                if (i > 0) out.append(", ");
+                Type* t = decl.arg_types[i];
+                emit_type(t, out);
+                // Match `emit_function_prototype`'s convention: struct args
+                // are passed by pointer at the C ABI boundary.
+                if (t && t->is_struct()) out.push_back('*');
+            }
+        }
+        out.append(");\n");
+    }
+    out.append("\n");
+}
+
 void CEmitter::emit_source(const IRModule* module, String& output) {
     m_module = module;
 
@@ -2359,6 +2430,14 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
 
     // Struct typedefs (in dependency order)
     emit_struct_typedefs(module, output);
+
+    // Pre-scan IR for `CallNative` ops that resolve through the embedder's
+    // `NativeRegistry` and emit `extern` declarations. This makes the
+    // generated source link against either an inline-defined header (via
+    // `native_include_paths`) or a separately-compiled .cpp without
+    // requiring the embedder to forward-declare the function themselves.
+    collect_extern_native_decls(module);
+    emit_extern_native_decls(output);
 
     // Forward declare all functions
     for (u32 i = 0; i < module->functions.size(); i++) {

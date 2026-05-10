@@ -86,6 +86,25 @@ private:
     void emit_escaped_string(StringView str, String& out);
     void emit_native_call(const IRInst* inst, String& out);
 
+    // Phase 4 step 4: pre-scan IR for `CallNative` ops that resolve through
+    // `CEmitterConfig::native_registry`. Each unique user native produces an
+    // `extern` declaration in the source preamble, taking the C++ symbol name
+    // from `NativeFunctionEntry::aot_symbol_name` and the type signature from
+    // the IR call site. Built-in natives (those mapped by the static table in
+    // `emit_native_call`) are skipped — their C declarations come from
+    // `roxy_rt.h`.
+    struct ExternNativeDecl {
+        StringView aot_symbol_name;
+        Type* return_type;
+        Vector<Type*> arg_types;
+    };
+    void collect_extern_native_decls(const IRModule* module);
+    void emit_extern_native_decls(String& out);
+    // Returns nonzero if `name` is mapped by the static built-in table or a
+    // pattern-based match in `emit_native_call`. Pre-scan uses this to skip
+    // declaring built-ins.
+    bool is_static_mapped_native(StringView name);
+
     // Header emission helpers
     bool is_pub_struct(Type* struct_type) const;
     bool is_pub_enum(Type* enum_type) const;
@@ -111,6 +130,12 @@ private:
     tsl::robin_set<u32> m_pointer_values;              // Values that are struct pointers (StackAlloc, struct params, GetFieldAddr)
     tsl::robin_map<u32, ValueId> m_var_name_to_value;  // BlockParam hash -> ValueId (for VarAddr)
     tsl::robin_map<u32, i64> m_const_int_values;       // ValueId.id -> ConstInt value (used at call sites that need compile-time-known indices, e.g. roxy_map_alloc's hash_fn_index/eq_fn_index args)
+
+    // User-registered natives referenced by CallNative ops in this module.
+    // Populated by `collect_extern_native_decls()` before function bodies are
+    // emitted; consumed by `emit_extern_native_decls()` to produce the source
+    // preamble's `extern` block.
+    tsl::robin_map<StringView, ExternNativeDecl> m_extern_native_decls;
 };
 
 } // namespace rx

@@ -1537,6 +1537,73 @@ TEST_CASE("E2E - C Backend AOT: user native dispatch shows up in generated sourc
     CHECK(result.stdout_output.empty());
 }
 
+// AOT-symbol-override target. The Roxy program calls `alias_add`, but the
+// registered C++ function is `actual_add` — the bound name and the C++
+// symbol differ on purpose.
+namespace { i32 actual_add(i32 a, i32 b) { return a + b; } }
+
+TEST_CASE("E2E - C Backend AOT: bind<>(roxy_name, aot_symbol) routes to a different C++ symbol") {
+    BumpAllocator alloc(8192);
+    TypeEnv type_env(alloc);
+    NativeRegistry registry(alloc, type_env.types());
+    register_builtin_natives(registry);
+    // Roxy code calls `alias_add(...)`; the generated AOT source emits a
+    // call to `actual_add(...)` because that's the AOT symbol override.
+    registry.bind<actual_add>("alias_add", "actual_add");
+
+    const char* source = R"(
+        fun main(): i32 {
+            return alias_add(20, 22);
+        }
+    )";
+
+    // The user provides `actual_add` inline (definition + implicit decl).
+    // The CEmitter also emits an `extern int32_t actual_add(int32_t, int32_t);`
+    // in the source preamble; C++ allows the redeclaration as long as the
+    // signatures match.
+    const char* native_header =
+        "#pragma once\n"
+        "#include <stdint.h>\n"
+        "inline int32_t actual_add(int32_t a, int32_t b) { return a + b; }\n";
+
+    CBackendResult result = compile_and_run_cpp_with_registry(
+        source, &registry, native_header);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("E2E - C Backend AOT: extern decl links against a separately-compiled .cpp") {
+    // The strong test: NO inline header (so the user's native isn't visible
+    // at the generated source's TU). The CEmitter's extern decl emission is
+    // what makes the call site compile; a separate .cpp provides the impl
+    // and the linker resolves them together.
+    BumpAllocator alloc(8192);
+    TypeEnv type_env(alloc);
+    NativeRegistry registry(alloc, type_env.types());
+    register_builtin_natives(registry);
+    registry.bind<my_aot_add>("my_aot_add");
+
+    const char* source = R"(
+        fun main(): i32 {
+            return my_aot_add(7, 8);
+        }
+    )";
+
+    // No inline header — the impl is in a separate .cpp file and the
+    // linker resolves the extern decl emitted in the source preamble.
+    const char* impl_cpp =
+        "#include <stdint.h>\n"
+        "extern \"C++\" int32_t my_aot_add(int32_t a, int32_t b) { return a + b; }\n";
+
+    CBackendResult result = compile_and_run_cpp_with_registry(
+        source, &registry, /*native_header_text=*/nullptr,
+        /*extra_cpp_text=*/impl_cpp);
+    CHECK(result.compile_success);
+    CHECK(result.run_success);
+    CHECK(result.exit_code == 15);
+}
+
 TEST_CASE("E2E - C Backend Header: non-pub struct's methods don't produce orphaned prototypes") {
     // A non-pub struct's methods would create prototypes referencing a type
     // not in the header; emit_header must skip them.

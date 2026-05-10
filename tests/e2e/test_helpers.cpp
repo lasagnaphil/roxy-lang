@@ -465,6 +465,7 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
 CBackendResult compile_and_run_cpp_with_registry(const char* source,
                                                  NativeRegistry* registry,
                                                  const char* native_header_text,
+                                                 const char* extra_cpp_text,
                                                  bool debug) {
     CBackendResult result;
     result.exit_code = -1;
@@ -497,6 +498,24 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
         if (fd < 0) return result;
         size_t hlen = strlen(native_header_text);
         write(fd, native_header_text, hlen);
+        close(fd);
+    }
+
+    // Optional extra .cpp — compiled as a separate translation unit and
+    // linked into the binary. Used to verify cross-TU linkage against AOT
+    // extern decls (the generated source carries only `extern` declarations
+    // for user natives; this extra .cpp provides the definitions).
+    char extra_cpp_path[256];
+    extra_cpp_path[0] = '\0';
+    if (extra_cpp_text) {
+        snprintf(extra_cpp_path, sizeof(extra_cpp_path), "%s/roxy_native_extra_XXXXXX.cpp", tmpdir);
+        int fd = mkstemps(extra_cpp_path, 4);  // .cpp
+        if (fd < 0) {
+            if (header_path[0] != '\0') remove(header_path);
+            return result;
+        }
+        size_t clen = strlen(extra_cpp_text);
+        write(fd, extra_cpp_text, clen);
         close(fd);
     }
 
@@ -560,11 +579,12 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
     }
     close(bin_fd);
 
-    char compile_cmd[2048];
+    char compile_cmd[2560];
     snprintf(compile_cmd, sizeof(compile_cmd),
-             "c++ -std=c++17 -I%s -I%s -o %s %s %s %s %s %s 2>&1",
+             "c++ -std=c++17 -I%s -I%s -o %s %s %s %s %s %s %s 2>&1",
              rt_include_dir, rt_include_dir_root, bin_path, src_path,
-             rt_src_path, slab_src_path, intern_src_path, vmem_src_path);
+             rt_src_path, slab_src_path, intern_src_path, vmem_src_path,
+             extra_cpp_path[0] != '\0' ? extra_cpp_path : "");
 
     if (debug) printf("Compile command: %s\n", compile_cmd);
 
@@ -614,6 +634,7 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
     remove(src_path);
     remove(bin_path);
     if (header_path[0] != '\0') remove(header_path);
+    if (extra_cpp_path[0] != '\0') remove(extra_cpp_path);
     return result;
 }
 

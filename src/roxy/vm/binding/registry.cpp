@@ -165,12 +165,19 @@ Type* NativeRegistry::resolve_type_expr(TypeExpr* expr,
 // NativeRegistry method implementations
 
 void NativeRegistry::bind_native(NativeFunction func, const char* signature) {
+    bind_native(func, signature, /*aot_symbol_name=*/nullptr);
+}
+
+void NativeRegistry::bind_native(NativeFunction func, const char* signature,
+                                 const char* aot_symbol_name) {
     Decl* decl = parse_signature(signature);
     assert(decl->kind == AstKind::DeclFun);
     FunDecl& fun = decl->fun_decl;
 
     NativeFunctionEntry entry;
     entry.name = fun.name;
+    entry.aot_symbol_name = aot_symbol_name
+        ? make_string_view(aot_symbol_name) : entry.name;
     entry.func = func;
     entry.type_info_mode = NativeTypeInfoMode::Parsed;
     entry.param_count = fun.params.size();
@@ -202,6 +209,9 @@ void NativeRegistry::bind_native(const char* override_name, NativeFunction func,
 
     NativeFunctionEntry entry;
     entry.name = make_string_view(override_name);
+    // For $$-mangled override names, the AOT path also wants the override
+    // name as the C++ symbol; the C emitter mangles `$$` -> `__`.
+    entry.aot_symbol_name = entry.name;
     entry.func = func;
     entry.type_info_mode = NativeTypeInfoMode::Parsed;
     entry.param_count = fun.params.size();
@@ -242,6 +252,7 @@ void NativeRegistry::bind_method(NativeFunction func, const char* signature) {
     entry.struct_name = method.struct_name;
     entry.method_name = method.name;
     entry.name = mangle_method_name(entry.struct_name, entry.method_name);
+    entry.aot_symbol_name = entry.name;
     entry.func = func;
     entry.type_info_mode = NativeTypeInfoMode::Parsed;
     entry.param_count = method.params.size();
@@ -273,6 +284,7 @@ void NativeRegistry::bind_constructor(NativeFunction func, const char* signature
     entry.struct_name = method.struct_name;
     entry.method_name = method.name;
     entry.name = mangle_method_name(entry.struct_name, entry.method_name);
+    entry.aot_symbol_name = entry.name;
     entry.func = func;
     entry.type_info_mode = NativeTypeInfoMode::Parsed;
     entry.param_count = method.params.size();
@@ -316,6 +328,7 @@ void NativeRegistry::bind_generic_destructor(const char* type_name, NativeFuncti
 
     NativeFunctionEntry entry;
     entry.name = mangled;
+    entry.aot_symbol_name = mangled;
     entry.func = func;
     entry.param_count = 0;
     entry.min_args = 0;
