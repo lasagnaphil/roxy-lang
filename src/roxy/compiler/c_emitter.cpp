@@ -425,6 +425,21 @@ void CEmitter::emit_block_arg_assignments(const JumpTarget& target, String& out)
 void CEmitter::emit_instruction(const IRInst* inst, String& out) {
     if (inst->op == IROp::BlockArg) return;
 
+    // Phase 5 follow-up: emit a `#line` directive whenever the instruction's
+    // source line moves to a new line, so debugger step / error attribution
+    // tracks per-statement granularity. Skipped when no source_path is set,
+    // when the IR builder couldn't recover a line (synthesized lowering),
+    // or when consecutive insts share the same line.
+    if (!m_config.source_path.empty() && inst->source_line != 0
+        && inst->source_line != m_last_emitted_source_line) {
+        char buf[32];
+        format_to(buf, sizeof(buf), "#line {} \"", inst->source_line);
+        out.append(buf);
+        out.append(StringView(m_config.source_path));
+        out.append("\"\n");
+        m_last_emitted_source_line = inst->source_line;
+    }
+
     switch (inst->op) {
         // --- Constants ---
         case IROp::ConstBool: {
@@ -1360,13 +1375,18 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
     // function body so debuggers attribute the body's lines to the original
     // Roxy source. `source_line == 0` means the IR builder couldn't recover
     // the source line (e.g. synthesized default ctor/dtor); skip in that
-    // case to avoid emitting `#line 0`.
+    // case to avoid emitting `#line 0`. The per-instruction tracker below
+    // emits additional directives whenever the source line changes within
+    // the body.
     if (!m_config.source_path.empty() && func->source_line > 0) {
         char buf[32];
         format_to(buf, sizeof(buf), "#line {} \"", func->source_line);
         out.append(buf);
         out.append(StringView(m_config.source_path));
         out.append("\"\n");
+        m_last_emitted_source_line = func->source_line;
+    } else {
+        m_last_emitted_source_line = 0;
     }
 
     // Declare ALL SSA value locals at the top of the function body.

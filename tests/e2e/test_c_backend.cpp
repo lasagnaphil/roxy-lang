@@ -1644,6 +1644,52 @@ TEST_CASE("E2E - C Backend AOT: no source_path means no #line directives") {
     CHECK(cpp.find("#line ") == String::npos);
 }
 
+TEST_CASE("E2E - C Backend AOT: #line directives track per-statement granularity") {
+    // The function-level #line covers the body's first line; subsequent
+    // statements on different lines each get their own #line directive
+    // so debuggers attribute step-through to the right Roxy line.
+    const char* source =
+        "fun main(): i32 {\n"     // line 1
+        "    var a: i32 = 10;\n"  // line 2
+        "    var b: i32 = 20;\n"  // line 3
+        "    var c: i32 = 30;\n"  // line 4
+        "    return a + b + c;\n" // line 5
+        "}\n";                    // line 6
+    String cpp = compile_to_cpp(source, /*debug=*/false, "user.roxy");
+    REQUIRE(!cpp.empty());
+
+    // Function body opens at line 1 (Roxy puts the body's loc at the
+    // function-decl line for same-line `{`). Each subsequent statement
+    // produces its own #line directive.
+    CHECK(cpp.find("#line 1 \"user.roxy\"") != String::npos);
+    CHECK(cpp.find("#line 2 \"user.roxy\"") != String::npos);
+    CHECK(cpp.find("#line 3 \"user.roxy\"") != String::npos);
+    CHECK(cpp.find("#line 4 \"user.roxy\"") != String::npos);
+    CHECK(cpp.find("#line 5 \"user.roxy\"") != String::npos);
+}
+
+TEST_CASE("E2E - C Backend AOT: #line directives don't duplicate within a single statement") {
+    // A multi-IR-instruction expression shares the same source line; only
+    // one #line directive should be emitted for the whole statement.
+    const char* source =
+        "fun main(): i32 {\n"
+        "    return 1 + 2 + 3 + 4 + 5;\n"  // line 2 — many IR ops
+        "}\n";
+    String cpp = compile_to_cpp(source, /*debug=*/false, "user.roxy");
+    REQUIRE(!cpp.empty());
+
+    // Count occurrences of `#line 2 "user.roxy"` — should be exactly 1.
+    u32 count = 0;
+    u32 pos = 0;
+    while (true) {
+        u32 found = cpp.find("#line 2 \"user.roxy\"", pos);
+        if (found == String::npos) break;
+        count++;
+        pos = found + 1;
+    }
+    CHECK(count == 1);
+}
+
 TEST_CASE("E2E - C Backend AOT: #line-tagged source still compiles + runs") {
     // Sanity check: the C compiler accepts the emitted #line directives and
     // the binary still produces the right answer.

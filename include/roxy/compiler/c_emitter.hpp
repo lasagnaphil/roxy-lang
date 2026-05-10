@@ -141,6 +141,12 @@ private:
     // emitted; consumed by `emit_extern_native_decls()` to produce the source
     // preamble's `extern` block.
     tsl::robin_map<StringView, ExternNativeDecl> m_extern_native_decls;
+
+    // Last source line emitted via a `#line` directive inside the current
+    // function body. Reset to the function's `source_line` at body start;
+    // `emit_instruction` writes a fresh `#line` directive whenever the
+    // current instruction's `source_line` differs (and is non-zero).
+    u32 m_last_emitted_source_line = 0;
 };
 
 } // namespace rx

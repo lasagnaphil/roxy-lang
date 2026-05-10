@@ -899,6 +899,7 @@ IRInst* IRBuilder::emit_inst(IROp op, Type* result_type) {
     inst->op = op;
     inst->result = m_current_func->new_value();
     inst->type = result_type;
+    inst->source_line = m_current_source_line;
     m_current_func->values_by_id[inst->result.id] = inst;
     m_current_block->instructions.push_back(inst);
     return inst;
@@ -1417,6 +1418,13 @@ ValueId IRBuilder::maybe_wrap_weak(ValueId value, Type* source_type, Type* targe
 
 void IRBuilder::gen_stmt(Stmt* stmt) {
     if (!stmt) return;
+
+    // Track this statement's source line so `emit_inst` can stamp it onto
+    // every IRInst produced by lowering its body. Nested blocks/expressions
+    // overwrite and never need to restore — at the top of each new
+    // statement we re-set, and synthesized lowering paths that don't go
+    // through `gen_stmt` keep `source_line == 0`.
+    if (stmt->loc.line != 0) m_current_source_line = stmt->loc.line;
 
     switch (stmt->kind) {
         case AstKind::StmtExpr:
@@ -4927,6 +4935,9 @@ ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {
 
 void IRBuilder::gen_decl(Decl* decl) {
     if (!decl) return;
+
+    // Stamp this decl's source line onto subsequent emit_inst calls.
+    if (decl->loc.line != 0) m_current_source_line = decl->loc.line;
 
     switch (decl->kind) {
         case AstKind::DeclVar:

@@ -230,6 +230,12 @@ private:
     IRFunction* m_current_func;
     IRBlock* m_current_block;
 
+    // 1-indexed source line of the AST node currently being lowered. Stamped
+    // onto every `IRInst` by `emit_inst`; consumed by the C backend's `#line`
+    // directive emission. Reset at each statement / declaration boundary in
+    // `gen_stmt` / `gen_decl`. 0 = unknown (synthesized stubs, builtins).
+    u32 m_current_source_line = 0;
+
     // Local variable mapping: name -> value ID
     struct LocalVar {
         ValueId value;

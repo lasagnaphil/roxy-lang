@@ -291,6 +291,14 @@ struct IRInst {
     ValueId result;     // The SSA value this instruction produces
     Type* type;         // Result type
 
+    // 1-indexed source line of the AST node that produced this instruction.
+    // Populated by `IRBuilder::emit_inst` from `m_current_source_line`,
+    // which `gen_stmt`/`gen_decl` set at each statement boundary. Used by
+    // the C backend to emit per-statement `#line` directives so debuggers
+    // attribute IR-generated C code to the right Roxy source line. 0 =
+    // unknown / synthesized (built-ins, coroutine lowering, etc.).
+    u32 source_line = 0;
+
     // Operands (usage depends on op)
     union {
         ConstData const_data;           // For Const* ops
