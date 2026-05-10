@@ -1,49 +1,31 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
+#include "roxy/rt/roxy_rt.h"
 
 namespace rx {
 
 // Forward declarations
 struct RoxyVM;
 
-// Dispatch tag for hash/equality based on key type
+// Dispatch tag for hash/equality based on key type. Values match the
+// `ROXY_MAP_KEY_*` defines in roxy_rt.h so a `MapKeyKind` cast to/from
+// `uint8_t` round-trips through the unified header's `key_kind` field.
 enum class MapKeyKind : u8 {
-    Integer,    // i8..i64, u8..u64, bool, enum — hash/compare the u64 bits
-    Float32,    // Normalize -0→+0, then hash bit representation
-    Float64,
-    String,     // Dereference pointer, FNV-1a hash, string_equals for eq
-    Struct,     // POD struct keys: bytewise FNV-1a hash + memcmp equality
+    Integer = ROXY_MAP_KEY_INTEGER,    // i8..i64, u8..u64, bool, enum
+    Float32 = ROXY_MAP_KEY_FLOAT32,    // Normalize -0→+0, then hash bit representation
+    Float64 = ROXY_MAP_KEY_FLOAT64,
+    String  = ROXY_MAP_KEY_STRING,     // Dereference pointer, hash via cached header field
+    Struct  = ROXY_MAP_KEY_STRUCT,     // Bytewise FNV-1a hash + memcmp, or user Hash/Eq
 };
 
-// Map header - stored in object data after ObjectHeader
-// Memory layout: [ObjectHeader][MapHeader]
-// Separate malloc'd arrays for distances, keys, values.
-//
-// Keys and values are both stored as variable-sized u32 slot arrays sized
-// `capacity * key_slot_count` and `capacity * value_slot_count` respectively.
-// For Integer/Float/String key kinds, key_slot_count is 2 (a single u64 stored
-// across two u32 slots). For Struct keys, key_slot_count is the struct's slot
-// count.
-struct MapHeader {
-    u32 length;          // Number of live entries
-    u32 capacity;        // Number of buckets (always power of 2, 0 if not allocated)
-    MapKeyKind key_kind; // Dispatch tag for hash/equality
-    u8 key_slot_count;   // u32 slots per key (2 for primitives, N for struct keys)
-    bool key_is_inline;  // true for primitives (caller passes value), false for structs (caller passes pointer)
-    u8 value_slot_count; // u32 slots per value (1 for primitives ≤ 4B, 2 for 8B, N for structs)
-    bool value_is_inline;// true = value fits in a single register (primitive); false = struct, source is a pointer
-    u8 _pad;
-    // For Struct keys with user-defined Hash/Eq impls, these hold the bytecode
-    // function indices for the hash and eq methods. UINT32_MAX means "no
-    // custom impl" — runtime falls back to bytewise hash/eq. Unused for
-    // non-struct key kinds (primitives use the key_kind enum dispatch).
-    u32 hash_fn_index;
-    u32 eq_fn_index;
-    u8* distances;       // Per-bucket Robin Hood distance+1 (0 = empty)
-    u32* keys;           // Key storage: capacity * key_slot_count u32 slots
-    u32* values;         // Value storage: capacity * value_slot_count u32 slots
-};
+// `MapHeader` is now a typedef of the unified C runtime header (see
+// rt/roxy_rt.h). The header is a bridge layout — both the AOT function
+// pointers (`hash_fn`/`eq_fn`) and the VM bytecode indices
+// (`hash_fn_index`/`eq_fn_index`) coexist; Phase 5 collapses this by
+// routing VM dispatch through a thread-local trampoline. VM code that
+// switches on `header->key_kind` casts to `MapKeyKind`.
+using MapHeader = roxy_map_header;
 
 // Get the MapHeader from map data pointer
 inline MapHeader* get_map_header(void* data) {

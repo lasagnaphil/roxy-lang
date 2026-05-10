@@ -741,6 +741,9 @@ void* roxy_map_alloc(int32_t key_slot_count, int32_t key_is_inline,
     hdr->value_is_inline = value_is_inline != 0 ? 1 : 0;
     hdr->hash_fn = hash_fn;
     hdr->eq_fn = eq_fn;
+    // VM-only fields; AOT path leaves them sentinel-valued.
+    hdr->hash_fn_index = UINT32_MAX;
+    hdr->eq_fn_index = UINT32_MAX;
     return data;
 }
 

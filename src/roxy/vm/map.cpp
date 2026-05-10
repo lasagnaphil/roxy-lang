@@ -57,7 +57,7 @@ static u64 read_packed_u64(const u32* key_src) {
 }
 
 static u64 map_hash_key(RoxyVM* vm, const u32* key_src, const MapHeader* hdr) {
-    switch (hdr->key_kind) {
+    switch (static_cast<MapKeyKind>(hdr->key_kind)) {
         case MapKeyKind::Integer:
             return hash_integer(read_packed_u64(key_src));
         case MapKeyKind::Float32: {
@@ -100,7 +100,7 @@ static u64 map_hash_key(RoxyVM* vm, const u32* key_src, const MapHeader* hdr) {
 // --- Key equality ---
 
 static bool map_keys_equal(RoxyVM* vm, const u32* a, const u32* b, const MapHeader* hdr) {
-    switch (hdr->key_kind) {
+    switch (static_cast<MapKeyKind>(hdr->key_kind)) {
         case MapKeyKind::Integer:
             return read_packed_u64(a) == read_packed_u64(b);
         case MapKeyKind::Float32: {
@@ -290,11 +290,16 @@ void* map_alloc(RoxyVM* vm, MapKeyKind key_kind, u32 capacity,
     MapHeader* header = get_map_header(data);
     header->length = 0;
     header->capacity = 0;
-    header->key_kind = key_kind;
+    header->key_kind = static_cast<u8>(key_kind);
     header->key_slot_count = key_slot_count > 0 ? key_slot_count : 2;
     header->key_is_inline = key_is_inline;
     header->value_slot_count = value_slot_count > 0 ? value_slot_count : 2;
     header->value_is_inline = value_is_inline;
+    // VM-mode dispatches custom Hash/Eq through bytecode indices; the
+    // shared-layout function pointers stay null. Phase 5 will install
+    // trampolines here that bridge into call_user_function.
+    header->hash_fn = nullptr;
+    header->eq_fn = nullptr;
     header->hash_fn_index = hash_fn_index;
     header->eq_fn_index = eq_fn_index;
     header->distances = nullptr;
@@ -314,7 +319,8 @@ void* map_copy(RoxyVM* vm, void* src) {
     if (!src) return nullptr;
     const MapHeader* src_header = get_map_header(src);
 
-    void* dst = map_alloc(vm, src_header->key_kind, src_header->capacity,
+    void* dst = map_alloc(vm, static_cast<MapKeyKind>(src_header->key_kind),
+                          src_header->capacity,
                           src_header->key_slot_count, src_header->key_is_inline,
                           src_header->value_slot_count, src_header->value_is_inline,
                           src_header->hash_fn_index, src_header->eq_fn_index);

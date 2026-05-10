@@ -550,7 +550,7 @@ static void native_map_init(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     // First arg after self is key_kind
     if (argc >= 2) {
         i32 kind_val = static_cast<i32>(regs[first_arg + 1]);
-        header->key_kind = key_kind_from_i32(kind_val);
+        header->key_kind = static_cast<u8>(key_kind_from_i32(kind_val));
     }
 
     // Second arg after self is optional capacity
