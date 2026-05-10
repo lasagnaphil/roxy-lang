@@ -58,6 +58,7 @@ struct RoxyVM {
     u32 local_stack_top;            // Current top of local stack allocation
 
     UniquePtr<SlabAllocator> allocator;  // Slab allocator for heap objects
+    roxy_allocator slab_vtable;          // Vtable view of `allocator` plugged into ctx
     UniquePtr<StringInternTable> string_intern;  // Content-keyed dedup of heap strings
 
     UniquePtr<CallFrame[]> call_stack;  // Pre-allocated call stack

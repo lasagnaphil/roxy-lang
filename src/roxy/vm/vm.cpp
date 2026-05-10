@@ -90,6 +90,14 @@ bool vm_init(RoxyVM* vm, const VMConfig& config) {
         return false;
     }
 
+    // Install a vtable view of the slab into the ctx so any code path that
+    // dispatches allocations through `roxy_alloc` (built-in `roxy_rt`
+    // helpers, future migrated string/list/map ops) routes to the per-VM
+    // slab. `vm->allocator` retains direct callers for now (object.cpp,
+    // ASSERT_HEAP) — those move to the vtable in later phases.
+    vm->slab_vtable = make_slab_allocator_vtable(vm->allocator.get());
+    vm->ctx.allocator = &vm->slab_vtable;
+
     // Initialize the string intern table. Used by string_alloc to dedup
     // heap strings — same content = same StringObject pointer.
     vm->string_intern = UniquePtr<StringInternTable>(new (std::nothrow) StringInternTable());
