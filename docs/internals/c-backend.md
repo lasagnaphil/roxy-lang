@@ -1537,7 +1537,7 @@ already use `roxy_get_ctx()` regardless of which path invoked them.
 - [ ] Store AOT function pointer/symbol name in `NativeRegistry` entries for `bind<FnPtr>` bindings (current dispatch uses the registered name as the C++ symbol name — works as long as the user's function is declared in a header reachable from `native_include_paths`)
 - [ ] Add `bind_native(vm_fn, aot_fn, sig)` overload for dual VM/AOT registration
 - [ ] Emit `extern` declarations for user-registered native functions in generated `.cpp` (currently the embedder is responsible for declaring them via `native_include_paths`; explicit extern decls would let the AOT binary link against compiled-elsewhere natives without inline definitions)
-- [ ] Cross-module calls (`CallExternal`) → already resolved during linking, emit as regular calls
+- [x] Cross-module calls (`CallExternal`) → emit as `module__func(args...)`; resolved at C-compile time across the bundled module set (handled in `c_emitter.cpp` since Phase 1)
 
 ### Phase 5: Polish
 
