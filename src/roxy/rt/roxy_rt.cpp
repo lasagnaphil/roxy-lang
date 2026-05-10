@@ -1,9 +1,11 @@
 #include "roxy/rt/roxy_rt.h"
+#include "roxy/rt/slab_allocator.hpp"
 
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include <cassert>
+#include <new>
 
 // ===== Runtime Context =====
 
@@ -14,7 +16,11 @@ static thread_local roxy_ctx* tls_current_ctx = nullptr;
 
 void roxy_ctx_init(roxy_ctx* ctx) {
     if (!ctx) return;
-    ctx->allocator = nullptr;
+    // Pick up the runtime's default allocator at init time. Before the first
+    // `roxy_rt_init` this is `&roxy_malloc_allocator`; after, it's the global
+    // slab vtable. Embedders may overwrite `ctx->allocator` afterwards (e.g.
+    // VM mode points it at a per-VM slab in `vm_init`).
+    ctx->allocator = roxy_rt_default_allocator();
     ctx->exception_state = nullptr;
     ctx->user_data = nullptr;
 }
@@ -89,28 +95,83 @@ roxy_allocator roxy_malloc_allocator = {
     /*userdata=*/ nullptr,
 };
 
+// ===== Process-wide slab (lazy, ref-counted) =====
+//
+// Used by AOT-compiled programs when `roxy_rt_init` is called. Single-
+// threaded; a multi-threaded embedder must manage allocator lifetime per
+// ctx instead of relying on this global.
+
+static rx::SlabAllocator* g_global_slab = nullptr;
+static roxy_allocator g_global_slab_vtable = {nullptr, nullptr, nullptr, nullptr};
+static int g_rt_init_refcount = 0;
+
+void roxy_rt_init(void) {
+    if (g_rt_init_refcount++ == 0) {
+        g_global_slab = new (std::nothrow) rx::SlabAllocator();
+        if (g_global_slab && g_global_slab->init()) {
+            g_global_slab_vtable = rx::make_slab_allocator_vtable(g_global_slab);
+        } else {
+            // Init failed — fall back to malloc by leaving the vtable empty;
+            // `roxy_rt_default_allocator` will return the malloc one when
+            // refcount > 0 but the slab pointer is null.
+            delete g_global_slab;
+            g_global_slab = nullptr;
+        }
+    }
+}
+
+void roxy_rt_shutdown(void) {
+    if (g_rt_init_refcount == 0) return;
+    if (--g_rt_init_refcount == 0) {
+        if (g_global_slab) {
+            g_global_slab->shutdown();
+            delete g_global_slab;
+            g_global_slab = nullptr;
+        }
+        g_global_slab_vtable = roxy_allocator{nullptr, nullptr, nullptr, nullptr};
+    }
+}
+
+roxy_allocator* roxy_rt_default_allocator(void) {
+    if (g_rt_init_refcount > 0 && g_global_slab) {
+        return &g_global_slab_vtable;
+    }
+    return &roxy_malloc_allocator;
+}
+
 // ===== Allocation =====
 
+static inline roxy_allocator* current_allocator() {
+    roxy_ctx* ctx = roxy_get_ctx();
+    if (ctx && ctx->allocator) return ctx->allocator;
+    return &roxy_malloc_allocator;
+}
+
 void* roxy_alloc(uint32_t data_size, uint32_t type_id) {
-    uint8_t* raw = static_cast<uint8_t*>(malloc(sizeof(roxy_object_header) + data_size));
+    roxy_allocator* alloc = current_allocator();
+    uint64_t generation = 0;
+    void* raw = alloc->alloc(alloc->userdata,
+                             sizeof(roxy_object_header) + data_size,
+                             &generation);
     if (!raw) return nullptr;
 
-    auto* header = reinterpret_cast<roxy_object_header*>(raw);
-    header->weak_generation = roxy_random_generation();
+    auto* header = static_cast<roxy_object_header*>(raw);
+    header->weak_generation = generation;
     header->ref_count = 0;
     header->type_id = type_id;
 
-    void* data = raw + sizeof(roxy_object_header);
+    void* data = static_cast<uint8_t*>(raw) + sizeof(roxy_object_header);
     memset(data, 0, data_size);
     return data;
 }
 
 void roxy_free(void* data) {
     if (!data) return;
+    roxy_allocator* alloc = current_allocator();
     auto* header = roxy_get_header(data);
-    header->weak_generation = 0;  // Tombstone
-    uint8_t* raw = reinterpret_cast<uint8_t*>(data) - sizeof(roxy_object_header);
-    free(raw);
+    // Allocator's free contract: tombstone weak_generation before freeing.
+    // Both the slab and malloc impls do this.
+    alloc->free(alloc->userdata, header);
 }
 
 roxy_object_header* roxy_get_header(void* data) {

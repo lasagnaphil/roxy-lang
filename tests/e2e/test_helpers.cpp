@@ -289,9 +289,17 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     char rt_include_dir[512];       // For generated code: #include "roxy_rt.h"
     char rt_include_dir_root[512];  // For roxy_rt.cpp: #include "roxy/rt/roxy_rt.h"
     char rt_src_path[512];
+    char slab_src_path[512];
+    char vmem_src_path[512];
     snprintf(rt_include_dir, sizeof(rt_include_dir), "%s/include/roxy/rt", project_root);
     snprintf(rt_include_dir_root, sizeof(rt_include_dir_root), "%s/include", project_root);
     snprintf(rt_src_path, sizeof(rt_src_path), "%s/src/roxy/rt/roxy_rt.cpp", project_root);
+    snprintf(slab_src_path, sizeof(slab_src_path), "%s/src/roxy/rt/slab_allocator.cpp", project_root);
+#ifdef _WIN32
+    snprintf(vmem_src_path, sizeof(vmem_src_path), "%s/src/roxy/rt/vmem_win32.cpp", project_root);
+#else
+    snprintf(vmem_src_path, sizeof(vmem_src_path), "%s/src/roxy/rt/vmem_unix.cpp", project_root);
+#endif
 
     // Write C++ source to temp file
     const char* tmpdir = getenv("TMPDIR");
@@ -320,11 +328,13 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     }
     close(bin_fd);
 
-    // Compile with c++ — include runtime header and compile runtime source
-    char compile_cmd[1024];
+    // Compile with c++ — include runtime header and compile runtime sources
+    // (roxy_rt.cpp + slab_allocator.cpp + the platform vmem impl).
+    char compile_cmd[2048];
     snprintf(compile_cmd, sizeof(compile_cmd),
-             "c++ -std=c++17 -I%s -I%s -o %s %s %s 2>&1",
-             rt_include_dir, rt_include_dir_root, bin_path, src_path, rt_src_path);
+             "c++ -std=c++17 -I%s -I%s -o %s %s %s %s %s 2>&1",
+             rt_include_dir, rt_include_dir_root, bin_path, src_path,
+             rt_src_path, slab_src_path, vmem_src_path);
 
     if (debug) {
         printf("Compile command: %s\n", compile_cmd);

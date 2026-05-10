@@ -2364,8 +2364,12 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
         if (user_main) {
             bool main_returns_void = !user_main->return_type
                 || user_main->return_type->kind == TypeKind::Void;
+            // `roxy_rt_init` brings up the process-wide slab allocator so
+            // `roxy_ctx_init` can pick it up as the default. Pairs with
+            // `roxy_rt_shutdown` after the user's `main_entry()` returns.
             output.append("int main(int argc, char** argv) {\n");
             output.append("    (void)argc; (void)argv;\n");
+            output.append("    roxy_rt_init();\n");
             output.append("    roxy_ctx ctx;\n");
             output.append("    roxy_ctx_init(&ctx);\n");
             output.append("    roxy_set_ctx(&ctx);\n");
@@ -2373,6 +2377,7 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
                 output.append("    main_entry();\n");
                 output.append("    roxy_ctx_destroy(&ctx);\n");
                 output.append("    roxy_set_ctx(NULL);\n");
+                output.append("    roxy_rt_shutdown();\n");
                 output.append("    return 0;\n");
             } else {
                 output.append("    ");
@@ -2380,6 +2385,7 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
                 output.append(" result = main_entry();\n");
                 output.append("    roxy_ctx_destroy(&ctx);\n");
                 output.append("    roxy_set_ctx(NULL);\n");
+                output.append("    roxy_rt_shutdown();\n");
                 output.append("    return (int)result;\n");
             }
             output.append("}\n");

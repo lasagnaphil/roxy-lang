@@ -2,7 +2,7 @@
 
 #include "roxy/rt/roxy_rt.h"
 
-TEST_CASE("Runtime ctx - init zero-initializes fields") {
+TEST_CASE("Runtime ctx - init installs the runtime's default allocator") {
     roxy_ctx ctx;
     ctx.allocator = reinterpret_cast<roxy_allocator*>(0xdeadbeefULL);
     ctx.exception_state = reinterpret_cast<void*>(0xdeadbeefULL);
@@ -10,9 +10,56 @@ TEST_CASE("Runtime ctx - init zero-initializes fields") {
 
     roxy_ctx_init(&ctx);
 
-    CHECK(ctx.allocator == nullptr);
+    // Without `roxy_rt_init` the default is the malloc allocator.
+    CHECK(ctx.allocator == &roxy_malloc_allocator);
     CHECK(ctx.exception_state == nullptr);
     CHECK(ctx.user_data == nullptr);
+}
+
+TEST_CASE("Runtime ctx - roxy_rt_init swaps the default allocator to slab") {
+    REQUIRE(roxy_rt_default_allocator() == &roxy_malloc_allocator);
+
+    roxy_rt_init();
+    CHECK(roxy_rt_default_allocator() != &roxy_malloc_allocator);
+
+    roxy_ctx ctx;
+    roxy_ctx_init(&ctx);
+    CHECK(ctx.allocator != &roxy_malloc_allocator);
+
+    roxy_ctx_destroy(&ctx);
+    roxy_rt_shutdown();
+    CHECK(roxy_rt_default_allocator() == &roxy_malloc_allocator);
+}
+
+TEST_CASE("Runtime ctx - roxy_rt_init/shutdown are reference-counted") {
+    REQUIRE(roxy_rt_default_allocator() == &roxy_malloc_allocator);
+
+    roxy_rt_init();
+    roxy_rt_init();
+    CHECK(roxy_rt_default_allocator() != &roxy_malloc_allocator);
+
+    roxy_rt_shutdown();
+    // Still active after only one shutdown.
+    CHECK(roxy_rt_default_allocator() != &roxy_malloc_allocator);
+
+    roxy_rt_shutdown();
+    CHECK(roxy_rt_default_allocator() == &roxy_malloc_allocator);
+}
+
+TEST_CASE("Runtime ctx - roxy_alloc/free use the active allocator") {
+    roxy_ctx ctx;
+    roxy_ctx_init(&ctx);
+    roxy::ScopedContext guard(&ctx);
+
+    void* obj = roxy_alloc(64, ROXY_TYPEID_STRING);
+    REQUIRE(obj != nullptr);
+    auto* hdr = roxy_get_header(obj);
+    CHECK(hdr->type_id == ROXY_TYPEID_STRING);
+    CHECK(hdr->weak_generation != 0);
+    CHECK(hdr->ref_count == 0);
+
+    roxy_free(obj);
+    roxy_ctx_destroy(&ctx);
 }
 
 TEST_CASE("Runtime ctx - set/get round-trip") {

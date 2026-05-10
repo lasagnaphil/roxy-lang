@@ -66,11 +66,32 @@ typedef struct roxy_allocator {
     void* userdata;
 } roxy_allocator;
 
-// Default malloc-based allocator. Used when no `roxy_ctx` is active or when
-// `ctx->allocator` is null. Generations are produced from a thread-local
-// xorshift64; weak-ref soundness is best-effort because the OS may reuse
-// freed addresses (unlike the slab path which keeps freed memory mapped).
+// Default malloc-based allocator. Used when no `roxy_ctx` is active, when
+// `ctx->allocator` is null, or when `roxy_rt_init` has not been called.
+// Generations are produced from a thread-local xorshift64; weak-ref
+// soundness is best-effort because the OS may reuse freed addresses
+// (unlike the slab path which keeps freed memory mapped).
 extern roxy_allocator roxy_malloc_allocator;
+
+// ===== Process-wide runtime initialization =====
+//
+// Lazy-initializes a process-wide slab allocator. Reference-counted: each
+// `roxy_rt_init` call must be paired with a `roxy_rt_shutdown` call; the
+// last shutdown tears the slab down. Safe to call from generated AOT
+// `main()` and from embedder code; both are idempotent in pairs.
+//
+// After at least one `roxy_rt_init` call, `roxy_ctx_init` defaults
+// `ctx->allocator` to the global slab vtable; before / after, it defaults
+// to `&roxy_malloc_allocator`. This means a generated AOT `main()` only
+// needs to call `roxy_rt_init` before `roxy_ctx_init` to get slab-backed
+// allocations (with proper weak-ref soundness) for free.
+void roxy_rt_init(void);
+void roxy_rt_shutdown(void);
+
+// Returns the allocator that `roxy_ctx_init` will install by default — the
+// global slab vtable when `roxy_rt_init` is active, `&roxy_malloc_allocator`
+// otherwise.
+roxy_allocator* roxy_rt_default_allocator(void);
 
 // Zero-initialize a context. Safe to call again after `roxy_ctx_destroy`.
 void roxy_ctx_init(roxy_ctx* ctx);

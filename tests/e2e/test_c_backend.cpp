@@ -1444,11 +1444,13 @@ TEST_CASE("E2E - C Backend AOT: generated main wraps user main_entry with ctx in
 
     // Generated wrapper exists, sets up TLS context, calls main_entry, tears down
     CHECK(cpp.find("int main(int argc, char** argv)") != String::npos);
+    CHECK(cpp.find("roxy_rt_init();") != String::npos);
     CHECK(cpp.find("roxy_ctx ctx;") != String::npos);
     CHECK(cpp.find("roxy_ctx_init(&ctx);") != String::npos);
     CHECK(cpp.find("roxy_set_ctx(&ctx);") != String::npos);
     CHECK(cpp.find("main_entry()") != String::npos);
     CHECK(cpp.find("roxy_ctx_destroy(&ctx);") != String::npos);
+    CHECK(cpp.find("roxy_rt_shutdown();") != String::npos);
 }
 
 TEST_CASE("E2E - C Backend AOT: void-returning user main wrapper returns 0") {
