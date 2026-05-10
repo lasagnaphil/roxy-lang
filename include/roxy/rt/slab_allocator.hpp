@@ -4,6 +4,7 @@
 #include "roxy/core/vector.hpp"
 #include "roxy/core/unique_ptr.hpp"
 #include "roxy/core/tsl/robin_map.h"
+#include "roxy/rt/roxy_rt.h"
 
 namespace rx {
 
@@ -168,5 +169,10 @@ private:
     Slab* find_slab_containing(void* ptr);
     const Slab* find_slab_containing(void* ptr) const;
 };
+
+// Build a `roxy_allocator` vtable that routes through the given slab. The
+// returned vtable's `userdata` is the `SlabAllocator*`; the slab must
+// outlive any allocations performed through the vtable.
+roxy_allocator make_slab_allocator_vtable(SlabAllocator* slab);
 
 }

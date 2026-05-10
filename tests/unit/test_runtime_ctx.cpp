@@ -4,7 +4,7 @@
 
 TEST_CASE("Runtime ctx - init zero-initializes fields") {
     roxy_ctx ctx;
-    ctx.allocator = reinterpret_cast<void*>(0xdeadbeefULL);
+    ctx.allocator = reinterpret_cast<roxy_allocator*>(0xdeadbeefULL);
     ctx.exception_state = reinterpret_cast<void*>(0xdeadbeefULL);
     ctx.user_data = reinterpret_cast<void*>(0xdeadbeefULL);
 

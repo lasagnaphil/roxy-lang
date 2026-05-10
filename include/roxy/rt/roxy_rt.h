@@ -29,13 +29,48 @@ typedef struct {
 // In VM mode `roxy_ctx` is the first member of `RoxyVM`, and the interpreter
 // calls `roxy_set_ctx(&vm->ctx)` before entering Roxy code. In AOT mode the
 // generated `main()` (or the embedder, via `roxy::ScopedContext`) does the
-// same. All three fields are `void*` placeholders today; future Phase 4 work
-// will populate them with real allocator / exception-handler state.
+// same. The `allocator` slot is a function-pointer vtable (see
+// `roxy_allocator` below); `exception_state` and `user_data` are
+// embedder-defined `void*` placeholders today.
+struct roxy_allocator;
 typedef struct roxy_ctx {
-    void* allocator;
+    struct roxy_allocator* allocator;
     void* exception_state;
     void* user_data;
 } roxy_ctx;
+
+// ===== Allocator vtable =====
+//
+// Function-pointer table that lets the runtime use any underlying allocator
+// (slab in VM mode, slab again in AOT mode via the global `roxy_rt_init`,
+// or `malloc` as a defensive fallback for code that runs before any context
+// is active). `userdata` is opaque allocator state — for the slab impl it's
+// a `SlabAllocator*`; for malloc it's unused.
+typedef struct roxy_allocator {
+    // Allocate `total_size` bytes (including the `roxy_object_header`); fill
+    // `*out_generation` with a fresh random non-zero generation. Returns the
+    // raw header pointer (caller writes header fields), or NULL on failure.
+    void* (*alloc)(void* userdata, uint32_t total_size, uint64_t* out_generation);
+
+    // Free a previously-allocated header. Implementations must tombstone the
+    // header's `weak_generation` to 0 before reclaiming so stale weak refs
+    // see "dead".
+    void (*free)(void* userdata, void* header_ptr);
+
+    // Optional: returns true if `ptr` is owned by this allocator. The slab
+    // impl answers precisely via a sorted index; the malloc impl
+    // unconditionally returns true. Used by the VM's ASSERT_HEAP closure-
+    // capture validation; degraded to a tautology in malloc mode.
+    bool (*owns)(void* userdata, void* ptr);
+
+    void* userdata;
+} roxy_allocator;
+
+// Default malloc-based allocator. Used when no `roxy_ctx` is active or when
+// `ctx->allocator` is null. Generations are produced from a thread-local
+// xorshift64; weak-ref soundness is best-effort because the OS may reuse
+// freed addresses (unlike the slab path which keeps freed memory mapped).
+extern roxy_allocator roxy_malloc_allocator;
 
 // Zero-initialize a context. Safe to call again after `roxy_ctx_destroy`.
 void roxy_ctx_init(roxy_ctx* ctx);

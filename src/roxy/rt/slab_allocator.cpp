@@ -440,4 +440,42 @@ u32 SlabAllocator::reclaim_tombstoned() {
     return total_reclaimed;
 }
 
+// ===== roxy_allocator vtable adapter =====
+//
+// Wraps the slab in the C `roxy_allocator` shape so it can be plugged into
+// `roxy_ctx.allocator`. The slab returns raw memory; the runtime caller
+// (e.g. `roxy_alloc`) writes the `roxy_object_header` itself, matching the
+// existing slab + ObjectHeader contract.
+
+static void* slab_alloc_fn(void* userdata, uint32_t total_size,
+                           uint64_t* out_generation) {
+    auto* slab = static_cast<SlabAllocator*>(userdata);
+    u64 gen = 0;
+    void* mem = slab->alloc(total_size, &gen);
+    if (out_generation) *out_generation = gen;
+    return mem;
+}
+
+static void slab_free_fn(void* userdata, void* header_ptr) {
+    auto* slab = static_cast<SlabAllocator*>(userdata);
+    if (!header_ptr) return;
+    // The slab zeroes the slot on free, which already tombstones
+    // `weak_generation`. No additional bookkeeping needed here.
+    slab->free(header_ptr);
+}
+
+static bool slab_owns_fn(void* userdata, void* ptr) {
+    auto* slab = static_cast<SlabAllocator*>(userdata);
+    return slab->owns(ptr);
+}
+
+roxy_allocator make_slab_allocator_vtable(SlabAllocator* slab) {
+    roxy_allocator vtable;
+    vtable.alloc = slab_alloc_fn;
+    vtable.free = slab_free_fn;
+    vtable.owns = slab_owns_fn;
+    vtable.userdata = slab;
+    return vtable;
+}
+
 }

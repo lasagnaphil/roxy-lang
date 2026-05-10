@@ -45,6 +45,50 @@ static uint64_t roxy_random_generation() {
     return state ? state : 1;
 }
 
+// ===== Default malloc-based allocator =====
+//
+// Vtable-shaped wrappers around the existing malloc/free path. These keep
+// behaviour identical to the pre-vtable `roxy_alloc`/`roxy_free` so Phase 1
+// can land without changing any allocation outcomes (Phase 2 wires the
+// vtable into `roxy_alloc` and starts dispatching through it).
+
+static void* roxy_malloc_alloc_fn(void* userdata, uint32_t total_size,
+                                  uint64_t* out_generation) {
+    (void)userdata;
+    void* raw = malloc(total_size);
+    if (!raw) {
+        if (out_generation) *out_generation = 0;
+        return nullptr;
+    }
+    if (out_generation) *out_generation = roxy_random_generation();
+    return raw;
+}
+
+static void roxy_malloc_free_fn(void* userdata, void* header_ptr) {
+    (void)userdata;
+    if (!header_ptr) return;
+    auto* hdr = static_cast<roxy_object_header*>(header_ptr);
+    hdr->weak_generation = 0;  // Tombstone before freeing.
+    free(header_ptr);
+}
+
+static bool roxy_malloc_owns_fn(void* userdata, void* ptr) {
+    (void)userdata;
+    (void)ptr;
+    // No fast way to query libc's heap. Return true so callers (e.g. the
+    // VM's ASSERT_HEAP) treat any pointer as owned in malloc mode. This
+    // degrades the assertion to a tautology — acceptable because
+    // closure-capture validation has no analogue in AOT-compiled programs.
+    return true;
+}
+
+roxy_allocator roxy_malloc_allocator = {
+    /*alloc=*/    roxy_malloc_alloc_fn,
+    /*free=*/     roxy_malloc_free_fn,
+    /*owns=*/     roxy_malloc_owns_fn,
+    /*userdata=*/ nullptr,
+};
+
 // ===== Allocation =====
 
 void* roxy_alloc(uint32_t data_size, uint32_t type_id) {
