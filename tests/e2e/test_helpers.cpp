@@ -189,7 +189,7 @@ IRModule* compile_to_ir(BumpAllocator& allocator, const char* source, bool debug
     return ir_module;
 }
 
-String compile_to_cpp(const char* source, bool debug) {
+String compile_to_cpp(const char* source, bool debug, const char* source_path) {
     BumpAllocator allocator(8192);
     IRModule* ir_module = compile_to_ir(allocator, source, debug);
     if (!ir_module) {
@@ -198,6 +198,7 @@ String compile_to_cpp(const char* source, bool debug) {
 
     CEmitterConfig config;
     config.emit_main_entry = true;
+    if (source_path) config.source_path = String(source_path);
     CEmitter emitter(allocator, config);
 
     String output;

@@ -441,6 +441,13 @@ struct IRFunction {
     // inherit visibility from their struct decl.
     bool is_pub = false;
 
+    // 1-indexed source line where this function's declaration begins.
+    // Populated by IRBuilder from the AST decl's `loc.line`; used by the C
+    // backend to emit `#line N "<source>"` directives at the start of each
+    // generated function body so debuggers attribute the body to the
+    // original Roxy source. 0 = unknown / synthesized function.
+    u32 source_line = 0;
+
     // Coroutine metadata (set by IR builder for functions returning Coro<T>)
     bool is_coroutine = false;
     Type* coro_yield_type = nullptr;     // T in Coro<T>

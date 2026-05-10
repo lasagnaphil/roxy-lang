@@ -22,6 +22,11 @@ struct CEmitterConfig {
     // by one of the `native_include_paths` headers); misses fall through to
     // the warning fallback.
     const NativeRegistry* native_registry = nullptr;
+    // Optional source-file path used in `#line N "<source_path>"` directives
+    // emitted at the start of each generated function body. Empty disables
+    // `#line` emission. The C compiler's debug info will then attribute
+    // function-body lines to the original Roxy source.
+    String source_path;
 };
 
 class CEmitter {

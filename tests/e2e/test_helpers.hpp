@@ -36,8 +36,12 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug = fal
 // Helper to compile Roxy source to SSA IR (stops before bytecode lowering)
 IRModule* compile_to_ir(BumpAllocator& allocator, const char* source, bool debug = false);
 
-// Helper to compile Roxy source to C++ source string via CEmitter
-String compile_to_cpp(const char* source, bool debug = false);
+// Helper to compile Roxy source to C++ source string via CEmitter.
+// `source_path`, when non-null, is plumbed into `CEmitterConfig::source_path`
+// so the generated source carries `#line N "<source_path>"` directives at
+// each function-body start.
+String compile_to_cpp(const char* source, bool debug = false,
+                      const char* source_path = nullptr);
 
 // Helper to compile Roxy source to a generated public header (.hpp) string
 String compile_to_hpp(const char* source, bool debug = false);

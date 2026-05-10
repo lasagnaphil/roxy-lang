@@ -1356,6 +1356,19 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
     emit_function_prototype(func, out);
     out.append(" {\n");
 
+    // Phase 5: emit a `#line N "<source>"` directive at the start of each
+    // function body so debuggers attribute the body's lines to the original
+    // Roxy source. `source_line == 0` means the IR builder couldn't recover
+    // the source line (e.g. synthesized default ctor/dtor); skip in that
+    // case to avoid emitting `#line 0`.
+    if (!m_config.source_path.empty() && func->source_line > 0) {
+        char buf[32];
+        format_to(buf, sizeof(buf), "#line {} \"", func->source_line);
+        out.append(buf);
+        out.append(StringView(m_config.source_path));
+        out.append("\"\n");
+    }
+
     // Declare ALL SSA value locals at the top of the function body.
     // This avoids C/C++ issues with goto jumping over variable declarations.
 

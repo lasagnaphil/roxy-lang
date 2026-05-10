@@ -382,6 +382,9 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
         m_current_func->name = decl->name;
     }
     m_current_func->is_pub = decl->is_pub;
+    // Source line for AOT `#line` directives. Use the body's first line —
+    // typically the same as the function header or the next line after.
+    if (decl->body) m_current_func->source_line = decl->body->loc.line;
 
     // Set up parameters
     setup_parameters(decl->params);
@@ -445,6 +448,7 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
     m_current_func = m_allocator.emplace<IRFunction>();
     m_current_func->name = mangle_constructor(decl->struct_name, decl->name);
     m_current_func->is_pub = decl->is_pub;
+    if (decl->body) m_current_func->source_line = decl->body->loc.line;
 
     // Set up parameters with 'self' as first parameter
     setup_parameters(decl->params, struct_type);
@@ -528,6 +532,7 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
     m_current_func = m_allocator.emplace<IRFunction>();
     m_current_func->name = mangle_destructor(decl->struct_name, decl->name);
     m_current_func->is_pub = decl->is_pub;
+    if (decl->body) m_current_func->source_line = decl->body->loc.line;
 
     // Set up parameters with 'self' as first parameter
     setup_parameters(decl->params, struct_type);
@@ -574,6 +579,7 @@ IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
     m_current_func = m_allocator.emplace<IRFunction>();
     m_current_func->name = mangle_method(decl->struct_name, decl->name);
     m_current_func->is_pub = decl->is_pub;
+    if (decl->body) m_current_func->source_line = decl->body->loc.line;
 
     // Set up parameters with 'self' as first parameter
     setup_parameters(decl->params, struct_type);
