@@ -1,6 +1,7 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
+#include "roxy/rt/roxy_rt.h"
 #include "roxy/vm/value.hpp"
 
 namespace rx {
@@ -8,16 +9,12 @@ namespace rx {
 // Forward declarations
 struct RoxyVM;
 
-// List header - stored in object data after ObjectHeader
-// Memory layout: [ObjectHeader][ListHeader]
-// Elements are in a separate malloc'd buffer (allows realloc on push without moving the header)
-struct ListHeader {
-    u32 length;
-    u32 capacity;
-    u32 element_slot_count;  // number of u32 slots per element (default 2)
-    bool element_is_inline;  // true: register holds value directly; false: register holds pointer to data
-    u32* elements;           // slot-based buffer: element[i] at &elements[i * element_slot_count]
-};
+// `ListHeader` is now a typedef of the unified C runtime header (see
+// rt/roxy_rt.h). Layout: [ObjectHeader][ListHeader] + a separately-malloc'd
+// element buffer. The single-byte `element_is_inline` field — formerly
+// `bool` — is `uint8_t` in the unified type, with explicit pad bytes;
+// `if (header->element_is_inline)` keeps working unchanged.
+using ListHeader = roxy_list_header;
 
 // Get the ListHeader from list data pointer (data is right after ObjectHeader)
 inline ListHeader* get_list_header(void* data) {
