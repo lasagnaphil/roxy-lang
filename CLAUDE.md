@@ -404,7 +404,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 
 ## Planned Components (Not Yet Implemented)
 
-- C backend Phase 5 follow-up: statement-level `#line` granularity (function-level is landed). Other Phase 5 items (DCE, Relooper, `switch` lowering, readable variable names) deliberately not pursued — the C compiler's optimizer covers them and they don't affect debugger UX. See `docs/internals/c-backend.md`.
+- C backend Phase 5 — function-level + statement-level `#line` directives landed. Other Phase 5 items (DCE, Relooper, `switch` lowering, readable variable names) deliberately not pursued — the C compiler's optimizer covers them and they don't affect debugger UX. See `docs/internals/c-backend.md`.
 - LSP Phase 8: Full semantic analysis (TypeCache/TypeEnv integration)
 - LSP Phase 9: Polish (signature help, code actions, workspace symbols, semantic tokens)
 - Optimization future phases: global CSE / GVN, loop-invariant code motion, function inlining, tail-call optimization, escape analysis (see `docs/internals/optimization.md`)
