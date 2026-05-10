@@ -35,6 +35,11 @@ typedef struct {
 struct roxy_allocator;
 typedef struct roxy_ctx {
     struct roxy_allocator* allocator;
+    // Optional content-keyed string intern table. When non-null,
+    // `roxy_string_from_literal` and `roxy_string_concat` dedup new strings
+    // against this table. VM mode populates it with `&vm->string_intern_table`;
+    // AOT mode leaves it null today.
+    void* string_intern;
     void* exception_state;
     void* user_data;
 } roxy_ctx;
@@ -174,6 +179,13 @@ void* roxy_string_concat(void* a, void* b);
 // String equality / inequality.
 bool roxy_string_eq(void* a, void* b);
 bool roxy_string_ne(void* a, void* b);
+
+// Intern-table operations exposed for the runtime's own string-allocating
+// helpers. The `table` argument is a `rx::StringInternTable*` cast to `void*`
+// (same type as `roxy_ctx.string_intern`). Callers should not hold the
+// looked-up pointer across mutations of the same table.
+void* roxy_string_intern_lookup(void* table, const char* chars, uint32_t length);
+void  roxy_string_intern_insert(void* table, const char* chars, uint32_t length, void* string_obj);
 
 // ===== to_string conversions =====
 

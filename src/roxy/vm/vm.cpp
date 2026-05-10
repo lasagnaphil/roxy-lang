@@ -3,7 +3,7 @@
 #include "roxy/vm/object.hpp"
 #include "roxy/rt/slab_allocator.hpp"
 #include "roxy/vm/string.hpp"
-#include "roxy/vm/string_intern.hpp"
+#include "roxy/rt/string_intern.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -98,9 +98,16 @@ bool vm_init(RoxyVM* vm, const VMConfig& config) {
     vm->slab_vtable = make_slab_allocator_vtable(vm->allocator.get());
     vm->ctx.allocator = &vm->slab_vtable;
 
+    // The intern table is created below — wire it once it exists.
+
     // Initialize the string intern table. Used by string_alloc to dedup
     // heap strings — same content = same StringObject pointer.
     vm->string_intern = UniquePtr<StringInternTable>(new (std::nothrow) StringInternTable());
+    if (vm->string_intern) {
+        // Plug the table into the ctx so `roxy_string_from_literal` /
+        // `roxy_string_concat` will probe + insert through it.
+        vm->ctx.string_intern = vm->string_intern.get();
+    }
     if (!vm->string_intern) {
         vm->allocator.reset();
         vm->register_file.reset();
@@ -140,6 +147,7 @@ void vm_destroy(RoxyVM* vm) {
 
     // Drop the intern table before shutting down the slab allocator, since
     // the string pointers the table holds become invalid once slabs are freed.
+    vm->ctx.string_intern = nullptr;
     vm->string_intern.reset();
 
     // Destroy slab allocator

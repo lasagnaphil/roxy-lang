@@ -100,6 +100,7 @@ target_link_libraries(roxy_vm roxy_compiler roxy_rt)
 add_library(roxy_rt
     src/roxy/rt/roxy_rt.cpp
     src/roxy/rt/slab_allocator.cpp
+    src/roxy/rt/string_intern.cpp
 )
 
 # Platform-specific virtual memory implementations (used by the slab allocator)

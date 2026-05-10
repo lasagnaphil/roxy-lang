@@ -24,6 +24,7 @@ void roxy_ctx_init(roxy_ctx* ctx) {
     // slab vtable. Embedders may overwrite `ctx->allocator` afterwards (e.g.
     // VM mode points it at a per-VM slab in `vm_init`).
     ctx->allocator = roxy_rt_default_allocator();
+    ctx->string_intern = nullptr;
     ctx->exception_state = nullptr;
     ctx->user_data = nullptr;
 }
@@ -226,6 +227,18 @@ static roxy_string_header* string_hdr(void* s) {
 }
 
 void* roxy_string_from_literal(const char* data, uint32_t length) {
+    // Probe the active context's intern table. Hits dedup the hot cases —
+    // LOAD_CONST of the same literal across many call sites, f-string
+    // numeric conversions, slices that recur. Strings are immutable
+    // copyable values in Roxy, so sharing a pointer is safe.
+    roxy_ctx* ctx = roxy_get_ctx();
+    void* intern = ctx ? ctx->string_intern : nullptr;
+    if (intern && data && length > 0) {
+        if (void* existing = roxy_string_intern_lookup(intern, data, length)) {
+            return existing;
+        }
+    }
+
     uint32_t data_size = static_cast<uint32_t>(sizeof(roxy_string_header)) + length + 1;
     void* s = roxy_alloc(data_size, ROXY_TYPEID_STRING);
     if (!s) return nullptr;
@@ -243,6 +256,12 @@ void* roxy_string_from_literal(const char* data, uint32_t length) {
     // lookups (and `roxy_string_hash`) don't walk the string on every op.
     // Low 32 bits of XXH3_64 — matches the VM's vm/string.cpp behaviour.
     hdr->hash = static_cast<uint32_t>(XXH3_64bits(chars, length));
+
+    // Register the new string in the intern table. The key's char range
+    // is the object's own chars (stable for the object's lifetime).
+    if (intern && data && length > 0) {
+        roxy_string_intern_insert(intern, chars, length, s);
+    }
     return s;
 }
 
@@ -268,23 +287,23 @@ void* roxy_string_concat(void* a, void* b) {
     uint32_t len_b = string_hdr(b)->length;
     uint32_t total = len_a + len_b;
 
-    uint32_t data_size = static_cast<uint32_t>(sizeof(roxy_string_header)) + total + 1;
-    void* s = roxy_alloc(data_size, ROXY_TYPEID_STRING);
-    if (!s) return nullptr;
+    // Build the concatenated bytes in a temp buffer so `roxy_string_from_literal`
+    // can dedup against the intern table. Short cases use the stack; longer
+    // ones take a one-shot malloc.
+    char stack_buf[256];
+    char* buf = (total < sizeof(stack_buf))
+        ? stack_buf
+        : static_cast<char*>(malloc(total + 1));
+    if (!buf) return nullptr;
 
-    auto* hdr = string_hdr(s);
-    hdr->length = total;
+    memcpy(buf, roxy_string_chars(a), len_a);
+    memcpy(buf + len_a, roxy_string_chars(b), len_b);
+    buf[total] = '\0';
 
-    char* chars = roxy_string_chars(s);
-    memcpy(chars, roxy_string_chars(a), len_a);
-    memcpy(chars + len_a, roxy_string_chars(b), len_b);
-    chars[total] = '\0';
+    void* result = roxy_string_from_literal(buf, total);
 
-    // Hash the concatenated bytes, not the inputs' hashes — XXH3 isn't a
-    // homomorphism, and mixing two cached values would diverge from the
-    // hash a fresh allocation of the same content would produce.
-    hdr->hash = static_cast<uint32_t>(XXH3_64bits(chars, total));
-    return s;
+    if (buf != stack_buf) free(buf);
+    return result;
 }
 
 bool roxy_string_eq(void* a, void* b) {
