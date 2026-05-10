@@ -254,13 +254,12 @@ typedef bool     (*roxy_map_eq_fn)(const void* a, const void* b);
 //
 // Custom Hash/Eq dispatch on Struct keys runs through `hash_fn` / `eq_fn`.
 // AOT-compiled programs write the user's mangled C function (e.g.
-// `(roxy_map_hash_fn)&MyType__hash`) directly. VM-mode programs
-// (currently) leave the function pointers null and store the user's
-// bytecode function indices in `hash_fn_index` / `eq_fn_index` — the VM
-// reads those indices to invoke `call_user_function`. The bridge layout
-// keeps both sets of fields so a single struct can serve both runtimes;
-// Phase 5 will collapse this by routing VM dispatch through a thread-
-// local trampoline and dropping the index fields.
+// `(roxy_map_hash_fn)&MyType__hash`) directly. VM-mode programs install
+// trampolines (defined in `vm/map_dispatch.cpp`) here; the trampolines
+// read a thread-local frame stack pushed by the VM-side wrappers and
+// re-enter the bytecode interpreter. VM-only bytecode-dispatch indices
+// live in a per-VM side-table on `RoxyVM` rather than in this header,
+// so the runtime layout is identical between VM and AOT modes.
 typedef struct {
     uint32_t length;            // Number of live entries
     uint32_t capacity;          // Number of buckets (power of 2, or 0)
@@ -272,8 +271,6 @@ typedef struct {
     uint8_t  _pad[3];
     roxy_map_hash_fn hash_fn;   // nullptr = bytewise hash (Struct key kind only)
     roxy_map_eq_fn   eq_fn;     // nullptr = bytewise eq (Struct key kind only)
-    uint32_t hash_fn_index;     // VM-only bytecode dispatch index; UINT32_MAX = unused
-    uint32_t eq_fn_index;       // VM-only; UINT32_MAX = unused
     uint8_t*  distances;        // Per-bucket Robin Hood distance+1 (0 = empty)
     uint32_t* keys;             // capacity * key_slot_count u32 slots
     uint32_t* values;           // capacity * value_slot_count u32 slots

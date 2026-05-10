@@ -1,5 +1,6 @@
 #include "roxy/vm/map_dispatch.hpp"
 #include "roxy/vm/interpreter.hpp"
+#include "roxy/vm/vm.hpp"
 #include "roxy/core/vector.hpp"
 
 #include <cstring>
@@ -77,6 +78,30 @@ roxy_map_hash_fn map_dispatch_hash_trampoline() {
 
 roxy_map_eq_fn map_dispatch_eq_trampoline() {
     return &vm_eq_trampoline;
+}
+
+// ----- Per-VM dispatch info side-table -----
+
+void map_dispatch_register(RoxyVM* vm, void* map_ptr, MapDispatchInfo info) {
+    if (!vm || !map_ptr) return;
+    if (info.hash_fn_idx == UINT32_MAX && info.eq_fn_idx == UINT32_MAX) {
+        // Both sentinel — no custom dispatch, no entry needed.
+        return;
+    }
+    vm->map_dispatch[map_ptr] = info;
+}
+
+MapDispatchInfo map_dispatch_lookup(RoxyVM* vm, void* map_ptr) {
+    if (vm && map_ptr) {
+        auto it = vm->map_dispatch.find(map_ptr);
+        if (it != vm->map_dispatch.end()) return it->second;
+    }
+    return MapDispatchInfo{UINT32_MAX, UINT32_MAX};
+}
+
+void map_dispatch_unregister(RoxyVM* vm, void* map_ptr) {
+    if (!vm || !map_ptr) return;
+    vm->map_dispatch.erase(map_ptr);
 }
 
 } // namespace rx

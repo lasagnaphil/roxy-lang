@@ -44,23 +44,22 @@ void init_type_registry() {
 void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size) {
     assert(vm != nullptr && vm->allocator != nullptr);
 
+    // Route through the per-VM `roxy_allocator` vtable — same slab as the
+    // direct call but goes through the same allocation path AOT-compiled
+    // programs use, so any future allocator-side hook (statistics,
+    // tracing) covers both modes uniformly.
     u32 total_size = sizeof(ObjectHeader) + data_size;
-    u64 generation;
-    void* mem = vm->allocator->alloc(total_size, &generation);
-    if (mem == nullptr) {
-        return nullptr;
-    }
+    u64 generation = 0;
+    void* mem = vm->slab_vtable.alloc(vm->slab_vtable.userdata,
+                                      total_size, &generation);
+    if (!mem) return nullptr;
 
-    // Initialize header
-    // ref_count starts at 0 for constraint reference model:
-    // uniq doesn't affect ref_count, only ref borrows increment it
-    ObjectHeader* header = static_cast<ObjectHeader*>(mem);
+    // Initialize header. ref_count starts at 0 for the constraint
+    // reference model: uniq doesn't affect ref_count, only ref borrows do.
+    auto* header = static_cast<ObjectHeader*>(mem);
     header->weak_generation = generation;
     header->ref_count = 0;
     header->type_id = type_id;
-
-    // Object data is already zeroed by the allocator
-
     return header_data(header);
 }
 
@@ -100,19 +99,18 @@ void object_free(RoxyVM* vm, void* data) {
 
     ObjectHeader* header = get_header_from_data(data);
 
-    // Call destructor if registered
+    // Call destructor if registered. The destructor still receives `vm`
+    // because some impls (e.g. the map-dispatch unregister hook) need
+    // access to per-VM state.
     const ObjectTypeInfo* type_info = get_object_type(header->type_id);
     if (type_info && type_info->destructor) {
         type_info->destructor(vm, data);
     }
 
-    // Mark as dead — weak_ref_valid() checks is_alive() which returns false
-    // when weak_generation == 0.
-    header->weak_generation = 0;
-
-    // Free via slab allocator — zeroes the entire slot (header + data),
-    // then updates bookkeeping. Memory stays mapped for safe weak ref reads.
-    vm->allocator->free(header);
+    // Free via the per-VM `roxy_allocator` vtable — the slab impl tombstones
+    // `weak_generation` (zeros the slot) and stays-mapped so weak refs see
+    // "dead". Same allocator path used by `roxy_free`.
+    vm->slab_vtable.free(vm->slab_vtable.userdata, header);
 }
 
 }

@@ -2,8 +2,10 @@
 
 #include "roxy/core/types.hpp"
 #include "roxy/core/unique_ptr.hpp"
+#include "roxy/core/tsl/robin_map.h"
 #include "roxy/rt/roxy_rt.h"
 #include "roxy/vm/bytecode.hpp"
+#include "roxy/vm/map_dispatch.hpp"
 #include "roxy/vm/value.hpp"
 
 namespace rx {
@@ -60,6 +62,13 @@ struct RoxyVM {
     UniquePtr<SlabAllocator> allocator;  // Slab allocator for heap objects
     roxy_allocator slab_vtable;          // Vtable view of `allocator` plugged into ctx
     UniquePtr<StringInternTable> string_intern;  // Content-keyed dedup of heap strings
+
+    // Per-map bytecode-dispatch indices for `Map<Struct, V>` with custom
+    // `impl Hash` / `impl Eq`. Replaces the old in-header `hash_fn_index` /
+    // `eq_fn_index` fields so the unified MapHeader stays free of VM-only
+    // metadata. Entries are inserted at `map_alloc` and removed by the map
+    // type's destructor in `register_map_type`.
+    tsl::robin_map<void*, MapDispatchInfo> map_dispatch;
 
     UniquePtr<CallFrame[]> call_stack;  // Pre-allocated call stack
     u32 call_stack_size;                // Current call stack depth

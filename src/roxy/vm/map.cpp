@@ -14,9 +14,16 @@ namespace rx {
 // Global map type ID (registered once at startup)
 static u32 g_map_type_id = UINT32_MAX;
 
+// Destructor invoked by `object_free` when a map is reclaimed by the slab.
+// Removes the map's bytecode-dispatch entry so a future allocation reusing
+// the same address doesn't inherit stale Hash/Eq indices.
+static void map_destructor(RoxyVM* vm, void* data) {
+    map_dispatch_unregister(vm, data);
+}
+
 u32 register_map_type() {
     if (g_map_type_id == UINT32_MAX) {
-        g_map_type_id = register_object_type("map", 0, nullptr);
+        g_map_type_id = register_object_type("map", 0, map_destructor);
     }
     return g_map_type_id;
 }
@@ -35,13 +42,17 @@ u32 get_map_type_id() {
 
 namespace {
 
-// RAII guard around `map_dispatch_push`/`pop`.
+// RAII guard around `map_dispatch_push`/`pop`. Looks up the bytecode
+// dispatch indices in the per-VM side-table (`vm->map_dispatch`) since the
+// unified MapHeader no longer stores them.
 struct MapDispatchScope {
-    MapDispatchScope(RoxyVM* vm, const MapHeader* header) {
+    MapDispatchScope(RoxyVM* vm, void* map_ptr) {
+        MapDispatchInfo info = map_dispatch_lookup(vm, map_ptr);
+        const MapHeader* header = get_map_header(map_ptr);
         MapDispatchFrame f;
         f.vm = vm;
-        f.hash_fn_idx = header->hash_fn_index;
-        f.eq_fn_idx = header->eq_fn_index;
+        f.hash_fn_idx = info.hash_fn_idx;
+        f.eq_fn_idx = info.eq_fn_idx;
         f.key_slot_count = header->key_slot_count;
         map_dispatch_push(f);
     }
@@ -54,7 +65,7 @@ struct MapDispatchScope {
 
 // --- Public API ---
 
-void* map_alloc(RoxyVM* /*vm*/, MapKeyKind key_kind, u32 capacity,
+void* map_alloc(RoxyVM* vm, MapKeyKind key_kind, u32 capacity,
                 u8 key_slot_count, bool key_is_inline,
                 u8 value_slot_count, bool value_is_inline,
                 u32 hash_fn_index, u32 eq_fn_index) {
@@ -75,30 +86,28 @@ void* map_alloc(RoxyVM* /*vm*/, MapKeyKind key_kind, u32 capacity,
     if (!data) return nullptr;
     roxy_map_init(data, static_cast<int32_t>(key_kind), static_cast<int32_t>(capacity));
 
-    MapHeader* header = get_map_header(data);
-    header->hash_fn_index = hash_fn_index;
-    header->eq_fn_index = eq_fn_index;
+    // Record the bytecode dispatch indices in the per-VM side-table so
+    // `MapDispatchScope` can rebuild the dispatch frame for each map op.
+    map_dispatch_register(vm, data,
+                          MapDispatchInfo{hash_fn_index, eq_fn_index});
     return data;
 }
 
 void* map_copy(RoxyVM* vm, void* src) {
     if (!src) return nullptr;
-    MapDispatchScope scope(vm, get_map_header(src));
+    MapDispatchScope scope(vm, src);
     void* dst = roxy_map_copy(src);
     if (!dst) return nullptr;
-    // `roxy_map_copy` preserves `hash_fn`/`eq_fn` and resets the index
-    // fields to UINT32_MAX. Restore the bytecode indices so the dst can
-    // dispatch through the VM trampolines just like the source.
-    const MapHeader* src_header = get_map_header(src);
-    MapHeader* dst_header = get_map_header(dst);
-    dst_header->hash_fn_index = src_header->hash_fn_index;
-    dst_header->eq_fn_index = src_header->eq_fn_index;
+    // `roxy_map_copy` preserves `hash_fn`/`eq_fn`. Mirror the dispatch
+    // info into the side-table so the dst dispatches like the src.
+    MapDispatchInfo info = map_dispatch_lookup(vm, src);
+    map_dispatch_register(vm, dst, info);
     return dst;
 }
 
 bool map_contains(RoxyVM* vm, const void* data, const u32* key_src) {
     if (!data) return false;
-    MapDispatchScope scope(vm, get_map_header(data));
+    MapDispatchScope scope(vm, const_cast<void*>(data));
     return roxy_map_contains(const_cast<void*>(data), key_src);
 }
 
@@ -107,7 +116,7 @@ const u32* map_get_ptr(RoxyVM* vm, const void* data, const u32* key_src, const c
         *error = "Null map reference";
         return nullptr;
     }
-    MapDispatchScope scope(vm, get_map_header(data));
+    MapDispatchScope scope(vm, const_cast<void*>(data));
     void* ptr = roxy_map_get(const_cast<void*>(data), key_src);
     if (!ptr) {
         *error = "Map key not found";
@@ -117,12 +126,12 @@ const u32* map_get_ptr(RoxyVM* vm, const void* data, const u32* key_src, const c
 }
 
 void map_insert(RoxyVM* vm, void* data, const u32* key_src, const u32* value_src) {
-    MapDispatchScope scope(vm, get_map_header(data));
+    MapDispatchScope scope(vm, data);
     roxy_map_insert(data, key_src, value_src);
 }
 
 bool map_remove(RoxyVM* vm, void* data, const u32* key_src) {
-    MapDispatchScope scope(vm, get_map_header(data));
+    MapDispatchScope scope(vm, data);
     return roxy_map_remove(data, key_src);
 }
 

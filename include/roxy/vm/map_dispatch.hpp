@@ -33,4 +33,18 @@ void map_dispatch_pop();
 roxy_map_hash_fn map_dispatch_hash_trampoline();
 roxy_map_eq_fn   map_dispatch_eq_trampoline();
 
+// Per-map dispatch info kept in a side-table on `RoxyVM`. The unified
+// `MapHeader` no longer carries `hash_fn_index`/`eq_fn_index` fields; they
+// live here instead so the AOT runtime never sees them. Sentinel
+// `UINT32_MAX` for either index means "no custom dispatch — fall back to
+// bytewise hash/memcmp".
+struct MapDispatchInfo {
+    u32 hash_fn_idx;
+    u32 eq_fn_idx;
+};
+
+void map_dispatch_register(RoxyVM* vm, void* map_ptr, MapDispatchInfo info);
+MapDispatchInfo map_dispatch_lookup(RoxyVM* vm, void* map_ptr);
+void map_dispatch_unregister(RoxyVM* vm, void* map_ptr);
+
 } // namespace rx
