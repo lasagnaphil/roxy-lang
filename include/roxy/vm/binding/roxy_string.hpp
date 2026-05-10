@@ -1,55 +1,20 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
-#include "roxy/vm/string.hpp"
+#include "roxy/rt/roxy_rt.h"
 #include "roxy/vm/binding/type_traits.hpp"
-
-#include <cstring>
 
 namespace rx {
 
 // Forward declaration
 struct RoxyVM;
 
-// RoxyString - thin non-owning wrapper around string data pointer (void*)
-// Provides type-safe access to Roxy strings from C++ bound functions.
-struct RoxyString {
-    // Factory: allocate a new string via the VM
-    static RoxyString alloc(RoxyVM* vm, const char* data, u32 length) {
-        void* str_data = string_alloc(vm, data, length);
-        return RoxyString(str_data);
-    }
-
-    // Convenience overload using strlen
-    static RoxyString alloc(RoxyVM* vm, const char* data) {
-        return alloc(vm, data, static_cast<u32>(std::strlen(data)));
-    }
-
-    explicit RoxyString(void* data) : m_data(data) {}
-
-    // String length (excluding null terminator)
-    u32 length() const { return string_length(m_data); }
-
-    // Null-terminated character data
-    const char* c_str() const { return string_chars(m_data); }
-
-    // Equality comparison
-    bool equals(const RoxyString& other) const {
-        return string_equals(m_data, other.m_data);
-    }
-
-    // Concatenate two strings, returns a new RoxyString
-    RoxyString concat(RoxyVM* vm, RoxyString other) const {
-        void* result = string_concat(vm, m_data, other.m_data);
-        return RoxyString(result);
-    }
-
-    bool is_valid() const { return m_data != nullptr; }
-    void* data() const { return m_data; }
-
-private:
-    void* m_data;
-};
+// `RoxyString` is a thin alias of `roxy::String`. The unified runtime now
+// owns the implementation; this alias keeps existing embedder code that
+// referenced `rx::RoxyString` working unchanged. Allocation flows through
+// the active `roxy_ctx`'s allocator (slab in VM mode, slab in AOT mode
+// after `roxy_rt_init`), so callers no longer need to thread a `RoxyVM*`.
+using RoxyString = roxy::String;
 
 // RoxyType specialization for RoxyString
 template<>

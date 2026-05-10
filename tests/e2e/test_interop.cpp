@@ -910,17 +910,19 @@ i32 str_get_len(RoxyVM* vm, RoxyString str) {
 // C++ function that checks if a string equals "hello"
 bool str_check_hello(RoxyVM* vm, RoxyString str) {
     (void)vm;
-    return str.equals(RoxyString(string_alloc(vm, "hello", 5)));
+    return str.equals(RoxyString::alloc("hello", 5));
 }
 
 // C++ function that creates a new string and returns it to Roxy
 RoxyString str_make_greeting(RoxyVM* vm) {
-    return RoxyString::alloc(vm, "hello from C++");
+    (void)vm;
+    return RoxyString::alloc("hello from C++");
 }
 
 // C++ function that concatenates two strings
 RoxyString str_join(RoxyVM* vm, RoxyString a, RoxyString b) {
-    return a.concat(vm, b);
+    (void)vm;
+    return a.concat(b);
 }
 
 TEST_CASE("Interop - RoxyString: C++ reads string length") {
