@@ -29,10 +29,13 @@
 - Constructor and destructor chaining
 - Generic functions and structs with monomorphization (explicit type args)
 - Generator-style stackless coroutines (`Coro<T>` with `yield`, `.resume()`, `.done()`)
+- Recursive types: self-referential and mutually recursive structs via `uniq` indirection (linked lists, trees, ASTs), with compile-time value-cycle detection and descriptor-driven recursive destruction
+- LSP server for IDE support (error-recovering parser, diagnostics, go-to-definition, completions, hover, find references, rename)
+- AOT compilation to C (SSA IR → C/C++ transpilation with a unified runtime; Phases 1–4 + Phase 5 partial)
 
 **Planned:**
-- LSP server for IDE support
-- AOT compilation to C
+- Full LSP semantic analysis (TypeCache/TypeEnv integration) and polish (signature help, code actions, workspace symbols)
+- Further IR optimizations (global CSE/GVN, loop-invariant code motion, function inlining, tail-call optimization)
 
 ## How does it look like?
 

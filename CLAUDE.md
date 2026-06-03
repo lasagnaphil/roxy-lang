@@ -227,6 +227,12 @@ ninja
 cmake .. -G Ninja -DENABLE_ASAN=ON
 ```
 
+> **Note:** ASAN is currently **disabled** on the maintainer's machine — the ASAN
+> runtime deadlocks at process startup (inside `AsanInitInternal`, before `main`)
+> on macOS Tahoe. Use `-DENABLE_ASAN=OFF` (the default) until the toolchain/OS
+> issue is resolved. A binary that spins at ~100% CPU before running any test is
+> this deadlock, not a code bug.
+
 ### CMake Libraries
 
 The project is organized into 6 libraries:
@@ -331,6 +337,9 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Tagged Unions** - Discriminated unions with `when` clause in struct definitions.
 **Details:** `docs/internals/tagged-unions.md` | **Tests:** `tests/e2e/test_tagged_unions.cpp`
 
+**Recursive Types** - Self-referential structs via `uniq` indirection (linked lists, trees, tagged-union ASTs) and mutually recursive structs. Direct value-type cycles (`struct Node { next: Node; }`) are rejected at compile time with an "infinite size" error. Recursive destruction is descriptor-driven — a `BCDeleteDesc` walks owned fields directly in C++ rather than re-entering the interpreter per node — so deep ownership chains destroy without overflowing the native stack.
+**Details:** `docs/internals/recursive-types.md` | **Tests:** `tests/e2e/test_recursive_types.cpp`
+
 ### IR and Bytecode
 **SSA IR** - Block arguments (not phi nodes), 43+ operations for all basic operations.
 **Details:** `docs/internals/ssa-ir.md` | **Files:** `compiler/ssa_ir.hpp`, `compiler/ir_builder.hpp`
@@ -428,7 +437,7 @@ cd build
 
 On Windows, use `.exe` extension.
 
-**Note for Claude Code:** C backend tests (`*C Backend*`) invoke the system C++ compiler to compile and run generated code. These require running outside the sandbox (`dangerouslyDisableSandbox: true`). ASAN builds also require running outside the sandbox for the symbolizer to work. All other tests run fine inside the sandbox.
+**Note for Claude Code:** C backend tests (`*C Backend*`) invoke the system C++ compiler to compile and run generated code, so they require running outside the sandbox (`dangerouslyDisableSandbox: true`). All other tests run fine inside the sandbox. (ASAN is currently disabled — see the AddressSanitizer note above; when re-enabled, ASAN builds also need to run outside the sandbox for the symbolizer.)
 
 ## Documentation
 
@@ -452,12 +461,13 @@ On Windows, use `.exe` extension.
   - `methods.md` - Struct methods, `self` parameter, name mangling
   - `inheritance.md` - Struct inheritance, subtyping, `super` keyword
   - `tagged-unions.md` - Discriminated unions with `when` clause
+  - `recursive-types.md` - Self-referential / mutually recursive structs via `uniq`, value-cycle detection, descriptor-driven recursive destruction
   - `traits.md` - Traits: declarations, required/default methods, trait inheritance, operator dispatch
   - `operator-overloading.md` - Operator traits (arithmetic, comparison, bitwise, unary) with unified primitive/struct dispatch
   - `generics.md` - Generic functions and structs with monomorphization
   - `exceptions.md` - Exception handling: try/catch/throw/finally, Exception trait, handler tables
   - `coroutines.md` - Coroutines: Coro<T>, yield, state machine transformation, graph-preserving block cloning
   - `closures.md` - Closures and first-class functions: function types, lambdas, capture modes, function references, self capture
-  - `c-backend.md` - C backend (AOT compilation via SSA IR → C): Phases 1–2 implemented, Phases 3–5 design plan
+  - `c-backend.md` - C backend (AOT compilation via SSA IR → C): Phases 1–4 + Phase 5 partial (function- and statement-level `#line` directives) implemented; remaining Phase 5 items (DCE, Relooper, `switch` lowering) deliberately not pursued
   - `lsp-server.md` - LSP server architecture: map-reduce design, error-recovering parser, indexing, lazy analysis
   - `optimization.md` - SSA IR optimization passes: Phase 1 (in IRBuilder), Phase 2 (DCE, copy propagation), Phase 3 (branch folding, block merging, trivial block-arg elim), and Phase 4 (block-local CSE) all implemented; future phases (global CSE/GVN, LICM, inlining, TCO, escape analysis) design plan
