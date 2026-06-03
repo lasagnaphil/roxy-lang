@@ -3,6 +3,7 @@
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/format.hpp"
 #include "roxy/compiler/ast.hpp"
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/type_env.hpp"
@@ -183,6 +184,19 @@ private:
     // module-private after IR modules are merged into one global table.
     // Returns name unchanged if module is empty (single-file mode).
     StringView mangle_module_local(StringView name);
+
+    // Format into an arena-allocated, null-terminated StringView. Probes the
+    // length with a stack buffer, allocates exactly that many bytes, then formats
+    // again into the arena — so names longer than the probe buffer are handled
+    // without truncation or out-of-bounds copies. Used by the mangle helpers.
+    template<typename... Args>
+    StringView intern_format(const char* fmt, const Args&... args) {
+        char probe[256];
+        u32 len = static_cast<u32>(format_to(probe, sizeof(probe), fmt, args...));
+        char* dst = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
+        format_to(dst, len + 1, fmt, args...);
+        return StringView(dst, len);
+    }
 
     // Zero `slot_count` contiguous u32 slots of `self_ptr` starting at
     // `start_slot`. Used by constructors to null-init a struct's own slot

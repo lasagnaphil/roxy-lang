@@ -800,13 +800,7 @@ IRFunction* IRBuilder::build_cleanup_wrapper(Type* noncopyable_type, u32 wrapper
     m_current_func = m_allocator.emplace<IRFunction>();
 
     // Name: __cleanup_wrapper_<index>
-    char name_buf[64];
-    format_to(name_buf, sizeof(name_buf), "__cleanup_wrapper_{}", wrapper_index);
-    u32 name_len = 0;
-    while (name_buf[name_len]) name_len++;
-    char* name_alloc = reinterpret_cast<char*>(m_allocator.alloc_bytes(name_len, 1));
-    memcpy(name_alloc, name_buf, name_len);
-    m_current_func->name = StringView(name_alloc, name_len);
+    m_current_func->name = intern_format("__cleanup_wrapper_{}", wrapper_index);
 
     // Single parameter: the list/map pointer
     m_current_func->return_type = m_types.void_type();
@@ -2829,11 +2823,7 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, const FunctionRefTarget& target)
         // Synthesize an empty env struct (just `__call_idx: u32`). Same shape
         // as a zero-capture lambda's env, just a different name so each
         // function-ref maps to its own type_id.
-        char env_buf[64];
-        i32 env_len = format_to(env_buf, sizeof(env_buf), "__funref_{}_env", ref_id);
-        char* env_name_buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(env_len), 1));
-        memcpy(env_name_buf, env_buf, static_cast<u32>(env_len));
-        env_struct_name = StringView(env_name_buf, static_cast<u32>(env_len));
+        env_struct_name = intern_format("__funref_{}_env", ref_id);
 
         Type* env_type = m_types.struct_type(env_struct_name, nullptr);
         FieldInfo* fields = reinterpret_cast<FieldInfo*>(
@@ -2859,11 +2849,7 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, const FunctionRefTarget& target)
         // build_function (line 365-374), non-pub functions get
         // mangle_module_local applied; "main" stays unmangled. The trampoline
         // is non-pub by construction, so always mangle.
-        char tramp_buf[64];
-        i32 tramp_len = format_to(tramp_buf, sizeof(tramp_buf), "__funref_{}_call", ref_id);
-        char* tramp_name_buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(tramp_len), 1));
-        memcpy(tramp_name_buf, tramp_buf, static_cast<u32>(tramp_len));
-        StringView raw_tramp_name(tramp_name_buf, static_cast<u32>(tramp_len));
+        StringView raw_tramp_name = intern_format("__funref_{}_call", ref_id);
         trampoline_name = mangle_module_local(raw_tramp_name);
 
         FunctionTypeInfo& fti = target.function_type->func_info;
@@ -2888,11 +2874,7 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, const FunctionRefTarget& target)
         // Params 1..N: forwarded arguments named arg0, arg1, ...
         Vector<ValueId> forwarded_arg_values;
         for (u32 i = 0; i < fti.param_types.size(); i++) {
-            char arg_buf[16];
-            i32 arg_len = format_to(arg_buf, sizeof(arg_buf), "arg{}", i);
-            char* arg_name_buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(arg_len), 1));
-            memcpy(arg_name_buf, arg_buf, static_cast<u32>(arg_len));
-            StringView arg_name(arg_name_buf, static_cast<u32>(arg_len));
+            StringView arg_name = intern_format("arg{}", i);
 
             BlockParam p;
             p.value = tramp->new_value();
@@ -4443,11 +4425,7 @@ ValueId IRBuilder::gen_constructor_call(Expr* expr) {
         // Track temporary for exception cleanup via m_owned_locals.
         // Consumed when passed/assigned/returned (marked is_moved + Nullify).
         if (result_type && result_type->noncopyable() && m_current_block) {
-            char buf[32];
-            i32 len = format_to(buf, sizeof(buf), "__tmp{}", m_next_temp_id++);
-            char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(len) + 1, 1));
-            memcpy(name_ptr, buf, static_cast<u32>(len) + 1);
-            StringView temp_name(name_ptr, static_cast<u32>(len));
+            StringView temp_name = intern_format("__tmp{}", m_next_temp_id++);
 
             define_local(temp_name, obj, result_type);
             u32 scope_depth = static_cast<u32>(m_local_scopes.size());
@@ -4602,11 +4580,7 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         struct_ptr = emit_new(type_name, empty_args, result_type);
         // Track temporary for exception cleanup via m_owned_locals
         if (result_type && result_type->noncopyable() && m_current_block) {
-            char buf[32];
-            i32 len = format_to(buf, sizeof(buf), "__tmp{}", m_next_temp_id++);
-            char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(len) + 1, 1));
-            memcpy(name_ptr, buf, static_cast<u32>(len) + 1);
-            StringView temp_name(name_ptr, static_cast<u32>(len));
+            StringView temp_name = intern_format("__tmp{}", m_next_temp_id++);
 
             define_local(temp_name, struct_ptr, result_type);
             u32 scope_depth = static_cast<u32>(m_local_scopes.size());
@@ -5555,33 +5529,19 @@ IROp IRBuilder::get_unary_op(UnaryOp op, Type* type) {
 // Name mangling helpers
 
 StringView IRBuilder::mangle_method(StringView struct_name, StringView method_name) {
-    char name_buf[256];
-    i32 len = format_to(name_buf, sizeof(name_buf), "{}$${}", struct_name, method_name);
-    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(len) + 1, 1));
-    memcpy(name_ptr, name_buf, static_cast<u32>(len) + 1);
-    return StringView(name_ptr, static_cast<u32>(len));
+    return intern_format("{}$${}", struct_name, method_name);
 }
 
 StringView IRBuilder::mangle_constructor(StringView struct_name, StringView ctor_name) {
-    char name_buf[256];
-    i32 len;
     if (ctor_name.empty()) {
-        len = format_to(name_buf, sizeof(name_buf), "{}$$new", struct_name);
-    } else {
-        len = format_to(name_buf, sizeof(name_buf), "{}$$new$${}", struct_name, ctor_name);
+        return intern_format("{}$$new", struct_name);
     }
-    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(len) + 1, 1));
-    memcpy(name_ptr, name_buf, static_cast<u32>(len) + 1);
-    return StringView(name_ptr, static_cast<u32>(len));
+    return intern_format("{}$$new$${}", struct_name, ctor_name);
 }
 
 StringView IRBuilder::mangle_module_local(StringView name) {
     if (m_module_name.empty()) return name;
-    char name_buf[256];
-    i32 len = format_to(name_buf, sizeof(name_buf), "{}::{}", m_module_name, name);
-    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(len) + 1, 1));
-    memcpy(name_ptr, name_buf, static_cast<u32>(len) + 1);
-    return StringView(name_ptr, static_cast<u32>(len));
+    return intern_format("{}::{}", m_module_name, name);
 }
 
 void IRBuilder::emit_zero_slots(ValueId self_ptr, u32 start_slot, u32 slot_count) {
@@ -5758,16 +5718,10 @@ void IRBuilder::setup_parameters(Span<Param> params, Type* self_type) {
 }
 
 StringView IRBuilder::mangle_destructor(StringView struct_name, StringView dtor_name) {
-    char name_buf[256];
-    i32 len;
     if (dtor_name.empty()) {
-        len = format_to(name_buf, sizeof(name_buf), "{}$$delete", struct_name);
-    } else {
-        len = format_to(name_buf, sizeof(name_buf), "{}$$delete$${}", struct_name, dtor_name);
+        return intern_format("{}$$delete", struct_name);
     }
-    char* name_ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(static_cast<u32>(len) + 1, 1));
-    memcpy(name_ptr, name_buf, static_cast<u32>(len) + 1);
-    return StringView(name_ptr, static_cast<u32>(len));
+    return intern_format("{}$$delete$${}", struct_name, dtor_name);
 }
 
 }
