@@ -1972,12 +1972,8 @@ void CEmitter::emit_escaped_string(StringView str, String& out) {
 // function name on a hit, nullptr otherwise. Both `emit_native_call` and
 // `is_static_mapped_native` share this lookup.
 static const char* lookup_static_native_mapping(StringView name) {
-    struct NativeMapping {
-        const char* roxy_name;
-        const char* c_name;
-    };
-
-    static const NativeMapping mappings[] = {
+    // Built-in natives declared in roxy_rt.h: exact roxy name -> C function.
+    static const tsl::robin_map<StringView, const char*> exact_mappings = {
         // Print
         {"print", "roxy_print"},
         // String functions
@@ -2005,32 +2001,13 @@ static const char* lookup_static_native_mapping(StringView name) {
         {"f32$$hash", "roxy_f32_hash"},
         {"f64$$hash", "roxy_f64_hash"},
         {"string$$hash", "roxy_string_hash"},
-        // List
+        // List / Map allocation + copy (free functions, not methods). The
+        // List$$<method> / Map$$<method> rows live in the method tables below,
+        // so the lookup is shared with the monomorphized-instance path.
         {"list_alloc", "roxy_list_alloc"},
         {"list_copy", "roxy_list_copy"},
-        {"List$$new", "roxy_list_init"},
-        {"List$$delete", "roxy_list_delete"},
-        {"List$$len", "roxy_list_len"},
-        {"List$$cap", "roxy_list_cap"},
-        {"List$$push", "roxy_list_push"},
-        {"List$$pop", "roxy_list_pop"},
-        {"List$$index", "roxy_list_get"},
-        {"List$$index_mut", "roxy_list_set"},
-        // Map
         {"map_alloc", "roxy_map_alloc"},
         {"map_copy", "roxy_map_copy"},
-        {"Map$$new", "roxy_map_init"},
-        {"Map$$delete", "roxy_map_delete"},
-        {"Map$$len", "roxy_map_len"},
-        {"Map$$contains", "roxy_map_contains"},
-        {"Map$$get", "roxy_map_get"},
-        {"Map$$insert", "roxy_map_insert"},
-        {"Map$$remove", "roxy_map_remove"},
-        {"Map$$clear", "roxy_map_clear"},
-        {"Map$$keys", "roxy_map_keys"},
-        {"Map$$values", "roxy_map_values"},
-        {"Map$$index", "roxy_map_index"},
-        {"Map$$index_mut", "roxy_map_index_mut"},
         // Internal map iteration
         {"__map_iter_capacity", "roxy_map_iter_capacity"},
         {"__map_iter_next_occupied", "roxy_map_iter_next_occupied"},
@@ -2038,9 +2015,38 @@ static const char* lookup_static_native_mapping(StringView name) {
         {"__map_iter_value_at", "roxy_map_iter_value_at"},
     };
 
-    // Exact matches
-    for (const auto& m : mappings) {
-        if (name == StringView(m.roxy_name)) return m.c_name;
+    // Bare method name -> runtime function, shared by the unparameterized name
+    // (List$$push) and every monomorphized instance (List$i32$$push) — both
+    // reduce to the method after the last "$$". Single source of truth, so a new
+    // List/Map method is added in exactly one place.
+    static const tsl::robin_map<StringView, const char*> list_methods = {
+        {"new", "roxy_list_init"},
+        {"delete", "roxy_list_delete"},
+        {"len", "roxy_list_len"},
+        {"cap", "roxy_list_cap"},
+        {"push", "roxy_list_push"},
+        {"pop", "roxy_list_pop"},
+        {"index", "roxy_list_get"},
+        {"index_mut", "roxy_list_set"},
+    };
+    static const tsl::robin_map<StringView, const char*> map_methods = {
+        {"new", "roxy_map_init"},
+        {"delete", "roxy_map_delete"},
+        {"len", "roxy_map_len"},
+        {"contains", "roxy_map_contains"},
+        {"get", "roxy_map_get"},
+        {"insert", "roxy_map_insert"},
+        {"remove", "roxy_map_remove"},
+        {"clear", "roxy_map_clear"},
+        {"keys", "roxy_map_keys"},
+        {"values", "roxy_map_values"},
+        {"index", "roxy_map_index"},
+        {"index_mut", "roxy_map_index_mut"},
+    };
+
+    // Exact match
+    if (auto it = exact_mappings.find(name); it != exact_mappings.end()) {
+        return it->second;
     }
 
     // Pattern-based matches (monomorphized generic names like "List$i32$$push")
@@ -2055,35 +2061,20 @@ static const char* lookup_static_native_mapping(StringView name) {
         return StringView();
     };
 
-    if (name.size() > 4 && name.data()[0] == 'L' && name.data()[1] == 'i' &&
-        name.data()[2] == 's' && name.data()[3] == 't') {
-        StringView m = suffix_after_last_dollar_dollar(name);
-        if (m == StringView("new")) return "roxy_list_init";
-        if (m == StringView("delete")) return "roxy_list_delete";
-        if (m == StringView("len")) return "roxy_list_len";
-        if (m == StringView("cap")) return "roxy_list_cap";
-        if (m == StringView("push")) return "roxy_list_push";
-        if (m == StringView("pop")) return "roxy_list_pop";
-        if (m == StringView("index")) return "roxy_list_get";
-        if (m == StringView("index_mut")) return "roxy_list_set";
-    }
+    // Container methods: any name starting with the container prefix and
+    // containing "$$" resolves by its bare method name. Covers both the
+    // unparameterized form and monomorphized instances.
+    auto match_method = [&](const char* prefix,
+                            const tsl::robin_map<StringView, const char*>& methods) -> const char* {
+        u32 plen = static_cast<u32>(strlen(prefix));
+        if (name.size() <= plen) return nullptr;
+        if (StringView(name.data(), plen) != StringView(prefix)) return nullptr;
+        auto it = methods.find(suffix_after_last_dollar_dollar(name));
+        return it != methods.end() ? it->second : nullptr;
+    };
 
-    if (name.size() > 3 && name.data()[0] == 'M' && name.data()[1] == 'a' &&
-        name.data()[2] == 'p') {
-        StringView m = suffix_after_last_dollar_dollar(name);
-        if (m == StringView("new")) return "roxy_map_init";
-        if (m == StringView("delete")) return "roxy_map_delete";
-        if (m == StringView("len")) return "roxy_map_len";
-        if (m == StringView("contains")) return "roxy_map_contains";
-        if (m == StringView("get")) return "roxy_map_get";
-        if (m == StringView("insert")) return "roxy_map_insert";
-        if (m == StringView("remove")) return "roxy_map_remove";
-        if (m == StringView("clear")) return "roxy_map_clear";
-        if (m == StringView("keys")) return "roxy_map_keys";
-        if (m == StringView("values")) return "roxy_map_values";
-        if (m == StringView("index")) return "roxy_map_index";
-        if (m == StringView("index_mut")) return "roxy_map_index_mut";
-    }
+    if (const char* c = match_method("List", list_methods)) return c;
+    if (const char* c = match_method("Map", map_methods)) return c;
 
     // Monomorphized list_alloc / list_copy / map_alloc / map_copy
     if (name.size() > 10 && StringView(name.data(), 10) == StringView("list_alloc"))
