@@ -248,9 +248,18 @@ static bool block_in_metadata(IRFunction* func, BlockId b) {
 
 bool run_block_merging(IRFunction* func) {
     bool any_changed = false;
-    bool inner_changed = true;
-    while (inner_changed) {
-        inner_changed = false;
+    bool pass_changed = true;
+    // Each pass computes predecessors once and applies every independent merge it
+    // finds, instead of restarting (recompute + rescan) after each single merge.
+    // Merging B into A only *moves* edges — B's successors swap pred B for pred A,
+    // their pred count unchanged — so the only way the in-pass `preds` snapshot
+    // goes stale is by naming a now-emptied block. An emptied block has a None
+    // terminator and fails the Goto check below, so stale entries cause at most a
+    // missed merge (re-attempted next pass), never an incorrect one. Long chains
+    // collapse by roughly half per pass, so this converges in ~log(chain) passes
+    // rather than one pass per merge.
+    while (pass_changed) {
+        pass_changed = false;
         Vector<Vector<BlockId>> preds = compute_predecessors(func);
         for (u32 b_idx = 0; b_idx < func->blocks.size(); b_idx++) {
             IRBlock* B = func->blocks[b_idx];
@@ -261,36 +270,31 @@ bool run_block_merging(IRFunction* func) {
             if (a_id.id >= func->blocks.size()) continue;
             IRBlock* A = func->blocks[a_id.id];
             // A's terminator must be an unconditional Goto to B (no other
-            // successors).
+            // successors). This also rejects stale preds entries that name an
+            // emptied block (None terminator) merged earlier in this pass.
             if (A->terminator.kind != TerminatorKind::Goto) continue;
             if (A->terminator.goto_target.block != B->id) continue;
             // Skip if B is referenced by any exception/finally/cleanup
             // metadata. (We don't rewrite metadata across a merge in v1.)
             if (block_in_metadata(func, B->id)) continue;
 
-            // Build substitution map: B's params -> A's goto args.
+            // Substitute B's params with A's goto args. The args are evaluated in
+            // A's context and strictly dominate B, so they are never B's own params
+            // — the substitution is flat (no transitive chains), so a small per-
+            // param lookup suffices instead of a map over the whole value space.
             Span<BlockArgPair> a_args = A->terminator.goto_target.args;
-            const u32 N = func->next_value_id;
-            Vector<u32> subst(N);
-            for (u32 i = 0; i < N; i++) subst[i] = i;
-            // Block-arg count mismatches would indicate malformed IR; assert
-            // and skip rather than crash on out-of-range indexing.
+            // A count mismatch would indicate malformed IR; skip rather than
+            // index out of range.
             if (a_args.size() != B->params.size()) continue;
-            for (u32 i = 0; i < B->params.size(); i++) {
-                ValueId param = B->params[i].value;
-                ValueId arg = a_args[i].value;
-                if (param.is_valid() && param.id < N) {
-                    subst[param.id] = arg.id;
-                }
-            }
-            auto find = [&](u32 id) -> u32 {
-                while (subst[id] != id) { subst[id] = subst[subst[id]]; id = subst[id]; }
-                return id;
-            };
-            for (u32 i = 0; i < N; i++) (void)find(i);
             auto rewrite = [&](ValueId& v) {
-                if (!v.is_valid() || v.id >= N) return;
-                if (subst[v.id] != v.id) v = ValueId{subst[v.id]};
+                if (!v.is_valid()) return;
+                for (u32 i = 0; i < B->params.size(); i++) {
+                    ValueId param = B->params[i].value;
+                    if (param.is_valid() && param.id == v.id) {
+                        v = a_args[i].value;
+                        return;
+                    }
+                }
             };
             // Rewrite B's instructions and terminator (B-local refs to its
             // params now resolve to A's args).
@@ -310,9 +314,10 @@ bool run_block_merging(IRFunction* func) {
             while (B->instructions.size() > 0) B->instructions.pop_back();
             B->terminator = Terminator{};
 
-            inner_changed = true;
+            pass_changed = true;
             any_changed = true;
-            break;  // restart scan (preds vector is now stale)
+            // Keep scanning; do not restart. `preds` may now be stale for B's
+            // former successors, but only in ways the Goto check above rejects.
         }
     }
     return any_changed;
