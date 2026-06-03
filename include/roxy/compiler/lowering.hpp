@@ -154,7 +154,34 @@ private:
     // Build delete descriptor tree for noncopyable types.
     // Recursively walks the type and appends BCDeleteDesc entries to
     // m_current_func->delete_descs. Returns the index of the root entry.
+    // Memoized per function via m_delete_desc_cache so recursive types
+    // (e.g. struct Node { next: uniq Node; }) produce a finite, self-
+    // referential descriptor instead of looping forever at compile time.
     u16 build_delete_desc(Type* type);
+
+    // True if `struct_type`'s owned-field cleanup can be expressed as a
+    // descriptor-driven STRUCT delete desc (kind 5/6) rather than a bytecode
+    // destructor. Requires a synthetic (non-user) default destructor and no
+    // parent, so the whole cleanup is pure data and avoids interpreter
+    // re-entry during destruction. Tagged-union (when-clause) structs qualify.
+    bool is_descriptor_eligible_struct(Type* struct_type) const;
+
+    // Append the field-cleanup actions for an eligible struct (regular owned
+    // fields + discriminant-guarded variant fields) to
+    // m_current_func->struct_field_deletes, returning [start, count).
+    void build_struct_field_deletes(Type* struct_type, u16& out_start, u16& out_count);
+
+    // True if the struct type has a default (empty-name) destructor.
+    bool struct_has_default_destructor(Type* struct_type) const;
+
+    // Resolve the bytecode function index of a struct's default destructor
+    // ("StructName$$delete"), or 0 if not found.
+    u16 lookup_destructor_index(Type* struct_type) const;
+
+    // Per-function memoization for build_delete_desc: Type* -> descriptor index.
+    // Cleared at the start of each function. Reservation-before-recursion lets
+    // self-referential structs reference their own (in-progress) descriptor.
+    tsl::robin_map<Type*, u16> m_delete_desc_cache;
 
     // Check if type is a struct that should be passed by reference (>4 slots)
     bool is_large_struct(Type* type) const;

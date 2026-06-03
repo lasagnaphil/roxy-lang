@@ -204,13 +204,13 @@ When a `uniq` owner goes out of scope, its destructor runs and then the object i
 3. `next: uniq Node` field → if non-null, delete the next Node
 4. Recursion continues until `nil` is reached
 
-**Stack overflow risk:** Very deep recursive structures (e.g., a linked list with 100,000 nodes) could overflow the C++ call stack during destruction. Mitigation options:
+**Stack overflow risk:** Very deep recursive structures could overflow the C++ call stack during destruction. Originally, destroying each node re-entered the bytecode interpreter (`interpret()` → `call_cleanup_destructor` → `delete_value` → `interpret()` …), so a *full interpreter stack frame* was pushed per ownership level — a 500-node linked list overflowed the stack.
 
-- **Accept the limit** for v1 (most practical structures are trees, not 100K-deep chains)
-- **Iterative cleanup** for tail-position owned fields: the compiler can detect when a struct's last owned field is `uniq Self` and generate an iterative loop instead of recursive destruction
-- **Trampoline-based cleanup** in the VM for deeply nested structures
+**Descriptor-driven struct cleanup (implemented):** Parentless structs with a synthetic (compiler-generated) default destructor now have their owned-field cleanup encoded as data — a `BCDeleteDesc` of kind `STRUCT_FIELDS` (`5`) / `STRUCT_FIELDS+DEL_OBJ` (`6`) that lists each owned field as a `(slot_offset, field_desc)` action, with discriminant-guarded actions for tagged-union (`when`-clause) variant fields. The runtime walks these fields directly in C++ (`delete_value`, `vm/interpreter.cpp`) instead of running a bytecode destructor, exactly as `List`/`Map` element cleanup already did. The descriptor is built once per type and memoized (`m_delete_desc_cache` in `lowering.cpp`) with reservation-before-recursion, so a self-referential struct (`next: uniq Node`) yields a finite, self-referencing descriptor.
 
-For v1, accept the limit and document it. Iterative cleanup can be added later as an optimization.
+This removes the heavyweight `interpret()` re-entry per node: destruction now recurses only through small `delete_value` frames, raising the practical depth limit by ~100× (a deep linked list now destroys cleanly into the tens of thousands of nodes). Structs with a **user-defined** destructor, or that use **inheritance**, keep the original bytecode-destructor path (their bodies must run via the interpreter, and inherited-field cleanup chains through parent destructors).
+
+**Remaining limit:** `delete_value` is still recursive in C++, so a sufficiently deep chain (hundreds of thousands of nodes) can still overflow. A fully bounded fix would make `delete_value` iterative via an explicit work-stack (push children instead of recursing); this was deliberately deferred as it was not needed in practice.
 
 ### Assigning to `uniq` Fields on Recursive Structs
 

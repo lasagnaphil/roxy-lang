@@ -371,16 +371,63 @@ struct BCExceptionHandler {
     u8 exception_reg;     // Register to store exception ptr in handler
 };
 
+// One owned-field cleanup action for descriptor-driven struct destruction
+// (BCDeleteDesc::WalkFields). Flattens a struct's regular owned fields and its
+// tagged-union variant fields into a single guarded list. For variant fields,
+// the action only fires when the discriminant slot equals `disc_value`. This
+// is the data-driven equivalent of the bytecode emitted by emit_field_cleanup,
+// letting the runtime clean up struct fields directly in C++ without
+// re-entering the interpreter (which previously caused unbounded native-stack
+// recursion when destroying deep recursive structures like linked lists).
+//
+// Whether the field is an embedded value struct (cleaned in place) or a heap
+// pointer (loaded, then deleted) is not stored here — it is exactly the field
+// descriptor's `free_obj` flag (a heap pointer is the thing that gets freed).
+struct BCStructFieldDelete {
+    i32 disc_value;       // variant guard value (valid only if disc_slot_offset != 0xFFFF);
+                          // discriminants are enum-backed i32
+    u16 slot_offset;      // field's slot offset within the struct (in u32 slots)
+    u16 field_desc_idx;   // delete descriptor index for the field's value type
+    u16 disc_slot_offset; // discriminant slot offset; 0xFFFF = unconditional (regular field)
+    u16 _pad;
+};
+
 // Describes how to delete one noncopyable value. Forms a tree via indices into
 // BCFunction::delete_descs[] for recursive container cleanup. Used by both
 // the DELETE opcode (normal scope-exit) and exception unwinding.
+//
+// Two orthogonal axes:
+//   - `cleanup`: how to recursively release the value's owned resources.
+//   - `free_obj`: whether `ptr` is itself a heap allocation to object_free()
+//     afterward (true for uniq/list/map/coro pointers, false for embedded
+//     value structs). delete_value() applies it as a single trailing step.
+//
+// Each cleanup uses only its relevant payload, so they share storage via a
+// union (the descriptor is 6 bytes instead of 12).
 struct BCDeleteDesc {
-    u8 kind;              // 0=DEL_OBJ, 1=CALL_DTOR+DEL_OBJ, 2=CALL_DTOR,
-                          // 3=LIST (iterate + recurse), 4=MAP (iterate + recurse)
-    u16 dtor_fn_idx;      // kinds 1, 2: destructor function index
-    u16 elem_desc_idx;    // kind 3: element descriptor index
-                          // kind 4: value descriptor index (0xFFFF = n/a)
-    u16 key_desc_idx;     // kind 4 only: key descriptor index (0xFFFF = copyable keys)
+    enum Cleanup : u8 {
+        None,        // no owned resources (e.g. uniq of a primitive)
+        CallDtor,    // run the type's bytecode destructor (user/inherited dtor)
+        WalkFields,  // walk owned fields directly via struct_field_deletes
+        List,        // iterate elements + recurse, free element buffer
+        Map,         // iterate occupied buckets + recurse, free bucket buffers
+    };
+
+    Cleanup cleanup;
+    bool free_obj;              // object_free(ptr) after `cleanup` runs
+    union {
+        u16 dtor_fn_idx;        // CallDtor: destructor function index
+        struct {                // List, Map
+            u16 elem_desc_idx;  //   List: element descriptor; Map: value descriptor (0xFFFF = n/a)
+            u16 key_desc_idx;   //   Map: key descriptor (0xFFFF = copyable keys)
+        } container;
+        struct {                // WalkFields
+            u16 field_start;    //   start index into BCFunction::struct_field_deletes
+            u16 field_count;    //   number of field-cleanup actions
+        } fields;
+    };
+
+    BCDeleteDesc() : cleanup(None), free_obj(false), dtor_fn_idx(0) {}
 };
 
 // Cleanup record for exception-path cleanup of owned locals.
@@ -407,6 +454,7 @@ struct BCFunction {
     Vector<BCExceptionHandler> exception_handlers; // Exception handler table
     Vector<BCCleanupRecord> cleanup_records;        // Cleanup records for exception handling
     Vector<BCDeleteDesc> delete_descs;             // Typed delete descriptors (tree via indices)
+    Vector<BCStructFieldDelete> struct_field_deletes; // Field-cleanup actions for STRUCT descriptors (kinds 5/6)
 
     BCFunction() : param_count(0), param_register_count(0), register_count(0), local_stack_slots(0), ret_reg_count(1) {}
 };

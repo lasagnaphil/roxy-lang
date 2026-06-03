@@ -268,24 +268,20 @@ static void delete_value(RoxyVM* vm, void* ptr,
                          const BCFunction* func) {
     if (!ptr) return;
 
-    switch (desc.kind) {
-    case 0:  // DEL_OBJ only (uniq without destructor)
-        object_free(vm, ptr);
+    // Recursive cleanup of owned resources. The heap free (if any) is applied
+    // uniformly afterward via desc.free_obj.
+    switch (desc.cleanup) {
+    case BCDeleteDesc::None:  // no owned resources
         break;
 
-    case 1:  // CALL_DTOR + DEL_OBJ (uniq with destructor)
-        call_cleanup_destructor(vm, desc.dtor_fn_idx, ptr);
-        object_free(vm, ptr);
-        break;
-
-    case 2:  // CALL_DTOR only (value struct with destructor, no heap free)
+    case BCDeleteDesc::CallDtor:  // run the type's bytecode destructor
         call_cleanup_destructor(vm, desc.dtor_fn_idx, ptr);
         break;
 
-    case 3: { // LIST: iterate elements, recurse, free buffers, free header
+    case BCDeleteDesc::List: { // iterate elements, recurse, free element buffer
         ListHeader* header = get_list_header(ptr);
-        if (header->elements && desc.elem_desc_idx != 0xFFFF) {
-            const BCDeleteDesc& elem_desc = func->delete_descs[desc.elem_desc_idx];
+        if (header->elements && desc.container.elem_desc_idx != 0xFFFF) {
+            const BCDeleteDesc& elem_desc = func->delete_descs[desc.container.elem_desc_idx];
             for (u32 i = 0; i < header->length; i++) {
                 u32* slot = header->elements + i * header->element_slot_count;
                 u64 val = static_cast<u64>(slot[0]) | (static_cast<u64>(slot[1]) << 32);
@@ -294,22 +290,21 @@ static void delete_value(RoxyVM* vm, void* ptr,
         }
         free(header->elements);
         header->elements = nullptr;
-        object_free(vm, ptr);
         break;
     }
 
-    case 4: { // MAP: iterate occupied buckets, recurse, free buffers, free header
+    case BCDeleteDesc::Map: { // iterate occupied buckets, recurse, free bucket buffers
         MapHeader* header = get_map_header(ptr);
         if (header->capacity > 0 && header->distances) {
             u32 vsc = header->value_slot_count;
             for (u32 i = 0; i < header->capacity; i++) {
                 if (header->distances[i] == 0) continue;
-                if (desc.key_desc_idx != 0xFFFF) {
-                    const BCDeleteDesc& key_desc = func->delete_descs[desc.key_desc_idx];
+                if (desc.container.key_desc_idx != 0xFFFF) {
+                    const BCDeleteDesc& key_desc = func->delete_descs[desc.container.key_desc_idx];
                     delete_value(vm, reinterpret_cast<void*>(header->keys[i]), key_desc, func);
                 }
-                if (desc.elem_desc_idx != 0xFFFF) {
-                    const BCDeleteDesc& val_desc = func->delete_descs[desc.elem_desc_idx];
+                if (desc.container.elem_desc_idx != 0xFFFF) {
+                    const BCDeleteDesc& val_desc = func->delete_descs[desc.container.elem_desc_idx];
                     // Pointer-typed values (uniq, list, map, etc.) occupy 2 u32 slots;
                     // read them as a u64 and pass the pointer to delete_value. For
                     // wider struct values, cleanup of nested noncopyable fields is
@@ -329,9 +324,45 @@ static void delete_value(RoxyVM* vm, void* ptr,
         header->distances = nullptr;
         header->keys = nullptr;
         header->values = nullptr;
-        object_free(vm, ptr);
         break;
     }
+
+    case BCDeleteDesc::WalkFields: {
+        // Clean up the struct's owned fields without re-entering the interpreter.
+        // This is the data-driven equivalent of running a synthetic destructor's
+        // field-cleanup bytecode; doing it in C++ keeps native-stack growth to one
+        // delete_value frame per ownership level instead of a full interpret()
+        // frame, so deep recursive structures (linked lists, trees) no longer
+        // overflow the stack during destruction.
+        u32* slots = reinterpret_cast<u32*>(ptr);
+        for (u16 i = 0; i < desc.fields.field_count; i++) {
+            const BCStructFieldDelete& action =
+                func->struct_field_deletes[desc.fields.field_start + i];
+
+            // Variant fields only fire when the discriminant selects them.
+            if (action.disc_slot_offset != 0xFFFF) {
+                i32 disc = static_cast<i32>(slots[action.disc_slot_offset]);
+                if (disc != action.disc_value) continue;
+            }
+
+            const BCDeleteDesc& field_desc = func->delete_descs[action.field_desc_idx];
+            u32* field_slots = slots + action.slot_offset;
+            if (field_desc.free_obj) {
+                // Heap-pointer field (uniq/list/map/coro): load the pointer.
+                u64 field_ptr = static_cast<u64>(field_slots[0]) |
+                                (static_cast<u64>(field_slots[1]) << 32);
+                delete_value(vm, reinterpret_cast<void*>(field_ptr), field_desc, func);
+            } else {
+                // Embedded value struct: the field's data lives in place.
+                delete_value(vm, field_slots, field_desc, func);
+            }
+        }
+        break;
+    }
+    }
+
+    if (desc.free_obj) {
+        object_free(vm, ptr);
     }
 }
 

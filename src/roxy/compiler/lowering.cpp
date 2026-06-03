@@ -128,6 +128,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_active.clear();
     m_spill_slots.clear();
     m_reg_to_value.clear();
+    m_delete_desc_cache.clear();
     m_has_spilling = false;
     m_scratch_regs[0] = m_scratch_regs[1] = 0xFF;
     m_next_reg = 0;
@@ -2887,92 +2888,166 @@ void BytecodeBuilder::emit_cast_bytecode(u8 dst, u8 src, Type* source_type, Type
     }
 }
 
-u16 BytecodeBuilder::build_delete_desc(Type* type) {
-    BCDeleteDesc desc;
-    desc.kind = 0;
-    desc.dtor_fn_idx = 0;
-    desc.elem_desc_idx = 0xFFFF;
-    desc.key_desc_idx = 0xFFFF;
+bool BytecodeBuilder::is_descriptor_eligible_struct(Type* struct_type) const {
+    if (!struct_type || !struct_type->is_struct()) return false;
+    const StructTypeInfo& struct_info = struct_type->struct_info;
 
-    if (type->kind == TypeKind::Uniq) {
-        Type* inner_type = type->ref_info.inner_type;
-        bool has_dtor = false;
-        if (inner_type && inner_type->is_struct()) {
-            for (const auto& dtor : inner_type->struct_info.destructors) {
-                if (dtor.name.empty()) { has_dtor = true; break; }
-            }
+    // Inheritance is kept on the bytecode-destructor path: a synthetic default
+    // destructor chains to its parent's, and `fields` already includes inherited
+    // fields, so descriptorizing inherited structs risks double cleanup. The
+    // recursive types we care about (linked lists, trees, ASTs) are parentless,
+    // so restrict descriptor-driven cleanup to parentless structs.
+    if (struct_info.parent != nullptr) return false;
+
+    // The default (empty-name) destructor must be synthetic (compiler-generated).
+    // A user-defined default destructor has a body that must run via the
+    // interpreter, so it stays on the bytecode path.
+    bool has_synthetic_default = false;
+    for (const auto& dtor : struct_info.destructors) {
+        if (dtor.name.empty()) {
+            if (dtor.decl != nullptr) return false;  // user-defined default destructor
+            has_synthetic_default = true;
         }
-        if (has_dtor) {
-            desc.kind = 1;  // CALL_DTOR + DEL_OBJ
-            char buf[256];
-            snprintf(buf, sizeof(buf), "%.*s$$delete",
-                     inner_type->struct_info.name.size(), inner_type->struct_info.name.data());
-            StringView dtor_name(buf, static_cast<u32>(strlen(buf)));
-            auto it = m_func_indices.find(dtor_name);
-            if (it != m_func_indices.end()) {
-                desc.dtor_fn_idx = static_cast<u16>(it->second);
-            }
-        } else {
-            desc.kind = 0;  // DEL_OBJ only
-        }
-    } else if (type->is_struct() && type->noncopyable()) {
-        bool has_dtor = false;
-        for (const auto& dtor : type->struct_info.destructors) {
-            if (dtor.name.empty()) { has_dtor = true; break; }
-        }
-        if (has_dtor) {
-            desc.kind = 2;  // CALL_DTOR only (value struct)
-            char buf[256];
-            snprintf(buf, sizeof(buf), "%.*s$$delete",
-                     type->struct_info.name.size(), type->struct_info.name.data());
-            StringView dtor_name(buf, static_cast<u32>(strlen(buf)));
-            auto it = m_func_indices.find(dtor_name);
-            if (it != m_func_indices.end()) {
-                desc.dtor_fn_idx = static_cast<u16>(it->second);
-            }
-        } else {
-            desc.kind = 0;  // DEL_OBJ only (noncopyable struct without destructor, shouldn't happen)
-        }
-    } else if (type->is_list() && type->noncopyable()) {
-        u16 elem_idx = build_delete_desc(type->list_info.element_type);
-        desc.kind = 3;  // LIST
-        desc.elem_desc_idx = elem_idx;
-    } else if (type->is_map() && type->noncopyable()) {
-        Type* key_type = type->map_info.key_type;
-        Type* value_type = type->map_info.value_type;
-        desc.kind = 4;  // MAP
-        if (value_type && value_type->noncopyable()) {
-            desc.elem_desc_idx = build_delete_desc(value_type);
-        }
-        if (key_type && key_type->noncopyable()) {
-            desc.key_desc_idx = build_delete_desc(key_type);
-        }
-    } else if (type->is_coroutine()) {
-        // Coro<T>: heap-allocated state struct with generated destructor
-        Type* coro_struct = type->coro_info.generated_struct_type;
-        bool has_dtor = false;
-        if (coro_struct) {
-            for (const auto& dtor : coro_struct->struct_info.destructors) {
-                if (dtor.name.empty()) { has_dtor = true; break; }
-            }
-        }
-        if (has_dtor) {
-            desc.kind = 1;  // CALL_DTOR + DEL_OBJ
-            char buf[256];
-            snprintf(buf, sizeof(buf), "%.*s$$delete",
-                     coro_struct->struct_info.name.size(), coro_struct->struct_info.name.data());
-            StringView dtor_name(buf, static_cast<u32>(strlen(buf)));
-            auto it = m_func_indices.find(dtor_name);
-            if (it != m_func_indices.end()) {
-                desc.dtor_fn_idx = static_cast<u16>(it->second);
-            }
-        } else {
-            desc.kind = 0;  // DEL_OBJ only
+    }
+    return has_synthetic_default;
+}
+
+void BytecodeBuilder::build_struct_field_deletes(Type* struct_type,
+                                                 u16& out_start, u16& out_count) {
+    const StructTypeInfo& struct_info = struct_type->struct_info;
+
+    // Build this struct's actions into a local buffer first. Recursive
+    // build_delete_desc() calls below may append OTHER structs' field actions to
+    // the shared struct_field_deletes vector, so we only flush ours contiguously
+    // once all recursion has finished — keeping our [start, count) range intact.
+    Vector<BCStructFieldDelete> local;
+
+    auto append_field = [&](u32 slot_offset, Type* field_type,
+                            u32 disc_slot_offset, i32 disc_value) {
+        BCStructFieldDelete action;
+        action.disc_value = disc_value;
+        action.slot_offset = static_cast<u16>(slot_offset);
+        action.field_desc_idx = build_delete_desc(field_type);
+        action.disc_slot_offset = static_cast<u16>(disc_slot_offset);
+        action._pad = 0;
+        local.push_back(action);
+    };
+
+    // Regular owned fields (reverse declaration order = LIFO, like emit_field_cleanup).
+    for (i32 i = static_cast<i32>(struct_info.fields.size()) - 1; i >= 0; i--) {
+        const FieldInfo& field = struct_info.fields[i];
+        if (!field.type) continue;
+        if (field.type->kind == TypeKind::Uniq || field.type->noncopyable()) {
+            append_field(field.slot_offset, field.type, 0xFFFF, 0);
         }
     }
 
+    // Tagged-union variant fields: each is guarded by the clause discriminant.
+    for (const auto& clause : struct_info.when_clauses) {
+        for (const auto& variant : clause.variants) {
+            for (i32 fi = static_cast<i32>(variant.fields.size()) - 1; fi >= 0; fi--) {
+                const VariantFieldInfo& variant_field = variant.fields[fi];
+                if (!variant_field.type) continue;
+                if (variant_field.type->kind == TypeKind::Uniq ||
+                    variant_field.type->noncopyable()) {
+                    append_field(clause.union_slot_offset + variant_field.slot_offset,
+                                 variant_field.type,
+                                 clause.discriminant_slot_offset,
+                                 static_cast<i32>(variant.discriminant_value));
+                }
+            }
+        }
+    }
+
+    out_start = static_cast<u16>(m_current_func->struct_field_deletes.size());
+    for (const auto& action : local) {
+        m_current_func->struct_field_deletes.push_back(action);
+    }
+    out_count = static_cast<u16>(local.size());
+}
+
+bool BytecodeBuilder::struct_has_default_destructor(Type* struct_type) const {
+    if (!struct_type || !struct_type->is_struct()) return false;
+    for (const auto& dtor : struct_type->struct_info.destructors) {
+        if (dtor.name.empty()) return true;
+    }
+    return false;
+}
+
+u16 BytecodeBuilder::lookup_destructor_index(Type* struct_type) const {
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%.*s$$delete",
+             struct_type->struct_info.name.size(), struct_type->struct_info.name.data());
+    StringView dtor_name(buf, static_cast<u32>(strlen(buf)));
+    auto it = m_func_indices.find(dtor_name);
+    return it != m_func_indices.end() ? static_cast<u16>(it->second) : 0;
+}
+
+u16 BytecodeBuilder::build_delete_desc(Type* type) {
+    auto cached = m_delete_desc_cache.find(type);
+    if (cached != m_delete_desc_cache.end()) return cached->second;
+
+    // Reserve this type's descriptor slot BEFORE recursing into its fields, so a
+    // self-referential struct (e.g. `next: uniq Node` inside Node) resolves to
+    // this same index on the recursive call instead of looping forever.
     u16 index = static_cast<u16>(m_current_func->delete_descs.size());
-    m_current_func->delete_descs.push_back(desc);
+    m_current_func->delete_descs.push_back(BCDeleteDesc{});  // placeholder, filled below
+    m_delete_desc_cache[type] = index;
+
+    // Default-constructed desc is an inert (None, no-free) descriptor; each
+    // branch sets the cleanup strategy, the free_obj flag, and its union payload.
+    // free_obj is true exactly when `type` is a heap pointer (uniq/list/map/coro).
+    BCDeleteDesc desc;
+
+    if (type->kind == TypeKind::Uniq) {
+        Type* inner_type = type->ref_info.inner_type;
+        desc.free_obj = true;
+        if (inner_type && is_descriptor_eligible_struct(inner_type)) {
+            desc.cleanup = BCDeleteDesc::WalkFields;
+            build_struct_field_deletes(inner_type, desc.fields.field_start, desc.fields.field_count);
+        } else if (inner_type && struct_has_default_destructor(inner_type)) {
+            desc.cleanup = BCDeleteDesc::CallDtor;
+            desc.dtor_fn_idx = lookup_destructor_index(inner_type);
+        } else {
+            desc.cleanup = BCDeleteDesc::None;  // uniq of a primitive / dtor-less value: just free
+        }
+    } else if (type->is_struct() && type->noncopyable()) {
+        // Embedded value struct: cleaned in place, never freed.
+        if (is_descriptor_eligible_struct(type)) {
+            desc.cleanup = BCDeleteDesc::WalkFields;
+            build_struct_field_deletes(type, desc.fields.field_start, desc.fields.field_count);
+        } else if (struct_has_default_destructor(type)) {
+            desc.cleanup = BCDeleteDesc::CallDtor;
+            desc.dtor_fn_idx = lookup_destructor_index(type);
+        }
+        // else: noncopyable struct without destructor (shouldn't happen) -> inert
+    } else if (type->is_list() && type->noncopyable()) {
+        desc.cleanup = BCDeleteDesc::List;
+        desc.free_obj = true;
+        desc.container.elem_desc_idx = build_delete_desc(type->list_info.element_type);
+        desc.container.key_desc_idx = 0xFFFF;  // unused for lists
+    } else if (type->is_map() && type->noncopyable()) {
+        Type* key_type = type->map_info.key_type;
+        Type* value_type = type->map_info.value_type;
+        desc.cleanup = BCDeleteDesc::Map;
+        desc.free_obj = true;
+        desc.container.elem_desc_idx =
+            (value_type && value_type->noncopyable()) ? build_delete_desc(value_type) : 0xFFFF;
+        desc.container.key_desc_idx =
+            (key_type && key_type->noncopyable()) ? build_delete_desc(key_type) : 0xFFFF;
+    } else if (type->is_coroutine()) {
+        // Coro<T>: heap-allocated state struct, always freed.
+        Type* coro_struct = type->coro_info.generated_struct_type;
+        desc.free_obj = true;
+        if (coro_struct && struct_has_default_destructor(coro_struct)) {
+            desc.cleanup = BCDeleteDesc::CallDtor;
+            desc.dtor_fn_idx = lookup_destructor_index(coro_struct);
+        } else {
+            desc.cleanup = BCDeleteDesc::None;
+        }
+    }
+
+    m_current_func->delete_descs[index] = desc;
     return index;
 }
 
