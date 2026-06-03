@@ -35,9 +35,7 @@ static StringView alloc_string(BumpAllocator& allocator, const char* str) {
 }
 
 static StringView alloc_string_fmt(BumpAllocator& allocator, const char* fmt, StringView arg) {
-    char tmp[256];
-    format_to(tmp, sizeof(tmp), fmt, arg);
-    return alloc_string(allocator, tmp);
+    return format_to_arena(allocator, fmt, arg);
 }
 
 static constexpr i32 CORO_STATE_DONE = 0x7FFFFFFF;
@@ -266,10 +264,8 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
                     if (dtor.name.empty()) { has_dtor = true; break; }
                 }
                 if (has_dtor) {
-                    char inner_dtor_name[256];
-                    i32 len = format_to(inner_dtor_name, sizeof(inner_dtor_name),
-                                        "{}$$delete", inner_type->struct_info.name);
-                    StringView inner_dtor_sv = alloc_string(allocator, inner_dtor_name);
+                    StringView inner_dtor_sv =
+                        format_to_arena(allocator, "{}$$delete", inner_type->struct_info.name);
                     Span<ValueId> call_args = alloc_span<ValueId>(allocator, 1);
                     call_args[0] = field_val;
                     emit_call(allocator, dtor_func, cleanup_block,

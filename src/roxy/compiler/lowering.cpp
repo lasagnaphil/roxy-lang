@@ -1,5 +1,6 @@
 #include "roxy/compiler/lowering.hpp"
 #include "roxy/compiler/type_env.hpp"
+#include "roxy/core/format.hpp"
 #include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/natives.hpp"
 
@@ -2954,11 +2955,10 @@ bool BytecodeBuilder::struct_has_default_destructor(Type* struct_type) const {
 }
 
 u16 BytecodeBuilder::lookup_destructor_index(Type* struct_type) const {
-    char buf[256];
-    snprintf(buf, sizeof(buf), "%.*s$$delete",
-             struct_type->struct_info.name.size(), struct_type->struct_info.name.data());
-    StringView dtor_name(buf, static_cast<u32>(strlen(buf)));
-    auto it = m_func_indices.find(dtor_name);
+    // Transient lookup key — rx::format grows for arbitrarily long struct names
+    // (deeply monomorphized generics) instead of truncating into a fixed buffer.
+    String dtor_name = format("{}$$delete", struct_type->struct_info.name);
+    auto it = m_func_indices.find(StringView(dtor_name.data(), dtor_name.size()));
     return it != m_func_indices.end() ? static_cast<u16>(it->second) : 0;
 }
 

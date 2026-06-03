@@ -345,4 +345,19 @@ String format(const char* fmt, const Args&... args) {
     return result;
 }
 
+/// Format into an arena-allocated, null-terminated StringView using any
+/// allocator exposing `alloc_bytes(u32 size, u32 align)` (e.g. BumpAllocator).
+/// Probes the length with a stack buffer, allocates exactly that many bytes,
+/// then formats again into the allocation — so names longer than the probe
+/// buffer are handled without truncation or out-of-bounds copies. Use this for
+/// name mangling instead of `format_to` into a fixed `char buf[N]`.
+template<typename Alloc, typename... Args>
+StringView format_to_arena(Alloc& alloc, const char* fmt, const Args&... args) {
+    char probe[256];
+    u32 len = static_cast<u32>(format_to(probe, sizeof(probe), fmt, args...));
+    char* dst = reinterpret_cast<char*>(alloc.alloc_bytes(len + 1, 1));
+    format_to(dst, len + 1, fmt, args...);
+    return StringView(dst, len);
+}
+
 } // namespace rx

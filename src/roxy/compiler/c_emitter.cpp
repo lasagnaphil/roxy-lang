@@ -1760,12 +1760,7 @@ void CEmitter::emit_pub_struct_definitions(const IRModule* module, String& out) 
             const MethodInfo& method = info.methods[m];
             if (!method.decl) continue;  // builtin methods have no Roxy decl
             if (!method.decl->method_decl.is_pub) continue;
-            StringView mangled = StringView();  // built lazily below
-            char buf[256];
-            i32 mlen = format_to(buf, sizeof(buf), "{}$${}", info.name, method.name);
-            char* mptr = reinterpret_cast<char*>(m_alloc.alloc_bytes(static_cast<u32>(mlen) + 1, 1));
-            memcpy(mptr, buf, static_cast<u32>(mlen) + 1);
-            mangled = StringView(mptr, static_cast<u32>(mlen));
+            StringView mangled = format_to_arena(m_alloc, "{}$${}", info.name, method.name);
 
             const IRFunction* func = find_function_by_mangled(mangled);
             if (!func) continue;
@@ -1788,11 +1783,7 @@ void CEmitter::emit_pub_make_factories(const IRModule* module, String& out) {
 
         // Locate the pub default destructor (used by every factory). If absent,
         // pass nullptr so `roxy::uniq` only frees without running a destructor.
-        char buf[256];
-        i32 dlen = format_to(buf, sizeof(buf), "{}$$delete", struct_name);
-        char* dptr = reinterpret_cast<char*>(m_alloc.alloc_bytes(static_cast<u32>(dlen) + 1, 1));
-        memcpy(dptr, buf, static_cast<u32>(dlen) + 1);
-        StringView dtor_mangled(dptr, static_cast<u32>(dlen));
+        StringView dtor_mangled = format_to_arena(m_alloc, "{}$$delete", struct_name);
         const IRFunction* dtor = find_function_by_mangled(dtor_mangled);
         if (dtor && !dtor->is_pub) dtor = nullptr;
 

@@ -184,17 +184,11 @@ private:
     // Returns name unchanged if module is empty (single-file mode).
     StringView mangle_module_local(StringView name);
 
-    // Format into an arena-allocated, null-terminated StringView. Probes the
-    // length with a stack buffer, allocates exactly that many bytes, then formats
-    // again into the arena — so names longer than the probe buffer are handled
-    // without truncation or out-of-bounds copies. Used by the mangle helpers.
+    // Mangle a name into an arena-allocated StringView without truncation.
+    // Thin wrapper over rx::format_to_arena bound to this builder's allocator.
     template<typename... Args>
     StringView intern_format(const char* fmt, const Args&... args) {
-        char probe[256];
-        u32 len = static_cast<u32>(format_to(probe, sizeof(probe), fmt, args...));
-        char* dst = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-        format_to(dst, len + 1, fmt, args...);
-        return StringView(dst, len);
+        return format_to_arena(m_allocator, fmt, args...);
     }
 
     // Zero `slot_count` contiguous u32 slots of `self_ptr` starting at
