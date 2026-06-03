@@ -1565,10 +1565,10 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     }
 
     auto restore_pre_if_state = [&]() {
-        m_local_scopes.clear();
-        for (auto& scope : saved_scopes_pre) {
-            m_local_scopes.push_back(scope);
-        }
+        // Runs at most once per if (the else path and the no-else path are
+        // mutually exclusive), so move the snapshot back instead of deep-copying
+        // every scope map. Do not call this more than once.
+        m_local_scopes = std::move(saved_scopes_pre);
         for (u32 i = 0; i < saved_is_moved_pre.size() && i < m_owned_locals.size(); i++) {
             m_owned_locals[i].is_moved = saved_is_moved_pre[i];
         }
@@ -1638,11 +1638,8 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     } else if (then_terminated && !else_terminated) {
         // Current state is post-else, which is correct.
     } else if (else_terminated && !then_terminated) {
-        // Restore post-then snapshot.
-        m_local_scopes.clear();
-        for (auto& scope : saved_scopes_post_then) {
-            m_local_scopes.push_back(scope);
-        }
+        // Restore post-then snapshot (used only here — move it back).
+        m_local_scopes = std::move(saved_scopes_post_then);
         for (u32 i = 0; i < saved_is_moved_post_then.size() && i < m_owned_locals.size(); i++) {
             m_owned_locals[i].is_moved = saved_is_moved_post_then[i];
         }
@@ -1774,7 +1771,7 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
     // 7. Generate branch bodies
     for (u32 i = 0; i < branches.size(); i++) {
         // Restore scopes so this branch sees original values
-        m_local_scopes.clear();
+        m_local_scopes.clear_keep_capacity();
         for (auto& scope : saved_scopes) {
             m_local_scopes.push_back(scope);
         }
@@ -1801,7 +1798,7 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
     // 8. Generate default body if present
     if (default_block) {
         // Restore scopes
-        m_local_scopes.clear();
+        m_local_scopes.clear_keep_capacity();
         for (auto& scope : saved_scopes) {
             m_local_scopes.push_back(scope);
         }
@@ -1833,7 +1830,7 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
     // construction (semantic forbids divergent moves on them). is_moved is
     // intentionally left alone — see the rationale in gen_try_stmt and
     // gen_when_stmt.
-    m_local_scopes.clear();
+    m_local_scopes.clear_keep_capacity();
     for (auto& scope : saved_scopes) {
         m_local_scopes.push_back(scope);
     }
@@ -2292,7 +2289,7 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         CaseInfo& ci = case_infos[i];
 
         // Restore scope so this case sees original values
-        m_local_scopes.clear();
+        m_local_scopes.clear_keep_capacity();
         for (auto& scope : saved_scopes) {
             m_local_scopes.push_back(scope);
         }
@@ -2321,7 +2318,7 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
     // 8. Generate else body if present
     if (else_block) {
         // Restore scope
-        m_local_scopes.clear();
+        m_local_scopes.clear_keep_capacity();
         for (auto& scope : saved_scopes) {
             m_local_scopes.push_back(scope);
         }
@@ -2355,7 +2352,7 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
     // non-phi vars — which by construction must agree across all surviving
     // paths (semantic forbids divergent moves on non-phi vars). is_moved is
     // intentionally left alone, mirroring the rationale in gen_try_stmt.
-    m_local_scopes.clear();
+    m_local_scopes.clear_keep_capacity();
     for (auto& scope : saved_scopes) {
         m_local_scopes.push_back(scope);
     }
@@ -2518,7 +2515,7 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
         saved_scopes_pre.push_back(scope);
     }
     auto restore_pre_try_state = [&]() {
-        m_local_scopes.clear();
+        m_local_scopes.clear_keep_capacity();
         for (auto& scope : saved_scopes_pre) {
             m_local_scopes.push_back(scope);
         }
@@ -5571,8 +5568,8 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
     set_current_block(entry);
 
     // Initialize local variable scopes and ownership tracking
-    m_local_scopes.clear();
-    m_owned_locals.clear();
+    m_local_scopes.clear_keep_capacity();
+    m_owned_locals.clear_keep_capacity();
     m_next_temp_id = 0;
     push_scope();
 
@@ -5661,8 +5658,8 @@ void IRBuilder::end_function_body() {
 
 void IRBuilder::setup_parameters(Span<Param> params, Type* self_type) {
     // Clear parameter tracking
-    m_param_is_ptr.clear();
-    m_ref_params.clear();
+    m_param_is_ptr.clear();  // robin_map::clear already keeps capacity
+    m_ref_params.clear_keep_capacity();
 
     // Add 'self' parameter if this is a method/constructor/destructor
     if (self_type) {

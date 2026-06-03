@@ -123,9 +123,9 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_unfusable_cmp_pcs.clear();
     m_nullify_pcs.clear();
     m_const_skip_load.clear();
-    m_jump_patches.clear();
-    m_free_regs.clear();
-    m_active.clear();
+    m_jump_patches.clear_keep_capacity();
+    m_free_regs.clear_keep_capacity();
+    m_active.clear_keep_capacity();
     m_spill_slots.clear();
     m_reg_to_value.clear();
     m_delete_desc_cache.clear();
@@ -1084,7 +1084,7 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
 void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     // Allocate live ranges for all SSA values in this function
     u32 num_values = ir_func->next_value_id;
-    m_live_ranges.clear();
+    m_live_ranges.clear_keep_capacity();
     m_live_ranges.reserve(num_values);
     for (u32 i = 0; i < num_values; i++) {
         m_live_ranges.push_back(LiveRange{0, 0});
@@ -1397,7 +1397,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     // partially-defined values (e.g., AND/OR short-circuit patterns where a
     // value is only defined on one branch). Fresh registers are zero-initialized
     // by the VM, preserving correct behavior for such patterns.
-    m_value_same_block.clear();
+    m_value_same_block.clear_keep_capacity();
     m_value_same_block.reserve(num_values);
     for (u32 vi = 0; vi < num_values; vi++) {
         m_value_same_block.push_back(false);

@@ -148,12 +148,22 @@ public:
         m_capacity = new_capacity;
     }
 
+    // Empty the vector and release its backing buffer.
     void clear() {
         if (m_data) {
             delete[] m_data;
             m_data = nullptr;
         }
         m_capacity = m_size = 0;
+    }
+
+    // Empty the vector but keep the allocated buffer for reuse — for hot
+    // "reset and refill" loops that would otherwise free + reallocate every
+    // pass. Elements stay constructed (this Vector default-constructs its whole
+    // capacity) and are reused by subsequent push_back/assignment, or destroyed
+    // when the Vector is.
+    void clear_keep_capacity() {
+        m_size = 0;
     }
 
     T* find(const T& item) {
