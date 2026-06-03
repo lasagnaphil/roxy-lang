@@ -1446,9 +1446,15 @@ void BytecodeBuilder::expire_before(u32 current_point) {
 }
 
 u16 BytecodeBuilder::add_constant(const BCConstant& c) {
-    u16 index = static_cast<u16>(m_current_func->constants.size());
+    size_t index = m_current_func->constants.size();
+    if (index > 0xFFFF) {
+        // The constant-pool index is a u16; wrapping it would silently make
+        // LOAD_CONST read the wrong constant. Reject instead.
+        report_error("Constant pool overflow: function has more than 65535 constants");
+        return 0;
+    }
     m_current_func->constants.push_back(c);
-    return index;
+    return static_cast<u16>(index);
 }
 
 u16 BytecodeBuilder::add_int_constant(i64 value) {

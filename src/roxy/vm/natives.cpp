@@ -568,13 +568,25 @@ static void native_map_init(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
             u32 actual = 8;
             while (actual < static_cast<u32>(cap)) actual *= 2;
             // Allocate buckets using the header's key/value slot counts that
-            // were set during native_map_alloc (via IR-builder args).
-            header->capacity = actual;
-            header->distances = static_cast<u8*>(calloc(actual, sizeof(u8)));
-            header->keys = static_cast<u32*>(calloc(
+            // were set during native_map_alloc (via IR-builder args). Only
+            // commit them to the header if all three succeed, so an OOM failure
+            // doesn't leave a non-zero capacity with null bucket arrays.
+            u8* distances = static_cast<u8*>(calloc(actual, sizeof(u8)));
+            u32* keys = static_cast<u32*>(calloc(
                 static_cast<size_t>(actual) * header->key_slot_count, sizeof(u32)));
-            header->values = static_cast<u32*>(calloc(
+            u32* values = static_cast<u32*>(calloc(
                 static_cast<size_t>(actual) * header->value_slot_count, sizeof(u32)));
+            if (!distances || !keys || !values) {
+                free(distances);
+                free(keys);
+                free(values);
+                vm->error = "map reserve: allocation failed";
+                return;
+            }
+            header->capacity = actual;
+            header->distances = distances;
+            header->keys = keys;
+            header->values = values;
         }
     }
     regs[dst] = 0;

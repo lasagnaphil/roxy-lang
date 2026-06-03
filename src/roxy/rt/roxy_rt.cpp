@@ -285,7 +285,10 @@ void roxy_print(void* s) {
 void* roxy_string_concat(void* a, void* b) {
     uint32_t len_a = string_hdr(a)->length;
     uint32_t len_b = string_hdr(b)->length;
-    uint32_t total = len_a + len_b;
+    // Compute the total width in size_t so two near-4GB strings don't overflow
+    // the u32 length; reject a result that wouldn't fit a u32 string length.
+    size_t total = static_cast<size_t>(len_a) + len_b;
+    if (total > UINT32_MAX) return nullptr;
 
     // Build the concatenated bytes in a temp buffer so `roxy_string_from_literal`
     // can dedup against the intern table. Short cases use the stack; longer
@@ -300,7 +303,7 @@ void* roxy_string_concat(void* a, void* b) {
     memcpy(buf + len_a, roxy_string_chars(b), len_b);
     buf[total] = '\0';
 
-    void* result = roxy_string_from_literal(buf, total);
+    void* result = roxy_string_from_literal(buf, static_cast<uint32_t>(total));
 
     if (buf != stack_buf) free(buf);
     return result;
@@ -374,10 +377,12 @@ void roxy_list_init(void* self, int32_t capacity) {
     hdr->length = 0;
     // Preserve element_slot_count / element_is_inline set by roxy_list_alloc.
     if (capacity > 0) {
-        hdr->capacity = static_cast<uint32_t>(capacity);
         hdr->elements = static_cast<uint32_t*>(calloc(
             static_cast<size_t>(capacity) * hdr->element_slot_count,
             sizeof(uint32_t)));
+        // On allocation failure leave a valid empty list rather than a non-zero
+        // capacity with a null buffer.
+        hdr->capacity = hdr->elements ? static_cast<uint32_t>(capacity) : 0;
     } else {
         hdr->capacity = 0;
         hdr->elements = nullptr;
@@ -453,12 +458,17 @@ void* roxy_list_copy(void* src) {
 
     auto* dst_hdr = static_cast<roxy_list_header*>(dst);
     if (src_hdr->capacity > 0) {
-        dst_hdr->length = src_hdr->length;
-        dst_hdr->capacity = src_hdr->capacity;
-        dst_hdr->elements = static_cast<uint32_t*>(malloc(
+        auto* elements = static_cast<uint32_t*>(malloc(
             sizeof(uint32_t) * src_hdr->element_slot_count * src_hdr->capacity));
-        memcpy(dst_hdr->elements, src_hdr->elements,
-               sizeof(uint32_t) * src_hdr->element_slot_count * src_hdr->length);
+        // On allocation failure leave dst an empty valid list (its header was
+        // zero-initialised by roxy_list_alloc) rather than copying into null.
+        if (elements) {
+            memcpy(elements, src_hdr->elements,
+                   sizeof(uint32_t) * src_hdr->element_slot_count * src_hdr->length);
+            dst_hdr->elements = elements;
+            dst_hdr->length = src_hdr->length;
+            dst_hdr->capacity = src_hdr->capacity;
+        }
     }
     return dst;
 }
