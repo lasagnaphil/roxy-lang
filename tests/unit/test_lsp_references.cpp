@@ -771,217 +771,221 @@ static ReferenceResult find_references(const char* source, u32 cursor_offset,
 
 // --- Function references ---
 
-TEST_CASE("References - function: definition + 2 call sites") {
-    const char* source =
-        "fun add(a: i32, b: i32): i32 { return a + b; }\n"
-        "fun main() {\n"
-        "    var x = add(1, 2);\n"
-        "    var y = add(3, 4);\n"
-        "}\n";
+TEST_SUITE("LSP References") {
 
-    // Cursor on "add" in the function definition (offset 4)
-    auto result = find_references(source, 4);
-    CHECK(result.count == 3);  // definition + 2 call sites
-}
+    TEST_CASE("function: definition + 2 call sites") {
+        const char* source =
+            "fun add(a: i32, b: i32): i32 { return a + b; }\n"
+            "fun main() {\n"
+            "    var x = add(1, 2);\n"
+            "    var y = add(3, 4);\n"
+            "}\n";
 
-TEST_CASE("References - function: no call sites (definition only)") {
-    const char* source =
-        "fun unused(): i32 { return 0; }\n"
-        "fun main() {\n"
-        "    var x = 1;\n"
-        "}\n";
+        // Cursor on "add" in the function definition (offset 4)
+        auto result = find_references(source, 4);
+        CHECK(result.count == 3);  // definition + 2 call sites
+    }
 
-    // Cursor on "unused" (offset 4)
-    auto result = find_references(source, 4);
-    CHECK(result.count == 1);  // definition only
-}
+    TEST_CASE("function: no call sites (definition only)") {
+        const char* source =
+            "fun unused(): i32 { return 0; }\n"
+            "fun main() {\n"
+            "    var x = 1;\n"
+            "}\n";
 
-TEST_CASE("References - function: rename add -> sum") {
-    const char* source =
-        "fun add(a: i32, b: i32): i32 { return a + b; }\n"
-        "fun main() {\n"
-        "    var x = add(1, 2);\n"
-        "    var y = add(3, 4);\n"
-        "}\n";
+        // Cursor on "unused" (offset 4)
+        auto result = find_references(source, 4);
+        CHECK(result.count == 1);  // definition only
+    }
 
-    // Rename from a call site
-    u32 call_offset = static_cast<u32>(strstr(source, "add(1") - source);
-    auto result = find_references(source, call_offset);
-    CHECK(result.count == 3);  // All occurrences should be found
-}
+    TEST_CASE("function: rename add -> sum") {
+        const char* source =
+            "fun add(a: i32, b: i32): i32 { return a + b; }\n"
+            "fun main() {\n"
+            "    var x = add(1, 2);\n"
+            "    var y = add(3, 4);\n"
+            "}\n";
 
-// --- Type references ---
+        // Rename from a call site
+        u32 call_offset = static_cast<u32>(strstr(source, "add(1") - source);
+        auto result = find_references(source, call_offset);
+        CHECK(result.count == 3);  // All occurrences should be found
+    }
 
-TEST_CASE("References - struct: definition + type annotations + struct literal") {
-    const char* source =
-        "struct Point { x: f32; y: f32; }\n"
-        "fun make_point(): Point {\n"
-        "    return Point { x = 1.0, y = 2.0 };\n"
-        "}\n"
-        "fun use_point(p: Point) {\n"
-        "}\n";
+    // --- Type references ---
 
-    // Cursor on "Point" in struct definition (offset 7)
-    auto result = find_references(source, 7);
-    CHECK(result.count == 4);  // definition + return type + struct literal + param type
-}
+    TEST_CASE("struct: definition + type annotations + struct literal") {
+        const char* source =
+            "struct Point { x: f32; y: f32; }\n"
+            "fun make_point(): Point {\n"
+            "    return Point { x = 1.0, y = 2.0 };\n"
+            "}\n"
+            "fun use_point(p: Point) {\n"
+            "}\n";
 
-TEST_CASE("References - enum: definition + static access") {
-    const char* source =
-        "enum Color { Red, Green, Blue }\n"
-        "fun get_color(): Color {\n"
-        "    return Color::Red;\n"
-        "}\n";
+        // Cursor on "Point" in struct definition (offset 7)
+        auto result = find_references(source, 7);
+        CHECK(result.count == 4);  // definition + return type + struct literal + param type
+    }
 
-    // Cursor on "Color" in enum definition (offset 5)
-    auto result = find_references(source, 5);
-    CHECK(result.count == 3);  // definition + return type + Color::Red
-}
+    TEST_CASE("enum: definition + static access") {
+        const char* source =
+            "enum Color { Red, Green, Blue }\n"
+            "fun get_color(): Color {\n"
+            "    return Color::Red;\n"
+            "}\n";
 
-TEST_CASE("References - struct: rename Point -> Vec2") {
-    const char* source =
-        "struct Point { x: f32; y: f32; }\n"
-        "fun make(): Point {\n"
-        "    return Point { x = 1.0, y = 2.0 };\n"
-        "}\n";
+        // Cursor on "Color" in enum definition (offset 5)
+        auto result = find_references(source, 5);
+        CHECK(result.count == 3);  // definition + return type + Color::Red
+    }
 
-    // Cursor on "Point" in struct definition
-    auto result = find_references(source, 7);
-    CHECK(result.count == 3);  // definition + return type + struct literal
-}
+    TEST_CASE("struct: rename Point -> Vec2") {
+        const char* source =
+            "struct Point { x: f32; y: f32; }\n"
+            "fun make(): Point {\n"
+            "    return Point { x = 1.0, y = 2.0 };\n"
+            "}\n";
 
-// --- Field/method references ---
+        // Cursor on "Point" in struct definition
+        auto result = find_references(source, 7);
+        CHECK(result.count == 3);  // definition + return type + struct literal
+    }
 
-TEST_CASE("References - field: definition + access sites") {
-    const char* source =
-        "struct Point { x: f32; y: f32; }\n"
-        "fun test() {\n"
-        "    var p: Point = Point { x = 1.0, y = 2.0 };\n"
-        "    var a = p.x;\n"
-        "    var b = p.x;\n"
-        "}\n";
+    // --- Field/method references ---
 
-    // Cursor on "x" in field definition
-    // "struct Point { x: f32" — "x" is at offset 15
-    auto result = find_references(source, 15);
-    // definition + struct literal "x" + p.x + p.x = 4
-    CHECK(result.count == 4);
-}
+    TEST_CASE("field: definition + access sites") {
+        const char* source =
+            "struct Point { x: f32; y: f32; }\n"
+            "fun test() {\n"
+            "    var p: Point = Point { x = 1.0, y = 2.0 };\n"
+            "    var a = p.x;\n"
+            "    var b = p.x;\n"
+            "}\n";
 
-TEST_CASE("References - method: definition + call sites") {
-    const char* source =
-        "struct Point { x: f32; }\n"
-        "fun Point.length(): f32 { return self.x; }\n"
-        "fun test() {\n"
-        "    var p: Point = Point { x = 1.0 };\n"
-        "    var a = p.length();\n"
-        "    var b = p.length();\n"
-        "}\n";
+        // Cursor on "x" in field definition
+        // "struct Point { x: f32" — "x" is at offset 15
+        auto result = find_references(source, 15);
+        // definition + struct literal "x" + p.x + p.x = 4
+        CHECK(result.count == 4);
+    }
 
-    // Cursor on "length" in method definition
-    u32 length_offset = static_cast<u32>(strstr(source, "length") - source);
-    auto result = find_references(source, length_offset);
-    CHECK(result.count == 3);  // definition + 2 call sites
-}
+    TEST_CASE("method: definition + call sites") {
+        const char* source =
+            "struct Point { x: f32; }\n"
+            "fun Point.length(): f32 { return self.x; }\n"
+            "fun test() {\n"
+            "    var p: Point = Point { x = 1.0 };\n"
+            "    var a = p.length();\n"
+            "    var b = p.length();\n"
+            "}\n";
 
-TEST_CASE("References - field: same name on different structs") {
-    const char* source =
-        "struct Point { x: f32; y: f32; }\n"
-        "struct Size { x: f32; y: f32; }\n"
-        "fun test() {\n"
-        "    var p: Point = Point { x = 1.0, y = 2.0 };\n"
-        "    var s: Size = Size { x = 10.0, y = 20.0 };\n"
-        "    var a = p.x;\n"
-        "    var b = s.x;\n"
-        "}\n";
+        // Cursor on "length" in method definition
+        u32 length_offset = static_cast<u32>(strstr(source, "length") - source);
+        auto result = find_references(source, length_offset);
+        CHECK(result.count == 3);  // definition + 2 call sites
+    }
 
-    // Cursor on "x" field of Point (offset 15)
-    auto result = find_references(source, 15);
-    // Point.x definition + Point struct literal "x" + p.x = 3
-    // Should NOT include Size.x or s.x
-    CHECK(result.count == 3);
-}
+    TEST_CASE("field: same name on different structs") {
+        const char* source =
+            "struct Point { x: f32; y: f32; }\n"
+            "struct Size { x: f32; y: f32; }\n"
+            "fun test() {\n"
+            "    var p: Point = Point { x = 1.0, y = 2.0 };\n"
+            "    var s: Size = Size { x = 10.0, y = 20.0 };\n"
+            "    var a = p.x;\n"
+            "    var b = s.x;\n"
+            "}\n";
 
-// --- Local variable references ---
+        // Cursor on "x" field of Point (offset 15)
+        auto result = find_references(source, 15);
+        // Point.x definition + Point struct literal "x" + p.x = 3
+        // Should NOT include Size.x or s.x
+        CHECK(result.count == 3);
+    }
 
-TEST_CASE("References - local: var decl + usages within function") {
-    const char* source =
-        "fun test() {\n"
-        "    var x = 10;\n"
-        "    var y = x + 1;\n"
-        "    var z = x + 2;\n"
-        "}\n";
+    // --- Local variable references ---
 
-    // Cursor on "x" in "var x = 10" — find "x"
-    u32 x_offset = static_cast<u32>(strstr(source, "x = 10") - source);
-    auto result = find_references(source, x_offset);
-    CHECK(result.count == 3);  // decl + 2 usages
-}
+    TEST_CASE("local: var decl + usages within function") {
+        const char* source =
+            "fun test() {\n"
+            "    var x = 10;\n"
+            "    var y = x + 1;\n"
+            "    var z = x + 2;\n"
+            "}\n";
 
-TEST_CASE("References - local: same name in different functions") {
-    const char* source =
-        "fun foo() {\n"
-        "    var x = 10;\n"
-        "    var y = x + 1;\n"
-        "}\n"
-        "fun bar() {\n"
-        "    var x = 20;\n"
-        "    var z = x + 2;\n"
-        "}\n";
+        // Cursor on "x" in "var x = 10" — find "x"
+        u32 x_offset = static_cast<u32>(strstr(source, "x = 10") - source);
+        auto result = find_references(source, x_offset);
+        CHECK(result.count == 3);  // decl + 2 usages
+    }
 
-    // Cursor on "x" in foo
-    u32 x_offset = static_cast<u32>(strstr(source, "x = 10") - source);
-    auto result = find_references(source, x_offset);
-    CHECK(result.count == 2);  // Only "var x = 10" and "x + 1" in foo
-}
+    TEST_CASE("local: same name in different functions") {
+        const char* source =
+            "fun foo() {\n"
+            "    var x = 10;\n"
+            "    var y = x + 1;\n"
+            "}\n"
+            "fun bar() {\n"
+            "    var x = 20;\n"
+            "    var z = x + 2;\n"
+            "}\n";
 
-TEST_CASE("References - parameter: find all usages in function body") {
-    const char* source =
-        "fun add(a: i32, b: i32): i32 {\n"
-        "    return a + b;\n"
-        "}\n";
+        // Cursor on "x" in foo
+        u32 x_offset = static_cast<u32>(strstr(source, "x = 10") - source);
+        auto result = find_references(source, x_offset);
+        CHECK(result.count == 2);  // Only "var x = 10" and "x + 1" in foo
+    }
 
-    // Cursor on "a" in param list
-    u32 a_offset = static_cast<u32>(strstr(source, "a: i32") - source);
-    auto result = find_references(source, a_offset);
-    CHECK(result.count == 2);  // param decl + usage in return
-}
+    TEST_CASE("parameter: find all usages in function body") {
+        const char* source =
+            "fun add(a: i32, b: i32): i32 {\n"
+            "    return a + b;\n"
+            "}\n";
 
-// --- Edge cases ---
+        // Cursor on "a" in param list
+        u32 a_offset = static_cast<u32>(strstr(source, "a: i32") - source);
+        auto result = find_references(source, a_offset);
+        CHECK(result.count == 2);  // param decl + usage in return
+    }
 
-TEST_CASE("References - cursor on definition vs usage gives same results") {
-    const char* source =
-        "fun greet() {}\n"
-        "fun main() { greet(); }\n";
+    // --- Edge cases ---
 
-    // From definition
-    auto result_from_def = find_references(source, 4);  // "greet" in fun greet
-    // From usage
-    u32 usage_offset = static_cast<u32>(strstr(source, "greet()") + 6 - source);  // after first greet
-    // Actually find second "greet" occurrence
-    const char* second = strstr(source + 15, "greet");
-    u32 call_offset = static_cast<u32>(second - source);
-    auto result_from_usage = find_references(source, call_offset);
+    TEST_CASE("cursor on definition vs usage gives same results") {
+        const char* source =
+            "fun greet() {}\n"
+            "fun main() { greet(); }\n";
 
-    CHECK(result_from_def.count == result_from_usage.count);
-}
+        // From definition
+        auto result_from_def = find_references(source, 4);  // "greet" in fun greet
+        // From usage
+        u32 usage_offset = static_cast<u32>(strstr(source, "greet()") + 6 - source);  // after first greet
+        // Actually find second "greet" occurrence
+        const char* second = strstr(source + 15, "greet");
+        u32 call_offset = static_cast<u32>(second - source);
+        auto result_from_usage = find_references(source, call_offset);
 
-TEST_CASE("References - includeDeclaration=false excludes definition") {
-    const char* source =
-        "fun add(a: i32, b: i32): i32 { return a + b; }\n"
-        "fun main() {\n"
-        "    var x = add(1, 2);\n"
-        "}\n";
+        CHECK(result_from_def.count == result_from_usage.count);
+    }
 
-    auto result_with_decl = find_references(source, 4, true);
-    auto result_without_decl = find_references(source, 4, false);
-    CHECK(result_with_decl.count == result_without_decl.count + 1);
-}
+    TEST_CASE("includeDeclaration=false excludes definition") {
+        const char* source =
+            "fun add(a: i32, b: i32): i32 { return a + b; }\n"
+            "fun main() {\n"
+            "    var x = add(1, 2);\n"
+            "}\n";
 
-TEST_CASE("References - rename with no references (definition only)") {
-    const char* source =
-        "fun standalone(): i32 { return 42; }\n";
+        auto result_with_decl = find_references(source, 4, true);
+        auto result_without_decl = find_references(source, 4, false);
+        CHECK(result_with_decl.count == result_without_decl.count + 1);
+    }
 
-    auto result = find_references(source, 4);
-    CHECK(result.count == 1);  // Only the definition
-}
+    TEST_CASE("rename with no references (definition only)") {
+        const char* source =
+            "fun standalone(): i32 { return 42; }\n";
+
+        auto result = find_references(source, 4);
+        CHECK(result.count == 1);  // Only the definition
+    }
+
+}  // TEST_SUITE("LSP References")

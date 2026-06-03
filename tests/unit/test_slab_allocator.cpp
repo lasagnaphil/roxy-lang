@@ -28,1221 +28,1225 @@ static u32 calc_slots_per_slab(u32 slot_size) {
 // Slab Allocator Unit Tests
 // ============================================================================
 
-TEST_CASE("Unit - SlabAllocator basic allocation") {
-    SlabAllocator allocator;
-    CHECK(allocator.init());
+TEST_SUITE("Slab Allocator") {
 
-    // Allocate some small objects
-    u64 gen1, gen2, gen3;
-    void* ptr1 = allocator.alloc(32, &gen1);
-    void* ptr2 = allocator.alloc(32, &gen2);
-    void* ptr3 = allocator.alloc(64, &gen3);
+    TEST_CASE("Unit - SlabAllocator basic allocation") {
+        SlabAllocator allocator;
+        CHECK(allocator.init());
 
-    CHECK(ptr1 != nullptr);
-    CHECK(ptr2 != nullptr);
-    CHECK(ptr3 != nullptr);
+        // Allocate some small objects
+        u64 gen1, gen2, gen3;
+        void* ptr1 = allocator.alloc(32, &gen1);
+        void* ptr2 = allocator.alloc(32, &gen2);
+        void* ptr3 = allocator.alloc(64, &gen3);
 
-    // All should have different generations (random)
-    CHECK(gen1 != gen2);
-    CHECK(gen2 != gen3);
+        CHECK(ptr1 != nullptr);
+        CHECK(ptr2 != nullptr);
+        CHECK(ptr3 != nullptr);
 
-    // Clean up
-    allocator.free(ptr1);
-    allocator.free(ptr2);
-    allocator.free(ptr3);
-    allocator.shutdown();
-}
+        // All should have different generations (random)
+        CHECK(gen1 != gen2);
+        CHECK(gen2 != gen3);
 
-TEST_CASE("Unit - SlabAllocator size classes") {
-    SlabAllocator allocator;
-    CHECK(allocator.init());
-
-    // Allocate objects of various sizes
-    u64 gen;
-    void* ptr32 = allocator.alloc(32, &gen);
-    void* ptr64 = allocator.alloc(64, &gen);
-    void* ptr128 = allocator.alloc(128, &gen);
-    void* ptr256 = allocator.alloc(256, &gen);
-    void* ptr512 = allocator.alloc(512, &gen);
-    void* ptr1024 = allocator.alloc(1024, &gen);
-    void* ptr2048 = allocator.alloc(2048, &gen);
-    void* ptr4096 = allocator.alloc(4096, &gen);
-
-    CHECK(ptr32 != nullptr);
-    CHECK(ptr64 != nullptr);
-    CHECK(ptr128 != nullptr);
-    CHECK(ptr256 != nullptr);
-    CHECK(ptr512 != nullptr);
-    CHECK(ptr1024 != nullptr);
-    CHECK(ptr2048 != nullptr);
-    CHECK(ptr4096 != nullptr);
-
-    allocator.free(ptr32);
-    allocator.free(ptr64);
-    allocator.free(ptr128);
-    allocator.free(ptr256);
-    allocator.free(ptr512);
-    allocator.free(ptr1024);
-    allocator.free(ptr2048);
-    allocator.free(ptr4096);
-    allocator.shutdown();
-}
-
-TEST_CASE("Unit - SlabAllocator large object") {
-    SlabAllocator allocator;
-    CHECK(allocator.init());
-
-    // Allocate a large object (> 4096 bytes)
-    u64 gen;
-    void* ptr = allocator.alloc(8192, &gen);
-    CHECK(ptr != nullptr);
-
-    allocator.free(ptr);
-    allocator.shutdown();
-}
-
-TEST_CASE("Unit - SlabAllocator large object free preserves tracking") {
-    SlabAllocator allocator;
-    CHECK(allocator.init());
-
-    // Allocate a large object (> 4096 bytes)
-    u64 gen;
-    void* ptr = allocator.alloc(8192, &gen);
-    CHECK(ptr != nullptr);
-    CHECK(allocator.owns(ptr));
-
-    // Free it — should tombstone but keep tracked
-    allocator.free(ptr);
-    CHECK(allocator.owns(ptr));
-
-    // Tombstoned memory should read as zeros (remap_to_zero)
-    u8 byte = *reinterpret_cast<u8*>(ptr);
-    CHECK(byte == 0);
-
-    // Double-free should be idempotent (no assert)
-    allocator.free(ptr);
-    CHECK(allocator.owns(ptr));
-
-    // Shutdown releases the vaddr range cleanly
-    allocator.shutdown();
-}
-
-TEST_CASE("Unit - SlabAllocator random generation uniqueness") {
-    SlabAllocator allocator;
-    CHECK(allocator.init());
-
-    // Allocate many objects and verify generation uniqueness
-    constexpr u32 NUM_ALLOCS = 100;
-    u64 generations[NUM_ALLOCS];
-    void* pointers[NUM_ALLOCS];
-
-    for (u32 i = 0; i < NUM_ALLOCS; i++) {
-        pointers[i] = allocator.alloc(32, &generations[i]);
-        CHECK(pointers[i] != nullptr);
+        // Clean up
+        allocator.free(ptr1);
+        allocator.free(ptr2);
+        allocator.free(ptr3);
+        allocator.shutdown();
     }
 
-    // Check that generations are unique (birthday paradox: with 64-bit random,
-    // 100 samples should have no collisions with overwhelming probability)
-    for (u32 i = 0; i < NUM_ALLOCS; i++) {
-        for (u32 j = i + 1; j < NUM_ALLOCS; j++) {
-            CHECK(generations[i] != generations[j]);
-        }
+    TEST_CASE("Unit - SlabAllocator size classes") {
+        SlabAllocator allocator;
+        CHECK(allocator.init());
+
+        // Allocate objects of various sizes
+        u64 gen;
+        void* ptr32 = allocator.alloc(32, &gen);
+        void* ptr64 = allocator.alloc(64, &gen);
+        void* ptr128 = allocator.alloc(128, &gen);
+        void* ptr256 = allocator.alloc(256, &gen);
+        void* ptr512 = allocator.alloc(512, &gen);
+        void* ptr1024 = allocator.alloc(1024, &gen);
+        void* ptr2048 = allocator.alloc(2048, &gen);
+        void* ptr4096 = allocator.alloc(4096, &gen);
+
+        CHECK(ptr32 != nullptr);
+        CHECK(ptr64 != nullptr);
+        CHECK(ptr128 != nullptr);
+        CHECK(ptr256 != nullptr);
+        CHECK(ptr512 != nullptr);
+        CHECK(ptr1024 != nullptr);
+        CHECK(ptr2048 != nullptr);
+        CHECK(ptr4096 != nullptr);
+
+        allocator.free(ptr32);
+        allocator.free(ptr64);
+        allocator.free(ptr128);
+        allocator.free(ptr256);
+        allocator.free(ptr512);
+        allocator.free(ptr1024);
+        allocator.free(ptr2048);
+        allocator.free(ptr4096);
+        allocator.shutdown();
     }
 
-    for (u32 i = 0; i < NUM_ALLOCS; i++) {
-        allocator.free(pointers[i]);
+    TEST_CASE("Unit - SlabAllocator large object") {
+        SlabAllocator allocator;
+        CHECK(allocator.init());
+
+        // Allocate a large object (> 4096 bytes)
+        u64 gen;
+        void* ptr = allocator.alloc(8192, &gen);
+        CHECK(ptr != nullptr);
+
+        allocator.free(ptr);
+        allocator.shutdown();
     }
-    allocator.shutdown();
-}
 
-// ============================================================================
-// Weak Reference Unit Tests
-// ============================================================================
+    TEST_CASE("Unit - SlabAllocator large object free preserves tracking") {
+        SlabAllocator allocator;
+        CHECK(allocator.init());
 
-TEST_CASE("Unit - Weak reference creation and validation") {
-    RoxyVM vm;
-    CHECK(vm_init(&vm, VMConfig()));
+        // Allocate a large object (> 4096 bytes)
+        u64 gen;
+        void* ptr = allocator.alloc(8192, &gen);
+        CHECK(ptr != nullptr);
+        CHECK(allocator.owns(ptr));
 
-    // Allocate an object
-    u32 type_id = register_object_type("TestObject", 16, nullptr);
-    void* data = object_alloc(&vm, type_id, 16);
-    CHECK(data != nullptr);
+        // Free it — should tombstone but keep tracked
+        allocator.free(ptr);
+        CHECK(allocator.owns(ptr));
 
-    // Create a weak reference
-    u64 gen = weak_ref_create(data);
-    CHECK(gen != 0);
+        // Tombstoned memory should read as zeros (remap_to_zero)
+        u8 byte = *reinterpret_cast<u8*>(ptr);
+        CHECK(byte == 0);
 
-    // Verify the weak reference is valid
-    CHECK(weak_ref_valid(data, gen));
+        // Double-free should be idempotent (no assert)
+        allocator.free(ptr);
+        CHECK(allocator.owns(ptr));
 
-    // Clean up
-    object_free(&vm, data);
-    vm_destroy(&vm);
-}
+        // Shutdown releases the vaddr range cleanly
+        allocator.shutdown();
+    }
 
-TEST_CASE("Unit - Weak reference invalidation after free") {
-    RoxyVM vm;
-    CHECK(vm_init(&vm, VMConfig()));
+    TEST_CASE("Unit - SlabAllocator random generation uniqueness") {
+        SlabAllocator allocator;
+        CHECK(allocator.init());
 
-    // Allocate an object
-    u32 type_id = register_object_type("TestObject2", 16, nullptr);
-    void* data = object_alloc(&vm, type_id, 16);
-    CHECK(data != nullptr);
+        // Allocate many objects and verify generation uniqueness
+        constexpr u32 NUM_ALLOCS = 100;
+        u64 generations[NUM_ALLOCS];
+        void* pointers[NUM_ALLOCS];
 
-    // Create a weak reference
-    u64 gen = weak_ref_create(data);
-    CHECK(weak_ref_valid(data, gen));
-
-    // Free the object
-    object_free(&vm, data);
-
-    // The weak reference should now be invalid
-    // (memory is tombstoned - reads zeros, so is_alive() returns false)
-    CHECK(weak_ref_valid(data, gen) == false);
-
-    vm_destroy(&vm);
-}
-
-TEST_CASE("Unit - ObjectHeader alive state") {
-    RoxyVM vm;
-    CHECK(vm_init(&vm, VMConfig()));
-
-    u32 type_id = register_object_type("TestObject3", 16, nullptr);
-    void* data = object_alloc(&vm, type_id, 16);
-    CHECK(data != nullptr);
-
-    ObjectHeader* header = get_header_from_data(data);
-
-    // Object should be alive after allocation
-    CHECK(is_alive(header));
-
-    // Free the object
-    object_free(&vm, data);
-
-    // Note: After free, the header memory is zeroed by tombstoning,
-    // so is_alive() should return false (weak_generation == 0)
-    // We can't check the header directly after free as it's been tombstoned
-
-    vm_destroy(&vm);
-}
-
-TEST_CASE("Unit - Multiple allocations and frees") {
-    RoxyVM vm;
-    CHECK(vm_init(&vm, VMConfig()));
-
-    u32 type_id = register_object_type("TestObject4", 32, nullptr);
-
-    // Perform many allocations and frees
-    for (int iteration = 0; iteration < 10; iteration++) {
-        void* ptrs[10];
-        u64 gens[10];
-
-        // Allocate
-        for (int i = 0; i < 10; i++) {
-            ptrs[i] = object_alloc(&vm, type_id, 32);
-            CHECK(ptrs[i] != nullptr);
-            gens[i] = weak_ref_create(ptrs[i]);
+        for (u32 i = 0; i < NUM_ALLOCS; i++) {
+            pointers[i] = allocator.alloc(32, &generations[i]);
+            CHECK(pointers[i] != nullptr);
         }
 
-        // Verify all are valid
-        for (int i = 0; i < 10; i++) {
-            CHECK(weak_ref_valid(ptrs[i], gens[i]));
+        // Check that generations are unique (birthday paradox: with 64-bit random,
+        // 100 samples should have no collisions with overwhelming probability)
+        for (u32 i = 0; i < NUM_ALLOCS; i++) {
+            for (u32 j = i + 1; j < NUM_ALLOCS; j++) {
+                CHECK(generations[i] != generations[j]);
+            }
         }
 
-        // Free all
-        for (int i = 0; i < 10; i++) {
-            object_free(&vm, ptrs[i]);
+        for (u32 i = 0; i < NUM_ALLOCS; i++) {
+            allocator.free(pointers[i]);
+        }
+        allocator.shutdown();
+    }
+
+    // ============================================================================
+    // Weak Reference Unit Tests
+    // ============================================================================
+
+    TEST_CASE("Unit - Weak reference creation and validation") {
+        RoxyVM vm;
+        CHECK(vm_init(&vm, VMConfig()));
+
+        // Allocate an object
+        u32 type_id = register_object_type("TestObject", 16, nullptr);
+        void* data = object_alloc(&vm, type_id, 16);
+        CHECK(data != nullptr);
+
+        // Create a weak reference
+        u64 gen = weak_ref_create(data);
+        CHECK(gen != 0);
+
+        // Verify the weak reference is valid
+        CHECK(weak_ref_valid(data, gen));
+
+        // Clean up
+        object_free(&vm, data);
+        vm_destroy(&vm);
+    }
+
+    TEST_CASE("Unit - Weak reference invalidation after free") {
+        RoxyVM vm;
+        CHECK(vm_init(&vm, VMConfig()));
+
+        // Allocate an object
+        u32 type_id = register_object_type("TestObject2", 16, nullptr);
+        void* data = object_alloc(&vm, type_id, 16);
+        CHECK(data != nullptr);
+
+        // Create a weak reference
+        u64 gen = weak_ref_create(data);
+        CHECK(weak_ref_valid(data, gen));
+
+        // Free the object
+        object_free(&vm, data);
+
+        // The weak reference should now be invalid
+        // (memory is tombstoned - reads zeros, so is_alive() returns false)
+        CHECK(weak_ref_valid(data, gen) == false);
+
+        vm_destroy(&vm);
+    }
+
+    TEST_CASE("Unit - ObjectHeader alive state") {
+        RoxyVM vm;
+        CHECK(vm_init(&vm, VMConfig()));
+
+        u32 type_id = register_object_type("TestObject3", 16, nullptr);
+        void* data = object_alloc(&vm, type_id, 16);
+        CHECK(data != nullptr);
+
+        ObjectHeader* header = get_header_from_data(data);
+
+        // Object should be alive after allocation
+        CHECK(is_alive(header));
+
+        // Free the object
+        object_free(&vm, data);
+
+        // Note: After free, the header memory is zeroed by tombstoning,
+        // so is_alive() should return false (weak_generation == 0)
+        // We can't check the header directly after free as it's been tombstoned
+
+        vm_destroy(&vm);
+    }
+
+    TEST_CASE("Unit - Multiple allocations and frees") {
+        RoxyVM vm;
+        CHECK(vm_init(&vm, VMConfig()));
+
+        u32 type_id = register_object_type("TestObject4", 32, nullptr);
+
+        // Perform many allocations and frees
+        for (int iteration = 0; iteration < 10; iteration++) {
+            void* ptrs[10];
+            u64 gens[10];
+
+            // Allocate
+            for (int i = 0; i < 10; i++) {
+                ptrs[i] = object_alloc(&vm, type_id, 32);
+                CHECK(ptrs[i] != nullptr);
+                gens[i] = weak_ref_create(ptrs[i]);
+            }
+
+            // Verify all are valid
+            for (int i = 0; i < 10; i++) {
+                CHECK(weak_ref_valid(ptrs[i], gens[i]));
+            }
+
+            // Free all
+            for (int i = 0; i < 10; i++) {
+                object_free(&vm, ptrs[i]);
+            }
+
+            // All weak refs should now be invalid
+            for (int i = 0; i < 10; i++) {
+                CHECK(weak_ref_valid(ptrs[i], gens[i]) == false);
+            }
         }
 
-        // All weak refs should now be invalid
-        for (int i = 0; i < 10; i++) {
-            CHECK(weak_ref_valid(ptrs[i], gens[i]) == false);
-        }
+        vm_destroy(&vm);
     }
 
-    vm_destroy(&vm);
-}
+    // ============================================================================
+    // Slab Allocator Stress Tests
+    // ============================================================================
 
-// ============================================================================
-// Slab Allocator Stress Tests
-// ============================================================================
+    TEST_CASE("Stress - SlabAllocator heavy allocation pattern") {
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
 
-TEST_CASE("Stress - SlabAllocator heavy allocation pattern") {
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
+        constexpr u32 NUM_OBJECTS = 10000;
+        struct AllocInfo {
+            void* ptr;
+            u64 generation;
+            u32 size;
+            u32 magic;  // Pattern to verify memory integrity
+        };
 
-    constexpr u32 NUM_OBJECTS = 10000;
-    struct AllocInfo {
-        void* ptr;
-        u64 generation;
-        u32 size;
-        u32 magic;  // Pattern to verify memory integrity
-    };
+        std::vector<AllocInfo> allocs;
+        allocs.reserve(NUM_OBJECTS);
 
-    std::vector<AllocInfo> allocs;
-    allocs.reserve(NUM_OBJECTS);
+        // Phase 1: Allocate many objects with varying sizes
+        std::mt19937 rng(42);  // Fixed seed for reproducibility
+        std::uniform_int_distribution<u32> size_dist(1, 4096);
 
-    // Phase 1: Allocate many objects with varying sizes
-    std::mt19937 rng(42);  // Fixed seed for reproducibility
-    std::uniform_int_distribution<u32> size_dist(1, 4096);
-
-    for (u32 i = 0; i < NUM_OBJECTS; i++) {
-        AllocInfo info;
-        info.size = size_dist(rng);
-        info.magic = 0xDEADBEEF ^ i;
-        info.ptr = allocator.alloc(info.size, &info.generation);
-
-        REQUIRE(info.ptr != nullptr);
-        REQUIRE(info.generation != 0);
-
-        // Write magic pattern to memory
-        u32* data = static_cast<u32*>(info.ptr);
-        *data = info.magic;
-
-        allocs.push_back(info);
-    }
-
-    // Phase 2: Verify all allocations are intact
-    for (const auto& info : allocs) {
-        u32* data = static_cast<u32*>(info.ptr);
-        CHECK(*data == info.magic);
-    }
-
-    // Phase 3: Free all objects
-    for (const auto& info : allocs) {
-        allocator.free(info.ptr);
-    }
-
-    allocator.shutdown();
-}
-
-TEST_CASE("Stress - SlabAllocator interleaved alloc/free") {
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    constexpr u32 ITERATIONS = 5000;
-    constexpr u32 MAX_LIVE = 500;
-
-    struct AllocInfo {
-        void* ptr;
-        u64 generation;
-        u32 size;
-        u64 pattern;
-    };
-
-    std::vector<AllocInfo> live_allocs;
-    live_allocs.reserve(MAX_LIVE);
-
-    std::mt19937 rng(12345);
-    std::uniform_int_distribution<u32> size_dist(8, 2048);
-    std::uniform_int_distribution<u32> action_dist(0, 99);
-
-    for (u32 iter = 0; iter < ITERATIONS; iter++) {
-        u32 action = action_dist(rng);
-
-        // 60% chance to allocate if under limit, 40% chance to free
-        bool should_alloc = (action < 60) && (live_allocs.size() < MAX_LIVE);
-        bool should_free = (action >= 60) && !live_allocs.empty();
-
-        if (live_allocs.empty()) should_alloc = true;
-        if (live_allocs.size() >= MAX_LIVE) should_free = true;
-
-        if (should_alloc) {
+        for (u32 i = 0; i < NUM_OBJECTS; i++) {
             AllocInfo info;
             info.size = size_dist(rng);
-            info.pattern = rng();
+            info.magic = 0xDEADBEEF ^ i;
+            info.ptr = allocator.alloc(info.size, &info.generation);
+
+            REQUIRE(info.ptr != nullptr);
+            REQUIRE(info.generation != 0);
+
+            // Write magic pattern to memory
+            u32* data = static_cast<u32*>(info.ptr);
+            *data = info.magic;
+
+            allocs.push_back(info);
+        }
+
+        // Phase 2: Verify all allocations are intact
+        for (const auto& info : allocs) {
+            u32* data = static_cast<u32*>(info.ptr);
+            CHECK(*data == info.magic);
+        }
+
+        // Phase 3: Free all objects
+        for (const auto& info : allocs) {
+            allocator.free(info.ptr);
+        }
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Stress - SlabAllocator interleaved alloc/free") {
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        constexpr u32 ITERATIONS = 5000;
+        constexpr u32 MAX_LIVE = 500;
+
+        struct AllocInfo {
+            void* ptr;
+            u64 generation;
+            u32 size;
+            u64 pattern;
+        };
+
+        std::vector<AllocInfo> live_allocs;
+        live_allocs.reserve(MAX_LIVE);
+
+        std::mt19937 rng(12345);
+        std::uniform_int_distribution<u32> size_dist(8, 2048);
+        std::uniform_int_distribution<u32> action_dist(0, 99);
+
+        for (u32 iter = 0; iter < ITERATIONS; iter++) {
+            u32 action = action_dist(rng);
+
+            // 60% chance to allocate if under limit, 40% chance to free
+            bool should_alloc = (action < 60) && (live_allocs.size() < MAX_LIVE);
+            bool should_free = (action >= 60) && !live_allocs.empty();
+
+            if (live_allocs.empty()) should_alloc = true;
+            if (live_allocs.size() >= MAX_LIVE) should_free = true;
+
+            if (should_alloc) {
+                AllocInfo info;
+                info.size = size_dist(rng);
+                info.pattern = rng();
+                info.ptr = allocator.alloc(info.size, &info.generation);
+
+                REQUIRE(info.ptr != nullptr);
+
+                // Write pattern
+                if (info.size >= sizeof(u64)) {
+                    *static_cast<u64*>(info.ptr) = info.pattern;
+                }
+
+                live_allocs.push_back(info);
+            } else if (should_free) {
+                // Pick a random allocation to free
+                std::uniform_int_distribution<size_t> idx_dist(0, live_allocs.size() - 1);
+                size_t idx = idx_dist(rng);
+
+                AllocInfo& info = live_allocs[idx];
+
+                // Verify pattern before freeing
+                if (info.size >= sizeof(u64)) {
+                    CHECK(*static_cast<u64*>(info.ptr) == info.pattern);
+                }
+
+                allocator.free(info.ptr);
+
+                // Remove from live list
+                live_allocs[idx] = live_allocs.back();
+                live_allocs.pop_back();
+            }
+        }
+
+        // Clean up remaining allocations
+        for (const auto& info : live_allocs) {
+            allocator.free(info.ptr);
+        }
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Stress - SlabAllocator all size classes simultaneously") {
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        // Allocate many objects in each size class
+        constexpr u32 OBJECTS_PER_CLASS = 500;
+        constexpr u32 SIZE_CLASSES[] = {32, 64, 128, 256, 512, 1024, 2048, 4096};
+        constexpr u32 NUM_CLASSES = sizeof(SIZE_CLASSES) / sizeof(SIZE_CLASSES[0]);
+
+        struct AllocInfo {
+            void* ptr;
+            u64 generation;
+            u32 size_class_idx;
+            u32 magic;
+        };
+
+        std::vector<AllocInfo> all_allocs;
+        all_allocs.reserve(OBJECTS_PER_CLASS * NUM_CLASSES);
+
+        // Allocate in round-robin across size classes
+        for (u32 i = 0; i < OBJECTS_PER_CLASS; i++) {
+            for (u32 sc = 0; sc < NUM_CLASSES; sc++) {
+                AllocInfo info;
+                info.size_class_idx = sc;
+                info.magic = (i << 16) | sc;
+                info.ptr = allocator.alloc(SIZE_CLASSES[sc], &info.generation);
+
+                REQUIRE(info.ptr != nullptr);
+
+                // Write magic
+                *static_cast<u32*>(info.ptr) = info.magic;
+
+                all_allocs.push_back(info);
+            }
+        }
+
+        // Shuffle the allocations
+        std::mt19937 rng(999);
+        std::shuffle(all_allocs.begin(), all_allocs.end(), rng);
+
+        // Verify all magics
+        for (const auto& info : all_allocs) {
+            CHECK(*static_cast<u32*>(info.ptr) == info.magic);
+        }
+
+        // Free in shuffled order
+        for (const auto& info : all_allocs) {
+            allocator.free(info.ptr);
+        }
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Stress - SlabAllocator generation uniqueness under heavy load") {
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        constexpr u32 NUM_GENERATIONS = 10000;
+        std::vector<u64> generations;
+        generations.reserve(NUM_GENERATIONS);
+
+        // Collect many generations
+        for (u32 i = 0; i < NUM_GENERATIONS; i++) {
+            u64 gen;
+            void* ptr = allocator.alloc(32, &gen);
+            REQUIRE(ptr != nullptr);
+            generations.push_back(gen);
+            allocator.free(ptr);
+        }
+
+        // Sort and check for duplicates
+        std::sort(generations.begin(), generations.end());
+        for (size_t i = 1; i < generations.size(); i++) {
+            CHECK(generations[i] != generations[i-1]);
+        }
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Stress - SlabAllocator memory zeroing verification") {
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        constexpr u32 NUM_ITERATIONS = 100;
+        constexpr u32 ALLOC_SIZE = 256;
+
+        for (u32 iter = 0; iter < NUM_ITERATIONS; iter++) {
+            u64 gen;
+            void* ptr = allocator.alloc(ALLOC_SIZE, &gen);
+            REQUIRE(ptr != nullptr);
+
+            // Verify memory is zeroed on allocation
+            u8* bytes = static_cast<u8*>(ptr);
+            for (u32 i = 0; i < ALLOC_SIZE; i++) {
+                REQUIRE(bytes[i] == 0);
+            }
+
+            // Fill with non-zero pattern
+            std::memset(ptr, 0xAB, ALLOC_SIZE);
+
+            // Free the object
+            allocator.free(ptr);
+        }
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Unit - SlabAllocator large object zeros full page-aligned range") {
+        // The slab path zeros the full slot_size on allocation; the large path
+        // must do the same for the full page-aligned alloc_size, not just the
+        // caller-requested size. Verifies that the padding between size and
+        // alloc_size is also zeroed.
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        u64 page_size = VirtualMemoryOps::page_size();
+        // Pick a request size that is not page-aligned so there IS padding,
+        // and that exceeds the largest slab size class so it takes the
+        // alloc_large path. One page plus a byte guarantees at least one full
+        // page of padding.
+        u32 request_size = static_cast<u32>(page_size + 1);
+        u32 page_count = (request_size + static_cast<u32>(page_size) - 1) /
+                         static_cast<u32>(page_size);
+        u64 alloc_size = static_cast<u64>(page_count) * page_size;
+
+        u64 gen;
+        void* ptr = allocator.alloc(request_size, &gen);
+        REQUIRE(ptr != nullptr);
+
+        u8* bytes = static_cast<u8*>(ptr);
+        for (u64 i = 0; i < alloc_size; i++) {
+            REQUIRE(bytes[i] == 0);
+        }
+
+        allocator.free(ptr);
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Stress - SlabAllocator large objects") {
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        constexpr u32 NUM_LARGE_OBJECTS = 50;
+        constexpr u32 LARGE_SIZES[] = {8192, 16384, 32768, 65536, 131072};
+        constexpr u32 NUM_SIZES = sizeof(LARGE_SIZES) / sizeof(LARGE_SIZES[0]);
+
+        struct LargeAlloc {
+            void* ptr;
+            u64 generation;
+            u32 size;
+            u64 checksum;
+        };
+
+        std::vector<LargeAlloc> allocs;
+        std::mt19937 rng(777);
+
+        for (u32 i = 0; i < NUM_LARGE_OBJECTS; i++) {
+            LargeAlloc info;
+            info.size = LARGE_SIZES[i % NUM_SIZES];
             info.ptr = allocator.alloc(info.size, &info.generation);
 
             REQUIRE(info.ptr != nullptr);
 
-            // Write pattern
-            if (info.size >= sizeof(u64)) {
-                *static_cast<u64*>(info.ptr) = info.pattern;
+            // Write a pattern and compute checksum
+            u64* data = static_cast<u64*>(info.ptr);
+            u32 num_u64s = info.size / sizeof(u64);
+            info.checksum = 0;
+            for (u32 j = 0; j < num_u64s; j++) {
+                data[j] = rng();
+                info.checksum ^= data[j];
             }
 
-            live_allocs.push_back(info);
-        } else if (should_free) {
-            // Pick a random allocation to free
-            std::uniform_int_distribution<size_t> idx_dist(0, live_allocs.size() - 1);
-            size_t idx = idx_dist(rng);
+            allocs.push_back(info);
+        }
 
-            AllocInfo& info = live_allocs[idx];
-
-            // Verify pattern before freeing
-            if (info.size >= sizeof(u64)) {
-                CHECK(*static_cast<u64*>(info.ptr) == info.pattern);
+        // Verify checksums
+        for (const auto& info : allocs) {
+            u64* data = static_cast<u64*>(info.ptr);
+            u32 num_u64s = info.size / sizeof(u64);
+            u64 checksum = 0;
+            for (u32 j = 0; j < num_u64s; j++) {
+                checksum ^= data[j];
             }
+            CHECK(checksum == info.checksum);
+        }
 
+        // Free all
+        for (const auto& info : allocs) {
             allocator.free(info.ptr);
-
-            // Remove from live list
-            live_allocs[idx] = live_allocs.back();
-            live_allocs.pop_back();
-        }
-    }
-
-    // Clean up remaining allocations
-    for (const auto& info : live_allocs) {
-        allocator.free(info.ptr);
-    }
-
-    allocator.shutdown();
-}
-
-TEST_CASE("Stress - SlabAllocator all size classes simultaneously") {
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    // Allocate many objects in each size class
-    constexpr u32 OBJECTS_PER_CLASS = 500;
-    constexpr u32 SIZE_CLASSES[] = {32, 64, 128, 256, 512, 1024, 2048, 4096};
-    constexpr u32 NUM_CLASSES = sizeof(SIZE_CLASSES) / sizeof(SIZE_CLASSES[0]);
-
-    struct AllocInfo {
-        void* ptr;
-        u64 generation;
-        u32 size_class_idx;
-        u32 magic;
-    };
-
-    std::vector<AllocInfo> all_allocs;
-    all_allocs.reserve(OBJECTS_PER_CLASS * NUM_CLASSES);
-
-    // Allocate in round-robin across size classes
-    for (u32 i = 0; i < OBJECTS_PER_CLASS; i++) {
-        for (u32 sc = 0; sc < NUM_CLASSES; sc++) {
-            AllocInfo info;
-            info.size_class_idx = sc;
-            info.magic = (i << 16) | sc;
-            info.ptr = allocator.alloc(SIZE_CLASSES[sc], &info.generation);
-
-            REQUIRE(info.ptr != nullptr);
-
-            // Write magic
-            *static_cast<u32*>(info.ptr) = info.magic;
-
-            all_allocs.push_back(info);
-        }
-    }
-
-    // Shuffle the allocations
-    std::mt19937 rng(999);
-    std::shuffle(all_allocs.begin(), all_allocs.end(), rng);
-
-    // Verify all magics
-    for (const auto& info : all_allocs) {
-        CHECK(*static_cast<u32*>(info.ptr) == info.magic);
-    }
-
-    // Free in shuffled order
-    for (const auto& info : all_allocs) {
-        allocator.free(info.ptr);
-    }
-
-    allocator.shutdown();
-}
-
-TEST_CASE("Stress - SlabAllocator generation uniqueness under heavy load") {
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    constexpr u32 NUM_GENERATIONS = 10000;
-    std::vector<u64> generations;
-    generations.reserve(NUM_GENERATIONS);
-
-    // Collect many generations
-    for (u32 i = 0; i < NUM_GENERATIONS; i++) {
-        u64 gen;
-        void* ptr = allocator.alloc(32, &gen);
-        REQUIRE(ptr != nullptr);
-        generations.push_back(gen);
-        allocator.free(ptr);
-    }
-
-    // Sort and check for duplicates
-    std::sort(generations.begin(), generations.end());
-    for (size_t i = 1; i < generations.size(); i++) {
-        CHECK(generations[i] != generations[i-1]);
-    }
-
-    allocator.shutdown();
-}
-
-TEST_CASE("Stress - SlabAllocator memory zeroing verification") {
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    constexpr u32 NUM_ITERATIONS = 100;
-    constexpr u32 ALLOC_SIZE = 256;
-
-    for (u32 iter = 0; iter < NUM_ITERATIONS; iter++) {
-        u64 gen;
-        void* ptr = allocator.alloc(ALLOC_SIZE, &gen);
-        REQUIRE(ptr != nullptr);
-
-        // Verify memory is zeroed on allocation
-        u8* bytes = static_cast<u8*>(ptr);
-        for (u32 i = 0; i < ALLOC_SIZE; i++) {
-            REQUIRE(bytes[i] == 0);
         }
 
-        // Fill with non-zero pattern
-        std::memset(ptr, 0xAB, ALLOC_SIZE);
-
-        // Free the object
-        allocator.free(ptr);
+        allocator.shutdown();
     }
 
-    allocator.shutdown();
-}
+    TEST_CASE("Stress - Weak reference validation under heavy churn") {
+        RoxyVM vm;
+        REQUIRE(vm_init(&vm, VMConfig()));
 
-TEST_CASE("Unit - SlabAllocator large object zeros full page-aligned range") {
-    // The slab path zeros the full slot_size on allocation; the large path
-    // must do the same for the full page-aligned alloc_size, not just the
-    // caller-requested size. Verifies that the padding between size and
-    // alloc_size is also zeroed.
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
+        u32 type_id = register_object_type("ChurnObject", 64, nullptr);
 
-    u64 page_size = VirtualMemoryOps::page_size();
-    // Pick a request size that is not page-aligned so there IS padding,
-    // and that exceeds the largest slab size class so it takes the
-    // alloc_large path. One page plus a byte guarantees at least one full
-    // page of padding.
-    u32 request_size = static_cast<u32>(page_size + 1);
-    u32 page_count = (request_size + static_cast<u32>(page_size) - 1) /
-                     static_cast<u32>(page_size);
-    u64 alloc_size = static_cast<u64>(page_count) * page_size;
+        constexpr u32 NUM_OBJECTS = 1000;
+        constexpr u32 NUM_ITERATIONS = 100;
 
-    u64 gen;
-    void* ptr = allocator.alloc(request_size, &gen);
-    REQUIRE(ptr != nullptr);
+        struct ObjInfo {
+            void* ptr;
+            u64 generation;
+            bool is_alive;
+        };
 
-    u8* bytes = static_cast<u8*>(ptr);
-    for (u64 i = 0; i < alloc_size; i++) {
-        REQUIRE(bytes[i] == 0);
-    }
+        std::vector<ObjInfo> objects(NUM_OBJECTS);
+        std::mt19937 rng(54321);
 
-    allocator.free(ptr);
-    allocator.shutdown();
-}
-
-TEST_CASE("Stress - SlabAllocator large objects") {
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    constexpr u32 NUM_LARGE_OBJECTS = 50;
-    constexpr u32 LARGE_SIZES[] = {8192, 16384, 32768, 65536, 131072};
-    constexpr u32 NUM_SIZES = sizeof(LARGE_SIZES) / sizeof(LARGE_SIZES[0]);
-
-    struct LargeAlloc {
-        void* ptr;
-        u64 generation;
-        u32 size;
-        u64 checksum;
-    };
-
-    std::vector<LargeAlloc> allocs;
-    std::mt19937 rng(777);
-
-    for (u32 i = 0; i < NUM_LARGE_OBJECTS; i++) {
-        LargeAlloc info;
-        info.size = LARGE_SIZES[i % NUM_SIZES];
-        info.ptr = allocator.alloc(info.size, &info.generation);
-
-        REQUIRE(info.ptr != nullptr);
-
-        // Write a pattern and compute checksum
-        u64* data = static_cast<u64*>(info.ptr);
-        u32 num_u64s = info.size / sizeof(u64);
-        info.checksum = 0;
-        for (u32 j = 0; j < num_u64s; j++) {
-            data[j] = rng();
-            info.checksum ^= data[j];
-        }
-
-        allocs.push_back(info);
-    }
-
-    // Verify checksums
-    for (const auto& info : allocs) {
-        u64* data = static_cast<u64*>(info.ptr);
-        u32 num_u64s = info.size / sizeof(u64);
-        u64 checksum = 0;
-        for (u32 j = 0; j < num_u64s; j++) {
-            checksum ^= data[j];
-        }
-        CHECK(checksum == info.checksum);
-    }
-
-    // Free all
-    for (const auto& info : allocs) {
-        allocator.free(info.ptr);
-    }
-
-    allocator.shutdown();
-}
-
-TEST_CASE("Stress - Weak reference validation under heavy churn") {
-    RoxyVM vm;
-    REQUIRE(vm_init(&vm, VMConfig()));
-
-    u32 type_id = register_object_type("ChurnObject", 64, nullptr);
-
-    constexpr u32 NUM_OBJECTS = 1000;
-    constexpr u32 NUM_ITERATIONS = 100;
-
-    struct ObjInfo {
-        void* ptr;
-        u64 generation;
-        bool is_alive;
-    };
-
-    std::vector<ObjInfo> objects(NUM_OBJECTS);
-    std::mt19937 rng(54321);
-
-    // Initial allocation
-    for (u32 i = 0; i < NUM_OBJECTS; i++) {
-        objects[i].ptr = object_alloc(&vm, type_id, 64);
-        REQUIRE(objects[i].ptr != nullptr);
-        objects[i].generation = weak_ref_create(objects[i].ptr);
-        objects[i].is_alive = true;
-    }
-
-    // Churn: randomly free and reallocate
-    for (u32 iter = 0; iter < NUM_ITERATIONS; iter++) {
-        // Free ~10% of live objects
+        // Initial allocation
         for (u32 i = 0; i < NUM_OBJECTS; i++) {
-            if (objects[i].is_alive && (rng() % 10 == 0)) {
-                // Verify weak ref is valid before freeing
-                CHECK(weak_ref_valid(objects[i].ptr, objects[i].generation));
+            objects[i].ptr = object_alloc(&vm, type_id, 64);
+            REQUIRE(objects[i].ptr != nullptr);
+            objects[i].generation = weak_ref_create(objects[i].ptr);
+            objects[i].is_alive = true;
+        }
 
-                object_free(&vm, objects[i].ptr);
-                objects[i].is_alive = false;
+        // Churn: randomly free and reallocate
+        for (u32 iter = 0; iter < NUM_ITERATIONS; iter++) {
+            // Free ~10% of live objects
+            for (u32 i = 0; i < NUM_OBJECTS; i++) {
+                if (objects[i].is_alive && (rng() % 10 == 0)) {
+                    // Verify weak ref is valid before freeing
+                    CHECK(weak_ref_valid(objects[i].ptr, objects[i].generation));
+
+                    object_free(&vm, objects[i].ptr);
+                    objects[i].is_alive = false;
+                }
             }
-        }
 
-        // Verify all weak refs: alive should be valid, dead should be invalid
-        for (u32 i = 0; i < NUM_OBJECTS; i++) {
-            bool is_valid = weak_ref_valid(objects[i].ptr, objects[i].generation);
-            if (objects[i].is_alive) {
-                CHECK(is_valid);
-            } else {
-                CHECK(!is_valid);
+            // Verify all weak refs: alive should be valid, dead should be invalid
+            for (u32 i = 0; i < NUM_OBJECTS; i++) {
+                bool is_valid = weak_ref_valid(objects[i].ptr, objects[i].generation);
+                if (objects[i].is_alive) {
+                    CHECK(is_valid);
+                } else {
+                    CHECK(!is_valid);
+                }
             }
-        }
 
-        // Reallocate dead objects
-        for (u32 i = 0; i < NUM_OBJECTS; i++) {
-            if (!objects[i].is_alive) {
-                objects[i].ptr = object_alloc(&vm, type_id, 64);
-                REQUIRE(objects[i].ptr != nullptr);
-                objects[i].generation = weak_ref_create(objects[i].ptr);
-                objects[i].is_alive = true;
-            }
-        }
-    }
-
-    // Clean up
-    for (u32 i = 0; i < NUM_OBJECTS; i++) {
-        if (objects[i].is_alive) {
-            object_free(&vm, objects[i].ptr);
-        }
-    }
-
-    vm_destroy(&vm);
-}
-
-TEST_CASE("Unit - SlabAllocator recycles freed slots into the free list") {
-    // Mixed-lifetime workloads used to fragment slabs permanently because
-    // freed slots stayed tombstoned forever. After recycling, freeing a
-    // slot must make it available to the next alloc of the same size
-    // class, so a steady-state alloc/free loop should not grow the
-    // working-set slab count past the high-watermark.
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    u32 slots = calc_slots_per_slab(32);
-    constexpr u32 LIVE_AT_ONCE = 16;
-
-    // Fill enough to force exactly one slab. Then free + re-alloc many
-    // times — the slab count must not grow.
-    std::vector<void*> live(LIVE_AT_ONCE, nullptr);
-    u64 gen;
-    for (u32 i = 0; i < LIVE_AT_ONCE; i++) {
-        live[i] = allocator.alloc(32, &gen);
-        REQUIRE(live[i] != nullptr);
-    }
-
-    constexpr u32 CYCLES = 1000;
-    for (u32 c = 0; c < CYCLES; c++) {
-        u32 idx = c % LIVE_AT_ONCE;
-        allocator.free(live[idx]);
-        live[idx] = allocator.alloc(32, &gen);
-        REQUIRE(live[idx] != nullptr);
-    }
-
-    // After 1000 cycles with only LIVE_AT_ONCE live slots, the allocator
-    // must still fit inside a single slab — proves recycling actually
-    // worked rather than secretly growing fresh slabs each cycle.
-    CHECK(allocator.size_classes[0].size() == 1);
-    (void)slots;
-
-    for (u32 i = 0; i < LIVE_AT_ONCE; i++) {
-        allocator.free(live[i]);
-    }
-    allocator.shutdown();
-}
-
-TEST_CASE("Unit - SlabAllocator weak refs survive recycle correctly") {
-    // The recycle path's safety relies entirely on the 64-bit random
-    // weak_generation: after a slot is recycled to a new occupant, any
-    // outstanding weak ref to the old occupant must still reject. This
-    // test is the canary for that invariant.
-    RoxyVM vm;
-    REQUIRE(vm_init(&vm, VMConfig()));
-
-    u32 type_id = register_object_type("RecycleProbe", 16, nullptr);
-
-    void* a = object_alloc(&vm, type_id, 16);
-    REQUIRE(a != nullptr);
-    u64 gen_a = weak_ref_create(a);
-    REQUIRE(gen_a != 0);
-    CHECK(weak_ref_valid(a, gen_a));
-
-    object_free(&vm, a);
-    // Slot is now FREE; weak_generation reads as zero, is_alive() false.
-    CHECK(!weak_ref_valid(a, gen_a));
-
-    // Force the freshly-freed slot to be the next pop from the free list
-    // by allocating immediately. Same size class → same slab → recycling
-    // pops the most-recently-freed slot (LIFO).
-    void* b = object_alloc(&vm, type_id, 16);
-    REQUIRE(b != nullptr);
-    CHECK(b == a);  // confirm we actually recycled the slot
-    u64 gen_b = weak_ref_create(b);
-    CHECK(gen_b != 0);
-    CHECK(gen_b != gen_a);  // fresh random gen, distinct from old
-
-    // The old weak ref must now reject: slot reads as alive (b's gen)
-    // but the gen does not match the cached gen_a.
-    CHECK(!weak_ref_valid(a, gen_a));
-    // The new weak ref accepts.
-    CHECK(weak_ref_valid(b, gen_b));
-
-    object_free(&vm, b);
-    vm_destroy(&vm);
-}
-
-TEST_CASE("Unit - SlabAllocator reclaim drained slab with FREE slots") {
-    // The old reclaim condition required free_head == 0xFFFFFFFF (every
-    // slot transitioned through ALIVE at least once and stayed
-    // tombstoned). With recycling, a slab can have live_count == 0 while
-    // its free list is non-empty — that case must still be reclaimable,
-    // otherwise drained slabs never release physical memory.
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    u32 slots = calc_slots_per_slab(32);
-    // Use only half the slab capacity, then free all. The slab now has
-    // live_count == 0 with `slots / 2` slots still on the free list
-    // (the other half were never allocated to begin with).
-    u32 used = slots / 2;
-    std::vector<void*> ptrs(used);
-    u64 gen;
-    for (u32 i = 0; i < used; i++) {
-        ptrs[i] = allocator.alloc(32, &gen);
-        REQUIRE(ptrs[i] != nullptr);
-    }
-    for (u32 i = 0; i < used; i++) {
-        allocator.free(ptrs[i]);
-    }
-
-    u32 reclaimed = allocator.reclaim_tombstoned();
-    CHECK(reclaimed > 0);
-
-    // After reclaim, find_or_create_slab must skip the reclaimed slab
-    // (free_head was set to 0xFFFFFFFF). A subsequent alloc creates a
-    // new slab rather than handing out slots from remapped memory.
-    CHECK(allocator.size_classes[0].size() == 1);
-    void* fresh = allocator.alloc(32, &gen);
-    REQUIRE(fresh != nullptr);
-    CHECK(allocator.size_classes[0].size() == 2);
-
-    allocator.free(fresh);
-    allocator.shutdown();
-}
-
-TEST_CASE("Stress - SlabAllocator sorted-range index correctness") {
-    // Allocate enough objects across every size class to force creation of
-    // many slabs, then verify both that owns()/free() route every pointer
-    // to the correct slab regardless of insertion vs. address order, and
-    // that pointers strictly outside every slab range are rejected.
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    constexpr u32 SIZE_CLASSES[] = {32, 64, 128, 256, 512, 1024, 2048, 4096};
-    constexpr u32 NUM_CLASSES = sizeof(SIZE_CLASSES) / sizeof(SIZE_CLASSES[0]);
-
-    // Allocate enough per class to force >=3 slabs of each class.
-    std::vector<void*> all_ptrs;
-    std::vector<u32> all_sizes;
-    for (u32 sc = 0; sc < NUM_CLASSES; sc++) {
-        u32 slots = calc_slots_per_slab(SIZE_CLASSES[sc]);
-        u32 to_alloc = slots * 3 + 7;
-        for (u32 i = 0; i < to_alloc; i++) {
-            u64 gen;
-            void* p = allocator.alloc(SIZE_CLASSES[sc], &gen);
-            REQUIRE(p != nullptr);
-            // Stamp size class index into the first byte so we can verify
-            // we read it back after the shuffled-free pass.
-            *static_cast<u8*>(p) = static_cast<u8>(sc);
-            all_ptrs.push_back(p);
-            all_sizes.push_back(SIZE_CLASSES[sc]);
-        }
-    }
-
-    // owns() must accept every live pointer regardless of allocation order.
-    for (size_t i = 0; i < all_ptrs.size(); i++) {
-        CHECK(allocator.owns(all_ptrs[i]));
-    }
-
-    // A stack-allocated pointer must NOT be reported as owned, exercising
-    // the upper_bound boundary at both ends of the sorted index.
-    int stack_var;
-    CHECK(!allocator.owns(&stack_var));
-
-    // Verify in-slab interior pointers route the same as base pointers.
-    // For a 256-byte slot, ptr+128 is still inside the same slab, so
-    // owns() should return true.
-    for (size_t i = 0; i < all_ptrs.size(); i++) {
-        u32 sz = all_sizes[i];
-        if (sz < 16) continue;
-        void* mid = static_cast<u8*>(all_ptrs[i]) + (sz / 2);
-        CHECK(allocator.owns(mid));
-    }
-
-    // Shuffle and free in random order; bug surface is highest when the
-    // free order is not the alloc order, since that's exactly the case
-    // where the old linear scan happened to short-circuit on the first
-    // size-class match by luck.
-    std::mt19937 rng(0xC0FFEE);
-    std::vector<size_t> order(all_ptrs.size());
-    for (size_t i = 0; i < order.size(); i++) order[i] = i;
-    std::shuffle(order.begin(), order.end(), rng);
-
-    for (size_t i : order) {
-        // Confirm the stamp survived between alloc and free — if free()
-        // routed to the wrong slab, the slot would be tombstoned in
-        // someone else's slab and this would mis-account live_count there.
-        CHECK(*static_cast<u8*>(all_ptrs[i]) ==
-              static_cast<u8>(std::find(std::begin(SIZE_CLASSES),
-                                        std::end(SIZE_CLASSES), all_sizes[i])
-                              - std::begin(SIZE_CLASSES)));
-        allocator.free(all_ptrs[i]);
-    }
-
-    allocator.shutdown();
-}
-
-TEST_CASE("Stress - SlabAllocator pointer alignment") {
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    // Verify all allocations are properly aligned
-    constexpr u32 NUM_ALLOCS = 1000;
-    std::mt19937 rng(11111);
-    std::uniform_int_distribution<u32> size_dist(1, 4096);
-
-    for (u32 i = 0; i < NUM_ALLOCS; i++) {
-        u32 size = size_dist(rng);
-        u64 gen;
-        void* ptr = allocator.alloc(size, &gen);
-
-        REQUIRE(ptr != nullptr);
-
-        // Check alignment (should be at least 8-byte aligned)
-        uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
-        CHECK((addr % 8) == 0);
-
-        allocator.free(ptr);
-    }
-
-    allocator.shutdown();
-}
-
-TEST_CASE("Stress - SlabAllocator fill entire slab") {
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    // Allocate enough 32-byte objects to fill multiple slabs
-    // Each slab is ~64 slots minimum, so 1000 should create multiple slabs
-    constexpr u32 NUM_ALLOCS = 1000;
-
-    struct AllocInfo {
-        void* ptr;
-        u64 gen;
-        u32 magic;
-    };
-
-    std::vector<AllocInfo> allocs(NUM_ALLOCS);
-
-    for (u32 i = 0; i < NUM_ALLOCS; i++) {
-        allocs[i].magic = 0xCAFE0000 | i;
-        allocs[i].ptr = allocator.alloc(32, &allocs[i].gen);
-        REQUIRE(allocs[i].ptr != nullptr);
-        *static_cast<u32*>(allocs[i].ptr) = allocs[i].magic;
-    }
-
-    // Verify all
-    for (u32 i = 0; i < NUM_ALLOCS; i++) {
-        CHECK(*static_cast<u32*>(allocs[i].ptr) == allocs[i].magic);
-    }
-
-    // Free every other one
-    for (u32 i = 0; i < NUM_ALLOCS; i += 2) {
-        allocator.free(allocs[i].ptr);
-        allocs[i].ptr = nullptr;
-    }
-
-    // Verify remaining
-    for (u32 i = 1; i < NUM_ALLOCS; i += 2) {
-        CHECK(*static_cast<u32*>(allocs[i].ptr) == allocs[i].magic);
-    }
-
-    // Free remaining
-    for (u32 i = 1; i < NUM_ALLOCS; i += 2) {
-        allocator.free(allocs[i].ptr);
-    }
-
-    allocator.shutdown();
-}
-
-TEST_CASE("Stress - ObjectHeader integrity under allocation pressure") {
-    RoxyVM vm;
-    REQUIRE(vm_init(&vm, VMConfig()));
-
-    u32 type_id = register_object_type("IntegrityTest", 128, nullptr);
-
-    constexpr u32 NUM_OBJECTS = 500;
-    struct ObjRecord {
-        void* data;
-        u64 expected_gen;
-        u32 expected_type_id;
-    };
-
-    std::vector<ObjRecord> records(NUM_OBJECTS);
-
-    // Allocate all
-    for (u32 i = 0; i < NUM_OBJECTS; i++) {
-        records[i].data = object_alloc(&vm, type_id, 128);
-        REQUIRE(records[i].data != nullptr);
-
-        ObjectHeader* header = get_header_from_data(records[i].data);
-        records[i].expected_gen = header->weak_generation;
-        records[i].expected_type_id = header->type_id;
-
-        // Verify header state
-        CHECK(is_alive(header));
-        CHECK(header->ref_count == 0);
-        CHECK(header->type_id == type_id);
-    }
-
-    // Verify all headers still intact
-    for (u32 i = 0; i < NUM_OBJECTS; i++) {
-        ObjectHeader* header = get_header_from_data(records[i].data);
-        CHECK(header->weak_generation == records[i].expected_gen);
-        CHECK(header->type_id == records[i].expected_type_id);
-        CHECK(is_alive(header));
-    }
-
-    // Free all
-    for (u32 i = 0; i < NUM_OBJECTS; i++) {
-        object_free(&vm, records[i].data);
-    }
-
-    vm_destroy(&vm);
-}
-
-// ============================================================================
-// Slab Reclamation Tests
-// ============================================================================
-
-TEST_CASE("Unit - SlabAllocator reclaim_tombstoned basic") {
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    // Allocate enough objects to COMPLETELY fill at least one slab
-    // Slots per slab varies by platform (page size): 4KB=128 slots, 16KB=512 slots for 32-byte class
-    u32 slots_per_slab = calc_slots_per_slab(32);
-    u32 NUM_OBJECTS = slots_per_slab + 20;  // Fill one slab completely + some extra
-    struct AllocInfo {
-        void* ptr;
-        u64 gen;
-    };
-    std::vector<AllocInfo> allocs(NUM_OBJECTS);
-
-    for (u32 i = 0; i < NUM_OBJECTS; i++) {
-        allocs[i].ptr = allocator.alloc(32, &allocs[i].gen);
-        REQUIRE(allocs[i].ptr != nullptr);
-    }
-
-    // Free all objects (they become tombstoned)
-    for (u32 i = 0; i < NUM_OBJECTS; i++) {
-        allocator.free(allocs[i].ptr);
-    }
-
-    // Reclaim tombstoned slabs - should reclaim at least the fully-filled first slab
-    u32 pages_reclaimed = allocator.reclaim_tombstoned();
-    CHECK(pages_reclaimed > 0);
-
-    // Calling reclaim again should return 0 (already reclaimed)
-    u32 pages_reclaimed_again = allocator.reclaim_tombstoned();
-    CHECK(pages_reclaimed_again == 0);
-
-    allocator.shutdown();
-}
-
-TEST_CASE("Unit - SlabAllocator reclaim_tombstoned with live objects") {
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    // Allocate enough to fill multiple slabs
-    // Slots per slab varies by platform (page size)
-    u32 slots_per_slab = calc_slots_per_slab(32);
-    u32 NUM_OBJECTS = slots_per_slab * 2 + 50;  // Fill 2+ slabs
-    struct AllocInfo {
-        void* ptr;
-        u64 gen;
-    };
-    std::vector<AllocInfo> allocs(NUM_OBJECTS);
-
-    for (u32 i = 0; i < NUM_OBJECTS; i++) {
-        allocs[i].ptr = allocator.alloc(32, &allocs[i].gen);
-        REQUIRE(allocs[i].ptr != nullptr);
-    }
-
-    // Free only the first slab's worth of objects (first slab completely)
-    // Keep some alive in subsequent slabs
-    for (u32 i = 0; i < slots_per_slab; i++) {
-        allocator.free(allocs[i].ptr);
-        allocs[i].ptr = nullptr;
-    }
-
-    // Reclaim should succeed for the first slab (all tombstoned)
-    u32 pages_reclaimed = allocator.reclaim_tombstoned();
-    CHECK(pages_reclaimed > 0);
-
-    // Verify live objects are still accessible
-    for (u32 i = slots_per_slab; i < NUM_OBJECTS; i++) {
-        CHECK(allocs[i].ptr != nullptr);
-        // Write and read to verify memory is still valid
-        *static_cast<u32*>(allocs[i].ptr) = 0xDEADBEEF;
-        CHECK(*static_cast<u32*>(allocs[i].ptr) == 0xDEADBEEF);
-    }
-
-    // Free remaining objects
-    for (u32 i = slots_per_slab; i < NUM_OBJECTS; i++) {
-        allocator.free(allocs[i].ptr);
-    }
-
-    // Now reclaim should reclaim more slabs
-    u32 more_reclaimed = allocator.reclaim_tombstoned();
-    CHECK(more_reclaimed > 0);
-
-    allocator.shutdown();
-}
-
-TEST_CASE("Unit - SlabAllocator reclaim_tombstoned idempotency") {
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    // Allocate enough to fill at least one slab completely
-    u32 slots_per_slab = calc_slots_per_slab(32);
-    u32 NUM_OBJECTS = slots_per_slab + 20;
-    std::vector<void*> ptrs(NUM_OBJECTS);
-    u64 gen;
-
-    for (u32 i = 0; i < NUM_OBJECTS; i++) {
-        ptrs[i] = allocator.alloc(32, &gen);
-        REQUIRE(ptrs[i] != nullptr);
-    }
-
-    // Free all
-    for (u32 i = 0; i < NUM_OBJECTS; i++) {
-        allocator.free(ptrs[i]);
-    }
-
-    // Reclaim multiple times - should be safe
-    u32 pages1 = allocator.reclaim_tombstoned();
-    u32 pages2 = allocator.reclaim_tombstoned();
-    u32 pages3 = allocator.reclaim_tombstoned();
-
-    CHECK(pages1 > 0);
-    CHECK(pages2 == 0);
-    CHECK(pages3 == 0);
-
-    allocator.shutdown();
-}
-
-TEST_CASE("Unit - SlabAllocator reclaim_tombstoned memory still readable") {
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    // Allocate exactly one slab's worth of objects to fill it completely
-    u32 slots_per_slab = calc_slots_per_slab(32);
-    u32 NUM_OBJECTS = slots_per_slab;
-    std::vector<void*> ptrs(NUM_OBJECTS);
-    u64 gen;
-
-    for (u32 i = 0; i < NUM_OBJECTS; i++) {
-        ptrs[i] = allocator.alloc(32, &gen);
-        REQUIRE(ptrs[i] != nullptr);
-        // Write non-zero data
-        std::memset(ptrs[i], 0xAB, 32);
-    }
-
-    // Free all
-    for (u32 i = 0; i < NUM_OBJECTS; i++) {
-        allocator.free(ptrs[i]);
-    }
-
-    // Reclaim tombstoned slabs
-    u32 pages_reclaimed = allocator.reclaim_tombstoned();
-    CHECK(pages_reclaimed > 0);
-
-    // After reclamation, memory should still be readable (for weak ref safety)
-    // The actual content depends on platform - Windows MEM_RESET may or may not
-    // zero memory immediately, but reading should not crash
-    u64 sum = 0;
-    for (u32 i = 0; i < NUM_OBJECTS; i++) {
-        u8* bytes = static_cast<u8*>(ptrs[i]);
-        for (u32 j = 0; j < 32; j++) {
-            sum += bytes[j];  // Just read the memory to verify it's accessible
-        }
-    }
-    // The sum will be something - we just want to verify no crash
-    (void)sum;
-
-    allocator.shutdown();
-}
-
-TEST_CASE("Unit - SlabAllocator reclaim_tombstoned multiple size classes") {
-    SlabAllocator allocator;
-    REQUIRE(allocator.init());
-
-    // Allocate objects in multiple size classes
-    // Slots per slab varies by platform (page size)
-    constexpr u32 SIZE_CLASSES[] = {32, 64, 128, 256};
-    constexpr u32 NUM_CLASSES = sizeof(SIZE_CLASSES) / sizeof(SIZE_CLASSES[0]);
-
-    std::vector<std::vector<void*>> allocs(NUM_CLASSES);
-    u64 gen;
-
-    for (u32 c = 0; c < NUM_CLASSES; c++) {
-        // Calculate how many objects needed to fill at least one slab for this size class
-        u32 slots_per_slab = calc_slots_per_slab(SIZE_CLASSES[c]);
-        u32 objects_to_alloc = slots_per_slab + 20;  // Fill one slab + extra
-        allocs[c].resize(objects_to_alloc);
-        for (u32 i = 0; i < objects_to_alloc; i++) {
-            allocs[c][i] = allocator.alloc(SIZE_CLASSES[c], &gen);
-            REQUIRE(allocs[c][i] != nullptr);
-        }
-    }
-
-    // Free all objects in all size classes
-    for (u32 c = 0; c < NUM_CLASSES; c++) {
-        for (u32 i = 0; i < allocs[c].size(); i++) {
-            allocator.free(allocs[c][i]);
-        }
-    }
-
-    // Reclaim should reclaim slabs from all size classes
-    u32 pages_reclaimed = allocator.reclaim_tombstoned();
-    CHECK(pages_reclaimed > 0);
-
-    // Second call should return 0
-    u32 pages_again = allocator.reclaim_tombstoned();
-    CHECK(pages_again == 0);
-
-    allocator.shutdown();
-}
-
-TEST_CASE("Stress - Concurrent-like access pattern simulation") {
-    // Simulate what might happen with multiple "threads" (sequentially)
-    // Each "thread" has its own set of objects it manages
-    RoxyVM vm;
-    REQUIRE(vm_init(&vm, VMConfig()));
-
-    u32 type_id = register_object_type("ThreadSimObject", 32, nullptr);
-
-    constexpr u32 NUM_THREADS = 4;
-    constexpr u32 OBJECTS_PER_THREAD = 100;
-    constexpr u32 ITERATIONS = 50;
-
-    struct ThreadState {
-        std::vector<void*> objects;
-        std::vector<u64> generations;
-    };
-
-    std::array<ThreadState, NUM_THREADS> threads;
-    std::mt19937 rng(99999);
-
-    // Initial allocation for each "thread"
-    for (u32 t = 0; t < NUM_THREADS; t++) {
-        threads[t].objects.resize(OBJECTS_PER_THREAD);
-        threads[t].generations.resize(OBJECTS_PER_THREAD);
-        for (u32 i = 0; i < OBJECTS_PER_THREAD; i++) {
-            threads[t].objects[i] = object_alloc(&vm, type_id, 32);
-            REQUIRE(threads[t].objects[i] != nullptr);
-            threads[t].generations[i] = weak_ref_create(threads[t].objects[i]);
-        }
-    }
-
-    // Simulate interleaved operations
-    for (u32 iter = 0; iter < ITERATIONS; iter++) {
-        // Each thread does some work
-        for (u32 t = 0; t < NUM_THREADS; t++) {
-            // Pick a random object in this thread
-            u32 idx = rng() % OBJECTS_PER_THREAD;
-
-            if (threads[t].objects[idx] != nullptr) {
-                // Verify weak ref still valid
-                CHECK(weak_ref_valid(threads[t].objects[idx], threads[t].generations[idx]));
-
-                // 30% chance to free and reallocate
-                if (rng() % 100 < 30) {
-                    object_free(&vm, threads[t].objects[idx]);
-
-                    // Verify weak ref now invalid
-                    CHECK(!weak_ref_valid(threads[t].objects[idx], threads[t].generations[idx]));
-
-                    // Reallocate
-                    threads[t].objects[idx] = object_alloc(&vm, type_id, 32);
-                    REQUIRE(threads[t].objects[idx] != nullptr);
-                    threads[t].generations[idx] = weak_ref_create(threads[t].objects[idx]);
+            // Reallocate dead objects
+            for (u32 i = 0; i < NUM_OBJECTS; i++) {
+                if (!objects[i].is_alive) {
+                    objects[i].ptr = object_alloc(&vm, type_id, 64);
+                    REQUIRE(objects[i].ptr != nullptr);
+                    objects[i].generation = weak_ref_create(objects[i].ptr);
+                    objects[i].is_alive = true;
                 }
             }
         }
 
-        // Cross-thread verification: check other threads' objects are still valid
+        // Clean up
+        for (u32 i = 0; i < NUM_OBJECTS; i++) {
+            if (objects[i].is_alive) {
+                object_free(&vm, objects[i].ptr);
+            }
+        }
+
+        vm_destroy(&vm);
+    }
+
+    TEST_CASE("Unit - SlabAllocator recycles freed slots into the free list") {
+        // Mixed-lifetime workloads used to fragment slabs permanently because
+        // freed slots stayed tombstoned forever. After recycling, freeing a
+        // slot must make it available to the next alloc of the same size
+        // class, so a steady-state alloc/free loop should not grow the
+        // working-set slab count past the high-watermark.
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        u32 slots = calc_slots_per_slab(32);
+        constexpr u32 LIVE_AT_ONCE = 16;
+
+        // Fill enough to force exactly one slab. Then free + re-alloc many
+        // times — the slab count must not grow.
+        std::vector<void*> live(LIVE_AT_ONCE, nullptr);
+        u64 gen;
+        for (u32 i = 0; i < LIVE_AT_ONCE; i++) {
+            live[i] = allocator.alloc(32, &gen);
+            REQUIRE(live[i] != nullptr);
+        }
+
+        constexpr u32 CYCLES = 1000;
+        for (u32 c = 0; c < CYCLES; c++) {
+            u32 idx = c % LIVE_AT_ONCE;
+            allocator.free(live[idx]);
+            live[idx] = allocator.alloc(32, &gen);
+            REQUIRE(live[idx] != nullptr);
+        }
+
+        // After 1000 cycles with only LIVE_AT_ONCE live slots, the allocator
+        // must still fit inside a single slab — proves recycling actually
+        // worked rather than secretly growing fresh slabs each cycle.
+        CHECK(allocator.size_classes[0].size() == 1);
+        (void)slots;
+
+        for (u32 i = 0; i < LIVE_AT_ONCE; i++) {
+            allocator.free(live[i]);
+        }
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Unit - SlabAllocator weak refs survive recycle correctly") {
+        // The recycle path's safety relies entirely on the 64-bit random
+        // weak_generation: after a slot is recycled to a new occupant, any
+        // outstanding weak ref to the old occupant must still reject. This
+        // test is the canary for that invariant.
+        RoxyVM vm;
+        REQUIRE(vm_init(&vm, VMConfig()));
+
+        u32 type_id = register_object_type("RecycleProbe", 16, nullptr);
+
+        void* a = object_alloc(&vm, type_id, 16);
+        REQUIRE(a != nullptr);
+        u64 gen_a = weak_ref_create(a);
+        REQUIRE(gen_a != 0);
+        CHECK(weak_ref_valid(a, gen_a));
+
+        object_free(&vm, a);
+        // Slot is now FREE; weak_generation reads as zero, is_alive() false.
+        CHECK(!weak_ref_valid(a, gen_a));
+
+        // Force the freshly-freed slot to be the next pop from the free list
+        // by allocating immediately. Same size class → same slab → recycling
+        // pops the most-recently-freed slot (LIFO).
+        void* b = object_alloc(&vm, type_id, 16);
+        REQUIRE(b != nullptr);
+        CHECK(b == a);  // confirm we actually recycled the slot
+        u64 gen_b = weak_ref_create(b);
+        CHECK(gen_b != 0);
+        CHECK(gen_b != gen_a);  // fresh random gen, distinct from old
+
+        // The old weak ref must now reject: slot reads as alive (b's gen)
+        // but the gen does not match the cached gen_a.
+        CHECK(!weak_ref_valid(a, gen_a));
+        // The new weak ref accepts.
+        CHECK(weak_ref_valid(b, gen_b));
+
+        object_free(&vm, b);
+        vm_destroy(&vm);
+    }
+
+    TEST_CASE("Unit - SlabAllocator reclaim drained slab with FREE slots") {
+        // The old reclaim condition required free_head == 0xFFFFFFFF (every
+        // slot transitioned through ALIVE at least once and stayed
+        // tombstoned). With recycling, a slab can have live_count == 0 while
+        // its free list is non-empty — that case must still be reclaimable,
+        // otherwise drained slabs never release physical memory.
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        u32 slots = calc_slots_per_slab(32);
+        // Use only half the slab capacity, then free all. The slab now has
+        // live_count == 0 with `slots / 2` slots still on the free list
+        // (the other half were never allocated to begin with).
+        u32 used = slots / 2;
+        std::vector<void*> ptrs(used);
+        u64 gen;
+        for (u32 i = 0; i < used; i++) {
+            ptrs[i] = allocator.alloc(32, &gen);
+            REQUIRE(ptrs[i] != nullptr);
+        }
+        for (u32 i = 0; i < used; i++) {
+            allocator.free(ptrs[i]);
+        }
+
+        u32 reclaimed = allocator.reclaim_tombstoned();
+        CHECK(reclaimed > 0);
+
+        // After reclaim, find_or_create_slab must skip the reclaimed slab
+        // (free_head was set to 0xFFFFFFFF). A subsequent alloc creates a
+        // new slab rather than handing out slots from remapped memory.
+        CHECK(allocator.size_classes[0].size() == 1);
+        void* fresh = allocator.alloc(32, &gen);
+        REQUIRE(fresh != nullptr);
+        CHECK(allocator.size_classes[0].size() == 2);
+
+        allocator.free(fresh);
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Stress - SlabAllocator sorted-range index correctness") {
+        // Allocate enough objects across every size class to force creation of
+        // many slabs, then verify both that owns()/free() route every pointer
+        // to the correct slab regardless of insertion vs. address order, and
+        // that pointers strictly outside every slab range are rejected.
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        constexpr u32 SIZE_CLASSES[] = {32, 64, 128, 256, 512, 1024, 2048, 4096};
+        constexpr u32 NUM_CLASSES = sizeof(SIZE_CLASSES) / sizeof(SIZE_CLASSES[0]);
+
+        // Allocate enough per class to force >=3 slabs of each class.
+        std::vector<void*> all_ptrs;
+        std::vector<u32> all_sizes;
+        for (u32 sc = 0; sc < NUM_CLASSES; sc++) {
+            u32 slots = calc_slots_per_slab(SIZE_CLASSES[sc]);
+            u32 to_alloc = slots * 3 + 7;
+            for (u32 i = 0; i < to_alloc; i++) {
+                u64 gen;
+                void* p = allocator.alloc(SIZE_CLASSES[sc], &gen);
+                REQUIRE(p != nullptr);
+                // Stamp size class index into the first byte so we can verify
+                // we read it back after the shuffled-free pass.
+                *static_cast<u8*>(p) = static_cast<u8>(sc);
+                all_ptrs.push_back(p);
+                all_sizes.push_back(SIZE_CLASSES[sc]);
+            }
+        }
+
+        // owns() must accept every live pointer regardless of allocation order.
+        for (size_t i = 0; i < all_ptrs.size(); i++) {
+            CHECK(allocator.owns(all_ptrs[i]));
+        }
+
+        // A stack-allocated pointer must NOT be reported as owned, exercising
+        // the upper_bound boundary at both ends of the sorted index.
+        int stack_var;
+        CHECK(!allocator.owns(&stack_var));
+
+        // Verify in-slab interior pointers route the same as base pointers.
+        // For a 256-byte slot, ptr+128 is still inside the same slab, so
+        // owns() should return true.
+        for (size_t i = 0; i < all_ptrs.size(); i++) {
+            u32 sz = all_sizes[i];
+            if (sz < 16) continue;
+            void* mid = static_cast<u8*>(all_ptrs[i]) + (sz / 2);
+            CHECK(allocator.owns(mid));
+        }
+
+        // Shuffle and free in random order; bug surface is highest when the
+        // free order is not the alloc order, since that's exactly the case
+        // where the old linear scan happened to short-circuit on the first
+        // size-class match by luck.
+        std::mt19937 rng(0xC0FFEE);
+        std::vector<size_t> order(all_ptrs.size());
+        for (size_t i = 0; i < order.size(); i++) order[i] = i;
+        std::shuffle(order.begin(), order.end(), rng);
+
+        for (size_t i : order) {
+            // Confirm the stamp survived between alloc and free — if free()
+            // routed to the wrong slab, the slot would be tombstoned in
+            // someone else's slab and this would mis-account live_count there.
+            CHECK(*static_cast<u8*>(all_ptrs[i]) ==
+                  static_cast<u8>(std::find(std::begin(SIZE_CLASSES),
+                                            std::end(SIZE_CLASSES), all_sizes[i])
+                                  - std::begin(SIZE_CLASSES)));
+            allocator.free(all_ptrs[i]);
+        }
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Stress - SlabAllocator pointer alignment") {
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        // Verify all allocations are properly aligned
+        constexpr u32 NUM_ALLOCS = 1000;
+        std::mt19937 rng(11111);
+        std::uniform_int_distribution<u32> size_dist(1, 4096);
+
+        for (u32 i = 0; i < NUM_ALLOCS; i++) {
+            u32 size = size_dist(rng);
+            u64 gen;
+            void* ptr = allocator.alloc(size, &gen);
+
+            REQUIRE(ptr != nullptr);
+
+            // Check alignment (should be at least 8-byte aligned)
+            uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
+            CHECK((addr % 8) == 0);
+
+            allocator.free(ptr);
+        }
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Stress - SlabAllocator fill entire slab") {
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        // Allocate enough 32-byte objects to fill multiple slabs
+        // Each slab is ~64 slots minimum, so 1000 should create multiple slabs
+        constexpr u32 NUM_ALLOCS = 1000;
+
+        struct AllocInfo {
+            void* ptr;
+            u64 gen;
+            u32 magic;
+        };
+
+        std::vector<AllocInfo> allocs(NUM_ALLOCS);
+
+        for (u32 i = 0; i < NUM_ALLOCS; i++) {
+            allocs[i].magic = 0xCAFE0000 | i;
+            allocs[i].ptr = allocator.alloc(32, &allocs[i].gen);
+            REQUIRE(allocs[i].ptr != nullptr);
+            *static_cast<u32*>(allocs[i].ptr) = allocs[i].magic;
+        }
+
+        // Verify all
+        for (u32 i = 0; i < NUM_ALLOCS; i++) {
+            CHECK(*static_cast<u32*>(allocs[i].ptr) == allocs[i].magic);
+        }
+
+        // Free every other one
+        for (u32 i = 0; i < NUM_ALLOCS; i += 2) {
+            allocator.free(allocs[i].ptr);
+            allocs[i].ptr = nullptr;
+        }
+
+        // Verify remaining
+        for (u32 i = 1; i < NUM_ALLOCS; i += 2) {
+            CHECK(*static_cast<u32*>(allocs[i].ptr) == allocs[i].magic);
+        }
+
+        // Free remaining
+        for (u32 i = 1; i < NUM_ALLOCS; i += 2) {
+            allocator.free(allocs[i].ptr);
+        }
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Stress - ObjectHeader integrity under allocation pressure") {
+        RoxyVM vm;
+        REQUIRE(vm_init(&vm, VMConfig()));
+
+        u32 type_id = register_object_type("IntegrityTest", 128, nullptr);
+
+        constexpr u32 NUM_OBJECTS = 500;
+        struct ObjRecord {
+            void* data;
+            u64 expected_gen;
+            u32 expected_type_id;
+        };
+
+        std::vector<ObjRecord> records(NUM_OBJECTS);
+
+        // Allocate all
+        for (u32 i = 0; i < NUM_OBJECTS; i++) {
+            records[i].data = object_alloc(&vm, type_id, 128);
+            REQUIRE(records[i].data != nullptr);
+
+            ObjectHeader* header = get_header_from_data(records[i].data);
+            records[i].expected_gen = header->weak_generation;
+            records[i].expected_type_id = header->type_id;
+
+            // Verify header state
+            CHECK(is_alive(header));
+            CHECK(header->ref_count == 0);
+            CHECK(header->type_id == type_id);
+        }
+
+        // Verify all headers still intact
+        for (u32 i = 0; i < NUM_OBJECTS; i++) {
+            ObjectHeader* header = get_header_from_data(records[i].data);
+            CHECK(header->weak_generation == records[i].expected_gen);
+            CHECK(header->type_id == records[i].expected_type_id);
+            CHECK(is_alive(header));
+        }
+
+        // Free all
+        for (u32 i = 0; i < NUM_OBJECTS; i++) {
+            object_free(&vm, records[i].data);
+        }
+
+        vm_destroy(&vm);
+    }
+
+    // ============================================================================
+    // Slab Reclamation Tests
+    // ============================================================================
+
+    TEST_CASE("Unit - SlabAllocator reclaim_tombstoned basic") {
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        // Allocate enough objects to COMPLETELY fill at least one slab
+        // Slots per slab varies by platform (page size): 4KB=128 slots, 16KB=512 slots for 32-byte class
+        u32 slots_per_slab = calc_slots_per_slab(32);
+        u32 NUM_OBJECTS = slots_per_slab + 20;  // Fill one slab completely + some extra
+        struct AllocInfo {
+            void* ptr;
+            u64 gen;
+        };
+        std::vector<AllocInfo> allocs(NUM_OBJECTS);
+
+        for (u32 i = 0; i < NUM_OBJECTS; i++) {
+            allocs[i].ptr = allocator.alloc(32, &allocs[i].gen);
+            REQUIRE(allocs[i].ptr != nullptr);
+        }
+
+        // Free all objects (they become tombstoned)
+        for (u32 i = 0; i < NUM_OBJECTS; i++) {
+            allocator.free(allocs[i].ptr);
+        }
+
+        // Reclaim tombstoned slabs - should reclaim at least the fully-filled first slab
+        u32 pages_reclaimed = allocator.reclaim_tombstoned();
+        CHECK(pages_reclaimed > 0);
+
+        // Calling reclaim again should return 0 (already reclaimed)
+        u32 pages_reclaimed_again = allocator.reclaim_tombstoned();
+        CHECK(pages_reclaimed_again == 0);
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Unit - SlabAllocator reclaim_tombstoned with live objects") {
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        // Allocate enough to fill multiple slabs
+        // Slots per slab varies by platform (page size)
+        u32 slots_per_slab = calc_slots_per_slab(32);
+        u32 NUM_OBJECTS = slots_per_slab * 2 + 50;  // Fill 2+ slabs
+        struct AllocInfo {
+            void* ptr;
+            u64 gen;
+        };
+        std::vector<AllocInfo> allocs(NUM_OBJECTS);
+
+        for (u32 i = 0; i < NUM_OBJECTS; i++) {
+            allocs[i].ptr = allocator.alloc(32, &allocs[i].gen);
+            REQUIRE(allocs[i].ptr != nullptr);
+        }
+
+        // Free only the first slab's worth of objects (first slab completely)
+        // Keep some alive in subsequent slabs
+        for (u32 i = 0; i < slots_per_slab; i++) {
+            allocator.free(allocs[i].ptr);
+            allocs[i].ptr = nullptr;
+        }
+
+        // Reclaim should succeed for the first slab (all tombstoned)
+        u32 pages_reclaimed = allocator.reclaim_tombstoned();
+        CHECK(pages_reclaimed > 0);
+
+        // Verify live objects are still accessible
+        for (u32 i = slots_per_slab; i < NUM_OBJECTS; i++) {
+            CHECK(allocs[i].ptr != nullptr);
+            // Write and read to verify memory is still valid
+            *static_cast<u32*>(allocs[i].ptr) = 0xDEADBEEF;
+            CHECK(*static_cast<u32*>(allocs[i].ptr) == 0xDEADBEEF);
+        }
+
+        // Free remaining objects
+        for (u32 i = slots_per_slab; i < NUM_OBJECTS; i++) {
+            allocator.free(allocs[i].ptr);
+        }
+
+        // Now reclaim should reclaim more slabs
+        u32 more_reclaimed = allocator.reclaim_tombstoned();
+        CHECK(more_reclaimed > 0);
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Unit - SlabAllocator reclaim_tombstoned idempotency") {
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        // Allocate enough to fill at least one slab completely
+        u32 slots_per_slab = calc_slots_per_slab(32);
+        u32 NUM_OBJECTS = slots_per_slab + 20;
+        std::vector<void*> ptrs(NUM_OBJECTS);
+        u64 gen;
+
+        for (u32 i = 0; i < NUM_OBJECTS; i++) {
+            ptrs[i] = allocator.alloc(32, &gen);
+            REQUIRE(ptrs[i] != nullptr);
+        }
+
+        // Free all
+        for (u32 i = 0; i < NUM_OBJECTS; i++) {
+            allocator.free(ptrs[i]);
+        }
+
+        // Reclaim multiple times - should be safe
+        u32 pages1 = allocator.reclaim_tombstoned();
+        u32 pages2 = allocator.reclaim_tombstoned();
+        u32 pages3 = allocator.reclaim_tombstoned();
+
+        CHECK(pages1 > 0);
+        CHECK(pages2 == 0);
+        CHECK(pages3 == 0);
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Unit - SlabAllocator reclaim_tombstoned memory still readable") {
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        // Allocate exactly one slab's worth of objects to fill it completely
+        u32 slots_per_slab = calc_slots_per_slab(32);
+        u32 NUM_OBJECTS = slots_per_slab;
+        std::vector<void*> ptrs(NUM_OBJECTS);
+        u64 gen;
+
+        for (u32 i = 0; i < NUM_OBJECTS; i++) {
+            ptrs[i] = allocator.alloc(32, &gen);
+            REQUIRE(ptrs[i] != nullptr);
+            // Write non-zero data
+            std::memset(ptrs[i], 0xAB, 32);
+        }
+
+        // Free all
+        for (u32 i = 0; i < NUM_OBJECTS; i++) {
+            allocator.free(ptrs[i]);
+        }
+
+        // Reclaim tombstoned slabs
+        u32 pages_reclaimed = allocator.reclaim_tombstoned();
+        CHECK(pages_reclaimed > 0);
+
+        // After reclamation, memory should still be readable (for weak ref safety)
+        // The actual content depends on platform - Windows MEM_RESET may or may not
+        // zero memory immediately, but reading should not crash
+        u64 sum = 0;
+        for (u32 i = 0; i < NUM_OBJECTS; i++) {
+            u8* bytes = static_cast<u8*>(ptrs[i]);
+            for (u32 j = 0; j < 32; j++) {
+                sum += bytes[j];  // Just read the memory to verify it's accessible
+            }
+        }
+        // The sum will be something - we just want to verify no crash
+        (void)sum;
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Unit - SlabAllocator reclaim_tombstoned multiple size classes") {
+        SlabAllocator allocator;
+        REQUIRE(allocator.init());
+
+        // Allocate objects in multiple size classes
+        // Slots per slab varies by platform (page size)
+        constexpr u32 SIZE_CLASSES[] = {32, 64, 128, 256};
+        constexpr u32 NUM_CLASSES = sizeof(SIZE_CLASSES) / sizeof(SIZE_CLASSES[0]);
+
+        std::vector<std::vector<void*>> allocs(NUM_CLASSES);
+        u64 gen;
+
+        for (u32 c = 0; c < NUM_CLASSES; c++) {
+            // Calculate how many objects needed to fill at least one slab for this size class
+            u32 slots_per_slab = calc_slots_per_slab(SIZE_CLASSES[c]);
+            u32 objects_to_alloc = slots_per_slab + 20;  // Fill one slab + extra
+            allocs[c].resize(objects_to_alloc);
+            for (u32 i = 0; i < objects_to_alloc; i++) {
+                allocs[c][i] = allocator.alloc(SIZE_CLASSES[c], &gen);
+                REQUIRE(allocs[c][i] != nullptr);
+            }
+        }
+
+        // Free all objects in all size classes
+        for (u32 c = 0; c < NUM_CLASSES; c++) {
+            for (u32 i = 0; i < allocs[c].size(); i++) {
+                allocator.free(allocs[c][i]);
+            }
+        }
+
+        // Reclaim should reclaim slabs from all size classes
+        u32 pages_reclaimed = allocator.reclaim_tombstoned();
+        CHECK(pages_reclaimed > 0);
+
+        // Second call should return 0
+        u32 pages_again = allocator.reclaim_tombstoned();
+        CHECK(pages_again == 0);
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Stress - Concurrent-like access pattern simulation") {
+        // Simulate what might happen with multiple "threads" (sequentially)
+        // Each "thread" has its own set of objects it manages
+        RoxyVM vm;
+        REQUIRE(vm_init(&vm, VMConfig()));
+
+        u32 type_id = register_object_type("ThreadSimObject", 32, nullptr);
+
+        constexpr u32 NUM_THREADS = 4;
+        constexpr u32 OBJECTS_PER_THREAD = 100;
+        constexpr u32 ITERATIONS = 50;
+
+        struct ThreadState {
+            std::vector<void*> objects;
+            std::vector<u64> generations;
+        };
+
+        std::array<ThreadState, NUM_THREADS> threads;
+        std::mt19937 rng(99999);
+
+        // Initial allocation for each "thread"
+        for (u32 t = 0; t < NUM_THREADS; t++) {
+            threads[t].objects.resize(OBJECTS_PER_THREAD);
+            threads[t].generations.resize(OBJECTS_PER_THREAD);
+            for (u32 i = 0; i < OBJECTS_PER_THREAD; i++) {
+                threads[t].objects[i] = object_alloc(&vm, type_id, 32);
+                REQUIRE(threads[t].objects[i] != nullptr);
+                threads[t].generations[i] = weak_ref_create(threads[t].objects[i]);
+            }
+        }
+
+        // Simulate interleaved operations
+        for (u32 iter = 0; iter < ITERATIONS; iter++) {
+            // Each thread does some work
+            for (u32 t = 0; t < NUM_THREADS; t++) {
+                // Pick a random object in this thread
+                u32 idx = rng() % OBJECTS_PER_THREAD;
+
+                if (threads[t].objects[idx] != nullptr) {
+                    // Verify weak ref still valid
+                    CHECK(weak_ref_valid(threads[t].objects[idx], threads[t].generations[idx]));
+
+                    // 30% chance to free and reallocate
+                    if (rng() % 100 < 30) {
+                        object_free(&vm, threads[t].objects[idx]);
+
+                        // Verify weak ref now invalid
+                        CHECK(!weak_ref_valid(threads[t].objects[idx], threads[t].generations[idx]));
+
+                        // Reallocate
+                        threads[t].objects[idx] = object_alloc(&vm, type_id, 32);
+                        REQUIRE(threads[t].objects[idx] != nullptr);
+                        threads[t].generations[idx] = weak_ref_create(threads[t].objects[idx]);
+                    }
+                }
+            }
+
+            // Cross-thread verification: check other threads' objects are still valid
+            for (u32 t = 0; t < NUM_THREADS; t++) {
+                for (u32 i = 0; i < OBJECTS_PER_THREAD; i++) {
+                    if (threads[t].objects[i] != nullptr) {
+                        CHECK(weak_ref_valid(threads[t].objects[i], threads[t].generations[i]));
+                    }
+                }
+            }
+        }
+
+        // Cleanup
         for (u32 t = 0; t < NUM_THREADS; t++) {
             for (u32 i = 0; i < OBJECTS_PER_THREAD; i++) {
                 if (threads[t].objects[i] != nullptr) {
-                    CHECK(weak_ref_valid(threads[t].objects[i], threads[t].generations[i]));
+                    object_free(&vm, threads[t].objects[i]);
                 }
             }
         }
+
+        vm_destroy(&vm);
     }
 
-    // Cleanup
-    for (u32 t = 0; t < NUM_THREADS; t++) {
-        for (u32 i = 0; i < OBJECTS_PER_THREAD; i++) {
-            if (threads[t].objects[i] != nullptr) {
-                object_free(&vm, threads[t].objects[i]);
-            }
-        }
-    }
-
-    vm_destroy(&vm);
-}
+}  // TEST_SUITE("Slab Allocator")

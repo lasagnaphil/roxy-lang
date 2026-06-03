@@ -66,164 +66,166 @@ struct SemanticTestHelper {
 // Type System Tests
 // ============================================================================
 
-TEST_CASE("Types: Primitive type creation") {
-    BumpAllocator allocator{1024};
-    TypeCache types(allocator);
+TEST_SUITE("Semantic") {
 
-    CHECK(types.void_type()->kind == TypeKind::Void);
-    CHECK(types.bool_type()->kind == TypeKind::Bool);
-    CHECK(types.i32_type()->kind == TypeKind::I32);
-    CHECK(types.i64_type()->kind == TypeKind::I64);
-    CHECK(types.f32_type()->kind == TypeKind::F32);
-    CHECK(types.f64_type()->kind == TypeKind::F64);
-    CHECK(types.string_type()->kind == TypeKind::String);
-    CHECK(types.nil_type()->kind == TypeKind::Nil);
-    CHECK(types.error_type()->kind == TypeKind::Error);
-}
+    TEST_CASE("Types: Primitive type creation") {
+        BumpAllocator allocator{1024};
+        TypeCache types(allocator);
 
-TEST_CASE("Types: Primitive type lookup by name") {
-    BumpAllocator allocator{1024};
-    TypeCache types(allocator);
+        CHECK(types.void_type()->kind == TypeKind::Void);
+        CHECK(types.bool_type()->kind == TypeKind::Bool);
+        CHECK(types.i32_type()->kind == TypeKind::I32);
+        CHECK(types.i64_type()->kind == TypeKind::I64);
+        CHECK(types.f32_type()->kind == TypeKind::F32);
+        CHECK(types.f64_type()->kind == TypeKind::F64);
+        CHECK(types.string_type()->kind == TypeKind::String);
+        CHECK(types.nil_type()->kind == TypeKind::Nil);
+        CHECK(types.error_type()->kind == TypeKind::Error);
+    }
 
-    CHECK(types.primitive_by_name("void") == types.void_type());
-    CHECK(types.primitive_by_name("bool") == types.bool_type());
-    CHECK(types.primitive_by_name("i32") == types.i32_type());
-    CHECK(types.primitive_by_name("f64") == types.f64_type());
-    CHECK(types.primitive_by_name("string") == types.string_type());
-    CHECK(types.primitive_by_name("unknown") == nullptr);
-}
+    TEST_CASE("Types: Primitive type lookup by name") {
+        BumpAllocator allocator{1024};
+        TypeCache types(allocator);
 
-TEST_CASE("Types: List type interning") {
-    BumpAllocator allocator{1024};
-    TypeCache types(allocator);
+        CHECK(types.primitive_by_name("void") == types.void_type());
+        CHECK(types.primitive_by_name("bool") == types.bool_type());
+        CHECK(types.primitive_by_name("i32") == types.i32_type());
+        CHECK(types.primitive_by_name("f64") == types.f64_type());
+        CHECK(types.primitive_by_name("string") == types.string_type());
+        CHECK(types.primitive_by_name("unknown") == nullptr);
+    }
 
-    Type* lst1 = types.list_type(types.i32_type());
-    Type* lst2 = types.list_type(types.i32_type());
-    Type* lst3 = types.list_type(types.f64_type());
+    TEST_CASE("Types: List type interning") {
+        BumpAllocator allocator{1024};
+        TypeCache types(allocator);
 
-    CHECK(lst1 == lst2);  // Same element type -> same interned type
-    CHECK(lst1 != lst3);  // Different element type -> different type
-    CHECK(lst1->kind == TypeKind::List);
-    CHECK(lst1->list_info.element_type == types.i32_type());
-}
+        Type* lst1 = types.list_type(types.i32_type());
+        Type* lst2 = types.list_type(types.i32_type());
+        Type* lst3 = types.list_type(types.f64_type());
 
-TEST_CASE("Types: Reference type interning") {
-    BumpAllocator allocator{1024};
-    TypeCache types(allocator);
+        CHECK(lst1 == lst2);  // Same element type -> same interned type
+        CHECK(lst1 != lst3);  // Different element type -> different type
+        CHECK(lst1->kind == TypeKind::List);
+        CHECK(lst1->list_info.element_type == types.i32_type());
+    }
 
-    Type* uniq1 = types.uniq_type(types.i32_type());
-    Type* uniq2 = types.uniq_type(types.i32_type());
-    Type* ref1 = types.ref_type(types.i32_type());
+    TEST_CASE("Types: Reference type interning") {
+        BumpAllocator allocator{1024};
+        TypeCache types(allocator);
 
-    CHECK(uniq1 == uniq2);  // Same kind and inner -> interned
-    CHECK(uniq1 != ref1);   // Different kind
-    CHECK(uniq1->kind == TypeKind::Uniq);
-    CHECK(ref1->kind == TypeKind::Ref);
-}
+        Type* uniq1 = types.uniq_type(types.i32_type());
+        Type* uniq2 = types.uniq_type(types.i32_type());
+        Type* ref1 = types.ref_type(types.i32_type());
 
-TEST_CASE("Types: Type helper methods") {
-    BumpAllocator allocator{1024};
-    TypeCache types(allocator);
+        CHECK(uniq1 == uniq2);  // Same kind and inner -> interned
+        CHECK(uniq1 != ref1);   // Different kind
+        CHECK(uniq1->kind == TypeKind::Uniq);
+        CHECK(ref1->kind == TypeKind::Ref);
+    }
 
-    CHECK(types.i32_type()->is_integer());
-    CHECK(types.i32_type()->is_signed_integer());
-    CHECK(types.u64_type()->is_unsigned_integer());
-    CHECK(types.f32_type()->is_float());
-    CHECK(types.f64_type()->is_numeric());
-    CHECK(types.i32_type()->is_numeric());
-    CHECK(!types.bool_type()->is_numeric());
+    TEST_CASE("Types: Type helper methods") {
+        BumpAllocator allocator{1024};
+        TypeCache types(allocator);
 
-    Type* uniq = types.uniq_type(types.i32_type());
-    CHECK(uniq->is_reference());
-    CHECK(uniq->inner_type() == types.i32_type());
-    CHECK(uniq->base_type() == types.i32_type());
-}
+        CHECK(types.i32_type()->is_integer());
+        CHECK(types.i32_type()->is_signed_integer());
+        CHECK(types.u64_type()->is_unsigned_integer());
+        CHECK(types.f32_type()->is_float());
+        CHECK(types.f64_type()->is_numeric());
+        CHECK(types.i32_type()->is_numeric());
+        CHECK(!types.bool_type()->is_numeric());
 
-// ============================================================================
-// Symbol Table Tests
-// ============================================================================
+        Type* uniq = types.uniq_type(types.i32_type());
+        CHECK(uniq->is_reference());
+        CHECK(uniq->inner_type() == types.i32_type());
+        CHECK(uniq->base_type() == types.i32_type());
+    }
 
-TEST_CASE("SymbolTable: Basic scope management") {
-    BumpAllocator allocator{1024};
-    TypeCache types(allocator);
-    SymbolTable symbols(allocator);
+    // ============================================================================
+    // Symbol Table Tests
+    // ============================================================================
 
-    SourceLocation loc = {0, 1, 1};
+    TEST_CASE("SymbolTable: Basic scope management") {
+        BumpAllocator allocator{1024};
+        TypeCache types(allocator);
+        SymbolTable symbols(allocator);
 
-    // Define in global scope
-    Symbol* x = symbols.define(SymbolKind::Variable, "x", types.i32_type(), loc);
-    CHECK(x != nullptr);
-    CHECK(symbols.lookup("x") == x);
+        SourceLocation loc = {0, 1, 1};
 
-    // Push a new scope
-    symbols.push_scope(ScopeKind::Block);
+        // Define in global scope
+        Symbol* x = symbols.define(SymbolKind::Variable, "x", types.i32_type(), loc);
+        CHECK(x != nullptr);
+        CHECK(symbols.lookup("x") == x);
 
-    // Still visible
-    CHECK(symbols.lookup("x") == x);
+        // Push a new scope
+        symbols.push_scope(ScopeKind::Block);
 
-    // Define in inner scope (shadows outer)
-    Symbol* x2 = symbols.define(SymbolKind::Variable, "x", types.f64_type(), loc);
-    CHECK(symbols.lookup("x") == x2);
-    CHECK(x2->type == types.f64_type());
+        // Still visible
+        CHECK(symbols.lookup("x") == x);
 
-    // Pop scope, original visible again
-    symbols.pop_scope();
-    CHECK(symbols.lookup("x") == x);
-    CHECK(symbols.lookup("x")->type == types.i32_type());
-}
+        // Define in inner scope (shadows outer)
+        Symbol* x2 = symbols.define(SymbolKind::Variable, "x", types.f64_type(), loc);
+        CHECK(symbols.lookup("x") == x2);
+        CHECK(x2->type == types.f64_type());
 
-TEST_CASE("SymbolTable: Function scope") {
-    BumpAllocator allocator{1024};
-    TypeCache types(allocator);
-    SymbolTable symbols(allocator);
+        // Pop scope, original visible again
+        symbols.pop_scope();
+        CHECK(symbols.lookup("x") == x);
+        CHECK(symbols.lookup("x")->type == types.i32_type());
+    }
 
-    CHECK(!symbols.is_in_function());
+    TEST_CASE("SymbolTable: Function scope") {
+        BumpAllocator allocator{1024};
+        TypeCache types(allocator);
+        SymbolTable symbols(allocator);
 
-    symbols.push_function_scope(types.i32_type());
-    CHECK(symbols.is_in_function());
-    CHECK(symbols.current_return_type() == types.i32_type());
+        CHECK(!symbols.is_in_function());
 
-    symbols.pop_scope();
-    CHECK(!symbols.is_in_function());
-}
+        symbols.push_function_scope(types.i32_type());
+        CHECK(symbols.is_in_function());
+        CHECK(symbols.current_return_type() == types.i32_type());
 
-TEST_CASE("SymbolTable: Loop scope") {
-    BumpAllocator allocator{1024};
-    TypeCache types(allocator);
-    SymbolTable symbols(allocator);
+        symbols.pop_scope();
+        CHECK(!symbols.is_in_function());
+    }
 
-    CHECK(!symbols.is_in_loop());
+    TEST_CASE("SymbolTable: Loop scope") {
+        BumpAllocator allocator{1024};
+        TypeCache types(allocator);
+        SymbolTable symbols(allocator);
 
-    symbols.push_loop_scope();
-    CHECK(symbols.is_in_loop());
+        CHECK(!symbols.is_in_loop());
 
-    symbols.push_scope(ScopeKind::Block);
-    CHECK(symbols.is_in_loop());  // Still in loop, nested block
+        symbols.push_loop_scope();
+        CHECK(symbols.is_in_loop());
 
-    symbols.pop_scope();
-    symbols.pop_scope();
-    CHECK(!symbols.is_in_loop());
-}
+        symbols.push_scope(ScopeKind::Block);
+        CHECK(symbols.is_in_loop());  // Still in loop, nested block
 
-// ============================================================================
-// Semantic Analysis Tests - Valid Code
-// ============================================================================
+        symbols.pop_scope();
+        symbols.pop_scope();
+        CHECK(!symbols.is_in_loop());
+    }
 
-TEST_CASE("Semantic: Variable declaration with type") {
-    SemanticTestHelper t;
-    CHECK(t.run("var x: i32 = 42;"));
-    CHECK(t.error_count() == 0);
-}
+    // ============================================================================
+    // Semantic Analysis Tests - Valid Code
+    // ============================================================================
 
-TEST_CASE("Semantic: Variable declaration with type inference") {
-    SemanticTestHelper t;
-    CHECK(t.run("var x = 42;"));
-    CHECK(t.error_count() == 0);
-}
+    TEST_CASE("Semantic: Variable declaration with type") {
+        SemanticTestHelper t;
+        CHECK(t.run("var x: i32 = 42;"));
+        CHECK(t.error_count() == 0);
+    }
 
-TEST_CASE("Semantic: Function declaration and call") {
-    SemanticTestHelper t;
-    CHECK(t.run(R"(
+    TEST_CASE("Semantic: Variable declaration with type inference") {
+        SemanticTestHelper t;
+        CHECK(t.run("var x = 42;"));
+        CHECK(t.error_count() == 0);
+    }
+
+    TEST_CASE("Semantic: Function declaration and call") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
         fun add(a: i32, b: i32): i32 {
             return a + b;
         }
@@ -232,35 +234,35 @@ TEST_CASE("Semantic: Function declaration and call") {
             var result = add(1, 2);
         }
     )"));
-    CHECK(t.error_count() == 0);
-}
+        CHECK(t.error_count() == 0);
+    }
 
-TEST_CASE("Semantic: Struct declaration") {
-    SemanticTestHelper t;
-    CHECK(t.run(R"(
+    TEST_CASE("Semantic: Struct declaration") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
         struct Point {
             x: f32;
             y: f32;
         }
     )"));
-    CHECK(t.error_count() == 0);
-}
+        CHECK(t.error_count() == 0);
+    }
 
-TEST_CASE("Semantic: Enum declaration") {
-    SemanticTestHelper t;
-    CHECK(t.run(R"(
+    TEST_CASE("Semantic: Enum declaration") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
         enum Color {
             Red,
             Green,
             Blue
         }
     )"));
-    CHECK(t.error_count() == 0);
-}
+        CHECK(t.error_count() == 0);
+    }
 
-TEST_CASE("Semantic: Control flow statements") {
-    SemanticTestHelper t;
-    CHECK(t.run(R"(
+    TEST_CASE("Semantic: Control flow statements") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
         fun test(x: i32): i32 {
             if (x > 0) {
                 return 1;
@@ -269,12 +271,12 @@ TEST_CASE("Semantic: Control flow statements") {
             }
         }
     )"));
-    CHECK(t.error_count() == 0);
-}
+        CHECK(t.error_count() == 0);
+    }
 
-TEST_CASE("Semantic: While loop") {
-    SemanticTestHelper t;
-    CHECK(t.run(R"(
+    TEST_CASE("Semantic: While loop") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
         fun countdown(n: i32) {
             var i = n;
             while (i > 0) {
@@ -282,12 +284,12 @@ TEST_CASE("Semantic: While loop") {
             }
         }
     )"));
-    CHECK(t.error_count() == 0);
-}
+        CHECK(t.error_count() == 0);
+    }
 
-TEST_CASE("Semantic: For loop") {
-    SemanticTestHelper t;
-    CHECK(t.run(R"(
+    TEST_CASE("Semantic: For loop") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
         fun sum(n: i32): i32 {
             var result = 0;
             for (var i = 0; i < n; i = i + 1) {
@@ -296,12 +298,12 @@ TEST_CASE("Semantic: For loop") {
             return result;
         }
     )"));
-    CHECK(t.error_count() == 0);
-}
+        CHECK(t.error_count() == 0);
+    }
 
-TEST_CASE("Semantic: Break and continue in loops") {
-    SemanticTestHelper t;
-    CHECK(t.run(R"(
+    TEST_CASE("Semantic: Break and continue in loops") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
         fun test() {
             while (true) {
                 break;
@@ -313,22 +315,22 @@ TEST_CASE("Semantic: Break and continue in loops") {
             }
         }
     )"));
-    CHECK(t.error_count() == 0);
-}
+        CHECK(t.error_count() == 0);
+    }
 
-TEST_CASE("Semantic: List indexing") {
-    SemanticTestHelper t;
-    CHECK(t.run(R"(
+    TEST_CASE("Semantic: List indexing") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
         fun test(lst: List<i32>): i32 {
             return lst[0];
         }
     )"));
-    CHECK(t.error_count() == 0);
-}
+        CHECK(t.error_count() == 0);
+    }
 
-TEST_CASE("Semantic: Binary operators") {
-    SemanticTestHelper t;
-    CHECK(t.run(R"(
+    TEST_CASE("Semantic: Binary operators") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
         fun test() {
             var a = 1 + 2;
             var b = 3.14 * 2.0;
@@ -337,104 +339,104 @@ TEST_CASE("Semantic: Binary operators") {
             var e = 0xFF & 0x0F;
         }
     )"));
-    CHECK(t.error_count() == 0);
-}
+        CHECK(t.error_count() == 0);
+    }
 
-TEST_CASE("Semantic: Unary operators") {
-    SemanticTestHelper t;
-    CHECK(t.run(R"(
+    TEST_CASE("Semantic: Unary operators") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
         fun test() {
             var a = -42;
             var b = !true;
             var c = ~0xFF;
         }
     )"));
-    CHECK(t.error_count() == 0);
-}
+        CHECK(t.error_count() == 0);
+    }
 
-TEST_CASE("Semantic: Ternary expression") {
-    SemanticTestHelper t;
-    CHECK(t.run(R"(
+    TEST_CASE("Semantic: Ternary expression") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
         fun max(a: i32, b: i32): i32 {
             return a > b ? a : b;
         }
     )"));
-    CHECK(t.error_count() == 0);
-}
+        CHECK(t.error_count() == 0);
+    }
 
-// ============================================================================
-// Semantic Analysis Tests - Error Detection
-// ============================================================================
+    // ============================================================================
+    // Semantic Analysis Tests - Error Detection
+    // ============================================================================
 
-TEST_CASE("Semantic Error: Undefined identifier") {
-    SemanticTestHelper t;
-    CHECK(!t.run("var x = undefined_var;"));
-    CHECK(t.has_error_containing("undefined"));
-}
+    TEST_CASE("Semantic Error: Undefined identifier") {
+        SemanticTestHelper t;
+        CHECK(!t.run("var x = undefined_var;"));
+        CHECK(t.has_error_containing("undefined"));
+    }
 
-TEST_CASE("Semantic Error: Type mismatch in assignment") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Type mismatch in assignment") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun test() {
             var x: i32 = "hello";
         }
     )"));
-    CHECK(t.has_error_containing("cannot assign"));
-}
+        CHECK(t.has_error_containing("cannot assign"));
+    }
 
-TEST_CASE("Semantic Error: Non-boolean condition") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Non-boolean condition") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun test() {
             if (42) {}
         }
     )"));
-    CHECK(t.has_error_containing("boolean"));
-}
+        CHECK(t.has_error_containing("boolean"));
+    }
 
-TEST_CASE("Semantic Error: Break outside loop") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Break outside loop") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun test() {
             break;
         }
     )"));
-    CHECK(t.has_error_containing("outside of loop"));
-}
+        CHECK(t.has_error_containing("outside of loop"));
+    }
 
-TEST_CASE("Semantic Error: Continue outside loop") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Continue outside loop") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun test() {
             continue;
         }
     )"));
-    CHECK(t.has_error_containing("outside of loop"));
-}
+        CHECK(t.has_error_containing("outside of loop"));
+    }
 
-TEST_CASE("Semantic Error: Return type mismatch") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Return type mismatch") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun test(): i32 {
             return "hello";
         }
     )"));
-    CHECK(t.has_error_containing("cannot assign"));
-}
+        CHECK(t.has_error_containing("cannot assign"));
+    }
 
-TEST_CASE("Semantic Error: Non-void function without return value") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Non-void function without return value") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun test(): i32 {
             return;
         }
     )"));
-    CHECK(t.has_error_containing("must return a value"));
-}
+        CHECK(t.has_error_containing("must return a value"));
+    }
 
-TEST_CASE("Semantic Error: Wrong argument count") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Wrong argument count") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun add(a: i32, b: i32): i32 {
             return a + b;
         }
@@ -443,182 +445,182 @@ TEST_CASE("Semantic Error: Wrong argument count") {
             var x = add(1);
         }
     )"));
-    CHECK(t.has_error_containing("arguments"));
-}
+        CHECK(t.has_error_containing("arguments"));
+    }
 
-TEST_CASE("Semantic Error: Duplicate type declaration") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Duplicate type declaration") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         struct Foo {}
         struct Foo {}
     )"));
-    CHECK(t.has_error_containing("duplicate"));
-}
+        CHECK(t.has_error_containing("duplicate"));
+    }
 
-TEST_CASE("Semantic Error: Duplicate variable in same scope") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Duplicate variable in same scope") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun test() {
             var x = 1;
             var x = 2;
         }
     )"));
-    CHECK(t.has_error_containing("redefinition"));
-}
+        CHECK(t.has_error_containing("redefinition"));
+    }
 
-TEST_CASE("Semantic Error: Unknown type") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Unknown type") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         var x: UnknownType = nil;
     )"));
-    CHECK(t.has_error_containing("unknown type"));
-}
+        CHECK(t.has_error_containing("unknown type"));
+    }
 
-TEST_CASE("Semantic Error: Unknown parent type") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Unknown parent type") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         struct Child : UnknownParent {}
     )"));
-    CHECK(t.has_error_containing("unknown parent"));
-}
+        CHECK(t.has_error_containing("unknown parent"));
+    }
 
-TEST_CASE("Semantic Error: Ref in struct field") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Ref in struct field") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         struct Node {
             next: ref Node;
         }
     )"));
-    CHECK(t.has_error_containing("ref"));
-}
+        CHECK(t.has_error_containing("ref"));
+    }
 
-TEST_CASE("Semantic Error: Delete on non-uniq") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Delete on non-uniq") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun test() {
             var x: i32 = 42;
             delete x;
         }
     )"));
-    CHECK(t.has_error_containing("uniq"));
-}
+        CHECK(t.has_error_containing("uniq"));
+    }
 
-TEST_CASE("Semantic Error: Indexing non-list") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Indexing non-list") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun test() {
             var x: i32 = 42;
             var y = x[0];
         }
     )"));
-    CHECK(t.has_error_containing("index"));
-}
+        CHECK(t.has_error_containing("index"));
+    }
 
-TEST_CASE("Semantic Error: Member access on non-struct") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Member access on non-struct") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun test() {
             var x: i32 = 42;
             var y = x.field;
         }
     )"));
-    CHECK(t.has_error_containing("non-struct"));
-}
+        CHECK(t.has_error_containing("non-struct"));
+    }
 
-TEST_CASE("Semantic Error: Unknown struct field") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Unknown struct field") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         struct Point { x: f32; y: f32; }
         fun test(p: Point) {
             var z = p.z;
         }
     )"));
-    CHECK(t.has_error_containing("no member"));
-}
+        CHECK(t.has_error_containing("no member"));
+    }
 
-TEST_CASE("Semantic Error: Calling non-callable") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Calling non-callable") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun test() {
             var x: i32 = 42;
             x();
         }
     )"));
-    CHECK(t.has_error_containing("not callable"));
-}
+        CHECK(t.has_error_containing("not callable"));
+    }
 
-TEST_CASE("Semantic Error: Arithmetic on non-numeric") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Arithmetic on non-numeric") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun test() {
             var x = true + false;
         }
     )"));
-    CHECK(t.has_error_containing("invalid operands"));
-}
+        CHECK(t.has_error_containing("invalid operands"));
+    }
 
-TEST_CASE("Semantic Error: Assignment to non-lvalue") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Assignment to non-lvalue") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun test() {
             1 + 2 = 3;
         }
     )"));
-    CHECK(t.has_error_containing("lvalue"));
-}
+        CHECK(t.has_error_containing("lvalue"));
+    }
 
-TEST_CASE("Semantic Error: Variable without type or initializer") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic Error: Variable without type or initializer") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         fun test() {
             var x;
         }
     )"));
-    CHECK(t.error_count() > 0);
-}
+        CHECK(t.error_count() > 0);
+    }
 
-// ============================================================================
-// Reference Type Tests
-// ============================================================================
+    // ============================================================================
+    // Reference Type Tests
+    // ============================================================================
 
-TEST_CASE("Semantic: Uniq type creation with uniq") {
-    SemanticTestHelper t;
-    CHECK(t.run(R"(
+    TEST_CASE("Semantic: Uniq type creation with uniq") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
         struct Point { x: f32; y: f32; }
         fun test() {
             var p: uniq Point = uniq Point();
             delete p;
         }
     )"));
-    CHECK(t.error_count() == 0);
-}
+        CHECK(t.error_count() == 0);
+    }
 
-TEST_CASE("Semantic: Stack type creation") {
-    SemanticTestHelper t;
-    CHECK(t.run(R"(
+    TEST_CASE("Semantic: Stack type creation") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
         struct Point { x: f32; y: f32; }
         fun test() {
             var p: Point = Point();
         }
     )"));
-    CHECK(t.error_count() == 0);
-}
+        CHECK(t.error_count() == 0);
+    }
 
-TEST_CASE("Semantic: Constructor call with args but no constructor") {
-    SemanticTestHelper t;
-    CHECK(!t.run(R"(
+    TEST_CASE("Semantic: Constructor call with args but no constructor") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
         struct Point { x: f32; y: f32; }
         fun test() {
             var p: uniq Point = uniq Point(1.0, 2.0);
         }
     )"));
-    CHECK(t.error_count() == 1);
-    CHECK(t.has_error_containing("has no constructor"));
-}
+        CHECK(t.error_count() == 1);
+        CHECK(t.has_error_containing("has no constructor"));
+    }
 
-TEST_CASE("Semantic: Struct inheritance") {
-    SemanticTestHelper t;
-    CHECK(t.run(R"(
+    TEST_CASE("Semantic: Struct inheritance") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
         struct Animal {
             name: string;
         }
@@ -626,37 +628,39 @@ TEST_CASE("Semantic: Struct inheritance") {
             breed: string;
         }
     )"));
-    CHECK(t.error_count() == 0);
-}
-
-// ============================================================================
-// Type String Tests
-// ============================================================================
-
-TEST_CASE("Types: type_to_string") {
-    BumpAllocator allocator{1024};
-    TypeCache types(allocator);
-
-    SUBCASE("Primitive types") {
-        String out;
-        type_to_string(types.i32_type(), out);
-        out.push_back('\0');
-        CHECK(strcmp(out.data(), "i32") == 0);
+        CHECK(t.error_count() == 0);
     }
 
-    SUBCASE("List types") {
-        String out;
-        Type* lst = types.list_type(types.f64_type());
-        type_to_string(lst, out);
-        out.push_back('\0');
-        CHECK(strcmp(out.data(), "List<f64>") == 0);
+    // ============================================================================
+    // Type String Tests
+    // ============================================================================
+
+    TEST_CASE("Types: type_to_string") {
+        BumpAllocator allocator{1024};
+        TypeCache types(allocator);
+
+        SUBCASE("Primitive types") {
+            String out;
+            type_to_string(types.i32_type(), out);
+            out.push_back('\0');
+            CHECK(strcmp(out.data(), "i32") == 0);
+        }
+
+        SUBCASE("List types") {
+            String out;
+            Type* lst = types.list_type(types.f64_type());
+            type_to_string(lst, out);
+            out.push_back('\0');
+            CHECK(strcmp(out.data(), "List<f64>") == 0);
+        }
+
+        SUBCASE("Reference types") {
+            String out;
+            Type* uniq = types.uniq_type(types.i32_type());
+            type_to_string(uniq, out);
+            out.push_back('\0');
+            CHECK(strcmp(out.data(), "uniq i32") == 0);
+        }
     }
 
-    SUBCASE("Reference types") {
-        String out;
-        Type* uniq = types.uniq_type(types.i32_type());
-        type_to_string(uniq, out);
-        out.push_back('\0');
-        CHECK(strcmp(out.data(), "uniq i32") == 0);
-    }
-}
+}  // TEST_SUITE("Semantic")
