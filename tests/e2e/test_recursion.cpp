@@ -7,8 +7,10 @@ using namespace rx;
 // Recursive Function Tests
 // ============================================================================
 
-TEST_CASE("E2E - Factorial (recursive)") {
-    const char* source = R"(
+TEST_SUITE("E2E Recursion") {
+
+    TEST_CASE("Factorial (recursive)") {
+        const char* source = R"(
         fun factorial(n: i32): i32 {
             if (n <= 1) {
                 return 1;
@@ -25,13 +27,13 @@ TEST_CASE("E2E - Factorial (recursive)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n1\n120\n3628800\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n1\n120\n3628800\n");
+    }
 
-TEST_CASE("E2E - Fibonacci (recursive)") {
-    const char* source = R"(
+    TEST_CASE("Fibonacci (recursive)") {
+        const char* source = R"(
         fun fib(n: i32): i32 {
             if (n <= 1) {
                 return n;
@@ -48,13 +50,13 @@ TEST_CASE("E2E - Fibonacci (recursive)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "0\n1\n55\n610\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "0\n1\n55\n610\n");
+    }
 
-TEST_CASE("E2E - GCD (Euclidean algorithm)") {
-    const char* source = R"(
+    TEST_CASE("GCD (Euclidean algorithm)") {
+        const char* source = R"(
         fun gcd(a: i32, b: i32): i32 {
             if (b == 0) {
                 return a;
@@ -71,14 +73,14 @@ TEST_CASE("E2E - GCD (Euclidean algorithm)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // gcd(48,18)=6, gcd(100,35)=5, gcd(17,13)=1, gcd(12,12)=12
-    CHECK(result.stdout_output == "6\n5\n1\n12\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // gcd(48,18)=6, gcd(100,35)=5, gcd(17,13)=1, gcd(12,12)=12
+        CHECK(result.stdout_output == "6\n5\n1\n12\n");
+    }
 
-TEST_CASE("E2E - Power function (recursive)") {
-    const char* source = R"(
+    TEST_CASE("Power function (recursive)") {
+        const char* source = R"(
         fun power(base: i32, exp: i32): i32 {
             if (exp == 0) {
                 return 1;
@@ -94,18 +96,18 @@ TEST_CASE("E2E - Power function (recursive)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // 2^0=1, 2^10=1024, 3^5=243
-    CHECK(result.stdout_output == "1\n1024\n243\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // 2^0=1, 2^10=1024, 3^5=243
+        CHECK(result.stdout_output == "1\n1024\n243\n");
+    }
 
-// ============================================================================
-// Multiple Functions Tests
-// ============================================================================
+    // ============================================================================
+    // Multiple Functions Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Simple function call") {
-    const char* source = R"(
+    TEST_CASE("Simple function call") {
+        const char* source = R"(
         fun square(x: i32): i32 {
             return x * x;
         }
@@ -116,13 +118,13 @@ TEST_CASE("E2E - Simple function call") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "25\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "25\n");
+    }
 
-TEST_CASE("E2E - Multiple functions calling each other") {
-    const char* source = R"(
+    TEST_CASE("Multiple functions calling each other") {
+        const char* source = R"(
         fun square(x: i32): i32 {
             return x * x;
         }
@@ -137,14 +139,14 @@ TEST_CASE("E2E - Multiple functions calling each other") {
         }
     )";
 
-    // 3^2 + 4^2 = 9 + 16 = 25
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "25\n");
-}
+        // 3^2 + 4^2 = 9 + 16 = 25
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "25\n");
+    }
 
-TEST_CASE("E2E - Mutual recursion") {
-    const char* source = R"(
+    TEST_CASE("Mutual recursion") {
+        const char* source = R"(
         fun is_even(n: i32): i32 {
             if (n == 0) {
                 return 1;
@@ -168,8 +170,10 @@ TEST_CASE("E2E - Mutual recursion") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // is_even(0)=1, is_even(4)=1, is_even(7)=0, is_odd(5)=1
-    CHECK(result.stdout_output == "1\n1\n0\n1\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // is_even(0)=1, is_even(4)=1, is_even(7)=0, is_odd(5)=1
+        CHECK(result.stdout_output == "1\n1\n0\n1\n");
+    }
+
+}  // TEST_SUITE("E2E Recursion")

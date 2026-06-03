@@ -10,8 +10,10 @@ using namespace rx;
 // Heap Allocation Tests - Basic New/Delete
 // ============================================================================
 
-TEST_CASE("E2E - Heap allocation basic") {
-    const char* source = R"(
+TEST_SUITE("E2E Heap") {
+
+    TEST_CASE("Heap allocation basic") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -27,13 +29,13 @@ TEST_CASE("E2E - Heap allocation basic") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 30);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 30);
+    }
 
-TEST_CASE("E2E - Heap allocation with print") {
-    const char* source = R"(
+    TEST_CASE("Heap allocation with print") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -50,13 +52,13 @@ TEST_CASE("E2E - Heap allocation with print") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n58\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n58\n");
+    }
 
-TEST_CASE("E2E - Multiple heap allocations") {
-    const char* source = R"(
+    TEST_CASE("Multiple heap allocations") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -77,13 +79,13 @@ TEST_CASE("E2E - Multiple heap allocations") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n10\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n10\n");
+    }
 
-TEST_CASE("E2E - Heap allocation larger struct") {
-    const char* source = R"(
+    TEST_CASE("Heap allocation larger struct") {
+        const char* source = R"(
         struct Data {
             a: i32;
             b: i32;
@@ -106,13 +108,13 @@ TEST_CASE("E2E - Heap allocation larger struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n3\n100000000000\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n3\n100000000000\n");
+    }
 
-TEST_CASE("E2E - Heap allocation with computation") {
-    const char* source = R"(
+    TEST_CASE("Heap allocation with computation") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -131,13 +133,13 @@ TEST_CASE("E2E - Heap allocation with computation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "12\n35\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "12\n35\n");
+    }
 
-TEST_CASE("E2E - Heap allocation in loop") {
-    const char* source = R"(
+    TEST_CASE("Heap allocation in loop") {
+        const char* source = R"(
         struct Counter {
             value: i32;
         }
@@ -155,17 +157,17 @@ TEST_CASE("E2E - Heap allocation in loop") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "30\n");  // 0 + 10 + 20
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "30\n");  // 0 + 10 + 20
+    }
 
-// ============================================================================
-// Heap Allocation Tests - Constraint Reference Model
-// ============================================================================
+    // ============================================================================
+    // Heap Allocation Tests - Constraint Reference Model
+    // ============================================================================
 
-TEST_CASE("E2E - Uniq passed to function (move semantics)") {
-    const char* source = R"(
+    TEST_CASE("Uniq passed to function (move semantics)") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -187,13 +189,13 @@ TEST_CASE("E2E - Uniq passed to function (move semantics)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "30\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "30\n");
+    }
 
-TEST_CASE("E2E - Heap allocation nested struct") {
-    const char* source = R"(
+    TEST_CASE("Heap allocation nested struct") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -217,18 +219,18 @@ TEST_CASE("E2E - Heap allocation nested struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "0\n10\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "0\n10\n");
+    }
 
-// ============================================================================
-// Borrow Checking Tests (Constraint Reference Model)
-// ============================================================================
+    // ============================================================================
+    // Borrow Checking Tests (Constraint Reference Model)
+    // ============================================================================
 
-TEST_CASE("E2E - Constraint reference borrow check success") {
-    // Test that passing uniq to uniq param moves ownership; callee cleans up
-    const char* source = R"(
+    TEST_CASE("Constraint reference borrow check success") {
+        // Test that passing uniq to uniq param moves ownership; callee cleans up
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -250,15 +252,15 @@ TEST_CASE("E2E - Constraint reference borrow check success") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "50\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "50\n");
+    }
 
-TEST_CASE("E2E - Ref parameter borrow tracking") {
-    // Test that ref parameters properly track borrows via RefInc/RefDec
-    // The ref parameter increments ref_count at entry, decrements at exit
-    const char* source = R"(
+    TEST_CASE("Ref parameter borrow tracking") {
+        // Test that ref parameters properly track borrows via RefInc/RefDec
+        // The ref parameter increments ref_count at entry, decrements at exit
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -282,14 +284,14 @@ TEST_CASE("E2E - Ref parameter borrow tracking") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "35\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "35\n");
+    }
 
-TEST_CASE("E2E - Multiple ref borrows in sequence") {
-    // Test multiple sequential borrows
-    const char* source = R"(
+    TEST_CASE("Multiple ref borrows in sequence") {
+        // Test multiple sequential borrows
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -316,14 +318,14 @@ TEST_CASE("E2E - Multiple ref borrows in sequence") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "100\n200\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "100\n200\n");
+    }
 
-TEST_CASE("E2E - Ref parameter with multiple returns") {
-    // Test that RefDec is emitted on all return paths
-    const char* source = R"(
+    TEST_CASE("Ref parameter with multiple returns") {
+        // Test that RefDec is emitted on all return paths
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -347,13 +349,13 @@ TEST_CASE("E2E - Ref parameter with multiple returns") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "50\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "50\n");
+    }
 
-TEST_CASE("E2E - Delete null pointer is safe") {
-    const char* source = R"(
+    TEST_CASE("Delete null pointer is safe") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -367,18 +369,18 @@ TEST_CASE("E2E - Delete null pointer is safe") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-// ============================================================================
-// Borrow Violation Tests
-// ============================================================================
+    // ============================================================================
+    // Borrow Violation Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Compile error: delete through ref") {
-    // Semantic analysis should reject delete on ref types
-    const char* source = R"(
+    TEST_CASE("Compile error: delete through ref") {
+        // Semantic analysis should reject delete on ref types
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -394,15 +396,15 @@ TEST_CASE("E2E - Compile error: delete through ref") {
         }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
 
-TEST_CASE("E2E - Runtime error: delete with active borrow") {
-    // Delete should fail at runtime when ref_count > 0
-    // Pass same object as both ref (creates borrow) and uniq (for delete)
-    const char* source = R"(
+    TEST_CASE("Runtime error: delete with active borrow") {
+        // Delete should fail at runtime when ref_count > 0
+        // Pass same object as both ref (creates borrow) and uniq (for delete)
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -424,17 +426,17 @@ TEST_CASE("E2E - Runtime error: delete with active borrow") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success == false);  // Should fail - can't delete with active borrow
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success == false);  // Should fail - can't delete with active borrow
+    }
 
-// ============================================================================
-// Reference Type Checking Tests
-// ============================================================================
+    // ============================================================================
+    // Reference Type Checking Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Compile error: ref to uniq assignment") {
-    // Cannot assign ref to uniq - would create ownership from borrow
-    const char* source = R"(
+    TEST_CASE("Compile error: ref to uniq assignment") {
+        // Cannot assign ref to uniq - would create ownership from borrow
+        const char* source = R"(
         struct Point { x: i32; y: i32; }
 
         fun bad_assign(p: ref Point): uniq Point {
@@ -445,14 +447,14 @@ TEST_CASE("E2E - Compile error: ref to uniq assignment") {
         fun main(): i32 { return 0; }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
 
-TEST_CASE("E2E - Compile error: weak to uniq assignment") {
-    // Cannot assign weak to uniq - weak cannot become owner
-    const char* source = R"(
+    TEST_CASE("Compile error: weak to uniq assignment") {
+        // Cannot assign weak to uniq - weak cannot become owner
+        const char* source = R"(
         struct Point { x: i32; y: i32; }
 
         fun bad_assign(p: weak Point): uniq Point {
@@ -463,14 +465,14 @@ TEST_CASE("E2E - Compile error: weak to uniq assignment") {
         fun main(): i32 { return 0; }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
 
-TEST_CASE("E2E - Compile error: weak to ref assignment") {
-    // Cannot assign weak to ref - weak cannot become strong borrow
-    const char* source = R"(
+    TEST_CASE("Compile error: weak to ref assignment") {
+        // Cannot assign weak to ref - weak cannot become strong borrow
+        const char* source = R"(
         struct Point { x: i32; y: i32; }
 
         fun bad_assign(p: weak Point): i32 {
@@ -481,14 +483,14 @@ TEST_CASE("E2E - Compile error: weak to ref assignment") {
         fun main(): i32 { return 0; }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
 
-TEST_CASE("E2E - Compile error: nil to value type") {
-    // Cannot assign nil to non-reference types
-    const char* source = R"(
+    TEST_CASE("Compile error: nil to value type") {
+        // Cannot assign nil to non-reference types
+        const char* source = R"(
         struct Point { x: i32; y: i32; }
 
         fun main(): i32 {
@@ -497,14 +499,14 @@ TEST_CASE("E2E - Compile error: nil to value type") {
         }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
 
-TEST_CASE("E2E - Valid: uniq to ref conversion") {
-    // uniq -> ref is allowed (borrowing from owner)
-    const char* source = R"(
+    TEST_CASE("Valid: uniq to ref conversion") {
+        // uniq -> ref is allowed (borrowing from owner)
+        const char* source = R"(
         struct Point { x: i32; y: i32; }
 
         fun borrow(p: ref Point): i32 {
@@ -522,14 +524,14 @@ TEST_CASE("E2E - Valid: uniq to ref conversion") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "30\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "30\n");
+    }
 
-TEST_CASE("E2E - Valid: nil to uniq assignment") {
-    // nil -> uniq is allowed
-    const char* source = R"(
+    TEST_CASE("Valid: nil to uniq assignment") {
+        // nil -> uniq is allowed
+        const char* source = R"(
         struct Point { x: i32; y: i32; }
 
         fun main(): i32 {
@@ -540,17 +542,17 @@ TEST_CASE("E2E - Valid: nil to uniq assignment") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-// ============================================================================
-// Weak Reference Tests
-// ============================================================================
+    // ============================================================================
+    // Weak Reference Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Weak field assignment and read") {
-    const char* source = R"(
+    TEST_CASE("Weak field assignment and read") {
+        const char* source = R"(
         struct Node {
             value: i32;
         }
@@ -573,13 +575,13 @@ TEST_CASE("E2E - Weak field assignment and read") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - Weak local variable from uniq") {
-    const char* source = R"(
+    TEST_CASE("Weak local variable from uniq") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -597,13 +599,13 @@ TEST_CASE("E2E - Weak local variable from uniq") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 30);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 30);
+    }
 
-TEST_CASE("E2E - Weak nil assignment") {
-    const char* source = R"(
+    TEST_CASE("Weak nil assignment") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -616,13 +618,13 @@ TEST_CASE("E2E - Weak nil assignment") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - Weak field in struct with other fields") {
-    const char* source = R"(
+    TEST_CASE("Weak field in struct with other fields") {
+        const char* source = R"(
         struct Node {
             value: i32;
         }
@@ -646,13 +648,13 @@ TEST_CASE("E2E - Weak field in struct with other fields") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n99\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n99\n");
+    }
 
-TEST_CASE("E2E - Weak parameter passing") {
-    const char* source = R"(
+    TEST_CASE("Weak parameter passing") {
+        const char* source = R"(
         struct Node {
             value: i32;
         }
@@ -671,7 +673,9 @@ TEST_CASE("E2E - Weak parameter passing") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+    }
+
+}  // TEST_SUITE("E2E Heap")

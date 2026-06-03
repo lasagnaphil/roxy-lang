@@ -7,8 +7,10 @@ using namespace rx;
 // String Tests
 // ============================================================================
 
-TEST_CASE("E2E - String literal") {
-    const char* source = R"(
+TEST_SUITE("E2E Strings") {
+
+    TEST_CASE("String literal") {
+        const char* source = R"(
         fun main(): i32 {
             var s: string = "hello";
             print(s);
@@ -16,13 +18,13 @@ TEST_CASE("E2E - String literal") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "hello\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "hello\n");
+    }
 
-TEST_CASE("E2E - Empty string") {
-    const char* source = R"(
+    TEST_CASE("Empty string") {
+        const char* source = R"(
         fun main(): i32 {
             var s: string = "";
             print(s);
@@ -31,13 +33,13 @@ TEST_CASE("E2E - Empty string") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "\ndone\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "\ndone\n");
+    }
 
-TEST_CASE("E2E - String length") {
-    const char* source = R"(
+    TEST_CASE("String length") {
+        const char* source = R"(
         fun main(): i32 {
             print(f"{str_len("hello")}");
             print(f"{str_len("")}");
@@ -46,13 +48,13 @@ TEST_CASE("E2E - String length") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "5\n0\n11\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "5\n0\n11\n");
+    }
 
-TEST_CASE("E2E - String concatenation with str_concat") {
-    const char* source = R"(
+    TEST_CASE("String concatenation with str_concat") {
+        const char* source = R"(
         fun main(): i32 {
             var s: string = str_concat("hello", " world");
             print(s);
@@ -60,13 +62,13 @@ TEST_CASE("E2E - String concatenation with str_concat") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "hello world\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "hello world\n");
+    }
 
-TEST_CASE("E2E - String concatenation with + operator") {
-    const char* source = R"(
+    TEST_CASE("String concatenation with + operator") {
+        const char* source = R"(
         fun main(): i32 {
             var s: string = "hello" + " world";
             print(s);
@@ -74,13 +76,13 @@ TEST_CASE("E2E - String concatenation with + operator") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "hello world\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "hello world\n");
+    }
 
-TEST_CASE("E2E - Multiple string concatenations") {
-    const char* source = R"(
+    TEST_CASE("Multiple string concatenations") {
+        const char* source = R"(
         fun main(): i32 {
             var s: string = "a" + "b" + "c" + "d";
             print(s);
@@ -88,13 +90,13 @@ TEST_CASE("E2E - Multiple string concatenations") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "abcd\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "abcd\n");
+    }
 
-TEST_CASE("E2E - String equality") {
-    const char* source = R"(
+    TEST_CASE("String equality") {
+        const char* source = R"(
         fun bool_to_str(b: bool): string {
             if (b) { return "true"; }
             return "false";
@@ -113,13 +115,13 @@ TEST_CASE("E2E - String equality") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "true\nfalse\ntrue\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "true\nfalse\ntrue\n");
+    }
 
-TEST_CASE("E2E - String inequality") {
-    const char* source = R"(
+    TEST_CASE("String inequality") {
+        const char* source = R"(
         fun bool_to_str(b: bool): string {
             if (b) { return "true"; }
             return "false";
@@ -134,13 +136,13 @@ TEST_CASE("E2E - String inequality") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "true\nfalse\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "true\nfalse\n");
+    }
 
-TEST_CASE("E2E - String as function parameter") {
-    const char* source = R"(
+    TEST_CASE("String as function parameter") {
+        const char* source = R"(
         fun print_greeting(name: string) {
             print("Hello, ");
             print(name);
@@ -152,13 +154,13 @@ TEST_CASE("E2E - String as function parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "Hello, \nWorld\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "Hello, \nWorld\n");
+    }
 
-TEST_CASE("E2E - String as return value") {
-    const char* source = R"(
+    TEST_CASE("String as return value") {
+        const char* source = R"(
         fun make_greeting(): string {
             return "hello";
         }
@@ -169,13 +171,13 @@ TEST_CASE("E2E - String as return value") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "hello\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "hello\n");
+    }
 
-TEST_CASE("E2E - String concatenation in function") {
-    const char* source = R"(
+    TEST_CASE("String concatenation in function") {
+        const char* source = R"(
         fun greet(name: string): string {
             return "Hello, " + name + "!";
         }
@@ -187,13 +189,13 @@ TEST_CASE("E2E - String concatenation in function") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "Hello, World!\nHello, Roxy!\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "Hello, World!\nHello, Roxy!\n");
+    }
 
-TEST_CASE("E2E - String comparison in if statement") {
-    const char* source = R"(
+    TEST_CASE("String comparison in if statement") {
+        const char* source = R"(
         fun check(s: string): string {
             if (s == "yes") {
                 return "accepted";
@@ -210,13 +212,13 @@ TEST_CASE("E2E - String comparison in if statement") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "accepted\nrejected\nrejected\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "accepted\nrejected\nrejected\n");
+    }
 
-TEST_CASE("E2E - String variable reassignment") {
-    const char* source = R"(
+    TEST_CASE("String variable reassignment") {
+        const char* source = R"(
         fun main(): i32 {
             var s: string = "short";
             print(s);
@@ -226,13 +228,13 @@ TEST_CASE("E2E - String variable reassignment") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "short\nmuch longer string\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "short\nmuch longer string\n");
+    }
 
-TEST_CASE("E2E - String equality after concatenation") {
-    const char* source = R"(
+    TEST_CASE("String equality after concatenation") {
+        const char* source = R"(
         fun bool_to_str(b: bool): string {
             if (b) { return "true"; }
             return "false";
@@ -248,13 +250,13 @@ TEST_CASE("E2E - String equality after concatenation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "true\nhello\nhello\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "true\nhello\nhello\n");
+    }
 
-TEST_CASE("E2E - String with special characters") {
-    const char* source = R"(
+    TEST_CASE("String with special characters") {
+        const char* source = R"(
         fun main(): i32 {
             var s: string = "hello\nworld";
             print(s);
@@ -262,13 +264,13 @@ TEST_CASE("E2E - String with special characters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "hello\nworld\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "hello\nworld\n");
+    }
 
-TEST_CASE("E2E - String in loop") {
-    const char* source = R"(
+    TEST_CASE("String in loop") {
+        const char* source = R"(
         fun main(): i32 {
             for (var i: i32 = 0; i < 3; i = i + 1) {
                 print("iteration");
@@ -278,17 +280,17 @@ TEST_CASE("E2E - String in loop") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "iteration\n0\niteration\n1\niteration\n2\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "iteration\n0\niteration\n1\niteration\n2\n");
+    }
 
-// ============================================================================
-// F-String Interpolation Tests
-// ============================================================================
+    // ============================================================================
+    // F-String Interpolation Tests
+    // ============================================================================
 
-TEST_CASE("E2E - F-string basic interpolation") {
-    const char* source = R"(
+    TEST_CASE("F-string basic interpolation") {
+        const char* source = R"(
         fun main(): i32 {
             var name: string = "World";
             print(f"Hello, {name}!");
@@ -296,13 +298,13 @@ TEST_CASE("E2E - F-string basic interpolation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "Hello, World!\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "Hello, World!\n");
+    }
 
-TEST_CASE("E2E - F-string integer interpolation") {
-    const char* source = R"(
+    TEST_CASE("F-string integer interpolation") {
+        const char* source = R"(
         fun main(): i32 {
             var x: i32 = 42;
             print(f"x = {x}");
@@ -310,13 +312,13 @@ TEST_CASE("E2E - F-string integer interpolation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "x = 42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "x = 42\n");
+    }
 
-TEST_CASE("E2E - F-string expression in braces") {
-    const char* source = R"(
+    TEST_CASE("F-string expression in braces") {
+        const char* source = R"(
         fun main(): i32 {
             var a: i32 = 3;
             var b: i32 = 4;
@@ -325,13 +327,13 @@ TEST_CASE("E2E - F-string expression in braces") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "3 + 4 = 7\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "3 + 4 = 7\n");
+    }
 
-TEST_CASE("E2E - F-string function call in braces") {
-    const char* source = R"(
+    TEST_CASE("F-string function call in braces") {
+        const char* source = R"(
         fun double_it(x: i32): i32 {
             return x * 2;
         }
@@ -342,13 +344,13 @@ TEST_CASE("E2E - F-string function call in braces") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "double: 10\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "double: 10\n");
+    }
 
-TEST_CASE("E2E - F-string bool interpolation") {
-    const char* source = R"(
+    TEST_CASE("F-string bool interpolation") {
+        const char* source = R"(
         fun main(): i32 {
             print(f"val: {true}");
             print(f"val: {false}");
@@ -356,13 +358,13 @@ TEST_CASE("E2E - F-string bool interpolation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "val: true\nval: false\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "val: true\nval: false\n");
+    }
 
-TEST_CASE("E2E - F-string float interpolation") {
-    const char* source = R"(
+    TEST_CASE("F-string float interpolation") {
+        const char* source = R"(
         fun main(): i32 {
             var pi: f64 = 3.14;
             print(f"pi: {pi}");
@@ -370,26 +372,26 @@ TEST_CASE("E2E - F-string float interpolation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "pi: 3.14\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "pi: 3.14\n");
+    }
 
-TEST_CASE("E2E - F-string no interpolation") {
-    const char* source = R"(
+    TEST_CASE("F-string no interpolation") {
+        const char* source = R"(
         fun main(): i32 {
             print(f"plain text");
             return 0;
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "plain text\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "plain text\n");
+    }
 
-TEST_CASE("E2E - F-string empty parts") {
-    const char* source = R"(
+    TEST_CASE("F-string empty parts") {
+        const char* source = R"(
         fun main(): i32 {
             var x: i32 = 42;
             print(f"{x}");
@@ -397,26 +399,26 @@ TEST_CASE("E2E - F-string empty parts") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - F-string escaped braces") {
-    const char* source = R"(
+    TEST_CASE("F-string escaped braces") {
+        const char* source = R"(
         fun main(): i32 {
             print(f"use \{ and \}");
             return 0;
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "use { and }\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "use { and }\n");
+    }
 
-TEST_CASE("E2E - F-string multiple types") {
-    const char* source = R"(
+    TEST_CASE("F-string multiple types") {
+        const char* source = R"(
         fun main(): i32 {
             var name: string = "app";
             var ver: i32 = 2;
@@ -426,13 +428,13 @@ TEST_CASE("E2E - F-string multiple types") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "app v2: 9.5\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "app v2: 9.5\n");
+    }
 
-TEST_CASE("E2E - F-string concatenation with +") {
-    const char* source = R"(
+    TEST_CASE("F-string concatenation with +") {
+        const char* source = R"(
         fun main(): i32 {
             var name: string = "World";
             print(f"hello" + f" {name}");
@@ -440,13 +442,13 @@ TEST_CASE("E2E - F-string concatenation with +") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "hello World\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "hello World\n");
+    }
 
-TEST_CASE("E2E - F-string in variable") {
-    const char* source = R"(
+    TEST_CASE("F-string in variable") {
+        const char* source = R"(
         fun main(): i32 {
             var x: i32 = 10;
             var s: string = f"value is {x}";
@@ -455,13 +457,13 @@ TEST_CASE("E2E - F-string in variable") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "value is 10\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "value is 10\n");
+    }
 
-TEST_CASE("E2E - F-string i64 interpolation") {
-    const char* source = R"(
+    TEST_CASE("F-string i64 interpolation") {
+        const char* source = R"(
         fun main(): i32 {
             var big: i64 = 1000000l;
             print(f"big = {big}");
@@ -469,13 +471,13 @@ TEST_CASE("E2E - F-string i64 interpolation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "big = 1000000\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "big = 1000000\n");
+    }
 
-TEST_CASE("E2E - F-string string expression") {
-    const char* source = R"(
+    TEST_CASE("F-string string expression") {
+        const char* source = R"(
         fun main(): i32 {
             var a: string = "hello";
             var b: string = "world";
@@ -485,30 +487,30 @@ TEST_CASE("E2E - F-string string expression") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "hello world\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "hello world\n");
+    }
 
-TEST_CASE("E2E - F-string empty") {
-    const char* source = R"(
+    TEST_CASE("F-string empty") {
+        const char* source = R"(
         fun main(): i32 {
             print(f"");
             return 0;
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "\n");
+    }
 
-// ============================================================================
-// New String Native Functions
-// ============================================================================
+    // ============================================================================
+    // New String Native Functions
+    // ============================================================================
 
-TEST_CASE("E2E - str_char_at basic") {
-    const char* source = R"(
+    TEST_CASE("str_char_at basic") {
+        const char* source = R"(
         fun main(): i32 {
             var s: string = "hello";
             var ch: i32 = str_char_at(s, 0);
@@ -519,14 +521,14 @@ TEST_CASE("E2E - str_char_at basic") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // 'h' = 104, 'o' = 111
-    CHECK(result.stdout_output == "104\n111\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // 'h' = 104, 'o' = 111
+        CHECK(result.stdout_output == "104\n111\n");
+    }
 
-TEST_CASE("E2E - str_substr basic") {
-    const char* source = R"(
+    TEST_CASE("str_substr basic") {
+        const char* source = R"(
         fun main(): i32 {
             var s: string = "hello world";
             var sub: string = str_substr(s, 6, 5);
@@ -537,13 +539,13 @@ TEST_CASE("E2E - str_substr basic") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "world\nhello\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "world\nhello\n");
+    }
 
-TEST_CASE("E2E - str_to_f64 basic") {
-    const char* source = R"(
+    TEST_CASE("str_to_f64 basic") {
+        const char* source = R"(
         fun main(): i32 {
             var v: f64 = str_to_f64("3.14");
             print(f"{v}");
@@ -553,13 +555,13 @@ TEST_CASE("E2E - str_to_f64 basic") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "3.14\n42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "3.14\n42\n");
+    }
 
-TEST_CASE("E2E - str_from_code basic") {
-    const char* source = R"(
+    TEST_CASE("str_from_code basic") {
+        const char* source = R"(
         fun main(): i32 {
             var s: string = str_from_code(65);
             print(s);
@@ -569,14 +571,14 @@ TEST_CASE("E2E - str_from_code basic") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // 65 = 'A', 122 = 'z'
-    CHECK(result.stdout_output == "A\nz\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // 65 = 'A', 122 = 'z'
+        CHECK(result.stdout_output == "A\nz\n");
+    }
 
-TEST_CASE("E2E - clock returns positive value") {
-    const char* source = R"(
+    TEST_CASE("clock returns positive value") {
+        const char* source = R"(
         fun main(): i32 {
             var t: f64 = clock();
             if (t > 0.0) {
@@ -586,13 +588,13 @@ TEST_CASE("E2E - clock returns positive value") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "ok\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "ok\n");
+    }
 
-TEST_CASE("E2E - read_file basic") {
-    const char* source = R"(
+    TEST_CASE("read_file basic") {
+        const char* source = R"(
         fun main(): i32 {
             var content: string = read_file("/dev/null");
             print(f"{str_len(content)}");
@@ -600,19 +602,19 @@ TEST_CASE("E2E - read_file basic") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "0\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "0\n");
+    }
 
-// ============================================================================
-// F-string interpolation of user-defined Printable struct rvalues
-// ============================================================================
+    // ============================================================================
+    // F-string interpolation of user-defined Printable struct rvalues
+    // ============================================================================
 
-TEST_CASE("E2E - F-string interp: Printable struct from function call") {
-    // Pre-fix: f"{make_pt()}" failed at IR gen with
-    // "Internal error: expression is not a valid lvalue".
-    const char* source = R"ROXY(
+    TEST_CASE("F-string interp: Printable struct from function call") {
+        // Pre-fix: f"{make_pt()}" failed at IR gen with
+        // "Internal error: expression is not a valid lvalue".
+        const char* source = R"ROXY(
         struct Pt {
             x: i32;
             y: i32;
@@ -632,13 +634,13 @@ TEST_CASE("E2E - F-string interp: Printable struct from function call") {
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "(3,4)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "(3,4)\n");
+    }
 
-TEST_CASE("E2E - F-string interp: Printable struct from list index") {
-    const char* source = R"ROXY(
+    TEST_CASE("F-string interp: Printable struct from list index") {
+        const char* source = R"ROXY(
         struct Pt {
             x: i32;
             y: i32;
@@ -658,13 +660,13 @@ TEST_CASE("E2E - F-string interp: Printable struct from list index") {
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "(1,2)\n(5,6)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "(1,2)\n(5,6)\n");
+    }
 
-TEST_CASE("E2E - F-string interp: Printable struct from method call") {
-    const char* source = R"ROXY(
+    TEST_CASE("F-string interp: Printable struct from method call") {
+        const char* source = R"ROXY(
         struct Pt {
             x: i32;
             y: i32;
@@ -689,14 +691,14 @@ TEST_CASE("E2E - F-string interp: Printable struct from method call") {
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "(10,11)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "(10,11)\n");
+    }
 
-TEST_CASE("E2E - F-string interp: Printable struct from local var still works") {
-    // Regression check for the workaround path (lvalue identifier).
-    const char* source = R"ROXY(
+    TEST_CASE("F-string interp: Printable struct from local var still works") {
+        // Regression check for the workaround path (lvalue identifier).
+        const char* source = R"ROXY(
         struct Pt {
             x: i32;
             y: i32;
@@ -713,7 +715,9 @@ TEST_CASE("E2E - F-string interp: Printable struct from local var still works") 
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "(7,8)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "(7,8)\n");
+    }
+
+}  // TEST_SUITE("E2E Strings")

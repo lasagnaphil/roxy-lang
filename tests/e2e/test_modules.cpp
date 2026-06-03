@@ -97,10 +97,12 @@ struct ModuleTestContext {
     }
 };
 
-TEST_CASE("E2E - Module: from import basic native function") {
-    ModuleTestContext ctx;
+TEST_SUITE("E2E Modules") {
 
-    const char* source = R"(
+    TEST_CASE("from import basic native function") {
+        ModuleTestContext ctx;
+
+        const char* source = R"(
         from math import add;
 
         fun main(): i32 {
@@ -108,14 +110,14 @@ TEST_CASE("E2E - Module: from import basic native function") {
         }
     )";
 
-    i64 result = ctx.compile_and_run(source);
-    CHECK(result == 7);
-}
+        i64 result = ctx.compile_and_run(source);
+        CHECK(result == 7);
+    }
 
-TEST_CASE("E2E - Module: from import multiple functions") {
-    ModuleTestContext ctx;
+    TEST_CASE("from import multiple functions") {
+        ModuleTestContext ctx;
 
-    const char* source = R"(
+        const char* source = R"(
         from math import add, mul;
 
         fun main(): i32 {
@@ -125,16 +127,16 @@ TEST_CASE("E2E - Module: from import multiple functions") {
         }
     )";
 
-    i64 result = ctx.compile_and_run(source);
-    CHECK(result == 20);  // (2+3) * 4 = 20
-}
+        i64 result = ctx.compile_and_run(source);
+        CHECK(result == 20);  // (2+3) * 4 = 20
+    }
 
-TEST_CASE("E2E - Module: imported native used as function reference") {
-    // Imported natives reach gen_function_ref via SymbolKind::ImportedFunction
-    // and lower their trampoline body to IROp::CallNative.
-    ModuleTestContext ctx;
+    TEST_CASE("imported native used as function reference") {
+        // Imported natives reach gen_function_ref via SymbolKind::ImportedFunction
+        // and lower their trampoline body to IROp::CallNative.
+        ModuleTestContext ctx;
 
-    const char* source = R"(
+        const char* source = R"(
         from math import add, square;
 
         fun main(): i32 {
@@ -144,14 +146,14 @@ TEST_CASE("E2E - Module: imported native used as function reference") {
         }
     )";
 
-    i64 result = ctx.compile_and_run(source);
-    CHECK(result == 10);
-}
+        i64 result = ctx.compile_and_run(source);
+        CHECK(result == 10);
+    }
 
-TEST_CASE("E2E - Module: from import with alias") {
-    ModuleTestContext ctx;
+    TEST_CASE("from import with alias") {
+        ModuleTestContext ctx;
 
-    const char* source = R"(
+        const char* source = R"(
         from math import add as plus;
 
         fun main(): i32 {
@@ -159,14 +161,14 @@ TEST_CASE("E2E - Module: from import with alias") {
         }
     )";
 
-    i64 result = ctx.compile_and_run(source);
-    CHECK(result == 30);
-}
+        i64 result = ctx.compile_and_run(source);
+        CHECK(result == 30);
+    }
 
-TEST_CASE("E2E - Module: import for qualified access") {
-    ModuleTestContext ctx;
+    TEST_CASE("import for qualified access") {
+        ModuleTestContext ctx;
 
-    const char* source = R"(
+        const char* source = R"(
         import math;
 
         fun main(): i32 {
@@ -174,14 +176,14 @@ TEST_CASE("E2E - Module: import for qualified access") {
         }
     )";
 
-    i64 result = ctx.compile_and_run(source);
-    CHECK(result == 25);
-}
+        i64 result = ctx.compile_and_run(source);
+        CHECK(result == 25);
+    }
 
-TEST_CASE("E2E - Module: qualified access with multiple calls") {
-    ModuleTestContext ctx;
+    TEST_CASE("qualified access with multiple calls") {
+        ModuleTestContext ctx;
 
-    const char* source = R"(
+        const char* source = R"(
         import math;
 
         fun main(): i32 {
@@ -191,14 +193,14 @@ TEST_CASE("E2E - Module: qualified access with multiple calls") {
         }
     )";
 
-    i64 result = ctx.compile_and_run(source);
-    CHECK(result == 81);  // ((1+2)*3)^2 = 9^2 = 81
-}
+        i64 result = ctx.compile_and_run(source);
+        CHECK(result == 81);  // ((1+2)*3)^2 = 9^2 = 81
+    }
 
-TEST_CASE("E2E - Module: mix from import and qualified access") {
-    ModuleTestContext ctx;
+    TEST_CASE("mix from import and qualified access") {
+        ModuleTestContext ctx;
 
-    const char* source = R"(
+        const char* source = R"(
         import math;
         from math import negate;
 
@@ -208,14 +210,14 @@ TEST_CASE("E2E - Module: mix from import and qualified access") {
         }
     )";
 
-    i64 result = ctx.compile_and_run(source);
-    CHECK(result == -10);
-}
+        i64 result = ctx.compile_and_run(source);
+        CHECK(result == -10);
+    }
 
-TEST_CASE("E2E - Module: error on unknown module") {
-    ModuleTestContext ctx;
+    TEST_CASE("error on unknown module") {
+        ModuleTestContext ctx;
 
-    const char* source = R"(
+        const char* source = R"(
         from unknown_module import func;
 
         fun main(): i32 {
@@ -223,13 +225,13 @@ TEST_CASE("E2E - Module: error on unknown module") {
         }
     )";
 
-    CHECK(ctx.has_error(source, "unknown module"));
-}
+        CHECK(ctx.has_error(source, "unknown module"));
+    }
 
-TEST_CASE("E2E - Module: error on unknown export") {
-    ModuleTestContext ctx;
+    TEST_CASE("error on unknown export") {
+        ModuleTestContext ctx;
 
-    const char* source = R"(
+        const char* source = R"(
         from math import nonexistent;
 
         fun main(): i32 {
@@ -237,13 +239,13 @@ TEST_CASE("E2E - Module: error on unknown export") {
         }
     )";
 
-    CHECK(ctx.has_error(source, "no export"));
-}
+        CHECK(ctx.has_error(source, "no export"));
+    }
 
-TEST_CASE("E2E - Module: error on duplicate import") {
-    ModuleTestContext ctx;
+    TEST_CASE("error on duplicate import") {
+        ModuleTestContext ctx;
 
-    const char* source = R"(
+        const char* source = R"(
         from math import add;
         from math import add;
 
@@ -252,17 +254,17 @@ TEST_CASE("E2E - Module: error on duplicate import") {
         }
     )";
 
-    CHECK(ctx.has_error(source, "redefinition"));
-}
+        CHECK(ctx.has_error(source, "redefinition"));
+    }
 
-// =============================================================================
-// Script Module Tests using Compiler class
-// =============================================================================
+    // =============================================================================
+    // Script Module Tests using Compiler class
+    // =============================================================================
 
-TEST_CASE("E2E - Compiler: single module compilation") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("Compiler: single module compilation") {
+        BumpAllocator allocator(16384);
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         pub fun add(a: i32, b: i32): i32 {
             return a + b;
         }
@@ -272,31 +274,31 @@ TEST_CASE("E2E - Compiler: single module compilation") {
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
-    REQUIRE(!compiler.has_errors());
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
+        REQUIRE(!compiler.has_errors());
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, "main", {});
-    REQUIRE(success);
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 30);
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 30);
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-TEST_CASE("E2E - Compiler: two module compilation with import") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("Compiler: two module compilation with import") {
+        BumpAllocator allocator(16384);
 
-    const char* utils_source = R"(
+        const char* utils_source = R"(
         pub fun double(x: i32): i32 {
             return x * 2;
         }
@@ -306,7 +308,7 @@ TEST_CASE("E2E - Compiler: two module compilation with import") {
         }
     )";
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         import utils;
 
         fun main(): i32 {
@@ -314,64 +316,64 @@ TEST_CASE("E2E - Compiler: two module compilation with import") {
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("utils", utils_source, static_cast<u32>(strlen(utils_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("utils", utils_source, static_cast<u32>(strlen(utils_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
-    REQUIRE(!compiler.has_errors());
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
+        REQUIRE(!compiler.has_errors());
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, "main", {});
-    REQUIRE(success);
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-TEST_CASE("E2E - Compiler: circular import detection") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("Compiler: circular import detection") {
+        BumpAllocator allocator(16384);
 
-    const char* module_a = R"(
+        const char* module_a = R"(
         import b;
         pub fun foo(): i32 { return 1; }
     )";
 
-    const char* module_b = R"(
+        const char* module_b = R"(
         import a;
         pub fun bar(): i32 { return 2; }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("a", module_a, static_cast<u32>(strlen(module_a)));
-    compiler.add_source("b", module_b, static_cast<u32>(strlen(module_b)));
+        Compiler compiler(allocator);
+        compiler.add_source("a", module_a, static_cast<u32>(strlen(module_a)));
+        compiler.add_source("b", module_b, static_cast<u32>(strlen(module_b)));
 
-    BCModule* module = compiler.compile();
-    CHECK(module == nullptr);
-    CHECK(compiler.has_errors());
+        BCModule* module = compiler.compile();
+        CHECK(module == nullptr);
+        CHECK(compiler.has_errors());
 
-    // Check that the error mentions "circular" or "cycle"
-    bool found_cycle_error = false;
-    for (const char* err : compiler.errors()) {
-        if (strstr(err, "Circular") || strstr(err, "cycle")) {
-            found_cycle_error = true;
-            break;
+        // Check that the error mentions "circular" or "cycle"
+        bool found_cycle_error = false;
+        for (const char* err : compiler.errors()) {
+            if (strstr(err, "Circular") || strstr(err, "cycle")) {
+                found_cycle_error = true;
+                break;
+            }
         }
+        CHECK(found_cycle_error);
     }
-    CHECK(found_cycle_error);
-}
 
-TEST_CASE("E2E - Compiler: from import with script module") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("Compiler: from import with script module") {
+        BumpAllocator allocator(16384);
 
-    const char* math_source = R"(
+        const char* math_source = R"(
         pub fun square(x: i32): i32 {
             return x * x;
         }
@@ -381,7 +383,7 @@ TEST_CASE("E2E - Compiler: from import with script module") {
         }
     )";
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         from mymath import square, cube;
 
         fun main(): i32 {
@@ -389,36 +391,36 @@ TEST_CASE("E2E - Compiler: from import with script module") {
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("mymath", math_source, static_cast<u32>(strlen(math_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("mymath", math_source, static_cast<u32>(strlen(math_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
-    REQUIRE(!compiler.has_errors());
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
+        REQUIRE(!compiler.has_errors());
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, "main", {});
-    REQUIRE(success);
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 17);  // square(3)=9 + cube(2)=8 = 17
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 17);  // square(3)=9 + cube(2)=8 = 17
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-// Note: Cross-module struct visibility tests require struct exports to be implemented.
-// For now, we test same-module visibility which is the most common case.
+    // Note: Cross-module struct visibility tests require struct exports to be implemented.
+    // For now, we test same-module visibility which is the most common case.
 
-TEST_CASE("E2E - Compiler: struct field visibility - same module private access allowed") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("Compiler: struct field visibility - same module private access allowed") {
+        BumpAllocator allocator(16384);
 
-    // Private fields should be accessible within the same module
-    const char* main_source = R"(
+        // Private fields should be accessible within the same module
+        const char* main_source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -430,31 +432,31 @@ TEST_CASE("E2E - Compiler: struct field visibility - same module private access 
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, "main", {});
-    REQUIRE(success);
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 30);
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 30);
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-TEST_CASE("E2E - Compiler: struct field visibility - same module public fields work") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("Compiler: struct field visibility - same module public fields work") {
+        BumpAllocator allocator(16384);
 
-    // Public fields should also work
-    const char* main_source = R"(
+        // Public fields should also work
+        const char* main_source = R"(
         struct Point {
             pub x: i32;
             pub y: i32;
@@ -466,35 +468,35 @@ TEST_CASE("E2E - Compiler: struct field visibility - same module public fields w
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, "main", {});
-    REQUIRE(success);
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 20);
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 20);
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-// =============================================================================
-// Nested Module Path Tests
-// =============================================================================
+    // =============================================================================
+    // Nested Module Path Tests
+    // =============================================================================
 
-TEST_CASE("E2E - Module: nested module path import") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("nested module path import") {
+        BumpAllocator allocator(16384);
 
-    // Use exactly the same function structure as working test
-    const char* vec2_source = R"(
+        // Use exactly the same function structure as working test
+        const char* vec2_source = R"(
         pub fun double(x: i32): i32 {
             return x * 2;
         }
@@ -504,7 +506,7 @@ TEST_CASE("E2E - Module: nested module path import") {
         }
     )";
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         import math.vec2;
 
         fun main(): i32 {
@@ -512,31 +514,31 @@ TEST_CASE("E2E - Module: nested module path import") {
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("math.vec2", vec2_source, static_cast<u32>(strlen(vec2_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("math.vec2", vec2_source, static_cast<u32>(strlen(vec2_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, "main", {});
-    REQUIRE(success);
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-TEST_CASE("E2E - Module: nested module path with multiple calls") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("nested module path with multiple calls") {
+        BumpAllocator allocator(16384);
 
-    const char* vec2_source = R"(
+        const char* vec2_source = R"(
         pub fun double(x: i32): i32 {
             return x * 2;
         }
@@ -546,7 +548,7 @@ TEST_CASE("E2E - Module: nested module path with multiple calls") {
         }
     )";
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         import math.vec2;
 
         fun main(): i32 {
@@ -555,31 +557,31 @@ TEST_CASE("E2E - Module: nested module path with multiple calls") {
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("math.vec2", vec2_source, static_cast<u32>(strlen(vec2_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("math.vec2", vec2_source, static_cast<u32>(strlen(vec2_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, "main", {});
-    REQUIRE(success);
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 13);  // double(2)=4 + triple(3)=9 = 13
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 13);  // double(2)=4 + triple(3)=9 = 13
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-TEST_CASE("E2E - Module: deeply nested path") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("deeply nested path") {
+        BumpAllocator allocator(16384);
 
-    const char* collision_source = R"(
+        const char* collision_source = R"(
         pub fun check(x: i32): i32 {
             return x * 2;
         }
@@ -589,7 +591,7 @@ TEST_CASE("E2E - Module: deeply nested path") {
         }
     )";
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         import game.physics.collision;
 
         fun main(): i32 {
@@ -597,31 +599,31 @@ TEST_CASE("E2E - Module: deeply nested path") {
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("game.physics.collision", collision_source, static_cast<u32>(strlen(collision_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("game.physics.collision", collision_source, static_cast<u32>(strlen(collision_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, "main", {});
-    REQUIRE(success);
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 16);  // check(5)=10 + verify(2)=6 = 16
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 16);  // check(5)=10 + verify(2)=6 = 16
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-TEST_CASE("E2E - Module: from import with nested path") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("from import with nested path") {
+        BumpAllocator allocator(16384);
 
-    const char* vec2_source = R"(
+        const char* vec2_source = R"(
         pub fun double(x: i32): i32 {
             return x * 2;
         }
@@ -631,7 +633,7 @@ TEST_CASE("E2E - Module: from import with nested path") {
         }
     )";
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         from math.vec2 import double, triple;
 
         fun main(): i32 {
@@ -639,32 +641,32 @@ TEST_CASE("E2E - Module: from import with nested path") {
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("math.vec2", vec2_source, static_cast<u32>(strlen(vec2_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("math.vec2", vec2_source, static_cast<u32>(strlen(vec2_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, "main", {});
-    REQUIRE(success);
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-TEST_CASE("E2E - Module: single-level import unchanged") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("single-level import unchanged") {
+        BumpAllocator allocator(16384);
 
-    // Exactly match working test structure
-    const char* utils_source = R"(
+        // Exactly match working test structure
+        const char* utils_source = R"(
         pub fun double(x: i32): i32 {
             return x * 2;
         }
@@ -674,7 +676,7 @@ TEST_CASE("E2E - Module: single-level import unchanged") {
         }
     )";
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         import utils;
 
         fun main(): i32 {
@@ -682,31 +684,31 @@ TEST_CASE("E2E - Module: single-level import unchanged") {
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("utils", utils_source, static_cast<u32>(strlen(utils_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("utils", utils_source, static_cast<u32>(strlen(utils_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, "main", {});
-    REQUIRE(success);
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-TEST_CASE("E2E - Module: cross-module call result in variable") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("cross-module call result in variable") {
+        BumpAllocator allocator(16384);
 
-    const char* utils_source = R"(
+        const char* utils_source = R"(
         pub fun double(x: i32): i32 {
             return x * 2;
         }
@@ -716,7 +718,7 @@ TEST_CASE("E2E - Module: cross-module call result in variable") {
         }
     )";
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         import utils;
 
         fun main(): i32 {
@@ -726,37 +728,37 @@ TEST_CASE("E2E - Module: cross-module call result in variable") {
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("utils", utils_source, static_cast<u32>(strlen(utils_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("utils", utils_source, static_cast<u32>(strlen(utils_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, "main", {});
-    REQUIRE(success);
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 12);  // triple(double(2)) = triple(4) = 12
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 12);  // triple(double(2)) = triple(4) = 12
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-TEST_CASE("E2E - Module: imported script function as function reference") {
-    // Imported script (cross-module) functions reach gen_function_ref via
-    // SymbolKind::ImportedFunction with is_native=false, and lower their
-    // trampoline body to IROp::CallExternal carrying the source module name.
-    BumpAllocator allocator(16384);
+    TEST_CASE("imported script function as function reference") {
+        // Imported script (cross-module) functions reach gen_function_ref via
+        // SymbolKind::ImportedFunction with is_native=false, and lower their
+        // trampoline body to IROp::CallExternal carrying the source module name.
+        BumpAllocator allocator(16384);
 
-    const char* utils_source = R"(
+        const char* utils_source = R"(
         pub fun double(x: i32): i32 { return x * 2; }
     )";
-    const char* main_source = R"(
+        const char* main_source = R"(
         from utils import double;
 
         fun apply(f: fun(i32) -> i32, x: i32): i32 { return f(x); }
@@ -767,33 +769,33 @@ TEST_CASE("E2E - Module: imported script function as function reference") {
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("utils", utils_source, static_cast<u32>(strlen(utils_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("utils", utils_source, static_cast<u32>(strlen(utils_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
-    REQUIRE(vm_call(&vm, "main", {}));
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
+        REQUIRE(vm_call(&vm, "main", {}));
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 42);
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 42);
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-TEST_CASE("E2E - Module: cross-module generic function call and reference") {
-    // A generic template defined in module A and called/referenced from
-    // module B. Body analysis and IR emission for the instance must run
-    // against A's symbol table, since the body may reference helpers
-    // private to A (here `helper`).
-    BumpAllocator allocator(16384);
+    TEST_CASE("cross-module generic function call and reference") {
+        // A generic template defined in module A and called/referenced from
+        // module B. Body analysis and IR emission for the instance must run
+        // against A's symbol table, since the body may reference helpers
+        // private to A (here `helper`).
+        BumpAllocator allocator(16384);
 
-    const char* a_source = R"(
+        const char* a_source = R"(
         fun helper(x: i32): i32 { return x + 100; }
 
         pub fun identity<T>(value: T): T { return value; }
@@ -803,7 +805,7 @@ TEST_CASE("E2E - Module: cross-module generic function call and reference") {
         }
     )";
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         from a import identity, add_const;
 
         fun apply(f: fun(i32) -> i32, x: i32): i32 { return f(x); }
@@ -820,29 +822,29 @@ TEST_CASE("E2E - Module: cross-module generic function call and reference") {
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("a", a_source, static_cast<u32>(strlen(a_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("a", a_source, static_cast<u32>(strlen(a_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
-    REQUIRE(vm_call(&vm, "main", {}));
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
+        REQUIRE(vm_call(&vm, "main", {}));
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 116);
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 116);
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-TEST_CASE("E2E - Module: error on unknown nested module") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("error on unknown nested module") {
+        BumpAllocator allocator(16384);
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         import math.nonexistent;
 
         fun main(): i32 {
@@ -850,32 +852,32 @@ TEST_CASE("E2E - Module: error on unknown nested module") {
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    CHECK(module == nullptr);
-    CHECK(compiler.has_errors());
+        BCModule* module = compiler.compile();
+        CHECK(module == nullptr);
+        CHECK(compiler.has_errors());
 
-    // Check that error mentions the unknown module
-    bool found_error = false;
-    for (const char* err : compiler.errors()) {
-        if (strstr(err, "unknown module") && strstr(err, "math.nonexistent")) {
-            found_error = true;
-            break;
+        // Check that error mentions the unknown module
+        bool found_error = false;
+        for (const char* err : compiler.errors()) {
+            if (strstr(err, "unknown module") && strstr(err, "math.nonexistent")) {
+                found_error = true;
+                break;
+            }
         }
+        CHECK(found_error);
     }
-    CHECK(found_error);
-}
 
-// =============================================================================
-// Tagged union variant field visibility across modules
-// =============================================================================
+    // =============================================================================
+    // Tagged union variant field visibility across modules
+    // =============================================================================
 
-TEST_CASE("E2E - Compiler: variant field visibility - cross-module private read rejected") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("Compiler: variant field visibility - cross-module private read rejected") {
+        BumpAllocator allocator(16384);
 
-    const char* lib_source = R"(
+        const char* lib_source = R"(
         pub enum Kind { Fire, Ice }
 
         pub struct Skill {
@@ -892,7 +894,7 @@ TEST_CASE("E2E - Compiler: variant field visibility - cross-module private read 
         }
     )";
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         from lib import Skill, Kind, make_fire;
 
         fun main(): i32 {
@@ -907,28 +909,28 @@ TEST_CASE("E2E - Compiler: variant field visibility - cross-module private read 
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("lib", lib_source, static_cast<u32>(strlen(lib_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("lib", lib_source, static_cast<u32>(strlen(lib_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    CHECK(module == nullptr);
-    CHECK(compiler.has_errors());
+        BCModule* module = compiler.compile();
+        CHECK(module == nullptr);
+        CHECK(compiler.has_errors());
 
-    bool found_error = false;
-    for (const char* err : compiler.errors()) {
-        if (strstr(err, "variant field") && strstr(err, "burn") && strstr(err, "private")) {
-            found_error = true;
-            break;
+        bool found_error = false;
+        for (const char* err : compiler.errors()) {
+            if (strstr(err, "variant field") && strstr(err, "burn") && strstr(err, "private")) {
+                found_error = true;
+                break;
+            }
         }
+        CHECK(found_error);
     }
-    CHECK(found_error);
-}
 
-TEST_CASE("E2E - Compiler: variant field visibility - cross-module private init rejected") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("Compiler: variant field visibility - cross-module private init rejected") {
+        BumpAllocator allocator(16384);
 
-    const char* lib_source = R"(
+        const char* lib_source = R"(
         pub enum Kind { Fire, Ice }
 
         pub struct Skill {
@@ -941,7 +943,7 @@ TEST_CASE("E2E - Compiler: variant field visibility - cross-module private init 
         }
     )";
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         from lib import Skill, Kind;
 
         fun main(): i32 {
@@ -950,28 +952,28 @@ TEST_CASE("E2E - Compiler: variant field visibility - cross-module private init 
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("lib", lib_source, static_cast<u32>(strlen(lib_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("lib", lib_source, static_cast<u32>(strlen(lib_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    CHECK(module == nullptr);
-    CHECK(compiler.has_errors());
+        BCModule* module = compiler.compile();
+        CHECK(module == nullptr);
+        CHECK(compiler.has_errors());
 
-    bool found_error = false;
-    for (const char* err : compiler.errors()) {
-        if (strstr(err, "variant field") && strstr(err, "burn") && strstr(err, "private")) {
-            found_error = true;
-            break;
+        bool found_error = false;
+        for (const char* err : compiler.errors()) {
+            if (strstr(err, "variant field") && strstr(err, "burn") && strstr(err, "private")) {
+                found_error = true;
+                break;
+            }
         }
+        CHECK(found_error);
     }
-    CHECK(found_error);
-}
 
-TEST_CASE("E2E - Compiler: variant field visibility - cross-module pub read allowed") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("Compiler: variant field visibility - cross-module pub read allowed") {
+        BumpAllocator allocator(16384);
 
-    const char* lib_source = R"(
+        const char* lib_source = R"(
         pub enum Kind { Fire, Ice }
 
         pub struct Skill {
@@ -984,7 +986,7 @@ TEST_CASE("E2E - Compiler: variant field visibility - cross-module pub read allo
         }
     )";
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         from lib import Skill, Kind;
 
         fun main(): i32 {
@@ -999,40 +1001,40 @@ TEST_CASE("E2E - Compiler: variant field visibility - cross-module pub read allo
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("lib", lib_source, static_cast<u32>(strlen(lib_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("lib", lib_source, static_cast<u32>(strlen(lib_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
-    REQUIRE(!compiler.has_errors());
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
+        REQUIRE(!compiler.has_errors());
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, "main", {});
-    REQUIRE(success);
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 11);
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 11);
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-// =============================================================================
-// Module-local function name scoping (non-pub names must not leak across modules)
-// =============================================================================
+    // =============================================================================
+    // Module-local function name scoping (non-pub names must not leak across modules)
+    // =============================================================================
 
-TEST_CASE("E2E - Compiler: non-pub function names do not collide across modules") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("Compiler: non-pub function names do not collide across modules") {
+        BumpAllocator allocator(16384);
 
-    // Both modules define a non-pub `aux`. Module A's `run` calls its own `aux`.
-    // Pre-fix: B's `aux` overwrote A's in the global function index; A's `run`
-    // dispatched to B's body. With module-local mangling, A's `aux` becomes
-    // `a::aux` and resolves correctly.
-    const char* a_source = R"(
+        // Both modules define a non-pub `aux`. Module A's `run` calls its own `aux`.
+        // Pre-fix: B's `aux` overwrote A's in the global function index; A's `run`
+        // dispatched to B's body. With module-local mangling, A's `aux` becomes
+        // `a::aux` and resolves correctly.
+        const char* a_source = R"(
         pub fun run(): i32 {
             return aux();
         }
@@ -1042,7 +1044,7 @@ TEST_CASE("E2E - Compiler: non-pub function names do not collide across modules"
         }
     )";
 
-    const char* b_source = R"(
+        const char* b_source = R"(
         import a;
 
         fun aux(): i32 {
@@ -1054,7 +1056,7 @@ TEST_CASE("E2E - Compiler: non-pub function names do not collide across modules"
         }
     )";
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         from a import run;
         from b import run_b;
 
@@ -1063,36 +1065,36 @@ TEST_CASE("E2E - Compiler: non-pub function names do not collide across modules"
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("a", a_source, static_cast<u32>(strlen(a_source)));
-    compiler.add_source("b", b_source, static_cast<u32>(strlen(b_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("a", a_source, static_cast<u32>(strlen(a_source)));
+        compiler.add_source("b", b_source, static_cast<u32>(strlen(b_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
-    REQUIRE(!compiler.has_errors());
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
+        REQUIRE(!compiler.has_errors());
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, "main", {});
-    REQUIRE(success);
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 12);  // run()=1 * 10 + run_b()=2 = 12
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 12);  // run()=1 * 10 + run_b()=2 = 12
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-TEST_CASE("E2E - Compiler: non-pub functions with mismatched signatures do not cross modules") {
-    BumpAllocator allocator(16384);
+    TEST_CASE("Compiler: non-pub functions with mismatched signatures do not cross modules") {
+        BumpAllocator allocator(16384);
 
-    // Pre-fix this would dispatch A's zero-arg `helper()` call to B's two-arg
-    // `helper(i32, i32)`, tripping the arg_count == param_count assertion in
-    // the interpreter. Post-fix, each module's `helper` is module-scoped.
-    const char* a_source = R"(
+        // Pre-fix this would dispatch A's zero-arg `helper()` call to B's two-arg
+        // `helper(i32, i32)`, tripping the arg_count == param_count assertion in
+        // the interpreter. Post-fix, each module's `helper` is module-scoped.
+        const char* a_source = R"(
         pub fun answer(): i32 {
             return helper();
         }
@@ -1102,7 +1104,7 @@ TEST_CASE("E2E - Compiler: non-pub functions with mismatched signatures do not c
         }
     )";
 
-    const char* b_source = R"(
+        const char* b_source = R"(
         fun helper(x: i32, y: i32): i32 {
             return x + y;
         }
@@ -1112,7 +1114,7 @@ TEST_CASE("E2E - Compiler: non-pub functions with mismatched signatures do not c
         }
     )";
 
-    const char* main_source = R"(
+        const char* main_source = R"(
         from a import answer;
         from b import sum;
 
@@ -1121,27 +1123,29 @@ TEST_CASE("E2E - Compiler: non-pub functions with mismatched signatures do not c
         }
     )";
 
-    Compiler compiler(allocator);
-    compiler.add_source("a", a_source, static_cast<u32>(strlen(a_source)));
-    compiler.add_source("b", b_source, static_cast<u32>(strlen(b_source)));
-    compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+        Compiler compiler(allocator);
+        compiler.add_source("a", a_source, static_cast<u32>(strlen(a_source)));
+        compiler.add_source("b", b_source, static_cast<u32>(strlen(b_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
-    BCModule* module = compiler.compile();
-    REQUIRE(module != nullptr);
-    REQUIRE(!compiler.has_errors());
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
+        REQUIRE(!compiler.has_errors());
 
-    RoxyVM vm;
-    vm_init(&vm);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
 
-    bool success = vm_call(&vm, "main", {});
-    REQUIRE(success);
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
 
-    Value result = vm_get_result(&vm);
-    CHECK(result.as_int == 49);  // answer()=42 + sum(3,4)=7 = 49
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 49);  // answer()=42 + sum(3,4)=7 = 49
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-} // namespace rx
+    } // namespace rx
+
+}  // TEST_SUITE("E2E Modules")

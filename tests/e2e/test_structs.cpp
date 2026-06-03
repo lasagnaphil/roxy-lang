@@ -10,8 +10,10 @@ using namespace rx;
 // Struct Tests
 // ============================================================================
 
-TEST_CASE("E2E - Basic struct field access") {
-    const char* source = R"(
+TEST_SUITE("E2E Structs") {
+
+    TEST_CASE("Basic struct field access") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -27,13 +29,13 @@ TEST_CASE("E2E - Basic struct field access") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n20\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n20\n");
+    }
 
-TEST_CASE("E2E - Struct with 64-bit field") {
-    const char* source = R"(
+    TEST_CASE("Struct with 64-bit field") {
+        const char* source = R"(
         struct Data {
             a: i32;
             b: i64;
@@ -49,13 +51,13 @@ TEST_CASE("E2E - Struct with 64-bit field") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n100000000000\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n100000000000\n");
+    }
 
-TEST_CASE("E2E - Multiple struct variables") {
-    const char* source = R"(
+    TEST_CASE("Multiple struct variables") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -76,13 +78,13 @@ TEST_CASE("E2E - Multiple struct variables") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n3\n4\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n3\n4\n");
+    }
 
-TEST_CASE("E2E - Struct field assignment from expression") {
-    const char* source = R"(
+    TEST_CASE("Struct field assignment from expression") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -98,13 +100,13 @@ TEST_CASE("E2E - Struct field assignment from expression") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "12\n17\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "12\n17\n");
+    }
 
-TEST_CASE("E2E - Struct with float fields") {
-    const char* source = R"(
+    TEST_CASE("Struct with float fields") {
+        const char* source = R"(
         struct Vec2 {
             x: f64;
             y: f64;
@@ -118,13 +120,13 @@ TEST_CASE("E2E - Struct with float fields") {
         }
     )";
 
-    Value result = compile_and_run(source, "main");
-    Value float_result = Value::float_from_u64(result.as_u64());
-    CHECK(float_result.as_float == doctest::Approx(4.0));  // 1.5 + 2.5
-}
+        Value result = compile_and_run(source, "main");
+        Value float_result = Value::float_from_u64(result.as_u64());
+        CHECK(float_result.as_float == doctest::Approx(4.0));  // 1.5 + 2.5
+    }
 
-TEST_CASE("E2E - Struct in conditional") {
-    const char* source = R"(
+    TEST_CASE("Struct in conditional") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -143,13 +145,13 @@ TEST_CASE("E2E - Struct in conditional") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n");
+    }
 
-TEST_CASE("E2E - Struct in loop") {
-    const char* source = R"(
+    TEST_CASE("Struct in loop") {
+        const char* source = R"(
         struct Counter {
             value: i32;
         }
@@ -165,13 +167,13 @@ TEST_CASE("E2E - Struct in loop") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "0\n1\n3\n6\n10\n");  // cumulative: 0, 0+1, 1+2, 3+3, 6+4
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "0\n1\n3\n6\n10\n");  // cumulative: 0, 0+1, 1+2, 3+3, 6+4
+    }
 
-TEST_CASE("E2E - Nested structs") {
-    const char* source = R"(
+    TEST_CASE("Nested structs") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -196,13 +198,13 @@ TEST_CASE("E2E - Nested structs") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n20\n100\n200\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n20\n100\n200\n");
+    }
 
-TEST_CASE("E2E - Deeply nested structs (3 levels)") {
-    const char* source = R"(
+    TEST_CASE("Deeply nested structs (3 levels)") {
+        const char* source = R"(
         struct Inner {
             value: i32;
         }
@@ -229,13 +231,13 @@ TEST_CASE("E2E - Deeply nested structs (3 levels)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n10\n100\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n10\n100\n");
+    }
 
-TEST_CASE("E2E - Multiple nested struct variables") {
-    const char* source = R"(
+    TEST_CASE("Multiple nested struct variables") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -266,17 +268,17 @@ TEST_CASE("E2E - Multiple nested struct variables") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n5\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n5\n");
+    }
 
-// ============================================================================
-// Struct Literal Tests
-// ============================================================================
+    // ============================================================================
+    // Struct Literal Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Struct literal") {
-    const char* source = R"(
+    TEST_CASE("Struct literal") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -290,13 +292,13 @@ TEST_CASE("E2E - Struct literal") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n20\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n20\n");
+    }
 
-TEST_CASE("E2E - Struct literal with default values") {
-    const char* source = R"(
+    TEST_CASE("Struct literal with default values") {
+        const char* source = R"(
         struct Config {
             width: i32 = 800;
             height: i32 = 600;
@@ -312,13 +314,13 @@ TEST_CASE("E2E - Struct literal with default values") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1920\n600\n0\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1920\n600\n0\n");
+    }
 
-TEST_CASE("E2E - Struct literal field order") {
-    const char* source = R"(
+    TEST_CASE("Struct literal field order") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -332,13 +334,13 @@ TEST_CASE("E2E - Struct literal field order") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n20\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n20\n");
+    }
 
-TEST_CASE("E2E - Empty struct literal (all defaults)") {
-    const char* source = R"(
+    TEST_CASE("Empty struct literal (all defaults)") {
+        const char* source = R"(
         struct Defaults {
             a: i32 = 1;
             b: i32 = 2;
@@ -354,13 +356,13 @@ TEST_CASE("E2E - Empty struct literal (all defaults)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n3\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n3\n");
+    }
 
-TEST_CASE("E2E - Struct literal with expressions") {
-    const char* source = R"(
+    TEST_CASE("Struct literal with expressions") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -375,13 +377,13 @@ TEST_CASE("E2E - Struct literal with expressions") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n15\n");  // 5*2=10, 5+10=15
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n15\n");  // 5*2=10, 5+10=15
+    }
 
-TEST_CASE("E2E - Struct literal with 64-bit field") {
-    const char* source = R"(
+    TEST_CASE("Struct literal with 64-bit field") {
+        const char* source = R"(
         struct Data {
             a: i32;
             b: i64;
@@ -395,17 +397,17 @@ TEST_CASE("E2E - Struct literal with 64-bit field") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n100000000000\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n100000000000\n");
+    }
 
-// ============================================================================
-// Struct Parameter Tests
-// ============================================================================
+    // ============================================================================
+    // Struct Parameter Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Small struct parameter") {
-    const char* source = R"(
+    TEST_CASE("Small struct parameter") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -422,13 +424,13 @@ TEST_CASE("E2E - Small struct parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "25\n");  // 3^2 + 4^2 = 9 + 16
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "25\n");  // 3^2 + 4^2 = 9 + 16
+    }
 
-TEST_CASE("E2E - Struct parameter value semantics") {
-    const char* source = R"(
+    TEST_CASE("Struct parameter value semantics") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -447,13 +449,13 @@ TEST_CASE("E2E - Struct parameter value semantics") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "100\n5\n");  // modify returns 100, but pt.x is still 5 (value semantics)
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "100\n5\n");  // modify returns 100, but pt.x is still 5 (value semantics)
+    }
 
-TEST_CASE("E2E - Multiple struct parameters") {
-    const char* source = R"(
+    TEST_CASE("Multiple struct parameters") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -475,13 +477,13 @@ TEST_CASE("E2E - Multiple struct parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n10\n20\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n10\n20\n");
+    }
 
-TEST_CASE("E2E - Mixed struct and primitive parameters") {
-    const char* source = R"(
+    TEST_CASE("Mixed struct and primitive parameters") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -501,17 +503,17 @@ TEST_CASE("E2E - Mixed struct and primitive parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "3\n7\n5\n50\n");  // p.x, p.y, factor, result
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "3\n7\n5\n50\n");  // p.x, p.y, factor, result
+    }
 
-// ============================================================================
-// Struct Return Tests
-// ============================================================================
+    // ============================================================================
+    // Struct Return Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Return small struct") {
-    const char* source = R"(
+    TEST_CASE("Return small struct") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -530,13 +532,13 @@ TEST_CASE("E2E - Return small struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n20\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n20\n");
+    }
 
-TEST_CASE("E2E - Return struct with modification") {
-    const char* source = R"(
+    TEST_CASE("Return struct with modification") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -556,13 +558,13 @@ TEST_CASE("E2E - Return struct with modification") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n20\n");  // 5*2, 10*2
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n20\n");  // 5*2, 10*2
+    }
 
-TEST_CASE("E2E - Chain struct returns") {
-    const char* source = R"(
+    TEST_CASE("Chain struct returns") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -584,13 +586,13 @@ TEST_CASE("E2E - Chain struct returns") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "5\n10\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "5\n10\n");
+    }
 
-TEST_CASE("E2E - Struct return used in expression") {
-    const char* source = R"(
+    TEST_CASE("Struct return used in expression") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -607,17 +609,17 @@ TEST_CASE("E2E - Struct return used in expression") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "7\n4\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "7\n4\n");
+    }
 
-// ============================================================================
-// Large Struct Return Tests (>16 bytes / >4 slots)
-// ============================================================================
+    // ============================================================================
+    // Large Struct Return Tests (>16 bytes / >4 slots)
+    // ============================================================================
 
-TEST_CASE("E2E - Large struct return (>16 bytes)") {
-    const char* source = R"(
+    TEST_CASE("Large struct return (>16 bytes)") {
+        const char* source = R"(
         struct BigData {
             a: i32;
             b: i32;
@@ -641,13 +643,13 @@ TEST_CASE("E2E - Large struct return (>16 bytes)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n11\n12\n13\n14\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n11\n12\n13\n14\n");
+    }
 
-TEST_CASE("E2E - Large struct return value semantics") {
-    const char* source = R"(
+    TEST_CASE("Large struct return value semantics") {
+        const char* source = R"(
         struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
 
         fun modify_big(data: BigData): i32 {
@@ -667,13 +669,13 @@ TEST_CASE("E2E - Large struct return value semantics") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "999\n1\n");  // modify_big returns 999, but data.a is still 1
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "999\n1\n");  // modify_big returns 999, but data.a is still 1
+    }
 
-TEST_CASE("E2E - Large struct chained returns") {
-    const char* source = R"(
+    TEST_CASE("Large struct chained returns") {
+        const char* source = R"(
         struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
 
         fun make_big(x: i32): BigData {
@@ -690,13 +692,13 @@ TEST_CASE("E2E - Large struct chained returns") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "25\n");  // 5 * 5
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "25\n");  // 5 * 5
+    }
 
-TEST_CASE("E2E - Large struct return with 64-bit field") {
-    const char* source = R"(
+    TEST_CASE("Large struct return with 64-bit field") {
+        const char* source = R"(
         struct BigData {
             a: i32;
             b: i32;
@@ -718,13 +720,13 @@ TEST_CASE("E2E - Large struct return with 64-bit field") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n100000000000\n4\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n100000000000\n4\n");
+    }
 
-TEST_CASE("E2E - Large struct return used in expression") {
-    const char* source = R"(
+    TEST_CASE("Large struct return used in expression") {
+        const char* source = R"(
         struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
 
         fun make_big(x: i32): BigData {
@@ -738,13 +740,13 @@ TEST_CASE("E2E - Large struct return used in expression") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "6\n12\n");  // 2*3=6, 3*4=12
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "6\n12\n");  // 2*3=6, 3*4=12
+    }
 
-TEST_CASE("E2E - Large struct return chained function calls") {
-    const char* source = R"(
+    TEST_CASE("Large struct return chained function calls") {
+        const char* source = R"(
         struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
 
         fun make_big(x: i32): BigData {
@@ -772,17 +774,17 @@ TEST_CASE("E2E - Large struct return chained function calls") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "15\n15\n15\n15\n15\n");  // 10+5 for each field
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "15\n15\n15\n15\n15\n");  // 10+5 for each field
+    }
 
-// ============================================================================
-// Float Struct Field Tests
-// ============================================================================
+    // ============================================================================
+    // Float Struct Field Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Struct with f32 fields") {
-    const char* source = R"(
+    TEST_CASE("Struct with f32 fields") {
+        const char* source = R"(
         struct Point {
             x: f32;
             y: f32;
@@ -795,13 +797,13 @@ TEST_CASE("E2E - Struct with f32 fields") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 4);  // 1.5 + 2.5 = 4.0 -> 4
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 4);  // 1.5 + 2.5 = 4.0 -> 4
+    }
 
-TEST_CASE("E2E - Struct with mixed i32 and f32 fields") {
-    const char* source = R"(
+    TEST_CASE("Struct with mixed i32 and f32 fields") {
+        const char* source = R"(
         struct Data {
             count: i32;
             value: f32;
@@ -814,7 +816,9 @@ TEST_CASE("E2E - Struct with mixed i32 and f32 fields") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 25);  // 10 * 2.5 = 25.0 -> 25
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 25);  // 10 * 2.5 = 25.0 -> 25
+    }
+
+}  // TEST_SUITE("E2E Structs")

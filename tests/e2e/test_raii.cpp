@@ -7,9 +7,11 @@ using namespace rx;
 // RAII Tests - Implicit Destruction at Scope Exit
 // ============================================================================
 
-TEST_CASE("E2E - RAII: implicit delete at scope exit") {
-    // uniq variable should be implicitly deleted when scope ends
-    const char* source = R"(
+TEST_SUITE("E2E RAII") {
+
+    TEST_CASE("implicit delete at scope exit") {
+        // uniq variable should be implicitly deleted when scope ends
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -23,14 +25,14 @@ TEST_CASE("E2E - RAII: implicit delete at scope exit") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - RAII: implicit delete at function end (void)") {
-    // uniq variable in a void function is cleaned up at the end
-    const char* source = R"(
+    TEST_CASE("implicit delete at function end (void)") {
+        // uniq variable in a void function is cleaned up at the end
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -49,14 +51,14 @@ TEST_CASE("E2E - RAII: implicit delete at function end (void)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 10);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 10);
+    }
 
-TEST_CASE("E2E - RAII: implicit delete in loop iteration") {
-    // uniq allocated inside a loop body is deleted each iteration
-    const char* source = R"(
+    TEST_CASE("implicit delete in loop iteration") {
+        // uniq allocated inside a loop body is deleted each iteration
+        const char* source = R"(
         struct Counter {
             value: i32;
         }
@@ -74,14 +76,14 @@ TEST_CASE("E2E - RAII: implicit delete in loop iteration") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "30\n");  // 0 + 10 + 20
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "30\n");  // 0 + 10 + 20
+    }
 
-TEST_CASE("E2E - RAII: explicit delete + scope exit (no double-free)") {
-    // Explicit delete marks variable as moved; scope exit doesn't double-delete
-    const char* source = R"(
+    TEST_CASE("explicit delete + scope exit (no double-free)") {
+        // Explicit delete marks variable as moved; scope exit doesn't double-delete
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -97,14 +99,14 @@ TEST_CASE("E2E - RAII: explicit delete + scope exit (no double-free)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - RAII: return uniq (no delete of returned value)") {
-    // Returning a uniq value moves it to the caller; it is NOT deleted
-    const char* source = R"(
+    TEST_CASE("return uniq (no delete of returned value)") {
+        // Returning a uniq value moves it to the caller; it is NOT deleted
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -125,18 +127,18 @@ TEST_CASE("E2E - RAII: return uniq (no delete of returned value)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 100);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 100);
+    }
 
-// ============================================================================
-// RAII Tests - Move Semantics
-// ============================================================================
+    // ============================================================================
+    // RAII Tests - Move Semantics
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: move to function transfers ownership") {
-    // Passing uniq to a function moves ownership; callee cleans up
-    const char* source = R"(
+    TEST_CASE("move to function transfers ownership") {
+        // Passing uniq to a function moves ownership; callee cleans up
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -158,18 +160,18 @@ TEST_CASE("E2E - RAII: move to function transfers ownership") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 10);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 10);
+    }
 
-// ============================================================================
-// RAII Tests - Reassignment Auto-Delete
-// ============================================================================
+    // ============================================================================
+    // RAII Tests - Reassignment Auto-Delete
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: reassignment auto-deletes old value") {
-    // Reassigning a uniq variable should delete the old value first
-    const char* source = R"(
+    TEST_CASE("reassignment auto-deletes old value") {
+        // Reassigning a uniq variable should delete the old value first
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -186,19 +188,19 @@ TEST_CASE("E2E - RAII: reassignment auto-deletes old value") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-// ============================================================================
-// RAII Tests - Destructor Called on Implicit Delete
-// ============================================================================
+    // ============================================================================
+    // RAII Tests - Destructor Called on Implicit Delete
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: destructor called on implicit delete") {
-    // Default destructor should be called when scope-exit implicit delete fires
-    // We verify the destructor runs by having it print a marker
-    const char* source = R"(
+    TEST_CASE("destructor called on implicit delete") {
+        // Default destructor should be called when scope-exit implicit delete fires
+        // We verify the destructor runs by having it print a marker
+        const char* source = R"(
         struct Resource {
             value: i32;
         }
@@ -222,17 +224,17 @@ TEST_CASE("E2E - RAII: destructor called on implicit delete") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // Destructor prints "dtor", then main prints "42"
-    CHECK(result.stdout_output == "dtor\n42\n");
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // Destructor prints "dtor", then main prints "42"
+        CHECK(result.stdout_output == "dtor\n42\n");
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - RAII: destructor called in correct LIFO order") {
-    // When multiple uniqs are in scope, destructors fire in reverse order
-    // Verify by having each destructor print its name
-    const char* source = R"(
+    TEST_CASE("destructor called in correct LIFO order") {
+        // When multiple uniqs are in scope, destructors fire in reverse order
+        // Verify by having each destructor print its name
+        const char* source = R"(
         struct A {
             value: i32;
         }
@@ -257,19 +259,19 @@ TEST_CASE("E2E - RAII: destructor called in correct LIFO order") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // b is declared second, so destroyed first (LIFO)
-    CHECK(result.stdout_output == "~B\n~A\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // b is declared second, so destroyed first (LIFO)
+        CHECK(result.stdout_output == "~B\n~A\n");
+    }
 
-// ============================================================================
-// RAII Tests - Nil Safety
-// ============================================================================
+    // ============================================================================
+    // RAII Tests - Nil Safety
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: nil uniq is safely cleaned up") {
-    // A nil uniq should not crash on implicit delete (DEL_OBJ on null is no-op)
-    const char* source = R"(
+    TEST_CASE("nil uniq is safely cleaned up") {
+        // A nil uniq should not crash on implicit delete (DEL_OBJ on null is no-op)
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -282,18 +284,18 @@ TEST_CASE("E2E - RAII: nil uniq is safely cleaned up") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-// ============================================================================
-// RAII Tests - Use-After-Move Compile Error
-// ============================================================================
+    // ============================================================================
+    // RAII Tests - Use-After-Move Compile Error
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: use-after-move compile error") {
-    // Using a uniq variable after it's been moved should be a compile error
-    const char* source = R"(
+    TEST_CASE("use-after-move compile error") {
+        // Using a uniq variable after it's been moved should be a compile error
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -312,14 +314,14 @@ TEST_CASE("E2E - RAII: use-after-move compile error") {
         }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
 
-TEST_CASE("E2E - RAII: use-after-delete compile error") {
-    // Using a uniq variable after explicit delete should be a compile error
-    const char* source = R"(
+    TEST_CASE("use-after-delete compile error") {
+        // Using a uniq variable after explicit delete should be a compile error
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -333,16 +335,16 @@ TEST_CASE("E2E - RAII: use-after-delete compile error") {
         }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
 
-TEST_CASE("E2E - RAII: self-assignment of noncopyable compile error") {
-    // `x = x` on a uniq variable would delete the old value and then move the
-    // now-dangling pointer back into x — a guaranteed use-after-free. The
-    // semantic analyzer should reject it.
-    const char* source = R"(
+    TEST_CASE("self-assignment of noncopyable compile error") {
+        // `x = x` on a uniq variable would delete the old value and then move the
+        // now-dangling pointer back into x — a guaranteed use-after-free. The
+        // semantic analyzer should reject it.
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -356,16 +358,16 @@ TEST_CASE("E2E - RAII: self-assignment of noncopyable compile error") {
         }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
 
-TEST_CASE("E2E - RAII: cross-variable move still compiles") {
-    // Regression guard: the self-assignment check must only fire when source
-    // and target resolve to the same symbol. Moving between distinct uniq
-    // variables is a normal move and must still compile.
-    const char* source = R"(
+    TEST_CASE("cross-variable move still compiles") {
+        // Regression guard: the self-assignment check must only fire when source
+        // and target resolve to the same symbol. Moving between distinct uniq
+        // variables is a normal move and must still compile.
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -380,14 +382,14 @@ TEST_CASE("E2E - RAII: cross-variable move still compiles") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 7);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 7);
+    }
 
-TEST_CASE("E2E - RAII: conditional move compile error") {
-    // Moving in one branch of if/else but not other causes MaybeValid error
-    const char* source = R"(
+    TEST_CASE("conditional move compile error") {
+        // Moving in one branch of if/else but not other causes MaybeValid error
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -408,19 +410,19 @@ TEST_CASE("E2E - RAII: conditional move compile error") {
         }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
 
-// ============================================================================
-// RAII Tests - Break/Continue Cleanup
-// ============================================================================
+    // ============================================================================
+    // RAII Tests - Break/Continue Cleanup
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: break cleans up loop-scoped uniq") {
-    // uniq allocated inside loop body should be cleaned up on break
-    // (no crash or memory error means cleanup succeeded)
-    const char* source = R"(
+    TEST_CASE("break cleans up loop-scoped uniq") {
+        // uniq allocated inside loop body should be cleaned up on break
+        // (no crash or memory error means cleanup succeeded)
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -440,14 +442,14 @@ TEST_CASE("E2E - RAII: break cleans up loop-scoped uniq") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - RAII: multiple uniqs in nested scopes") {
-    // Test cleanup with multiple uniqs at different scope levels
-    const char* source = R"(
+    TEST_CASE("multiple uniqs in nested scopes") {
+        // Test cleanup with multiple uniqs at different scope levels
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -467,18 +469,18 @@ TEST_CASE("E2E - RAII: multiple uniqs in nested scopes") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+    }
 
-// ============================================================================
-// RAII Tests - Named-Only Destructor Compile Errors
-// ============================================================================
+    // ============================================================================
+    // RAII Tests - Named-Only Destructor Compile Errors
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: named-only destructor requires explicit delete") {
-    // Struct with only named destructors (no default) left live at scope exit → compile error
-    const char* source = R"(
+    TEST_CASE("named-only destructor requires explicit delete") {
+        // Struct with only named destructors (no default) left live at scope exit → compile error
+        const char* source = R"(
         struct Resource {
             value: i32;
         }
@@ -495,14 +497,14 @@ TEST_CASE("E2E - RAII: named-only destructor requires explicit delete") {
         }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
 
-TEST_CASE("E2E - RAII: named-only destructor with explicit delete OK") {
-    // Same struct but variable is explicitly deleted before scope exit → OK
-    const char* source = R"(
+    TEST_CASE("named-only destructor with explicit delete OK") {
+        // Same struct but variable is explicitly deleted before scope exit → OK
+        const char* source = R"(
         struct Resource {
             value: i32;
         }
@@ -520,15 +522,15 @@ TEST_CASE("E2E - RAII: named-only destructor with explicit delete OK") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "saving to output.txt\n");
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "saving to output.txt\n");
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - RAII: default + named destructor uses implicit delete") {
-    // Struct with both default and named destructors → RAII uses default, no error
-    const char* source = R"(
+    TEST_CASE("default + named destructor uses implicit delete") {
+        // Struct with both default and named destructors → RAII uses default, no error
+        const char* source = R"(
         struct Resource {
             value: i32;
         }
@@ -549,15 +551,15 @@ TEST_CASE("E2E - RAII: default + named destructor uses implicit delete") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "default dtor\n");
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "default dtor\n");
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - RAII: named-only destructor with break is compile error") {
-    // Variable in loop body with only named destructors + break → compile error
-    const char* source = R"(
+    TEST_CASE("named-only destructor with break is compile error") {
+        // Variable in loop body with only named destructors + break → compile error
+        const char* source = R"(
         struct Resource {
             value: i32;
         }
@@ -579,19 +581,19 @@ TEST_CASE("E2E - RAII: named-only destructor with break is compile error") {
         }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
 
-// ============================================================================
-// Recursive Uniq Field Cleanup (Synthetic Destructors)
-// ============================================================================
+    // ============================================================================
+    // Recursive Uniq Field Cleanup (Synthetic Destructors)
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: uniq field auto-cleanup at scope exit") {
-    // When a struct with a uniq field goes out of scope,
-    // the uniq field should be automatically deleted
-    const char* source = R"(
+    TEST_CASE("uniq field auto-cleanup at scope exit") {
+        // When a struct with a uniq field goes out of scope,
+        // the uniq field should be automatically deleted
+        const char* source = R"(
         struct Inner {
             value: i32;
         }
@@ -614,15 +616,15 @@ TEST_CASE("E2E - RAII: uniq field auto-cleanup at scope exit") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-    CHECK(result.stdout_output == "~Inner\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+        CHECK(result.stdout_output == "~Inner\n");
+    }
 
-TEST_CASE("E2E - RAII: uniq field cleanup with explicit delete") {
-    // Explicit delete of a struct with uniq fields should clean up the fields
-    const char* source = R"CODE(
+    TEST_CASE("uniq field cleanup with explicit delete") {
+        // Explicit delete of a struct with uniq fields should clean up the fields
+        const char* source = R"CODE(
         struct Node {
             value: i32;
         }
@@ -644,14 +646,14 @@ TEST_CASE("E2E - RAII: uniq field cleanup with explicit delete") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "~Node(99)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "~Node(99)\n");
+    }
 
-TEST_CASE("E2E - RAII: recursive uniq field cleanup (tree structure)") {
-    // A tree with uniq children should recursively clean up all nodes
-    const char* source = R"CODE(
+    TEST_CASE("recursive uniq field cleanup (tree structure)") {
+        // A tree with uniq children should recursively clean up all nodes
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             left: uniq Node;
@@ -678,17 +680,17 @@ TEST_CASE("E2E - RAII: recursive uniq field cleanup (tree structure)") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // Root's dtor runs first, then right field (reverse order), then left field
-    // Each child's dtor runs before the child is deleted
-    CHECK(result.stdout_output == "~Node(1)\n~Node(3)\n~Node(2)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // Root's dtor runs first, then right field (reverse order), then left field
+        // Each child's dtor runs before the child is deleted
+        CHECK(result.stdout_output == "~Node(1)\n~Node(3)\n~Node(2)\n");
+    }
 
-TEST_CASE("E2E - RAII: user-defined dtor + auto field cleanup") {
-    // When a struct has BOTH a user-defined destructor AND uniq fields,
-    // the user destructor runs first, then fields are cleaned up
-    const char* source = R"CODE(
+    TEST_CASE("user-defined dtor + auto field cleanup") {
+        // When a struct has BOTH a user-defined destructor AND uniq fields,
+        // the user destructor runs first, then fields are cleaned up
+        const char* source = R"CODE(
         struct Child {
             name: string;
         }
@@ -715,15 +717,15 @@ TEST_CASE("E2E - RAII: user-defined dtor + auto field cleanup") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // Parent's user dtor runs first, then child field cleanup
-    CHECK(result.stdout_output == "~Parent(root)\n~Child(kid)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // Parent's user dtor runs first, then child field cleanup
+        CHECK(result.stdout_output == "~Parent(root)\n~Child(kid)\n");
+    }
 
-TEST_CASE("E2E - RAII: multiple uniq fields cleanup order") {
-    // Multiple uniq fields should be cleaned up in reverse declaration order
-    const char* source = R"CODE(
+    TEST_CASE("multiple uniq fields cleanup order") {
+        // Multiple uniq fields should be cleaned up in reverse declaration order
+        const char* source = R"CODE(
         struct Item {
             id: i32;
         }
@@ -750,16 +752,16 @@ TEST_CASE("E2E - RAII: multiple uniq fields cleanup order") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // Reverse declaration order: third, second, first
-    CHECK(result.stdout_output == "~Item(3)\n~Item(2)\n~Item(1)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // Reverse declaration order: third, second, first
+        CHECK(result.stdout_output == "~Item(3)\n~Item(2)\n~Item(1)\n");
+    }
 
-TEST_CASE("E2E - RAII: uniq field without destructor (no struct inner type)") {
-    // A struct with a uniq field pointing to a struct without any destructor
-    // should still free the memory (no crash, no leak)
-    const char* source = R"(
+    TEST_CASE("uniq field without destructor (no struct inner type)") {
+        // A struct with a uniq field pointing to a struct without any destructor
+        // should still free the memory (no crash, no leak)
+        const char* source = R"(
         struct Simple {
             value: i32;
         }
@@ -778,16 +780,16 @@ TEST_CASE("E2E - RAII: uniq field without destructor (no struct inner type)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - RAII: value-type struct field with destructor") {
-    // When a struct embeds a value-type struct field whose type has a
-    // destructor (due to owning uniq fields), the field's destructor
-    // should be called automatically.
-    const char* source = R"CODE(
+    TEST_CASE("value-type struct field with destructor") {
+        // When a struct embeds a value-type struct field whose type has a
+        // destructor (due to owning uniq fields), the field's destructor
+        // should be called automatically.
+        const char* source = R"CODE(
         struct Leaf {
             value: i32;
         }
@@ -816,17 +818,17 @@ TEST_CASE("E2E - RAII: value-type struct field with destructor") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // Outer's synthetic dtor calls Inner's synthetic dtor on the embedded field,
-    // which in turn cleans up the uniq Leaf child.
-    CHECK(result.stdout_output == "~Leaf(77)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // Outer's synthetic dtor calls Inner's synthetic dtor on the embedded field,
+        // which in turn cleans up the uniq Leaf child.
+        CHECK(result.stdout_output == "~Leaf(77)\n");
+    }
 
-TEST_CASE("E2E - RAII: deeply nested value-type fields with destructors") {
-    // Three levels of nesting: C embeds B embeds A, where A has a uniq field.
-    // All three should get synthetic destructors via the fixpoint loop.
-    const char* source = R"CODE(
+    TEST_CASE("deeply nested value-type fields with destructors") {
+        // Three levels of nesting: C embeds B embeds A, where A has a uniq field.
+        // All three should get synthetic destructors via the fixpoint loop.
+        const char* source = R"CODE(
         struct Resource {
             id: i32;
         }
@@ -855,19 +857,19 @@ TEST_CASE("E2E - RAII: deeply nested value-type fields with destructors") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "~Resource(42)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "~Resource(42)\n");
+    }
 
-// ============================================================================
-// Value-Type Struct Move Semantics
-// ============================================================================
+    // ============================================================================
+    // Value-Type Struct Move Semantics
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: value struct scope-exit cleanup") {
-    // A value-type struct with a uniq field gets a synthetic destructor,
-    // so it should be cleaned up at scope exit
-    const char* source = R"CODE(
+    TEST_CASE("value struct scope-exit cleanup") {
+        // A value-type struct with a uniq field gets a synthetic destructor,
+        // so it should be cleaned up at scope exit
+        const char* source = R"CODE(
         struct Leaf {
             value: i32;
         }
@@ -889,15 +891,15 @@ TEST_CASE("E2E - RAII: value struct scope-exit cleanup") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "~Leaf(55)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "~Leaf(55)\n");
+    }
 
-TEST_CASE("E2E - RAII: value struct use-after-move compile error") {
-    // Passing a move-semantic value struct to a function moves it;
-    // using it after is a compile error
-    const char* source = R"CODE(
+    TEST_CASE("value struct use-after-move compile error") {
+        // Passing a move-semantic value struct to a function moves it;
+        // using it after is a compile error
+        const char* source = R"CODE(
         struct Leaf {
             value: i32;
         }
@@ -920,15 +922,15 @@ TEST_CASE("E2E - RAII: value struct use-after-move compile error") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
 
-TEST_CASE("E2E - RAII: value struct move on return") {
-    // Returning a value struct with move semantics moves it to the caller;
-    // no double-destroy should occur
-    const char* source = R"CODE(
+    TEST_CASE("value struct move on return") {
+        // Returning a value struct with move semantics moves it to the caller;
+        // no double-destroy should occur
+        const char* source = R"CODE(
         struct Leaf {
             value: i32;
         }
@@ -957,14 +959,14 @@ TEST_CASE("E2E - RAII: value struct move on return") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "77\n~Leaf(77)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "77\n~Leaf(77)\n");
+    }
 
-TEST_CASE("E2E - RAII: value struct reassignment destroys old") {
-    // Reassigning a move-semantic value struct should destroy the old value first
-    const char* source = R"CODE(
+    TEST_CASE("value struct reassignment destroys old") {
+        // Reassigning a move-semantic value struct should destroy the old value first
+        const char* source = R"CODE(
         struct Leaf {
             value: i32;
         }
@@ -990,14 +992,14 @@ TEST_CASE("E2E - RAII: value struct reassignment destroys old") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "~Leaf(1)\n~Leaf(2)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "~Leaf(1)\n~Leaf(2)\n");
+    }
 
-TEST_CASE("E2E - RAII: value struct conditional move compile error") {
-    // Moving in one if-branch but using after → compile error
-    const char* source = R"CODE(
+    TEST_CASE("value struct conditional move compile error") {
+        // Moving in one if-branch but using after → compile error
+        const char* source = R"CODE(
         struct Leaf {
             value: i32;
         }
@@ -1021,14 +1023,14 @@ TEST_CASE("E2E - RAII: value struct conditional move compile error") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
 
-TEST_CASE("E2E - RAII: plain struct remains copyable") {
-    // A struct without uniq fields or destructors should be freely copyable
-    const char* source = R"(
+    TEST_CASE("plain struct remains copyable") {
+        // A struct without uniq fields or destructors should be freely copyable
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -1049,14 +1051,14 @@ TEST_CASE("E2E - RAII: plain struct remains copyable") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 4);  // p.x (1) + sum (3) = 4
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 4);  // p.x (1) + sum (3) = 4
+    }
 
-TEST_CASE("E2E - RAII: user-defined destructor makes struct non-copyable") {
-    // A struct with a user-defined default destructor should require move semantics
-    const char* source = R"CODE(
+    TEST_CASE("user-defined destructor makes struct non-copyable") {
+        // A struct with a user-defined default destructor should require move semantics
+        const char* source = R"CODE(
         struct File {
             fd: i32;
         }
@@ -1078,17 +1080,17 @@ TEST_CASE("E2E - RAII: user-defined destructor makes struct non-copyable") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
 
-// ============================================================================
-// Field-Level Move Prevention (Compile Errors)
-// ============================================================================
+    // ============================================================================
+    // Field-Level Move Prevention (Compile Errors)
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: cannot pass uniq field to uniq parameter") {
-    const char* source = R"CODE(
+    TEST_CASE("cannot pass uniq field to uniq parameter") {
+        const char* source = R"CODE(
         struct Item {
             value: i32;
         }
@@ -1109,13 +1111,13 @@ TEST_CASE("E2E - RAII: cannot pass uniq field to uniq parameter") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Cannot move out of field
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Cannot move out of field
+    }
 
-TEST_CASE("E2E - RAII: cannot assign uniq field to uniq variable") {
-    const char* source = R"CODE(
+    TEST_CASE("cannot assign uniq field to uniq variable") {
+        const char* source = R"CODE(
         struct Item {
             value: i32;
         }
@@ -1132,13 +1134,13 @@ TEST_CASE("E2E - RAII: cannot assign uniq field to uniq variable") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Cannot move out of field
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Cannot move out of field
+    }
 
-TEST_CASE("E2E - RAII: cannot assign uniq field to inferred uniq variable") {
-    const char* source = R"CODE(
+    TEST_CASE("cannot assign uniq field to inferred uniq variable") {
+        const char* source = R"CODE(
         struct Item {
             value: i32;
         }
@@ -1155,13 +1157,13 @@ TEST_CASE("E2E - RAII: cannot assign uniq field to inferred uniq variable") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Cannot move out of field
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Cannot move out of field
+    }
 
-TEST_CASE("E2E - RAII: cannot delete uniq field directly") {
-    const char* source = R"CODE(
+    TEST_CASE("cannot delete uniq field directly") {
+        const char* source = R"CODE(
         struct Item {
             value: i32;
         }
@@ -1178,13 +1180,13 @@ TEST_CASE("E2E - RAII: cannot delete uniq field directly") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Cannot delete a field
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Cannot delete a field
+    }
 
-TEST_CASE("E2E - RAII: cannot return uniq field") {
-    const char* source = R"CODE(
+    TEST_CASE("cannot return uniq field") {
+        const char* source = R"CODE(
         struct Item {
             value: i32;
         }
@@ -1204,13 +1206,13 @@ TEST_CASE("E2E - RAII: cannot return uniq field") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Cannot return a field with move semantics
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Cannot return a field with move semantics
+    }
 
-TEST_CASE("E2E - RAII: cannot reassign uniq variable from uniq field") {
-    const char* source = R"CODE(
+    TEST_CASE("cannot reassign uniq variable from uniq field") {
+        const char* source = R"CODE(
         struct Item {
             value: i32;
         }
@@ -1228,17 +1230,17 @@ TEST_CASE("E2E - RAII: cannot reassign uniq variable from uniq field") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Cannot move out of field
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Cannot move out of field
+    }
 
-// ============================================================================
-// Field Borrowing Still Works
-// ============================================================================
+    // ============================================================================
+    // Field Borrowing Still Works
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: reading through uniq field works") {
-    const char* source = R"CODE(
+    TEST_CASE("reading through uniq field works") {
+        const char* source = R"CODE(
         struct Item {
             value: i32;
         }
@@ -1255,13 +1257,13 @@ TEST_CASE("E2E - RAII: reading through uniq field works") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - RAII: passing uniq field as ref parameter works") {
-    const char* source = R"CODE(
+    TEST_CASE("passing uniq field as ref parameter works") {
+        const char* source = R"CODE(
         struct Item {
             value: i32;
         }
@@ -1282,13 +1284,13 @@ TEST_CASE("E2E - RAII: passing uniq field as ref parameter works") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - RAII: calling method on uniq field works") {
-    const char* source = R"CODE(
+    TEST_CASE("calling method on uniq field works") {
+        const char* source = R"CODE(
         struct Item {
             value: i32;
         }
@@ -1309,13 +1311,13 @@ TEST_CASE("E2E - RAII: calling method on uniq field works") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - RAII: reassigning uniq field with new value works") {
-    const char* source = R"CODE(
+    TEST_CASE("reassigning uniq field with new value works") {
+        const char* source = R"CODE(
         struct Item {
             value: i32;
         }
@@ -1338,19 +1340,19 @@ TEST_CASE("E2E - RAII: reassigning uniq field with new value works") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 2);
-    // First child (value=1) destroyed on reassignment, second (value=2) destroyed at scope exit
-    CHECK(result.stdout_output == "~Item(1)\n~Item(2)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 2);
+        // First child (value=1) destroyed on reassignment, second (value=2) destroyed at scope exit
+        CHECK(result.stdout_output == "~Item(1)\n~Item(2)\n");
+    }
 
-// ============================================================================
-// Field Reassignment Cleanup (Runtime)
-// ============================================================================
+    // ============================================================================
+    // Field Reassignment Cleanup (Runtime)
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: field reassignment destroys old uniq value") {
-    const char* source = R"CODE(
+    TEST_CASE("field reassignment destroys old uniq value") {
+        const char* source = R"CODE(
         struct Item {
             id: i32;
         }
@@ -1375,14 +1377,14 @@ TEST_CASE("E2E - RAII: field reassignment destroys old uniq value") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // Old item destroyed during reassignment, new item destroyed at scope exit
-    CHECK(result.stdout_output == "before reassign\n~Item(1)\nafter reassign\n~Item(2)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // Old item destroyed during reassignment, new item destroyed at scope exit
+        CHECK(result.stdout_output == "before reassign\n~Item(1)\nafter reassign\n~Item(2)\n");
+    }
 
-TEST_CASE("E2E - RAII: field reassignment with nil destroys old value") {
-    const char* source = R"CODE(
+    TEST_CASE("field reassignment with nil destroys old value") {
+        const char* source = R"CODE(
         struct Item {
             id: i32;
         }
@@ -1406,13 +1408,13 @@ TEST_CASE("E2E - RAII: field reassignment with nil destroys old value") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "before nil\n~Item(99)\nafter nil\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "before nil\n~Item(99)\nafter nil\n");
+    }
 
-TEST_CASE("E2E - RAII: field assignment from uniq variable moves source") {
-    const char* source = R"CODE(
+    TEST_CASE("field assignment from uniq variable moves source") {
+        const char* source = R"CODE(
         struct Item {
             value: i32;
         }
@@ -1431,13 +1433,13 @@ TEST_CASE("E2E - RAII: field assignment from uniq variable moves source") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // item is moved after field assignment
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // item is moved after field assignment
+    }
 
-TEST_CASE("E2E - RAII: field assignment from uniq variable works correctly") {
-    const char* source = R"CODE(
+    TEST_CASE("field assignment from uniq variable works correctly") {
+        const char* source = R"CODE(
         struct Item {
             value: i32;
         }
@@ -1460,20 +1462,20 @@ TEST_CASE("E2E - RAII: field assignment from uniq variable works correctly") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-    // Item destroyed once via Owner's field cleanup
-    CHECK(result.stdout_output == "~Item(42)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+        // Item destroyed once via Owner's field cleanup
+        CHECK(result.stdout_output == "~Item(42)\n");
+    }
 
-// ============================================================================
-// Noncopyable Container Tests — List<uniq T>
-// ============================================================================
+    // ============================================================================
+    // Noncopyable Container Tests — List<uniq T>
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: List<uniq T> empty list cleanup") {
-    // Empty noncopyable list should be cleaned up without issues
-    const char* source = R"CODE(
+    TEST_CASE("List<uniq T> empty list cleanup") {
+        // Empty noncopyable list should be cleaned up without issues
+        const char* source = R"CODE(
         struct Item {
             id: i32;
         }
@@ -1489,14 +1491,14 @@ TEST_CASE("E2E - RAII: List<uniq T> empty list cleanup") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "created\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "created\n");
+    }
 
-TEST_CASE("E2E - RAII: List<uniq T> element cleanup at scope exit") {
-    // Elements in a List<uniq T> should be destroyed when the list goes out of scope
-    const char* source = R"CODE(
+    TEST_CASE("List<uniq T> element cleanup at scope exit") {
+        // Elements in a List<uniq T> should be destroyed when the list goes out of scope
+        const char* source = R"CODE(
         struct Item {
             id: i32;
         }
@@ -1522,14 +1524,14 @@ TEST_CASE("E2E - RAII: List<uniq T> element cleanup at scope exit") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "before exit\n~Item(1)\n~Item(2)\n~Item(3)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "before exit\n~Item(1)\n~Item(2)\n~Item(3)\n");
+    }
 
-TEST_CASE("E2E - RAII: List<uniq T> passed to function by move") {
-    // Passing List<uniq T> to a function moves it; elements destroyed in callee
-    const char* source = R"CODE(
+    TEST_CASE("List<uniq T> passed to function by move") {
+        // Passing List<uniq T> to a function moves it; elements destroyed in callee
+        const char* source = R"CODE(
         struct Item {
             id: i32;
         }
@@ -1558,15 +1560,15 @@ TEST_CASE("E2E - RAII: List<uniq T> passed to function by move") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "~Item(10)\n~Item(20)\n2\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "~Item(10)\n~Item(20)\n2\n");
+    }
 
-TEST_CASE("E2E - RAII: struct with List<uniq T> field cleanup") {
-    // A struct containing a List<uniq T> field should get a synthetic destructor
-    // that cleans up the list elements
-    const char* source = R"CODE(
+    TEST_CASE("struct with List<uniq T> field cleanup") {
+        // A struct containing a List<uniq T> field should get a synthetic destructor
+        // that cleans up the list elements
+        const char* source = R"CODE(
         struct Item {
             id: i32;
         }
@@ -1593,15 +1595,15 @@ TEST_CASE("E2E - RAII: struct with List<uniq T> field cleanup") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "~Item(100)\n~Item(200)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "~Item(100)\n~Item(200)\n");
+    }
 
-TEST_CASE("E2E - RAII: use-after-move on List<uniq T> via var init") {
-    // Initializing a new variable from a noncopyable list moves it;
-    // using the source after is a compile error
-    const char* source = R"CODE(
+    TEST_CASE("use-after-move on List<uniq T> via var init") {
+        // Initializing a new variable from a noncopyable list moves it;
+        // using the source after is a compile error
+        const char* source = R"CODE(
         struct Item {
             id: i32;
         }
@@ -1616,14 +1618,14 @@ TEST_CASE("E2E - RAII: use-after-move on List<uniq T> via var init") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile — use after move
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile — use after move
+    }
 
-TEST_CASE("E2E - RAII: use-after-move on List<uniq T>") {
-    // Using a List<uniq T> after passing it to a function should fail
-    const char* source = R"CODE(
+    TEST_CASE("use-after-move on List<uniq T>") {
+        // Using a List<uniq T> after passing it to a function should fail
+        const char* source = R"CODE(
         struct Item {
             id: i32;
         }
@@ -1642,14 +1644,14 @@ TEST_CASE("E2E - RAII: use-after-move on List<uniq T>") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail to compile — use after move
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile — use after move
+    }
 
-TEST_CASE("E2E - RAII: List<i32> remains copyable") {
-    // Regular lists with copyable element types are still copyable
-    const char* source = R"CODE(
+    TEST_CASE("List<i32> remains copyable") {
+        // Regular lists with copyable element types are still copyable
+        const char* source = R"CODE(
         fun use_list(items: List<i32>): i32 {
             return items.len();
         }
@@ -1665,14 +1667,14 @@ TEST_CASE("E2E - RAII: List<i32> remains copyable") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 4);  // 2 + 2
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 4);  // 2 + 2
+    }
 
-TEST_CASE("E2E - RAII: method calls on noncopyable list work") {
-    // .push(), .len(), .pop() should still work on List<uniq T>
-    const char* source = R"CODE(
+    TEST_CASE("method calls on noncopyable list work") {
+        // .push(), .len(), .pop() should still work on List<uniq T>
+        const char* source = R"CODE(
         struct Item {
             id: i32;
         }
@@ -1695,18 +1697,18 @@ TEST_CASE("E2E - RAII: method calls on noncopyable list work") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "len=2\n~Item(1)\n~Item(2)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "len=2\n~Item(1)\n~Item(2)\n");
+    }
 
-// ============================================================================
-// Variable-to-variable move semantics
-// ============================================================================
+    // ============================================================================
+    // Variable-to-variable move semantics
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: variable-to-variable move marks source as moved") {
-    // After `b = a`, using `a` should be a compile error (use-after-move)
-    const char* source = R"CODE(
+    TEST_CASE("variable-to-variable move marks source as moved") {
+        // After `b = a`, using `a` should be a compile error (use-after-move)
+        const char* source = R"CODE(
         struct Node {
             value: i32;
         }
@@ -1720,13 +1722,13 @@ TEST_CASE("E2E - RAII: variable-to-variable move marks source as moved") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);  // Should fail: use-after-move on `a`
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);  // Should fail: use-after-move on `a`
+    }
 
-TEST_CASE("E2E - RAII: variable-to-variable move works correctly") {
-    // After `b = a`, using `b` should work fine
-    const char* source = R"CODE(
+    TEST_CASE("variable-to-variable move works correctly") {
+        // After `b = a`, using `b` should work fine
+        const char* source = R"CODE(
         struct Node {
             value: i32;
         }
@@ -1740,14 +1742,14 @@ TEST_CASE("E2E - RAII: variable-to-variable move works correctly") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - RAII: linked list building in while loop") {
-    // Move head into field, reassign head, repeat — should work
-    const char* source = R"CODE(
+    TEST_CASE("linked list building in while loop") {
+        // Move head into field, reassign head, repeat — should work
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             next: uniq Node;
@@ -1772,14 +1774,14 @@ TEST_CASE("E2E - RAII: linked list building in while loop") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 3);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
 
-TEST_CASE("E2E - RAII: linked list building in for loop") {
-    // Same pattern with for loop
-    const char* source = R"CODE(
+    TEST_CASE("linked list building in for loop") {
+        // Same pattern with for loop
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             next: uniq Node;
@@ -1802,14 +1804,14 @@ TEST_CASE("E2E - RAII: linked list building in for loop") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 3);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
 
-TEST_CASE("E2E - RAII: move in loop without reassignment is error") {
-    // Moving a uniq in a loop body without reassigning should be a compile error
-    const char* source = R"CODE(
+    TEST_CASE("move in loop without reassignment is error") {
+        // Moving a uniq in a loop body without reassigning should be a compile error
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             child: uniq Node;
@@ -1832,13 +1834,13 @@ TEST_CASE("E2E - RAII: move in loop without reassignment is error") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);  // Should fail: use-after-move on next iteration
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);  // Should fail: use-after-move on next iteration
+    }
 
-TEST_CASE("E2E - RAII: conditional move in loop is error") {
-    // Moving in one branch of an if inside a loop — MaybeValid cross-iteration
-    const char* source = R"CODE(
+    TEST_CASE("conditional move in loop is error") {
+        // Moving in one branch of an if inside a loop — MaybeValid cross-iteration
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             child: uniq Node;
@@ -1863,18 +1865,18 @@ TEST_CASE("E2E - RAII: conditional move in loop is error") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);  // Should fail: MaybeValid cross-iteration
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);  // Should fail: MaybeValid cross-iteration
+    }
 
-// ============================================================================
-// Deep else-if chain compilation performance
-// ============================================================================
+    // ============================================================================
+    // Deep else-if chain compilation performance
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: deep else-if chain with noncopyable types") {
-    // Regression: 20+ else-if branches with List<uniq T> in scope
-    // previously caused the compiler to hang (quadratic compilation)
-    const char* source = R"CODE(
+    TEST_CASE("deep else-if chain with noncopyable types") {
+        // Regression: 20+ else-if branches with List<uniq T> in scope
+        // previously caused the compiler to hang (quadratic compilation)
+        const char* source = R"CODE(
         struct Item { value: i32; }
 
         fun classify(n: i32): i32 {
@@ -1909,15 +1911,15 @@ TEST_CASE("E2E - RAII: deep else-if chain with noncopyable types") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 200);  // 50 + 150
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 200);  // 50 + 150
+    }
 
-TEST_CASE("E2E - RAII: variable shadowing does not corrupt outer move state") {
-    // After moving outer x, an inner scope declaring a new x should not
-    // make the outer x appear live again after the inner scope exits.
-    const char* source = R"CODE(
+    TEST_CASE("variable shadowing does not corrupt outer move state") {
+        // After moving outer x, an inner scope declaring a new x should not
+        // make the outer x appear live again after the inner scope exits.
+        const char* source = R"CODE(
         struct Widget {
             id: i32;
         }
@@ -1936,13 +1938,13 @@ TEST_CASE("E2E - RAII: variable shadowing does not corrupt outer move state") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);  // Should fail: use of moved value 'x' (outer)
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);  // Should fail: use of moved value 'x' (outer)
+    }
 
-TEST_CASE("E2E - RAII: struct literal field marks source as moved") {
-    SUBCASE("Use after move into struct literal is rejected") {
-        const char* source = R"CODE(
+    TEST_CASE("struct literal field marks source as moved") {
+        SUBCASE("Use after move into struct literal is rejected") {
+            const char* source = R"CODE(
             struct Widget {
                 id: i32;
             }
@@ -1960,12 +1962,12 @@ TEST_CASE("E2E - RAII: struct literal field marks source as moved") {
             }
         )CODE";
 
-        TestResult result = run_and_capture(source, "main");
-        CHECK(!result.success);  // Should fail: use of moved value 'w'
-    }
+            TestResult result = run_and_capture(source, "main");
+            CHECK(!result.success);  // Should fail: use of moved value 'w'
+        }
 
-    SUBCASE("Move into struct literal without later use succeeds") {
-        const char* source = R"CODE(
+        SUBCASE("Move into struct literal without later use succeeds") {
+            const char* source = R"CODE(
             struct Widget {
                 id: i32;
             }
@@ -1983,20 +1985,20 @@ TEST_CASE("E2E - RAII: struct literal field marks source as moved") {
             }
         )CODE";
 
-        TestResult result = run_and_capture(source, "main");
-        CHECK(result.success);
-        CHECK(result.value == 42);
+            TestResult result = run_and_capture(source, "main");
+            CHECK(result.success);
+            CHECK(result.value == 42);
+        }
     }
-}
 
-// ============================================================================
-// RAII Tests - Definite-termination analysis
-// ============================================================================
-// If one branch of an if/when/try always returns/throws/breaks/continues, the
-// merge should pick the surviving branch's move state instead of MaybeValid.
+    // ============================================================================
+    // RAII Tests - Definite-termination analysis
+    // ============================================================================
+    // If one branch of an if/when/try always returns/throws/breaks/continues, the
+    // merge should pick the surviving branch's move state instead of MaybeValid.
 
-TEST_CASE("E2E - RAII: early return in if-then preserves x live after") {
-    const char* source = R"(
+    TEST_CASE("early return in if-then preserves x live after") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -2017,13 +2019,13 @@ TEST_CASE("E2E - RAII: early return in if-then preserves x live after") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - RAII: throw in if-then preserves x live after") {
-    const char* source = R"(
+    TEST_CASE("throw in if-then preserves x live after") {
+        const char* source = R"(
         struct BadInput {
             code: i32;
         }
@@ -2060,13 +2062,13 @@ TEST_CASE("E2E - RAII: throw in if-then preserves x live after") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 99);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 99);
+    }
 
-TEST_CASE("E2E - RAII: move and return in then, live in else") {
-    const char* source = R"(
+    TEST_CASE("move and return in then, live in else") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -2089,13 +2091,13 @@ TEST_CASE("E2E - RAII: move and return in then, live in else") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 7);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 7);
+    }
 
-TEST_CASE("E2E - RAII: when with one terminating case preserves live path") {
-    const char* source = R"(
+    TEST_CASE("when with one terminating case preserves live path") {
+        const char* source = R"(
         enum Kind { A, B }
 
         struct Point {
@@ -2121,15 +2123,15 @@ TEST_CASE("E2E - RAII: when with one terminating case preserves live path") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 5);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 5);
+    }
 
-TEST_CASE("E2E - RAII: try body move with terminating catch keeps x moved after") {
-    // Regression/precision test: catch terminates, so the only surviving
-    // exit path is the try body where x was moved. Using x after must error.
-    const char* source = R"(
+    TEST_CASE("try body move with terminating catch keeps x moved after") {
+        // Regression/precision test: catch terminates, so the only surviving
+        // exit path is the try body where x was moved. Using x after must error.
+        const char* source = R"(
         struct E { code: i32; }
         fun E.message(): string for Exception { return "e"; }
 
@@ -2154,19 +2156,19 @@ TEST_CASE("E2E - RAII: try body move with terminating catch keeps x moved after"
         }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
 
-TEST_CASE("E2E - RAII: reassignment in nested scope adopts RHS temporary") {
-    // Regression for an IR-gen fix: gen_assign_expr must consume the RHS
-    // temporary when the target is a noncopyable identifier, otherwise the
-    // temp's cleanup record at the inner scope depth triggers a double-free
-    // against the outer variable's cleanup when the scopes pop in order.
-    // This is observable when the reassignment sits in a nested block that
-    // pops before the variable's scope.
-    const char* source = R"(
+    TEST_CASE("reassignment in nested scope adopts RHS temporary") {
+        // Regression for an IR-gen fix: gen_assign_expr must consume the RHS
+        // temporary when the target is a noncopyable identifier, otherwise the
+        // temp's cleanup record at the inner scope depth triggers a double-free
+        // against the outer variable's cleanup when the scopes pop in order.
+        // This is observable when the reassignment sits in a nested block that
+        // pops before the variable's scope.
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -2183,18 +2185,18 @@ TEST_CASE("E2E - RAII: reassignment in nested scope adopts RHS temporary") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - RAII: reassignment in catch after terminating try") {
-    // Exercises both the try/catch termination analysis and the
-    // gen_assign_expr temp-adoption fix: the try throws (terminating), so
-    // only the catch path survives; the catch reassigns a uniq variable
-    // from an outer scope, and the value must flow out to the caller
-    // without double-destroying the new resource.
-    const char* source = R"(
+    TEST_CASE("reassignment in catch after terminating try") {
+        // Exercises both the try/catch termination analysis and the
+        // gen_assign_expr temp-adoption fix: the try throws (terminating), so
+        // only the catch path survives; the catch reassigns a uniq variable
+        // from an outer scope, and the value must flow out to the caller
+        // without double-destroying the new resource.
+        const char* source = R"(
         struct Resource { id: i32; }
         fun delete Resource() { }
 
@@ -2214,17 +2216,17 @@ TEST_CASE("E2E - RAII: reassignment in catch after terminating try") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 7);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 7);
+    }
 
-TEST_CASE("E2E - RAII: loop body return does not escape enclosing if") {
-    // Regression: if we incorrectly propagated termination from a loop body,
-    // we'd accept this program. The loop may execute zero times, so the
-    // then-branch may fall through with p moved — use of p after must still
-    // be rejected.
-    const char* source = R"(
+    TEST_CASE("loop body return does not escape enclosing if") {
+        // Regression: if we incorrectly propagated termination from a loop body,
+        // we'd accept this program. The loop may execute zero times, so the
+        // then-branch may fall through with p moved — use of p after must still
+        // be rejected.
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -2247,24 +2249,24 @@ TEST_CASE("E2E - RAII: loop body return does not escape enclosing if") {
         }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
 
-// ============================================================================
-// RAII Tests - Ternary move-state merging
-// ============================================================================
-// Ternary branches are evaluated conditionally at runtime, so the analyzer
-// must save/restore state across the branches and merge results — same
-// protocol used by if/else. A naive linear analysis would either produce
-// spurious use-after-move errors in the second branch, or miss conditional
-// moves that should mark a variable MaybeValid after the expression.
+    // ============================================================================
+    // RAII Tests - Ternary move-state merging
+    // ============================================================================
+    // Ternary branches are evaluated conditionally at runtime, so the analyzer
+    // must save/restore state across the branches and merge results — same
+    // protocol used by if/else. A naive linear analysis would either produce
+    // spurious use-after-move errors in the second branch, or miss conditional
+    // moves that should mark a variable MaybeValid after the expression.
 
-TEST_CASE("E2E - RAII: ternary consumes different variables in each branch") {
-    // Each branch moves a different uniq variable. After the ternary, both
-    // should be MaybeValid; using either must be a compile error.
-    const char* source = R"(
+    TEST_CASE("ternary consumes different variables in each branch") {
+        // Each branch moves a different uniq variable. After the ternary, both
+        // should be MaybeValid; using either must be a compile error.
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -2282,15 +2284,15 @@ TEST_CASE("E2E - RAII: ternary consumes different variables in each branch") {
         }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
 
-TEST_CASE("E2E - RAII: ternary consumes same variable in both branches") {
-    // Both branches move the same variable — post-ternary it is definitely
-    // Moved; use after must be a compile error.
-    const char* source = R"(
+    TEST_CASE("ternary consumes same variable in both branches") {
+        // Both branches move the same variable — post-ternary it is definitely
+        // Moved; use after must be a compile error.
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -2307,16 +2309,16 @@ TEST_CASE("E2E - RAII: ternary consumes same variable in both branches") {
         }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
 
-TEST_CASE("E2E - RAII: ternary consumes in only one branch is MaybeValid") {
-    // Without merge, the linear analysis would mark p as Moved after the
-    // ternary; with merge it is MaybeValid (one branch consumes, other
-    // does not). Either way, a post-ternary use must be rejected.
-    const char* source = R"(
+    TEST_CASE("ternary consumes in only one branch is MaybeValid") {
+        // Without merge, the linear analysis would mark p as Moved after the
+        // ternary; with merge it is MaybeValid (one branch consumes, other
+        // does not). Either way, a post-ternary use must be rejected.
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -2333,15 +2335,15 @@ TEST_CASE("E2E - RAII: ternary consumes in only one branch is MaybeValid") {
         }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
 
-TEST_CASE("E2E - RAII: ternary with no moves keeps variable live") {
-    // Regression guard: a ternary over pure int branches must not affect
-    // the move state of uniq variables in scope.
-    const char* source = R"(
+    TEST_CASE("ternary with no moves keeps variable live") {
+        // Regression guard: a ternary over pure int branches must not affect
+        // the move state of uniq variables in scope.
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -2355,23 +2357,23 @@ TEST_CASE("E2E - RAII: ternary with no moves keeps variable live") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 6);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 6);
+    }
 
-// ============================================================================
-// IR-builder companion to definite-termination merging:
-// the IR builder must roll back local-scope and is_moved bookkeeping when a
-// branch terminates, so the merge-block code (reachable only via surviving
-// paths) doesn't see the consumed-and-nullified locals from the dead branch.
-// ============================================================================
+    // ============================================================================
+    // IR-builder companion to definite-termination merging:
+    // the IR builder must roll back local-scope and is_moved bookkeeping when a
+    // branch terminates, so the merge-block code (reachable only via surviving
+    // paths) doesn't see the consumed-and-nullified locals from the dead branch.
+    // ============================================================================
 
-TEST_CASE("E2E - RAII: terminating then-branch struct-literal move keeps local live for after-if struct literal") {
-    // Pre-fix: the then-branch struct literal nullify-replaced `cond` to nil;
-    // the after-if path then embedded nil into its own struct literal and
-    // segfaulted on the field dereference at main.
-    const char* source = R"ROXY(
+    TEST_CASE("terminating then-branch struct-literal move keeps local live for after-if struct literal") {
+        // Pre-fix: the then-branch struct literal nullify-replaced `cond` to nil;
+        // the after-if path then embedded nil into its own struct literal and
+        // segfaulted on the field dereference at main.
+        const char* source = R"ROXY(
         enum NodeKind { NLeaf, NIf }
 
         struct Node {
@@ -2399,17 +2401,17 @@ TEST_CASE("E2E - RAII: terminating then-branch struct-literal move keeps local l
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+    }
 
-TEST_CASE("E2E - RAII: terminating else-branch struct-literal move keeps local live for after-if struct literal") {
-    // Symmetric to the above: when the else-branch terminates, the merge block
-    // is reachable only via the then-branch (which here also moves the local).
-    // The IR builder must restore the post-then snapshot rather than carrying
-    // the else-branch's nullify-replace into the merge.
-    const char* source = R"ROXY(
+    TEST_CASE("terminating else-branch struct-literal move keeps local live for after-if struct literal") {
+        // Symmetric to the above: when the else-branch terminates, the merge block
+        // is reachable only via the then-branch (which here also moves the local).
+        // The IR builder must restore the post-then snapshot rather than carrying
+        // the else-branch's nullify-replace into the merge.
+        const char* source = R"ROXY(
         enum NodeKind { NLeaf, NIf }
 
         struct Node {
@@ -2439,16 +2441,16 @@ TEST_CASE("E2E - RAII: terminating else-branch struct-literal move keeps local l
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 2);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 2);
+    }
 
-TEST_CASE("E2E - RAII: terminating then-branch with else preserves else's post-state at merge") {
-    // then-branch terminates; the merge block is reachable only via the
-    // else-branch. The IR builder should keep the else's post-state at merge
-    // (not roll back to pre-if), so the after-if code sees the right values.
-    const char* source = R"ROXY(
+    TEST_CASE("terminating then-branch with else preserves else's post-state at merge") {
+        // then-branch terminates; the merge block is reachable only via the
+        // else-branch. The IR builder should keep the else's post-state at merge
+        // (not roll back to pre-if), so the after-if code sees the right values.
+        const char* source = R"ROXY(
         enum NodeKind { NLeaf, NIf }
 
         struct Node {
@@ -2478,17 +2480,17 @@ TEST_CASE("E2E - RAII: terminating then-branch with else preserves else's post-s
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 3);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
 
-TEST_CASE("E2E - RAII: terminating when-case struct-literal move keeps local live for after-when struct literal") {
-    // Same shape as the if-stmt termination tests, but for when. Pre-fix the
-    // last case body's nullify-replace of `cond` to nil leaked into the
-    // merge block, segfaulting on dereference of the after-when struct
-    // literal's if_cond field.
-    const char* source = R"ROXY(
+    TEST_CASE("terminating when-case struct-literal move keeps local live for after-when struct literal") {
+        // Same shape as the if-stmt termination tests, but for when. Pre-fix the
+        // last case body's nullify-replace of `cond` to nil leaked into the
+        // merge block, segfaulting on dereference of the after-when struct
+        // literal's if_cond field.
+        const char* source = R"ROXY(
         enum NodeKind { NLeaf, NIf }
         enum K { KA, KB }
 
@@ -2520,16 +2522,16 @@ TEST_CASE("E2E - RAII: terminating when-case struct-literal move keeps local liv
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 7);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 7);
+    }
 
-TEST_CASE("E2E - RAII: terminating else-if-chain branch struct-literal move keeps local live after chain") {
-    // Same shape but for an else-if cascade (gen_if_else_chain). The last
-    // chain branch's nullify-replace of `cond` would otherwise leak into the
-    // merge block.
-    const char* source = R"ROXY(
+    TEST_CASE("terminating else-if-chain branch struct-literal move keeps local live after chain") {
+        // Same shape but for an else-if cascade (gen_if_else_chain). The last
+        // chain branch's nullify-replace of `cond` would otherwise leak into the
+        // merge block.
+        const char* source = R"ROXY(
         enum NodeKind { NLeaf, NIf }
 
         struct Node {
@@ -2559,20 +2561,20 @@ TEST_CASE("E2E - RAII: terminating else-if-chain branch struct-literal move keep
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 7);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 7);
+    }
 
-// ============================================================================
-// User-defined constructors with noncopyable fields must not destroy stale
-// pre-call stack bytes (regression: Holder() assigning self.stmts hit the
-// destroy-old preamble with whatever pointer was left in the caller's return
-// slot from a previous call, double-freeing the previous Holder's list).
-// ============================================================================
+    // ============================================================================
+    // User-defined constructors with noncopyable fields must not destroy stale
+    // pre-call stack bytes (regression: Holder() assigning self.stmts hit the
+    // destroy-old preamble with whatever pointer was left in the caller's return
+    // slot from a previous call, double-freeing the previous Holder's list).
+    // ============================================================================
 
-TEST_CASE("E2E - Constructor: reassigning a List<uniq T> field survives sequential calls") {
-    const char* source = R"ROXY(
+    TEST_CASE("Constructor: reassigning a List<uniq T> field survives sequential calls") {
+        const char* source = R"ROXY(
         struct Stmt { val: i32; }
 
         pub struct Holder { pub stmts: List<uniq Stmt>; }
@@ -2599,14 +2601,14 @@ TEST_CASE("E2E - Constructor: reassigning a List<uniq T> field survives sequenti
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 84);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 84);
+    }
 
-TEST_CASE("E2E - Constructor: uniq field initialisation survives sequential calls") {
-    // Same pattern for a plain uniq-typed field (no container wrapping).
-    const char* source = R"ROXY(
+    TEST_CASE("Constructor: uniq field initialisation survives sequential calls") {
+        // Same pattern for a plain uniq-typed field (no container wrapping).
+        const char* source = R"ROXY(
         struct Payload { val: i32; }
         pub struct Holder { pub p: uniq Payload; }
 
@@ -2627,21 +2629,21 @@ TEST_CASE("E2E - Constructor: uniq field initialisation survives sequential call
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 7);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 7);
+    }
 
-// ============================================================================
-// Constructor calls must consume/nullify noncopyable identifier arguments
-// (regression: gen_constructor_call didn't move-nullify identifier args like
-// gen_call_expr does, so `uniq T.name(leaf)` left `leaf` still pointing at
-// the slot the constructor stored into a field, causing a double-free at
-// scope exit).
-// ============================================================================
+    // ============================================================================
+    // Constructor calls must consume/nullify noncopyable identifier arguments
+    // (regression: gen_constructor_call didn't move-nullify identifier args like
+    // gen_call_expr does, so `uniq T.name(leaf)` left `leaf` still pointing at
+    // the slot the constructor stored into a field, causing a double-free at
+    // scope exit).
+    // ============================================================================
 
-TEST_CASE("E2E - Constructor call consumes noncopyable identifier argument stored in variant field") {
-    const char* source = R"ROXY(
+    TEST_CASE("Constructor call consumes noncopyable identifier argument stored in variant field") {
+        const char* source = R"ROXY(
         enum K { A, B }
         struct Node {
             expr_id: i32;
@@ -2668,16 +2670,16 @@ TEST_CASE("E2E - Constructor call consumes noncopyable identifier argument store
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Constructor call consumes inline uniq rvalue argument stored in variant field") {
-    // Exercises the rvalue/temp path (not just identifiers): the inner
-    // `uniq Node.b(...)` is an rvalue temporary passed to Node.a. It must be
-    // consumed via the temp-nullify path, not the identifier path.
-    const char* source = R"ROXY(
+    TEST_CASE("Constructor call consumes inline uniq rvalue argument stored in variant field") {
+        // Exercises the rvalue/temp path (not just identifiers): the inner
+        // `uniq Node.b(...)` is an rvalue temporary passed to Node.a. It must be
+        // consumed via the temp-nullify path, not the identifier path.
+        const char* source = R"ROXY(
         enum K { A, B }
         struct Node {
             expr_id: i32;
@@ -2703,20 +2705,20 @@ TEST_CASE("E2E - Constructor call consumes inline uniq rvalue argument stored in
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 99);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 99);
+    }
 
-// ============================================================================
-// Synthesized default constructor must null-init variant uniq fields too — the
-// union region aliases with whatever bytes were in the caller's local_stack
-// from a previous stack-allocation; a later `self.variant_field = …` would
-// destroy that stale pointer and crash.
-// ============================================================================
+    // ============================================================================
+    // Synthesized default constructor must null-init variant uniq fields too — the
+    // union region aliases with whatever bytes were in the caller's local_stack
+    // from a previous stack-allocation; a later `self.variant_field = …` would
+    // destroy that stale pointer and crash.
+    // ============================================================================
 
-TEST_CASE("E2E - Synthesized default ctor null-inits variant uniq fields for stack-reuse safety") {
-    const char* source = R"ROXY(
+    TEST_CASE("Synthesized default ctor null-inits variant uniq fields for stack-reuse safety") {
+        const char* source = R"ROXY(
         enum K { A, B }
         struct Node {
             when kind: K {
@@ -2744,20 +2746,20 @@ TEST_CASE("E2E - Synthesized default ctor null-inits variant uniq fields for sta
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-// ============================================================================
-// Moving a noncopyable field out of a by-value struct parameter must null
-// the source field so the parameter's scope-exit destructor doesn't double-
-// free it. Semantic analysis already permits the move; IR gen was copying
-// the pointer into the target without clearing the source.
-// ============================================================================
+    // ============================================================================
+    // Moving a noncopyable field out of a by-value struct parameter must null
+    // the source field so the parameter's scope-exit destructor doesn't double-
+    // free it. Semantic analysis already permits the move; IR gen was copying
+    // the pointer into the target without clearing the source.
+    // ============================================================================
 
-TEST_CASE("E2E - Field move from by-value struct param nulls the source field") {
-    const char* source = R"ROXY(
+    TEST_CASE("Field move from by-value struct param nulls the source field") {
+        const char* source = R"ROXY(
         struct Thing { pub items: List<uniq Thing>; }
         fun new Thing() { self.items = List<uniq Thing>(); }
 
@@ -2773,15 +2775,15 @@ TEST_CASE("E2E - Field move from by-value struct param nulls the source field") 
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 2);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 2);
+    }
 
-TEST_CASE("E2E - Field move from by-value struct param preserves unrelated fields") {
-    // The source struct may have other fields that were NOT moved; they still
-    // belong to `src` and should be cleaned up by its destructor normally.
-    const char* source = R"ROXY(
+    TEST_CASE("Field move from by-value struct param preserves unrelated fields") {
+        // The source struct may have other fields that were NOT moved; they still
+        // belong to `src` and should be cleaned up by its destructor normally.
+        const char* source = R"ROXY(
         struct Payload { pub items: List<uniq Payload>; }
         fun new Payload() { self.items = List<uniq Payload>(); }
 
@@ -2809,19 +2811,19 @@ TEST_CASE("E2E - Field move from by-value struct param preserves unrelated field
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 2);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 2);
+    }
 
-// ============================================================================
-// Nested field moves through value-struct chains. `obj.inner.field` is allowed
-// when every link in the chain is a value struct (no references); the root
-// identifier is marked moved.
-// ============================================================================
+    // ============================================================================
+    // Nested field moves through value-struct chains. `obj.inner.field` is allowed
+    // when every link in the chain is a value struct (no references); the root
+    // identifier is marked moved.
+    // ============================================================================
 
-TEST_CASE("E2E - Nested field move through value-struct chain") {
-    const char* source = R"ROXY(
+    TEST_CASE("Nested field move through value-struct chain") {
+        const char* source = R"ROXY(
         struct Payload { pub items: List<uniq Payload>; }
         fun new Payload() { self.items = List<uniq Payload>(); }
 
@@ -2844,15 +2846,15 @@ TEST_CASE("E2E - Nested field move through value-struct chain") {
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 3);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
 
-TEST_CASE("E2E - Nested field move rejected when chain crosses a uniq reference") {
-    // A `uniq` link in the chain means the storage is owned through
-    // indirection; moving out from behind the reference is forbidden.
-    const char* source = R"ROXY(
+    TEST_CASE("Nested field move rejected when chain crosses a uniq reference") {
+        // A `uniq` link in the chain means the storage is owned through
+        // indirection; moving out from behind the reference is forbidden.
+        const char* source = R"ROXY(
         struct Item { pub val: i32; }
         struct Inner { pub items: List<uniq Item>; }
         fun new Inner() { self.items = List<uniq Item>(); }
@@ -2866,15 +2868,15 @@ TEST_CASE("E2E - Nested field move rejected when chain crosses a uniq reference"
         }
     )ROXY";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
 
-TEST_CASE("E2E - Nested field move from already-moved root is rejected") {
-    // After moving a nested field, the root variable is marked moved. A
-    // subsequent move from the same root must be flagged as use-after-move.
-    const char* source = R"ROXY(
+    TEST_CASE("Nested field move from already-moved root is rejected") {
+        // After moving a nested field, the root variable is marked moved. A
+        // subsequent move from the same root must be flagged as use-after-move.
+        const char* source = R"ROXY(
         struct Payload { pub items: List<uniq Payload>; }
         fun new Payload() { self.items = List<uniq Payload>(); }
 
@@ -2892,7 +2894,9 @@ TEST_CASE("E2E - Nested field move from already-moved root is rejected") {
         }
     )ROXY";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
+
+}  // TEST_SUITE("E2E RAII")

@@ -4,8 +4,10 @@
 
 using namespace rx;
 
-TEST_CASE("E2E - Enum basic definition") {
-    const char* source = R"(
+TEST_SUITE("E2E Enums") {
+
+    TEST_CASE("Enum basic definition") {
+        const char* source = R"(
         enum Color { Red, Green, Blue }
 
         fun main(): i32 {
@@ -13,13 +15,13 @@ TEST_CASE("E2E - Enum basic definition") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 0);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 0);
+    }
 
-TEST_CASE("E2E - Enum variant access") {
-    const char* source = R"(
+    TEST_CASE("Enum variant access") {
+        const char* source = R"(
         enum Color { Red, Green, Blue }
 
         fun main(): i32 {
@@ -28,14 +30,14 @@ TEST_CASE("E2E - Enum variant access") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 0);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 0);
+    }
 
-TEST_CASE("E2E - Enum comparison") {
-    SUBCASE("Different variants compare not equal") {
-        const char* source = R"(
+    TEST_CASE("Enum comparison") {
+        SUBCASE("Different variants compare not equal") {
+            const char* source = R"(
             enum Color { Red, Green, Blue }
 
             fun main(): i32 {
@@ -49,14 +51,14 @@ TEST_CASE("E2E - Enum comparison") {
             }
         )";
 
-        // Green != Red, so should print 0
-        TestResult result = run_and_capture(source, "main");
-        CHECK(result.success);
-        CHECK(result.stdout_output == "0\n");
-    }
+            // Green != Red, so should print 0
+            TestResult result = run_and_capture(source, "main");
+            CHECK(result.success);
+            CHECK(result.stdout_output == "0\n");
+        }
 
-    SUBCASE("Same variants compare equal") {
-        const char* source = R"(
+        SUBCASE("Same variants compare equal") {
+            const char* source = R"(
             enum Color { Red, Green, Blue }
 
             fun main(): i32 {
@@ -70,16 +72,16 @@ TEST_CASE("E2E - Enum comparison") {
             }
         )";
 
-        // Green == Green, so should print 1
-        TestResult result = run_and_capture(source, "main");
-        CHECK(result.success);
-        CHECK(result.stdout_output == "1\n");
+            // Green == Green, so should print 1
+            TestResult result = run_and_capture(source, "main");
+            CHECK(result.success);
+            CHECK(result.stdout_output == "1\n");
+        }
     }
-}
 
-TEST_CASE("E2E - Enum explicit values") {
-    SUBCASE("Explicit value assignment") {
-        const char* source = R"(
+    TEST_CASE("Enum explicit values") {
+        SUBCASE("Explicit value assignment") {
+            const char* source = R"(
             enum Status { Pending = 0, Active = 10, Done = 20 }
 
             fun main(): i32 {
@@ -93,13 +95,13 @@ TEST_CASE("E2E - Enum explicit values") {
             }
         )";
 
-        TestResult result = run_and_capture(source, "main");
-        CHECK(result.success);
-        CHECK(result.stdout_output == "1\n");
-    }
+            TestResult result = run_and_capture(source, "main");
+            CHECK(result.success);
+            CHECK(result.stdout_output == "1\n");
+        }
 
-    SUBCASE("Auto-increment after explicit value") {
-        const char* source = R"(
+        SUBCASE("Auto-increment after explicit value") {
+            const char* source = R"(
             enum Code { A = 5, B, C }  // B=6, C=7
 
             fun main(): i32 {
@@ -110,14 +112,14 @@ TEST_CASE("E2E - Enum explicit values") {
             }
         )";
 
-        TestResult result = run_and_capture(source, "main");
-        CHECK(result.success);
-        CHECK(result.stdout_output == "1\n1\n1\n");
+            TestResult result = run_and_capture(source, "main");
+            CHECK(result.success);
+            CHECK(result.stdout_output == "1\n1\n1\n");
+        }
     }
-}
 
-TEST_CASE("E2E - Enum in struct field") {
-    const char* source = R"(
+    TEST_CASE("Enum in struct field") {
+        const char* source = R"(
         enum Direction { North, East, South, West }
 
         struct Player {
@@ -137,13 +139,13 @@ TEST_CASE("E2E - Enum in struct field") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n");
+    }
 
-TEST_CASE("E2E - Enum as function parameter") {
-    const char* source = R"(
+    TEST_CASE("Enum as function parameter") {
+        const char* source = R"(
         enum Op { Add, Sub, Mul }
 
         fun apply(a: i32, b: i32, op: Op): i32 {
@@ -164,7 +166,9 @@ TEST_CASE("E2E - Enum as function parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "13\n7\n30\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "13\n7\n30\n");
+    }
+
+}  // TEST_SUITE("E2E Enums")

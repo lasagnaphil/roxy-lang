@@ -7,8 +7,10 @@ using namespace rx;
 // List Tests
 // ============================================================================
 
-TEST_CASE("E2E - List basic operations") {
-    const char* source = R"(
+TEST_SUITE("E2E Lists") {
+
+    TEST_CASE("List basic operations") {
+        const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
             lst.push(10);
@@ -21,13 +23,13 @@ TEST_CASE("E2E - List basic operations") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n20\n30\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n20\n30\n");
+    }
 
-TEST_CASE("E2E - List length and capacity") {
-    const char* source = R"(
+    TEST_CASE("List length and capacity") {
+        const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
             print(f"{lst.len()}");
@@ -39,13 +41,13 @@ TEST_CASE("E2E - List length and capacity") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "0\n3\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "0\n3\n");
+    }
 
-TEST_CASE("E2E - List with initial capacity") {
-    const char* source = R"(
+    TEST_CASE("List with initial capacity") {
+        const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>(10);
             print(f"{lst.len()}");
@@ -57,13 +59,13 @@ TEST_CASE("E2E - List with initial capacity") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "0\n10\n1\n10\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "0\n10\n1\n10\n");
+    }
 
-TEST_CASE("E2E - List pop") {
-    const char* source = R"(
+    TEST_CASE("List pop") {
+        const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
             lst.push(10);
@@ -79,13 +81,13 @@ TEST_CASE("E2E - List pop") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "30\n2\n20\n1\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "30\n2\n20\n1\n");
+    }
 
-TEST_CASE("E2E - List index assignment") {
-    const char* source = R"(
+    TEST_CASE("List index assignment") {
+        const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
             lst.push(10);
@@ -100,13 +102,13 @@ TEST_CASE("E2E - List index assignment") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "100\n20\n300\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "100\n20\n300\n");
+    }
 
-TEST_CASE("E2E - List with loop") {
-    const char* source = R"(
+    TEST_CASE("List with loop") {
+        const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
             lst.push(1);
@@ -125,13 +127,13 @@ TEST_CASE("E2E - List with loop") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n3\n4\n5\n15\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n3\n4\n5\n15\n");
+    }
 
-TEST_CASE("E2E - List swap") {
-    const char* source = R"(
+    TEST_CASE("List swap") {
+        const char* source = R"(
         fun swap(lst: inout List<i32>, i: i32, j: i32) {
             var temp: i32 = lst[i];
             lst[i] = lst[j];
@@ -151,13 +153,13 @@ TEST_CASE("E2E - List swap") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "30\n20\n10\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "30\n20\n10\n");
+    }
 
-TEST_CASE("E2E - List quicksort") {
-    const char* source = R"(
+    TEST_CASE("List quicksort") {
+        const char* source = R"(
         fun swap(lst: inout List<i32>, i: i32, j: i32) {
             var temp: i32 = lst[i];
             lst[i] = lst[j];
@@ -202,13 +204,13 @@ TEST_CASE("E2E - List quicksort") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n5\n8\n9\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n5\n8\n9\n");
+    }
 
-TEST_CASE("E2E - List growth") {
-    const char* source = R"(
+    TEST_CASE("List growth") {
+        const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
             for (var i: i32 = 0; i < 20; i = i + 1) {
@@ -222,13 +224,13 @@ TEST_CASE("E2E - List growth") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "20\n0\n90\n190\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "20\n0\n90\n190\n");
+    }
 
-TEST_CASE("E2E - List sum function") {
-    const char* source = R"(
+    TEST_CASE("List sum function") {
+        const char* source = R"(
         fun sum(lst: List<i32>): i32 {
             var total: i32 = 0;
             for (var i: i32 = 0; i < lst.len(); i = i + 1) {
@@ -247,13 +249,13 @@ TEST_CASE("E2E - List sum function") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "60\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "60\n");
+    }
 
-TEST_CASE("E2E - List value parameter isolation") {
-    const char* source = R"(
+    TEST_CASE("List value parameter isolation") {
+        const char* source = R"(
         fun modify(lst: List<i32>) {
             lst[0] = 999;
             lst.push(40);
@@ -271,13 +273,13 @@ TEST_CASE("E2E - List value parameter isolation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n3\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n3\n");
+    }
 
-TEST_CASE("E2E - List inout parameter mutation") {
-    const char* source = R"(
+    TEST_CASE("List inout parameter mutation") {
+        const char* source = R"(
         fun modify(lst: inout List<i32>) {
             lst[0] = 999;
             lst.push(40);
@@ -295,17 +297,17 @@ TEST_CASE("E2E - List inout parameter mutation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "999\n4\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "999\n4\n");
+    }
 
-// ============================================================================
-// List with struct element tests (multi-slot)
-// ============================================================================
+    // ============================================================================
+    // List with struct element tests (multi-slot)
+    // ============================================================================
 
-TEST_CASE("E2E - List of 2-slot struct (Point)") {
-    const char* source = R"(
+    TEST_CASE("List of 2-slot struct (Point)") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -324,13 +326,13 @@ TEST_CASE("E2E - List of 2-slot struct (Point)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10 20\n30 40\n50 60\n3\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10 20\n30 40\n50 60\n3\n");
+    }
 
-TEST_CASE("E2E - List of 3-slot struct (Vec3)") {
-    const char* source = R"(
+    TEST_CASE("List of 3-slot struct (Vec3)") {
+        const char* source = R"(
         struct Vec3 {
             x: f32;
             y: f32;
@@ -349,13 +351,13 @@ TEST_CASE("E2E - List of 3-slot struct (Vec3)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1 2 3\n4 5 6\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1 2 3\n4 5 6\n");
+    }
 
-TEST_CASE("E2E - List of large struct (5 slots)") {
-    const char* source = R"(
+    TEST_CASE("List of large struct (5 slots)") {
+        const char* source = R"(
         struct BigStruct {
             a: i32;
             b: i32;
@@ -377,13 +379,13 @@ TEST_CASE("E2E - List of large struct (5 slots)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1 2 3 4 5\n10 20 30 40 50\n2\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1 2 3 4 5\n10 20 30 40 50\n2\n");
+    }
 
-TEST_CASE("E2E - List of struct index set") {
-    const char* source = R"(
+    TEST_CASE("List of struct index set") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -400,13 +402,13 @@ TEST_CASE("E2E - List of struct index set") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "100 200\n3 4\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "100 200\n3 4\n");
+    }
 
-TEST_CASE("E2E - List of struct pop") {
-    const char* source = R"(
+    TEST_CASE("List of struct pop") {
+        const char* source = R"(
         struct Vec3 {
             x: f32;
             y: f32;
@@ -424,13 +426,13 @@ TEST_CASE("E2E - List of struct pop") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "4 5 6\n1\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "4 5 6\n1\n");
+    }
 
-TEST_CASE("E2E - List of struct loop iteration") {
-    const char* source = R"(
+    TEST_CASE("List of struct loop iteration") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -450,19 +452,19 @@ TEST_CASE("E2E - List of struct loop iteration") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "110\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "110\n");
+    }
 
-// ============================================================================
-// Sign-extension of 1-slot integer elements (regression: INDEX_GET_LIST on an
-// inline 1-slot element zero-extended to 64 bits, so negative i32s compared
-// as a large positive 32-bit number despite printing correctly).
-// ============================================================================
+    // ============================================================================
+    // Sign-extension of 1-slot integer elements (regression: INDEX_GET_LIST on an
+    // inline 1-slot element zero-extended to 64 bits, so negative i32s compared
+    // as a large positive 32-bit number despite printing correctly).
+    // ============================================================================
 
-TEST_CASE("E2E - List<i32>: negative element compares as negative") {
-    const char* source = R"(
+    TEST_CASE("List<i32>: negative element compares as negative") {
+        const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
             lst.push(-1);
@@ -474,13 +476,13 @@ TEST_CASE("E2E - List<i32>: negative element compares as negative") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - List<Struct>: negative i32 field of struct element compares as negative") {
-    const char* source = R"(
+    TEST_CASE("List<Struct>: negative i32 field of struct element compares as negative") {
+        const char* source = R"(
         struct E { enc: i32; }
         fun main(): i32 {
             var lst: List<E> = List<E>();
@@ -493,17 +495,17 @@ TEST_CASE("E2E - List<Struct>: negative i32 field of struct element compares as 
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - List<i32>: while loop with negative-sentinel guard terminates") {
-    // The TODO note's "while-loop-doesn't-re-check-condition" symptom:
-    // assigning `idx = lst[idx].enc` where enc=-1 would silently give a large
-    // positive number under zero-extension, so `idx >= 0` stayed true and the
-    // loop re-entered with an out-of-bounds index. Should terminate cleanly now.
-    const char* source = R"(
+    TEST_CASE("List<i32>: while loop with negative-sentinel guard terminates") {
+        // The TODO note's "while-loop-doesn't-re-check-condition" symptom:
+        // assigning `idx = lst[idx].enc` where enc=-1 would silently give a large
+        // positive number under zero-extension, so `idx >= 0` stayed true and the
+        // loop re-entered with an out-of-bounds index. Should terminate cleanly now.
+        const char* source = R"(
         struct Env { enc: i32; }
         fun main(): i32 {
             var envs: List<Env> = List<Env>();
@@ -521,24 +523,24 @@ TEST_CASE("E2E - List<i32>: while loop with negative-sentinel guard terminates")
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 3);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
 
-// ============================================================================
-// Element cleanup for noncopyable value-struct elements (regression).
-// List element cleanup must pass the in-place element address to delete_value
-// for value structs (free_obj == false), not load the first two slots as a
-// pointer. Older code always loaded a pointer, corrupting cleanup of
-// List<value-struct-with-owned-fields>.
-// ============================================================================
+    // ============================================================================
+    // Element cleanup for noncopyable value-struct elements (regression).
+    // List element cleanup must pass the in-place element address to delete_value
+    // for value structs (free_obj == false), not load the first two slots as a
+    // pointer. Older code always loaded a pointer, corrupting cleanup of
+    // List<value-struct-with-owned-fields>.
+    // ============================================================================
 
-TEST_CASE("E2E - List<value-struct with destructor>: per-element cleanup") {
-    // Each Item is an inline value struct with a user destructor. When the list
-    // is destroyed at scope exit, each element's destructor must run with the
-    // correct `self`, in element order.
-    const char* source = R"(
+    TEST_CASE("List<value-struct with destructor>: per-element cleanup") {
+        // Each Item is an inline value struct with a user destructor. When the list
+        // is destroyed at scope exit, each element's destructor must run with the
+        // correct `self`, in element order.
+        const char* source = R"(
         struct Item { id: i32; }
         fun delete Item() { print(f"del {self.id}"); }
 
@@ -551,15 +553,15 @@ TEST_CASE("E2E - List<value-struct with destructor>: per-element cleanup") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "del 1\ndel 2\ndel 3\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "del 1\ndel 2\ndel 3\n");
+    }
 
-TEST_CASE("E2E - List<struct with uniq field>: per-element field cleanup") {
-    // Holder is an inline value struct owning a uniq Inner. Destroying the list
-    // must walk each element's fields in place and free the owned Inner.
-    const char* source = R"(
+    TEST_CASE("List<struct with uniq field>: per-element field cleanup") {
+        // Holder is an inline value struct owning a uniq Inner. Destroying the list
+        // must walk each element's fields in place and free the owned Inner.
+        const char* source = R"(
         struct Inner { tag: i32; }
         fun delete Inner() { print(f"inner {self.tag}"); }
         struct Holder { val: uniq Inner; }
@@ -572,7 +574,9 @@ TEST_CASE("E2E - List<struct with uniq field>: per-element field cleanup") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "inner 10\ninner 20\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "inner 10\ninner 20\n");
+    }
+
+}  // TEST_SUITE("E2E Lists")

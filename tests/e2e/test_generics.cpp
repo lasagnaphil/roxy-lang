@@ -7,8 +7,10 @@ using namespace rx;
 // Generic Function Tests
 // ============================================================================
 
-TEST_CASE("E2E - Generic function identity i32") {
-    const char* source = R"(
+TEST_SUITE("E2E Generics") {
+
+    TEST_CASE("Generic function identity i32") {
+        const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
         }
@@ -18,13 +20,13 @@ TEST_CASE("E2E - Generic function identity i32") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic function identity f64") {
-    const char* source = R"(
+    TEST_CASE("Generic function identity f64") {
+        const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
         }
@@ -35,13 +37,13 @@ TEST_CASE("E2E - Generic function identity f64") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 3);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
 
-TEST_CASE("E2E - Generic function identity bool") {
-    const char* source = R"(
+    TEST_CASE("Generic function identity bool") {
+        const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
         }
@@ -53,13 +55,13 @@ TEST_CASE("E2E - Generic function identity bool") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+    }
 
-TEST_CASE("E2E - Generic function multiple instantiations") {
-    const char* source = R"(
+    TEST_CASE("Generic function multiple instantiations") {
+        const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
         }
@@ -72,13 +74,13 @@ TEST_CASE("E2E - Generic function multiple instantiations") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 31);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 31);
+    }
 
-TEST_CASE("E2E - Generic function two type params") {
-    const char* source = R"(
+    TEST_CASE("Generic function two type params") {
+        const char* source = R"(
         fun first<T, U>(a: T, b: U): T {
             return a;
         }
@@ -88,13 +90,13 @@ TEST_CASE("E2E - Generic function two type params") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic function second of two params") {
-    const char* source = R"(
+    TEST_CASE("Generic function second of two params") {
+        const char* source = R"(
         fun second<T, U>(a: T, b: U): U {
             return b;
         }
@@ -105,13 +107,13 @@ TEST_CASE("E2E - Generic function second of two params") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 2);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 2);
+    }
 
-TEST_CASE("E2E - Generic function with computation") {
-    const char* source = R"(
+    TEST_CASE("Generic function with computation") {
+        const char* source = R"(
         fun double_val<T>(value: T): T {
             return value + value;
         }
@@ -121,13 +123,13 @@ TEST_CASE("E2E - Generic function with computation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic function with struct type arg") {
-    const char* source = R"(
+    TEST_CASE("Generic function with struct type arg") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -143,17 +145,17 @@ TEST_CASE("E2E - Generic function with struct type arg") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 99);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 99);
+    }
 
-// ============================================================================
-// Generic Struct Tests
-// ============================================================================
+    // ============================================================================
+    // Generic Struct Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Generic struct literal i32") {
-    const char* source = R"(
+    TEST_CASE("Generic struct literal i32") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -164,13 +166,13 @@ TEST_CASE("E2E - Generic struct literal i32") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic struct literal f64") {
-    const char* source = R"(
+    TEST_CASE("Generic struct literal f64") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -181,13 +183,13 @@ TEST_CASE("E2E - Generic struct literal f64") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 3);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
 
-TEST_CASE("E2E - Generic struct two type params") {
-    const char* source = R"(
+    TEST_CASE("Generic struct two type params") {
+        const char* source = R"(
         struct Pair<T, U> {
             first: T;
             second: U;
@@ -199,13 +201,13 @@ TEST_CASE("E2E - Generic struct two type params") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 12);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 12);
+    }
 
-TEST_CASE("E2E - Generic struct different instantiations") {
-    const char* source = R"(
+    TEST_CASE("Generic struct different instantiations") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -217,13 +219,13 @@ TEST_CASE("E2E - Generic struct different instantiations") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 15);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 15);
+    }
 
-TEST_CASE("E2E - Generic struct as function parameter") {
-    const char* source = R"(
+    TEST_CASE("Generic struct as function parameter") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -238,13 +240,13 @@ TEST_CASE("E2E - Generic struct as function parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic struct as function return type") {
-    const char* source = R"(
+    TEST_CASE("Generic struct as function return type") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -259,13 +261,13 @@ TEST_CASE("E2E - Generic struct as function return type") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic function with generic struct") {
-    const char* source = R"(
+    TEST_CASE("Generic function with generic struct") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -280,17 +282,17 @@ TEST_CASE("E2E - Generic function with generic struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-// ============================================================================
-// Generic Type Argument Inference Tests
-// ============================================================================
+    // ============================================================================
+    // Generic Type Argument Inference Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Generic inference: identity i32") {
-    const char* source = R"(
+    TEST_CASE("Generic inference: identity i32") {
+        const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
         }
@@ -300,13 +302,13 @@ TEST_CASE("E2E - Generic inference: identity i32") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic inference: identity f64") {
-    const char* source = R"(
+    TEST_CASE("Generic inference: identity f64") {
+        const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
         }
@@ -317,13 +319,13 @@ TEST_CASE("E2E - Generic inference: identity f64") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 3);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
 
-TEST_CASE("E2E - Generic inference: two type params") {
-    const char* source = R"(
+    TEST_CASE("Generic inference: two type params") {
+        const char* source = R"(
         fun first<T, U>(a: T, b: U): T {
             return a;
         }
@@ -333,13 +335,13 @@ TEST_CASE("E2E - Generic inference: two type params") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic inference: function with struct arg") {
-    const char* source = R"(
+    TEST_CASE("Generic inference: function with struct arg") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -355,13 +357,13 @@ TEST_CASE("E2E - Generic inference: function with struct arg") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 99);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 99);
+    }
 
-TEST_CASE("E2E - Generic inference: computation") {
-    const char* source = R"(
+    TEST_CASE("Generic inference: computation") {
+        const char* source = R"(
         fun double_val<T>(value: T): T {
             return value + value;
         }
@@ -371,13 +373,13 @@ TEST_CASE("E2E - Generic inference: computation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic inference: struct literal") {
-    const char* source = R"(
+    TEST_CASE("Generic inference: struct literal") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -388,13 +390,13 @@ TEST_CASE("E2E - Generic inference: struct literal") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic inference: struct literal multiple params") {
-    const char* source = R"(
+    TEST_CASE("Generic inference: struct literal multiple params") {
+        const char* source = R"(
         struct Pair<T, U> {
             first: T;
             second: U;
@@ -406,13 +408,13 @@ TEST_CASE("E2E - Generic inference: struct literal multiple params") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 12);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 12);
+    }
 
-TEST_CASE("E2E - Generic inference: function returning generic struct") {
-    const char* source = R"(
+    TEST_CASE("Generic inference: function returning generic struct") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -427,13 +429,13 @@ TEST_CASE("E2E - Generic inference: function returning generic struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic inference: backward compat explicit args") {
-    const char* source = R"(
+    TEST_CASE("Generic inference: backward compat explicit args") {
+        const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
         }
@@ -443,17 +445,17 @@ TEST_CASE("E2E - Generic inference: backward compat explicit args") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-// ============================================================================
-// Variable Type Inference with Generic RHS
-// ============================================================================
+    // ============================================================================
+    // Variable Type Inference with Generic RHS
+    // ============================================================================
 
-TEST_CASE("E2E - Generic var inference: struct literal inferred") {
-    const char* source = R"(
+    TEST_CASE("Generic var inference: struct literal inferred") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -464,13 +466,13 @@ TEST_CASE("E2E - Generic var inference: struct literal inferred") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic var inference: function call inferred") {
-    const char* source = R"(
+    TEST_CASE("Generic var inference: function call inferred") {
+        const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
         }
@@ -481,13 +483,13 @@ TEST_CASE("E2E - Generic var inference: function call inferred") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic var inference: function returning generic struct") {
-    const char* source = R"(
+    TEST_CASE("Generic var inference: function returning generic struct") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -502,13 +504,13 @@ TEST_CASE("E2E - Generic var inference: function returning generic struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic var inference: multiple type params") {
-    const char* source = R"(
+    TEST_CASE("Generic var inference: multiple type params") {
+        const char* source = R"(
         struct Pair<T, U> {
             first: T;
             second: U;
@@ -520,13 +522,13 @@ TEST_CASE("E2E - Generic var inference: multiple type params") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 12);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 12);
+    }
 
-TEST_CASE("E2E - Generic var inference: explicit type args no LHS annotation") {
-    const char* source = R"(
+    TEST_CASE("Generic var inference: explicit type args no LHS annotation") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -537,13 +539,13 @@ TEST_CASE("E2E - Generic var inference: explicit type args no LHS annotation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic var inference: chained field access") {
-    const char* source = R"(
+    TEST_CASE("Generic var inference: chained field access") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -555,17 +557,17 @@ TEST_CASE("E2E - Generic var inference: chained field access") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-// ============================================================================
-// Generic Compound Type Argument Tests (name mangling)
-// ============================================================================
+    // ============================================================================
+    // Generic Compound Type Argument Tests (name mangling)
+    // ============================================================================
 
-TEST_CASE("E2E - Generic function with List type argument") {
-    const char* source = R"(
+    TEST_CASE("Generic function with List type argument") {
+        const char* source = R"(
         fun get_len<T>(lst: T): i32 {
             return 0;
         }
@@ -579,13 +581,13 @@ TEST_CASE("E2E - Generic function with List type argument") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+    }
 
-TEST_CASE("E2E - Generic struct with List type argument") {
-    const char* source = R"(
+    TEST_CASE("Generic struct with List type argument") {
+        const char* source = R"(
         struct Wrapper<T> {
             value: T;
         }
@@ -598,13 +600,13 @@ TEST_CASE("E2E - Generic struct with List type argument") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+    }
 
-TEST_CASE("E2E - Generic inference: error uninferrable param") {
-    const char* source = R"(
+    TEST_CASE("Generic inference: error uninferrable param") {
+        const char* source = R"(
         fun make_default<T>(): T {
             var x: T;
             return x;
@@ -615,17 +617,17 @@ TEST_CASE("E2E - Generic inference: error uninferrable param") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-// ============================================================================
-// Trait Bound Tests (Bounded Quantification - Phase A)
-// Phase A: checks bounds at instantiation sites only (not in generic bodies)
-// ============================================================================
+    // ============================================================================
+    // Trait Bound Tests (Bounded Quantification - Phase A)
+    // Phase A: checks bounds at instantiation sites only (not in generic bodies)
+    // ============================================================================
 
-TEST_CASE("E2E - Generic bound: single bound Printable") {
-    const char* source = R"(
+    TEST_CASE("Generic bound: single bound Printable") {
+        const char* source = R"(
         fun identity_printable<T: Printable>(value: T): T {
             return value;
         }
@@ -635,13 +637,13 @@ TEST_CASE("E2E - Generic bound: single bound Printable") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic bound: Hash bound") {
-    const char* source = R"(
+    TEST_CASE("Generic bound: Hash bound") {
+        const char* source = R"(
         fun identity_hash<T: Hash>(value: T): T {
             return value;
         }
@@ -651,13 +653,13 @@ TEST_CASE("E2E - Generic bound: Hash bound") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic bound: multiple bounds Printable + Hash") {
-    const char* source = R"(
+    TEST_CASE("Generic bound: multiple bounds Printable + Hash") {
+        const char* source = R"(
         fun identity_both<T: Printable + Hash>(value: T): T {
             return value;
         }
@@ -667,13 +669,13 @@ TEST_CASE("E2E - Generic bound: multiple bounds Printable + Hash") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic bound: bound on generic struct") {
-    const char* source = R"(
+    TEST_CASE("Generic bound: bound on generic struct") {
+        const char* source = R"(
         struct HashBox<T: Hash> {
             value: T;
         }
@@ -684,13 +686,13 @@ TEST_CASE("E2E - Generic bound: bound on generic struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic bound: inferred type args with bound") {
-    const char* source = R"(
+    TEST_CASE("Generic bound: inferred type args with bound") {
+        const char* source = R"(
         fun identity_printable<T: Printable>(value: T): T {
             return value;
         }
@@ -700,13 +702,13 @@ TEST_CASE("E2E - Generic bound: inferred type args with bound") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic bound: inferred struct literal with bound") {
-    const char* source = R"(
+    TEST_CASE("Generic bound: inferred struct literal with bound") {
+        const char* source = R"(
         struct HashBox<T: Hash> {
             value: T;
         }
@@ -717,13 +719,13 @@ TEST_CASE("E2E - Generic bound: inferred struct literal with bound") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic bound: bound not satisfied (negative)") {
-    const char* source = R"(
+    TEST_CASE("Generic bound: bound not satisfied (negative)") {
+        const char* source = R"(
         trait Flyable;
 
         fun require_fly<T: Flyable>(value: T): i32 {
@@ -735,12 +737,12 @@ TEST_CASE("E2E - Generic bound: bound not satisfied (negative)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-TEST_CASE("E2E - Generic bound: generic trait bound with type args") {
-    const char* source = R"(
+    TEST_CASE("Generic bound: generic trait bound with type args") {
+        const char* source = R"(
         trait Scalable<T>;
 
         fun Scalable.scale(factor: T): Self;
@@ -764,13 +766,13 @@ TEST_CASE("E2E - Generic bound: generic trait bound with type args") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+    }
 
-TEST_CASE("E2E - Generic bound: generic trait bound mismatch (negative)") {
-    const char* source = R"(
+    TEST_CASE("Generic bound: generic trait bound mismatch (negative)") {
+        const char* source = R"(
         trait Scalable<T>;
 
         fun Scalable.scale(factor: T): Self;
@@ -794,12 +796,12 @@ TEST_CASE("E2E - Generic bound: generic trait bound mismatch (negative)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-TEST_CASE("E2E - Generic bound: one of multiple bounds not satisfied (negative)") {
-    const char* source = R"(
+    TEST_CASE("Generic bound: one of multiple bounds not satisfied (negative)") {
+        const char* source = R"(
         trait Flyable;
 
         fun needs_both<T: Printable + Flyable>(value: T): i32 {
@@ -811,12 +813,12 @@ TEST_CASE("E2E - Generic bound: one of multiple bounds not satisfied (negative)"
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-TEST_CASE("E2E - Generic bound: bound not satisfied on struct (negative)") {
-    const char* source = R"(
+    TEST_CASE("Generic bound: bound not satisfied on struct (negative)") {
+        const char* source = R"(
         trait Flyable;
 
         struct FlyBox<T: Flyable> {
@@ -829,12 +831,12 @@ TEST_CASE("E2E - Generic bound: bound not satisfied on struct (negative)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-TEST_CASE("E2E - Generic bound: inferred type args violate bound (negative)") {
-    const char* source = R"(
+    TEST_CASE("Generic bound: inferred type args violate bound (negative)") {
+        const char* source = R"(
         trait Flyable;
 
         fun require_fly<T: Flyable>(value: T): i32 {
@@ -846,17 +848,17 @@ TEST_CASE("E2E - Generic bound: inferred type args violate bound (negative)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-// ============================================================================
-// Phase B: Definition-site Trait Bound Checking Tests
-// Validates that generic template bodies are checked against declared bounds
-// ============================================================================
+    // ============================================================================
+    // Phase B: Definition-site Trait Bound Checking Tests
+    // Validates that generic template bodies are checked against declared bounds
+    // ============================================================================
 
-TEST_CASE("E2E - Generic Phase B: call trait method on bounded param") {
-    const char* source = R"(
+    TEST_CASE("Generic Phase B: call trait method on bounded param") {
+        const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32;
 
@@ -871,13 +873,13 @@ TEST_CASE("E2E - Generic Phase B: call trait method on bounded param") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic Phase B: call methods from multiple bounds") {
-    const char* source = R"(
+    TEST_CASE("Generic Phase B: call methods from multiple bounds") {
+        const char* source = R"(
         trait HasX;
         fun HasX.get_x(): i32;
 
@@ -896,13 +898,13 @@ TEST_CASE("E2E - Generic Phase B: call methods from multiple bounds") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic Phase B: return type Self resolves to T") {
-    const char* source = R"(
+    TEST_CASE("Generic Phase B: return type Self resolves to T") {
+        const char* source = R"(
         trait Addable;
         fun Addable.add(other: Self): Self;
 
@@ -921,13 +923,13 @@ TEST_CASE("E2E - Generic Phase B: return type Self resolves to T") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic Phase B: generic trait bound with type args") {
-    const char* source = R"(
+    TEST_CASE("Generic Phase B: generic trait bound with type args") {
+        const char* source = R"(
         trait Scalable<T>;
         fun Scalable.scale(factor: T): Self;
 
@@ -948,13 +950,13 @@ TEST_CASE("E2E - Generic Phase B: generic trait bound with type args") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic Phase B: bounded template with passthrough return") {
-    const char* source = R"(
+    TEST_CASE("Generic Phase B: bounded template with passthrough return") {
+        const char* source = R"(
         fun identity_bounded<T: Printable>(value: T): T {
             return value;
         }
@@ -964,17 +966,17 @@ TEST_CASE("E2E - Generic Phase B: bounded template with passthrough return") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-// ============================================================================
-// Phase B Negative Tests: definition-site errors
-// ============================================================================
+    // ============================================================================
+    // Phase B Negative Tests: definition-site errors
+    // ============================================================================
 
-TEST_CASE("E2E - Generic Phase B: call method not in any bound (negative)") {
-    const char* source = R"(
+    TEST_CASE("Generic Phase B: call method not in any bound (negative)") {
+        const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32;
 
@@ -983,12 +985,12 @@ TEST_CASE("E2E - Generic Phase B: call method not in any bound (negative)") {
         fun main(): i32 { return 0; }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-TEST_CASE("E2E - Generic Phase B: call method from wrong trait (negative)") {
-    const char* source = R"(
+    TEST_CASE("Generic Phase B: call method from wrong trait (negative)") {
+        const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32;
 
@@ -997,12 +999,12 @@ TEST_CASE("E2E - Generic Phase B: call method from wrong trait (negative)") {
         fun main(): i32 { return 0; }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-TEST_CASE("E2E - Generic Phase B: access field on type param (negative)") {
-    const char* source = R"(
+    TEST_CASE("Generic Phase B: access field on type param (negative)") {
+        const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32;
 
@@ -1011,15 +1013,15 @@ TEST_CASE("E2E - Generic Phase B: access field on type param (negative)") {
         fun main(): i32 { return 0; }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-TEST_CASE("E2E - Generic Phase B: unbounded template body not checked") {
-    // Unbounded generic templates are NOT checked at definition site
-    // (only checked at instantiation). This should compile fine as long
-    // as main doesn't instantiate bad_func.
-    const char* source = R"(
+    TEST_CASE("Generic Phase B: unbounded template body not checked") {
+        // Unbounded generic templates are NOT checked at definition site
+        // (only checked at instantiation). This should compile fine as long
+        // as main doesn't instantiate bad_func.
+        const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
         }
@@ -1029,17 +1031,17 @@ TEST_CASE("E2E - Generic Phase B: unbounded template body not checked") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-// ============================================================================
-// Generic Struct Methods Tests
-// ============================================================================
+    // ============================================================================
+    // Generic Struct Methods Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Generic struct method: basic external getter") {
-    const char* source = R"(
+    TEST_CASE("Generic struct method: basic external getter") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -1054,13 +1056,13 @@ TEST_CASE("E2E - Generic struct method: basic external getter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic struct method: setter and getter") {
-    const char* source = R"(
+    TEST_CASE("Generic struct method: setter and getter") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -1080,13 +1082,13 @@ TEST_CASE("E2E - Generic struct method: setter and getter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic struct method: multiple instantiations") {
-    const char* source = R"(
+    TEST_CASE("Generic struct method: multiple instantiations") {
+        const char* source = R"(
         struct Wrapper<T> {
             val: T;
         }
@@ -1102,13 +1104,13 @@ TEST_CASE("E2E - Generic struct method: multiple instantiations") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 15);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 15);
+    }
 
-TEST_CASE("E2E - Generic struct method: cross-method calls") {
-    const char* source = R"(
+    TEST_CASE("Generic struct method: cross-method calls") {
+        const char* source = R"(
         struct Counter<T> {
             value: T;
             count: i32;
@@ -1131,13 +1133,13 @@ TEST_CASE("E2E - Generic struct method: cross-method calls") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic struct method: return struct type") {
-    const char* source = R"(
+    TEST_CASE("Generic struct method: return struct type") {
+        const char* source = R"(
         struct Pair<T> {
             first: T;
             second: T;
@@ -1154,13 +1156,13 @@ TEST_CASE("E2E - Generic struct method: return struct type") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic struct method: with additional parameters") {
-    const char* source = R"(
+    TEST_CASE("Generic struct method: with additional parameters") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -1175,17 +1177,17 @@ TEST_CASE("E2E - Generic struct method: with additional parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-// ============================================================================
-// Generic Struct Constructor/Destructor Tests
-// ============================================================================
+    // ============================================================================
+    // Generic Struct Constructor/Destructor Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Generic struct: user-defined default constructor") {
-    const char* source = R"(
+    TEST_CASE("Generic struct: user-defined default constructor") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -1200,13 +1202,13 @@ TEST_CASE("E2E - Generic struct: user-defined default constructor") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic struct: named constructor") {
-    const char* source = R"(
+    TEST_CASE("Generic struct: named constructor") {
+        const char* source = R"(
         struct Pair<T> {
             first: T;
             second: T;
@@ -1223,13 +1225,13 @@ TEST_CASE("E2E - Generic struct: named constructor") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic struct: constructor with method") {
-    const char* source = R"(
+    TEST_CASE("Generic struct: constructor with method") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -1248,13 +1250,13 @@ TEST_CASE("E2E - Generic struct: constructor with method") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic struct: constructor multiple instantiations") {
-    const char* source = R"(
+    TEST_CASE("Generic struct: constructor multiple instantiations") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -1270,13 +1272,13 @@ TEST_CASE("E2E - Generic struct: constructor multiple instantiations") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic struct: destructor with uniq") {
-    const char* source = R"(
+    TEST_CASE("Generic struct: destructor with uniq") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -1296,14 +1298,14 @@ TEST_CASE("E2E - Generic struct: destructor with uniq") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "99\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "99\n");
+    }
 
-TEST_CASE("E2E - Generic struct: constructor suppresses synthesized default") {
-    // User-defined default constructor should be used instead of synthesized one
-    const char* source = R"(
+    TEST_CASE("Generic struct: constructor suppresses synthesized default") {
+        // User-defined default constructor should be used instead of synthesized one
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -1318,22 +1320,22 @@ TEST_CASE("E2E - Generic struct: constructor suppresses synthesized default") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Generic higher-order with closure") {
-    // Generic function taking a fun(T) -> T parameter, called with a closure
-    // that's stored in a local variable. Exercises three issues that all had to
-    // line up: (1) substitute_type_expr must recurse into Function-kind
-    // return_type so `fun(T) -> T` becomes `fun(i32) -> i32`; (2) the generic
-    // call site must consume noncopyable args (closure values are
-    // noncopyable); (3) analyze_generic_fun_call must set
-    // ce.callee->resolved_type so the IR builder emits Nullify (not Delete) on
-    // the moved closure local at scope exit.
-    SUBCASE("Explicit type args") {
-        const char* source = R"(
+    TEST_CASE("Generic higher-order with closure") {
+        // Generic function taking a fun(T) -> T parameter, called with a closure
+        // that's stored in a local variable. Exercises three issues that all had to
+        // line up: (1) substitute_type_expr must recurse into Function-kind
+        // return_type so `fun(T) -> T` becomes `fun(i32) -> i32`; (2) the generic
+        // call site must consume noncopyable args (closure values are
+        // noncopyable); (3) analyze_generic_fun_call must set
+        // ce.callee->resolved_type so the IR builder emits Nullify (not Delete) on
+        // the moved closure local at scope exit.
+        SUBCASE("Explicit type args") {
+            const char* source = R"(
             fun apply<T>(f: fun(T) -> T, x: T): T {
                 return f(x);
             }
@@ -1342,13 +1344,13 @@ TEST_CASE("E2E - Generic higher-order with closure") {
                 return apply<i32>(double, 21);
             }
         )";
-        TestResult result = run_and_capture(source, "main");
-        CHECK(result.success);
-        CHECK(result.value == 42);
-    }
+            TestResult result = run_and_capture(source, "main");
+            CHECK(result.success);
+            CHECK(result.value == 42);
+        }
 
-    SUBCASE("Inferred type args") {
-        const char* source = R"(
+        SUBCASE("Inferred type args") {
+            const char* source = R"(
             fun apply<T>(f: fun(T) -> T, x: T): T {
                 return f(x);
             }
@@ -1357,8 +1359,10 @@ TEST_CASE("E2E - Generic higher-order with closure") {
                 return apply(double, 21);
             }
         )";
-        TestResult result = run_and_capture(source, "main");
-        CHECK(result.success);
-        CHECK(result.value == 42);
+            TestResult result = run_and_capture(source, "main");
+            CHECK(result.success);
+            CHECK(result.value == 42);
+        }
     }
-}
+
+}  // TEST_SUITE("E2E Generics")

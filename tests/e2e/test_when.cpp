@@ -7,8 +7,10 @@ using namespace rx;
 // When Statement Tests
 // ============================================================================
 
-TEST_CASE("E2E - When basic") {
-    const char* source = R"(
+TEST_SUITE("E2E When") {
+
+    TEST_CASE("When basic") {
+        const char* source = R"(
         enum Color { Red, Green, Blue }
 
         fun test_color(c: Color): i32 {
@@ -31,13 +33,13 @@ TEST_CASE("E2E - When basic") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n3\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n3\n");
+    }
 
-TEST_CASE("E2E - When with else") {
-    const char* source = R"(
+    TEST_CASE("When with else") {
+        const char* source = R"(
         enum Status { Pending, Active, Done, Cancelled }
 
         fun status_code(s: Status): i32 {
@@ -60,13 +62,13 @@ TEST_CASE("E2E - When with else") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "100\n200\n999\n999\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "100\n200\n999\n999\n");
+    }
 
-TEST_CASE("E2E - When with multiple case names") {
-    const char* source = R"(
+    TEST_CASE("When with multiple case names") {
+        const char* source = R"(
         enum Day { Mon, Tue, Wed, Thu, Fri, Sat, Sun }
 
         fun is_weekend(d: Day): i32 {
@@ -87,13 +89,13 @@ TEST_CASE("E2E - When with multiple case names") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "0\n0\n1\n1\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "0\n0\n1\n1\n");
+    }
 
-TEST_CASE("E2E - When with enum explicit values") {
-    const char* source = R"(
+    TEST_CASE("When with enum explicit values") {
+        const char* source = R"(
         enum Priority { Low = 10, Medium = 50, High = 100 }
 
         fun get_multiplier(p: Priority): i32 {
@@ -116,13 +118,13 @@ TEST_CASE("E2E - When with enum explicit values") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n3\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n3\n");
+    }
 
-TEST_CASE("E2E - When with local variables in case") {
-    const char* source = R"(
+    TEST_CASE("When with local variables in case") {
+        const char* source = R"(
         enum Op { Add, Sub, Mul }
 
         fun calc(op: Op, a: i32, b: i32): i32 {
@@ -148,15 +150,15 @@ TEST_CASE("E2E - When with local variables in case") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "13\n7\n30\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "13\n7\n30\n");
+    }
 
-TEST_CASE("E2E - When with multiple statements per case") {
-    // This test verifies that variable modifications inside case bodies
-    // persist after the when statement (phi node support)
-    const char* source = R"(
+    TEST_CASE("When with multiple statements per case") {
+        // This test verifies that variable modifications inside case bodies
+        // persist after the when statement (phi node support)
+        const char* source = R"(
         enum Level { Debug, Info, Error }
 
         fun log_level(l: Level): i32 {
@@ -186,13 +188,13 @@ TEST_CASE("E2E - When with multiple statements per case") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n3\n10\n20\n30\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n3\n10\n20\n30\n");
+    }
 
-TEST_CASE("E2E - When exhaustive without else") {
-    const char* source = R"(
+    TEST_CASE("When exhaustive without else") {
+        const char* source = R"(
         enum Bool2 { True2, False2 }
 
         fun to_int(b: Bool2): i32 {
@@ -212,13 +214,13 @@ TEST_CASE("E2E - When exhaustive without else") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n0\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n0\n");
+    }
 
-TEST_CASE("E2E - When with variable discriminant") {
-    const char* source = R"(
+    TEST_CASE("When with variable discriminant") {
+        const char* source = R"(
         enum Mode { Read, Write, ReadWrite }
 
         fun check_mode(m: Mode): i32 {
@@ -242,13 +244,13 @@ TEST_CASE("E2E - When with variable discriminant") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n3\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n3\n");
+    }
 
-TEST_CASE("E2E - When phi without else") {
-    const char* source = R"(
+    TEST_CASE("When phi without else") {
+        const char* source = R"(
         enum Op { Add, Sub }
 
         fun calc(op: Op, a: i32, b: i32): i32 {
@@ -269,13 +271,13 @@ TEST_CASE("E2E - When phi without else") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "15\n5\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "15\n5\n");
+    }
 
-TEST_CASE("E2E - When phi with else") {
-    const char* source = R"(
+    TEST_CASE("When phi with else") {
+        const char* source = R"(
         enum Status { Ok, Warning, Error, Unknown }
 
         fun status_value(s: Status): i32 {
@@ -302,13 +304,13 @@ TEST_CASE("E2E - When phi with else") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "0\n1\n2\n99\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "0\n1\n2\n99\n");
+    }
 
-TEST_CASE("E2E - When phi multiple variables") {
-    const char* source = R"(
+    TEST_CASE("When phi multiple variables") {
+        const char* source = R"(
         enum Action { Move, Jump, Attack }
 
         fun process_action(a: Action): i32 {
@@ -336,14 +338,14 @@ TEST_CASE("E2E - When phi multiple variables") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "15\n20\n5\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "15\n20\n5\n");
+    }
 
-TEST_CASE("E2E - When phi partial coverage") {
-    // Some cases modify the variable, some don't - should use original value
-    const char* source = R"(
+    TEST_CASE("When phi partial coverage") {
+        // Some cases modify the variable, some don't - should use original value
+        const char* source = R"(
         enum Priority { Low, Medium, High }
 
         fun get_score(p: Priority, base: i32): i32 {
@@ -365,19 +367,19 @@ TEST_CASE("E2E - When phi partial coverage") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // Low falls through to merge with original value (10)
-    CHECK(result.stdout_output == "10\n20\n30\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // Low falls through to merge with original value (10)
+        CHECK(result.stdout_output == "10\n20\n30\n");
+    }
 
-// ============================================================================
-// When Statement Move State Tracking Tests
-// ============================================================================
+    // ============================================================================
+    // When Statement Move State Tracking Tests
+    // ============================================================================
 
-TEST_CASE("E2E - When move in all branches with else") {
-    // Moving uniq in every case + else → Moved after when → use is compile error
-    const char* source = R"(
+    TEST_CASE("When move in all branches with else") {
+        // Moving uniq in every case + else → Moved after when → use is compile error
+        const char* source = R"(
         struct Resource { value: i32; }
 
         enum Action { Start, Stop }
@@ -401,14 +403,14 @@ TEST_CASE("E2E - When move in all branches with else") {
         fun main(): i32 { return test(Action::Start); }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail: use of moved value
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail: use of moved value
+    }
 
-TEST_CASE("E2E - When move in some branches") {
-    // Moving uniq in one case but not others → MaybeValid → use is compile error
-    const char* source = R"(
+    TEST_CASE("When move in some branches") {
+        // Moving uniq in one case but not others → MaybeValid → use is compile error
+        const char* source = R"(
         struct Resource { value: i32; }
 
         enum Action { Start, Stop }
@@ -432,19 +434,19 @@ TEST_CASE("E2E - When move in some branches") {
         fun main(): i32 { return test(Action::Start); }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail: use of possibly moved value
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail: use of possibly moved value
+    }
 
-TEST_CASE("E2E - When arm bool reused after for-loop (compare/branch fusion)") {
-    // Regression: a bool local whose defining comparison is fused with the
-    // immediately-following JMP_IF used to leave the SSA value's register
-    // uninitialized for a later read on the other side of a `for` loop. With
-    // RPO block layout, the loop body sits AFTER the second read, so the
-    // register (reassigned inside the loop body at runtime) held stale bytes
-    // by the time control returned to the second `if`.
-    const char* source = R"(
+    TEST_CASE("When arm bool reused after for-loop (compare/branch fusion)") {
+        // Regression: a bool local whose defining comparison is fused with the
+        // immediately-following JMP_IF used to leave the SSA value's register
+        // uninitialized for a later read on the other side of a `for` loop. With
+        // RPO block layout, the loop body sits AFTER the second read, so the
+        // register (reassigned inside the loop body at runtime) held stale bytes
+        // by the time control returned to the second `if`.
+        const char* source = R"(
         struct Holder {
             items: List<i32>;
             a: i32 = 0;
@@ -478,14 +480,14 @@ TEST_CASE("E2E - When arm bool reused after for-loop (compare/branch fusion)") {
         }
     )";
 
-    Value result = compile_and_run(source, "main");
-    // flag=true → 1 (first if) + 20 (two loop iters) + 100 (second if) = 121
-    CHECK(result.as_int == 121);
-}
+        Value result = compile_and_run(source, "main");
+        // flag=true → 1 (first if) + 20 (two loop iters) + 100 (second if) = 121
+        CHECK(result.as_int == 121);
+    }
 
-TEST_CASE("E2E - When no move in any branch") {
-    // uniq untouched in all branches → Live after when → use is fine
-    const char* source = R"(
+    TEST_CASE("When no move in any branch") {
+        // uniq untouched in all branches → Live after when → use is fine
+        const char* source = R"(
         struct Resource { value: i32; }
 
         enum Action { Start, Stop }
@@ -507,14 +509,14 @@ TEST_CASE("E2E - When no move in any branch") {
         fun main(): i32 { return test(Action::Start); }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module != nullptr);  // Should compile successfully
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module != nullptr);  // Should compile successfully
+    }
 
-TEST_CASE("E2E - When move in case without else") {
-    // Moving in a case with no else → merge with pre-when fall-through → MaybeValid
-    const char* source = R"(
+    TEST_CASE("When move in case without else") {
+        // Moving in a case with no else → merge with pre-when fall-through → MaybeValid
+        const char* source = R"(
         struct Resource { value: i32; }
 
         enum Action { Start, Stop }
@@ -536,7 +538,9 @@ TEST_CASE("E2E - When move in case without else") {
         fun main(): i32 { return test(Action::Start); }
     )";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);  // Should fail: use of possibly moved value
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail: use of possibly moved value
+    }
+
+}  // TEST_SUITE("E2E When")

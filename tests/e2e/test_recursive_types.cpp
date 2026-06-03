@@ -7,8 +7,10 @@ using namespace rx;
 // Recursive Types Tests
 // ============================================================================
 
-TEST_CASE("E2E - Recursive types: basic uniq self-reference compiles") {
-    const char* source = R"CODE(
+TEST_SUITE("E2E Recursive Types") {
+
+    TEST_CASE("basic uniq self-reference compiles") {
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             next: uniq Node;
@@ -22,13 +24,13 @@ TEST_CASE("E2E - Recursive types: basic uniq self-reference compiles") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module != nullptr);
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module != nullptr);
+    }
 
-TEST_CASE("E2E - Recursive types: two-node list") {
-    const char* source = R"CODE(
+    TEST_CASE("two-node list") {
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             next: uniq Node;
@@ -47,13 +49,13 @@ TEST_CASE("E2E - Recursive types: two-node list") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 10);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 10);
+    }
 
-TEST_CASE("E2E - Recursive types: access uniq field via ref param") {
-    const char* source = R"CODE(
+    TEST_CASE("access uniq field via ref param") {
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             next: uniq Node;
@@ -76,13 +78,13 @@ TEST_CASE("E2E - Recursive types: access uniq field via ref param") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 20);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 20);
+    }
 
-TEST_CASE("E2E - Recursive types: explicit ref expression") {
-    const char* source = R"CODE(
+    TEST_CASE("explicit ref expression") {
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             next: uniq Node;
@@ -102,13 +104,13 @@ TEST_CASE("E2E - Recursive types: explicit ref expression") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 10);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 10);
+    }
 
-TEST_CASE("E2E - Recursive types: ref of uniq field") {
-    const char* source = R"CODE(
+    TEST_CASE("ref of uniq field") {
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             next: uniq Node;
@@ -128,13 +130,13 @@ TEST_CASE("E2E - Recursive types: ref of uniq field") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 20);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 20);
+    }
 
-TEST_CASE("E2E - Recursive types: linked list traversal with ref") {
-    const char* source = R"CODE(
+    TEST_CASE("linked list traversal with ref") {
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             next: uniq Node;
@@ -166,13 +168,13 @@ TEST_CASE("E2E - Recursive types: linked list traversal with ref") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 60);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 60);
+    }
 
-TEST_CASE("E2E - Recursive types: binary tree sum") {
-    const char* source = R"CODE(
+    TEST_CASE("binary tree sum") {
+        const char* source = R"CODE(
         struct TreeNode {
             value: i32;
             left: uniq TreeNode;
@@ -210,13 +212,13 @@ TEST_CASE("E2E - Recursive types: binary tree sum") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 6);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 6);
+    }
 
-TEST_CASE("E2E - Recursive types: implicit destruction") {
-    const char* source = R"CODE(
+    TEST_CASE("implicit destruction") {
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             next: uniq Node;
@@ -243,13 +245,13 @@ TEST_CASE("E2E - Recursive types: implicit destruction") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+    }
 
-TEST_CASE("E2E - Recursive types: nil assignment cleans up subtree") {
-    const char* source = R"CODE(
+    TEST_CASE("nil assignment cleans up subtree") {
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             next: uniq Node;
@@ -270,13 +272,13 @@ TEST_CASE("E2E - Recursive types: nil assignment cleans up subtree") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+    }
 
-TEST_CASE("E2E - Recursive types: reassignment cleans up old subtree") {
-    const char* source = R"CODE(
+    TEST_CASE("reassignment cleans up old subtree") {
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             next: uniq Node;
@@ -301,13 +303,13 @@ TEST_CASE("E2E - Recursive types: reassignment cleans up old subtree") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Recursive types: direct self-reference compile error") {
-    const char* source = R"CODE(
+    TEST_CASE("direct self-reference compile error") {
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             next: Node;
@@ -318,13 +320,13 @@ TEST_CASE("E2E - Recursive types: direct self-reference compile error") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
 
-TEST_CASE("E2E - Recursive types: mutual recursion compile error") {
-    const char* source = R"CODE(
+    TEST_CASE("mutual recursion compile error") {
+        const char* source = R"CODE(
         struct A {
             value: i32;
             b: B;
@@ -340,13 +342,13 @@ TEST_CASE("E2E - Recursive types: mutual recursion compile error") {
         }
     )CODE";
 
-    BumpAllocator allocator(65536);
-    BCModule* module = compile(allocator, source);
-    CHECK(module == nullptr);
-}
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);
+    }
 
-TEST_CASE("E2E - Recursive types: list traversal with while loop") {
-    const char* source = R"CODE(
+    TEST_CASE("list traversal with while loop") {
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             next: uniq Node;
@@ -387,13 +389,13 @@ TEST_CASE("E2E - Recursive types: list traversal with while loop") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 15);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 15);
+    }
 
-TEST_CASE("E2E - Recursive types: tagged union AST eval") {
-    const char* source = R"CODE(
+    TEST_CASE("tagged union AST eval") {
+        const char* source = R"CODE(
         enum ExprKind { Literal, Negate, Add }
 
         struct Expr {
@@ -428,13 +430,13 @@ TEST_CASE("E2E - Recursive types: tagged union AST eval") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == -2);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == -2);
+    }
 
-TEST_CASE("E2E - Recursive types: mutual recursion via List<uniq T>") {
-    const char* source = R"CODE(
+    TEST_CASE("mutual recursion via List<uniq T>") {
+        const char* source = R"CODE(
         struct Forest {
             trees: List<uniq Tree>;
         }
@@ -468,13 +470,13 @@ TEST_CASE("E2E - Recursive types: mutual recursion via List<uniq T>") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 6);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 6);
+    }
 
-TEST_CASE("E2E - Recursive types: deep linked list construction and destruction") {
-    const char* source = R"CODE(
+    TEST_CASE("deep linked list construction and destruction") {
+        const char* source = R"CODE(
         struct Node {
             value: i32;
             next: uniq Node;
@@ -497,7 +499,9 @@ TEST_CASE("E2E - Recursive types: deep linked list construction and destruction"
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 499);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 499);
+    }
+
+}  // TEST_SUITE("E2E Recursive Types")

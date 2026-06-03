@@ -10,8 +10,10 @@ using namespace rx;
 // Float Tests
 // ============================================================================
 
-TEST_CASE("E2E - Float arithmetic") {
-    const char* source = R"(
+TEST_SUITE("E2E Algorithms") {
+
+    TEST_CASE("Float arithmetic") {
+        const char* source = R"(
         fun calc(): f64 {
             var a: f64 = 3.5;
             var b: f64 = 2.5;
@@ -23,12 +25,12 @@ TEST_CASE("E2E - Float arithmetic") {
         }
     )";
 
-    Value result = compile_and_run(source, "main");
-    CHECK(result.as_int == 6);
-}
+        Value result = compile_and_run(source, "main");
+        CHECK(result.as_int == 6);
+    }
 
-TEST_CASE("E2E - Float comparison") {
-    const char* source = R"(
+    TEST_CASE("Float comparison") {
+        const char* source = R"(
         fun max_float(a: f64, b: f64): f64 {
             if (a > b) {
                 return a;
@@ -46,16 +48,16 @@ TEST_CASE("E2E - Float comparison") {
         }
     )";
 
-    Value result = compile_and_run(source, "main");
-    CHECK(result.as_int == 3);  // both branches matched
-}
+        Value result = compile_and_run(source, "main");
+        CHECK(result.as_int == 3);  // both branches matched
+    }
 
-// ============================================================================
-// Complex Algorithm Tests
-// ============================================================================
+    // ============================================================================
+    // Complex Algorithm Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Ackermann function (deeply recursive)") {
-    const char* source = R"(
+    TEST_CASE("Ackermann function (deeply recursive)") {
+        const char* source = R"(
         fun ackermann(m: i32, n: i32): i32 {
             if (m == 0) {
                 return n + 1;
@@ -75,27 +77,27 @@ TEST_CASE("E2E - Ackermann function (deeply recursive)") {
         }
     )";
 
-    BumpAllocator allocator(4096);
-    BCModule* module = compile(allocator, source);
-    REQUIRE(module != nullptr);
+        BumpAllocator allocator(4096);
+        BCModule* module = compile(allocator, source);
+        REQUIRE(module != nullptr);
 
-    RoxyVM vm;
-    VMConfig config;
-    config.register_file_size = 65536;  // Need more registers for deep recursion
-    config.max_call_depth = 4096;
-    vm_init(&vm, config);
-    vm_load_module(&vm, module);
+        RoxyVM vm;
+        VMConfig config;
+        config.register_file_size = 65536;  // Need more registers for deep recursion
+        config.max_call_depth = 4096;
+        vm_init(&vm, config);
+        vm_load_module(&vm, module);
 
-    CHECK(vm_call(&vm, "main", {}));
-    // ackermann(0,0)=1, ackermann(1,1)=3, ackermann(2,2)=7, ackermann(3,2)=29
-    CHECK(vm_get_result(&vm).as_int == 1 + 3 + 7 + 29);
+        CHECK(vm_call(&vm, "main", {}));
+        // ackermann(0,0)=1, ackermann(1,1)=3, ackermann(2,2)=7, ackermann(3,2)=29
+        CHECK(vm_get_result(&vm).as_int == 1 + 3 + 7 + 29);
 
-    vm_destroy(&vm);
-    delete module;
-}
+        vm_destroy(&vm);
+        delete module;
+    }
 
-TEST_CASE("E2E - Collatz conjecture steps") {
-    const char* source = R"(
+    TEST_CASE("Collatz conjecture steps") {
+        const char* source = R"(
         fun collatz_steps(n: i32): i32 {
             var steps: i32 = 0;
             while (n != 1) {
@@ -117,14 +119,14 @@ TEST_CASE("E2E - Collatz conjecture steps") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // collatz_steps(1)=0, collatz_steps(6)=8, collatz_steps(27)=111
-    CHECK(result.stdout_output == "0\n8\n111\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // collatz_steps(1)=0, collatz_steps(6)=8, collatz_steps(27)=111
+        CHECK(result.stdout_output == "0\n8\n111\n");
+    }
 
-TEST_CASE("E2E - Prime checking") {
-    const char* source = R"(
+    TEST_CASE("Prime checking") {
+        const char* source = R"(
         fun is_prime(n: i32): i32 {
             if (n <= 1) {
                 return 0;
@@ -164,18 +166,18 @@ TEST_CASE("E2E - Prime checking") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // primes return 1, non-primes return 0
-    CHECK(result.stdout_output == "1\n1\n1\n1\n1\n1\n0\n0\n0\n0\n0\n0\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // primes return 1, non-primes return 0
+        CHECK(result.stdout_output == "1\n1\n1\n1\n1\n1\n0\n0\n0\n0\n0\n0\n");
+    }
 
-// ============================================================================
-// Print Tests
-// ============================================================================
+    // ============================================================================
+    // Print Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Print function") {
-    const char* source = R"(
+    TEST_CASE("Print function") {
+        const char* source = R"(
         fun main(): i32 {
             print(f"{42}");
             print(f"{123}");
@@ -184,7 +186,9 @@ TEST_CASE("E2E - Print function") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n123\n0\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n123\n0\n");
+    }
+
+}  // TEST_SUITE("E2E Algorithms")

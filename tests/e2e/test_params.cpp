@@ -7,8 +7,10 @@ using namespace rx;
 // Out/Inout Parameter Tests
 // ============================================================================
 
-TEST_CASE("E2E - Basic inout parameter") {
-    const char* source = R"(
+TEST_SUITE("E2E Parameters") {
+
+    TEST_CASE("Basic inout parameter") {
+        const char* source = R"(
         fun increment(x: inout i32) {
             x = x + 1;
         }
@@ -21,13 +23,13 @@ TEST_CASE("E2E - Basic inout parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - Basic out parameter") {
-    const char* source = R"(
+    TEST_CASE("Basic out parameter") {
+        const char* source = R"(
         fun init_value(x: out i32) {
             x = 42;
         }
@@ -40,13 +42,13 @@ TEST_CASE("E2E - Basic out parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - Multiple out parameters") {
-    const char* source = R"(
+    TEST_CASE("Multiple out parameters") {
+        const char* source = R"(
         fun init_pair(a: out i32, b: out i32) {
             a = 10;
             b = 20;
@@ -62,13 +64,13 @@ TEST_CASE("E2E - Multiple out parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n20\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n20\n");
+    }
 
-TEST_CASE("E2E - Swap with inout") {
-    const char* source = R"(
+    TEST_CASE("Swap with inout") {
+        const char* source = R"(
         fun swap(a: inout i32, b: inout i32) {
             var temp: i32 = a;
             a = b;
@@ -85,13 +87,13 @@ TEST_CASE("E2E - Swap with inout") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "20\n10\n");  // swapped
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "20\n10\n");  // swapped
+    }
 
-TEST_CASE("E2E - Inout with computation") {
-    const char* source = R"(
+    TEST_CASE("Inout with computation") {
+        const char* source = R"(
         fun double_value(x: inout i32) {
             x = x * 2;
         }
@@ -104,13 +106,13 @@ TEST_CASE("E2E - Inout with computation") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");  // 21 * 2
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");  // 21 * 2
+    }
 
-TEST_CASE("E2E - Multiple inout calls") {
-    const char* source = R"(
+    TEST_CASE("Multiple inout calls") {
+        const char* source = R"(
         fun increment(x: inout i32) {
             x = x + 1;
         }
@@ -127,13 +129,13 @@ TEST_CASE("E2E - Multiple inout calls") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n3\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n3\n");
+    }
 
-TEST_CASE("E2E - Mixed regular and inout parameters") {
-    const char* source = R"(
+    TEST_CASE("Mixed regular and inout parameters") {
+        const char* source = R"(
         fun add_to(x: inout i32, amount: i32) {
             x = x + amount;
         }
@@ -146,13 +148,13 @@ TEST_CASE("E2E - Mixed regular and inout parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");  // 10 + 32
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");  // 10 + 32
+    }
 
-TEST_CASE("E2E - Inout with struct parameter") {
-    const char* source = R"(
+    TEST_CASE("Inout with struct parameter") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -172,13 +174,13 @@ TEST_CASE("E2E - Inout with struct parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "20\n40\n");  // 10*2, 20*2
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "20\n40\n");  // 10*2, 20*2
+    }
 
-TEST_CASE("E2E - Out with struct parameter") {
-    const char* source = R"(
+    TEST_CASE("Out with struct parameter") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -198,13 +200,13 @@ TEST_CASE("E2E - Out with struct parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "15\n27\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "15\n27\n");
+    }
 
-TEST_CASE("E2E - Inout struct field modification") {
-    const char* source = R"(
+    TEST_CASE("Inout struct field modification") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -225,13 +227,13 @@ TEST_CASE("E2E - Inout struct field modification") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "20\n10\n");  // swapped
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "20\n10\n");  // swapped
+    }
 
-TEST_CASE("E2E - Inout with nested struct") {
-    const char* source = R"(
+    TEST_CASE("Inout with nested struct") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -263,21 +265,21 @@ TEST_CASE("E2E - Inout with nested struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "3\n6\n30\n60\n");  // 1*3, 2*3, 10*3, 20*3
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "3\n6\n30\n60\n");  // 1*3, 2*3, 10*3, 20*3
+    }
 
-// ============================================================================
-// Multi-Register Struct Parameter Tests
-// These tests verify correct argument placement when struct parameters
-// span multiple registers (3-4 slots = 2 registers)
-// ============================================================================
+    // ============================================================================
+    // Multi-Register Struct Parameter Tests
+    // These tests verify correct argument placement when struct parameters
+    // span multiple registers (3-4 slots = 2 registers)
+    // ============================================================================
 
-TEST_CASE("E2E - Four-slot struct followed by int parameter") {
-    // FourSlot is 4 slots (16 bytes) = 2 registers
-    // The int parameter should be in register 2, not register 1
-    const char* source = R"(
+    TEST_CASE("Four-slot struct followed by int parameter") {
+        // FourSlot is 4 slots (16 bytes) = 2 registers
+        // The int parameter should be in register 2, not register 1
+        const char* source = R"(
         struct FourSlot {
             a: i32;
             b: i32;
@@ -296,15 +298,15 @@ TEST_CASE("E2E - Four-slot struct followed by int parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "110\n");  // 1+2+3+4+100 = 110
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "110\n");  // 1+2+3+4+100 = 110
+    }
 
-TEST_CASE("E2E - Three-slot struct followed by int parameter") {
-    // ThreeSlot is 3 slots (12 bytes) = 2 registers
-    // The int parameter should be in register 2, not register 1
-    const char* source = R"(
+    TEST_CASE("Three-slot struct followed by int parameter") {
+        // ThreeSlot is 3 slots (12 bytes) = 2 registers
+        // The int parameter should be in register 2, not register 1
+        const char* source = R"(
         struct ThreeSlot {
             a: i32;
             b: i32;
@@ -322,14 +324,14 @@ TEST_CASE("E2E - Three-slot struct followed by int parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "560\n");  // 10+20+30+500 = 560
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "560\n");  // 10+20+30+500 = 560
+    }
 
-TEST_CASE("E2E - Four-slot struct followed by two int parameters") {
-    // FourSlot uses regs 0-1, ints should be in regs 2-3
-    const char* source = R"(
+    TEST_CASE("Four-slot struct followed by two int parameters") {
+        // FourSlot uses regs 0-1, ints should be in regs 2-3
+        const char* source = R"(
         struct FourSlot {
             a: i32;
             b: i32;
@@ -348,14 +350,14 @@ TEST_CASE("E2E - Four-slot struct followed by two int parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "190\n");  // 5*10 + 7*20 = 50 + 140 = 190
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "190\n");  // 5*10 + 7*20 = 50 + 140 = 190
+    }
 
-TEST_CASE("E2E - Two four-slot struct parameters") {
-    // First FourSlot in regs 0-1, second FourSlot in regs 2-3
-    const char* source = R"(
+    TEST_CASE("Two four-slot struct parameters") {
+        // First FourSlot in regs 0-1, second FourSlot in regs 2-3
+        const char* source = R"(
         struct FourSlot {
             a: i32;
             b: i32;
@@ -375,15 +377,15 @@ TEST_CASE("E2E - Two four-slot struct parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "110\n");  // (1+2+3+4) + (10+20+30+40) = 10 + 100 = 110
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "110\n");  // (1+2+3+4) + (10+20+30+40) = 10 + 100 = 110
+    }
 
-TEST_CASE("E2E - Mix of two-slot and four-slot struct parameters") {
-    // TwoSlot (2 slots = 1 reg), FourSlot (4 slots = 2 regs), int
-    // TwoSlot in reg 0, FourSlot in regs 1-2, int in reg 3
-    const char* source = R"(
+    TEST_CASE("Mix of two-slot and four-slot struct parameters") {
+        // TwoSlot (2 slots = 1 reg), FourSlot (4 slots = 2 regs), int
+        // TwoSlot in reg 0, FourSlot in regs 1-2, int in reg 3
+        const char* source = R"(
         struct TwoSlot {
             x: i32;
             y: i32;
@@ -408,14 +410,14 @@ TEST_CASE("E2E - Mix of two-slot and four-slot struct parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1103\n");  // 1+2+10+20+30+40+1000 = 1103
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1103\n");  // 1+2+10+20+30+40+1000 = 1103
+    }
 
-TEST_CASE("E2E - Four-slot struct parameter with struct return") {
-    // Tests that multi-register args work with struct returns
-    const char* source = R"(
+    TEST_CASE("Four-slot struct parameter with struct return") {
+        // Tests that multi-register args work with struct returns
+        const char* source = R"(
         struct FourSlot {
             a: i32;
             b: i32;
@@ -448,14 +450,14 @@ TEST_CASE("E2E - Four-slot struct parameter with struct return") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n3\n4\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n3\n4\n");
+    }
 
-TEST_CASE("E2E - Int parameter before four-slot struct") {
-    // int in reg 0, FourSlot in regs 1-2
-    const char* source = R"(
+    TEST_CASE("Int parameter before four-slot struct") {
+        // int in reg 0, FourSlot in regs 1-2
+        const char* source = R"(
         struct FourSlot {
             a: i32;
             b: i32;
@@ -474,14 +476,14 @@ TEST_CASE("E2E - Int parameter before four-slot struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "100\n");  // 10 * (1+2+3+4) = 10 * 10 = 100
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "100\n");  // 10 * (1+2+3+4) = 10 * 10 = 100
+    }
 
-TEST_CASE("E2E - Multiple four-slot structs with int in middle") {
-    // FourSlot1 in regs 0-1, int in reg 2, FourSlot2 in regs 3-4
-    const char* source = R"(
+    TEST_CASE("Multiple four-slot structs with int in middle") {
+        // FourSlot1 in regs 0-1, int in reg 2, FourSlot2 in regs 3-4
+        const char* source = R"(
         struct FourSlot {
             a: i32;
             b: i32;
@@ -503,21 +505,21 @@ TEST_CASE("E2E - Multiple four-slot structs with int in middle") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "60\n");  // (1+1+1+1)*10 + (5+5+5+5) = 40 + 20 = 60
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "60\n");  // (1+1+1+1)*10 + (5+5+5+5) = 40 + 20 = 60
+    }
 
-// ============================================================================
-// inout noncopyable args in loop body (regression: semantic analyzer treated
-// inout identically to a by-value move and rejected the call with
-// "moved in loop body without reassignment"; the IR builder also marked the
-// local as moved after the call, tracked the inout param as owned, and
-// failed to phi-merge the caller's local at the loop header).
-// ============================================================================
+    // ============================================================================
+    // inout noncopyable args in loop body (regression: semantic analyzer treated
+    // inout identically to a by-value move and rejected the call with
+    // "moved in loop body without reassignment"; the IR builder also marked the
+    // local as moved after the call, tracked the inout param as owned, and
+    // failed to phi-merge the caller's local at the loop header).
+    // ============================================================================
 
-TEST_CASE("E2E - inout List<uniq T> in loop body compiles and runs") {
-    const char* source = R"ROXY(
+    TEST_CASE("inout List<uniq T> in loop body compiles and runs") {
+        const char* source = R"ROXY(
         struct Item { pub v: i32; }
 
         fun add_one(xs: inout List<uniq Item>) {
@@ -536,13 +538,13 @@ TEST_CASE("E2E - inout List<uniq T> in loop body compiles and runs") {
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 3);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
 
-TEST_CASE("E2E - inout List<i32> in for loop body with post-loop read") {
-    const char* source = R"ROXY(
+    TEST_CASE("inout List<i32> in for loop body with post-loop read") {
+        const char* source = R"ROXY(
         fun push_val(xs: inout List<i32>, v: i32) {
             xs.push(v);
         }
@@ -563,17 +565,17 @@ TEST_CASE("E2E - inout List<i32> in for loop body with post-loop read") {
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 0 + 10 + 20 + 30 + 40);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 0 + 10 + 20 + 30 + 40);
+    }
 
-TEST_CASE("E2E - inout noncopyable cleanup across multiple calls is not double-freed") {
-    // The caller still owns `xs` after an inout call — the callee must not
-    // mark xs as moved, or else post-call nullify would suppress cleanup.
-    // Conversely the inout param inside the callee must NOT be tracked as an
-    // owned local (borrow, not ownership).
-    const char* source = R"ROXY(
+    TEST_CASE("inout noncopyable cleanup across multiple calls is not double-freed") {
+        // The caller still owns `xs` after an inout call — the callee must not
+        // mark xs as moved, or else post-call nullify would suppress cleanup.
+        // Conversely the inout param inside the callee must NOT be tracked as an
+        // owned local (borrow, not ownership).
+        const char* source = R"ROXY(
         struct Item { pub v: i32; }
 
         fun fill(xs: inout List<uniq Item>) {
@@ -589,7 +591,9 @@ TEST_CASE("E2E - inout noncopyable cleanup across multiple calls is not double-f
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 4);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 4);
+    }
+
+}  // TEST_SUITE("E2E Parameters")

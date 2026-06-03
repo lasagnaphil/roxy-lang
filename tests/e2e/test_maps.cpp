@@ -7,8 +7,10 @@ using namespace rx;
 // Map Tests
 // ============================================================================
 
-TEST_CASE("E2E - Map basic insert and get") {
-    const char* source = R"(
+TEST_SUITE("E2E Maps") {
+
+    TEST_CASE("Map basic insert and get") {
+        const char* source = R"(
         fun main(): i32 {
             var m: Map<i32, i32> = Map<i32, i32>();
             m.insert(1, 10);
@@ -21,13 +23,13 @@ TEST_CASE("E2E - Map basic insert and get") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n20\n30\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n20\n30\n");
+    }
 
-TEST_CASE("E2E - Map len tracking") {
-    const char* source = R"(
+    TEST_CASE("Map len tracking") {
+        const char* source = R"(
         fun main(): i32 {
             var m: Map<i32, i32> = Map<i32, i32>();
             print(f"{m.len()}");
@@ -41,13 +43,13 @@ TEST_CASE("E2E - Map len tracking") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "0\n1\n2\n3\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "0\n1\n2\n3\n");
+    }
 
-TEST_CASE("E2E - Map index operator read and write") {
-    const char* source = R"(
+    TEST_CASE("Map index operator read and write") {
+        const char* source = R"(
         fun main(): i32 {
             var m: Map<i32, i32> = Map<i32, i32>();
             m[1] = 100;
@@ -61,13 +63,13 @@ TEST_CASE("E2E - Map index operator read and write") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "100\n200\n999\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "100\n200\n999\n");
+    }
 
-TEST_CASE("E2E - Map contains") {
-    const char* source = R"(
+    TEST_CASE("Map contains") {
+        const char* source = R"(
         fun main(): i32 {
             var m: Map<i32, i32> = Map<i32, i32>();
             m.insert(42, 1);
@@ -81,13 +83,13 @@ TEST_CASE("E2E - Map contains") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "yes\nno\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "yes\nno\n");
+    }
 
-TEST_CASE("E2E - Map remove") {
-    const char* source = R"(
+    TEST_CASE("Map remove") {
+        const char* source = R"(
         fun main(): i32 {
             var m: Map<i32, i32> = Map<i32, i32>();
             m.insert(1, 10);
@@ -106,13 +108,13 @@ TEST_CASE("E2E - Map remove") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "2\ntrue\n1\ngone\nfalse\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "2\ntrue\n1\ngone\nfalse\n");
+    }
 
-TEST_CASE("E2E - Map clear") {
-    const char* source = R"(
+    TEST_CASE("Map clear") {
+        const char* source = R"(
         fun main(): i32 {
             var m: Map<i32, i32> = Map<i32, i32>();
             m.insert(1, 10);
@@ -127,13 +129,13 @@ TEST_CASE("E2E - Map clear") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "2\n0\nempty\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "2\n0\nempty\n");
+    }
 
-TEST_CASE("E2E - Map string keys") {
-    const char* source = R"(
+    TEST_CASE("Map string keys") {
+        const char* source = R"(
         fun main(): i32 {
             var m: Map<string, i32> = Map<string, i32>();
             var key1: string = "hello";
@@ -147,13 +149,13 @@ TEST_CASE("E2E - Map string keys") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n2\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n2\n");
+    }
 
-TEST_CASE("E2E - Map i32 keys with string values") {
-    const char* source = R"(
+    TEST_CASE("Map i32 keys with string values") {
+        const char* source = R"(
         fun main(): i32 {
             var m: Map<i32, string> = Map<i32, string>();
             m.insert(1, "one");
@@ -164,13 +166,13 @@ TEST_CASE("E2E - Map i32 keys with string values") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "one\ntwo\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "one\ntwo\n");
+    }
 
-TEST_CASE("E2E - Map overwrite existing key") {
-    const char* source = R"(
+    TEST_CASE("Map overwrite existing key") {
+        const char* source = R"(
         fun main(): i32 {
             var m: Map<i32, i32> = Map<i32, i32>();
             m.insert(1, 10);
@@ -182,13 +184,13 @@ TEST_CASE("E2E - Map overwrite existing key") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n99\n1\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n99\n1\n");
+    }
 
-TEST_CASE("E2E - Map growth and rehashing") {
-    const char* source = R"(
+    TEST_CASE("Map growth and rehashing") {
+        const char* source = R"(
         fun main(): i32 {
             var m: Map<i32, i32> = Map<i32, i32>();
             var i: i32 = 0;
@@ -204,13 +206,13 @@ TEST_CASE("E2E - Map growth and rehashing") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "50\n0\n250\n490\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "50\n0\n250\n490\n");
+    }
 
-TEST_CASE("E2E - Map with initial capacity") {
-    const char* source = R"(
+    TEST_CASE("Map with initial capacity") {
+        const char* source = R"(
         fun main(): i32 {
             var m: Map<i32, i32> = Map<i32, i32>(64);
             m.insert(1, 10);
@@ -222,13 +224,13 @@ TEST_CASE("E2E - Map with initial capacity") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "2\n10\n20\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "2\n10\n20\n");
+    }
 
-TEST_CASE("E2E - Map missing key runtime error") {
-    const char* source = R"(
+    TEST_CASE("Map missing key runtime error") {
+        const char* source = R"(
         fun main(): i32 {
             var m: Map<i32, i32> = Map<i32, i32>();
             m.insert(1, 10);
@@ -237,12 +239,12 @@ TEST_CASE("E2E - Map missing key runtime error") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-TEST_CASE("E2E - Map keys and values") {
-    const char* source = R"(
+    TEST_CASE("Map keys and values") {
+        const char* source = R"(
         fun main(): i32 {
             var m: Map<i32, i32> = Map<i32, i32>();
             m.insert(10, 100);
@@ -259,20 +261,20 @@ TEST_CASE("E2E - Map keys and values") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "2\n2\n30\n300\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "2\n2\n30\n300\n");
+    }
 
-// ============================================================================
-// Map with struct-typed values (regression: Map<K, V> used to store a dangling
-// pointer to the caller's local stack for V larger than 8 bytes; as soon as
-// any subsequent method call reused the same local-stack region, the value
-// bytes decoded by get() were whatever the second frame had just written.)
-// ============================================================================
+    // ============================================================================
+    // Map with struct-typed values (regression: Map<K, V> used to store a dangling
+    // pointer to the caller's local stack for V larger than 8 bytes; as soon as
+    // any subsequent method call reused the same local-stack region, the value
+    // bytes decoded by get() were whatever the second frame had just written.)
+    // ============================================================================
 
-TEST_CASE("E2E - Map<string, Struct>: value survives subsequent method call with local struct") {
-    const char* source = R"ROXY(
+    TEST_CASE("Map<string, Struct>: value survives subsequent method call with local struct") {
+        const char* source = R"ROXY(
         struct Val { pub a: i32; pub b: i32; pub c: i32; }
         fun make_val(): Val { return Val { a = 43690, b = 48059, c = 52428 }; }
 
@@ -309,16 +311,16 @@ TEST_CASE("E2E - Map<string, Struct>: value survives subsequent method call with
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+    }
 
-TEST_CASE("E2E - Map<string, Struct>: value preserved across List.push to enclosing list") {
-    // Original TODO-report pattern: method A inserts into a nested map,
-    // method B pushes to the enclosing list. Struct-valued map entries must
-    // stay valid across the list push.
-    const char* source = R"ROXY(
+    TEST_CASE("Map<string, Struct>: value preserved across List.push to enclosing list") {
+        // Original TODO-report pattern: method A inserts into a nested map,
+        // method B pushes to the enclosing list. Struct-valued map entries must
+        // stay valid across the list push.
+        const char* source = R"ROXY(
         struct Val { pub a: i32; pub b: i32; pub c: i32; }
         fun make_val(): Val { return Val { a = 1, b = 2, c = 3 }; }
 
@@ -352,16 +354,16 @@ TEST_CASE("E2E - Map<string, Struct>: value preserved across List.push to enclos
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 6);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 6);
+    }
 
-TEST_CASE("E2E - Map<i32, Struct>: rehash preserves struct values") {
-    // Exercises map_grow + map_insert_internal's Robin Hood swap on
-    // variable-sized values. Insert enough entries to trigger at least one
-    // grow, then verify every value is intact.
-    const char* source = R"ROXY(
+    TEST_CASE("Map<i32, Struct>: rehash preserves struct values") {
+        // Exercises map_grow + map_insert_internal's Robin Hood swap on
+        // variable-sized values. Insert enough entries to trigger at least one
+        // grow, then verify every value is intact.
+        const char* source = R"ROXY(
         struct Val { pub x: i32; pub y: i32; pub z: i32; }
 
         fun main(): i32 {
@@ -382,15 +384,15 @@ TEST_CASE("E2E - Map<i32, Struct>: rehash preserves struct values") {
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // sum over j in [0,50) of (j + 2j + 3j) = 6 * sum(0..49) = 6 * 1225 = 7350
-    CHECK(result.value == 7350);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // sum over j in [0,50) of (j + 2j + 3j) = 6 * sum(0..49) = 6 * 1225 = 7350
+        CHECK(result.value == 7350);
+    }
 
-TEST_CASE("E2E - Map<i32, Struct>: remove keeps other entries intact") {
-    // Exercises backward-shift deletion with variable-sized values.
-    const char* source = R"ROXY(
+    TEST_CASE("Map<i32, Struct>: remove keeps other entries intact") {
+        // Exercises backward-shift deletion with variable-sized values.
+        const char* source = R"ROXY(
         struct Val { pub x: i32; pub y: i32; pub z: i32; }
 
         fun main(): i32 {
@@ -405,20 +407,20 @@ TEST_CASE("E2E - Map<i32, Struct>: remove keeps other entries intact") {
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // 10+20+30 + 70+80+90 = 300
-    CHECK(result.value == 300);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // 10+20+30 + 70+80+90 = 300
+        CHECK(result.value == 300);
+    }
 
-// ============================================================================
-// Struct keys (MapKeyKind::Struct, bytewise hash + memcmp).
-// Note: Roxy structs are slot-aligned with no compiler padding, so bytewise
-// equality is well-defined for POD struct keys.
-// ============================================================================
+    // ============================================================================
+    // Struct keys (MapKeyKind::Struct, bytewise hash + memcmp).
+    // Note: Roxy structs are slot-aligned with no compiler padding, so bytewise
+    // equality is well-defined for POD struct keys.
+    // ============================================================================
 
-TEST_CASE("E2E - Map<Struct, i32>: basic insert + get") {
-    const char* source = R"ROXY(
+    TEST_CASE("Map<Struct, i32>: basic insert + get") {
+        const char* source = R"ROXY(
         struct Point { x: i32; y: i32; }
         fun main(): i32 {
             var m: Map<Point, i32> = Map<Point, i32>();
@@ -427,13 +429,13 @@ TEST_CASE("E2E - Map<Struct, i32>: basic insert + get") {
             return m.get(Point { x = 1, y = 2 }) + m.get(Point { x = 3, y = 4 });
         }
     )ROXY";
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Map<Struct, i32>: contains, remove, len") {
-    const char* source = R"ROXY(
+    TEST_CASE("Map<Struct, i32>: contains, remove, len") {
+        const char* source = R"ROXY(
         struct Pair { a: i32; b: i32; }
         fun main(): i32 {
             var m: Map<Pair, i32> = Map<Pair, i32>();
@@ -451,14 +453,14 @@ TEST_CASE("E2E - Map<Struct, i32>: contains, remove, len") {
             return len_before * 10 + len_after + bits;
         }
     )ROXY";
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // len_before=3, len_after=2, has_two=1, missing=0 → 30 + 2 + 3 = 35
-    CHECK(result.value == 35);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // len_before=3, len_after=2, has_two=1, missing=0 → 30 + 2 + 3 = 35
+        CHECK(result.value == 35);
+    }
 
-TEST_CASE("E2E - Map<Struct, Struct>: both sides struct") {
-    const char* source = R"ROXY(
+    TEST_CASE("Map<Struct, Struct>: both sides struct") {
+        const char* source = R"ROXY(
         struct Pos { x: i32; y: i32; }
         struct Color { r: i32; g: i32; b: i32; }
         fun main(): i32 {
@@ -469,15 +471,15 @@ TEST_CASE("E2E - Map<Struct, Struct>: both sides struct") {
             return c.r + c.g + c.b;
         }
     )ROXY";
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 60);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 60);
+    }
 
-TEST_CASE("E2E - Map<Struct, i32>: rehash with struct keys") {
-    // Inserts cross the 80% load threshold and force map_grow; this exercises
-    // the ping-pong scratch buffers for variable-sized keys.
-    const char* source = R"ROXY(
+    TEST_CASE("Map<Struct, i32>: rehash with struct keys") {
+        // Inserts cross the 80% load threshold and force map_grow; this exercises
+        // the ping-pong scratch buffers for variable-sized keys.
+        const char* source = R"ROXY(
         struct Key { a: i32; b: i32; c: i32; }
         fun main(): i32 {
             var m: Map<Key, i32> = Map<Key, i32>();
@@ -487,21 +489,21 @@ TEST_CASE("E2E - Map<Struct, i32>: rehash with struct keys") {
             return m.get(Key { a = 7, b = 14, c = 21 });
         }
     )ROXY";
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 700);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 700);
+    }
 
-// ============================================================================
-// Custom Hash / Eq dispatch for struct keys via runtime callback.
-// The runtime calls the user's `K.hash()` / `K.eq(other)` methods through
-// `call_user_function` (re-entrant interpreter call) when they're defined.
-// Detection is by method-name lookup — no `Eq` builtin trait required.
-// ============================================================================
+    // ============================================================================
+    // Custom Hash / Eq dispatch for struct keys via runtime callback.
+    // The runtime calls the user's `K.hash()` / `K.eq(other)` methods through
+    // `call_user_function` (re-entrant interpreter call) when they're defined.
+    // Detection is by method-name lookup — no `Eq` builtin trait required.
+    // ============================================================================
 
-TEST_CASE("E2E - Map<Struct, i32>: custom hash dispatched") {
-    // The user's Vec2.hash() is dispatched during insert and get.
-    const char* source = R"ROXY(
+    TEST_CASE("Map<Struct, i32>: custom hash dispatched") {
+        // The user's Vec2.hash() is dispatched during insert and get.
+        const char* source = R"ROXY(
         struct Vec2 { x: i32; y: i32; }
         fun Vec2.hash(): u64 for Hash {
             return u64(self.x * 31 + self.y);
@@ -512,15 +514,15 @@ TEST_CASE("E2E - Map<Struct, i32>: custom hash dispatched") {
             return m.get(Vec2 { x = 1, y = 2 });
         }
     )ROXY";
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Map<Struct, i32>: custom eq collapses bytewise-different keys") {
-    // Custom Vec2.eq treats (a,b) and (b,a) as equal, so the second insert
-    // overwrites the first and the map ends up with one entry.
-    const char* source = R"ROXY(
+    TEST_CASE("Map<Struct, i32>: custom eq collapses bytewise-different keys") {
+        // Custom Vec2.eq treats (a,b) and (b,a) as equal, so the second insert
+        // overwrites the first and the map ends up with one entry.
+        const char* source = R"ROXY(
         struct Vec2 { x: i32; y: i32; }
         fun Vec2.hash(): u64 for Hash {
             // Symmetric hash so colliding pairs land in the same bucket.
@@ -539,15 +541,15 @@ TEST_CASE("E2E - Map<Struct, i32>: custom eq collapses bytewise-different keys")
             return len * 1000 + v;   // expect 1*1000 + 200 = 1200
         }
     )ROXY";
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1200);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1200);
+    }
 
-TEST_CASE("E2E - Map<Struct, i32>: only hash defined, eq falls back to bytewise") {
-    // No user-defined eq → bytewise memcmp. Two distinct-byte keys remain
-    // distinct entries even though they collide on hash.
-    const char* source = R"ROXY(
+    TEST_CASE("Map<Struct, i32>: only hash defined, eq falls back to bytewise") {
+        // No user-defined eq → bytewise memcmp. Two distinct-byte keys remain
+        // distinct entries even though they collide on hash.
+        const char* source = R"ROXY(
         struct K { x: i32; y: i32; }
         fun K.hash(): u64 for Hash {
             return 42ul;  // everything collides
@@ -559,17 +561,17 @@ TEST_CASE("E2E - Map<Struct, i32>: only hash defined, eq falls back to bytewise"
             return i32(m.len()) * 1000 + m.get(K { x = 3, y = 4 });
         }
     )ROXY";
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 2200);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 2200);
+    }
 
-TEST_CASE("E2E - Map<Struct, i32>: hash method without `for Hash` is NOT dispatched") {
-    // Just defining `hash()` on a struct doesn't enable custom dispatch —
-    // the struct must explicitly `impl Hash`. Without `for Hash`, the runtime
-    // falls back to bytewise hash. This means two structs with different
-    // bytes are different keys regardless of what the user's hash() returns.
-    const char* source = R"ROXY(
+    TEST_CASE("Map<Struct, i32>: hash method without `for Hash` is NOT dispatched") {
+        // Just defining `hash()` on a struct doesn't enable custom dispatch —
+        // the struct must explicitly `impl Hash`. Without `for Hash`, the runtime
+        // falls back to bytewise hash. This means two structs with different
+        // bytes are different keys regardless of what the user's hash() returns.
+        const char* source = R"ROXY(
         struct Vec2 { x: i32; y: i32; }
 
         // hash defined but NOT marked `for Hash` — runtime ignores it.
@@ -585,15 +587,15 @@ TEST_CASE("E2E - Map<Struct, i32>: hash method without `for Hash` is NOT dispatc
             return i32(m.len());
         }
     )ROXY";
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 2);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 2);
+    }
 
-TEST_CASE("E2E - Map<Struct, i32>: custom hash survives rehash") {
-    // 30 inserts force map_grow, which rehashes via the user's Hash method
-    // (the runtime calls back into user code for each key during rehash).
-    const char* source = R"ROXY(
+    TEST_CASE("Map<Struct, i32>: custom hash survives rehash") {
+        // 30 inserts force map_grow, which rehashes via the user's Hash method
+        // (the runtime calls back into user code for each key during rehash).
+        const char* source = R"ROXY(
         struct K { a: i32; b: i32; }
         fun K.hash(): u64 for Hash {
             return u64(self.a * 31 + self.b);  // simple mix
@@ -609,22 +611,22 @@ TEST_CASE("E2E - Map<Struct, i32>: custom hash survives rehash") {
             return m.get(K { a = 17, b = 119 });
         }
     )ROXY";
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 18);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 18);
+    }
 
-// ============================================================================
-// Bucket cleanup for noncopyable keys / values (regression).
-// On map destruction, each occupied bucket's key and value must be deleted at
-// the correct slot base (keys/values + i * *_slot_count) and dispatched by the
-// entry descriptor's free_obj flag. Older code read keys[i] (wrong bucket,
-// 32-bit-truncated) and treated values as pointers, corrupting cleanup of
-// Map<noncopyable-key, V> and Map<K, struct-value-with-owned-fields>.
-// ============================================================================
+    // ============================================================================
+    // Bucket cleanup for noncopyable keys / values (regression).
+    // On map destruction, each occupied bucket's key and value must be deleted at
+    // the correct slot base (keys/values + i * *_slot_count) and dispatched by the
+    // entry descriptor's free_obj flag. Older code read keys[i] (wrong bucket,
+    // 32-bit-truncated) and treated values as pointers, corrupting cleanup of
+    // Map<noncopyable-key, V> and Map<K, struct-value-with-owned-fields>.
+    // ============================================================================
 
-TEST_CASE("E2E - Map<string, value-struct with destructor>: value cleanup") {
-    const char* source = R"(
+    TEST_CASE("Map<string, value-struct with destructor>: value cleanup") {
+        const char* source = R"(
         struct Item { id: i32; }
         fun delete Item() { print(f"del {self.id}"); }
 
@@ -635,13 +637,13 @@ TEST_CASE("E2E - Map<string, value-struct with destructor>: value cleanup") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "del 7\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "del 7\n");
+    }
 
-TEST_CASE("E2E - Map<string, struct with uniq field>: value field cleanup") {
-    const char* source = R"(
+    TEST_CASE("Map<string, struct with uniq field>: value field cleanup") {
+        const char* source = R"(
         struct Inner { tag: i32; }
         fun delete Inner() { print(f"inner {self.tag}"); }
         struct Holder { val: uniq Inner; }
@@ -653,15 +655,15 @@ TEST_CASE("E2E - Map<string, struct with uniq field>: value field cleanup") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "inner 30\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "inner 30\n");
+    }
 
-TEST_CASE("E2E - Map<string, value-struct>: all occupied buckets cleaned up") {
-    // Order-independent: each destructor prints the same token, so the count of
-    // tokens proves every occupied bucket was visited at the right slot base.
-    const char* source = R"(
+    TEST_CASE("Map<string, value-struct>: all occupied buckets cleaned up") {
+        // Order-independent: each destructor prints the same token, so the count of
+        // tokens proves every occupied bucket was visited at the right slot base.
+        const char* source = R"(
         struct Item { id: i32; }
         fun delete Item() { print("x"); }
 
@@ -675,16 +677,16 @@ TEST_CASE("E2E - Map<string, value-struct>: all occupied buckets cleaned up") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "x\nx\nx\nx\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "x\nx\nx\nx\n");
+    }
 
-TEST_CASE("E2E - Map<noncopyable struct key, V>: key cleanup") {
-    // K is a noncopyable struct key (has a destructor) with custom Hash/Eq.
-    // Destroying the map must run each key's destructor with the correct `self`
-    // (keys + i * key_slot_count), not the truncated keys[i].
-    const char* source = R"(
+    TEST_CASE("Map<noncopyable struct key, V>: key cleanup") {
+        // K is a noncopyable struct key (has a destructor) with custom Hash/Eq.
+        // Destroying the map must run each key's destructor with the correct `self`
+        // (keys + i * key_slot_count), not the truncated keys[i].
+        const char* source = R"(
         struct K { a: i32; }
         fun K.hash(): u64 for Hash { return u64(self.a); }
         fun K.eq(other: K): bool for Eq { return self.a == other.a; }
@@ -697,7 +699,9 @@ TEST_CASE("E2E - Map<noncopyable struct key, V>: key cleanup") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "delkey 5\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "delkey 5\n");
+    }
+
+}  // TEST_SUITE("E2E Maps")

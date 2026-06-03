@@ -7,8 +7,10 @@ using namespace rx;
 // Coroutine Tests
 // ============================================================================
 
-TEST_CASE("E2E - Coroutine single yield") {
-    const char* source = R"(
+TEST_SUITE("E2E Coroutines") {
+
+    TEST_CASE("Coroutine single yield") {
+        const char* source = R"(
         fun single(): Coro<i32> {
             yield 42;
         }
@@ -19,13 +21,13 @@ TEST_CASE("E2E - Coroutine single yield") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Coroutine multiple yields") {
-    const char* source = R"(
+    TEST_CASE("Coroutine multiple yields") {
+        const char* source = R"(
         fun triple(): Coro<i32> {
             yield 10;
             yield 20;
@@ -41,13 +43,13 @@ TEST_CASE("E2E - Coroutine multiple yields") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 60);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 60);
+    }
 
-TEST_CASE("E2E - Coroutine done check") {
-    const char* source = R"(
+    TEST_CASE("Coroutine done check") {
+        const char* source = R"(
         fun one_val(): Coro<i32> {
             yield 99;
         }
@@ -68,17 +70,17 @@ TEST_CASE("E2E - Coroutine done check") {
         }
     )";
 
-    // before=0 (not done), after_one=0 (not done), after_two=1 (done)
-    // Result: 0*100 + 0*10 + 1 = 1
-    // before=0 (not done), after_one=0 (not done), after_two=1 (done)
-    // Result: 0*100 + 0*10 + 1 = 1
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-}
+        // before=0 (not done), after_one=0 (not done), after_two=1 (done)
+        // Result: 0*100 + 0*10 + 1 = 1
+        // before=0 (not done), after_one=0 (not done), after_two=1 (done)
+        // Result: 0*100 + 0*10 + 1 = 1
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+    }
 
-TEST_CASE("E2E - Coroutine with parameters") {
-    const char* source = R"(
+    TEST_CASE("Coroutine with parameters") {
+        const char* source = R"(
         fun add_offset(base: i32, offset: i32): Coro<i32> {
             yield base + offset;
             yield base + offset + 1;
@@ -92,13 +94,13 @@ TEST_CASE("E2E - Coroutine with parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 31);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 31);
+    }
 
-TEST_CASE("E2E - Coroutine local variables across yields") {
-    const char* source = R"(
+    TEST_CASE("Coroutine local variables across yields") {
+        const char* source = R"(
         fun locals(): Coro<i32> {
             var x: i32 = 10;
             var y: i32 = 20;
@@ -115,13 +117,13 @@ TEST_CASE("E2E - Coroutine local variables across yields") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 61);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 61);
+    }
 
-TEST_CASE("E2E - Coroutine yield in if/else") {
-    const char* source = R"(
+    TEST_CASE("Coroutine yield in if/else") {
+        const char* source = R"(
         fun conditional(flag: bool): Coro<i32> {
             if (flag) {
                 yield 100;
@@ -144,16 +146,16 @@ TEST_CASE("E2E - Coroutine yield in if/else") {
         }
     )";
 
-    // g1 (flag=true): resume() → 100, resume() → 300. Total: 400
-    // g2 (flag=false): resume() → 200, resume() → 300. Total: 500
-    // Result: 400 + 500 = 900
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 900);
-}
+        // g1 (flag=true): resume() → 100, resume() → 300. Total: 400
+        // g2 (flag=false): resume() → 200, resume() → 300. Total: 500
+        // Result: 400 + 500 = 900
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 900);
+    }
 
-TEST_CASE("E2E - Coroutine error: yield outside coroutine") {
-    const char* source = R"(
+    TEST_CASE("Coroutine error: yield outside coroutine") {
+        const char* source = R"(
         fun not_a_coro(): i32 {
             yield 42;
             return 0;
@@ -164,12 +166,12 @@ TEST_CASE("E2E - Coroutine error: yield outside coroutine") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);
+    }
 
-TEST_CASE("E2E - Coroutine error: return with value") {
-    const char* source = R"(
+    TEST_CASE("Coroutine error: return with value") {
+        const char* source = R"(
         fun bad_coro(): Coro<i32> {
             return 42;
         }
@@ -180,16 +182,16 @@ TEST_CASE("E2E - Coroutine error: return with value") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);
+    }
 
-// ============================================================================
-// Yield in loops
-// ============================================================================
+    // ============================================================================
+    // Yield in loops
+    // ============================================================================
 
-TEST_CASE("E2E - Coroutine yield in while loop") {
-    const char* source = R"(
+    TEST_CASE("Coroutine yield in while loop") {
+        const char* source = R"(
         fun counter(): Coro<i32> {
             var i: i32 = 0;
             while (i < 3) {
@@ -207,14 +209,14 @@ TEST_CASE("E2E - Coroutine yield in while loop") {
         }
     )";
 
-    // a=0, b=1, c=2 → 0*100 + 1*10 + 2 = 12
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 12);
-}
+        // a=0, b=1, c=2 → 0*100 + 1*10 + 2 = 12
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 12);
+    }
 
-TEST_CASE("E2E - Coroutine yield in while loop with done check") {
-    const char* source = R"(
+    TEST_CASE("Coroutine yield in while loop with done check") {
+        const char* source = R"(
         fun counter(): Coro<i32> {
             var i: i32 = 0;
             while (i < 2) {
@@ -240,15 +242,15 @@ TEST_CASE("E2E - Coroutine yield in while loop with done check") {
         }
     )";
 
-    // a=0, b=1, d1=0 (not done), d2=0 (not done), d3=1 (done after loop ends)
-    // 0*1000 + 1*100 + 0*100 + 0*10 + 1 = 101
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 101);
-}
+        // a=0, b=1, d1=0 (not done), d2=0 (not done), d3=1 (done after loop ends)
+        // 0*1000 + 1*100 + 0*100 + 0*10 + 1 = 101
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 101);
+    }
 
-TEST_CASE("E2E - Coroutine yield in while loop with break") {
-    const char* source = R"(
+    TEST_CASE("Coroutine yield in while loop with break") {
+        const char* source = R"(
         fun early_stop(): Coro<i32> {
             var i: i32 = 0;
             while (i < 10) {
@@ -270,15 +272,15 @@ TEST_CASE("E2E - Coroutine yield in while loop with break") {
         }
     )";
 
-    // Yields: 0, 1, then break, then 99
-    // a=0, b=1, c=99 → 0*100 + 1*10 + 99 = 109
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 109);
-}
+        // Yields: 0, 1, then break, then 99
+        // a=0, b=1, c=99 → 0*100 + 1*10 + 99 = 109
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 109);
+    }
 
-TEST_CASE("E2E - Coroutine yield in while loop with continue") {
-    const char* source = R"(
+    TEST_CASE("Coroutine yield in while loop with continue") {
+        const char* source = R"(
         fun skip_odds(): Coro<i32> {
             var i: i32 = 0;
             while (i < 6) {
@@ -306,15 +308,15 @@ TEST_CASE("E2E - Coroutine yield in while loop with continue") {
         }
     )";
 
-    // Yields: 0, 2, 4 (odd values skipped by continue)
-    // a=0, b=2, c=4 → 0*100 + 2*10 + 4 = 24
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 24);
-}
+        // Yields: 0, 2, 4 (odd values skipped by continue)
+        // a=0, b=2, c=4 → 0*100 + 2*10 + 4 = 24
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 24);
+    }
 
-TEST_CASE("E2E - Coroutine yield in for loop") {
-    const char* source = R"(
+    TEST_CASE("Coroutine yield in for loop") {
+        const char* source = R"(
         fun range(n: i32): Coro<i32> {
             for (var i: i32 = 0; i < n; i = i + 1) {
                 yield i;
@@ -332,14 +334,14 @@ TEST_CASE("E2E - Coroutine yield in for loop") {
         }
     )";
 
-    // Yields: 0, 1, 2, 3 → sum = 6
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 6);
-}
+        // Yields: 0, 1, 2, 3 → sum = 6
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 6);
+    }
 
-TEST_CASE("E2E - Coroutine multiple yields in loop body") {
-    const char* source = R"(
+    TEST_CASE("Coroutine multiple yields in loop body") {
+        const char* source = R"(
         fun double_yield(): Coro<i32> {
             var i: i32 = 0;
             while (i < 2) {
@@ -359,15 +361,15 @@ TEST_CASE("E2E - Coroutine multiple yields in loop body") {
         }
     )";
 
-    // i=0: yield 0, yield 1; i=1: yield 10, yield 11
-    // a=0, b=1, c=10, d=11 → 0*1000 + 1*100 + 10*10 + 11 = 211
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 211);
-}
+        // i=0: yield 0, yield 1; i=1: yield 10, yield 11
+        // a=0, b=1, c=10, d=11 → 0*1000 + 1*100 + 10*10 + 11 = 211
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 211);
+    }
 
-TEST_CASE("E2E - Coroutine yield in nested loops") {
-    const char* source = R"(
+    TEST_CASE("Coroutine yield in nested loops") {
+        const char* source = R"(
         fun matrix(): Coro<i32> {
             for (var i: i32 = 0; i < 2; i = i + 1) {
                 for (var j: i32 = 0; j < 2; j = j + 1) {
@@ -386,19 +388,19 @@ TEST_CASE("E2E - Coroutine yield in nested loops") {
         }
     )";
 
-    // (0,0)=0, (0,1)=1, (1,0)=10, (1,1)=11
-    // a=0, b=1, c=10, d=11 → 0*1000 + 1*100 + 10*10 + 11 = 211
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 211);
-}
+        // (0,0)=0, (0,1)=1, (1,0)=10, (1,1)=11
+        // a=0, b=1, c=10, d=11 → 0*1000 + 1*100 + 10*10 + 11 = 211
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 211);
+    }
 
-// ============================================================================
-// Yield in when statements
-// ============================================================================
+    // ============================================================================
+    // Yield in when statements
+    // ============================================================================
 
-TEST_CASE("E2E - Coroutine yield in when statement") {
-    const char* source = R"(
+    TEST_CASE("Coroutine yield in when statement") {
+        const char* source = R"(
         enum Color { Red, Green, Blue }
 
         fun color_values(c: Color): Coro<i32> {
@@ -426,20 +428,20 @@ TEST_CASE("E2E - Coroutine yield in when statement") {
         }
     )";
 
-    // g1(Red): yield 1, yield 0 → a=1, b=0
-    // g2(Blue): yield 3, yield 0 → c=3, d=0
-    // 1*1000 + 0*100 + 3*10 + 0 = 1030
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1030);
-}
+        // g1(Red): yield 1, yield 0 → a=1, b=0
+        // g2(Blue): yield 3, yield 0 → c=3, d=0
+        // 1*1000 + 0*100 + 3*10 + 0 = 1030
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1030);
+    }
 
-// ============================================================================
-// Deeply nested yield
-// ============================================================================
+    // ============================================================================
+    // Deeply nested yield
+    // ============================================================================
 
-TEST_CASE("E2E - Coroutine deeply nested yield") {
-    const char* source = R"(
+    TEST_CASE("Coroutine deeply nested yield") {
+        const char* source = R"(
         fun deep(a: bool, b: bool): Coro<i32> {
             if (a) {
                 if (b) {
@@ -470,20 +472,20 @@ TEST_CASE("E2E - Coroutine deeply nested yield") {
         }
     )";
 
-    // g1(true,true): yield 11, yield 99 → v1=11, e1=99
-    // g2(false,true): yield 1, yield 99 → v2=1, e2=99
-    // 11*1000 + 99*100 + 1*10 + 99 = 11000 + 9900 + 10 + 99 = 21009
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 21009);
-}
+        // g1(true,true): yield 11, yield 99 → v1=11, e1=99
+        // g2(false,true): yield 1, yield 99 → v2=1, e2=99
+        // 11*1000 + 99*100 + 1*10 + 99 = 11000 + 9900 + 10 + 99 = 21009
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 21009);
+    }
 
-// ============================================================================
-// Yield in try/catch
-// ============================================================================
+    // ============================================================================
+    // Yield in try/catch
+    // ============================================================================
 
-TEST_CASE("E2E - Coroutine yield in try block") {
-    const char* source = R"(
+    TEST_CASE("Coroutine yield in try block") {
+        const char* source = R"(
         fun gen(): Coro<i32> {
             try {
                 yield 42;
@@ -497,13 +499,13 @@ TEST_CASE("E2E - Coroutine yield in try block") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Coroutine yield in catch block") {
-    const char* source = R"(
+    TEST_CASE("Coroutine yield in catch block") {
+        const char* source = R"(
         struct MyErr {}
         fun MyErr.message(): string for Exception {
             return "err";
@@ -523,13 +525,13 @@ TEST_CASE("E2E - Coroutine yield in catch block") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Coroutine error: yield in finally block") {
-    const char* source = R"(
+    TEST_CASE("Coroutine error: yield in finally block") {
+        const char* source = R"(
         fun bad_coro(): Coro<i32> {
             try {
                 var x: i32 = 1;
@@ -545,12 +547,12 @@ TEST_CASE("E2E - Coroutine error: yield in finally block") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);
+    }
 
-TEST_CASE("E2E - Coroutine yield in try, no exception") {
-    const char* source = R"(
+    TEST_CASE("Coroutine yield in try, no exception") {
+        const char* source = R"(
         fun gen(): Coro<i32> {
             var result: i32 = 0;
             try {
@@ -573,14 +575,14 @@ TEST_CASE("E2E - Coroutine yield in try, no exception") {
         }
     )";
 
-    // a=10, b=20, c=20 (no exception, so result stays 20 after try)
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1220);
-}
+        // a=10, b=20, c=20 (no exception, so result stays 20 after try)
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1220);
+    }
 
-TEST_CASE("E2E - Coroutine multiple yields in try") {
-    const char* source = R"(
+    TEST_CASE("Coroutine multiple yields in try") {
+        const char* source = R"(
         fun gen(): Coro<i32> {
             try {
                 yield 1;
@@ -599,13 +601,13 @@ TEST_CASE("E2E - Coroutine multiple yields in try") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 123);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 123);
+    }
 
-TEST_CASE("E2E - Coroutine yield in catch after throw") {
-    const char* source = R"(
+    TEST_CASE("Coroutine yield in catch after throw") {
+        const char* source = R"(
         struct MyErr {
             val: i32;
         }
@@ -630,13 +632,13 @@ TEST_CASE("E2E - Coroutine yield in catch after throw") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 9900 + 100);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 9900 + 100);
+    }
 
-TEST_CASE("E2E - Coroutine yield in try with loop") {
-    const char* source = R"(
+    TEST_CASE("Coroutine yield in try with loop") {
+        const char* source = R"(
         fun gen(): Coro<i32> {
             try {
                 for (var i: i32 = 0; i < 3; i = i + 1) {
@@ -655,20 +657,20 @@ TEST_CASE("E2E - Coroutine yield in try with loop") {
         }
     )";
 
-    // 0 + 10 + 20 = 30
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 30);
-}
+        // 0 + 10 + 20 = 30
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 30);
+    }
 
-// ============================================================================
-// Coroutine Memory Management Tests
-// ============================================================================
+    // ============================================================================
+    // Coroutine Memory Management Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Coroutine primitive cleanup") {
-    // Verify primitive-only Coro<i32> compiles and runs correctly.
-    // The heap-allocated state struct is freed at scope exit.
-    const char* source = R"(
+    TEST_CASE("Coroutine primitive cleanup") {
+        // Verify primitive-only Coro<i32> compiles and runs correctly.
+        // The heap-allocated state struct is freed at scope exit.
+        const char* source = R"(
         fun counter(): Coro<i32> {
             yield 10;
             yield 20;
@@ -682,16 +684,16 @@ TEST_CASE("E2E - Coroutine primitive cleanup") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 30);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 30);
+    }
 
-TEST_CASE("E2E - Coroutine uniq promoted, run to completion") {
-    // A uniq variable captured across a yield point becomes a promoted field.
-    // When the coroutine runs to completion, inline cleanup frees the uniq,
-    // and the destructor (called at Coro scope exit) sees null and skips it.
-    const char* source = R"(
+    TEST_CASE("Coroutine uniq promoted, run to completion") {
+        // A uniq variable captured across a yield point becomes a promoted field.
+        // When the coroutine runs to completion, inline cleanup frees the uniq,
+        // and the destructor (called at Coro scope exit) sees null and skips it.
+        const char* source = R"(
         struct Resource {
             value: i32;
         }
@@ -717,17 +719,17 @@ TEST_CASE("E2E - Coroutine uniq promoted, run to completion") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 4243);
-    // Destructor should be called exactly once (inline cleanup on done path)
-    CHECK(result.stdout_output == "dtor\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 4243);
+        // Destructor should be called exactly once (inline cleanup on done path)
+        CHECK(result.stdout_output == "dtor\n");
+    }
 
-TEST_CASE("E2E - Coroutine uniq promoted, early drop") {
-    // Drop the Coro before it reaches done. The destructor should clean up
-    // the promoted uniq field that hasn't been freed by inline cleanup.
-    const char* source = R"(
+    TEST_CASE("Coroutine uniq promoted, early drop") {
+        // Drop the Coro before it reaches done. The destructor should clean up
+        // the promoted uniq field that hasn't been freed by inline cleanup.
+        const char* source = R"(
         struct Resource {
             value: i32;
         }
@@ -755,17 +757,17 @@ TEST_CASE("E2E - Coroutine uniq promoted, early drop") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 99);
-    // Destructor should be called by the coroutine's destructor
-    CHECK(result.stdout_output == "freed\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 99);
+        // Destructor should be called by the coroutine's destructor
+        CHECK(result.stdout_output == "freed\n");
+    }
 
-TEST_CASE("E2E - Coroutine uniq parameter") {
-    // A uniq parameter to a coroutine is captured in the state struct.
-    // Cleanup should free it when the coroutine is destroyed.
-    const char* source = R"(
+    TEST_CASE("Coroutine uniq parameter") {
+        // A uniq parameter to a coroutine is captured in the state struct.
+        // Cleanup should free it when the coroutine is destroyed.
+        const char* source = R"(
         struct Data {
             value: i32;
         }
@@ -790,16 +792,16 @@ TEST_CASE("E2E - Coroutine uniq parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 60);
-    CHECK(result.stdout_output == "~Data\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 60);
+        CHECK(result.stdout_output == "~Data\n");
+    }
 
-TEST_CASE("E2E - Coroutine mixed primitive and uniq promoted") {
-    // Only noncopyable fields get cleanup. Primitive promoted variables
-    // should work alongside uniq promoted variables.
-    const char* source = R"(
+    TEST_CASE("Coroutine mixed primitive and uniq promoted") {
+        // Only noncopyable fields get cleanup. Primitive promoted variables
+        // should work alongside uniq promoted variables.
+        const char* source = R"(
         struct Counter {
             count: i32;
         }
@@ -827,18 +829,18 @@ TEST_CASE("E2E - Coroutine mixed primitive and uniq promoted") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 30);
-    CHECK(result.stdout_output == "~Counter\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 30);
+        CHECK(result.stdout_output == "~Counter\n");
+    }
 
-// ============================================================================
-// List/Map Cleanup in Coroutine Destructors
-// ============================================================================
+    // ============================================================================
+    // List/Map Cleanup in Coroutine Destructors
+    // ============================================================================
 
-TEST_CASE("E2E - Coroutine List<uniq T> cleanup on completion") {
-    const char* source = R"CODE(
+    TEST_CASE("Coroutine List<uniq T> cleanup on completion") {
+        const char* source = R"CODE(
         struct Resource {
             id: i32;
         }
@@ -871,15 +873,15 @@ TEST_CASE("E2E - Coroutine List<uniq T> cleanup on completion") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 23);
-    // All three resources should be cleaned up (order: 1, 2, 3 from list iteration)
-    CHECK(result.stdout_output == "~Resource(1)\n~Resource(2)\n~Resource(3)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 23);
+        // All three resources should be cleaned up (order: 1, 2, 3 from list iteration)
+        CHECK(result.stdout_output == "~Resource(1)\n~Resource(2)\n~Resource(3)\n");
+    }
 
-TEST_CASE("E2E - Coroutine List<uniq T> cleanup on early drop") {
-    const char* source = R"CODE(
+    TEST_CASE("Coroutine List<uniq T> cleanup on early drop") {
+        const char* source = R"CODE(
         struct Resource {
             id: i32;
         }
@@ -911,15 +913,15 @@ TEST_CASE("E2E - Coroutine List<uniq T> cleanup on early drop") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 2);
-    // Both resources should be cleaned up by the coroutine destructor
-    CHECK(result.stdout_output == "~Resource(10)\n~Resource(20)\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 2);
+        // Both resources should be cleaned up by the coroutine destructor
+        CHECK(result.stdout_output == "~Resource(10)\n~Resource(20)\n");
+    }
 
-TEST_CASE("E2E - Coroutine Map<string, uniq T> cleanup on completion") {
-    const char* source = R"CODE(
+    TEST_CASE("Coroutine Map<string, uniq T> cleanup on completion") {
+        const char* source = R"CODE(
         struct Resource {
             id: i32;
         }
@@ -952,17 +954,17 @@ TEST_CASE("E2E - Coroutine Map<string, uniq T> cleanup on completion") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 23);
-    // All three resources should be cleaned up (order depends on hash table bucket layout)
-    CHECK(result.stdout_output.find("~Resource(100)") != std::string::npos);
-    CHECK(result.stdout_output.find("~Resource(200)") != std::string::npos);
-    CHECK(result.stdout_output.find("~Resource(300)") != std::string::npos);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 23);
+        // All three resources should be cleaned up (order depends on hash table bucket layout)
+        CHECK(result.stdout_output.find("~Resource(100)") != std::string::npos);
+        CHECK(result.stdout_output.find("~Resource(200)") != std::string::npos);
+        CHECK(result.stdout_output.find("~Resource(300)") != std::string::npos);
+    }
 
-TEST_CASE("E2E - Coroutine Map<string, uniq T> cleanup on early drop") {
-    const char* source = R"CODE(
+    TEST_CASE("Coroutine Map<string, uniq T> cleanup on early drop") {
+        const char* source = R"CODE(
         struct Resource {
             id: i32;
         }
@@ -994,10 +996,12 @@ TEST_CASE("E2E - Coroutine Map<string, uniq T> cleanup on early drop") {
         }
     )CODE";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 2);
-    // Both resources should be cleaned up by the coroutine destructor
-    CHECK(result.stdout_output.find("~Resource(10)") != std::string::npos);
-    CHECK(result.stdout_output.find("~Resource(20)") != std::string::npos);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 2);
+        // Both resources should be cleaned up by the coroutine destructor
+        CHECK(result.stdout_output.find("~Resource(10)") != std::string::npos);
+        CHECK(result.stdout_output.find("~Resource(20)") != std::string::npos);
+    }
+
+}  // TEST_SUITE("E2E Coroutines")

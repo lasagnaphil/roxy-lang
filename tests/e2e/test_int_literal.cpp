@@ -7,8 +7,10 @@ using namespace rx;
 // Integer Literal Polymorphism Tests
 // ============================================================================
 
-TEST_CASE("E2E - IntLiteral basic coercion to i64") {
-    const char* source = R"(
+TEST_SUITE("E2E Int Literals") {
+
+    TEST_CASE("IntLiteral basic coercion to i64") {
+        const char* source = R"(
         fun main(): i32 {
             var x: i64 = 42;
             print(f"{x}");
@@ -16,13 +18,13 @@ TEST_CASE("E2E - IntLiteral basic coercion to i64") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - IntLiteral basic coercion to i8") {
-    const char* source = R"(
+    TEST_CASE("IntLiteral basic coercion to i8") {
+        const char* source = R"(
         fun check(x: i8): i32 {
             return i32(x);
         }
@@ -34,13 +36,13 @@ TEST_CASE("E2E - IntLiteral basic coercion to i8") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - IntLiteral basic coercion to u32") {
-    const char* source = R"(
+    TEST_CASE("IntLiteral basic coercion to u32") {
+        const char* source = R"(
         fun check(x: u32): i32 {
             return i32(x);
         }
@@ -52,13 +54,13 @@ TEST_CASE("E2E - IntLiteral basic coercion to u32") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - IntLiteral basic coercion to u64") {
-    const char* source = R"(
+    TEST_CASE("IntLiteral basic coercion to u64") {
+        const char* source = R"(
         fun main(): i32 {
             var x: u64 = 42;
             print(f"{i64(x)}");
@@ -66,13 +68,13 @@ TEST_CASE("E2E - IntLiteral basic coercion to u64") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - IntLiteral default inference is i32") {
-    const char* source = R"(
+    TEST_CASE("IntLiteral default inference is i32") {
+        const char* source = R"(
         fun main(): i32 {
             var x = 42;
             print(f"{x}");
@@ -80,13 +82,13 @@ TEST_CASE("E2E - IntLiteral default inference is i32") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - IntLiteral function argument coercion") {
-    const char* source = R"(
+    TEST_CASE("IntLiteral function argument coercion") {
+        const char* source = R"(
         fun add_one(x: i64): i64 {
             return x + 1l;
         }
@@ -97,13 +99,13 @@ TEST_CASE("E2E - IntLiteral function argument coercion") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "43\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "43\n");
+    }
 
-TEST_CASE("E2E - IntLiteral return statement coercion") {
-    const char* source = R"(
+    TEST_CASE("IntLiteral return statement coercion") {
+        const char* source = R"(
         fun get_value(): i64 {
             return 42;
         }
@@ -114,13 +116,13 @@ TEST_CASE("E2E - IntLiteral return statement coercion") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - IntLiteral binary ops with suffixed literal") {
-    const char* source = R"(
+    TEST_CASE("IntLiteral binary ops with suffixed literal") {
+        const char* source = R"(
         fun main(): i32 {
             var a: i64 = 42 + 1l;
             print(f"{a}");
@@ -130,13 +132,13 @@ TEST_CASE("E2E - IntLiteral binary ops with suffixed literal") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "43\n43\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "43\n43\n");
+    }
 
-TEST_CASE("E2E - IntLiteral binary ops default to i32") {
-    const char* source = R"(
+    TEST_CASE("IntLiteral binary ops default to i32") {
+        const char* source = R"(
         fun main(): i32 {
             var x = 42 + 1;
             print(f"{x}");
@@ -144,13 +146,13 @@ TEST_CASE("E2E - IntLiteral binary ops default to i32") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "43\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "43\n");
+    }
 
-TEST_CASE("E2E - IntLiteral unary negate coercion") {
-    const char* source = R"(
+    TEST_CASE("IntLiteral unary negate coercion") {
+        const char* source = R"(
         fun main(): i32 {
             var x: i64 = -42;
             print(f"{x}");
@@ -158,13 +160,13 @@ TEST_CASE("E2E - IntLiteral unary negate coercion") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "-42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "-42\n");
+    }
 
-TEST_CASE("E2E - IntLiteral compound assignment") {
-    const char* source = R"(
+    TEST_CASE("IntLiteral compound assignment") {
+        const char* source = R"(
         fun main(): i32 {
             var x: i64 = 0l;
             x += 42;
@@ -173,15 +175,15 @@ TEST_CASE("E2E - IntLiteral compound assignment") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - IntLiteral ternary coercion compiles") {
-    // Ternary with int literal coercion should compile (runtime value depends
-    // on simplified ternary implementation that always takes the else branch)
-    const char* source = R"(
+    TEST_CASE("IntLiteral ternary coercion compiles") {
+        // Ternary with int literal coercion should compile (runtime value depends
+        // on simplified ternary implementation that always takes the else branch)
+        const char* source = R"(
         fun main(): i32 {
             var x: i64 = false ? 0l : 42;
             print(f"{x}");
@@ -189,14 +191,14 @@ TEST_CASE("E2E - IntLiteral ternary coercion compiles") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - IntLiteral non-literal still strict") {
-    // A concrete i32 variable should NOT be assignable to i64
-    const char* source = R"(
+    TEST_CASE("IntLiteral non-literal still strict") {
+        // A concrete i32 variable should NOT be assignable to i64
+        const char* source = R"(
         fun main(): i32 {
             var x: i32 = 10;
             var y: i64 = x;
@@ -204,12 +206,12 @@ TEST_CASE("E2E - IntLiteral non-literal still strict") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-TEST_CASE("E2E - IntLiteral simple assignment coercion") {
-    const char* source = R"(
+    TEST_CASE("IntLiteral simple assignment coercion") {
+        const char* source = R"(
         fun main(): i32 {
             var x: i64 = 0l;
             x = 42;
@@ -218,13 +220,13 @@ TEST_CASE("E2E - IntLiteral simple assignment coercion") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - IntLiteral struct field init") {
-    const char* source = R"(
+    TEST_CASE("IntLiteral struct field init") {
+        const char* source = R"(
         struct Point {
             x: i64;
             y: i64;
@@ -237,13 +239,13 @@ TEST_CASE("E2E - IntLiteral struct field init") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "30\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "30\n");
+    }
 
-TEST_CASE("E2E - IntLiteral comparison with typed variable") {
-    const char* source = R"(
+    TEST_CASE("IntLiteral comparison with typed variable") {
+        const char* source = R"(
         fun main(): i32 {
             var x: i64 = 42l;
             if (x == 42) {
@@ -253,33 +255,35 @@ TEST_CASE("E2E - IntLiteral comparison with typed variable") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n");
+    }
 
-TEST_CASE("E2E - IntLiteral non-integer target fails") {
-    // Cannot assign integer literal to string
-    const char* source = R"(
+    TEST_CASE("IntLiteral non-integer target fails") {
+        // Cannot assign integer literal to string
+        const char* source = R"(
         fun main(): i32 {
             var x: bool = 42;
             return 0;
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-TEST_CASE("E2E - IntLiteral suffixed literal still strict") {
-    // 42l is i64, cannot assign to i32
-    const char* source = R"(
+    TEST_CASE("IntLiteral suffixed literal still strict") {
+        // 42l is i64, cannot assign to i32
+        const char* source = R"(
         fun main(): i32 {
             var x: i32 = 42l;
             return 0;
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
+
+}  // TEST_SUITE("E2E Int Literals")

@@ -10,8 +10,10 @@ using namespace rx;
 // Method Tests
 // ============================================================================
 
-TEST_CASE("E2E - Basic method call") {
-    const char* source = R"(
+TEST_SUITE("E2E Methods") {
+
+    TEST_CASE("Basic method call") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -28,13 +30,13 @@ TEST_CASE("E2E - Basic method call") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "30\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "30\n");
+    }
 
-TEST_CASE("E2E - Method with parameters") {
-    const char* source = R"(
+    TEST_CASE("Method with parameters") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -51,13 +53,13 @@ TEST_CASE("E2E - Method with parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "50\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "50\n");
+    }
 
-TEST_CASE("E2E - Method modifying self") {
-    const char* source = R"(
+    TEST_CASE("Method modifying self") {
+        const char* source = R"(
         struct Counter {
             value: i32;
         }
@@ -80,13 +82,13 @@ TEST_CASE("E2E - Method modifying self") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n11\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n11\n");
+    }
 
-TEST_CASE("E2E - Method returning struct") {
-    const char* source = R"(
+    TEST_CASE("Method returning struct") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -105,13 +107,13 @@ TEST_CASE("E2E - Method returning struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "6\n8\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "6\n8\n");
+    }
 
-TEST_CASE("E2E - Multiple methods on same struct") {
-    const char* source = R"(
+    TEST_CASE("Multiple methods on same struct") {
+        const char* source = R"(
         struct Rect {
             width: i32;
             height: i32;
@@ -133,13 +135,13 @@ TEST_CASE("E2E - Multiple methods on same struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "15\n16\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "15\n16\n");
+    }
 
-TEST_CASE("E2E - Method on heap-allocated struct") {
-    const char* source = R"(
+    TEST_CASE("Method on heap-allocated struct") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -157,13 +159,13 @@ TEST_CASE("E2E - Method on heap-allocated struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "300\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "300\n");
+    }
 
-TEST_CASE("E2E - Chained method calls") {
-    const char* source = R"(
+    TEST_CASE("Chained method calls") {
+        const char* source = R"(
         struct Counter {
             value: i32;
         }
@@ -182,13 +184,13 @@ TEST_CASE("E2E - Chained method calls") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "5\n10\n15\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "5\n10\n15\n");
+    }
 
-TEST_CASE("E2E - Method with struct parameter") {
-    const char* source = R"(
+    TEST_CASE("Method with struct parameter") {
+        const char* source = R"(
         struct Point {
             x: i32;
             y: i32;
@@ -208,7 +210,9 @@ TEST_CASE("E2E - Method with struct parameter") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "25\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "25\n");
+    }
+
+}  // TEST_SUITE("E2E Methods")

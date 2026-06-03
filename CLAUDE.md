@@ -426,18 +426,24 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 
 ### Running Tests
 
+Tests are grouped into doctest `TEST_SUITE`s (one per file). E2E suites are named
+`E2E <Category>` (e.g. `E2E Structs`, `E2E C Backend`); unit suites are bare
+(e.g. `Lexer`, `IR Optimize`, `LSP Hover`). Filter by suite:
+
 ```bash
 cd build
-./roxy_tests                              # Run all tests
-./roxy_tests --test-case-exclude="E2E*"   # Run only unit tests
-./roxy_tests --test-case="E2E*"           # Run only E2E tests
-./roxy_tests --test-case="E2E - Struct*"  # Run specific category
-./roxy_tests --list-test-cases            # List all test cases
+./roxy_tests                                # Run all tests
+./roxy_tests --test-suite-exclude="E2E*"    # Run only unit tests
+./roxy_tests --test-suite="E2E*"            # Run only E2E tests
+./roxy_tests --test-suite="E2E Structs"     # Run a specific suite
+./roxy_tests --test-case="*field access*"   # Run cases matching a name
+./roxy_tests --list-test-suites             # List all suites
+./roxy_tests --list-test-cases              # List all test cases
 ```
 
 On Windows, use `.exe` extension.
 
-**Note for Claude Code:** C backend tests (`*C Backend*`) invoke the system C++ compiler to compile and run generated code, so they require running outside the sandbox (`dangerouslyDisableSandbox: true`). All other tests run fine inside the sandbox. (ASAN is currently disabled — see the AddressSanitizer note above; when re-enabled, ASAN builds also need to run outside the sandbox for the symbolizer.)
+**Note for Claude Code:** C backend tests (`--test-suite="E2E C Backend"`) invoke the system C++ compiler to compile and run generated code, so they require running outside the sandbox (`dangerouslyDisableSandbox: true`). All other tests run fine inside the sandbox. (ASAN is currently disabled — see the AddressSanitizer note above; when re-enabled, ASAN builds also need to run outside the sandbox for the symbolizer.)
 
 ## Documentation
 

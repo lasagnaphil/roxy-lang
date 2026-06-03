@@ -7,8 +7,10 @@ using namespace rx;
 // Exception Handling Tests
 // ============================================================================
 
-TEST_CASE("E2E - Exception basic throw/catch") {
-    const char* source = R"(
+TEST_SUITE("E2E Exceptions") {
+
+    TEST_CASE("Exception basic throw/catch") {
+        const char* source = R"(
         struct MyError {
             code: i32;
         }
@@ -33,14 +35,14 @@ TEST_CASE("E2E - Exception basic throw/catch") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Exception trait validation error") {
-    SUBCASE("Throw non-Exception type") {
-        const char* source = R"(
+    TEST_CASE("Exception trait validation error") {
+        SUBCASE("Throw non-Exception type") {
+            const char* source = R"(
             struct NotAnException {
                 x: i32;
             }
@@ -51,12 +53,12 @@ TEST_CASE("E2E - Exception trait validation error") {
             }
         )";
 
-        TestResult result = run_and_capture(source, "main");
-        CHECK(!result.success);
-    }
+            TestResult result = run_and_capture(source, "main");
+            CHECK(!result.success);
+        }
 
-    SUBCASE("Catch non-Exception type") {
-        const char* source = R"(
+        SUBCASE("Catch non-Exception type") {
+            const char* source = R"(
             struct NotAnException {
                 x: i32;
             }
@@ -71,13 +73,13 @@ TEST_CASE("E2E - Exception trait validation error") {
             }
         )";
 
-        TestResult result = run_and_capture(source, "main");
-        CHECK(!result.success);
+            TestResult result = run_and_capture(source, "main");
+            CHECK(!result.success);
+        }
     }
-}
 
-TEST_CASE("E2E - Exception catch-all") {
-    const char* source = R"(
+    TEST_CASE("Exception catch-all") {
+        const char* source = R"(
         struct SomeError {
             val: i32;
         }
@@ -101,13 +103,13 @@ TEST_CASE("E2E - Exception catch-all") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+    }
 
-TEST_CASE("E2E - Exception multiple catch clauses") {
-    const char* source = R"(
+    TEST_CASE("Exception multiple catch clauses") {
+        const char* source = R"(
         struct ErrorA {
             code: i32;
         }
@@ -141,13 +143,13 @@ TEST_CASE("E2E - Exception multiple catch clauses") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 20);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 20);
+    }
 
-TEST_CASE("E2E - Exception catch-all must be last") {
-    const char* source = R"(
+    TEST_CASE("Exception catch-all must be last") {
+        const char* source = R"(
         struct MyError {
             x: i32;
         }
@@ -168,12 +170,12 @@ TEST_CASE("E2E - Exception catch-all must be last") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);
+    }
 
-TEST_CASE("E2E - Exception finally on normal exit") {
-    const char* source = R"(
+    TEST_CASE("Exception finally on normal exit") {
+        const char* source = R"(
         struct MyError {
             x: i32;
         }
@@ -195,13 +197,13 @@ TEST_CASE("E2E - Exception finally on normal exit") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 11);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 11);
+    }
 
-TEST_CASE("E2E - Exception finally on exception") {
-    const char* source = R"(
+    TEST_CASE("Exception finally on exception") {
+        const char* source = R"(
         struct MyError {
             x: i32;
         }
@@ -229,13 +231,13 @@ TEST_CASE("E2E - Exception finally on exception") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 105);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 105);
+    }
 
-TEST_CASE("E2E - Exception stack unwinding through multiple frames") {
-    const char* source = R"(
+    TEST_CASE("Exception stack unwinding through multiple frames") {
+        const char* source = R"(
         struct DeepError {
             level: i32;
         }
@@ -267,13 +269,13 @@ TEST_CASE("E2E - Exception stack unwinding through multiple frames") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 3);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
 
-TEST_CASE("E2E - Exception nested try/catch") {
-    const char* source = R"(
+    TEST_CASE("Exception nested try/catch") {
+        const char* source = R"(
         struct InnerError {
             x: i32;
         }
@@ -309,13 +311,13 @@ TEST_CASE("E2E - Exception nested try/catch") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 10);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 10);
+    }
 
-TEST_CASE("E2E - Unhandled exception") {
-    const char* source = R"(
+    TEST_CASE("Unhandled exception") {
+        const char* source = R"(
         struct FatalError {
             code: i32;
         }
@@ -330,12 +332,12 @@ TEST_CASE("E2E - Unhandled exception") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);
+    }
 
-TEST_CASE("E2E - Exception with fields accessible in catch") {
-    const char* source = R"(
+    TEST_CASE("Exception with fields accessible in catch") {
+        const char* source = R"(
         struct ValueError {
             code: i32;
             extra: i32;
@@ -360,13 +362,13 @@ TEST_CASE("E2E - Exception with fields accessible in catch") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 20);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 20);
+    }
 
-TEST_CASE("E2E - Exception try without catch (finally only)") {
-    const char* source = R"(
+    TEST_CASE("Exception try without catch (finally only)") {
+        const char* source = R"(
         fun main(): i32 {
             var result: i32 = 0;
             try {
@@ -378,13 +380,13 @@ TEST_CASE("E2E - Exception try without catch (finally only)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 43);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 43);
+    }
 
-TEST_CASE("E2E - Exception normal flow no exception thrown") {
-    const char* source = R"(
+    TEST_CASE("Exception normal flow no exception thrown") {
+        const char* source = R"(
         struct MyError {
             x: i32;
         }
@@ -408,13 +410,13 @@ TEST_CASE("E2E - Exception normal flow no exception thrown") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Exception typed catch mismatch falls through") {
-    const char* source = R"(
+    TEST_CASE("Exception typed catch mismatch falls through") {
+        const char* source = R"(
         struct ErrorA {
             x: i32;
         }
@@ -448,13 +450,13 @@ TEST_CASE("E2E - Exception typed catch mismatch falls through") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 99);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 99);
+    }
 
-TEST_CASE("E2E - Exception throw in directly in try block") {
-    const char* source = R"(
+    TEST_CASE("Exception throw in directly in try block") {
+        const char* source = R"(
         struct SimpleError {
             val: i32;
         }
@@ -473,18 +475,18 @@ TEST_CASE("E2E - Exception throw in directly in try block") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 77);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 77);
+    }
 
-// ============================================================================
-// Exception Safety Tests - RAII Cleanup During Exception Handling
-// ============================================================================
+    // ============================================================================
+    // Exception Safety Tests - RAII Cleanup During Exception Handling
+    // ============================================================================
 
-TEST_CASE("E2E - Exception safety: throw cleans up current scope uniq") {
-    // A uniq variable in the same scope as a throw should be cleaned up
-    const char* source = R"(
+    TEST_CASE("Exception safety: throw cleans up current scope uniq") {
+        // A uniq variable in the same scope as a throw should be cleaned up
+        const char* source = R"(
         struct Resource {
             id: i32;
         }
@@ -514,17 +516,17 @@ TEST_CASE("E2E - Exception safety: throw cleans up current scope uniq") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-    // Resource destructor should run before catch handler
-    CHECK(result.stdout_output == "~Resource\ncaught\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+        // Resource destructor should run before catch handler
+        CHECK(result.stdout_output == "~Resource\ncaught\n");
+    }
 
-TEST_CASE("E2E - Exception safety: catch handler cleans up try scope") {
-    // A uniq variable declared in try body should be cleaned up when a called
-    // function throws an exception that is caught
-    const char* source = R"(
+    TEST_CASE("Exception safety: catch handler cleans up try scope") {
+        // A uniq variable declared in try body should be cleaned up when a called
+        // function throws an exception that is caught
+        const char* source = R"(
         struct Resource {
             id: i32;
         }
@@ -559,16 +561,16 @@ TEST_CASE("E2E - Exception safety: catch handler cleans up try scope") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 99);
-    CHECK(result.stdout_output == "~Resource\ncaught\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 99);
+        CHECK(result.stdout_output == "~Resource\ncaught\n");
+    }
 
-TEST_CASE("E2E - Exception safety: cross-frame unwinding cleanup") {
-    // A uniq variable in an intermediate function (no handler) should be cleaned
-    // up when the exception propagates through
-    const char* source = R"(
+    TEST_CASE("Exception safety: cross-frame unwinding cleanup") {
+        // A uniq variable in an intermediate function (no handler) should be cleaned
+        // up when the exception propagates through
+        const char* source = R"(
         struct Resource {
             id: i32;
         }
@@ -607,15 +609,15 @@ TEST_CASE("E2E - Exception safety: cross-frame unwinding cleanup") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 7);
-    CHECK(result.stdout_output == "~Resource\ncaught\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 7);
+        CHECK(result.stdout_output == "~Resource\ncaught\n");
+    }
 
-TEST_CASE("E2E - Exception safety: LIFO cleanup order") {
-    // Multiple uniq variables should be cleaned up in reverse declaration order
-    const char* source = R"(
+    TEST_CASE("Exception safety: LIFO cleanup order") {
+        // Multiple uniq variables should be cleaned up in reverse declaration order
+        const char* source = R"(
         struct A {
             val: i32;
         }
@@ -658,16 +660,16 @@ TEST_CASE("E2E - Exception safety: LIFO cleanup order") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-    // b destroyed first (LIFO), then a
-    CHECK(result.stdout_output == "~B\n~A\ncaught\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+        // b destroyed first (LIFO), then a
+        CHECK(result.stdout_output == "~B\n~A\ncaught\n");
+    }
 
-TEST_CASE("E2E - Exception safety: nested try/catch cleanup") {
-    // Inner and outer scopes should both be cleaned up correctly
-    const char* source = R"(
+    TEST_CASE("Exception safety: nested try/catch cleanup") {
+        // Inner and outer scopes should both be cleaned up correctly
+        const char* source = R"(
         struct Outer {
             val: i32;
         }
@@ -713,17 +715,17 @@ TEST_CASE("E2E - Exception safety: nested try/catch cleanup") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 0);
-    // Inner is cleaned up by exception handler, Outer is cleaned up at scope exit
-    CHECK(result.stdout_output == "~Inner\ninner caught\n~Outer\ndone\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 0);
+        // Inner is cleaned up by exception handler, Outer is cleaned up at scope exit
+        CHECK(result.stdout_output == "~Inner\ninner caught\n~Outer\ndone\n");
+    }
 
-TEST_CASE("E2E - Exception safety: value struct destructor during unwinding") {
-    // A value struct with a custom destructor should have its destructor
-    // called during exception unwinding
-    const char* source = R"(
+    TEST_CASE("Exception safety: value struct destructor during unwinding") {
+        // A value struct with a custom destructor should have its destructor
+        // called during exception unwinding
+        const char* source = R"(
         struct Guard {
             name: i32;
         }
@@ -761,15 +763,15 @@ TEST_CASE("E2E - Exception safety: value struct destructor during unwinding") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 3);
-    CHECK(result.stdout_output == "~Guard\ncaught\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 3);
+        CHECK(result.stdout_output == "~Guard\ncaught\n");
+    }
 
-TEST_CASE("E2E - Exception safety: finally on exception path") {
-    // A finally block should execute when an exception propagates through
-    const char* source = R"(
+    TEST_CASE("Exception safety: finally on exception path") {
+        // A finally block should execute when an exception propagates through
+        const char* source = R"(
         struct MyError {
             code: i32;
         }
@@ -794,16 +796,16 @@ TEST_CASE("E2E - Exception safety: finally on exception path") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 10);
-    // Finally should run before the exception is re-thrown to outer catch
-    CHECK(result.stdout_output == "finally\ncaught\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 10);
+        // Finally should run before the exception is re-thrown to outer catch
+        CHECK(result.stdout_output == "finally\ncaught\n");
+    }
 
-TEST_CASE("E2E - Exception safety: already-moved uniq skipped during cleanup") {
-    // A uniq variable that was moved before the throw should not be double-freed
-    const char* source = R"(
+    TEST_CASE("Exception safety: already-moved uniq skipped during cleanup") {
+        // A uniq variable that was moved before the throw should not be double-freed
+        const char* source = R"(
         struct Resource {
             id: i32;
         }
@@ -839,17 +841,17 @@ TEST_CASE("E2E - Exception safety: already-moved uniq skipped during cleanup") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-    // Resource is destroyed by consume(), NOT by exception cleanup
-    // Only one destructor call expected
-    CHECK(result.stdout_output == "~Resource\ncaught\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+        // Resource is destroyed by consume(), NOT by exception cleanup
+        // Only one destructor call expected
+        CHECK(result.stdout_output == "~Resource\ncaught\n");
+    }
 
-TEST_CASE("E2E - Exception safety: normal path still works") {
-    // Verify no regressions for non-exception RAII cleanup
-    const char* source = R"(
+    TEST_CASE("Exception safety: normal path still works") {
+        // Verify no regressions for non-exception RAII cleanup
+        const char* source = R"(
         struct Resource {
             id: i32;
         }
@@ -871,14 +873,14 @@ TEST_CASE("E2E - Exception safety: normal path still works") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 10);
-    CHECK(result.stdout_output == "~Resource\n10\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 10);
+        CHECK(result.stdout_output == "~Resource\n10\n");
+    }
 
-TEST_CASE("E2E - Exception move tracking: moved in try, used in catch") {
-    const char* source = R"(
+    TEST_CASE("Exception move tracking: moved in try, used in catch") {
+        const char* source = R"(
         struct Resource { id: i32; }
         fun delete Resource() { print(f"{"~Resource"}"); }
         fun consume(r: uniq Resource): i32 { return r.id; }
@@ -899,12 +901,12 @@ TEST_CASE("E2E - Exception move tracking: moved in try, used in catch") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);
+    }
 
-TEST_CASE("E2E - Exception move tracking: moved in try, reassigned in catch, used after") {
-    const char* source = R"(
+    TEST_CASE("Exception move tracking: moved in try, reassigned in catch, used after") {
+        const char* source = R"(
         struct Resource { id: i32; }
         fun delete Resource() { print(f"{"~Resource"}"); }
         fun consume(r: uniq Resource): i32 { return r.id; }
@@ -926,17 +928,17 @@ TEST_CASE("E2E - Exception move tracking: moved in try, reassigned in catch, use
         }
     )";
 
-    // Try body ends with an unconditional throw, so its normal-exit path
-    // (r = Moved) is unreachable after the try/catch. Only the catch path
-    // survives (r reassigned, Live), so this program is well-typed and
-    // returns 99.
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 99);
-}
+        // Try body ends with an unconditional throw, so its normal-exit path
+        // (r = Moved) is unreachable after the try/catch. Only the catch path
+        // survives (r reassigned, Live), so this program is well-typed and
+        // returns 99.
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 99);
+    }
 
-TEST_CASE("E2E - Exception move tracking: not moved in try, moved in catch, used after") {
-    const char* source = R"(
+    TEST_CASE("Exception move tracking: not moved in try, moved in catch, used after") {
+        const char* source = R"(
         struct Resource { id: i32; }
         fun delete Resource() { print(f"{"~Resource"}"); }
         fun consume(r: uniq Resource): i32 { return r.id; }
@@ -956,13 +958,13 @@ TEST_CASE("E2E - Exception move tracking: not moved in try, moved in catch, used
         }
     )";
 
-    // post-try: Live, post-catch: Moved → merged = MaybeValid
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
-}
+        // post-try: Live, post-catch: Moved → merged = MaybeValid
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);
+    }
 
-TEST_CASE("E2E - Exception move tracking: no move anywhere") {
-    const char* source = R"(
+    TEST_CASE("Exception move tracking: no move anywhere") {
+        const char* source = R"(
         struct Resource { id: i32; }
         fun delete Resource() { print(f"{"~Resource"}"); }
 
@@ -981,12 +983,12 @@ TEST_CASE("E2E - Exception move tracking: no move anywhere") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+    }
 
-TEST_CASE("E2E - Exception move tracking: no leak between catch clauses") {
-    const char* source = R"(
+    TEST_CASE("Exception move tracking: no leak between catch clauses") {
+        const char* source = R"(
         struct Resource { id: i32; }
         fun delete Resource() { print(f"{"~Resource"}"); }
         fun consume(r: uniq Resource): i32 { return r.id; }
@@ -1011,21 +1013,21 @@ TEST_CASE("E2E - Exception move tracking: no leak between catch clauses") {
         }
     )";
 
-    // Second catch starts from catch_entry (not first catch's exit).
-    // r is not moved in try, so catch_entry has r as Live.
-    // The second catch can access r.id without error — the first catch's
-    // move does not leak into the second catch.
-    // r is not accessed after the try/catch, so the merged MaybeValid state is fine.
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-}
+        // Second catch starts from catch_entry (not first catch's exit).
+        // r is not moved in try, so catch_entry has r as Live.
+        // The second catch can access r.id without error — the first catch's
+        // move does not leak into the second catch.
+        // r is not accessed after the try/catch, so the merged MaybeValid state is fine.
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+    }
 
-// ============================================================================
-// Container cleanup on exception unwind
-// ============================================================================
+    // ============================================================================
+    // Container cleanup on exception unwind
+    // ============================================================================
 
-TEST_CASE("E2E - Exception cleanup: List<uniq T> elements destroyed on unwind") {
-    const char* source = R"(
+    TEST_CASE("Exception cleanup: List<uniq T> elements destroyed on unwind") {
+        const char* source = R"(
         struct Widget {
             id: i32;
         }
@@ -1060,17 +1062,17 @@ TEST_CASE("E2E - Exception cleanup: List<uniq T> elements destroyed on unwind") 
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-    // Destructors should have been called for all 3 widgets during unwind
-    CHECK(result.stdout_output.find("del:10") != String::npos);
-    CHECK(result.stdout_output.find("del:20") != String::npos);
-    CHECK(result.stdout_output.find("del:30") != String::npos);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+        // Destructors should have been called for all 3 widgets during unwind
+        CHECK(result.stdout_output.find("del:10") != String::npos);
+        CHECK(result.stdout_output.find("del:20") != String::npos);
+        CHECK(result.stdout_output.find("del:30") != String::npos);
+    }
 
-TEST_CASE("E2E - Exception cleanup: Map<string, uniq T> values destroyed on unwind") {
-    const char* source = R"(
+    TEST_CASE("Exception cleanup: Map<string, uniq T> values destroyed on unwind") {
+        const char* source = R"(
         struct Resource {
             value: i32;
         }
@@ -1100,15 +1102,15 @@ TEST_CASE("E2E - Exception cleanup: Map<string, uniq T> values destroyed on unwi
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-    CHECK(result.stdout_output.find("free:100") != String::npos);
-    CHECK(result.stdout_output.find("free:200") != String::npos);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+        CHECK(result.stdout_output.find("free:100") != String::npos);
+        CHECK(result.stdout_output.find("free:200") != String::npos);
+    }
 
-TEST_CASE("E2E - Exception cleanup: temporary uniq destroyed on unwind") {
-    const char* source = R"(
+    TEST_CASE("Exception cleanup: temporary uniq destroyed on unwind") {
+        const char* source = R"(
         struct Widget {
             id: i32;
         }
@@ -1140,20 +1142,20 @@ TEST_CASE("E2E - Exception cleanup: temporary uniq destroyed on unwind") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 1);
-    // The temporary uniq Widget should be cleaned up during exception unwind
-    CHECK(result.stdout_output.find("del:99") != String::npos);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 1);
+        // The temporary uniq Widget should be cleaned up during exception unwind
+        CHECK(result.stdout_output.find("del:99") != String::npos);
+    }
 
-// ============================================================================
-// Throw in delete destructor (compile-time ban)
-// ============================================================================
+    // ============================================================================
+    // Throw in delete destructor (compile-time ban)
+    // ============================================================================
 
-TEST_CASE("E2E - Exception throw in delete destructor rejected") {
-    SUBCASE("Direct throw in delete destructor") {
-        const char* source = R"(
+    TEST_CASE("Exception throw in delete destructor rejected") {
+        SUBCASE("Direct throw in delete destructor") {
+            const char* source = R"(
             struct MyError {
                 code: i32;
             }
@@ -1176,12 +1178,12 @@ TEST_CASE("E2E - Exception throw in delete destructor rejected") {
             }
         )";
 
-        TestResult result = run_and_capture(source, "main");
-        CHECK(!result.success);
-    }
+            TestResult result = run_and_capture(source, "main");
+            CHECK(!result.success);
+        }
 
-    SUBCASE("Throw in named destructor is allowed") {
-        const char* source = R"(
+        SUBCASE("Throw in named destructor is allowed") {
+            const char* source = R"(
             struct MyError {
                 code: i32;
             }
@@ -1209,22 +1211,22 @@ TEST_CASE("E2E - Exception throw in delete destructor rejected") {
             }
         )";
 
-        TestResult result = run_and_capture(source, "main");
-        CHECK(result.success);
-        CHECK(result.value == 1);
+            TestResult result = run_and_capture(source, "main");
+            CHECK(result.success);
+            CHECK(result.value == 1);
+        }
     }
-}
 
-// ============================================================================
-// Pre-declared local reassigned from a throwing call inside try/catch
-// ============================================================================
-// The IR builder must not let the try-body's rebinding of `r` to the call's
-// (never-produced) result leak into the catch handler — otherwise the catch
-// dereferences an uninitialized SSA value (segfault for struct returns,
-// silently-wrong value for primitives).
+    // ============================================================================
+    // Pre-declared local reassigned from a throwing call inside try/catch
+    // ============================================================================
+    // The IR builder must not let the try-body's rebinding of `r` to the call's
+    // (never-produced) result leak into the catch handler — otherwise the catch
+    // dereferences an uninitialized SSA value (segfault for struct returns,
+    // silently-wrong value for primitives).
 
-TEST_CASE("E2E - Try/catch: throwing call to pre-declared struct local preserves prior value") {
-    const char* source = R"ROXY(
+    TEST_CASE("Try/catch: throwing call to pre-declared struct local preserves prior value") {
+        const char* source = R"ROXY(
         struct Pt { x: i32; y: i32; z: i32; }
         struct E { c: i32; }
         fun E.message(): string for Exception { return "e"; }
@@ -1244,13 +1246,13 @@ TEST_CASE("E2E - Try/catch: throwing call to pre-declared struct local preserves
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 7);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 7);
+    }
 
-TEST_CASE("E2E - Try/catch: throwing call to pre-declared primitive local preserves prior value") {
-    const char* source = R"ROXY(
+    TEST_CASE("Try/catch: throwing call to pre-declared primitive local preserves prior value") {
+        const char* source = R"ROXY(
         struct E { c: i32; }
         fun E.message(): string for Exception { return "e"; }
 
@@ -1269,15 +1271,15 @@ TEST_CASE("E2E - Try/catch: throwing call to pre-declared primitive local preser
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 7);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 7);
+    }
 
-TEST_CASE("E2E - Try/catch: non-throwing call still rebinds the pre-declared local") {
-    // Sanity check that the IR-builder rollback doesn't break the happy path:
-    // when the call succeeds, the assignment must take effect.
-    const char* source = R"ROXY(
+    TEST_CASE("Try/catch: non-throwing call still rebinds the pre-declared local") {
+        // Sanity check that the IR-builder rollback doesn't break the happy path:
+        // when the call succeeds, the assignment must take effect.
+        const char* source = R"ROXY(
         struct Pt { x: i32; y: i32; z: i32; }
         struct E { c: i32; }
         fun E.message(): string for Exception { return "e"; }
@@ -1296,20 +1298,20 @@ TEST_CASE("E2E - Try/catch: non-throwing call still rebinds the pre-declared loc
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-// ============================================================================
-// Try bodies containing loops (regression: RPO reorder placed a loop body
-// block after the loop's fall-through in the bytecode layout, so the original
-// single-range handler table missed the call site inside the loop and the
-// exception surfaced as "Unhandled exception" instead of being caught.)
-// ============================================================================
+    // ============================================================================
+    // Try bodies containing loops (regression: RPO reorder placed a loop body
+    // block after the loop's fall-through in the bytecode layout, so the original
+    // single-range handler table missed the call site inside the loop and the
+    // exception surfaced as "Unhandled exception" instead of being caught.)
+    // ============================================================================
 
-TEST_CASE("E2E - Try/catch around while loop catches throw from inside") {
-    const char* source = R"ROXY(
+    TEST_CASE("Try/catch around while loop catches throw from inside") {
+        const char* source = R"ROXY(
         struct Err { code: i32; }
         fun Err.message(): string for Exception { return "boom"; }
 
@@ -1331,13 +1333,13 @@ TEST_CASE("E2E - Try/catch around while loop catches throw from inside") {
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Try/catch around for loop catches throw from inside") {
-    const char* source = R"ROXY(
+    TEST_CASE("Try/catch around for loop catches throw from inside") {
+        const char* source = R"ROXY(
         struct Err { code: i32; }
         fun Err.message(): string for Exception { return "boom"; }
 
@@ -1357,15 +1359,15 @@ TEST_CASE("E2E - Try/catch around for loop catches throw from inside") {
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Try/catch around loop: normal exit still reaches code after") {
-    // Make sure the per-range handler table doesn't accidentally catch past
-    // the try when the loop runs to completion without throwing.
-    const char* source = R"ROXY(
+    TEST_CASE("Try/catch around loop: normal exit still reaches code after") {
+        // Make sure the per-range handler table doesn't accidentally catch past
+        // the try when the loop runs to completion without throwing.
+        const char* source = R"ROXY(
         struct Err { code: i32; }
         fun Err.message(): string for Exception { return "boom"; }
 
@@ -1382,13 +1384,13 @@ TEST_CASE("E2E - Try/catch around loop: normal exit still reaches code after") {
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 6);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 6);
+    }
 
-TEST_CASE("E2E - Try/catch around nested loops catches throw from inner iteration") {
-    const char* source = R"ROXY(
+    TEST_CASE("Try/catch around nested loops catches throw from inner iteration") {
+        const char* source = R"ROXY(
         struct Err { code: i32; }
         fun Err.message(): string for Exception { return "boom"; }
 
@@ -1412,8 +1414,9 @@ TEST_CASE("E2E - Try/catch around nested loops catches throw from inner iteratio
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 99);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 99);
+    }
 
+}  // TEST_SUITE("E2E Exceptions")

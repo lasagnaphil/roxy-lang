@@ -4,8 +4,10 @@
 
 using namespace rx;
 
-TEST_CASE("E2E - Tagged unions basic definition") {
-    const char* source = R"(
+TEST_SUITE("E2E Tagged Unions") {
+
+    TEST_CASE("basic definition") {
+        const char* source = R"(
         enum Kind { A, B }
 
         struct Data {
@@ -22,13 +24,13 @@ TEST_CASE("E2E - Tagged unions basic definition") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 0);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 0);
+    }
 
-TEST_CASE("E2E - Tagged unions struct literal with variant A") {
-    const char* source = R"(
+    TEST_CASE("struct literal with variant A") {
+        const char* source = R"(
         enum Kind { A, B }
 
         struct Data {
@@ -47,13 +49,13 @@ TEST_CASE("E2E - Tagged unions struct literal with variant A") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - Tagged unions struct literal with variant B") {
-    const char* source = R"(
+    TEST_CASE("struct literal with variant B") {
+        const char* source = R"(
         enum Kind { A, B }
 
         struct Data {
@@ -72,13 +74,13 @@ TEST_CASE("E2E - Tagged unions struct literal with variant B") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "99\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "99\n");
+    }
 
-TEST_CASE("E2E - Tagged unions with regular fields") {
-    const char* source = R"(
+    TEST_CASE("with regular fields") {
+        const char* source = R"(
         enum SkillType { Attack, Defend }
 
         struct Skill {
@@ -103,13 +105,13 @@ TEST_CASE("E2E - Tagged unions with regular fields") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n100\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n100\n");
+    }
 
-TEST_CASE("E2E - Tagged unions multiple fields per variant") {
-    const char* source = R"(
+    TEST_CASE("multiple fields per variant") {
+        const char* source = R"(
         enum Kind { Point2D, Point3D }
 
         struct Point {
@@ -132,13 +134,13 @@ TEST_CASE("E2E - Tagged unions multiple fields per variant") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n20\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n20\n");
+    }
 
-TEST_CASE("E2E - Tagged unions variant field assignment") {
-    const char* source = R"(
+    TEST_CASE("variant field assignment") {
+        const char* source = R"(
         enum Kind { A, B }
 
         struct Data {
@@ -158,13 +160,13 @@ TEST_CASE("E2E - Tagged unions variant field assignment") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "20\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "20\n");
+    }
 
-TEST_CASE("E2E - Tagged unions method access") {
-    const char* source = R"(
+    TEST_CASE("method access") {
+        const char* source = R"(
         enum Kind { A, B }
 
         struct Data {
@@ -187,13 +189,13 @@ TEST_CASE("E2E - Tagged unions method access") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - Tagged unions use with when statement") {
-    const char* source = R"(
+    TEST_CASE("use with when statement") {
+        const char* source = R"(
         enum Kind { A, B }
 
         struct Data {
@@ -225,17 +227,17 @@ TEST_CASE("E2E - Tagged unions use with when statement") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n20\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n20\n");
+    }
 
-// ============================================================================
-// Tagged unions with uniq fields
-// ============================================================================
+    // ============================================================================
+    // Tagged unions with uniq fields
+    // ============================================================================
 
-TEST_CASE("E2E - Tagged unions with uniq field: basic create and access") {
-    const char* source = R"(
+    TEST_CASE("with uniq field: basic create and access") {
+        const char* source = R"(
         struct Leaf {
             value: i32;
         }
@@ -261,15 +263,15 @@ TEST_CASE("E2E - Tagged unions with uniq field: basic create and access") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-TEST_CASE("E2E - Tagged unions with uniq field: RAII cleanup") {
-    // The uniq field inside a tagged union variant must be cleaned up
-    // when the struct goes out of scope
-    const char* source = R"(
+    TEST_CASE("with uniq field: RAII cleanup") {
+        // The uniq field inside a tagged union variant must be cleaned up
+        // when the struct goes out of scope
+        const char* source = R"(
         struct Leaf {
             value: i32;
         }
@@ -299,14 +301,14 @@ TEST_CASE("E2E - Tagged unions with uniq field: RAII cleanup") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "before scope exit\ndelete Leaf 99\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "before scope exit\ndelete Leaf 99\n");
+    }
 
-TEST_CASE("E2E - Tagged unions with uniq field: empty variant no crash") {
-    // When the active variant has no uniq field, cleanup should be safe
-    const char* source = R"(
+    TEST_CASE("with uniq field: empty variant no crash") {
+        // When the active variant has no uniq field, cleanup should be safe
+        const char* source = R"(
         struct Leaf {
             value: i32;
         }
@@ -334,13 +336,13 @@ TEST_CASE("E2E - Tagged unions with uniq field: empty variant no crash") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "empty variant\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "empty variant\n");
+    }
 
-TEST_CASE("E2E - Tagged unions with uniq field: when statement access") {
-    const char* source = R"(
+    TEST_CASE("with uniq field: when statement access") {
+        const char* source = R"(
         struct Payload {
             data: i32;
         }
@@ -374,14 +376,14 @@ TEST_CASE("E2E - Tagged unions with uniq field: when statement access") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "123\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "123\n");
+    }
 
-TEST_CASE("E2E - Tagged unions recursive: uniq self-reference") {
-    // This is the core AST pattern: Expr contains uniq Expr children
-    const char* source = R"(
+    TEST_CASE("recursive: uniq self-reference") {
+        // This is the core AST pattern: Expr contains uniq Expr children
+        const char* source = R"(
         enum ExprKind { Literal, Binary }
 
         struct Expr {
@@ -424,14 +426,14 @@ TEST_CASE("E2E - Tagged unions recursive: uniq self-reference") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "30\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "30\n");
+    }
 
-TEST_CASE("E2E - Tagged unions recursive: deep tree cleanup") {
-    // Verify RAII cleanup for a recursive tree structure
-    const char* source = R"(
+    TEST_CASE("recursive: deep tree cleanup") {
+        // Verify RAII cleanup for a recursive tree structure
+        const char* source = R"(
         enum ExprKind { Literal, Binary }
 
         struct Expr {
@@ -482,16 +484,16 @@ TEST_CASE("E2E - Tagged unions recursive: deep tree cleanup") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n");
+    }
 
-TEST_CASE("E2E - Tagged unions recursive: destructor chaining") {
-    // Verify that destroying a uniq tagged union recursively cleans up
-    // uniq children in variants. Without a synthetic destructor on Expr,
-    // only the root would be freed — children would leak.
-    const char* source = R"(
+    TEST_CASE("recursive: destructor chaining") {
+        // Verify that destroying a uniq tagged union recursively cleans up
+        // uniq children in variants. Without a synthetic destructor on Expr,
+        // only the root would be freed — children would leak.
+        const char* source = R"(
         enum ExprKind { Literal, Binary }
 
         struct Expr {
@@ -532,15 +534,15 @@ TEST_CASE("E2E - Tagged unions recursive: destructor chaining") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // All three Expr objects must be destroyed:
-    // root (Binary), then its variant fields in LIFO order (right, left)
-    CHECK(result.stdout_output == "before cleanup\ndelete Binary\ndelete Literal 2\ndelete Literal 1\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // All three Expr objects must be destroyed:
+        // root (Binary), then its variant fields in LIFO order (right, left)
+        CHECK(result.stdout_output == "before cleanup\ndelete Binary\ndelete Literal 2\ndelete Literal 1\n");
+    }
 
-TEST_CASE("E2E - Tagged unions with List<uniq T> field") {
-    const char* source = R"(
+    TEST_CASE("with List<uniq T> field") {
+        const char* source = R"(
         struct Item {
             value: i32;
         }
@@ -583,20 +585,20 @@ TEST_CASE("E2E - Tagged unions with List<uniq T> field") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "60\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "60\n");
+    }
 
-// ============================================================================
-// Field-assignment of struct values (regression: was copying pointer bits
-// instead of struct contents, corrupting nested when-discriminants)
-// ============================================================================
+    // ============================================================================
+    // Field-assignment of struct values (regression: was copying pointer bits
+    // instead of struct contents, corrupting nested when-discriminants)
+    // ============================================================================
 
-TEST_CASE("E2E - Field assignment: struct value into a regular struct field") {
-    // Pre-fix: emit_set_field stored the source struct's pointer bits into the
-    // destination slots, so o.inner.x/y/z came back as garbage.
-    const char* source = R"ROXY(
+    TEST_CASE("Field assignment: struct value into a regular struct field") {
+        // Pre-fix: emit_set_field stored the source struct's pointer bits into the
+        // destination slots, so o.inner.x/y/z came back as garbage.
+        const char* source = R"ROXY(
         struct Inner { x: i32; y: i32; z: i32; }
         struct Outer { inner: Inner; }
 
@@ -611,15 +613,15 @@ TEST_CASE("E2E - Field assignment: struct value into a regular struct field") {
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n3\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n3\n");
+    }
 
-TEST_CASE("E2E - Field assignment: tagged-union struct into a variant field") {
-    // Pre-fix: assigning v (kind=IA) into o.inner clobbered the inner
-    // discriminant; `when o.inner.kind` matched neither IA nor IB.
-    const char* source = R"ROXY(
+    TEST_CASE("Field assignment: tagged-union struct into a variant field") {
+        // Pre-fix: assigning v (kind=IA) into o.inner clobbered the inner
+        // discriminant; `when o.inner.kind` matched neither IA nor IB.
+        const char* source = R"ROXY(
         enum InnerKind { IA, IB }
         enum OuterKind { OA, OB }
 
@@ -652,15 +654,15 @@ TEST_CASE("E2E - Field assignment: tagged-union struct into a variant field") {
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "IA=42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "IA=42\n");
+    }
 
-TEST_CASE("E2E - Field assignment: struct value via 'self' inside a method") {
-    // Mirrors the original lox repro: assignment happens through `self.field`
-    // (a ref to the enclosing struct) rather than through a local variable.
-    const char* source = R"ROXY(
+    TEST_CASE("Field assignment: struct value via 'self' inside a method") {
+        // Mirrors the original lox repro: assignment happens through `self.field`
+        // (a ref to the enclosing struct) rather than through a local variable.
+        const char* source = R"ROXY(
         enum InnerKind { IA, IB }
         enum OuterKind { OA }
 
@@ -695,7 +697,9 @@ TEST_CASE("E2E - Field assignment: struct value via 'self' inside a method") {
         }
     )ROXY";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "IA=13\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "IA=13\n");
+    }
+
+}  // TEST_SUITE("E2E Tagged Unions")

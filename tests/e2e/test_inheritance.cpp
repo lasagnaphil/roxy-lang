@@ -7,8 +7,10 @@ using namespace rx;
 // Inheritance Tests
 // ============================================================================
 
-TEST_CASE("E2E - Inherit field access") {
-    const char* source = R"(
+TEST_SUITE("E2E Inheritance") {
+
+    TEST_CASE("Inherit field access") {
+        const char* source = R"(
         struct Animal {
             hp: i32;
         }
@@ -25,13 +27,13 @@ TEST_CASE("E2E - Inherit field access") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "100\n5\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "100\n5\n");
+    }
 
-TEST_CASE("E2E - Inherit method from parent") {
-    const char* source = R"(
+    TEST_CASE("Inherit method from parent") {
+        const char* source = R"(
         struct Animal {
             hp: i32;
         }
@@ -51,13 +53,13 @@ TEST_CASE("E2E - Inherit method from parent") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "100\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "100\n");
+    }
 
-TEST_CASE("E2E - Method override in child") {
-    const char* source = R"(
+    TEST_CASE("Method override in child") {
+        const char* source = R"(
         struct Animal {
             hp: i32;
         }
@@ -83,13 +85,13 @@ TEST_CASE("E2E - Method override in child") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n");
+    }
 
-TEST_CASE("E2E - Super method call") {
-    const char* source = R"(
+    TEST_CASE("Super method call") {
+        const char* source = R"(
         struct Animal {
             hp: i32;
         }
@@ -113,15 +115,15 @@ TEST_CASE("E2E - Super method call") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "11\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "11\n");
+    }
 
-TEST_CASE("E2E - Constructor chaining implicit") {
-    // Test implicit super() call to parent's default constructor
-    // Note: implicit super() only works when parent has a default (parameterless) constructor
-    const char* source = R"(
+    TEST_CASE("Constructor chaining implicit") {
+        // Test implicit super() call to parent's default constructor
+        // Note: implicit super() only works when parent has a default (parameterless) constructor
+        const char* source = R"(
         struct Animal {
             hp: i32;
         }
@@ -149,14 +151,14 @@ TEST_CASE("E2E - Constructor chaining implicit") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // Parent default constructor called first (implicit super()), then child body
-    CHECK(result.stdout_output == "1\n2\n50\n5\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // Parent default constructor called first (implicit super()), then child body
+        CHECK(result.stdout_output == "1\n2\n50\n5\n");
+    }
 
-TEST_CASE("E2E - Constructor chaining explicit super") {
-    const char* source = R"(
+    TEST_CASE("Constructor chaining explicit super") {
+        const char* source = R"(
         struct Animal {
             hp: i32;
         }
@@ -184,13 +186,13 @@ TEST_CASE("E2E - Constructor chaining explicit super") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n2\n100\n5\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n100\n5\n");
+    }
 
-TEST_CASE("E2E - Destructor chaining") {
-    const char* source = R"(
+    TEST_CASE("Destructor chaining") {
+        const char* source = R"(
         struct Animal {
             hp: i32;
         }
@@ -214,14 +216,14 @@ TEST_CASE("E2E - Destructor chaining") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // Child destructor runs first, then parent destructor
-    CHECK(result.stdout_output == "2\n1\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // Child destructor runs first, then parent destructor
+        CHECK(result.stdout_output == "2\n1\n");
+    }
 
-TEST_CASE("E2E - Value slicing on assignment") {
-    const char* source = R"(
+    TEST_CASE("Value slicing on assignment") {
+        const char* source = R"(
         struct Animal {
             hp: i32;
         }
@@ -243,13 +245,13 @@ TEST_CASE("E2E - Value slicing on assignment") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "100\n100\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "100\n100\n");
+    }
 
-TEST_CASE("E2E - Reference subtyping uniq to ref") {
-    const char* source = R"(
+    TEST_CASE("Reference subtyping uniq to ref") {
+        const char* source = R"(
         struct Animal {
             hp: i32;
         }
@@ -270,13 +272,13 @@ TEST_CASE("E2E - Reference subtyping uniq to ref") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "100\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "100\n");
+    }
 
-TEST_CASE("E2E - Multi-level inheritance") {
-    const char* source = R"(
+    TEST_CASE("Multi-level inheritance") {
+        const char* source = R"(
         struct Animal {
             hp: i32;
         }
@@ -311,13 +313,13 @@ TEST_CASE("E2E - Multi-level inheritance") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "100\n5\n3\n12\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "100\n5\n3\n12\n");
+    }
 
-TEST_CASE("E2E - Synthesized constructor with inheritance") {
-    const char* source = R"(
+    TEST_CASE("Synthesized constructor with inheritance") {
+        const char* source = R"(
         struct Animal {
             hp: i32 = 50;
         }
@@ -334,13 +336,13 @@ TEST_CASE("E2E - Synthesized constructor with inheritance") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "50\n1\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "50\n1\n");
+    }
 
-TEST_CASE("E2E - Child accessing parent field in method") {
-    const char* source = R"(
+    TEST_CASE("Child accessing parent field in method") {
+        const char* source = R"(
         struct Animal {
             hp: i32;
         }
@@ -360,7 +362,9 @@ TEST_CASE("E2E - Child accessing parent field in method") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "105\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "105\n");
+    }
+
+}  // TEST_SUITE("E2E Inheritance")

@@ -10,8 +10,10 @@ using namespace rx;
 // Trait Tests
 // ============================================================================
 
-TEST_CASE("E2E - Trait basic required method") {
-    const char* source = R"(
+TEST_SUITE("E2E Traits") {
+
+    TEST_CASE("Trait basic required method") {
+        const char* source = R"(
         trait Describable;
 
         fun Describable.value(): i32;
@@ -32,13 +34,13 @@ TEST_CASE("E2E - Trait basic required method") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n");
+    }
 
-TEST_CASE("E2E - Trait default method") {
-    const char* source = R"(
+    TEST_CASE("Trait default method") {
+        const char* source = R"(
         trait Summable;
 
         fun Summable.sum(): i32;
@@ -64,13 +66,13 @@ TEST_CASE("E2E - Trait default method") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "8\n16\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "8\n16\n");
+    }
 
-TEST_CASE("E2E - Trait inheritance") {
-    const char* source = R"(
+    TEST_CASE("Trait inheritance") {
+        const char* source = R"(
         trait Base;
         fun Base.base_val(): i32;
 
@@ -97,13 +99,13 @@ TEST_CASE("E2E - Trait inheritance") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "5\n10\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "5\n10\n");
+    }
 
-TEST_CASE("E2E - Trait missing required method") {
-    const char* source = R"(
+    TEST_CASE("Trait missing required method") {
+        const char* source = R"(
         trait Describable;
         fun Describable.value(): i32;
         fun Describable.name(): i32;
@@ -121,12 +123,12 @@ TEST_CASE("E2E - Trait missing required method") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);
+    }
 
-TEST_CASE("E2E - Trait Eq operator") {
-    const char* source = R"(
+    TEST_CASE("Trait Eq operator") {
+        const char* source = R"(
         trait Eq;
         fun Eq.eq(other: Self): bool;
         fun Eq.ne(other: Self): bool {
@@ -160,13 +162,13 @@ TEST_CASE("E2E - Trait Eq operator") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n0\n1\n0\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n0\n1\n0\n");
+    }
 
-TEST_CASE("E2E - Trait Ord operator with inheritance") {
-    const char* source = R"(
+    TEST_CASE("Trait Ord operator with inheritance") {
+        const char* source = R"(
         trait Eq;
         fun Eq.eq(other: Self): bool;
 
@@ -217,13 +219,13 @@ TEST_CASE("E2E - Trait Ord operator with inheritance") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "1\n0\n1\n0\n1\n1\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n0\n1\n0\n1\n1\n");
+    }
 
-TEST_CASE("E2E - Trait override default method") {
-    const char* source = R"(
+    TEST_CASE("Trait override default method") {
+        const char* source = R"(
         trait Summable;
 
         fun Summable.sum(): i32;
@@ -253,13 +255,13 @@ TEST_CASE("E2E - Trait override default method") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "8\n24\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "8\n24\n");
+    }
 
-TEST_CASE("E2E - Trait Self type in parameters") {
-    const char* source = R"(
+    TEST_CASE("Trait Self type in parameters") {
+        const char* source = R"(
         trait Addable;
 
         fun Addable.add(other: Self): Self;
@@ -281,13 +283,13 @@ TEST_CASE("E2E - Trait Self type in parameters") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "35\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "35\n");
+    }
 
-TEST_CASE("E2E - Multiple traits on one struct") {
-    const char* source = R"(
+    TEST_CASE("Multiple traits on one struct") {
+        const char* source = R"(
         trait HasX;
         fun HasX.get_x(): i32;
 
@@ -315,13 +317,13 @@ TEST_CASE("E2E - Multiple traits on one struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n99\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n99\n");
+    }
 
-TEST_CASE("E2E - Struct method takes priority over trait default") {
-    const char* source = R"(
+    TEST_CASE("Struct method takes priority over trait default") {
+        const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32 {
             return 0;
@@ -342,13 +344,13 @@ TEST_CASE("E2E - Struct method takes priority over trait default") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "42\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
 
-TEST_CASE("E2E - Trait method not in trait error") {
-    const char* source = R"(
+    TEST_CASE("Trait method not in trait error") {
+        const char* source = R"(
         trait Foo;
         fun Foo.bar(): i32;
 
@@ -369,16 +371,16 @@ TEST_CASE("E2E - Trait method not in trait error") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);
+    }
 
-// ============================================================================
-// Generic Trait Tests
-// ============================================================================
+    // ============================================================================
+    // Generic Trait Tests
+    // ============================================================================
 
-TEST_CASE("E2E - Generic trait basic required method") {
-    const char* source = R"(
+    TEST_CASE("Generic trait basic required method") {
+        const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
 
@@ -401,13 +403,13 @@ TEST_CASE("E2E - Generic trait basic required method") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "4\n6\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "4\n6\n");
+    }
 
-TEST_CASE("E2E - Generic trait mixed-type Rhs") {
-    const char* source = R"(
+    TEST_CASE("Generic trait mixed-type Rhs") {
+        const char* source = R"(
         trait Mul<Rhs>;
         fun Mul.mul(other: Rhs): Self;
 
@@ -429,13 +431,13 @@ TEST_CASE("E2E - Generic trait mixed-type Rhs") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "8\n12\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "8\n12\n");
+    }
 
-TEST_CASE("E2E - Generic trait default method injection") {
-    const char* source = R"(
+    TEST_CASE("Generic trait default method injection") {
+        const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
         fun Add.add_twice(other: Rhs): Self {
@@ -459,13 +461,13 @@ TEST_CASE("E2E - Generic trait default method injection") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "20\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "20\n");
+    }
 
-TEST_CASE("E2E - Generic trait multi-param") {
-    const char* source = R"(
+    TEST_CASE("Generic trait multi-param") {
+        const char* source = R"(
         trait Convert<From, To>;
         fun Convert.convert(input: From): To;
 
@@ -485,13 +487,13 @@ TEST_CASE("E2E - Generic trait multi-param") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "21\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "21\n");
+    }
 
-TEST_CASE("E2E - Generic trait default type param (Rhs defaults to Self)") {
-    const char* source = R"(
+    TEST_CASE("Generic trait default type param (Rhs defaults to Self)") {
+        const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
 
@@ -508,13 +510,13 @@ TEST_CASE("E2E - Generic trait default type param (Rhs defaults to Self)") {
         }
     )";
 
-    // `for Add` is shorthand for `for Add<Num>` (type params default to Self)
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-}
+        // `for Add` is shorthand for `for Add<Num>` (type params default to Self)
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+    }
 
-TEST_CASE("E2E - Generic trait error: type args on non-generic trait") {
-    const char* source = R"(
+    TEST_CASE("Generic trait error: type args on non-generic trait") {
+        const char* source = R"(
         trait Eq;
         fun Eq.eq(other: Self): bool;
 
@@ -531,12 +533,12 @@ TEST_CASE("E2E - Generic trait error: type args on non-generic trait") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);
+    }
 
-TEST_CASE("E2E - Trait error: wrong parameter type (Self trait)") {
-    const char* source = R"(
+    TEST_CASE("Trait error: wrong parameter type (Self trait)") {
+        const char* source = R"(
         trait Addable;
         fun Addable.add(other: Self): Self;
 
@@ -553,12 +555,12 @@ TEST_CASE("E2E - Trait error: wrong parameter type (Self trait)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-TEST_CASE("E2E - Trait error: wrong return type (Self trait)") {
-    const char* source = R"(
+    TEST_CASE("Trait error: wrong return type (Self trait)") {
+        const char* source = R"(
         trait Addable;
         fun Addable.add(other: Self): Self;
 
@@ -575,12 +577,12 @@ TEST_CASE("E2E - Trait error: wrong return type (Self trait)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-TEST_CASE("E2E - Trait error: wrong parameter type (generic trait)") {
-    const char* source = R"(
+    TEST_CASE("Trait error: wrong parameter type (generic trait)") {
+        const char* source = R"(
         trait Mul<Rhs>;
         fun Mul.mul(other: Rhs): Self;
 
@@ -598,14 +600,14 @@ TEST_CASE("E2E - Trait error: wrong parameter type (generic trait)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK_FALSE(result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
 
-// ========== Operator Overloading Tests ==========
+    // ========== Operator Overloading Tests ==========
 
-TEST_CASE("E2E - Arithmetic operator dispatch (+ -)") {
-    const char* source = R"(
+    TEST_CASE("Arithmetic operator dispatch (+ -)") {
+        const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
 
@@ -638,13 +640,13 @@ TEST_CASE("E2E - Arithmetic operator dispatch (+ -)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "13\n27\n7\n13\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "13\n27\n7\n13\n");
+    }
 
-TEST_CASE("E2E - Mixed-type arithmetic (* with scalar)") {
-    const char* source = R"(
+    TEST_CASE("Mixed-type arithmetic (* with scalar)") {
+        const char* source = R"(
         trait Mul<Rhs>;
         fun Mul.mul(other: Rhs): Self;
 
@@ -666,13 +668,13 @@ TEST_CASE("E2E - Mixed-type arithmetic (* with scalar)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "12\n20\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "12\n20\n");
+    }
 
-TEST_CASE("E2E - Unary negation dispatch") {
-    const char* source = R"(
+    TEST_CASE("Unary negation dispatch") {
+        const char* source = R"(
         trait Neg;
         fun Neg.neg(): Self;
 
@@ -696,18 +698,18 @@ TEST_CASE("E2E - Unary negation dispatch") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    // Note: struct GET_FIELD zero-extends i32 to u64, so negative values
-    // display as unsigned. Use a value test instead:
-    // The neg method computes 0 - 5 = -5. When stored as u32 and loaded as u64,
-    // it becomes 4294967291. This is a known limitation with i32 struct fields.
-    // Test that the operator dispatch itself works (compiles and runs without crash)
-    CHECK(result.value == 0);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        // Note: struct GET_FIELD zero-extends i32 to u64, so negative values
+        // display as unsigned. Use a value test instead:
+        // The neg method computes 0 - 5 = -5. When stored as u32 and loaded as u64,
+        // it becomes 4294967291. This is a known limitation with i32 struct fields.
+        // Test that the operator dispatch itself works (compiles and runs without crash)
+        CHECK(result.value == 0);
+    }
 
-TEST_CASE("E2E - Compound assignment dispatch (+=)") {
-    const char* source = R"(
+    TEST_CASE("Compound assignment dispatch (+=)") {
+        const char* source = R"(
         trait AddAssign<Rhs>;
         fun AddAssign.add_assign(other: Rhs);
 
@@ -731,13 +733,13 @@ TEST_CASE("E2E - Compound assignment dispatch (+=)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "11\n22\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "11\n22\n");
+    }
 
-TEST_CASE("E2E - Bitwise operator dispatch on structs") {
-    const char* source = R"(
+    TEST_CASE("Bitwise operator dispatch on structs") {
+        const char* source = R"(
         trait BitAnd<Rhs>;
         fun BitAnd.bit_and(other: Rhs): Self;
 
@@ -767,13 +769,13 @@ TEST_CASE("E2E - Bitwise operator dispatch on structs") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "15\n255\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "15\n255\n");
+    }
 
-TEST_CASE("E2E - New operators on primitives (^ << >>)") {
-    const char* source = R"(
+    TEST_CASE("New operators on primitives (^ << >>)") {
+        const char* source = R"(
         fun main(): i32 {
             var a: i32 = 0xFF;
             var b: i32 = 0x0F;
@@ -792,13 +794,13 @@ TEST_CASE("E2E - New operators on primitives (^ << >>)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "240\n16\n32\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "240\n16\n32\n");
+    }
 
-TEST_CASE("E2E - New compound assignments on primitives (&= |= ^= <<= >>=)") {
-    const char* source = R"(
+    TEST_CASE("New compound assignments on primitives (&= |= ^= <<= >>=)") {
+        const char* source = R"(
         fun main(): i32 {
             var a: i32 = 0xFF;
             a &= 0x0F;
@@ -824,13 +826,13 @@ TEST_CASE("E2E - New compound assignments on primitives (&= |= ^= <<= >>=)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "15\n255\n240\n256\n32\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "15\n255\n240\n256\n32\n");
+    }
 
-TEST_CASE("E2E - Default type param (for Add without explicit <Vec2>)") {
-    const char* source = R"(
+    TEST_CASE("Default type param (for Add without explicit <Vec2>)") {
+        const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
 
@@ -853,13 +855,13 @@ TEST_CASE("E2E - Default type param (for Add without explicit <Vec2>)") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "4\n6\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "4\n6\n");
+    }
 
-TEST_CASE("E2E - Nested generics with >> token splitting") {
-    const char* source = R"(
+    TEST_CASE("Nested generics with >> token splitting") {
+        const char* source = R"(
         struct Box<T> {
             value: T;
         }
@@ -871,15 +873,15 @@ TEST_CASE("E2E - Nested generics with >> token splitting") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.value == 42);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
 
-// ========== Index Operator Dispatch Tests ==========
+    // ========== Index Operator Dispatch Tests ==========
 
-TEST_CASE("E2E - Index read dispatch on struct") {
-    const char* source = R"(
+    TEST_CASE("Index read dispatch on struct") {
+        const char* source = R"(
         struct Grid {
             a: i32;
             b: i32;
@@ -901,13 +903,13 @@ TEST_CASE("E2E - Index read dispatch on struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "10\n20\n30\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n20\n30\n");
+    }
 
-TEST_CASE("E2E - Index write dispatch on struct") {
-    const char* source = R"(
+    TEST_CASE("Index write dispatch on struct") {
+        const char* source = R"(
         struct Grid {
             a: i32;
             b: i32;
@@ -938,13 +940,13 @@ TEST_CASE("E2E - Index write dispatch on struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "100\n200\n300\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "100\n200\n300\n");
+    }
 
-TEST_CASE("E2E - Index compound assignment dispatch on struct") {
-    const char* source = R"(
+    TEST_CASE("Index compound assignment dispatch on struct") {
+        const char* source = R"(
         struct Grid {
             a: i32;
             b: i32;
@@ -975,13 +977,13 @@ TEST_CASE("E2E - Index compound assignment dispatch on struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(result.success);
-    CHECK(result.stdout_output == "15\n30\n45\n");
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "15\n30\n45\n");
+    }
 
-TEST_CASE("E2E - Index error: no index method on struct") {
-    const char* source = R"(
+    TEST_CASE("Index error: no index method on struct") {
+        const char* source = R"(
         struct Foo {
             x: i32;
         }
@@ -993,12 +995,12 @@ TEST_CASE("E2E - Index error: no index method on struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);
+    }
 
-TEST_CASE("E2E - Index error: no index_mut method on struct") {
-    const char* source = R"(
+    TEST_CASE("Index error: no index_mut method on struct") {
+        const char* source = R"(
         struct Grid {
             a: i32;
             b: i32;
@@ -1016,6 +1018,8 @@ TEST_CASE("E2E - Index error: no index_mut method on struct") {
         }
     )";
 
-    TestResult result = run_and_capture(source, "main");
-    CHECK(!result.success);
-}
+        TestResult result = run_and_capture(source, "main");
+        CHECK(!result.success);
+    }
+
+}  // TEST_SUITE("E2E Traits")
