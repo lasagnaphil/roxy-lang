@@ -544,6 +544,36 @@ TEST_SUITE("E2E Strings") {
         CHECK(result.stdout_output == "world\nhello\n");
     }
 
+    TEST_CASE("str_substr at end boundary returns empty") {
+        const char* source = R"(
+        fun main(): i32 {
+            var s: string = "hello";
+            var sub: string = str_substr(s, 5, 0);  // start == len, empty
+            print(f"[{sub}]");
+            return 0;
+        }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "[]\n");
+    }
+
+    TEST_CASE("str_substr out-of-bounds with overflow-prone lengths is rejected") {
+        // start + sub_len overflows i32 if added naively; the bounds check must
+        // reject this cleanly rather than relying on signed-overflow UB.
+        const char* source = R"(
+        fun main(): i32 {
+            var s: string = "hello";
+            var sub: string = str_substr(s, 2000000000, 2000000000);
+            return 0;
+        }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
+
     TEST_CASE("str_to_f64 basic") {
         const char* source = R"(
         fun main(): i32 {

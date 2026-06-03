@@ -880,7 +880,13 @@ static void native_str_substr(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     i32 start = static_cast<i32>(regs[first_arg + 1]);
     i32 sub_len = static_cast<i32>(regs[first_arg + 2]);
     u32 str_len = string_length(str);
-    if (start < 0 || sub_len < 0 || static_cast<u32>(start + sub_len) > str_len) {
+    // Bounds check without the `start + sub_len` signed-overflow UB: require
+    // start <= str_len, then sub_len <= str_len - start (computed in u32, and
+    // safe to subtract because the prior clause short-circuits when start is
+    // past the end).
+    if (start < 0 || sub_len < 0 ||
+        static_cast<u32>(start) > str_len ||
+        static_cast<u32>(sub_len) > str_len - static_cast<u32>(start)) {
         vm->error = "str_substr: index out of bounds";
         return;
     }
