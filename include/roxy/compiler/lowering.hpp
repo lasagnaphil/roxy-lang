@@ -61,6 +61,12 @@ private:
     bool has_register(ValueId value) const;
     u8 bump_register();  // Allocate next fresh register with bounds check
 
+    // Grow the register window to at least `needed_regs` for a call's
+    // argument/return block. Stops if bump_register hits the 255-register cap
+    // (which reports an error) so a call needing more than 255 registers fails
+    // cleanly instead of looping forever.
+    void ensure_register_window(u16 needed_regs);
+
     // Register spilling
     void spill_furthest();
     u8 get_result_register(ValueId value);

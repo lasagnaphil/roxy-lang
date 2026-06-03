@@ -1,6 +1,8 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
 
+#include <string>
+
 using namespace rx;
 
 // ============================================================================
@@ -594,6 +596,23 @@ TEST_SUITE("E2E Parameters") {
         TestResult result = run_and_capture(source, "main");
         CHECK(result.success);
         CHECK(result.value == 4);
+    }
+
+    TEST_CASE("call exceeding the 255-register window fails to compile (no hang)") {
+        // A call whose argument window exceeds 255 registers must produce a
+        // clean register-overflow error during lowering, not spin forever in
+        // the register-window pre-allocation loop.
+        std::string params, args;
+        for (int i = 0; i < 300; i++) {
+            if (i) { params += ", "; args += ", "; }
+            params += "a" + std::to_string(i) + ": i32";
+            args += std::to_string(i);
+        }
+        std::string source = "fun big(" + params + "): i32 { return a0; }\n"
+                             "fun main(): i32 { return big(" + args + "); }\n";
+
+        TestResult result = run_and_capture(source.c_str(), "main");
+        CHECK_FALSE(result.success);
     }
 
 }  // TEST_SUITE("E2E Parameters")

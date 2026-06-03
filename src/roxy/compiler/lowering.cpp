@@ -267,9 +267,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                         [this](Type* t) { return get_struct_slot_count(t); });
 
                     u16 needed_regs = static_cast<u16>(dst) + static_cast<u16>(extra_regs_for_return) + 1 + static_cast<u16>(total_arg_regs);
-                    while (m_next_reg < needed_regs) {
-                        bump_register();
-                    }
+                    ensure_register_window(needed_regs);
                 }
 
                 if (inst->op == IROp::CallExternal && inst->result.is_valid()) {
@@ -295,9 +293,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                         [this](Type* t) { return get_struct_slot_count(t); });
 
                     u16 needed_regs = static_cast<u16>(dst) + static_cast<u16>(extra_regs_for_return) + 1 + static_cast<u16>(total_arg_regs);
-                    while (m_next_reg < needed_regs) {
-                        bump_register();
-                    }
+                    ensure_register_window(needed_regs);
                 }
 
                 // CallIndirect (closure dispatch): callee resolved at runtime, but the
@@ -330,9 +326,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                     }
 
                     u16 needed_regs = static_cast<u16>(dst) + static_cast<u16>(extra_regs_for_return) + 1 + static_cast<u16>(total_arg_regs);
-                    while (m_next_reg < needed_regs) {
-                        bump_register();
-                    }
+                    ensure_register_window(needed_regs);
                 }
 
                 alloc_point++;
@@ -654,6 +648,16 @@ u8 BytecodeBuilder::bump_register() {
         return 0xFF;
     }
     return static_cast<u8>(m_next_reg++);
+}
+
+void BytecodeBuilder::ensure_register_window(u16 needed_regs) {
+    while (m_next_reg < needed_regs) {
+        u16 before = m_next_reg;
+        bump_register();
+        // bump_register caps at 255 and reports an error without advancing;
+        // stop here so a >255-register call window doesn't spin forever.
+        if (m_next_reg == before) break;
+    }
 }
 
 u8 BytecodeBuilder::allocate_register(ValueId value) {
