@@ -259,6 +259,14 @@ static void call_cleanup_destructor(RoxyVM* vm, u16 func_idx, void* obj_ptr) {
     interpret(vm, saved_depth);
 }
 
+// Delete a noncopyable value stored at `base` — a u32 slot pointer into a struct
+// field, list element, or map key/value bucket. The "pointer vs. embedded value"
+// distinction is the entry descriptor's free_obj flag: pointer-shaped values
+// (uniq/list/map/coro) hold a pointer in the first two slots, while embedded
+// value structs live in place at `base`. Mutually recursive with delete_value.
+static void delete_slot_entry(RoxyVM* vm, const u32* base,
+                              const BCDeleteDesc& desc, const BCFunction* func);
+
 // Recursively delete a single noncopyable value. Walks the BCDeleteDesc
 // descriptor tree to handle arbitrarily nested types: uniq T, value structs
 // with destructors, List<noncopyable>, Map<K, noncopyable V>, etc.
@@ -283,9 +291,8 @@ static void delete_value(RoxyVM* vm, void* ptr,
         if (header->elements && desc.container.elem_desc_idx != 0xFFFF) {
             const BCDeleteDesc& elem_desc = func->delete_descs[desc.container.elem_desc_idx];
             for (u32 i = 0; i < header->length; i++) {
-                u32* slot = header->elements + i * header->element_slot_count;
-                u64 val = static_cast<u64>(slot[0]) | (static_cast<u64>(slot[1]) << 32);
-                delete_value(vm, reinterpret_cast<void*>(val), elem_desc, func);
+                delete_slot_entry(vm, header->elements + static_cast<size_t>(i) * header->element_slot_count,
+                                  elem_desc, func);
             }
         }
         free(header->elements);
@@ -296,25 +303,20 @@ static void delete_value(RoxyVM* vm, void* ptr,
     case BCDeleteDesc::Map: { // iterate occupied buckets, recurse, free bucket buffers
         MapHeader* header = get_map_header(ptr);
         if (header->capacity > 0 && header->distances) {
-            u32 vsc = header->value_slot_count;
+            // Keys and values are each `capacity * *_slot_count` u32 slots; bucket
+            // i's entry starts at base + i * slot_count. delete_slot_entry then
+            // handles pointer vs. embedded value structs uniformly.
             for (u32 i = 0; i < header->capacity; i++) {
                 if (header->distances[i] == 0) continue;
                 if (desc.container.key_desc_idx != 0xFFFF) {
                     const BCDeleteDesc& key_desc = func->delete_descs[desc.container.key_desc_idx];
-                    delete_value(vm, reinterpret_cast<void*>(header->keys[i]), key_desc, func);
+                    delete_slot_entry(vm, header->keys + static_cast<size_t>(i) * header->key_slot_count,
+                                      key_desc, func);
                 }
                 if (desc.container.elem_desc_idx != 0xFFFF) {
                     const BCDeleteDesc& val_desc = func->delete_descs[desc.container.elem_desc_idx];
-                    // Pointer-typed values (uniq, list, map, etc.) occupy 2 u32 slots;
-                    // read them as a u64 and pass the pointer to delete_value. For
-                    // wider struct values, cleanup of nested noncopyable fields is
-                    // not yet supported here — this path predates struct-valued maps
-                    // and only fires for Map<K, noncopyable-primitive>.
-                    u64 val_bits = 0;
-                    u32 copy_slots = vsc < 2 ? vsc : 2;
-                    memcpy(&val_bits, header->values + static_cast<size_t>(i) * vsc,
-                           sizeof(u32) * copy_slots);
-                    delete_value(vm, reinterpret_cast<void*>(val_bits), val_desc, func);
+                    delete_slot_entry(vm, header->values + static_cast<size_t>(i) * header->value_slot_count,
+                                      val_desc, func);
                 }
             }
         }
@@ -346,16 +348,7 @@ static void delete_value(RoxyVM* vm, void* ptr,
             }
 
             const BCDeleteDesc& field_desc = func->delete_descs[action.field_desc_idx];
-            u32* field_slots = slots + action.slot_offset;
-            if (field_desc.free_obj) {
-                // Heap-pointer field (uniq/list/map/coro): load the pointer.
-                u64 field_ptr = static_cast<u64>(field_slots[0]) |
-                                (static_cast<u64>(field_slots[1]) << 32);
-                delete_value(vm, reinterpret_cast<void*>(field_ptr), field_desc, func);
-            } else {
-                // Embedded value struct: the field's data lives in place.
-                delete_value(vm, field_slots, field_desc, func);
-            }
+            delete_slot_entry(vm, slots + action.slot_offset, field_desc, func);
         }
         break;
     }
@@ -363,6 +356,18 @@ static void delete_value(RoxyVM* vm, void* ptr,
 
     if (desc.free_obj) {
         object_free(vm, ptr);
+    }
+}
+
+static void delete_slot_entry(RoxyVM* vm, const u32* base,
+                              const BCDeleteDesc& desc, const BCFunction* func) {
+    if (desc.free_obj) {
+        // Pointer-shaped value (uniq/list/map/coro): the slot holds a pointer.
+        u64 ptr = static_cast<u64>(base[0]) | (static_cast<u64>(base[1]) << 32);
+        delete_value(vm, reinterpret_cast<void*>(ptr), desc, func);
+    } else {
+        // Embedded value struct: its data (and owned fields) live in place at `base`.
+        delete_value(vm, const_cast<u32*>(base), desc, func);
     }
 }
 

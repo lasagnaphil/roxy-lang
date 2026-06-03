@@ -525,3 +525,54 @@ TEST_CASE("E2E - List<i32>: while loop with negative-sentinel guard terminates")
     CHECK(result.success);
     CHECK(result.value == 3);
 }
+
+// ============================================================================
+// Element cleanup for noncopyable value-struct elements (regression).
+// List element cleanup must pass the in-place element address to delete_value
+// for value structs (free_obj == false), not load the first two slots as a
+// pointer. Older code always loaded a pointer, corrupting cleanup of
+// List<value-struct-with-owned-fields>.
+// ============================================================================
+
+TEST_CASE("E2E - List<value-struct with destructor>: per-element cleanup") {
+    // Each Item is an inline value struct with a user destructor. When the list
+    // is destroyed at scope exit, each element's destructor must run with the
+    // correct `self`, in element order.
+    const char* source = R"(
+        struct Item { id: i32; }
+        fun delete Item() { print(f"del {self.id}"); }
+
+        fun main(): i32 {
+            var lst: List<Item> = List<Item>();
+            lst.push(Item { id = 1 });
+            lst.push(Item { id = 2 });
+            lst.push(Item { id = 3 });
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "del 1\ndel 2\ndel 3\n");
+}
+
+TEST_CASE("E2E - List<struct with uniq field>: per-element field cleanup") {
+    // Holder is an inline value struct owning a uniq Inner. Destroying the list
+    // must walk each element's fields in place and free the owned Inner.
+    const char* source = R"(
+        struct Inner { tag: i32; }
+        fun delete Inner() { print(f"inner {self.tag}"); }
+        struct Holder { val: uniq Inner; }
+
+        fun main(): i32 {
+            var lst: List<Holder> = List<Holder>();
+            lst.push(Holder { val = uniq Inner { tag = 10 } });
+            lst.push(Holder { val = uniq Inner { tag = 20 } });
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "inner 10\ninner 20\n");
+}

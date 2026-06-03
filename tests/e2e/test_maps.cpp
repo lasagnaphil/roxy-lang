@@ -613,3 +613,91 @@ TEST_CASE("E2E - Map<Struct, i32>: custom hash survives rehash") {
     CHECK(result.success);
     CHECK(result.value == 18);
 }
+
+// ============================================================================
+// Bucket cleanup for noncopyable keys / values (regression).
+// On map destruction, each occupied bucket's key and value must be deleted at
+// the correct slot base (keys/values + i * *_slot_count) and dispatched by the
+// entry descriptor's free_obj flag. Older code read keys[i] (wrong bucket,
+// 32-bit-truncated) and treated values as pointers, corrupting cleanup of
+// Map<noncopyable-key, V> and Map<K, struct-value-with-owned-fields>.
+// ============================================================================
+
+TEST_CASE("E2E - Map<string, value-struct with destructor>: value cleanup") {
+    const char* source = R"(
+        struct Item { id: i32; }
+        fun delete Item() { print(f"del {self.id}"); }
+
+        fun main(): i32 {
+            var m: Map<string, Item> = Map<string, Item>();
+            m.insert("a", Item { id = 7 });
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "del 7\n");
+}
+
+TEST_CASE("E2E - Map<string, struct with uniq field>: value field cleanup") {
+    const char* source = R"(
+        struct Inner { tag: i32; }
+        fun delete Inner() { print(f"inner {self.tag}"); }
+        struct Holder { val: uniq Inner; }
+
+        fun main(): i32 {
+            var m: Map<string, Holder> = Map<string, Holder>();
+            m.insert("k", Holder { val = uniq Inner { tag = 30 } });
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "inner 30\n");
+}
+
+TEST_CASE("E2E - Map<string, value-struct>: all occupied buckets cleaned up") {
+    // Order-independent: each destructor prints the same token, so the count of
+    // tokens proves every occupied bucket was visited at the right slot base.
+    const char* source = R"(
+        struct Item { id: i32; }
+        fun delete Item() { print("x"); }
+
+        fun main(): i32 {
+            var m: Map<string, Item> = Map<string, Item>();
+            m.insert("a", Item { id = 1 });
+            m.insert("b", Item { id = 2 });
+            m.insert("c", Item { id = 3 });
+            m.insert("d", Item { id = 4 });
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "x\nx\nx\nx\n");
+}
+
+TEST_CASE("E2E - Map<noncopyable struct key, V>: key cleanup") {
+    // K is a noncopyable struct key (has a destructor) with custom Hash/Eq.
+    // Destroying the map must run each key's destructor with the correct `self`
+    // (keys + i * key_slot_count), not the truncated keys[i].
+    const char* source = R"(
+        struct K { a: i32; }
+        fun K.hash(): u64 for Hash { return u64(self.a); }
+        fun K.eq(other: K): bool for Eq { return self.a == other.a; }
+        fun delete K() { print(f"delkey {self.a}"); }
+
+        fun main(): i32 {
+            var m: Map<K, i32> = Map<K, i32>();
+            m.insert(K { a = 5 }, 100);
+            return 0;
+        }
+    )";
+
+    TestResult result = run_and_capture(source, "main");
+    CHECK(result.success);
+    CHECK(result.stdout_output == "delkey 5\n");
+}
