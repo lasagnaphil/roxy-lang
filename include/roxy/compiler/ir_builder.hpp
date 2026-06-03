@@ -95,7 +95,6 @@ private:
     ValueId emit_load_ptr(ValueId ptr, u32 slot_count, Type* result_type);
     ValueId emit_store_ptr(ValueId ptr, ValueId value, u32 slot_count, Type* result_type);
     void emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_count);
-    ValueId emit_var_addr(StringView name, Type* result_type);
 
     // Reference counting for constraint reference model
     void emit_ref_inc(ValueId ptr);

@@ -117,7 +117,6 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     // Reset state
     m_value_to_reg.clear();
     m_value_to_stack_slot.clear();
-    m_var_name_to_stack_slot.clear();
     m_value_types.clear();
     m_block_offsets.clear();
     m_unfusable_cmp_pcs.clear();
@@ -1026,7 +1025,7 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
                 // Const ops have no operands; results are what we're testing.
                 case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
                 case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
-                case IROp::StackAlloc: case IROp::BlockArg: case IROp::VarAddr:
+                case IROp::StackAlloc: case IROp::BlockArg:
                 case IROp::Yield:
                     break;
             }
@@ -1225,7 +1224,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                 // No operands
                 case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
                 case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
-                case IROp::StackAlloc: case IROp::BlockArg: case IROp::VarAddr:
+                case IROp::StackAlloc: case IROp::BlockArg:
                     break;
             }
             point++;
@@ -2353,26 +2352,6 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             u8 slot_count = static_cast<u8>(inst->store_ptr.slot_count);
             emit_abc(Opcode::SET_FIELD, ptr_reg, val_reg, slot_count);
             emit(0);  // offset = 0
-            break;
-        }
-
-        case IROp::VarAddr: {
-            // Get address of local variable - lookup its stack slot and emit STACK_ADDR
-            StringView name = inst->var_addr.name;
-
-            // Check if this variable already has a stack slot from StackAlloc
-            // If not, we need to allocate one on-demand
-            auto it = m_var_name_to_stack_slot.find(name);
-            if (it != m_var_name_to_stack_slot.end()) {
-                emit_abi(Opcode::STACK_ADDR, dst, static_cast<u16>(it->second));
-            } else {
-                // Allocate a new stack slot for this variable
-                u32 slot_offset = m_next_stack_slot;
-                m_next_stack_slot += 1;  // Assume 1 slot for now (primitives)
-                m_var_name_to_stack_slot[name] = slot_offset;
-                emit_abi(Opcode::STACK_ADDR, dst, static_cast<u16>(slot_offset));
-            }
-            spill_if_needed(inst->result, dst);
             break;
         }
 

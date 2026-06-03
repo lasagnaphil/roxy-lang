@@ -331,7 +331,7 @@ static void remap_inst_values(const tsl::robin_map<u32, ValueId>& value_map, IRI
     switch (inst->op) {
         case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
         case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
-        case IROp::StackAlloc: case IROp::VarAddr: case IROp::BlockArg:
+        case IROp::StackAlloc: case IROp::BlockArg:
             break;
         case IROp::GetField: case IROp::GetFieldAddr:
             inst->field.object = remap_value(value_map, inst->field.object);

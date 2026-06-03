@@ -524,7 +524,6 @@ TEST_CASE("IR Optimize - is_cse_eligible classification") {
     CHECK_FALSE(is_cse_eligible(IROp::Nullify));
     // Stack alloc / addressing — fresh-address semantics.
     CHECK_FALSE(is_cse_eligible(IROp::StackAlloc));
-    CHECK_FALSE(is_cse_eligible(IROp::VarAddr));
     // BlockArg is not a real instruction in current IR.
     CHECK_FALSE(is_cse_eligible(IROp::BlockArg));
 }

@@ -341,19 +341,11 @@ BCModule* Compiler::link_modules() {
     IRModule merged_ir;
     merged_ir.name = "linked";
 
-    // Map from (module_name, func_name) to global function index
-    tsl::robin_map<StringView, u32> func_name_to_global_idx;
-
-    // Collect all functions
+    // Collect all functions. Function names are assumed unique across modules
+    // (non-pub names are already module-prefixed by mangle_module_local).
     for (u32 idx : m_compile_order) {
         IRModule* ir_mod = m_module_states[idx].ir_module;
-        StringView mod_name = m_sources[idx].name;
-
         for (IRFunction* func : ir_mod->functions) {
-            // For linked module, we may need to prefix function names to avoid conflicts
-            // For now, assume function names are unique across modules
-            u32 global_idx = static_cast<u32>(merged_ir.functions.size());
-            func_name_to_global_idx[func->name] = global_idx;
             merged_ir.functions.push_back(func);
         }
     }

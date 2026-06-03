@@ -100,7 +100,6 @@ const char* ir_op_to_string(IROp op) {
 
         case IROp::LoadPtr:  return "load_ptr";
         case IROp::StorePtr: return "store_ptr";
-        case IROp::VarAddr:  return "var_addr";
 
         case IROp::Cast:     return "cast";
 
@@ -389,12 +388,6 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
             StaticString<32> tmp;
             format_to(tmp, " ({})", inst->store_ptr.slot_count);
             for (char c : tmp) out.push_back(c);
-            break;
-        }
-
-        case IROp::VarAddr: {
-            append_str(out, " &");
-            append_string_view(out, inst->var_addr.name);
             break;
         }
 

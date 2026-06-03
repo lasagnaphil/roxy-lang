@@ -1369,15 +1369,6 @@ void IRBuilder::emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_
     }
 }
 
-ValueId IRBuilder::emit_var_addr(StringView name, Type* result_type) {
-    IRInst* inst = emit_inst(IROp::VarAddr, result_type);
-    if (inst) {
-        inst->var_addr.name = name;
-        return inst->result;
-    }
-    return ValueId::invalid();
-}
-
 void IRBuilder::emit_ref_inc(ValueId ptr) {
     IRInst* inst = emit_inst(IROp::RefInc, m_types.void_type());
     if (inst) inst->unary = ptr;

@@ -163,7 +163,6 @@ enum class IROp : u8 {
     // Pointer operations (for out/inout parameters)
     LoadPtr,        // Load value through pointer: dst = *ptr
     StorePtr,       // Store value through pointer: *ptr = val
-    VarAddr,        // Get address of local variable
 
     // Type casting
     Cast,           // Generic cast - uses source_type in CastData
@@ -263,11 +262,6 @@ struct StorePtrData {
     u32 slot_count;  // Number of slots to store (1 or 2 for primitives)
 };
 
-// Variable address data
-struct VarAddrData {
-    StringView name;  // Name of the local variable
-};
-
 // Container kind for IndexGet/IndexSet
 enum class ContainerKind : u8 { List, Map };
 
@@ -317,7 +311,6 @@ struct IRInst {
         StructCopyData struct_copy;     // For StructCopy
         LoadPtrData load_ptr;           // For LoadPtr
         StorePtrData store_ptr;         // For StorePtr
-        VarAddrData var_addr;           // For VarAddr
         CastData cast;                  // For Cast
         IndexData index_data;           // For IndexGet/IndexSet
         u32 block_arg_index;            // For BlockArg (parameter index)

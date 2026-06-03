@@ -142,7 +142,6 @@ void CEmitter::collect_value_types(const IRFunction* func) {
     m_value_types.clear();
     m_stack_alloc_values.clear();
     m_pointer_values.clear();
-    m_var_name_to_value.clear();
     m_const_int_values.clear();
 
     for (u32 i = 0; i < func->params.size(); i++) {
@@ -156,26 +155,12 @@ void CEmitter::collect_value_types(const IRFunction* func) {
         if (i < func->param_is_ptr.size() && func->param_is_ptr[i]) {
             m_pointer_values.insert(func->params[i].value.id);
         }
-        if (func->params[i].name.data() && func->params[i].name.size() > 0) {
-            u32 name_hash = 0;
-            for (u32 c = 0; c < func->params[i].name.size(); c++) {
-                name_hash = name_hash * 31 + func->params[i].name.data()[c];
-            }
-            m_var_name_to_value[name_hash] = func->params[i].value;
-        }
     }
 
     for (u32 b = 0; b < func->blocks.size(); b++) {
         const IRBlock* block = func->blocks[b];
         for (u32 p = 0; p < block->params.size(); p++) {
             m_value_types[block->params[p].value.id] = block->params[p].type;
-            if (block->params[p].name.data() && block->params[p].name.size() > 0) {
-                u32 name_hash = 0;
-                for (u32 c = 0; c < block->params[p].name.size(); c++) {
-                    name_hash = name_hash * 31 + block->params[p].name.data()[c];
-                }
-                m_var_name_to_value[name_hash] = block->params[p].value;
-            }
         }
         for (u32 i = 0; i < block->instructions.size(); i++) {
             const IRInst* inst = block->instructions[i];
@@ -920,37 +905,6 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             out.append(" = ");
             emit_value(inst->store_ptr.value, out);
             out.append(";\n");
-            return;
-        }
-        case IROp::VarAddr: {
-            // v1 = &v0;  or  v1 = &v0_struct;
-            out.append("    ");
-            emit_value(inst->result, out);
-            out.append(" = &");
-
-            // Look up the variable name to find the ValueId
-            StringView var_name = inst->var_addr.name;
-            u32 name_hash = 0;
-            for (u32 c = 0; c < var_name.size(); c++) {
-                name_hash = name_hash * 31 + var_name.data()[c];
-            }
-
-            auto it = m_var_name_to_value.find(name_hash);
-            if (it != m_var_name_to_value.end()) {
-                ValueId target_value = it->second;
-                if (is_stack_alloc_value(target_value)) {
-                    emit_value(target_value, out);
-                    out.append("_struct;\n");
-                } else {
-                    emit_value(target_value, out);
-                    out.append(";\n");
-                }
-            } else {
-                // Fallback: emit a comment and abort
-                out.append("0; /* VarAddr: unknown variable '");
-                out.append(var_name.data(), var_name.size());
-                out.append("' */\n");
-            }
             return;
         }
 

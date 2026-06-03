@@ -133,7 +133,6 @@ private:
     tsl::robin_map<u32, Type*> m_value_types;         // ValueId.id -> Type*
     tsl::robin_set<u32> m_stack_alloc_values;          // Tracks StackAlloc result ValueIds
     tsl::robin_set<u32> m_pointer_values;              // Values that are struct pointers (StackAlloc, struct params, GetFieldAddr)
-    tsl::robin_map<u32, ValueId> m_var_name_to_value;  // BlockParam hash -> ValueId (for VarAddr)
     tsl::robin_map<u32, i64> m_const_int_values;       // ValueId.id -> ConstInt value (used at call sites that need compile-time-known indices, e.g. roxy_map_alloc's hash_fn_index/eq_fn_index args)
 
     // User-registered natives referenced by CallNative ops in this module.
