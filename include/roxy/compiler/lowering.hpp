@@ -148,6 +148,12 @@ private:
     // Patch jump offsets after all blocks are emitted
     void patch_jumps();
 
+    // Signed branch offset from `from_idx` to `to_idx` (PC-relative, accounting
+    // for the +1 advance). Reports an error and returns 0 if the distance does
+    // not fit the i16 AOFF field, rather than silently truncating to a wrong
+    // target — a function with >32K code words between branch and target.
+    i16 branch_offset(u32 from_idx, u32 to_idx);
+
     // Fuse adjacent compare + conditional branch into single two-word instruction
     void fuse_compare_branch();
 

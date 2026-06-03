@@ -376,4 +376,27 @@ TEST_SUITE("E2E Basics") {
         }
     }
 
+    TEST_CASE("function exceeding the i16 branch-offset range is rejected") {
+        // A branch spanning more than 32K code words cannot be encoded in the
+        // i16 AOFF offset field; the compiler must reject it rather than
+        // silently truncating the offset to a wrong jump target. The if-body
+        // statements depend on a runtime param and aren't CSE-able, so the
+        // optimizer can't shrink the span below the limit.
+        std::string body;
+        for (int i = 0; i < 40000; i++) {
+            body += "        n = n * n;\n";
+        }
+        std::string source =
+            "fun f(n: i32): i32 {\n"
+            "    if (n > 0) {\n" + body +
+            "    }\n"
+            "    return n;\n"
+            "}\n"
+            "fun main(): i32 { return f(0); }\n";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source.c_str());
+        CHECK(module == nullptr);  // branch offset out of i16 range -> compile fails
+    }
+
 }  // TEST_SUITE("E2E Basics")

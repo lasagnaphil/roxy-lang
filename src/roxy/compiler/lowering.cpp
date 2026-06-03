@@ -2448,7 +2448,7 @@ void BytecodeBuilder::lower_terminator(IRBlock* block) {
 
             // Patch JMP_IF_NOT to jump here (else label)
             u32 else_label = m_current_func->code.size();
-            i16 skip_offset = static_cast<i16>(else_label - jmp_if_not_idx - 1);
+            i16 skip_offset = branch_offset(jmp_if_not_idx, else_label);
             m_current_func->code[jmp_if_not_idx] = encode_aoff(Opcode::JMP_IF_NOT, cond, skip_offset);
 
             // Emit else-branch arguments (only executes when cond is false)
@@ -2499,6 +2499,16 @@ void BytecodeBuilder::lower_terminator(IRBlock* block) {
     }
 }
 
+i16 BytecodeBuilder::branch_offset(u32 from_idx, u32 to_idx) {
+    i64 delta = static_cast<i64>(to_idx) - static_cast<i64>(from_idx) - 1;
+    if (delta < -32768 || delta > 32767) {
+        report_error("Branch offset out of range: function is too large "
+                     "(more than 32K code words between a branch and its target)");
+        return 0;
+    }
+    return static_cast<i16>(delta);
+}
+
 void BytecodeBuilder::patch_jumps() {
     for (const JumpPatch& patch : m_jump_patches) {
         auto it = m_block_offsets.find(patch.target_block.id);
@@ -2506,9 +2516,7 @@ void BytecodeBuilder::patch_jumps() {
             continue;  // Invalid target
         }
 
-        u32 target_offset = it->second;
-        u32 current_offset = patch.instruction_index;
-        i16 relative_offset = static_cast<i16>(target_offset - current_offset - 1);
+        i16 relative_offset = branch_offset(patch.instruction_index, it->second);
 
         // Patch the instruction
         u32& instr = m_current_func->code[patch.instruction_index];
