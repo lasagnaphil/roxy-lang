@@ -274,6 +274,13 @@ bool vm_call_index(RoxyVM* vm, u32 func_index, Span<Value> args) {
     }
     vm->local_stack_top = local_stack_base + func->local_stack_slots;
 
+    // Guard against overflowing the fixed-size call stack (e.g. an embedder
+    // re-entering the VM while frames are still active).
+    if (vm->call_stack_size >= vm->call_stack_capacity) {
+        vm->error = "Call stack overflow";
+        return false;
+    }
+
     // Push call frame
     // For top-level call, return_reg is 0 (result goes to R0 of this frame)
     vm->call_stack[vm->call_stack_size++] = CallFrame(func, func->code.data(), registers, 0, local_stack_base);

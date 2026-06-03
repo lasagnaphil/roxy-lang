@@ -176,4 +176,16 @@ TEST_SUITE("E2E Recursion") {
         CHECK(result.stdout_output == "1\n1\n0\n1\n");
     }
 
+    TEST_CASE("unbounded recursion fails gracefully (call stack overflow)") {
+        // Unbounded recursion must hit the call-stack-depth guard in CALL and
+        // return a clean error, not write past the fixed-size call-frame array.
+        const char* source = R"(
+        fun f(n: i32): i32 { return f(n - 1); }
+        fun main(): i32 { return f(1000000); }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK_FALSE(result.success);
+    }
+
 }  // TEST_SUITE("E2E Recursion")

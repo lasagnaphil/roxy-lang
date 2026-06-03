@@ -1419,6 +1419,10 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             vm->error = "Register file overflow";
             return false;
         }
+        if (vm->call_stack_size >= vm->call_stack_capacity) {
+            vm->error = "Call stack overflow";
+            return false;
+        }
 
         frame->pc = pc;
 
@@ -1499,6 +1503,10 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
 
         if (vm->register_top + callee->register_count > vm->register_file_size) {
             vm->error = "Register file overflow";
+            return false;
+        }
+        if (vm->call_stack_size >= vm->call_stack_capacity) {
+            vm->error = "Call stack overflow";
             return false;
         }
 
