@@ -121,6 +121,36 @@ bool SemanticAnalyzer::too_many_errors() const {
     return m_errors.size() >= limit;
 }
 
+Type* SemanticAnalyzer::register_builtin_trait(
+        StringView name, StringView method_name,
+        Span<Type*> method_param_types, Type* return_type,
+        Span<TypeKind> primitive_kinds, bool register_trait_on_primitives) {
+    Type* trait_type = m_types.trait_type(name, nullptr);
+    m_type_env.register_trait_type(name, trait_type);
+
+    TraitMethodInfo tmi;
+    tmi.name = method_name;
+    tmi.param_types = method_param_types;
+    tmi.return_type = return_type;
+    tmi.decl = nullptr;
+    tmi.has_default = false;
+    trait_type->trait_info.methods =
+        Span<TraitMethodInfo>(m_allocator.emplace<TraitMethodInfo>(tmi), 1);
+
+    for (TypeKind tk : primitive_kinds) {
+        MethodInfo mi;
+        mi.name = method_name;
+        mi.param_types = method_param_types;
+        mi.return_type = return_type;
+        mi.decl = nullptr;
+        m_types.register_primitive_method(tk, mi);
+        if (register_trait_on_primitives) {
+            m_types.register_primitive_trait(tk, trait_type);
+        }
+    }
+    return trait_type;
+}
+
 void SemanticAnalyzer::run_declaration_passes(Program* program) {
     m_program = program;
 
@@ -155,54 +185,18 @@ void SemanticAnalyzer::run_declaration_passes(Program* program) {
     // Pass 1.7: Register builtin traits (Printable, Hash, Exception)
     // and primitive operator methods — guarded against re-initialization
     if (!m_type_env.printable_type()) {
-        Type* printable_type = m_types.trait_type(StringView("Printable", 9), nullptr);
-        m_type_env.set_printable_type(printable_type);
-        m_type_env.register_trait_type(StringView("Printable", 9), printable_type);
-
-        TraitMethodInfo trait_method_info;
-        trait_method_info.name = StringView("to_string", 9);
-        trait_method_info.param_types = Span<Type*>(nullptr, 0);
-        trait_method_info.return_type = m_types.string_type();
-        trait_method_info.decl = nullptr;
-        trait_method_info.has_default = false;
-
-        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
-            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
-        tmi_data[0] = trait_method_info;
-        printable_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
-
         TypeKind prim_kinds[] = {
             TypeKind::Bool, TypeKind::I32, TypeKind::I64,
             TypeKind::F32, TypeKind::F64, TypeKind::String
         };
-        for (TypeKind tk : prim_kinds) {
-            MethodInfo method_info;
-            method_info.name = StringView("to_string", 9);
-            method_info.param_types = Span<Type*>(nullptr, 0);
-            method_info.return_type = m_types.string_type();
-            method_info.decl = nullptr;
-            m_types.register_primitive_method(tk, method_info);
-            m_types.register_primitive_trait(tk, printable_type);
-        }
+        Type* printable_type = register_builtin_trait(
+            StringView("Printable", 9), StringView("to_string", 9),
+            Span<Type*>(nullptr, 0), m_types.string_type(),
+            Span<TypeKind>(prim_kinds, 6), /*register_trait_on_primitives=*/true);
+        m_type_env.set_printable_type(printable_type);
     }
 
     if (!m_type_env.hash_type()) {
-        Type* hash_trait_type = m_types.trait_type(StringView("Hash", 4), nullptr);
-        m_type_env.set_hash_type(hash_trait_type);
-        m_type_env.register_trait_type(StringView("Hash", 4), hash_trait_type);
-
-        TraitMethodInfo trait_method_info;
-        trait_method_info.name = StringView("hash", 4);
-        trait_method_info.param_types = Span<Type*>(nullptr, 0);
-        trait_method_info.return_type = m_types.u64_type();
-        trait_method_info.decl = nullptr;
-        trait_method_info.has_default = false;
-
-        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
-            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
-        tmi_data[0] = trait_method_info;
-        hash_trait_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
-
         TypeKind hashable_kinds[] = {
             TypeKind::Bool,
             TypeKind::I8, TypeKind::I16, TypeKind::I32, TypeKind::I64,
@@ -210,15 +204,11 @@ void SemanticAnalyzer::run_declaration_passes(Program* program) {
             TypeKind::F32, TypeKind::F64,
             TypeKind::String
         };
-        for (TypeKind tk : hashable_kinds) {
-            MethodInfo method_info;
-            method_info.name = StringView("hash", 4);
-            method_info.param_types = Span<Type*>(nullptr, 0);
-            method_info.return_type = m_types.u64_type();
-            method_info.decl = nullptr;
-            m_types.register_primitive_method(tk, method_info);
-            m_types.register_primitive_trait(tk, hash_trait_type);
-        }
+        Type* hash_trait_type = register_builtin_trait(
+            StringView("Hash", 4), StringView("hash", 4),
+            Span<Type*>(nullptr, 0), m_types.u64_type(),
+            Span<TypeKind>(hashable_kinds, 12), /*register_trait_on_primitives=*/true);
+        m_type_env.set_hash_type(hash_trait_type);
     }
 
     // Builtin `Eq` trait used by Map's struct-key dispatch — `Map<K, V>` uses
@@ -233,51 +223,27 @@ void SemanticAnalyzer::run_declaration_passes(Program* program) {
     // operator overloading — the trait-decl handler below merges that with
     // this builtin instead of erroring on duplicate.
     if (!m_type_env.eq_type()) {
-        Type* eq_trait_type = m_types.trait_type(StringView("Eq", 2), nullptr);
+        // Required method: fun Eq.eq(other: Self): bool. Eq is intentionally not
+        // registered on primitives (see comment above), so primitive_kinds is
+        // empty and register_trait_on_primitives is irrelevant.
+        Span<Type*> eq_params(m_allocator.emplace<Type*>(m_types.self_type()), 1);
+        Type* eq_trait_type = register_builtin_trait(
+            StringView("Eq", 2), StringView("eq", 2),
+            eq_params, m_types.bool_type(),
+            Span<TypeKind>(), /*register_trait_on_primitives=*/false);
         m_type_env.set_eq_type(eq_trait_type);
-        m_type_env.register_trait_type(StringView("Eq", 2), eq_trait_type);
-
-        // Required method: fun Eq.eq(other: Self): bool
-        Type** eq_param_types = reinterpret_cast<Type**>(
-            m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
-        eq_param_types[0] = m_types.self_type();
-
-        TraitMethodInfo trait_method_info;
-        trait_method_info.name = StringView("eq", 2);
-        trait_method_info.param_types = Span<Type*>(eq_param_types, 1);
-        trait_method_info.return_type = m_types.bool_type();
-        trait_method_info.decl = nullptr;
-        trait_method_info.has_default = false;
-
-        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
-            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
-        tmi_data[0] = trait_method_info;
-        eq_trait_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
     }
 
     if (!m_type_env.exception_type()) {
-        Type* exception_trait_type = m_types.trait_type(StringView("Exception", 9), nullptr);
+        // `message` is installed on ExceptionRef as a primitive method, but the
+        // Exception trait itself is not registered on it (catch-all handles only
+        // message()), so register_trait_on_primitives is false.
+        TypeKind exc_kinds[] = { TypeKind::ExceptionRef };
+        Type* exception_trait_type = register_builtin_trait(
+            StringView("Exception", 9), StringView("message", 7),
+            Span<Type*>(nullptr, 0), m_types.string_type(),
+            Span<TypeKind>(exc_kinds, 1), /*register_trait_on_primitives=*/false);
         m_type_env.set_exception_type(exception_trait_type);
-        m_type_env.register_trait_type(StringView("Exception", 9), exception_trait_type);
-
-        TraitMethodInfo trait_method_info;
-        trait_method_info.name = StringView("message", 7);
-        trait_method_info.param_types = Span<Type*>(nullptr, 0);
-        trait_method_info.return_type = m_types.string_type();
-        trait_method_info.decl = nullptr;
-        trait_method_info.has_default = false;
-
-        TraitMethodInfo* tmi_data = reinterpret_cast<TraitMethodInfo*>(
-            m_allocator.alloc_bytes(sizeof(TraitMethodInfo), alignof(TraitMethodInfo)));
-        tmi_data[0] = trait_method_info;
-        exception_trait_type->trait_info.methods = Span<TraitMethodInfo>(tmi_data, 1);
-
-        MethodInfo method_info;
-        method_info.name = StringView("message", 7);
-        method_info.param_types = Span<Type*>(nullptr, 0);
-        method_info.return_type = m_types.string_type();
-        method_info.decl = nullptr;
-        m_types.register_primitive_method(TypeKind::ExceptionRef, method_info);
     }
 
     // Pass 1.8: Register built-in operator trait methods for primitive types
@@ -3964,11 +3930,7 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
                     Expr* src;
                     if (is_outermost_crossed) {
                         // Direct identifier in the enclosing scope.
-                        src = m_allocator.emplace<Expr>();
-                        src->kind = AstKind::ExprIdentifier;
-                        src->loc = captured_loc;
-                        src->identifier.name = captured_name;
-                        src->resolved_type = captured_type;
+                        src = make_identifier_expr(captured_name, captured_type, captured_loc);
                     } else {
                         // Read from the immediately-enclosing context's env.
                         // crossed_ctx_indices is innermost-first, so the
@@ -3980,19 +3942,9 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
                             ? m_types.ref_type(enclosing_env_type)
                             : nullptr;
 
-                        Expr* env_id = m_allocator.emplace<Expr>();
-                        env_id->kind = AstKind::ExprIdentifier;
-                        env_id->loc = captured_loc;
-                        env_id->identifier.name = StringView("__env", 5);
-                        env_id->resolved_type = enclosing_env_ref;
-
-                        Expr* getter = m_allocator.emplace<Expr>();
-                        getter->kind = AstKind::ExprGet;
-                        getter->loc = captured_loc;
-                        getter->get.object = env_id;
-                        getter->get.name = captured_name;
-                        getter->resolved_type = captured_type;
-                        src = getter;
+                        Expr* env_id = make_identifier_expr(StringView("__env", 5),
+                                                            enclosing_env_ref, captured_loc);
+                        src = make_get_expr(env_id, captured_name, captured_type, captured_loc);
                     }
 
                     u32 index = static_cast<u32>(ctx.captures.size());
@@ -4012,11 +3964,8 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
                 ? m_types.ref_type(innermost_env_type)
                 : nullptr;
 
-            Expr* env_id = m_allocator.emplace<Expr>();
-            env_id->kind = AstKind::ExprIdentifier;
-            env_id->loc = captured_loc;
-            env_id->identifier.name = StringView("__env", 5);
-            env_id->resolved_type = innermost_env_ref;
+            Expr* env_id = make_identifier_expr(StringView("__env", 5),
+                                                innermost_env_ref, captured_loc);
 
             expr->kind = AstKind::ExprGet;
             expr->get.object = env_id;
@@ -4054,6 +4003,33 @@ static StringView alloc_view_fmt(BumpAllocator& alloc, const char* fmt, u32 id) 
     return StringView(buf, static_cast<u32>(n));
 }
 
+Expr* SemanticAnalyzer::make_identifier_expr(StringView name, Type* type, SourceLocation loc) {
+    Expr* e = m_allocator.emplace<Expr>();
+    e->kind = AstKind::ExprIdentifier;
+    e->loc = loc;
+    e->identifier.name = name;
+    e->resolved_type = type;
+    return e;
+}
+
+Expr* SemanticAnalyzer::make_get_expr(Expr* object, StringView name, Type* type, SourceLocation loc) {
+    Expr* e = m_allocator.emplace<Expr>();
+    e->kind = AstKind::ExprGet;
+    e->loc = loc;
+    e->get.object = object;
+    e->get.name = name;
+    e->resolved_type = type;
+    return e;
+}
+
+Expr* SemanticAnalyzer::make_this_expr(Type* type, SourceLocation loc) {
+    Expr* e = m_allocator.emplace<Expr>();
+    e->kind = AstKind::ExprThis;
+    e->loc = loc;
+    e->resolved_type = type;
+    return e;
+}
+
 void SemanticAnalyzer::ensure_self_captured_through(u32 target_idx, Type* struct_type,
                                                     SourceLocation loc) {
     if (target_idx >= m_lambda_contexts.size()) return;
@@ -4074,10 +4050,7 @@ void SemanticAnalyzer::ensure_self_captured_through(u32 target_idx, Type* struct
         // Outermost lambda: source is ExprThis (resolves to the method's
         // `self` parameter at IR-build time, where the IR is being emitted in
         // the enclosing method's context).
-        src = m_allocator.emplace<Expr>();
-        src->kind = AstKind::ExprThis;
-        src->loc = loc;
-        src->resolved_type = ref_self;
+        src = make_this_expr(ref_self, loc);
     } else {
         // Inner lambda: read from the immediately-enclosing lambda's env.
         // That outer's `__self` field was just populated by the recursive call
@@ -4087,18 +4060,8 @@ void SemanticAnalyzer::ensure_self_captured_through(u32 target_idx, Type* struct
             ? m_types.ref_type(outer.env_struct_type)
             : nullptr;
 
-        Expr* env_id = m_allocator.emplace<Expr>();
-        env_id->kind = AstKind::ExprIdentifier;
-        env_id->loc = loc;
-        env_id->identifier.name = StringView("__env", 5);
-        env_id->resolved_type = outer_env_ref;
-
-        src = m_allocator.emplace<Expr>();
-        src->kind = AstKind::ExprGet;
-        src->loc = loc;
-        src->get.object = env_id;
-        src->get.name = StringView("__self", 6);
-        src->resolved_type = ref_self;
+        Expr* env_id = make_identifier_expr(StringView("__env", 5), outer_env_ref, loc);
+        src = make_get_expr(env_id, StringView("__self", 6), ref_self, loc);
     }
 
     CaptureInfo info{};
@@ -4212,31 +4175,17 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
             // either directly from the enclosing scope (outermost) or from
             // the next-outer lambda's env field (intermediate / innermost).
             auto build_src_for_level = [&](i32 enclosing_ctx_idx) -> Expr* {
-                Expr* src = m_allocator.emplace<Expr>();
                 if (enclosing_ctx_idx < 0) {
-                    src->kind = AstKind::ExprIdentifier;
-                    src->loc = entry.loc;
-                    src->identifier.name = entry.name;
-                    src->resolved_type = outer_sym->type;
-                    return src;
+                    return make_identifier_expr(entry.name, outer_sym->type, entry.loc);
                 }
                 LambdaCaptureContext& enclosing_ctx =
                     *m_lambda_contexts[enclosing_ctx_idx];
                 Type* enclosing_env_ref = enclosing_ctx.env_struct_type
                     ? m_types.ref_type(enclosing_ctx.env_struct_type)
                     : nullptr;
-                Expr* env_id = m_allocator.emplace<Expr>();
-                env_id->kind = AstKind::ExprIdentifier;
-                env_id->loc = entry.loc;
-                env_id->identifier.name = StringView("__env", 5);
-                env_id->resolved_type = enclosing_env_ref;
-
-                src->kind = AstKind::ExprGet;
-                src->loc = entry.loc;
-                src->get.object = env_id;
-                src->get.name = entry.name;
-                src->resolved_type = outer_sym->type;
-                return src;
+                Expr* env_id = make_identifier_expr(StringView("__env", 5),
+                                                    enclosing_env_ref, entry.loc);
+                return make_get_expr(env_id, entry.name, outer_sym->type, entry.loc);
             };
 
             // Add Move captures to crossed enclosing contexts (outermost
@@ -4325,30 +4274,15 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
         auto build_outer_self_ref_source = [&](SourceLocation loc) -> Expr* {
             Type* ref_self = m_types.ref_type(struct_type);
             if (m_lambda_contexts.empty()) {
-                Expr* e = m_allocator.emplace<Expr>();
-                e->kind = AstKind::ExprThis;
-                e->loc = loc;
-                e->resolved_type = ref_self;
-                return e;
+                return make_this_expr(ref_self, loc);
             }
             LambdaCaptureContext& outer = *m_lambda_contexts.back();
             Type* outer_env_ref = outer.env_struct_type
                 ? m_types.ref_type(outer.env_struct_type)
                 : nullptr;
 
-            Expr* env_id = m_allocator.emplace<Expr>();
-            env_id->kind = AstKind::ExprIdentifier;
-            env_id->loc = loc;
-            env_id->identifier.name = StringView("__env", 5);
-            env_id->resolved_type = outer_env_ref;
-
-            Expr* getter = m_allocator.emplace<Expr>();
-            getter->kind = AstKind::ExprGet;
-            getter->loc = loc;
-            getter->get.object = env_id;
-            getter->get.name = StringView("__self", 6);
-            getter->resolved_type = ref_self;
-            return getter;
+            Expr* env_id = make_identifier_expr(StringView("__env", 5), outer_env_ref, loc);
+            return make_get_expr(env_id, StringView("__self", 6), ref_self, loc);
         };
 
         if (entry.mode == CaptureMode::Copy) {
@@ -4376,12 +4310,8 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
             for (u32 i = 0; i < fields.size(); i++) {
                 Expr* self_ref = build_outer_self_ref_source(entry.loc);
 
-                Expr* field_get = m_allocator.emplace<Expr>();
-                field_get->kind = AstKind::ExprGet;
-                field_get->loc = entry.loc;
-                field_get->get.object = self_ref;
-                field_get->get.name = fields[i].name;
-                field_get->resolved_type = fields[i].type;
+                Expr* field_get = make_get_expr(self_ref, fields[i].name,
+                                                fields[i].type, entry.loc);
 
                 inits[i].name = fields[i].name;
                 inits[i].value = field_get;
@@ -6092,13 +6022,10 @@ Type* SemanticAnalyzer::analyze_this_expr(Expr* expr) {
             // type drives the resulting expr's resolved_type (ref Self for
             // implicit / `[ref]`-equivalent, value Self for [copy], weak Self
             // for [weak]).
-            Expr* env_id = m_allocator.emplace<Expr>();
-            env_id->kind = AstKind::ExprIdentifier;
-            env_id->loc = expr->loc;
-            env_id->identifier.name = StringView("__env", 5);
-            env_id->resolved_type = innermost.env_struct_type
+            Type* env_ref = innermost.env_struct_type
                 ? m_types.ref_type(innermost.env_struct_type)
                 : nullptr;
+            Expr* env_id = make_identifier_expr(StringView("__env", 5), env_ref, expr->loc);
 
             expr->kind = AstKind::ExprGet;
             expr->get.object = env_id;

@@ -222,6 +222,13 @@ private:
     Type* analyze_string_interp_expr(Expr* expr);
     Type* analyze_lambda_expr(Expr* expr);
 
+    // Builders for synthetic AST nodes (used by lambda capture lowering and
+    // self-capture rewriting). Each bump-allocates an Expr and fills in the
+    // tagged-union member plus loc/resolved_type.
+    Expr* make_identifier_expr(StringView name, Type* type, SourceLocation loc);
+    Expr* make_get_expr(Expr* object, StringView name, Type* type, SourceLocation loc);
+    Expr* make_this_expr(Type* type, SourceLocation loc);
+
     // Recursively populates implicit ref-self captures in lambda contexts
     // 0..target_idx (inclusive). Outermost reads `self` directly via ExprThis;
     // every inner one reads via ExprGet(__env, __self) on the next-outer env.
@@ -262,6 +269,16 @@ private:
 
     // Register built-in operator methods for primitive types
     void register_primitive_operator_methods();
+
+    // Register a builtin trait (Printable/Hash/Eq/Exception): create the trait
+    // type, register it by name, and attach a single required method. The method
+    // (and, when register_trait_on_primitives is set, the trait itself) is also
+    // installed on each kind in primitive_kinds. Returns the trait type so the
+    // caller can stash it in the matching TypeEnv slot.
+    Type* register_builtin_trait(StringView name, StringView method_name,
+                                 Span<Type*> method_param_types, Type* return_type,
+                                 Span<TypeKind> primitive_kinds,
+                                 bool register_trait_on_primitives);
 
     // Convert a Type* to a null-terminated string for use in error messages
     String type_string(Type* type);
