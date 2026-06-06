@@ -393,6 +393,25 @@ private:
     // Merge move states from two branches (e.g., if/else)
     void merge_move_states(const MoveStateSnapshot& then_states, const MoveStateSnapshot& else_states);
 
+    // Branch-merge helpers shared by if/when/try (all operate on m_move_states).
+    //
+    // Two-way merge for if/else: keeps the surviving branch's snapshot when one
+    // branch terminates, merges both when neither does, and sets
+    // m_branch_terminates = then_terminates && else_terminates. A no-else `if`
+    // calls this with else_states = pre_branch and else_terminates = false.
+    void merge_two_branches(const MoveStateSnapshot& pre_branch,
+                            const MoveStateSnapshot& then_states,
+                            const MoveStateSnapshot& else_states,
+                            bool then_terminates, bool else_terminates);
+
+    // N-way merge for when/try: merges every non-terminating snapshot into
+    // m_move_states. Returns true when every branch terminates (the join point
+    // is unreachable), in which case m_move_states is restored to the first
+    // snapshot. Does NOT touch m_branch_terminates — callers set it, since
+    // when/try diverge afterwards (try has a finally clause).
+    bool merge_branch_snapshots(const Vector<MoveStateSnapshot>& snapshots,
+                                const Vector<bool>& terminates);
+
     // Check live uniq variables at scope exit for named-only destructors
     void check_scope_exit_uniq_destructors(const Scope* scope, SourceLocation loc);
     void check_all_scopes_uniq_destructors(SourceLocation loc, ScopeKind stop_kind);

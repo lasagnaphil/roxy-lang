@@ -1539,6 +1539,48 @@ void SemanticAnalyzer::merge_move_states(const MoveStateSnapshot& then_states,
     }
 }
 
+void SemanticAnalyzer::merge_two_branches(const MoveStateSnapshot& pre_branch,
+                                          const MoveStateSnapshot& then_states,
+                                          const MoveStateSnapshot& else_states,
+                                          bool then_terminates, bool else_terminates) {
+    // Terminating branches contribute no state to the post-merge point.
+    // Pick the surviving branch's snapshot; if both terminate, the code
+    // after is unreachable but we pick then_states arbitrarily.
+    if (then_terminates && !else_terminates) {
+        restore_move_states(else_states);
+    } else if (!then_terminates && else_terminates) {
+        restore_move_states(then_states);
+    } else {
+        restore_move_states(pre_branch);
+        merge_move_states(then_states, else_states);
+    }
+    m_branch_terminates = then_terminates && else_terminates;
+}
+
+bool SemanticAnalyzer::merge_branch_snapshots(const Vector<MoveStateSnapshot>& snapshots,
+                                              const Vector<bool>& terminates) {
+    // Pairwise-merge only the surviving (non-terminating) snapshots.
+    bool have_survivor = false;
+    for (u32 i = 0; i < snapshots.size(); i++) {
+        if (terminates[i]) continue;
+        if (!have_survivor) {
+            restore_move_states(snapshots[i]);
+            have_survivor = true;
+        } else {
+            MoveStateSnapshot current = save_move_states();
+            merge_move_states(current, snapshots[i]);
+        }
+    }
+
+    // No survivor means every branch terminates: the join point is
+    // unreachable. Restore an arbitrary snapshot and report it upward.
+    if (!have_survivor && !snapshots.empty()) {
+        restore_move_states(snapshots[0]);
+        return true;
+    }
+    return false;
+}
+
 bool SemanticAnalyzer::check_not_moved(StringView name, SourceLocation loc) {
     Symbol* sym = m_symbols.lookup(name);
     if (!sym) return true;
@@ -3158,30 +3200,15 @@ void SemanticAnalyzer::analyze_if_stmt(Stmt* stmt) {
         MoveStateSnapshot else_states = save_move_states();
         bool else_terminates = m_branch_terminates;
 
-        // Terminating branches contribute no state to the post-merge point.
-        // Pick the surviving branch's snapshot; if both terminate, the code
-        // after is unreachable but we pick then_states arbitrarily.
-        if (then_terminates && !else_terminates) {
-            restore_move_states(else_states);
-        } else if (!then_terminates && else_terminates) {
-            restore_move_states(then_states);
-        } else {
-            restore_move_states(pre_branch_states);
-            merge_move_states(then_states, else_states);
-        }
-
-        m_branch_terminates = then_terminates && else_terminates;
+        merge_two_branches(pre_branch_states, then_states, else_states,
+                           then_terminates, else_terminates);
     } else {
-        // No else branch — the implicit else is the pre-branch state (no moves).
-        // If the then-branch terminates, only the fall-through survives.
-        if (then_terminates) {
-            restore_move_states(pre_branch_states);
-        } else {
-            restore_move_states(pre_branch_states);
-            merge_move_states(then_states, pre_branch_states);
-        }
-        // A no-else if never proves termination: the condition may be false.
-        m_branch_terminates = false;
+        // No else branch — the implicit else is the pre-branch state (no moves)
+        // and can never terminate. merge_two_branches therefore leaves
+        // m_branch_terminates false: a no-else if never proves termination
+        // because the condition may be false.
+        merge_two_branches(pre_branch_states, then_states, pre_branch_states,
+                           then_terminates, /*else_terminates=*/false);
     }
 }
 
@@ -3461,8 +3488,8 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
 
     // Save move states before branching
     MoveStateSnapshot pre_when_states = save_move_states();
-    std::vector<MoveStateSnapshot> case_snapshots;
-    std::vector<bool> case_terminates;
+    Vector<MoveStateSnapshot> case_snapshots;
+    Vector<bool> case_terminates;
 
     // Analyze each case
     for (auto& wc : ws.cases) {
@@ -3539,28 +3566,11 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
         case_terminates.push_back(false);
     }
 
-    // Pairwise-merge only the surviving (non-terminating) case snapshots.
-    int first_survivor = -1;
-    for (size_t i = 0; i < case_snapshots.size(); i++) {
-        if (case_terminates[i]) continue;
-        if (first_survivor < 0) {
-            restore_move_states(case_snapshots[i]);
-            first_survivor = (int)i;
-        } else {
-            MoveStateSnapshot current = save_move_states();
-            merge_move_states(current, case_snapshots[i]);
-        }
-    }
-
-    // If every path terminates (only possible when else exists; otherwise the
-    // pre-when fall-through is always non-terminating), the code after the
-    // when is unreachable — pick any snapshot and report termination upward.
-    if (first_survivor < 0 && !case_snapshots.empty()) {
-        restore_move_states(case_snapshots[0]);
-        m_branch_terminates = true;
-    } else {
-        m_branch_terminates = false;
-    }
+    // Merge the surviving (non-terminating) case paths. If every path
+    // terminates (only possible when an else exists; otherwise the pre-when
+    // fall-through is always non-terminating), the code after the when is
+    // unreachable and termination propagates upward.
+    m_branch_terminates = merge_branch_snapshots(case_snapshots, case_terminates);
 }
 
 void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
@@ -3616,8 +3626,8 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
 
     // Normal try exit is one exit path. If the try body ends in an
     // unconditional return/throw, the normal-exit path is unreachable.
-    std::vector<MoveStateSnapshot> exit_paths;
-    std::vector<bool> exit_terminates;
+    Vector<MoveStateSnapshot> exit_paths;
+    Vector<bool> exit_terminates;
     exit_paths.push_back(post_try);
     exit_terminates.push_back(try_terminates);
 
@@ -3674,25 +3684,9 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
         exit_terminates.push_back(m_branch_terminates);
     }
 
-    // Pairwise-merge only the surviving (non-terminating) exit paths.
-    int first_survivor = -1;
-    for (size_t i = 0; i < exit_paths.size(); i++) {
-        if (exit_terminates[i]) continue;
-        if (first_survivor < 0) {
-            restore_move_states(exit_paths[i]);
-            first_survivor = (int)i;
-        } else {
-            MoveStateSnapshot current = save_move_states();
-            merge_move_states(current, exit_paths[i]);
-        }
-    }
-
-    // If every exit path terminates, code after the try is unreachable —
-    // pick any snapshot and propagate termination upward.
-    bool all_terminate = (first_survivor < 0) && !exit_paths.empty();
-    if (all_terminate) {
-        restore_move_states(exit_paths[0]);
-    }
+    // Merge the surviving (non-terminating) exit paths. If every exit path
+    // terminates, code after the try is unreachable and all_terminate is true.
+    bool all_terminate = merge_branch_snapshots(exit_paths, exit_terminates);
 
     // Analyze finally body if present (yield is NOT allowed here).
     // Finally runs on every exit path, so its own terminators are the
