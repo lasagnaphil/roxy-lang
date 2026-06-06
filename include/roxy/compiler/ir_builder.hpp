@@ -85,6 +85,16 @@ private:
     ValueId emit_call(StringView func_name, Span<ValueId> args, Type* result_type);
     ValueId emit_call_native(StringView func_name, Span<ValueId> args, Type* result_type, u32 native_index);
     ValueId emit_call_external(StringView module_name, StringView func_name, Span<ValueId> args, Type* result_type);
+
+    // Native-vs-script dispatch: emit CallNative when `name` is a registered native,
+    // otherwise a plain Call. Folds the get_index(name) >= 0 ? ... : ... idiom.
+    ValueId emit_call_resolved(StringView name, Span<ValueId> args, Type* result_type);
+    // Emit a CALL_INDIRECT through an already-evaluated closure value. Returns
+    // invalid when the current block is terminated (emit_inst guard).
+    ValueId emit_call_indirect(ValueId callee_val, Span<ValueId> args, Type* result_type);
+    // Build a method-argument span [self] + args, with a trailing output pointer
+    // appended when output_ptr is valid (large struct return convention).
+    Span<ValueId> prepend_self(ValueId self, Span<ValueId> args, ValueId output_ptr = ValueId::invalid());
     ValueId emit_index_get(ValueId container, ValueId index, ContainerKind kind, Type* result_type);
     void emit_index_set(ValueId container, ValueId index, ValueId value, ContainerKind kind);
     ValueId emit_new(StringView type_name, Span<ValueId> args, Type* result_type);
@@ -133,6 +143,35 @@ private:
     ValueId gen_binary_expr(Expr* expr);
     ValueId gen_ternary_expr(Expr* expr);
     ValueId gen_call_expr(Expr* expr);
+
+    // gen_call_expr decomposition. gen_call_expr handles the early type-driven
+    // delegations (cast / constructor / list / map / super), lowers arguments once
+    // via lower_call_args, dispatches on callee shape, then reloads inout args and
+    // marks moved arguments. The dispatch helpers consume the shared CallLowering.
+    struct InoutArg {
+        StringView name;     // identifier to reload after the call
+        ValueId addr;        // stack address passed as the out/inout argument
+        Type* type;
+        u32 slot_count;
+    };
+    struct CallLowering {
+        Span<ValueId> args;           // user args (addresses for out/inout)
+        Span<ValueId> final_args;     // args, plus the hidden output ptr for large struct returns
+        Vector<InoutArg> inout_args;  // primitive out/inout identifiers needing a post-call reload
+        ValueId output_ptr = ValueId::invalid();  // stack slot for large struct returns
+        bool returns_large_struct = false;
+    };
+    ValueId gen_list_constructor(Expr* expr);  // List<T>() / List<T>(cap)
+    ValueId gen_map_constructor(Expr* expr);   // Map<K,V>() / Map<K,V>(cap)
+    CallLowering lower_call_args(Expr* expr);
+    ValueId gen_call_direct(Expr* expr, const CallLowering& lowered);  // callee is an identifier
+    ValueId gen_call_member(Expr* expr, const CallLowering& lowered);  // callee is obj.method / module.fn
+    void reload_inout_args(const CallLowering& lowered);
+    void mark_call_args_moved(Expr* expr);
+    // Bytecode function index of struct_type's `method_name` (mangled at its
+    // defining type) within the current module, or -1 if absent.
+    i32 find_method_fn_index(Type* struct_type, StringView method_name);
+
     ValueId gen_primitive_cast(Expr* expr);
     ValueId gen_constructor_call(Expr* expr);
     ValueId gen_super_call(Expr* expr);  // Handle super() and super.method() calls

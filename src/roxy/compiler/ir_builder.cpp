@@ -3275,182 +3275,434 @@ ValueId IRBuilder::gen_ternary_expr(Expr* expr) {
     return phi;
 }
 
+ValueId IRBuilder::emit_call_resolved(StringView name, Span<ValueId> args, Type* result_type) {
+    i32 native_idx = m_registry.get_index(name);
+    if (native_idx >= 0) {
+        return emit_call_native(name, args, result_type, static_cast<u8>(native_idx));
+    }
+    return emit_call(name, args, result_type);
+}
+
+ValueId IRBuilder::emit_call_indirect(ValueId callee_val, Span<ValueId> args, Type* result_type) {
+    IRInst* call_inst = emit_inst(IROp::CallIndirect, result_type);
+    if (!call_inst) return ValueId::invalid();
+    call_inst->call_indirect.callee = callee_val;
+    call_inst->call_indirect.args = args;
+    return call_inst->result;
+}
+
+Span<ValueId> IRBuilder::prepend_self(ValueId self, Span<ValueId> args, ValueId output_ptr) {
+    bool has_output = output_ptr.is_valid();
+    u32 extra = has_output ? 2 : 1;
+    Span<ValueId> result = alloc_span<ValueId>(static_cast<u32>(args.size()) + extra);
+    result[0] = self;
+    for (u32 i = 0; i < args.size(); i++) {
+        result[i + 1] = args[i];
+    }
+    if (has_output) {
+        result[args.size() + 1] = output_ptr;
+    }
+    return result;
+}
+
+i32 IRBuilder::find_method_fn_index(Type* struct_type, StringView method_name) {
+    if (!m_module) return -1;
+    Type* found_in = nullptr;
+    const MethodInfo* method_info = m_types.lookup_method(struct_type, method_name, &found_in);
+    if (!method_info || !found_in) return -1;
+    StringView mangled = mangle_method(found_in->struct_info.name, method_name);
+    for (u32 fi = 0; fi < m_module->functions.size(); fi++) {
+        if (m_module->functions[fi]->name == mangled) {
+            return static_cast<i32>(fi);
+        }
+    }
+    return -1;
+}
+
+ValueId IRBuilder::gen_list_constructor(Expr* expr) {
+    // List<T>() / List<T>(cap): two-step allocate+init matching struct constructors.
+    //   1. Call alloc native (element layout args) to get the list pointer
+    //   2. Call the constructor method with [self, user_args...]
+    CallExpr& call_expr = expr->call;
+    Type* list_type = call_expr.callee->resolved_type;
+
+    // Generate user arguments first
+    u32 user_argc = static_cast<u32>(call_expr.arguments.size());
+    Span<ValueId> user_args = alloc_span<ValueId>(user_argc);
+    for (u32 i = 0; i < user_argc; i++) {
+        user_args[i] = gen_expr(call_expr.arguments[i].expr);
+    }
+
+    // Step 1: Allocate empty list with element_slot_count and element_is_inline args
+    StringView alloc_name = list_type->list_info.alloc_native_name;
+    i32 alloc_idx = m_registry.get_index(alloc_name);
+    Type* elem_type = list_type->list_info.element_type;
+    u32 esc = get_type_slot_count(elem_type);
+    bool is_inline = !elem_type->is_struct();
+    ValueId esc_val = emit_const_int(static_cast<i64>(esc), m_types.i32_type());
+    ValueId inline_val = emit_const_int(is_inline ? 1 : 0, m_types.i32_type());
+    Span<ValueId> alloc_args = alloc_span<ValueId>(2);
+    alloc_args[0] = esc_val;
+    alloc_args[1] = inline_val;
+    ValueId list_ptr = emit_call_native(alloc_name, alloc_args, expr->resolved_type,
+                                        static_cast<u8>(alloc_idx));
+
+    // Step 2: Call constructor method with [self, user_args...]
+    StringView ctor_name = call_expr.mangled_name;  // "List$$new"
+    i32 ctor_idx = m_registry.get_index(ctor_name);
+    Span<ValueId> ctor_args = prepend_self(list_ptr, user_args);
+    emit_call_native(ctor_name, ctor_args, m_types.void_type(), static_cast<u8>(ctor_idx));
+
+    return list_ptr;
+}
+
+ValueId IRBuilder::gen_map_constructor(Expr* expr) {
+    // Map<K,V>() / Map<K,V>(cap): like the List constructor but injects a hidden
+    // key_kind argument, and for struct keys passes the user's hash/eq fn indices.
+    CallExpr& call_expr = expr->call;
+    Type* map_resolved_type = call_expr.callee->resolved_type;
+
+    // Generate user arguments first (0 or 1 capacity arg)
+    u32 user_argc = static_cast<u32>(call_expr.arguments.size());
+    Span<ValueId> user_args = alloc_span<ValueId>(user_argc);
+    for (u32 i = 0; i < user_argc; i++) {
+        user_args[i] = gen_expr(call_expr.arguments[i].expr);
+    }
+
+    // Step 1: Allocate empty map with key/value layout. Both keys and values
+    // support variable slot counts; for primitive keys the layout is 2-slot inline
+    // (the u64 register packs the value), for struct keys the layout matches the
+    // struct's slot count and the runtime expects a pointer to the bytes.
+    StringView alloc_name = map_resolved_type->map_info.alloc_native_name;
+    i32 alloc_idx = m_registry.get_index(alloc_name);
+    Type* key_type = map_resolved_type->map_info.key_type;
+    Type* value_type = map_resolved_type->map_info.value_type;
+    u32 ksc = key_type->is_struct() ? get_type_slot_count(key_type) : 2u;
+    bool key_is_inline = !key_type->is_struct();
+    u32 vsc = get_type_slot_count(value_type);
+    bool value_is_inline = !value_type->is_struct();
+
+    // For struct keys, look up the user's hash()/eq() methods and pass their bytecode
+    // indices to the runtime (called via call_user_function during bucket probing).
+    // -1 means "no custom impl, use bytewise dispatch". Custom dispatch fires only
+    // when the struct EXPLICITLY implements both Hash and Eq via `for Hash` / `for Eq`
+    // — just defining hash()/eq() is not enough, matching Rust's HashMap requiring
+    // `impl Hash` + `impl Eq`.
+    i32 hash_fn_index = -1;
+    i32 eq_fn_index = -1;
+    if (key_type->is_struct() && m_module) {
+        Type* hash_trait = m_type_env.hash_type();
+        Type* eq_trait = m_type_env.eq_type();
+        if (hash_trait && m_types.implements_trait(key_type, hash_trait)) {
+            hash_fn_index = find_method_fn_index(key_type, StringView("hash", 4));
+        }
+        if (eq_trait && m_types.implements_trait(key_type, eq_trait)) {
+            eq_fn_index = find_method_fn_index(key_type, StringView("eq", 2));
+        }
+    }
+
+    ValueId ksc_val = emit_const_int(static_cast<i64>(ksc), m_types.i32_type());
+    ValueId kii_val = emit_const_int(key_is_inline ? 1 : 0, m_types.i32_type());
+    ValueId vsc_val = emit_const_int(static_cast<i64>(vsc), m_types.i32_type());
+    ValueId vii_val = emit_const_int(value_is_inline ? 1 : 0, m_types.i32_type());
+    ValueId hash_val = emit_const_int(static_cast<i64>(hash_fn_index), m_types.i32_type());
+    ValueId eq_val = emit_const_int(static_cast<i64>(eq_fn_index), m_types.i32_type());
+    Span<ValueId> alloc_args = alloc_span<ValueId>(6);
+    alloc_args[0] = ksc_val;
+    alloc_args[1] = kii_val;
+    alloc_args[2] = vsc_val;
+    alloc_args[3] = vii_val;
+    alloc_args[4] = hash_val;
+    alloc_args[5] = eq_val;
+    ValueId map_ptr = emit_call_native(alloc_name, alloc_args, expr->resolved_type,
+                                       static_cast<u8>(alloc_idx));
+
+    // Step 2: Call constructor with [self, key_kind, user_args...]. Determine
+    // MapKeyKind from the key type.
+    i32 key_kind_val = static_cast<i32>(MapKeyKind::Integer);  // default
+    if (key_type->kind == TypeKind::F32) {
+        key_kind_val = static_cast<i32>(MapKeyKind::Float32);
+    } else if (key_type->kind == TypeKind::F64) {
+        key_kind_val = static_cast<i32>(MapKeyKind::Float64);
+    } else if (key_type->kind == TypeKind::String) {
+        key_kind_val = static_cast<i32>(MapKeyKind::String);
+    } else if (key_type->is_struct()) {
+        key_kind_val = static_cast<i32>(MapKeyKind::Struct);
+    }
+    ValueId key_kind_const = emit_const_int(static_cast<i64>(key_kind_val), m_types.i32_type());
+
+    StringView ctor_name = call_expr.mangled_name;  // "Map$$new"
+    i32 ctor_idx = m_registry.get_index(ctor_name);
+    // Constructor args: [self, key_kind, optional_capacity]
+    Span<ValueId> ctor_args = alloc_span<ValueId>(user_argc + 2);
+    ctor_args[0] = map_ptr;           // self
+    ctor_args[1] = key_kind_const;    // key_kind (hidden)
+    for (u32 i = 0; i < user_argc; i++) {
+        ctor_args[i + 2] = user_args[i];
+    }
+    emit_call_native(ctor_name, ctor_args, m_types.void_type(), static_cast<u8>(ctor_idx));
+
+    return map_ptr;
+}
+
+IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
+    CallExpr& call_expr = expr->call;
+    CallLowering lowered;
+
+    // Callee returning a large struct gets a hidden output pointer (stack slot).
+    Type* callee_return_type = expr->resolved_type;
+    lowered.returns_large_struct = callee_return_type &&
+        callee_return_type->is_struct() &&
+        callee_return_type->struct_info.slot_count > 4;
+    if (lowered.returns_large_struct) {
+        lowered.output_ptr = emit_stack_alloc(callee_return_type->struct_info.slot_count,
+                                              callee_return_type);
+    }
+
+    // Evaluate arguments - for out/inout args, pass address instead of value
+    Span<ValueId> args = alloc_span<ValueId>(call_expr.arguments.size());
+    for (u32 i = 0; i < call_expr.arguments.size(); i++) {
+        CallArg& arg = call_expr.arguments[i];
+        if (arg.modifier != ParamModifier::None) {
+            // Pass address of lvalue
+            args[i] = gen_lvalue_addr(arg.expr);
+
+            // Track primitive inout/out identifiers for post-call reload. Structs are
+            // modified in place through the pointer, so they need no reload.
+            if (arg.modifier == ParamModifier::Inout || arg.modifier == ParamModifier::Out) {
+                if (arg.expr->kind == AstKind::ExprIdentifier && !m_param_is_ptr.count(arg.expr->identifier.name)) {
+                    Type* type = arg.expr->resolved_type;
+                    if (type && type->is_struct()) {
+                        continue;
+                    }
+                    // Structs skipped above; get_type_slot_count gives the correct width
+                    // for every remaining type (weak=4, uniq/ref/list/map/string/fn=2).
+                    u32 slot_count = get_type_slot_count(type);
+                    if (slot_count == 0) slot_count = 1;
+                    lowered.inout_args.push_back({arg.expr->identifier.name, args[i], type, slot_count});
+                }
+            }
+        } else {
+            args[i] = gen_expr(arg.expr);
+
+            // Consume noncopyable temporaries (ownership transfers to callee).
+            // Nullify is a compile-time annotation — it ends the cleanup record
+            // scope so exception cleanup skips this value after the transfer.
+            if (arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
+                consume_temp_noncopyable(args[i]);
+            }
+
+            // Wrap uniq/ref → weak conversion for call arguments
+            Type* callee_func_type = call_expr.callee->resolved_type;
+            if (callee_func_type && callee_func_type->is_function() &&
+                i < callee_func_type->func_info.param_types.size()) {
+                Type* param_type = callee_func_type->func_info.param_types[i];
+                args[i] = maybe_wrap_weak(args[i], arg.expr->resolved_type, param_type);
+            }
+        }
+    }
+    lowered.args = args;
+
+    // For large struct returns, append the output pointer to arguments
+    if (lowered.returns_large_struct) {
+        Span<ValueId> final_args = alloc_span<ValueId>(args.size() + 1);
+        for (u32 i = 0; i < args.size(); i++) {
+            final_args[i] = args[i];
+        }
+        final_args[args.size()] = lowered.output_ptr;
+        lowered.final_args = final_args;
+    } else {
+        lowered.final_args = args;
+    }
+
+    return lowered;
+}
+
+ValueId IRBuilder::gen_call_direct(Expr* expr, const CallLowering& lowered) {
+    CallExpr& call_expr = expr->call;
+    Span<ValueId> final_args = lowered.final_args;
+
+    // Original (unmangled) callee name from source. For generic calls this is the
+    // template name ("helper"); the symbol table is keyed by the template name, not
+    // the monomorphized name ("helper$i32"), so we look up via orig_name.
+    StringView orig_name = call_expr.callee->identifier.name;
+    // Use the mangled name for generic function calls (e.g., "identity$i32")
+    StringView func_name = call_expr.mangled_name.size() > 0 ? call_expr.mangled_name : orig_name;
+    StringView lookup_name = func_name;
+
+    // Imported functions may have an alias; use the original name for native lookup.
+    Symbol* sym = m_symbols.lookup(orig_name);
+    if (sym && sym->kind == SymbolKind::ImportedFunction) {
+        lookup_name = sym->imported_func.original_name;
+    }
+
+    ValueId result;
+    // Indirect call: callee is a local holding a closure value (Function-typed).
+    // Detect via the local scope map — symbol lookups don't see function-body locals.
+    if (LocalVar* lv = find_local(orig_name); lv && lv->type && lv->type->is_function()) {
+        ValueId closure_val = gen_identifier_expr(call_expr.callee);
+        result = emit_call_indirect(closure_val, final_args, expr->resolved_type);
+    }
+    // Native function
+    else if (i32 native_idx = m_registry.get_index(lookup_name); native_idx >= 0) {
+        result = emit_call_native(lookup_name, final_args, expr->resolved_type, static_cast<u8>(native_idx));
+    } else {
+        // Module-scope non-pub functions are mangled at definition (see build_function);
+        // calls to them must use the mangled name so they resolve within the same module.
+        StringView emit_name = func_name;
+        // For generic calls the template lives in the GenericInstantiator rather than
+        // the symbol table, so `sym` is null. Look up the template there for its is_pub
+        // (build_function uses the same is_pub when emitting the instance).
+        bool is_pub = false;
+        bool is_function_symbol = false;
+        if (sym && sym->kind == SymbolKind::Function) {
+            is_function_symbol = true;
+            is_pub = sym->is_pub;
+        } else if (call_expr.mangled_name.size() > 0 &&
+                   m_type_env.generics().is_generic_fun(orig_name)) {
+            Decl* template_decl = m_type_env.generics().get_generic_fun_decl(orig_name);
+            if (template_decl && template_decl->kind == AstKind::DeclFun) {
+                is_function_symbol = true;
+                is_pub = template_decl->fun_decl.is_pub;
+            }
+        }
+        if (is_function_symbol && !is_pub
+            && orig_name != StringView("main", 4)) {
+            emit_name = mangle_module_local(func_name);
+        }
+        result = emit_call(emit_name, final_args, expr->resolved_type);
+    }
+
+    // For large struct returns, the result is the output pointer (already allocated)
+    if (lowered.returns_large_struct) {
+        result = lowered.output_ptr;
+    }
+    return result;
+}
+
+ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
+    CallExpr& call_expr = expr->call;
+    GetExpr& get_expr = call_expr.callee->get;
+    Span<ValueId> args = lowered.args;
+    Span<ValueId> final_args = lowered.final_args;
+
+    // Module-qualified call: module.function(). The object's resolved_type is null
+    // for module references.
+    if (get_expr.object->kind == AstKind::ExprIdentifier && get_expr.object->resolved_type == nullptr) {
+        StringView module_name = get_expr.object->identifier.name;
+        StringView func_name = get_expr.name;
+        // The function name is just the member name for the native registry.
+        i32 native_idx = m_registry.get_index(func_name);
+        ValueId result;
+        if (native_idx >= 0) {
+            result = emit_call_native(func_name, final_args, expr->resolved_type, static_cast<u8>(native_idx));
+        } else {
+            result = emit_call_external(module_name, func_name, final_args, expr->resolved_type);
+        }
+        if (lowered.returns_large_struct) result = lowered.output_ptr;
+        return result;
+    }
+
+    // Method call: obj.method(args)
+    ValueId obj = gen_expr(get_expr.object);
+    Type* obj_type = get_expr.object->resolved_type;
+    Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
+
+    // Coro method call (resume/done — lowered functions): self is the coroutine object.
+    if (struct_type && struct_type->is_coroutine()) {
+        Span<ValueId> method_args = prepend_self(obj, args);
+        return emit_call(call_expr.mangled_name, method_args, expr->resolved_type);
+    }
+
+    // "Field of function type": obj.callback(args) where callback is a struct field
+    // whose type is fun(...) -> R. Checked before method dispatch since a field name
+    // could collide with a method name (and we want the field).
+    const FieldInfo* fn_field = (struct_type && struct_type->is_struct())
+        ? struct_type->struct_info.find_field(get_expr.name) : nullptr;
+    if (fn_field && fn_field->type && fn_field->type->is_function()) {
+        // Read the closure value from the field, then CALL_INDIRECT.
+        ValueId closure_val = gen_expr(call_expr.callee);
+        return emit_call_indirect(closure_val, final_args, expr->resolved_type);
+    }
+
+    // List/Map builtin native method.
+    if (struct_type && struct_type->is_container()) {
+        StringView native_name = call_expr.mangled_name;
+        i32 native_idx = m_registry.get_index(native_name);
+        Span<ValueId> method_args = prepend_self(obj, args);
+        return emit_call_native(native_name, method_args, expr->resolved_type, static_cast<u8>(native_idx));
+    }
+
+    // User struct method. Look up the method in the type hierarchy to find where it's
+    // defined, so mangling uses the correct struct name (important for inheritance).
+    Type* method_owner = nullptr;
+    StringView method_name = get_expr.name;
+    if (struct_type && struct_type->is_struct()) {
+        lookup_method_in_hierarchy(struct_type, get_expr.name, &method_owner);
+        Type* name_type = method_owner ? method_owner : struct_type;
+        method_name = mangle_method(name_type->struct_info.name, get_expr.name);
+    }
+
+    // [obj] + args, with a trailing output pointer when this returns a large struct
+    // (output_ptr is invalid otherwise, so prepend_self appends nothing).
+    Span<ValueId> method_args = prepend_self(obj, args, lowered.output_ptr);
+    ValueId result = emit_call_resolved(method_name, method_args, expr->resolved_type);
+    if (lowered.returns_large_struct) result = lowered.output_ptr;
+    return result;
+}
+
+void IRBuilder::reload_inout_args(const CallLowering& lowered) {
+    // After the call, reload inout variables from their stack addresses.
+    for (const InoutArg& ia : lowered.inout_args) {
+        ValueId new_val = emit_load_ptr(ia.addr, ia.slot_count, ia.type);
+        define_local(ia.name, new_val, ia.type);
+    }
+}
+
+void IRBuilder::mark_call_args_moved(Expr* expr) {
+    CallExpr& call_expr = expr->call;
+    // Mark owned args passed to owned params as moved (suppresses scope-exit cleanup;
+    // for uniq, mark_moved_from also nulls the register). Skip inout/out: those pass a
+    // pointer to the caller's slot, ownership stays with the caller — marking them moved
+    // would trip a false use-after-move on the next loop iteration and (for noncopyable
+    // types) null out a local the caller still owns.
+    Type* callee_func_type = call_expr.callee->resolved_type;
+    if (!callee_func_type || !callee_func_type->is_function()) return;
+    Span<Type*> param_types = callee_func_type->func_info.param_types;
+    // Method calls include implicit 'self' as param_types[0]; user args start at 1.
+    u32 param_offset = (call_expr.callee->kind == AstKind::ExprGet) ? 1 : 0;
+    for (u32 i = 0; i < call_expr.arguments.size() && (i + param_offset) < param_types.size(); i++) {
+        const CallArg& arg = call_expr.arguments[i];
+        if (arg.modifier != ParamModifier::None) continue;
+        if (arg.expr->kind != AstKind::ExprIdentifier) continue;
+        Type* arg_type = arg.expr->resolved_type;
+        Type* param_type = param_types[i + param_offset];
+        if (arg_type && arg_type->noncopyable() && param_type && param_type->noncopyable()) {
+            // For uniq: null-ify so DEL_OBJ on scope exit is a safe no-op. For value
+            // structs: the bitwise copy IS the move, just suppress cleanup.
+            mark_moved_from(arg.expr->identifier.name);
+        }
+    }
+}
+
 ValueId IRBuilder::gen_call_expr(Expr* expr) {
     CallExpr& call_expr = expr->call;
+    Type* callee_type = call_expr.callee->resolved_type;
 
-    // Check if this is a primitive type cast (set by semantic analysis)
-    if (call_expr.callee->kind == AstKind::ExprIdentifier &&
-        call_expr.callee->resolved_type && call_expr.callee->resolved_type->is_primitive() &&
-        !call_expr.callee->resolved_type->is_void()) {
-        return gen_primitive_cast(expr);
-    }
-
-    // Check if this is a constructor call - callee has a struct type (set by semantic analysis)
-    if (call_expr.callee->kind == AstKind::ExprIdentifier &&
-        call_expr.callee->resolved_type && call_expr.callee->resolved_type->is_struct()) {
-        return gen_constructor_call(expr);
-    }
-
-    // Check if this is a List constructor call: List<i32>() or List<i32>(cap)
-    // Uses two-step allocate+init pattern matching struct constructors:
-    //   1. Call alloc native (no args) to get list pointer
-    //   2. Call constructor method with [self, user_args...]
-    if (call_expr.callee->kind == AstKind::ExprIdentifier &&
-        call_expr.callee->resolved_type && call_expr.callee->resolved_type->is_list()) {
-        // Generate user arguments first
-        u32 user_argc = static_cast<u32>(call_expr.arguments.size());
-        Span<ValueId> user_args = alloc_span<ValueId>(user_argc);
-        for (u32 i = 0; i < user_argc; i++) {
-            user_args[i] = gen_expr(call_expr.arguments[i].expr);
+    // Type-driven early delegations when the callee is a bare identifier.
+    if (call_expr.callee->kind == AstKind::ExprIdentifier && callee_type) {
+        if (callee_type->is_primitive() && !callee_type->is_void()) {
+            return gen_primitive_cast(expr);     // i32(x), f64(y), ...
         }
-
-        // Step 1: Allocate empty list with element_slot_count and element_is_inline args
-        StringView alloc_name = call_expr.callee->resolved_type->list_info.alloc_native_name;
-        i32 alloc_idx = m_registry.get_index(alloc_name);
-        Type* elem_type = call_expr.callee->resolved_type->list_info.element_type;
-        u32 esc = get_type_slot_count(elem_type);
-        bool is_inline = !elem_type->is_struct();
-        ValueId esc_val = emit_const_int(static_cast<i64>(esc), m_types.i32_type());
-        ValueId inline_val = emit_const_int(is_inline ? 1 : 0, m_types.i32_type());
-        Span<ValueId> alloc_args = alloc_span<ValueId>(2);
-        alloc_args[0] = esc_val;
-        alloc_args[1] = inline_val;
-        ValueId list_ptr = emit_call_native(alloc_name, alloc_args, expr->resolved_type,
-                                             static_cast<u8>(alloc_idx));
-
-        // Step 2: Call constructor method with [self, user_args...]
-        StringView ctor_name = call_expr.mangled_name;  // "List$$new"
-        i32 ctor_idx = m_registry.get_index(ctor_name);
-        Span<ValueId> ctor_args = alloc_span<ValueId>(user_argc + 1);
-        ctor_args[0] = list_ptr;  // self
-        for (u32 i = 0; i < user_argc; i++) {
-            ctor_args[i + 1] = user_args[i];
+        if (callee_type->is_struct()) {
+            return gen_constructor_call(expr);   // Foo(...)
         }
-        emit_call_native(ctor_name, ctor_args, m_types.void_type(),
-                         static_cast<u8>(ctor_idx));
-
-        return list_ptr;
-    }
-
-    // Check if this is a Map constructor call: Map<K, V>() or Map<K, V>(cap)
-    // Similar to List but injects a hidden key_kind argument
-    if (call_expr.callee->kind == AstKind::ExprIdentifier &&
-        call_expr.callee->resolved_type && call_expr.callee->resolved_type->is_map()) {
-        Type* map_resolved_type = call_expr.callee->resolved_type;
-
-        // Generate user arguments first (0 or 1 capacity arg)
-        u32 user_argc = static_cast<u32>(call_expr.arguments.size());
-        Span<ValueId> user_args = alloc_span<ValueId>(user_argc);
-        for (u32 i = 0; i < user_argc; i++) {
-            user_args[i] = gen_expr(call_expr.arguments[i].expr);
+        if (callee_type->is_list()) {
+            return gen_list_constructor(expr);   // List<T>() / List<T>(cap)
         }
-
-        // Step 1: Allocate empty map with key/value layout. Both keys and
-        // values support variable slot counts; for primitive keys the layout
-        // is 2-slot inline (the u64 register packs the value), for struct
-        // keys the layout matches the struct's slot count and the runtime
-        // expects a pointer to the bytes.
-        //
-        // For struct keys, we also look up the user's `hash()` / `eq()`
-        // methods (if defined) and pass their bytecode function indices to
-        // the runtime. The runtime calls them via call_user_function during
-        // bucket probing. -1 means "no custom impl, use bytewise dispatch".
-        StringView alloc_name = map_resolved_type->map_info.alloc_native_name;
-        i32 alloc_idx = m_registry.get_index(alloc_name);
-        Type* key_type = map_resolved_type->map_info.key_type;
-        Type* value_type = map_resolved_type->map_info.value_type;
-        u32 ksc = key_type->is_struct() ? get_type_slot_count(key_type) : 2u;
-        bool key_is_inline = !key_type->is_struct();
-        u32 vsc = get_type_slot_count(value_type);
-        bool value_is_inline = !value_type->is_struct();
-
-        // Look up user-defined Hash/Eq methods for struct keys.
-        // Custom dispatch fires only when the struct EXPLICITLY implements
-        // both `Hash` and `Eq` via `for Hash` / `for Eq` impl annotations.
-        // Just defining `hash()` / `eq()` methods without the annotation is
-        // not enough — those only resolve via TypeCache::lookup_method, but
-        // the runtime won't dispatch through them. This matches Rust's
-        // behavior: HashMap requires `impl Hash` and `impl Eq`.
-        i32 hash_fn_index = -1;
-        i32 eq_fn_index = -1;
-        if (key_type->is_struct() && m_module) {
-            Type* hash_trait = m_type_env.hash_type();
-            Type* eq_trait = m_type_env.eq_type();
-            bool impls_hash = hash_trait && m_types.implements_trait(key_type, hash_trait);
-            bool impls_eq = eq_trait && m_types.implements_trait(key_type, eq_trait);
-            if (impls_hash) {
-                Type* found_in = nullptr;
-                const MethodInfo* hash_info = m_types.lookup_method(key_type, StringView("hash", 4), &found_in);
-                if (hash_info && found_in) {
-                    StringView mangled = mangle_method(found_in->struct_info.name, StringView("hash", 4));
-                    for (u32 fi = 0; fi < m_module->functions.size(); fi++) {
-                        if (m_module->functions[fi]->name == mangled) {
-                            hash_fn_index = static_cast<i32>(fi);
-                            break;
-                        }
-                    }
-                }
-            }
-            if (impls_eq) {
-                Type* found_in = nullptr;
-                const MethodInfo* eq_info = m_types.lookup_method(key_type, StringView("eq", 2), &found_in);
-                if (eq_info && found_in) {
-                    StringView mangled = mangle_method(found_in->struct_info.name, StringView("eq", 2));
-                    for (u32 fi = 0; fi < m_module->functions.size(); fi++) {
-                        if (m_module->functions[fi]->name == mangled) {
-                            eq_fn_index = static_cast<i32>(fi);
-                            break;
-                        }
-                    }
-                }
-            }
+        if (callee_type->is_map()) {
+            return gen_map_constructor(expr);    // Map<K,V>() / Map<K,V>(cap)
         }
-
-        ValueId ksc_val = emit_const_int(static_cast<i64>(ksc), m_types.i32_type());
-        ValueId kii_val = emit_const_int(key_is_inline ? 1 : 0, m_types.i32_type());
-        ValueId vsc_val = emit_const_int(static_cast<i64>(vsc), m_types.i32_type());
-        ValueId vii_val = emit_const_int(value_is_inline ? 1 : 0, m_types.i32_type());
-        ValueId hash_val = emit_const_int(static_cast<i64>(hash_fn_index), m_types.i32_type());
-        ValueId eq_val = emit_const_int(static_cast<i64>(eq_fn_index), m_types.i32_type());
-        Span<ValueId> alloc_args = alloc_span<ValueId>(6);
-        alloc_args[0] = ksc_val;
-        alloc_args[1] = kii_val;
-        alloc_args[2] = vsc_val;
-        alloc_args[3] = vii_val;
-        alloc_args[4] = hash_val;
-        alloc_args[5] = eq_val;
-        ValueId map_ptr = emit_call_native(alloc_name, alloc_args, expr->resolved_type,
-                                            static_cast<u8>(alloc_idx));
-
-        // Step 2: Call constructor with [self, key_kind, user_args...]
-        // Determine MapKeyKind from key type
-        i32 key_kind_val = static_cast<i32>(MapKeyKind::Integer); // default
-        if (key_type->kind == TypeKind::F32) {
-            key_kind_val = static_cast<i32>(MapKeyKind::Float32);
-        } else if (key_type->kind == TypeKind::F64) {
-            key_kind_val = static_cast<i32>(MapKeyKind::Float64);
-        } else if (key_type->kind == TypeKind::String) {
-            key_kind_val = static_cast<i32>(MapKeyKind::String);
-        } else if (key_type->is_struct()) {
-            key_kind_val = static_cast<i32>(MapKeyKind::Struct);
-        }
-
-        ValueId key_kind_const = emit_const_int(static_cast<i64>(key_kind_val), m_types.i32_type());
-
-        StringView ctor_name = call_expr.mangled_name;  // "Map$$new"
-        i32 ctor_idx = m_registry.get_index(ctor_name);
-        // Constructor args: [self, key_kind, optional_capacity]
-        u32 ctor_argc = 1 + user_argc; // key_kind + user args
-        Span<ValueId> ctor_args = alloc_span<ValueId>(ctor_argc + 1);
-        ctor_args[0] = map_ptr;           // self
-        ctor_args[1] = key_kind_const;    // key_kind (hidden)
-        for (u32 i = 0; i < user_argc; i++) {
-            ctor_args[i + 2] = user_args[i];
-        }
-        emit_call_native(ctor_name, ctor_args, m_types.void_type(),
-                         static_cast<u8>(ctor_idx));
-
-        return map_ptr;
     }
 
     // Check if this is a named constructor call: Type.ctor_name(...)
@@ -3476,320 +3728,34 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
         return gen_super_call(expr);
     }
 
-    // Track which arguments are inout and their addresses, so we can reload after
-    struct InoutArg {
-        StringView name;
-        ValueId addr;
-        Type* type;
-        u32 slot_count;
-    };
-    Vector<InoutArg> inout_args;
-
-    // Check if callee returns a large struct
-    Type* callee_return_type = expr->resolved_type;
-    bool callee_returns_large_struct = callee_return_type &&
-        callee_return_type->is_struct() &&
-        callee_return_type->struct_info.slot_count > 4;
-
-    // For large struct returns, allocate stack space and prepare output pointer
-    ValueId output_ptr = ValueId::invalid();
-    if (callee_returns_large_struct) {
-        u32 slot_count = callee_return_type->struct_info.slot_count;
-        output_ptr = emit_stack_alloc(slot_count, callee_return_type);
-    }
-
-    // Evaluate arguments - for out/inout args, pass address instead of value
-    Span<ValueId> args = alloc_span<ValueId>(call_expr.arguments.size());
-    for (u32 i = 0; i < call_expr.arguments.size(); i++) {
-        CallArg& arg = call_expr.arguments[i];
-        if (arg.modifier != ParamModifier::None) {
-            // Pass address of lvalue
-            args[i] = gen_lvalue_addr(arg.expr);
-
-            // If this is an identifier and modifier is Inout/Out, track it for reload
-            // But only for primitive types - structs are modified in place through the pointer
-            if (arg.modifier == ParamModifier::Inout || arg.modifier == ParamModifier::Out) {
-                if (arg.expr->kind == AstKind::ExprIdentifier && !m_param_is_ptr.count(arg.expr->identifier.name)) {
-                    Type* type = arg.expr->resolved_type;
-                    // Skip structs - they're modified in place, no reload needed
-                    if (type && type->is_struct()) {
-                        continue;
-                    }
-                    // Structs skipped above; get_type_slot_count gives the correct width
-                    // for every remaining type (weak=4, uniq/ref/list/map/string/fn=2).
-                    u32 slot_count = get_type_slot_count(type);
-                    if (slot_count == 0) slot_count = 1;
-                    inout_args.push_back({arg.expr->identifier.name, args[i], type, slot_count});
-                }
-            }
-        } else {
-            args[i] = gen_expr(arg.expr);
-
-            // Consume noncopyable temporaries (ownership transfers to callee).
-            // Nullify is a compile-time annotation — it ends the cleanup record
-            // scope so exception cleanup skips this value after the transfer.
-            if (arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
-                consume_temp_noncopyable(args[i]);
-            }
-
-            // Wrap uniq/ref → weak conversion for call arguments
-            Type* callee_func_type = call_expr.callee->resolved_type;
-            if (callee_func_type && callee_func_type->is_function() &&
-                i < callee_func_type->func_info.param_types.size()) {
-                Type* param_type = callee_func_type->func_info.param_types[i];
-                args[i] = maybe_wrap_weak(args[i], arg.expr->resolved_type, param_type);
-            }
-        }
-    }
-
-    // For large struct returns, append the output pointer to arguments
-    Span<ValueId> final_args;
-    if (callee_returns_large_struct) {
-        final_args = alloc_span<ValueId>(args.size() + 1);
-        for (u32 i = 0; i < args.size(); i++) {
-            final_args[i] = args[i];
-        }
-        final_args[args.size()] = output_ptr;
-    } else {
-        final_args = args;
-    }
+    // Lower arguments once (out/inout addresses, large-struct output pointer, weak
+    // wrapping, temp consumption), then dispatch on the callee's shape.
+    CallLowering lowered = lower_call_args(expr);
 
     ValueId result;
-
-    // Get function name from callee
     if (call_expr.callee->kind == AstKind::ExprIdentifier) {
-        // Original (unmangled) callee name from source. For generic calls, this is the
-        // template name ("helper"); the symbol table is keyed by template name, not by
-        // monomorphized name ("helper$i32"), so we must look up via orig_name.
-        StringView orig_name = call_expr.callee->identifier.name;
-        // Use mangled name for generic function calls (e.g., "identity$i32")
-        StringView func_name = call_expr.mangled_name.size() > 0 ? call_expr.mangled_name : orig_name;
-        StringView lookup_name = func_name;
-
-        // Check if this is an imported function (may have alias)
-        Symbol* sym = m_symbols.lookup(orig_name);
-        if (sym && sym->kind == SymbolKind::ImportedFunction) {
-            // Use the original function name for native registry lookup
-            lookup_name = sym->imported_func.original_name;
-        }
-
-        // Indirect call: callee is a local (variable or parameter) holding a
-        // closure value (Function-typed). Detect via the IR builder's local scope
-        // map — symbol-table lookups don't see function-body locals.
-        if (LocalVar* lv = find_local(orig_name); lv && lv->type && lv->type->is_function()) {
-            ValueId closure_val = gen_identifier_expr(call_expr.callee);
-            IRInst* call_inst = emit_inst(IROp::CallIndirect, expr->resolved_type);
-            if (!call_inst) return ValueId::invalid();
-            call_inst->call_indirect.callee = closure_val;
-            call_inst->call_indirect.args = final_args;
-            result = call_inst->result;
-        }
-        // Check if this is a native function
-        else if (i32 native_idx = m_registry.get_index(lookup_name); native_idx >= 0) {
-            result = emit_call_native(lookup_name, final_args, expr->resolved_type, static_cast<u8>(native_idx));
-        } else {
-            // Module-scope non-pub functions are mangled at definition (see build_function);
-            // calls to them must use the mangled name so they resolve within the same module.
-            StringView emit_name = func_name;
-            // For generic calls, the template lives in the GenericInstantiator
-            // rather than the symbol table, so `sym` will be null. Look up the
-            // template there to find its is_pub for the mangling decision —
-            // build_function uses the same is_pub when emitting the instance.
-            bool is_pub = false;
-            bool is_function_symbol = false;
-            if (sym && sym->kind == SymbolKind::Function) {
-                is_function_symbol = true;
-                is_pub = sym->is_pub;
-            } else if (call_expr.mangled_name.size() > 0 &&
-                       m_type_env.generics().is_generic_fun(orig_name)) {
-                Decl* template_decl = m_type_env.generics().get_generic_fun_decl(orig_name);
-                if (template_decl && template_decl->kind == AstKind::DeclFun) {
-                    is_function_symbol = true;
-                    is_pub = template_decl->fun_decl.is_pub;
-                }
-            }
-            if (is_function_symbol && !is_pub
-                && orig_name != StringView("main", 4)) {
-                emit_name = mangle_module_local(func_name);
-            }
-            result = emit_call(emit_name, final_args, expr->resolved_type);
-        }
-
-        // For large struct returns, the result is the output pointer (already allocated)
-        if (callee_returns_large_struct) {
-            result = output_ptr;
-        }
+        result = gen_call_direct(expr, lowered);
     }
     else if (call_expr.callee->kind == AstKind::ExprGet) {
-        GetExpr& get_expr = call_expr.callee->get;
-
-        // Check for module-qualified call: module.function()
-        // The object's resolved_type is nullptr for module references
-        if (get_expr.object->kind == AstKind::ExprIdentifier && get_expr.object->resolved_type == nullptr) {
-            // This is a module-qualified call
-            StringView module_name = get_expr.object->identifier.name;
-            StringView func_name = get_expr.name;
-
-            // Look up in native registry - the function name is just the member name
-            i32 native_idx = m_registry.get_index(func_name);
-
-            if (native_idx >= 0) {
-                result = emit_call_native(func_name, final_args, expr->resolved_type, static_cast<u8>(native_idx));
-            } else {
-                // Script module call - emit CallExternal
-                result = emit_call_external(module_name, func_name, final_args, expr->resolved_type);
-            }
-
-            // For large struct returns, the result is the output pointer
-            if (callee_returns_large_struct) {
-                result = output_ptr;
-            }
-        } else {
-            // Method call: obj.method(args)
-            ValueId obj = gen_expr(get_expr.object);
-
-            // Get the struct type from the object
-            Type* obj_type = get_expr.object->resolved_type;
-            Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
-
-            // Check for Coro method call (resume/done — lowered functions)
-            if (struct_type && struct_type->is_coroutine()) {
-                StringView method_name = call_expr.mangled_name;
-
-                // [obj] + args (self is the coroutine object)
-                Span<ValueId> method_args = alloc_span<ValueId>(args.size() + 1);
-                method_args[0] = obj;
-                for (u32 i = 0; i < args.size(); i++) {
-                    method_args[i + 1] = args[i];
-                }
-
-                result = emit_call(method_name, method_args, expr->resolved_type);
-            }
-            // Check for "field of function type": `obj.callback(args)` where
-            // callback is a struct field whose type is `fun(...) -> R`. This
-            // must be checked before method dispatch since the field name
-            // could collide with a method name (and we want the field).
-            else if (struct_type && struct_type->is_struct() &&
-                     struct_type->struct_info.find_field(get_expr.name) &&
-                     struct_type->struct_info.find_field(get_expr.name)->type &&
-                     struct_type->struct_info.find_field(get_expr.name)->type->is_function()) {
-                // Read the closure value from the field, then CALL_INDIRECT.
-                ValueId closure_val = gen_expr(call_expr.callee);
-                IRInst* call_inst = emit_inst(IROp::CallIndirect, expr->resolved_type);
-                if (!call_inst) return ValueId::invalid();
-                call_inst->call_indirect.callee = closure_val;
-                call_inst->call_indirect.args = final_args;
-                result = call_inst->result;
-            }
-            // Check for List or Map method call (builtin native methods)
-            else if (struct_type && struct_type->is_container()) {
-                StringView native_name = call_expr.mangled_name;
-                i32 native_idx = m_registry.get_index(native_name);
-
-                // Generic: [obj] + args
-                Span<ValueId> method_args = alloc_span<ValueId>(args.size() + 1);
-                method_args[0] = obj;
-                for (u32 i = 0; i < args.size(); i++) {
-                    method_args[i + 1] = args[i];
-                }
-
-                result = emit_call_native(native_name, method_args, expr->resolved_type, static_cast<u8>(native_idx));
-            } else {
-
-            // Look up method in the type hierarchy to find where it's defined
-            // This ensures we use the correct struct name for mangling (important for inheritance)
-            Type* method_owner = nullptr;
-            StringView method_name = get_expr.name;
-            if (struct_type && struct_type->is_struct()) {
-                lookup_method_in_hierarchy(struct_type, get_expr.name, &method_owner);
-                Type* name_type = method_owner ? method_owner : struct_type;
-                method_name = mangle_method(name_type->struct_info.name, get_expr.name);
-            }
-
-            // Prepend object to arguments, append output pointer if large struct return
-            Span<ValueId> method_args;
-            if (callee_returns_large_struct) {
-                // obj + args + output_ptr
-                method_args = alloc_span<ValueId>(args.size() + 2);
-                method_args[0] = obj;
-                for (u32 i = 0; i < args.size(); i++) {
-                    method_args[i + 1] = args[i];
-                }
-                method_args[args.size() + 1] = output_ptr;
-            } else {
-                method_args = alloc_span<ValueId>(args.size() + 1);
-                method_args[0] = obj;
-                for (u32 i = 0; i < args.size(); i++) {
-                    method_args[i + 1] = args[i];
-                }
-            }
-
-            // Check if method is a native function
-            i32 native_idx = m_registry.get_index(method_name);
-            if (native_idx >= 0) {
-                result = emit_call_native(method_name, method_args, expr->resolved_type,
-                                          static_cast<u8>(native_idx));
-            } else {
-                result = emit_call(method_name, method_args, expr->resolved_type);
-            }
-
-            // For large struct returns, the result is the output pointer
-            if (callee_returns_large_struct) {
-                result = output_ptr;
-            }
-            } // end else (struct method)
-        } // end outer else (method call)
+        result = gen_call_member(expr, lowered);
     }
-    else if (call_expr.callee->resolved_type && call_expr.callee->resolved_type->is_function()) {
-        // General indirect call: the callee is some expression (call result,
-        // index, field access, ...) producing a Function-typed value. Evaluate
-        // it and dispatch through CALL_INDIRECT.
+    else if (callee_type && callee_type->is_function()) {
+        // General indirect call: callee is some Function-typed expression (call
+        // result, index, field access, ...). Evaluate it and dispatch via CALL_INDIRECT.
         ValueId closure_val = gen_expr(call_expr.callee);
-        IRInst* call_inst = emit_inst(IROp::CallIndirect, expr->resolved_type);
-        if (!call_inst) return ValueId::invalid();
-        call_inst->call_indirect.callee = closure_val;
-        call_inst->call_indirect.args = final_args;
-        result = call_inst->result;
+        result = emit_call_indirect(closure_val, lowered.final_args, expr->resolved_type);
     }
     else {
         report_error("Internal error: unhandled call expression kind");
         return ValueId::invalid();
     }
 
-    // After the call, reload inout variables from their stack addresses
-    for (const InoutArg& ia : inout_args) {
-        ValueId new_val = emit_load_ptr(ia.addr, ia.slot_count, ia.type);
-        define_local(ia.name, new_val, ia.type);
-    }
+    // If a dispatch helper bailed because the block was terminated, stop here to
+    // match the original early-return (no inout reload / move-marking on a dead block).
+    if (!m_current_block) return result;
 
-    // Move semantics: mark owned args passed to owned params as moved
-    // For uniq args, also null-ify the register so DEL_OBJ on scope exit is a safe no-op.
-    // Skip inout/out: those pass a pointer to the caller's slot, ownership stays
-    // with the caller. Marking them moved would trip a false "use-after-move"
-    // on the next loop iteration and (symmetrically, for noncopyable types)
-    // null out a local the caller still owns.
-    Type* callee_func_type = call_expr.callee->resolved_type;
-    if (callee_func_type && callee_func_type->is_function()) {
-        Span<Type*> param_types = callee_func_type->func_info.param_types;
-        // For method calls, param_types includes implicit 'self' as first parameter,
-        // but call_expr.arguments only has user-visible arguments. Offset by 1.
-        u32 param_offset = (call_expr.callee->kind == AstKind::ExprGet) ? 1 : 0;
-        for (u32 i = 0; i < call_expr.arguments.size() && (i + param_offset) < param_types.size(); i++) {
-            const CallArg& arg = call_expr.arguments[i];
-            if (arg.modifier != ParamModifier::None) continue;
-            if (arg.expr->kind == AstKind::ExprIdentifier) {
-                Type* arg_type = arg.expr->resolved_type;
-                if (arg_type && arg_type->noncopyable() &&
-                    param_types[i + param_offset] && param_types[i + param_offset]->noncopyable()) {
-                    StringView arg_name = arg.expr->identifier.name;
-                    // For uniq: null-ify so DEL_OBJ on scope exit is a safe no-op. For
-                    // value structs: the bitwise copy IS the move, just suppress cleanup.
-                    mark_moved_from(arg_name);
-                }
-            }
-        }
-    }
-
+    reload_inout_args(lowered);
+    mark_call_args_moved(expr);
     return result;
 }
 
