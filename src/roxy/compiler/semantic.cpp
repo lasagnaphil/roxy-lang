@@ -5,8 +5,29 @@
 #include "roxy/vm/binding/registry.hpp"
 
 #include <cstring>
+#include <utility>
 
 namespace rx {
+
+namespace {
+// RAII guard for the analyzer's implicit "current context" members. Saves a
+// slot's value on construction and restores it on destruction, so a method can
+// freely mutate the member and have the previous value reinstated at scope exit
+// — even on an early return. Replaces the manual `auto prev = m_x; m_x = ...;
+// ...; m_x = prev;` idiom, which silently leaks state if a return slips between
+// the save and the restore.
+template <typename T>
+class ScopedValue {
+public:
+    explicit ScopedValue(T& slot) : m_slot(slot), m_saved(slot) {}
+    ~ScopedValue() { m_slot = std::move(m_saved); }
+    ScopedValue(const ScopedValue&) = delete;
+    ScopedValue& operator=(const ScopedValue&) = delete;
+private:
+    T& m_slot;
+    T m_saved;
+};
+}
 
 static const ConstructorInfo* find_constructor(Span<ConstructorInfo> constructors, StringView name) {
     for (const auto& constructor : constructors) {
@@ -1724,18 +1745,18 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
     // Resolve return type
     Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
 
-    // Detect coroutine function (returns Coro<T>)
+    // Detect coroutine function (returns Coro<T>). These guards restore the
+    // outer coroutine context and move-state map when the function returns.
     bool is_coroutine = return_type && return_type->is_coroutine();
-    bool prev_in_coroutine = m_in_coroutine;
-    Type* prev_coro_yield_type = m_coro_yield_type;
-
+    ScopedValue coro_guard(m_in_coroutine);
+    ScopedValue yield_guard(m_coro_yield_type);
     if (is_coroutine) {
         m_in_coroutine = true;
         m_coro_yield_type = return_type->coro_info.yield_type;
     }
 
-    // Save and reset move states for this function body
-    MoveStateSnapshot saved_move_states = save_move_states();
+    // Reset move states for this function body (restored on exit by the guard).
+    ScopedValue move_states_guard(m_move_states);
     m_move_states.clear();
 
     // Push function scope
@@ -1774,13 +1795,7 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
 
     check_scope_exit_uniq_destructors(m_symbols.current_scope(), decl->loc);
     m_symbols.pop_scope();
-
-    // Restore coroutine state
-    m_in_coroutine = prev_in_coroutine;
-    m_coro_yield_type = prev_coro_yield_type;
-
-    // Restore outer function's move states
-    m_move_states = saved_move_states;
+    // coro_guard / yield_guard / move_states_guard restore on return.
 }
 
 void SemanticAnalyzer::analyze_struct_decl(Decl* decl) {
@@ -2038,8 +2053,8 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
                                             Type* return_type) {
     if (!body) return;
 
-    // Save and reset move states for this function body
-    MoveStateSnapshot saved_move_states = save_move_states();
+    // Reset move states for this function body (restored on exit by the guard).
+    ScopedValue move_states_guard(m_move_states);
     m_move_states.clear();
 
     // Push struct scope so 'self' and fields are accessible
@@ -2078,9 +2093,7 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
     check_scope_exit_uniq_destructors(m_symbols.current_scope(), decl->loc);
     m_symbols.pop_scope();  // function scope
     m_symbols.pop_scope();  // struct scope
-
-    // Restore outer function's move states
-    m_move_states = saved_move_states;
+    // move_states_guard restores the outer function's move states on return.
 }
 
 void SemanticAnalyzer::analyze_constructor_body(Decl* decl, Type* struct_type) {
@@ -2092,12 +2105,11 @@ void SemanticAnalyzer::analyze_destructor_body(Decl* decl, Type* struct_type) {
     auto& dd = decl->destructor_decl;
     // Track delete destructor context to forbid throw inside it.
     // Named destructors (dd.name is non-empty) are explicitly called and can throw.
-    bool prev_in_delete_destructor = m_in_delete_destructor;
+    ScopedValue in_delete_guard(m_in_delete_destructor);
     if (dd.name.empty()) {
         m_in_delete_destructor = true;
     }
     analyze_member_body(decl, struct_type, dd.params, dd.body, m_types.void_type());
-    m_in_delete_destructor = prev_in_delete_destructor;
 }
 
 void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
@@ -2639,17 +2651,17 @@ void SemanticAnalyzer::analyze_generic_template_body(Decl* decl) {
     if (!fun_decl.body) return;
     if (fun_decl.is_native) return;
 
-    // Save and set bounds context
-    auto saved_bounds = m_active_type_param_bounds;
-    auto saved_params = m_active_type_params;
+    // Set the bounds context (restored on exit by these guards).
+    ScopedValue bounds_guard(m_active_type_param_bounds);
+    ScopedValue params_guard(m_active_type_params);
     m_active_type_param_bounds = bounds->param_bounds;
     m_active_type_params = fun_decl.type_params;
 
     // Resolve return type (may reference type params → resolves to TypeParam via resolve_type_expr)
     Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
 
-    // Save and reset move states (same pattern as analyze_fun_decl)
-    MoveStateSnapshot saved_move_states = save_move_states();
+    // Reset move states (same pattern as analyze_fun_decl).
+    ScopedValue move_states_guard(m_move_states);
     m_move_states.clear();
 
     // Push function scope with return type
@@ -2667,13 +2679,7 @@ void SemanticAnalyzer::analyze_generic_template_body(Decl* decl) {
     analyze_stmt(fun_decl.body);
 
     m_symbols.pop_scope();
-
-    // Restore move states
-    restore_move_states(saved_move_states);
-
-    // Restore bounds context
-    m_active_type_param_bounds = saved_bounds;
-    m_active_type_params = saved_params;
+    // move_states_guard / params_guard / bounds_guard restore on return.
 }
 
 void SemanticAnalyzer::validate_trait_implementations() {
@@ -3692,10 +3698,12 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
     // Finally runs on every exit path, so its own terminators are the
     // conservative upper bound for the whole try/catch/finally.
     if (ts.finally_body) {
-        m_in_finally_depth++;
-        m_branch_terminates = false;
-        analyze_stmt(ts.finally_body);
-        m_in_finally_depth--;
+        {
+            ScopedValue finally_depth_guard(m_in_finally_depth);
+            m_in_finally_depth++;
+            m_branch_terminates = false;
+            analyze_stmt(ts.finally_body);
+        }
         // If finally terminates, so does the whole statement; otherwise
         // use the all_terminate result computed from try+catches.
         if (!m_branch_terminates) {
@@ -4473,11 +4481,13 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
     context.boundary_scope = m_symbols.current_scope();
     m_lambda_contexts.push_back(&context);
     {
-        MoveStateSnapshot saved_move_states = save_move_states();
+        // Analyze the lambda body with a fresh move-state map and outside any
+        // enclosing coroutine context; the guards restore both at block end.
+        ScopedValue move_states_guard(m_move_states);
         m_move_states.clear();
 
-        bool prev_in_coroutine = m_in_coroutine;
-        Type* prev_coro_yield_type = m_coro_yield_type;
+        ScopedValue coro_guard(m_in_coroutine);
+        ScopedValue yield_guard(m_coro_yield_type);
         m_in_coroutine = false;
         m_coro_yield_type = nullptr;
 
@@ -4503,10 +4513,7 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
 
         check_scope_exit_uniq_destructors(m_symbols.current_scope(), expr->loc);
         m_symbols.pop_scope();  // function scope
-
-        m_in_coroutine = prev_in_coroutine;
-        m_coro_yield_type = prev_coro_yield_type;
-        m_move_states = saved_move_states;
+        // coro_guard / yield_guard / move_states_guard restore at block end.
     }
     m_lambda_contexts.pop_back();
     m_symbols.pop_scope();  // lambda boundary scope
