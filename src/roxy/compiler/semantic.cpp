@@ -4990,28 +4990,65 @@ Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, Strin
         return m_types.error_type();
     }
 
-    // Instantiate the generic function
+    // Instantiate the generic function and type-check the call against it.
     StringView mangled = m_type_env.generics().instantiate_fun(func_name, type_args);
     ce.mangled_name = mangled;
-
-    // Use the instantiated function's substituted types for type checking
     GenericFunInstance* inst = m_type_env.generics().find_fun_instance(mangled);
+    return check_instantiated_generic_call(expr, ce, func_name, inst, /*args_pre_analyzed=*/false);
+}
+
+Type* SemanticAnalyzer::analyze_generic_fun_call_inferred(Expr* expr, CallExpr& ce, StringView func_name) {
+    Decl* template_decl = m_type_env.generics().get_generic_fun_decl(func_name);
+    FunDecl& template_fun_decl = template_decl->fun_decl;
+
+    // Infer type args from the call arguments (this analyzes each argument).
+    InferredTypeArgs inferred = infer_type_args_from_call(
+        template_fun_decl.type_params, template_fun_decl.params,
+        ce.arguments, expr->loc);
+    if (!inferred.success) {
+        error_fmt(expr->loc,
+            "cannot infer type arguments for generic function '{}'; "
+            "provide explicit type arguments", func_name);
+        return m_types.error_type();
+    }
+
+    // Check trait bounds on the inferred type args
+    Span<Type*> type_args = m_allocator.alloc_span(inferred.type_args);
+    const ResolvedTypeParams* bounds = m_type_env.generics().get_fun_bounds(func_name);
+    if (!check_type_arg_bounds(func_name, type_args, bounds, expr->loc)) {
+        return m_types.error_type();
+    }
+
+    // Instantiate and type-check. Arguments were already analyzed during
+    // inference, so the shared tail reads their resolved types directly.
+    StringView mangled = m_type_env.generics().instantiate_fun(func_name, type_args);
+    ce.mangled_name = mangled;
+    GenericFunInstance* inst = m_type_env.generics().find_fun_instance(mangled);
+    return check_instantiated_generic_call(expr, ce, func_name, inst, /*args_pre_analyzed=*/true);
+}
+
+Type* SemanticAnalyzer::check_instantiated_generic_call(
+        Expr* expr, CallExpr& ce, StringView func_name,
+        GenericFunInstance* inst, bool args_pre_analyzed) {
     FunDecl& inst_fun_decl = inst->instantiated_decl->fun_decl;
 
-    // Resolve parameter types and type-check arguments
     if (ce.arguments.size() != inst_fun_decl.params.size()) {
         error_fmt(expr->loc, "function '{}' expects {} arguments but got {}",
                  func_name, inst_fun_decl.params.size(), ce.arguments.size());
         return m_types.error_type();
     }
 
+    // Resolve each parameter type from the instantiated function and
+    // type-check the corresponding argument.
     Vector<Type*> resolved_param_types;
     resolved_param_types.reserve(ce.arguments.size());
     for (u32 i = 0; i < ce.arguments.size(); i++) {
         CallArg& arg = ce.arguments[i];
-        Type* arg_type = analyze_expr(arg.expr);
+        // On the inference path the arguments were already analyzed in
+        // infer_type_args_from_call; re-analyzing would be redundant.
+        Type* arg_type = args_pre_analyzed ? arg.expr->resolved_type
+                                           : analyze_expr(arg.expr);
 
-        // Resolve the parameter type from the instantiated function
         Type* param_type = nullptr;
         if (inst_fun_decl.params[i].type) {
             param_type = resolve_type_expr(inst_fun_decl.params[i].type);
@@ -5036,14 +5073,14 @@ Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, Strin
         }
     }
 
-    // Resolve return type from the instantiated function
+    // Resolve return type from the instantiated function.
     Type* return_type = m_types.void_type();
     if (inst_fun_decl.return_type) {
         return_type = resolve_type_expr(inst_fun_decl.return_type);
     }
 
-    // Set the callee's resolved_type to the instantiated function type so the IR
-    // builder can read param types for post-call move/nullify decisions on
+    // Record the instantiated function type on the callee so the IR builder
+    // can read param types for post-call move/nullify decisions on
     // noncopyable arguments.
     if (ce.callee) {
         ce.callee->resolved_type = m_types.function_type(
@@ -5521,84 +5558,11 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         }
     }
 
-    // Generic function call WITHOUT explicit type args — attempt inference
+    // Generic function call WITHOUT explicit type args — infer them.
     if (call_expr.type_args.size() == 0 && call_expr.callee->kind == AstKind::ExprIdentifier) {
         StringView func_name = call_expr.callee->identifier.name;
         if (m_type_env.generics().is_generic_fun(func_name)) {
-            Decl* template_decl = m_type_env.generics().get_generic_fun_decl(func_name);
-            FunDecl& template_fun_decl = template_decl->fun_decl;
-
-            auto inferred = infer_type_args_from_call(
-                template_fun_decl.type_params, template_fun_decl.params,
-                call_expr.arguments, expr->loc);
-
-            if (inferred.success) {
-                Span<Type*> type_args = m_allocator.alloc_span(inferred.type_args);
-
-                // Check trait bounds on inferred type args
-                const ResolvedTypeParams* bounds = m_type_env.generics().get_fun_bounds(func_name);
-                if (!check_type_arg_bounds(func_name, type_args, bounds, expr->loc)) {
-                    return m_types.error_type();
-                }
-
-                StringView mangled = m_type_env.generics().instantiate_fun(func_name, type_args);
-                call_expr.mangled_name = mangled;
-
-                // Type-check arguments against instantiated function
-                GenericFunInstance* inst = m_type_env.generics().find_fun_instance(mangled);
-                FunDecl& inst_fun_decl = inst->instantiated_decl->fun_decl;
-
-                if (call_expr.arguments.size() != inst_fun_decl.params.size()) {
-                    error_fmt(expr->loc, "function '{}' expects {} arguments but got {}",
-                             func_name, inst_fun_decl.params.size(), call_expr.arguments.size());
-                    return m_types.error_type();
-                }
-
-                Vector<Type*> resolved_param_types;
-                resolved_param_types.reserve(call_expr.arguments.size());
-                for (u32 i = 0; i < call_expr.arguments.size(); i++) {
-                    // Args were already analyzed in infer_type_args_from_call,
-                    // so just resolve param type and check assignability
-                    CallArg& arg = call_expr.arguments[i];
-                    Type* arg_type = arg.expr->resolved_type;
-                    Type* param_type = nullptr;
-                    if (inst_fun_decl.params[i].type) {
-                        param_type = resolve_type_expr(inst_fun_decl.params[i].type);
-                    }
-                    resolved_param_types.push_back(param_type ? param_type : m_types.error_type());
-
-                    // Generic-template-ref arg against the substituted param type.
-                    if (param_type && coerce_generic_template_ref(arg.expr, param_type)) {
-                        arg_type = arg.expr->resolved_type;
-                    }
-
-                    if (param_type && !param_type->is_error() && arg_type && !arg_type->is_error()) {
-                        check_assignable(param_type, arg_type, arg.expr->loc);
-                    }
-
-                    // Move semantics: noncopyable args are consumed by the call.
-                    if (param_type && param_type->noncopyable()
-                        && arg.modifier == ParamModifier::None) {
-                        consume_noncopyable(arg.expr, arg.expr->loc);
-                    }
-                }
-
-                Type* return_type = m_types.void_type();
-                if (inst_fun_decl.return_type) {
-                    return_type = resolve_type_expr(inst_fun_decl.return_type);
-                }
-
-                if (call_expr.callee) {
-                    call_expr.callee->resolved_type = m_types.function_type(
-                        m_allocator.alloc_span(resolved_param_types), return_type);
-                }
-                return return_type;
-            } else {
-                error_fmt(expr->loc,
-                    "cannot infer type arguments for generic function '{}'; "
-                    "provide explicit type arguments", func_name);
-                return m_types.error_type();
-            }
+            return analyze_generic_fun_call_inferred(expr, call_expr, func_name);
         }
     }
 

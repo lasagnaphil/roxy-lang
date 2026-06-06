@@ -179,7 +179,18 @@ private:
     Type* analyze_constructor_call(Expr* expr, Type* struct_type, StringView ctor_name, bool is_heap);
 
     // Call expression sub-helpers (extracted from analyze_call_expr)
+    // Generic function call with explicit type args: name<T>(args).
     Type* analyze_generic_fun_call(Expr* expr, CallExpr& ce, StringView func_name);
+    // Generic function call without type args: infers them from the arguments.
+    Type* analyze_generic_fun_call_inferred(Expr* expr, CallExpr& ce, StringView func_name);
+    // Shared tail for both generic-fun-call paths: validates argument count
+    // against the instantiated function, type-checks each argument, resolves the
+    // return type, and records the callee's concrete function type. When
+    // args_pre_analyzed is true (inference path), arguments were already
+    // analyzed during inference, so their resolved_type is read instead of
+    // re-analyzing.
+    Type* check_instantiated_generic_call(Expr* expr, CallExpr& ce, StringView func_name,
+                                          GenericFunInstance* inst, bool args_pre_analyzed);
     Type* analyze_list_constructor_call(Expr* expr, CallExpr& ce);
     Type* analyze_map_constructor_call(Expr* expr, CallExpr& ce);
     Type* analyze_generic_struct_constructor_call(Expr* expr, CallExpr& ce, StringView func_name);
