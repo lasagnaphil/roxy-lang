@@ -3867,318 +3867,335 @@ ValueId IRBuilder::gen_get_expr(Expr* expr) {
 ValueId IRBuilder::gen_assign_expr(Expr* expr) {
     AssignExpr& assign_expr = expr->assign;
 
-    // Get the value to assign
+    // Evaluate the RHS, then fold in any compound operator (`+=`, `-=`, ...).
     ValueId value = gen_expr(assign_expr.value);
-
-    // Handle compound assignment
     if (assign_expr.op != AssignOp::Assign) {
-        Type* type = assign_expr.target->resolved_type;
-
-        // Check for struct compound assignment trait dispatch
-        if (type && type->is_struct()) {
-            const char* method_name_str = assign_op_to_trait_method(assign_expr.op);
-            if (method_name_str) {
-                StringView method_name(method_name_str, static_cast<u32>(strlen(method_name_str)));
-                Type* found_in = nullptr;
-                const MethodInfo* mi = lookup_method_in_hierarchy(type, method_name, &found_in);
-                if (mi && found_in) {
-                    ValueId self_ptr = gen_lvalue_addr(assign_expr.target);
-                    StringView mangled = mangle_method(found_in->struct_info.name, method_name);
-                    Span<ValueId> args = alloc_span<ValueId>(2);
-                    args[0] = self_ptr;
-                    args[1] = value;
-                    return emit_call(mangled, args, m_types.void_type());
-                }
-            }
-        }
-
-        // Primitive compound assignment
-        ValueId old_val = gen_expr(assign_expr.target);
-
-        IROp op;
-        switch (assign_expr.op) {
-            case AssignOp::AddAssign:
-                op = type->is_float() ? IROp::AddF : IROp::AddI;
-                break;
-            case AssignOp::SubAssign:
-                op = type->is_float() ? IROp::SubF : IROp::SubI;
-                break;
-            case AssignOp::MulAssign:
-                op = type->is_float() ? IROp::MulF : IROp::MulI;
-                break;
-            case AssignOp::DivAssign:
-                op = type->is_float() ? IROp::DivF : IROp::DivI;
-                break;
-            case AssignOp::ModAssign:
-                op = IROp::ModI;
-                break;
-            case AssignOp::BitAndAssign:
-                op = IROp::BitAnd;
-                break;
-            case AssignOp::BitOrAssign:
-                op = IROp::BitOr;
-                break;
-            case AssignOp::BitXorAssign:
-                op = IROp::BitXor;
-                break;
-            case AssignOp::ShlAssign:
-                op = IROp::Shl;
-                break;
-            case AssignOp::ShrAssign:
-                op = IROp::Shr;
-                break;
-            default:
-                op = IROp::Copy;
-                break;
-        }
-
-        value = emit_binary(op, old_val, value, type);
+        bool handled = false;
+        ValueId combined = gen_compound_assign(expr, value, handled);
+        if (handled) return combined;  // struct trait dispatch did the whole assignment
+        value = combined;
     }
 
-    // Assign based on target type
-    if (assign_expr.target->kind == AstKind::ExprIdentifier) {
-        StringView name = assign_expr.target->identifier.name;
-
-        // If this is a pointer parameter (out/inout), store through the pointer
-        if (m_param_is_ptr.count(name)) {
-            ValueId ptr = lookup_local(name);
-            Type* type = expr->resolved_type;
-            // get_type_slot_count handles structs (struct_info.slot_count) and every other
-            // width uniformly. The old inline check omitted list/map/string/weak, under-counting
-            // their slots when stored through an out/inout pointer.
-            u32 slot_count = get_type_slot_count(type);
-            if (slot_count == 0) slot_count = 1;
-            return emit_store_ptr(ptr, value, slot_count, type);
-        }
-
-        // Auto-destroy old owned value before reassignment
-        Type* target_type = assign_expr.target->resolved_type;
-        if (target_type && target_type->noncopyable()) {
-            OwnedLocalInfo* owned_info = find_owned_local(name);
-            if (owned_info && !owned_info->is_moved) {
-                emit_implicit_destroy(*owned_info);
-                owned_info->is_moved = false;  // Reset — new value is now live
-            } else if (owned_info && owned_info->is_moved) {
-                // Variable was moved but now being reassigned — make it live again
-                owned_info->is_moved = false;
-            }
-        }
-
-        // Wrap uniq/ref → weak conversion for local assignment
-        value = maybe_wrap_weak(value, assign_expr.value->resolved_type, assign_expr.target->resolved_type);
-
-        // For copyable struct rvalues that alias source storage, allocate fresh
-        // storage and emit a StructCopy — mirrors the gen_var_decl fix. Struct
-        // literals and calls already produce fresh storage, so skip them.
-        // Only applies to simple `=`; compound ops on structs dispatch through
-        // trait methods above, and primitive compound ops don't land here with
-        // a struct target.
-        bool value_is_fresh = assign_expr.value->kind == AstKind::ExprStructLiteral ||
-                              assign_expr.value->kind == AstKind::ExprCall;
-        if (assign_expr.op == AssignOp::Assign && target_type && target_type->is_struct()
-            && !target_type->noncopyable() && !value_is_fresh) {
-            u32 slot_count = target_type->struct_info.slot_count;
-            ValueId fresh = emit_stack_alloc(slot_count, target_type);
-            emit_struct_copy(fresh, value, slot_count);
-            value = fresh;
-        }
-
-        // Normal variable assignment - in SSA, we create a new value
-        define_local(name, value, expr->resolved_type);
-
-        // If the RHS was a noncopyable temporary (e.g. `uniq T()`), transfer
-        // its ownership to the target variable. Without this, the temp's
-        // cleanup record at the current scope depth races with the
-        // variable's cleanup record at the variable's (outer) scope depth —
-        // harmless when register allocation aliases them and tombstoning
-        // absorbs the double-delete, but catastrophic inside nested scopes
-        // (e.g. a catch body) where the temp's scope pops before the
-        // variable's value is observed, leaving the variable pointing at
-        // freed memory. Matches the consume_temp_noncopyable(value, true)
-        // call in gen_var_decl.
-        if (assign_expr.target->resolved_type &&
-            assign_expr.target->resolved_type->noncopyable()) {
-            consume_temp_noncopyable(value, true);
-        }
-
-        // Move semantics: if value is a noncopyable identifier, mark source as moved.
-        // Unlike field assignment, we pass nullify_record=false: the target variable now
-        // shares the same SSA value/register as the source, so emitting a Nullify on that
-        // register would corrupt the target. The SSA null-out of the source still happens.
-        if (assign_expr.value->kind == AstKind::ExprIdentifier) {
-            Type* value_type = assign_expr.value->resolved_type;
-            if (value_type && value_type->noncopyable()) {
-                mark_moved_from(assign_expr.value->identifier.name, /*null_ssa=*/true,
-                                /*nullify_record=*/false);
-            }
-        }
-
-        return value;
+    // Dispatch on the assignment target.
+    switch (assign_expr.target->kind) {
+        case AstKind::ExprIdentifier: return gen_assign_local(expr, value);
+        case AstKind::ExprGet:        return gen_assign_field(expr, value);
+        case AstKind::ExprIndex:      return gen_assign_index(expr, value);
+        default:                      return value;
     }
-    else if (assign_expr.target->kind == AstKind::ExprGet) {
-        // Field assignment
-        GetExpr& get_expr = assign_expr.target->get;
-        ValueId obj = gen_expr(get_expr.object);
+}
 
-        // Get the struct type from the object
-        Type* obj_type = get_expr.object->resolved_type;
-        Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
+ValueId IRBuilder::gen_compound_assign(Expr* expr, ValueId rhs, bool& handled) {
+    AssignExpr& assign_expr = expr->assign;
+    handled = false;
+    Type* type = assign_expr.target->resolved_type;
 
-        u32 slot_offset = 0;
-        u32 slot_count = 1;
-        Type* field_type = nullptr;
-        bool is_variant_field = false;
-        const WhenClauseInfo* when_clause = nullptr;
-        const VariantInfo* variant = nullptr;
-
-        if (struct_type && struct_type->is_struct()) {
-            const FieldInfo* field_info = struct_type->struct_info.find_field(get_expr.name);
-            if (field_info) {
-                slot_offset = field_info->slot_offset;
-                slot_count = field_info->slot_count;
-                field_type = field_info->type;
-            } else {
-                // Check for variant field in when clauses
-                const VariantFieldInfo* variant_field_info = struct_type->struct_info.find_variant_field(
-                    get_expr.name, &when_clause, &variant);
-                if (variant_field_info) {
-                    is_variant_field = true;
-                    slot_offset = when_clause->union_slot_offset + variant_field_info->slot_offset;
-                    slot_count = variant_field_info->slot_count;
-                    field_type = variant_field_info->type;
-                }
-            }
-        }
-
-        // If this is a variant field, emit runtime discriminant check
-        if (is_variant_field && when_clause && variant) {
-            // Load the discriminant
-            ValueId disc = emit_get_field(obj, when_clause->discriminant_name,
-                                          when_clause->discriminant_slot_offset, 1,
-                                          when_clause->discriminant_type);
-
-            // Create the expected discriminant value constant
-            ValueId expected = emit_const_int(variant->discriminant_value,
-                                              when_clause->discriminant_type);
-
-            // Compare discriminant with expected value
-            ValueId matches = emit_binary(IROp::EqI, disc, expected, m_types.bool_type());
-
-            // Create pass and fail blocks
-            IRBlock* pass_block = create_block("variant_set_pass");
-            IRBlock* fail_block = create_block("variant_set_fail");
-
-            // Branch based on discriminant check
-            finish_block_branch(matches, pass_block->id, fail_block->id);
-
-            // In fail block: emit unreachable (will lower to TRAP)
-            set_current_block(fail_block);
-            finish_block_unreachable();
-
-            // Continue in pass block
-            set_current_block(pass_block);
-        }
-
-        // Destroy old field value before overwriting (prevents leaks for uniq/move-semantic fields)
-        if (field_type && (field_type->kind == TypeKind::Uniq || field_type->noncopyable())) {
-            emit_single_field_destroy(obj, get_expr.name, slot_offset, slot_count, field_type);
-        }
-
-        // Wrap uniq/ref → weak conversion for field assignment
-        value = maybe_wrap_weak(value, assign_expr.value->resolved_type, field_type);
-
-        // For struct-typed fields the rvalue is a struct pointer (per IR convention),
-        // so we must copy slot-by-slot from the source struct. emit_set_field would
-        // otherwise stuff the raw pointer bits into the field slots, silently
-        // corrupting the field (e.g. losing nested when-discriminants). Mirror the
-        // struct-literal initialization path for consistency.
-        ValueId result;
-        if (field_type && field_type->is_struct()) {
-            ValueId field_addr = emit_get_field_addr(obj, get_expr.name, slot_offset, field_type);
-            emit_struct_copy(field_addr, value, slot_count);
-            result = value;
-        } else {
-            result = emit_set_field(obj, get_expr.name, slot_offset, slot_count, value, expr->resolved_type);
-        }
-
-        // Consume noncopyable temporaries assigned to fields
-        if (field_type && field_type->noncopyable()) {
-            consume_temp_noncopyable(value);
-        }
-
-        // Move semantics: if value is a uniq/move-semantic identifier, mark it as moved
-        // Only when the field type also needs move semantics (not for weak ref fields)
-        if (assign_expr.value->kind == AstKind::ExprIdentifier && field_type &&
-            field_type->noncopyable()) {
-            Type* value_type = assign_expr.value->resolved_type;
-            if (value_type && value_type->noncopyable()) {
-                mark_moved_from(assign_expr.value->identifier.name);
-            }
-        }
-
-        // Field-move nullify: if the RHS is a field access on a local value-struct
-        // (e.g. `self.things = src.items` where `src` is a by-value noncopyable
-        // struct param), the semantic analyzer marked the RHS as moved, but nothing
-        // has actually cleared the source field. When the enclosing struct goes
-        // out of scope, its destructor walks its own fields and destroys
-        // `src.items` — freeing the list a second time after we stored the same
-        // pointer into `self.things`. Null the source field so the eventual
-        // destroy-on-scope-exit is a safe `Delete(null)`.
-        if (assign_expr.value->kind == AstKind::ExprGet && field_type &&
-            field_type->noncopyable()) {
-            Type* value_type = assign_expr.value->resolved_type;
-            if (value_type && value_type->noncopyable()) {
-                GetExpr& src_get = assign_expr.value->get;
-                Type* src_obj_type = src_get.object->resolved_type;
-                Type* src_struct_type = src_obj_type ? src_obj_type->base_type() : nullptr;
-                if (src_struct_type && src_struct_type->is_struct()) {
-                    const FieldInfo* src_field = src_struct_type->struct_info.find_field(src_get.name);
-                    if (src_field) {
-                        ValueId src_obj_ptr = gen_expr(src_get.object);
-                        ValueId null_val = emit_const_null();
-                        emit_set_field(src_obj_ptr, src_field->name,
-                                       src_field->slot_offset, src_field->slot_count,
-                                       null_val, m_types.void_type());
-                    }
-                }
-            }
-        }
-
-        return result;
-    }
-    else if (assign_expr.target->kind == AstKind::ExprIndex) {
-        // Index assignment
-        IndexExpr& index_expr = assign_expr.target->index;
-
-        Type* obj_type = index_expr.object->resolved_type;
-        Type* container_type = obj_type ? obj_type->base_type() : nullptr;
-
-        // Struct indexing: dispatch to "index_mut" method
-        if (container_type && container_type->is_struct()) {
-            StringView method_name("index_mut", 9);
+    // Struct compound assignment trait dispatch (e.g. `a += b` -> Add's add_assign).
+    if (type && type->is_struct()) {
+        const char* method_name_str = assign_op_to_trait_method(assign_expr.op);
+        if (method_name_str) {
+            StringView method_name(method_name_str, static_cast<u32>(strlen(method_name_str)));
             Type* found_in = nullptr;
-            const MethodInfo* method_info = lookup_method_in_hierarchy(container_type, method_name, &found_in);
-            if (method_info && found_in) {
-                ValueId self_ptr = gen_lvalue_addr(index_expr.object);
-                ValueId index_val = gen_expr(index_expr.index);
+            const MethodInfo* mi = lookup_method_in_hierarchy(type, method_name, &found_in);
+            if (mi && found_in) {
+                ValueId self_ptr = gen_lvalue_addr(assign_expr.target);
                 StringView mangled = mangle_method(found_in->struct_info.name, method_name);
-                Span<ValueId> args = alloc_span<ValueId>(3);
+                Span<ValueId> args = alloc_span<ValueId>(2);
                 args[0] = self_ptr;
-                args[1] = index_val;
-                args[2] = value;
+                args[1] = rhs;
+                handled = true;
                 return emit_call(mangled, args, m_types.void_type());
             }
         }
+    }
 
-        // List/Map indexing: emit IndexSet IR op
-        Type* container_base = container_type;
-        if (container_base && container_base->is_container()) {
-            ValueId obj = gen_expr(index_expr.object);
-            ValueId index_val = gen_expr(index_expr.index);
-            ContainerKind kind = container_base->is_list() ? ContainerKind::List : ContainerKind::Map;
-            emit_index_set(obj, index_val, value, kind);
-            return value;
+    // Primitive compound assignment: fold the target's current value with the RHS.
+    ValueId old_val = gen_expr(assign_expr.target);
+
+    IROp op;
+    switch (assign_expr.op) {
+        case AssignOp::AddAssign:
+            op = type->is_float() ? IROp::AddF : IROp::AddI;
+            break;
+        case AssignOp::SubAssign:
+            op = type->is_float() ? IROp::SubF : IROp::SubI;
+            break;
+        case AssignOp::MulAssign:
+            op = type->is_float() ? IROp::MulF : IROp::MulI;
+            break;
+        case AssignOp::DivAssign:
+            op = type->is_float() ? IROp::DivF : IROp::DivI;
+            break;
+        case AssignOp::ModAssign:
+            op = IROp::ModI;
+            break;
+        case AssignOp::BitAndAssign:
+            op = IROp::BitAnd;
+            break;
+        case AssignOp::BitOrAssign:
+            op = IROp::BitOr;
+            break;
+        case AssignOp::BitXorAssign:
+            op = IROp::BitXor;
+            break;
+        case AssignOp::ShlAssign:
+            op = IROp::Shl;
+            break;
+        case AssignOp::ShrAssign:
+            op = IROp::Shr;
+            break;
+        default:
+            op = IROp::Copy;
+            break;
+    }
+
+    return emit_binary(op, old_val, rhs, type);
+}
+
+ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
+    AssignExpr& assign_expr = expr->assign;
+    StringView name = assign_expr.target->identifier.name;
+
+    // If this is a pointer parameter (out/inout), store through the pointer
+    if (m_param_is_ptr.count(name)) {
+        ValueId ptr = lookup_local(name);
+        Type* type = expr->resolved_type;
+        // get_type_slot_count handles structs (struct_info.slot_count) and every other
+        // width uniformly. The old inline check omitted list/map/string/weak, under-counting
+        // their slots when stored through an out/inout pointer.
+        u32 slot_count = get_type_slot_count(type);
+        if (slot_count == 0) slot_count = 1;
+        return emit_store_ptr(ptr, value, slot_count, type);
+    }
+
+    // Auto-destroy old owned value before reassignment
+    Type* target_type = assign_expr.target->resolved_type;
+    if (target_type && target_type->noncopyable()) {
+        OwnedLocalInfo* owned_info = find_owned_local(name);
+        if (owned_info && !owned_info->is_moved) {
+            emit_implicit_destroy(*owned_info);
+            owned_info->is_moved = false;  // Reset — new value is now live
+        } else if (owned_info && owned_info->is_moved) {
+            // Variable was moved but now being reassigned — make it live again
+            owned_info->is_moved = false;
         }
+    }
+
+    // Wrap uniq/ref → weak conversion for local assignment
+    value = maybe_wrap_weak(value, assign_expr.value->resolved_type, assign_expr.target->resolved_type);
+
+    // For copyable struct rvalues that alias source storage, allocate fresh
+    // storage and emit a StructCopy — mirrors the gen_var_decl fix. Struct
+    // literals and calls already produce fresh storage, so skip them.
+    // Only applies to simple `=`; compound ops on structs dispatch through
+    // trait methods above, and primitive compound ops don't land here with
+    // a struct target.
+    bool value_is_fresh = assign_expr.value->kind == AstKind::ExprStructLiteral ||
+                          assign_expr.value->kind == AstKind::ExprCall;
+    if (assign_expr.op == AssignOp::Assign && target_type && target_type->is_struct()
+        && !target_type->noncopyable() && !value_is_fresh) {
+        u32 slot_count = target_type->struct_info.slot_count;
+        ValueId fresh = emit_stack_alloc(slot_count, target_type);
+        emit_struct_copy(fresh, value, slot_count);
+        value = fresh;
+    }
+
+    // Normal variable assignment - in SSA, we create a new value
+    define_local(name, value, expr->resolved_type);
+
+    // If the RHS was a noncopyable temporary (e.g. `uniq T()`), transfer
+    // its ownership to the target variable. Without this, the temp's
+    // cleanup record at the current scope depth races with the
+    // variable's cleanup record at the variable's (outer) scope depth —
+    // harmless when register allocation aliases them and tombstoning
+    // absorbs the double-delete, but catastrophic inside nested scopes
+    // (e.g. a catch body) where the temp's scope pops before the
+    // variable's value is observed, leaving the variable pointing at
+    // freed memory. Matches the consume_temp_noncopyable(value, true)
+    // call in gen_var_decl.
+    if (assign_expr.target->resolved_type &&
+        assign_expr.target->resolved_type->noncopyable()) {
+        consume_temp_noncopyable(value, true);
+    }
+
+    // Move semantics: if value is a noncopyable identifier, mark source as moved.
+    // Unlike field assignment, we pass nullify_record=false: the target variable now
+    // shares the same SSA value/register as the source, so emitting a Nullify on that
+    // register would corrupt the target. The SSA null-out of the source still happens.
+    if (assign_expr.value->kind == AstKind::ExprIdentifier) {
+        Type* value_type = assign_expr.value->resolved_type;
+        if (value_type && value_type->noncopyable()) {
+            mark_moved_from(assign_expr.value->identifier.name, /*null_ssa=*/true,
+                            /*nullify_record=*/false);
+        }
+    }
+
+    return value;
+}
+
+ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
+    AssignExpr& assign_expr = expr->assign;
+    GetExpr& get_expr = assign_expr.target->get;
+    ValueId obj = gen_expr(get_expr.object);
+
+    // Get the struct type from the object
+    Type* obj_type = get_expr.object->resolved_type;
+    Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
+
+    u32 slot_offset = 0;
+    u32 slot_count = 1;
+    Type* field_type = nullptr;
+    bool is_variant_field = false;
+    const WhenClauseInfo* when_clause = nullptr;
+    const VariantInfo* variant = nullptr;
+
+    if (struct_type && struct_type->is_struct()) {
+        const FieldInfo* field_info = struct_type->struct_info.find_field(get_expr.name);
+        if (field_info) {
+            slot_offset = field_info->slot_offset;
+            slot_count = field_info->slot_count;
+            field_type = field_info->type;
+        } else {
+            // Check for variant field in when clauses
+            const VariantFieldInfo* variant_field_info = struct_type->struct_info.find_variant_field(
+                get_expr.name, &when_clause, &variant);
+            if (variant_field_info) {
+                is_variant_field = true;
+                slot_offset = when_clause->union_slot_offset + variant_field_info->slot_offset;
+                slot_count = variant_field_info->slot_count;
+                field_type = variant_field_info->type;
+            }
+        }
+    }
+
+    // If this is a variant field, emit runtime discriminant check
+    if (is_variant_field && when_clause && variant) {
+        // Load the discriminant
+        ValueId disc = emit_get_field(obj, when_clause->discriminant_name,
+                                      when_clause->discriminant_slot_offset, 1,
+                                      when_clause->discriminant_type);
+
+        // Create the expected discriminant value constant
+        ValueId expected = emit_const_int(variant->discriminant_value,
+                                          when_clause->discriminant_type);
+
+        // Compare discriminant with expected value
+        ValueId matches = emit_binary(IROp::EqI, disc, expected, m_types.bool_type());
+
+        // Create pass and fail blocks
+        IRBlock* pass_block = create_block("variant_set_pass");
+        IRBlock* fail_block = create_block("variant_set_fail");
+
+        // Branch based on discriminant check
+        finish_block_branch(matches, pass_block->id, fail_block->id);
+
+        // In fail block: emit unreachable (will lower to TRAP)
+        set_current_block(fail_block);
+        finish_block_unreachable();
+
+        // Continue in pass block
+        set_current_block(pass_block);
+    }
+
+    // Destroy old field value before overwriting (prevents leaks for uniq/move-semantic fields)
+    if (field_type && (field_type->kind == TypeKind::Uniq || field_type->noncopyable())) {
+        emit_single_field_destroy(obj, get_expr.name, slot_offset, slot_count, field_type);
+    }
+
+    // Wrap uniq/ref → weak conversion for field assignment
+    value = maybe_wrap_weak(value, assign_expr.value->resolved_type, field_type);
+
+    // For struct-typed fields the rvalue is a struct pointer (per IR convention),
+    // so we must copy slot-by-slot from the source struct. emit_set_field would
+    // otherwise stuff the raw pointer bits into the field slots, silently
+    // corrupting the field (e.g. losing nested when-discriminants). Mirror the
+    // struct-literal initialization path for consistency.
+    ValueId result;
+    if (field_type && field_type->is_struct()) {
+        ValueId field_addr = emit_get_field_addr(obj, get_expr.name, slot_offset, field_type);
+        emit_struct_copy(field_addr, value, slot_count);
+        result = value;
+    } else {
+        result = emit_set_field(obj, get_expr.name, slot_offset, slot_count, value, expr->resolved_type);
+    }
+
+    // Consume noncopyable temporaries assigned to fields
+    if (field_type && field_type->noncopyable()) {
+        consume_temp_noncopyable(value);
+    }
+
+    // Move semantics: if value is a uniq/move-semantic identifier, mark it as moved
+    // Only when the field type also needs move semantics (not for weak ref fields)
+    if (assign_expr.value->kind == AstKind::ExprIdentifier && field_type &&
+        field_type->noncopyable()) {
+        Type* value_type = assign_expr.value->resolved_type;
+        if (value_type && value_type->noncopyable()) {
+            mark_moved_from(assign_expr.value->identifier.name);
+        }
+    }
+
+    // Field-move nullify: if the RHS is a field access on a local value-struct
+    // (e.g. `self.things = src.items` where `src` is a by-value noncopyable
+    // struct param), the semantic analyzer marked the RHS as moved, but nothing
+    // has actually cleared the source field. When the enclosing struct goes
+    // out of scope, its destructor walks its own fields and destroys
+    // `src.items` — freeing the list a second time after we stored the same
+    // pointer into `self.things`. Null the source field so the eventual
+    // destroy-on-scope-exit is a safe `Delete(null)`.
+    if (assign_expr.value->kind == AstKind::ExprGet && field_type &&
+        field_type->noncopyable()) {
+        Type* value_type = assign_expr.value->resolved_type;
+        if (value_type && value_type->noncopyable()) {
+            GetExpr& src_get = assign_expr.value->get;
+            Type* src_obj_type = src_get.object->resolved_type;
+            Type* src_struct_type = src_obj_type ? src_obj_type->base_type() : nullptr;
+            if (src_struct_type && src_struct_type->is_struct()) {
+                const FieldInfo* src_field = src_struct_type->struct_info.find_field(src_get.name);
+                if (src_field) {
+                    ValueId src_obj_ptr = gen_expr(src_get.object);
+                    ValueId null_val = emit_const_null();
+                    emit_set_field(src_obj_ptr, src_field->name,
+                                   src_field->slot_offset, src_field->slot_count,
+                                   null_val, m_types.void_type());
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
+    AssignExpr& assign_expr = expr->assign;
+    IndexExpr& index_expr = assign_expr.target->index;
+
+    Type* obj_type = index_expr.object->resolved_type;
+    Type* container_type = obj_type ? obj_type->base_type() : nullptr;
+
+    // Struct indexing: dispatch to "index_mut" method
+    if (container_type && container_type->is_struct()) {
+        StringView method_name("index_mut", 9);
+        Type* found_in = nullptr;
+        const MethodInfo* method_info = lookup_method_in_hierarchy(container_type, method_name, &found_in);
+        if (method_info && found_in) {
+            ValueId self_ptr = gen_lvalue_addr(index_expr.object);
+            ValueId index_val = gen_expr(index_expr.index);
+            StringView mangled = mangle_method(found_in->struct_info.name, method_name);
+            Span<ValueId> args = alloc_span<ValueId>(3);
+            args[0] = self_ptr;
+            args[1] = index_val;
+            args[2] = value;
+            return emit_call(mangled, args, m_types.void_type());
+        }
+    }
+
+    // List/Map indexing: emit IndexSet IR op
+    if (container_type && container_type->is_container()) {
+        ValueId obj = gen_expr(index_expr.object);
+        ValueId index_val = gen_expr(index_expr.index);
+        ContainerKind kind = container_type->is_list() ? ContainerKind::List : ContainerKind::Map;
+        emit_index_set(obj, index_val, value, kind);
+        return value;
     }
 
     return value;

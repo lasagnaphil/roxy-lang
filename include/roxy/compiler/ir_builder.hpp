@@ -195,6 +195,18 @@ private:
     ValueId gen_index_expr(Expr* expr);
     ValueId gen_get_expr(Expr* expr);
     ValueId gen_assign_expr(Expr* expr);
+    // gen_assign_expr decomposition. gen_assign_expr evaluates the RHS, applies any
+    // compound operator, then dispatches on the target's kind. Each helper takes the
+    // already-evaluated (and compound-folded) RHS value.
+    //
+    // gen_compound_assign handles `+=`/`-=`/... : for struct targets with a
+    // compound-assign trait method it emits the in-place call and sets handled=true
+    // (the whole assignment is done); otherwise it folds the RHS against the target's
+    // current value and returns the combined value to store, with handled=false.
+    ValueId gen_compound_assign(Expr* expr, ValueId rhs, bool& handled);
+    ValueId gen_assign_local(Expr* expr, ValueId value);  // target is an identifier
+    ValueId gen_assign_field(Expr* expr, ValueId value);  // target is obj.field
+    ValueId gen_assign_index(Expr* expr, ValueId value);  // target is container[index]
     ValueId gen_grouping_expr(Expr* expr);
     ValueId gen_this_expr(Expr* expr);
     ValueId gen_struct_literal_expr(Expr* expr);
