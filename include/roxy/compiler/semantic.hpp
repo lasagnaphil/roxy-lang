@@ -233,6 +233,16 @@ private:
     Type* analyze_struct_literal_expr(Expr* expr);
     Type* analyze_string_interp_expr(Expr* expr);
     Type* analyze_lambda_expr(Expr* expr);
+    struct LambdaCaptureContext;  // defined below; used by the phase helpers
+    // Phases of analyze_lambda_expr, sharing the per-lambda LambdaCaptureContext.
+    // validate: pre-validate [move]/[copy self]/[weak self] entries and collect
+    //   captures into `context` (false on error). synthesize: build the lifted
+    //   call FunDecl and analyze its body. backfill: lay out the env struct.
+    bool validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext& context);
+    Decl* synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
+                                    StringView fun_name, StringView env_name,
+                                    Type* ret_type, LambdaCaptureContext& context);
+    void backfill_lambda_env(Type* env_type, const LambdaCaptureContext& context);
 
     // Builders for synthetic AST nodes (used by lambda capture lowering and
     // self-capture rewriting). Each bump-allocates an Expr and fills in the

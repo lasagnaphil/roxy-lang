@@ -3934,16 +3934,50 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
     env_type->struct_info.module_name = StringView(nullptr, 0);
     m_type_env.register_named_type(env_name, env_type);
 
-    // ===== Pre-validate explicit capture entries =====
+    LambdaCaptureContext context;
+    context.boundary_scope = nullptr;       // set after pushing the Lambda scope
+    context.env_struct_type = env_type;
+
+    // Phase 1: pre-validate and collect the capture list into `context`.
+    if (!validate_lambda_captures(le, context)) return m_types.error_type();
+
+    // Phase 2: synthesize the lifted call function and analyze its body.
+    Decl* synth_decl = synthesize_lambda_call_fn(expr, le, fun_name, env_name, ret_type, context);
+
+    // Phase 3: backfill the env struct fields from the resolved captures.
+    backfill_lambda_env(env_type, context);
+
+    // ===== Mark outer-scope move captures as consumed =====
+    // For each Move-mode capture, mark the OUTER symbol moved so subsequent
+    // references in the surrounding scope correctly fail with use-after-move.
+    for (const CaptureInfo& cap : context.captures) {
+        if (cap.mode == CaptureMode::Move) {
+            mark_moved(cap.name);
+        }
+    }
+
+    // Stash the synthesized decl so the IR builder picks it up.
+    m_synthetic_decls.push_back(synth_decl);
+
+    // Annotate the LambdaExpr for downstream consumption (IR builder).
+    le.env_struct_name = env_name;
+    le.call_function_name = fun_name;
+    le.env_struct_type = env_type;
+    le.resolved_captures = m_allocator.alloc_span(context.captures);
+
+    // The lambda expression's resolved type is the user-facing `Function<sig>`.
+    Span<Type*> sig_span = m_allocator.alloc_span(sig_param_types);
+    return m_types.function_type(sig_span, ret_type);
+}
+
+bool SemanticAnalyzer::validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext& context) {
+    // Pre-validate explicit capture entries:
     // [move <name>]: noncopyable, no transitive moves, sets up a Move source.
     // [copy self]:   copyable struct, no when-clauses; synthesizes a struct
     //                literal source so the env field holds a value snapshot.
     // [weak self]:   any struct kind; copyable structs get a runtime heap check
     //                at construction time (receiver might be stack-allocated).
-    LambdaCaptureContext context;
-    context.boundary_scope = nullptr;       // set after pushing the Lambda scope
-    context.env_struct_type = env_type;
-
+    //
     // [copy self] / [weak self] are valid as long as we're inside a struct
     // method. Nested closures are supported: the outer chain gets implicit
     // ref-self captures so the inner lambda can read self via the enclosing
@@ -3958,19 +3992,19 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
             Symbol* outer_sym = m_symbols.lookup(entry.name);
             if (!outer_sym) {
                 error_fmt(entry.loc, "capture list references unknown variable '{}'", entry.name);
-                return m_types.error_type();
+                return false;
             }
             if (!outer_sym->type || !outer_sym->type->noncopyable()) {
                 error_fmt(entry.loc,
                     "move captures only apply to noncopyable types; '{}' is copyable, capture it implicitly",
                     entry.name);
-                return m_types.error_type();
+                return false;
             }
             if (context.by_symbol.find(outer_sym) != context.by_symbol.end()) {
                 error_fmt(entry.loc, "duplicate capture entry for '{}'", entry.name);
-                return m_types.error_type();
+                return false;
             }
-            if (!check_not_moved(entry.name, entry.loc)) return m_types.error_type();
+            if (!check_not_moved(entry.name, entry.loc)) return false;
 
             // Walk crossed Lambda boundaries between this lambda and the
             // symbol's defining scope. For each one, propagate a Move-mode
@@ -4022,7 +4056,7 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
                         "'{}' is already captured implicitly by an enclosing "
                         "lambda; declare '[move {}]' on it (or refactor) so the "
                         "ownership chain is consistent", entry.name, entry.name);
-                    return m_types.error_type();
+                    return false;
                 }
                 bool is_outermost = (i == static_cast<i32>(crossed_ctx_indices.size()) - 1);
                 i32 enclosing_idx = is_outermost
@@ -4067,11 +4101,11 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
         if (entry.name != StringView("self", 4)) {
             error_fmt(entry.loc,
                 "[copy ...] / [weak ...] captures are currently restricted to 'self'");
-            return m_types.error_type();
+            return false;
         }
         if (context.has_self_capture) {
             error(entry.loc, "duplicate self capture in capture list");
-            return m_types.error_type();
+            return false;
         }
 
         Type* struct_type = self_lambda_method_struct();
@@ -4079,7 +4113,7 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
             error_fmt(entry.loc,
                 "[{} self] is only valid inside a struct method",
                 entry.mode == CaptureMode::Copy ? "copy" : "weak");
-            return m_types.error_type();
+            return false;
         }
 
         // For nested lambdas, ensure each enclosing context has self captured
@@ -4114,13 +4148,13 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
                 error_fmt(entry.loc,
                     "cannot [copy self] of noncopyable struct '{}'; use [weak self] instead",
                     struct_type->struct_info.name);
-                return m_types.error_type();
+                return false;
             }
             if (struct_type->struct_info.when_clauses.size() > 0) {
                 error_fmt(entry.loc,
                     "[copy self] on tagged-union struct '{}' is not yet supported",
                     struct_type->struct_info.name);
-                return m_types.error_type();
+                return false;
             }
 
             // Synthesize the struct literal:
@@ -4188,8 +4222,12 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
             context.has_self_capture = true;
         }
     }
+    return true;
+}
 
-    // ===== Synthesize the lifted call function FunDecl =====
+Decl* SemanticAnalyzer::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
+                                                  StringView fun_name, StringView env_name,
+                                                  Type* ret_type, LambdaCaptureContext& context) {
     // Signature: fun __lambda_<id>_call(__env: ref __lambda_<id>_env, params...): R
     Decl* synth_decl = m_allocator.emplace<Decl>();
     synth_decl->kind = AstKind::DeclFun;
@@ -4271,72 +4309,51 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
     }
     m_lambda_contexts.pop_back();
     m_symbols.pop_scope();  // lambda boundary scope
+    return synth_decl;
+}
 
-    // ===== Backfill the env struct fields with [__call_idx, captures...] =====
-    // Field 0 is __call_idx (u32, slot 0). Capture fields follow at increasing
-    // slot offsets. If any capture is noncopyable, attach a synthetic default
+void SemanticAnalyzer::backfill_lambda_env(Type* env_type, const LambdaCaptureContext& context) {
+    // Backfill the env struct fields with [__call_idx, captures...]. Field 0 is
+    // __call_idx (u32, slot 0); capture fields follow at increasing slot
+    // offsets. If any capture is noncopyable, attach a synthetic default
     // destructor — Type::noncopyable() will then return true and the IR builder
     // auto-emits the destructor body (see ir_builder.cpp:260-286).
-    {
-        u32 num_fields = 1 + static_cast<u32>(context.captures.size());
-        FieldInfo* fields = reinterpret_cast<FieldInfo*>(
-            m_allocator.alloc_bytes(sizeof(FieldInfo) * num_fields, alignof(FieldInfo)));
-        fields[0].name = alloc_view(m_allocator, "__call_idx");
-        fields[0].type = m_types.u32_type();
-        fields[0].is_pub = false;
-        fields[0].index = 0;
-        fields[0].slot_offset = 0;
-        fields[0].slot_count = 1;
+    u32 num_fields = 1 + static_cast<u32>(context.captures.size());
+    FieldInfo* fields = reinterpret_cast<FieldInfo*>(
+        m_allocator.alloc_bytes(sizeof(FieldInfo) * num_fields, alignof(FieldInfo)));
+    fields[0].name = alloc_view(m_allocator, "__call_idx");
+    fields[0].type = m_types.u32_type();
+    fields[0].is_pub = false;
+    fields[0].index = 0;
+    fields[0].slot_offset = 0;
+    fields[0].slot_count = 1;
 
-        u32 current_slot = 1;
-        bool any_noncopyable = false;
-        for (u32 i = 0; i < context.captures.size(); i++) {
-            const CaptureInfo& cap = context.captures[i];
-            FieldInfo& f = fields[1 + i];
-            f.name = cap.name;
-            f.type = cap.type;
-            f.is_pub = false;
-            f.index = 1 + i;
-            f.slot_offset = current_slot;
-            f.slot_count = get_type_slot_count(cap.type);
-            current_slot += f.slot_count;
-            if (cap.type && cap.type->noncopyable()) any_noncopyable = true;
-        }
-
-        env_type->struct_info.fields = Span<FieldInfo>(fields, num_fields);
-        env_type->struct_info.slot_count = current_slot;
-
-        if (any_noncopyable) {
-            DestructorInfo* dtor = reinterpret_cast<DestructorInfo*>(
-                m_allocator.alloc_bytes(sizeof(DestructorInfo), alignof(DestructorInfo)));
-            dtor->name = StringView();      // empty = default destructor
-            dtor->param_types = Span<Type*>();
-            dtor->decl = nullptr;
-            env_type->struct_info.destructors = Span<DestructorInfo>(dtor, 1);
-        }
+    u32 current_slot = 1;
+    bool any_noncopyable = false;
+    for (u32 i = 0; i < context.captures.size(); i++) {
+        const CaptureInfo& cap = context.captures[i];
+        FieldInfo& f = fields[1 + i];
+        f.name = cap.name;
+        f.type = cap.type;
+        f.is_pub = false;
+        f.index = 1 + i;
+        f.slot_offset = current_slot;
+        f.slot_count = get_type_slot_count(cap.type);
+        current_slot += f.slot_count;
+        if (cap.type && cap.type->noncopyable()) any_noncopyable = true;
     }
 
-    // ===== Mark outer-scope move captures as consumed =====
-    // For each Move-mode capture, mark the OUTER symbol moved so subsequent
-    // references in the surrounding scope correctly fail with use-after-move.
-    for (const CaptureInfo& cap : context.captures) {
-        if (cap.mode == CaptureMode::Move) {
-            mark_moved(cap.name);
-        }
+    env_type->struct_info.fields = Span<FieldInfo>(fields, num_fields);
+    env_type->struct_info.slot_count = current_slot;
+
+    if (any_noncopyable) {
+        DestructorInfo* dtor = reinterpret_cast<DestructorInfo*>(
+            m_allocator.alloc_bytes(sizeof(DestructorInfo), alignof(DestructorInfo)));
+        dtor->name = StringView();      // empty = default destructor
+        dtor->param_types = Span<Type*>();
+        dtor->decl = nullptr;
+        env_type->struct_info.destructors = Span<DestructorInfo>(dtor, 1);
     }
-
-    // Stash the synthesized decl so the IR builder picks it up.
-    m_synthetic_decls.push_back(synth_decl);
-
-    // Annotate the LambdaExpr for downstream consumption (IR builder).
-    le.env_struct_name = env_name;
-    le.call_function_name = fun_name;
-    le.env_struct_type = env_type;
-    le.resolved_captures = m_allocator.alloc_span(context.captures);
-
-    // The lambda expression's resolved type is the user-facing `Function<sig>`.
-    Span<Type*> sig_span = m_allocator.alloc_span(sig_param_types);
-    return m_types.function_type(sig_span, ret_type);
 }
 
 Type* SemanticAnalyzer::analyze_unary_expr(Expr* expr) {
