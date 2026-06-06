@@ -12,38 +12,7 @@
 
 namespace rx {
 
-// Returns number of u32 slots needed for a type
-static u32 get_type_slot_count(Type* type) {
-    if (!type) return 0;
-    switch (type->kind) {
-        case TypeKind::Bool:
-        case TypeKind::I8: case TypeKind::U8:
-        case TypeKind::I16: case TypeKind::U16:
-        case TypeKind::I32: case TypeKind::U32:
-        case TypeKind::F32:
-        case TypeKind::Enum:
-        case TypeKind::IntLiteral:
-            return 1;
-        case TypeKind::I64: case TypeKind::U64:
-        case TypeKind::F64:
-        case TypeKind::Uniq:
-        case TypeKind::Ref:
-        case TypeKind::List:
-        case TypeKind::Map:
-        case TypeKind::Coroutine:
-            return 2;
-        case TypeKind::Weak:
-            return 4;
-        case TypeKind::Struct:
-            return type->struct_info.slot_count;
-        case TypeKind::String:
-            return 2;
-        case TypeKind::Function:
-            return 2;
-        default:
-            return 0;
-    }
-}
+// get_type_slot_count is declared in types.hpp and defined in types.cpp.
 
 IRBuilder::IRBuilder(BumpAllocator& allocator, TypeEnv& type_env, NativeRegistry& registry,
                      SymbolTable& symbols, ModuleRegistry& module_registry)

@@ -469,6 +469,46 @@ bool is_subtype_of(Type* child, Type* parent) {
     return false;
 }
 
+u32 get_type_slot_count(Type* type) {
+    if (!type) return 0;
+
+    switch (type->kind) {
+        // 1 slot (4 bytes) - small types widened to 32-bit
+        case TypeKind::Bool:
+        case TypeKind::I8:  case TypeKind::U8:
+        case TypeKind::I16: case TypeKind::U16:
+        case TypeKind::I32: case TypeKind::U32:
+        case TypeKind::F32:
+        case TypeKind::Enum:        // Enums are stored as i32
+        case TypeKind::IntLiteral:  // Safety net: defaults to i32 (1 slot)
+            return 1;
+
+        // 2 slots (8 bytes): 64-bit primitives and pointers
+        case TypeKind::I64: case TypeKind::U64:
+        case TypeKind::F64:
+        case TypeKind::String:      // Heap-allocated string object (pointer)
+        case TypeKind::Uniq:
+        case TypeKind::Ref:
+        case TypeKind::List:
+        case TypeKind::Map:
+        case TypeKind::Coroutine:
+        // Function closures are a single uniq pointer to the env struct
+        // (env's first field holds the call_idx; subsequent fields hold captures).
+        case TypeKind::Function:
+            return 2;
+
+        case TypeKind::Weak:
+            return 4;  // 64-bit pointer + 64-bit generation
+
+        // Structs: use computed slot_count
+        case TypeKind::Struct:
+            return type->struct_info.slot_count;
+
+        default:
+            return 0;
+    }
+}
+
 const char* type_kind_to_string(TypeKind kind) {
     switch (kind) {
         case TypeKind::Void: return "void";

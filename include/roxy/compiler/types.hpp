@@ -497,6 +497,13 @@ private:
 const char* type_kind_to_string(TypeKind kind);
 void type_to_string(const Type* type, String& out);
 
+// Number of 32-bit value-stack slots a value of `type` occupies. Small primitives
+// widen to 1 slot; 64-bit primitives and pointers (i64/u64/f64, string, uniq, ref,
+// list, map, coroutine, function-closure) take 2; weak refs take 4 (64-bit pointer
+// + 64-bit generation); structs use their computed struct_info.slot_count. Returns
+// 0 for null or types with no value representation (void, never, trait, ...).
+u32 get_type_slot_count(Type* type);
+
 // Look up a method in a struct's type hierarchy (walks inheritance chain)
 // Returns the MethodInfo and optionally sets found_in_type to where the method was defined
 const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name, Type** found_in_type = nullptr);
