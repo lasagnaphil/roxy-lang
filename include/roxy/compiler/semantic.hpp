@@ -123,6 +123,18 @@ private:
     // Multi-pass analysis
     void collect_type_declarations(Program* program);
     void resolve_type_members(Program* program);
+    // Per-declaration handlers dispatched by resolve_type_members.
+    void resolve_struct_members(Decl* decl);
+    void resolve_enum_members(Decl* decl);
+    void resolve_fun_signature(Decl* decl);
+    void resolve_global_var(Decl* decl);
+    void resolve_constructor_member(Decl* decl);
+    void resolve_destructor_member(Decl* decl);
+    void resolve_method_member(Decl* decl);
+    void resolve_trait_parent(Decl* decl);
+    // Trailing whole-program passes run after all members are resolved.
+    void detect_mutual_struct_recursion(Program* program);
+    void generate_synthetic_destructors(Program* program);
     void resolve_when_clauses(Span<WhenFieldDecl> when_decls,
                               Vector<FieldInfo>& fields,
                               Vector<WhenClauseInfo>& when_clauses,

@@ -462,285 +462,310 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
 void SemanticAnalyzer::resolve_type_members(Program* program) {
     for (auto* decl : program->declarations) {
         if (!decl) continue;
-
-        if (decl->kind == AstKind::DeclStruct) {
-            StructDecl& struct_decl = decl->struct_decl;
-
-            // Skip generic struct templates - they have unresolved type params
-            if (struct_decl.type_params.size() > 0) continue;
-
-            Type* type = m_type_env.named_type_by_name(struct_decl.name);
-
-            // Resolve parent type
-            if (!struct_decl.parent_name.empty()) {
-                Type* parent = m_type_env.named_type_by_name(struct_decl.parent_name);
-                if (!parent) {
-                    error_fmt(decl->loc, "unknown parent type '{}'", struct_decl.parent_name);
-                } else if (parent->kind != TypeKind::Struct) {
-                    error_fmt(decl->loc, "parent type '{}' is not a struct", struct_decl.parent_name);
-                } else {
-                    type->struct_info.parent = parent;
-                }
-            }
-
-            // Resolve field types
-            Vector<FieldInfo> fields;
-
-            // First, inherit parent fields
-            if (type->struct_info.parent) {
-                Type* parent = type->struct_info.parent;
-                for (const auto& field : parent->struct_info.fields) {
-                    fields.push_back(field);
-                }
-            }
-
-            // Then add own fields
-            for (auto& field : struct_decl.fields) {
-                Type* field_type = resolve_type_expr(field.type);
-                if (!field_type) {
-                    field_type = m_types.error_type();
-                }
-
-                // Check: ref types cannot be used in struct fields (prevents cycles)
-                if (field_type->kind == TypeKind::Ref) {
-                    error_fmt(field.loc, "'ref' types cannot be used in struct fields");
-                }
-
-                FieldInfo info;
-                info.name = field.name;
-                info.type = field_type;
-                info.is_pub = field.is_pub;
-                info.index = static_cast<u32>(fields.size());
-                info.slot_offset = 0;  // Will be computed below
-                info.slot_count = 0;   // Will be computed below
-                fields.push_back(info);
-            }
-
-            // Check for direct self-referencing cycles (infinite size)
-            bool has_cycle = false;
-            for (u32 fi = 0; fi < struct_decl.fields.size(); fi++) {
-                auto& field_info = fields[fields.size() - struct_decl.fields.size() + fi];
-                if (field_info.type->kind == TypeKind::Struct &&
-                    field_info.type == type) {
-                    error_fmt(struct_decl.fields[fi].loc,
-                        "recursive struct type '{}' has infinite size; "
-                        "use 'uniq {}' for indirection",
-                        field_info.type->struct_info.name,
-                        field_info.type->struct_info.name);
-                    has_cycle = true;
-                }
-            }
-
-            if (has_cycle) continue;
-
-            // Compute field slot offsets for regular fields
-            u32 current_slot = 0;
-            for (auto& field_info : fields) {
-                field_info.slot_count = get_type_slot_count(field_info.type);
-                field_info.slot_offset = current_slot;
-                current_slot += field_info.slot_count;
-            }
-
-            // Process when clauses (tagged unions)
-            Vector<WhenClauseInfo> when_clauses;
-            resolve_when_clauses(struct_decl.when_clauses, fields, when_clauses, current_slot);
-
-            type->struct_info.slot_count = current_slot;
-
-            type->struct_info.fields = m_allocator.alloc_span(fields);
-            type->struct_info.when_clauses = m_allocator.alloc_span(when_clauses);
-
-            // Initialize empty constructor/destructor/method lists
-            type->struct_info.constructors = Span<ConstructorInfo>(nullptr, 0);
-            type->struct_info.destructors = Span<DestructorInfo>(nullptr, 0);
-            type->struct_info.methods = Span<MethodInfo>(nullptr, 0);
-        }
-        else if (decl->kind == AstKind::DeclEnum) {
-            EnumDecl& ed = decl->enum_decl;
-            Type* type = m_type_env.named_type_by_name(ed.name);
-
-            // Define enum variants in global scope (accessible as EnumName::Variant)
-            i64 next_value = 0;
-            for (auto& v : ed.variants) {
-
-                i64 value = next_value;
-                if (v.value) {
-                    // Analyze the value expression
-                    Type* vtype = analyze_expr(v.value);
-                    if (vtype && !vtype->is_error() && !vtype->is_integer() && !vtype->is_int_literal()) {
-                        error_fmt(v.loc, "enum variant value must be an integer");
-                    }
-                    // For simplicity, we require compile-time integer literals
-                    if (v.value->kind == AstKind::ExprLiteral) {
-                        LiteralKind lk = v.value->literal.literal_kind;
-                        if (lk == LiteralKind::I32 || lk == LiteralKind::I64 ||
-                            lk == LiteralKind::U32 || lk == LiteralKind::U64) {
-                            value = v.value->literal.int_value;
-                        }
-                    }
-                }
-
-                // Create a qualified name for the variant (e.g., "EnumName::VariantName")
-                // But for lookup purposes, we store it separately
-                m_symbols.define_enum_variant(v.name, type, v.loc, value);
-
-                next_value = value + 1;
-            }
-        }
-        else if (decl->kind == AstKind::DeclFun) {
-            // Skip generic function templates - they have unresolved type params
-            FunDecl& fun_decl = decl->fun_decl;
-            if (fun_decl.type_params.size() > 0) continue;
-
-            // Register function in global scope (for forward references)
-            // Resolve parameter types
-            Vector<Type*> param_types;
-            for (const auto& param : fun_decl.params) {
-                Type* ptype = resolve_type_expr(param.type);
-                if (!ptype) ptype = m_types.error_type();
-                param_types.push_back(ptype);
-            }
-
-            // Resolve return type
-            Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
-            if (!return_type) return_type = m_types.error_type();
-
-            // For coroutine functions, create a function-specific coroutine type
-            // so that method calls (.resume(), .done()) can be resolved to the
-            // correct mangled function names.
-            if (return_type && return_type->is_coroutine()) {
-                return_type = m_types.coroutine_type_for_func(
-                    return_type->coro_info.yield_type, fun_decl.name);
-                populate_coro_methods(return_type);
-            }
-
-            // Create function type
-            Type* func_type = m_types.function_type(
-                m_allocator.alloc_span(param_types), return_type);
-
-            // Define function in global scope
-            Symbol* sym = m_symbols.define(SymbolKind::Function, fun_decl.name, func_type, decl->loc, decl);
-            sym->is_pub = fun_decl.is_pub;
-        }
-        else if (decl->kind == AstKind::DeclVar) {
-            // Global variable
-            VarDecl& var_decl = decl->var_decl;
-
-            Type* var_type = nullptr;
-            if (var_decl.type) {
-                var_type = resolve_type_expr(var_decl.type);
-            }
-
-            if (var_decl.initializer) {
-                Type* init_type = analyze_expr(var_decl.initializer);
-                if (var_type && coerce_generic_template_ref(var_decl.initializer, var_type)) {
-                    init_type = var_decl.initializer->resolved_type;
-                }
-                if (!var_type) {
-                    // Type inference
-                    var_type = init_type;
-                    if (var_type->is_int_literal()) {
-                        var_type = m_types.i32_type();
-                        coerce_int_literal(var_decl.initializer, var_type);
-                    }
-                } else if (!check_assignable(var_type, init_type, decl->loc)) {
-                    // Error already reported by check_assignable
-                } else {
-                    coerce_int_literal(var_decl.initializer, var_type);
-                }
-            } else if (!var_type) {
-                error(decl->loc, "variable declaration requires type annotation or initializer");
-                var_type = m_types.error_type();
-            }
-
-            var_decl.resolved_type = var_type;
-            Symbol* sym = m_symbols.define(SymbolKind::Variable, var_decl.name, var_type, decl->loc, decl);
-            sym->is_pub = var_decl.is_pub;
-        }
-        else if (decl->kind == AstKind::DeclConstructor) {
-            ConstructorDecl& constructor_decl = decl->constructor_decl;
-            if (generics().is_generic_struct(constructor_decl.struct_name)) {
-                generics().register_generic_struct_constructor(constructor_decl.struct_name, decl);
-                continue;
-            }
-            analyze_constructor_decl(decl);
-        }
-        else if (decl->kind == AstKind::DeclDestructor) {
-            DestructorDecl& destructor_decl = decl->destructor_decl;
-            if (generics().is_generic_struct(destructor_decl.struct_name)) {
-                generics().register_generic_struct_destructor(destructor_decl.struct_name, decl);
-                continue;
-            }
-            analyze_destructor_decl(decl);
-        }
-        else if (decl->kind == AstKind::DeclMethod) {
-            MethodDecl& method_decl = decl->method_decl;
-
-            // Check if struct_name is actually a trait name
-            Type* trait_lookup = m_type_env.trait_type_by_name(method_decl.struct_name);
-            if (trait_lookup && method_decl.trait_name.empty()) {
-                // This is a trait method declaration (fun TraitName.method(...))
-                analyze_trait_method_decl(decl, trait_lookup);
-            }
-            else if (!method_decl.trait_name.empty()) {
-                // This is a trait implementation (fun Type.method(...) for Trait<Args>)
-                Type* struct_type_lookup = m_type_env.named_type_by_name(method_decl.struct_name);
-                if (!struct_type_lookup) {
-                    error_fmt(decl->loc, "method for unknown type '{}'", method_decl.struct_name);
-                } else if (struct_type_lookup->kind != TypeKind::Struct) {
-                    error_fmt(decl->loc, "'{}' is not a struct type", method_decl.struct_name);
-                } else {
-                    Type* impl_trait = m_type_env.trait_type_by_name(method_decl.trait_name);
-                    if (!impl_trait) {
-                        error_fmt(decl->loc, "unknown trait '{}'", method_decl.trait_name);
-                    } else {
-                        Type* trait_type = impl_trait;
-                        TraitTypeInfo& trait_type_info = trait_type->trait_info;
-
-                        // Resolve the `for Trait<Args>` type args of this impl.
-                        Span<Type*> resolved_trait_type_args;
-                        if (!resolve_trait_impl_type_args(method_decl, trait_type_info,
-                                                          struct_type_lookup, decl->loc,
-                                                          resolved_trait_type_args)) {
-                            continue;
-                        }
-
-                        m_pending_trait_impls.push_back({decl, struct_type_lookup, trait_type, resolved_trait_type_args});
-                    }
-                }
-            }
-            else {
-                // Regular method (no trait involvement)
-                // Check if struct_name is a generic struct template
-                if (generics().is_generic_struct(method_decl.struct_name)) {
-                    generics().register_generic_struct_method(method_decl.struct_name, decl);
-                    continue;  // Skip normal method analysis; handled in worklist
-                }
-                analyze_method_decl(decl);
-            }
-        }
-        else if (decl->kind == AstKind::DeclTrait) {
-            TraitDecl& trait_decl = decl->trait_decl;
-            Type* trait_type = m_type_env.trait_type_by_name(trait_decl.name);
-
-            // Resolve parent trait
-            if (!trait_decl.parent_name.empty()) {
-                Type* parent_trait = m_type_env.trait_type_by_name(trait_decl.parent_name);
-                if (!parent_trait) {
-                    error_fmt(decl->loc, "unknown parent trait '{}'", trait_decl.parent_name);
-                } else if (parent_trait == trait_type) {
-                    error_fmt(decl->loc, "trait '{}' cannot inherit from itself", trait_decl.name);
-                } else {
-                    trait_type->trait_info.parent = parent_trait;
-                }
-            }
+        switch (decl->kind) {
+            case AstKind::DeclStruct:      resolve_struct_members(decl); break;
+            case AstKind::DeclEnum:        resolve_enum_members(decl); break;
+            case AstKind::DeclFun:         resolve_fun_signature(decl); break;
+            case AstKind::DeclVar:         resolve_global_var(decl); break;
+            case AstKind::DeclConstructor: resolve_constructor_member(decl); break;
+            case AstKind::DeclDestructor:  resolve_destructor_member(decl); break;
+            case AstKind::DeclMethod:      resolve_method_member(decl); break;
+            case AstKind::DeclTrait:       resolve_trait_parent(decl); break;
+            default: break;
         }
     }
 
-    // Detect mutual recursion: after all structs are resolved, recompute
-    // each struct's expected slot_count. If it differs from the stored value,
-    // it means a field referenced a not-yet-resolved struct (mutual recursion
-    // or invalid forward reference of a value type).
+    detect_mutual_struct_recursion(program);
+    generate_synthetic_destructors(program);
+
+    // Now validate all trait implementations
+    validate_trait_implementations();
+}
+
+void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
+    StructDecl& struct_decl = decl->struct_decl;
+
+    // Skip generic struct templates - they have unresolved type params
+    if (struct_decl.type_params.size() > 0) return;
+
+    Type* type = m_type_env.named_type_by_name(struct_decl.name);
+
+    // Resolve parent type
+    if (!struct_decl.parent_name.empty()) {
+        Type* parent = m_type_env.named_type_by_name(struct_decl.parent_name);
+        if (!parent) {
+            error_fmt(decl->loc, "unknown parent type '{}'", struct_decl.parent_name);
+        } else if (parent->kind != TypeKind::Struct) {
+            error_fmt(decl->loc, "parent type '{}' is not a struct", struct_decl.parent_name);
+        } else {
+            type->struct_info.parent = parent;
+        }
+    }
+
+    // Resolve field types
+    Vector<FieldInfo> fields;
+
+    // First, inherit parent fields
+    if (type->struct_info.parent) {
+        Type* parent = type->struct_info.parent;
+        for (const auto& field : parent->struct_info.fields) {
+            fields.push_back(field);
+        }
+    }
+
+    // Then add own fields
+    for (auto& field : struct_decl.fields) {
+        Type* field_type = resolve_type_expr(field.type);
+        if (!field_type) {
+            field_type = m_types.error_type();
+        }
+
+        // Check: ref types cannot be used in struct fields (prevents cycles)
+        if (field_type->kind == TypeKind::Ref) {
+            error_fmt(field.loc, "'ref' types cannot be used in struct fields");
+        }
+
+        FieldInfo info;
+        info.name = field.name;
+        info.type = field_type;
+        info.is_pub = field.is_pub;
+        info.index = static_cast<u32>(fields.size());
+        info.slot_offset = 0;  // Will be computed below
+        info.slot_count = 0;   // Will be computed below
+        fields.push_back(info);
+    }
+
+    // Check for direct self-referencing cycles (infinite size)
+    bool has_cycle = false;
+    for (u32 fi = 0; fi < struct_decl.fields.size(); fi++) {
+        auto& field_info = fields[fields.size() - struct_decl.fields.size() + fi];
+        if (field_info.type->kind == TypeKind::Struct &&
+            field_info.type == type) {
+            error_fmt(struct_decl.fields[fi].loc,
+                "recursive struct type '{}' has infinite size; "
+                "use 'uniq {}' for indirection",
+                field_info.type->struct_info.name,
+                field_info.type->struct_info.name);
+            has_cycle = true;
+        }
+    }
+
+    if (has_cycle) return;
+
+    // Compute field slot offsets for regular fields
+    u32 current_slot = 0;
+    for (auto& field_info : fields) {
+        field_info.slot_count = get_type_slot_count(field_info.type);
+        field_info.slot_offset = current_slot;
+        current_slot += field_info.slot_count;
+    }
+
+    // Process when clauses (tagged unions)
+    Vector<WhenClauseInfo> when_clauses;
+    resolve_when_clauses(struct_decl.when_clauses, fields, when_clauses, current_slot);
+
+    type->struct_info.slot_count = current_slot;
+
+    type->struct_info.fields = m_allocator.alloc_span(fields);
+    type->struct_info.when_clauses = m_allocator.alloc_span(when_clauses);
+
+    // Initialize empty constructor/destructor/method lists
+    type->struct_info.constructors = Span<ConstructorInfo>(nullptr, 0);
+    type->struct_info.destructors = Span<DestructorInfo>(nullptr, 0);
+    type->struct_info.methods = Span<MethodInfo>(nullptr, 0);
+}
+
+void SemanticAnalyzer::resolve_enum_members(Decl* decl) {
+    EnumDecl& ed = decl->enum_decl;
+    Type* type = m_type_env.named_type_by_name(ed.name);
+
+    // Define enum variants in global scope (accessible as EnumName::Variant)
+    i64 next_value = 0;
+    for (auto& v : ed.variants) {
+
+        i64 value = next_value;
+        if (v.value) {
+            // Analyze the value expression
+            Type* vtype = analyze_expr(v.value);
+            if (vtype && !vtype->is_error() && !vtype->is_integer() && !vtype->is_int_literal()) {
+                error_fmt(v.loc, "enum variant value must be an integer");
+            }
+            // For simplicity, we require compile-time integer literals
+            if (v.value->kind == AstKind::ExprLiteral) {
+                LiteralKind lk = v.value->literal.literal_kind;
+                if (lk == LiteralKind::I32 || lk == LiteralKind::I64 ||
+                    lk == LiteralKind::U32 || lk == LiteralKind::U64) {
+                    value = v.value->literal.int_value;
+                }
+            }
+        }
+
+        // Create a qualified name for the variant (e.g., "EnumName::VariantName")
+        // But for lookup purposes, we store it separately
+        m_symbols.define_enum_variant(v.name, type, v.loc, value);
+
+        next_value = value + 1;
+    }
+}
+
+void SemanticAnalyzer::resolve_fun_signature(Decl* decl) {
+    // Skip generic function templates - they have unresolved type params
+    FunDecl& fun_decl = decl->fun_decl;
+    if (fun_decl.type_params.size() > 0) return;
+
+    // Register function in global scope (for forward references)
+    // Resolve parameter types
+    Vector<Type*> param_types;
+    for (const auto& param : fun_decl.params) {
+        Type* ptype = resolve_type_expr(param.type);
+        if (!ptype) ptype = m_types.error_type();
+        param_types.push_back(ptype);
+    }
+
+    // Resolve return type
+    Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
+    if (!return_type) return_type = m_types.error_type();
+
+    // For coroutine functions, create a function-specific coroutine type
+    // so that method calls (.resume(), .done()) can be resolved to the
+    // correct mangled function names.
+    if (return_type && return_type->is_coroutine()) {
+        return_type = m_types.coroutine_type_for_func(
+            return_type->coro_info.yield_type, fun_decl.name);
+        populate_coro_methods(return_type);
+    }
+
+    // Create function type
+    Type* func_type = m_types.function_type(
+        m_allocator.alloc_span(param_types), return_type);
+
+    // Define function in global scope
+    Symbol* sym = m_symbols.define(SymbolKind::Function, fun_decl.name, func_type, decl->loc, decl);
+    sym->is_pub = fun_decl.is_pub;
+}
+
+void SemanticAnalyzer::resolve_global_var(Decl* decl) {
+    VarDecl& var_decl = decl->var_decl;
+
+    Type* var_type = nullptr;
+    if (var_decl.type) {
+        var_type = resolve_type_expr(var_decl.type);
+    }
+
+    if (var_decl.initializer) {
+        Type* init_type = analyze_expr(var_decl.initializer);
+        if (var_type && coerce_generic_template_ref(var_decl.initializer, var_type)) {
+            init_type = var_decl.initializer->resolved_type;
+        }
+        if (!var_type) {
+            // Type inference
+            var_type = init_type;
+            if (var_type->is_int_literal()) {
+                var_type = m_types.i32_type();
+                coerce_int_literal(var_decl.initializer, var_type);
+            }
+        } else if (!check_assignable(var_type, init_type, decl->loc)) {
+            // Error already reported by check_assignable
+        } else {
+            coerce_int_literal(var_decl.initializer, var_type);
+        }
+    } else if (!var_type) {
+        error(decl->loc, "variable declaration requires type annotation or initializer");
+        var_type = m_types.error_type();
+    }
+
+    var_decl.resolved_type = var_type;
+    Symbol* sym = m_symbols.define(SymbolKind::Variable, var_decl.name, var_type, decl->loc, decl);
+    sym->is_pub = var_decl.is_pub;
+}
+
+void SemanticAnalyzer::resolve_constructor_member(Decl* decl) {
+    ConstructorDecl& constructor_decl = decl->constructor_decl;
+    if (generics().is_generic_struct(constructor_decl.struct_name)) {
+        generics().register_generic_struct_constructor(constructor_decl.struct_name, decl);
+        return;
+    }
+    analyze_constructor_decl(decl);
+}
+
+void SemanticAnalyzer::resolve_destructor_member(Decl* decl) {
+    DestructorDecl& destructor_decl = decl->destructor_decl;
+    if (generics().is_generic_struct(destructor_decl.struct_name)) {
+        generics().register_generic_struct_destructor(destructor_decl.struct_name, decl);
+        return;
+    }
+    analyze_destructor_decl(decl);
+}
+
+void SemanticAnalyzer::resolve_method_member(Decl* decl) {
+    MethodDecl& method_decl = decl->method_decl;
+
+    // Check if struct_name is actually a trait name
+    Type* trait_lookup = m_type_env.trait_type_by_name(method_decl.struct_name);
+    if (trait_lookup && method_decl.trait_name.empty()) {
+        // This is a trait method declaration (fun TraitName.method(...))
+        analyze_trait_method_decl(decl, trait_lookup);
+    }
+    else if (!method_decl.trait_name.empty()) {
+        // This is a trait implementation (fun Type.method(...) for Trait<Args>)
+        Type* struct_type_lookup = m_type_env.named_type_by_name(method_decl.struct_name);
+        if (!struct_type_lookup) {
+            error_fmt(decl->loc, "method for unknown type '{}'", method_decl.struct_name);
+        } else if (struct_type_lookup->kind != TypeKind::Struct) {
+            error_fmt(decl->loc, "'{}' is not a struct type", method_decl.struct_name);
+        } else {
+            Type* impl_trait = m_type_env.trait_type_by_name(method_decl.trait_name);
+            if (!impl_trait) {
+                error_fmt(decl->loc, "unknown trait '{}'", method_decl.trait_name);
+            } else {
+                Type* trait_type = impl_trait;
+                TraitTypeInfo& trait_type_info = trait_type->trait_info;
+
+                // Resolve the `for Trait<Args>` type args of this impl.
+                Span<Type*> resolved_trait_type_args;
+                if (!resolve_trait_impl_type_args(method_decl, trait_type_info,
+                                                  struct_type_lookup, decl->loc,
+                                                  resolved_trait_type_args)) {
+                    return;
+                }
+
+                m_pending_trait_impls.push_back({decl, struct_type_lookup, trait_type, resolved_trait_type_args});
+            }
+        }
+    }
+    else {
+        // Regular method (no trait involvement)
+        // Check if struct_name is a generic struct template
+        if (generics().is_generic_struct(method_decl.struct_name)) {
+            generics().register_generic_struct_method(method_decl.struct_name, decl);
+            return;  // Skip normal method analysis; handled in worklist
+        }
+        analyze_method_decl(decl);
+    }
+}
+
+void SemanticAnalyzer::resolve_trait_parent(Decl* decl) {
+    TraitDecl& trait_decl = decl->trait_decl;
+    Type* trait_type = m_type_env.trait_type_by_name(trait_decl.name);
+
+    // Resolve parent trait
+    if (!trait_decl.parent_name.empty()) {
+        Type* parent_trait = m_type_env.trait_type_by_name(trait_decl.parent_name);
+        if (!parent_trait) {
+            error_fmt(decl->loc, "unknown parent trait '{}'", trait_decl.parent_name);
+        } else if (parent_trait == trait_type) {
+            error_fmt(decl->loc, "trait '{}' cannot inherit from itself", trait_decl.name);
+        } else {
+            trait_type->trait_info.parent = parent_trait;
+        }
+    }
+}
+
+void SemanticAnalyzer::detect_mutual_struct_recursion(Program* program) {
+    // After all structs are resolved, recompute each struct's expected
+    // slot_count. If it differs from the stored value, a field referenced a
+    // not-yet-resolved struct (mutual recursion or invalid forward reference
+    // of a value type).
     for (auto* decl : program->declarations) {
         if (!decl || decl->kind != AstKind::DeclStruct) continue;
         if (decl->struct_decl.type_params.size() > 0) continue;
@@ -771,7 +796,9 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             }
         }
     }
+}
 
+void SemanticAnalyzer::generate_synthetic_destructors(Program* program) {
     // Generate synthetic default destructors for structs that have fields
     // needing cleanup. A field needs cleanup if:
     //   - It is a uniq reference (needs destructor call + memory free)
@@ -835,9 +862,6 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             changed = true;
         }
     }
-
-    // Now validate all trait implementations
-    validate_trait_implementations();
 }
 
 void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
