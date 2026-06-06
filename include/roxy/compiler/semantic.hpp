@@ -395,16 +395,45 @@ private:
     // Generic trait bound resolution and checking
     Span<TraitBound> resolve_type_param_bounds(Span<TypeExpr*> bound_exprs, SourceLocation loc);
     void resolve_generic_bounds();
+    // Resolve one template's per-type-param trait bounds; returns false (no
+    // bounds) when no type param is bounded. Shared by both arms of
+    // resolve_generic_bounds (generic functions and generic structs).
+    bool resolve_template_bounds(Span<TypeParam> type_params, ResolvedTypeParams& out);
     bool check_type_arg_bounds(StringView template_name, Span<Type*> type_args,
                                const ResolvedTypeParams* bounds, SourceLocation loc);
 
     // Trait analysis helpers
-    Type* resolve_trait_type_expr(TypeExpr* type_expr, const TraitTypeInfo& trait_info);
+    // Resolve a trait *method signature* TypeExpr: maps `Self` and the trait's
+    // own type-param names to abstract types. (Distinct from concretize_trait_type.)
+    Type* resolve_trait_method_type_expr(TypeExpr* type_expr, const TraitTypeInfo& trait_info);
     void analyze_trait_method_decl(Decl* decl, Type* trait_type);
+    // Resolve the `for Trait<Args>` type args of a trait impl: validates arity,
+    // defaults a bare `for Trait` to all-Self, resolves each arg. Returns false
+    // (error already reported) on an arity mismatch.
+    bool resolve_trait_impl_type_args(MethodDecl& method_decl, const TraitTypeInfo& trait_info,
+                                      Type* struct_type, SourceLocation loc, Span<Type*>& out);
+
+    // validate_trait_implementations is split across the helpers below.
     void validate_trait_implementations();
+    struct TraitImplGroup {
+        Type* struct_type;
+        Type* trait_type;
+        Span<Type*> trait_type_args;
+        Vector<Decl*> impl_decls;
+    };
+    Vector<TraitImplGroup> group_pending_trait_impls();
+    bool check_parent_trait_satisfied(const TraitImplGroup& group,
+                                      const Vector<TraitImplGroup>& all_groups);
+    void validate_and_register_impl_method(const TraitImplGroup& group, Decl* decl,
+                                           Vector<bool>& implemented);
+    void finalize_trait_impl(const TraitImplGroup& group, const Vector<bool>& implemented);
+
     void inject_default_method(Type* struct_type, Type* trait_type,
                                TraitMethodInfo& tmi, Span<Type*> trait_type_args);
-    Type* resolve_trait_type(Type* abstract_type, Type* struct_type, Span<Type*> trait_type_args);
+    // Concretize an abstract trait-method type (`Self` -> the implementing
+    // struct; a trait type-param -> the matching `for Trait<Args>` argument).
+    // (Distinct from resolve_trait_method_type_expr, which works on TypeExprs.)
+    Type* concretize_trait_type(Type* abstract_type, Type* struct_type, Span<Type*> trait_type_args);
 
     // Pending trait implementations (struct_name resolved to struct type + trait decl)
     struct PendingTraitImpl {

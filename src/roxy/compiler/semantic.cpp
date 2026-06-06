@@ -697,33 +697,12 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
                         Type* trait_type = impl_trait;
                         TraitTypeInfo& trait_type_info = trait_type->trait_info;
 
-                        // Resolve trait type args
+                        // Resolve the `for Trait<Args>` type args of this impl.
                         Span<Type*> resolved_trait_type_args;
-                        if (method_decl.trait_type_args.size() > 0) {
-                            if (trait_type_info.type_params.size() == 0) {
-                                error_fmt(decl->loc, "trait '{}' does not take type arguments", method_decl.trait_name);
-                                continue;
-                            }
-                            if (method_decl.trait_type_args.size() != trait_type_info.type_params.size()) {
-                                error_fmt(decl->loc, "trait '{}' expects {} type argument(s), got {}",
-                                         method_decl.trait_name, trait_type_info.type_params.size(), method_decl.trait_type_args.size());
-                                continue;
-                            }
-                            Vector<Type*> args;
-                            for (auto* type_arg : method_decl.trait_type_args) {
-                                Type* arg_type = resolve_type_expr(type_arg);
-                                if (!arg_type) arg_type = m_types.error_type();
-                                args.push_back(arg_type);
-                            }
-                            resolved_trait_type_args = m_allocator.alloc_span(args);
-                        } else if (trait_type_info.type_params.size() > 0) {
-                            // Default all type params to Self (the implementing struct type)
-                            // This enables `for Add` as shorthand for `for Add<Vec2>` on struct Vec2
-                            Vector<Type*> args;
-                            for (u32 i = 0; i < trait_type_info.type_params.size(); i++) {
-                                args.push_back(struct_type_lookup);
-                            }
-                            resolved_trait_type_args = m_allocator.alloc_span(args);
+                        if (!resolve_trait_impl_type_args(method_decl, trait_type_info,
+                                                          struct_type_lookup, decl->loc,
+                                                          resolved_trait_type_args)) {
+                            continue;
                         }
 
                         m_pending_trait_impls.push_back({decl, struct_type_lookup, trait_type, resolved_trait_type_args});
@@ -2128,7 +2107,7 @@ void SemanticAnalyzer::append_destructor(StructTypeInfo& info, DestructorInfo dt
 
 // ===== Trait Validation =====
 
-Type* SemanticAnalyzer::resolve_trait_type_expr(TypeExpr* type_expr,
+Type* SemanticAnalyzer::resolve_trait_method_type_expr(TypeExpr* type_expr,
                                                  const TraitTypeInfo& trait_info) {
     if (!type_expr) {
         return m_types.error_type();
@@ -2173,12 +2152,12 @@ void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
     // Resolve parameter types - use TypeKind::Self for Self, TypeParam for trait type params
     Vector<Type*> param_types;
     for (const auto& param : method_decl.params) {
-        param_types.push_back(resolve_trait_type_expr(param.type, trait_type_info));
+        param_types.push_back(resolve_trait_method_type_expr(param.type, trait_type_info));
     }
 
     // Resolve return type (TypeKind::Self for Self, TypeParam for trait type params)
     Type* return_type = method_decl.return_type
-        ? resolve_trait_type_expr(method_decl.return_type, trait_type_info)
+        ? resolve_trait_method_type_expr(method_decl.return_type, trait_type_info)
         : m_types.void_type();
 
     // Create trait method info
@@ -2247,51 +2226,33 @@ Span<TraitBound> SemanticAnalyzer::resolve_type_param_bounds(Span<TypeExpr*> bou
     return m_allocator.alloc_span(bounds);
 }
 
-void SemanticAnalyzer::resolve_generic_bounds() {
-    // Resolve bounds for all generic function templates
-    for (const auto& entry : m_type_env.generics().generic_funs_map()) {
-        StringView name = entry.first;
-        Decl* decl = entry.second;
-        FunDecl& fun_decl = decl->fun_decl;
-
-        bool has_bounds = false;
-        for (const auto& type_param : fun_decl.type_params) {
-            if (type_param.bounds.size() > 0) { has_bounds = true; break; }
-        }
-        if (!has_bounds) continue;
-
-        Vector<Span<TraitBound>> all_param_bounds;
-        for (const auto& type_param : fun_decl.type_params) {
-            Span<TraitBound> bounds = resolve_type_param_bounds(type_param.bounds, type_param.loc);
-            all_param_bounds.push_back(bounds);
-        }
-
-        ResolvedTypeParams resolved;
-        resolved.param_bounds = m_allocator.alloc_span(all_param_bounds);
-        m_type_env.generics().set_fun_bounds(name, resolved);
+bool SemanticAnalyzer::resolve_template_bounds(Span<TypeParam> type_params, ResolvedTypeParams& out) {
+    bool has_bounds = false;
+    for (const auto& type_param : type_params) {
+        if (type_param.bounds.size() > 0) { has_bounds = true; break; }
     }
+    if (!has_bounds) return false;
 
-    // Resolve bounds for all generic struct templates
-    for (const auto& entry : m_type_env.generics().generic_structs_map()) {
-        StringView name = entry.first;
-        Decl* decl = entry.second;
-        StructDecl& struct_decl = decl->struct_decl;
+    Vector<Span<TraitBound>> all_param_bounds;
+    for (const auto& type_param : type_params) {
+        all_param_bounds.push_back(resolve_type_param_bounds(type_param.bounds, type_param.loc));
+    }
+    out.param_bounds = m_allocator.alloc_span(all_param_bounds);
+    return true;
+}
 
-        bool has_bounds = false;
-        for (const auto& type_param : struct_decl.type_params) {
-            if (type_param.bounds.size() > 0) { has_bounds = true; break; }
-        }
-        if (!has_bounds) continue;
-
-        Vector<Span<TraitBound>> all_param_bounds;
-        for (const auto& type_param : struct_decl.type_params) {
-            Span<TraitBound> bounds = resolve_type_param_bounds(type_param.bounds, type_param.loc);
-            all_param_bounds.push_back(bounds);
-        }
-
+void SemanticAnalyzer::resolve_generic_bounds() {
+    for (const auto& entry : m_type_env.generics().generic_funs_map()) {
         ResolvedTypeParams resolved;
-        resolved.param_bounds = m_allocator.alloc_span(all_param_bounds);
-        m_type_env.generics().set_struct_bounds(name, resolved);
+        if (resolve_template_bounds(entry.second->fun_decl.type_params, resolved)) {
+            m_type_env.generics().set_fun_bounds(entry.first, resolved);
+        }
+    }
+    for (const auto& entry : m_type_env.generics().generic_structs_map()) {
+        ResolvedTypeParams resolved;
+        if (resolve_template_bounds(entry.second->struct_decl.type_params, resolved)) {
+            m_type_env.generics().set_struct_bounds(entry.first, resolved);
+        }
     }
 }
 
@@ -2479,38 +2440,56 @@ void SemanticAnalyzer::analyze_generic_template_body(Decl* decl) {
     // move_states_guard / params_guard / bounds_guard restore on return.
 }
 
-void SemanticAnalyzer::validate_trait_implementations() {
-    // Group pending impls by (struct, trait, type_args)
-    struct TraitImplGroup {
-        Type* struct_type;
-        Type* trait_type;
-        Span<Type*> trait_type_args;
-        Vector<Decl*> impl_decls;
-    };
+bool SemanticAnalyzer::resolve_trait_impl_type_args(
+        MethodDecl& method_decl, const TraitTypeInfo& trait_info,
+        Type* struct_type, SourceLocation loc, Span<Type*>& out) {
+    out = Span<Type*>();
+    if (method_decl.trait_type_args.size() > 0) {
+        if (trait_info.type_params.size() == 0) {
+            error_fmt(loc, "trait '{}' does not take type arguments", method_decl.trait_name);
+            return false;
+        }
+        if (method_decl.trait_type_args.size() != trait_info.type_params.size()) {
+            error_fmt(loc, "trait '{}' expects {} type argument(s), got {}",
+                     method_decl.trait_name, trait_info.type_params.size(),
+                     method_decl.trait_type_args.size());
+            return false;
+        }
+        Vector<Type*> args;
+        for (auto* type_arg : method_decl.trait_type_args) {
+            Type* arg_type = resolve_type_expr(type_arg);
+            if (!arg_type) arg_type = m_types.error_type();
+            args.push_back(arg_type);
+        }
+        out = m_allocator.alloc_span(args);
+    } else if (trait_info.type_params.size() > 0) {
+        // Default all type params to Self (the implementing struct type).
+        // Enables `for Add` as shorthand for `for Add<Vec2>` on struct Vec2.
+        Vector<Type*> args;
+        for (u32 i = 0; i < trait_info.type_params.size(); i++) {
+            args.push_back(struct_type);
+        }
+        out = m_allocator.alloc_span(args);
+    }
+    return true;
+}
 
-    // Use a simple list of groups since we don't expect many
+Vector<SemanticAnalyzer::TraitImplGroup> SemanticAnalyzer::group_pending_trait_impls() {
+    // Group pending impls by (struct, trait, type_args). A simple list of
+    // groups suffices since we don't expect many.
     Vector<TraitImplGroup> groups;
-
     for (auto& pending : m_pending_trait_impls) {
-        // Find or create group - match on struct, trait, AND type args
         TraitImplGroup* group = nullptr;
         for (auto& g : groups) {
-            if (g.struct_type == pending.struct_type && g.trait_type == pending.trait_type) {
-                // Also check type args match element-wise
-                bool args_match = g.trait_type_args.size() == pending.trait_type_args.size();
-                if (args_match) {
-                    for (u32 i = 0; i < g.trait_type_args.size(); i++) {
-                        if (g.trait_type_args[i] != pending.trait_type_args[i]) {
-                            args_match = false;
-                            break;
-                        }
-                    }
-                }
-                if (args_match) {
-                    group = &g;
-                    break;
+            if (g.struct_type != pending.struct_type || g.trait_type != pending.trait_type) continue;
+            // Match on type args element-wise too.
+            bool args_match = g.trait_type_args.size() == pending.trait_type_args.size();
+            if (args_match) {
+                for (u32 i = 0; i < g.trait_type_args.size(); i++) {
+                    if (g.trait_type_args[i] != pending.trait_type_args[i]) { args_match = false; break; }
                 }
             }
+            if (args_match) { group = &g; break; }
         }
         if (!group) {
             groups.push_back({pending.struct_type, pending.trait_type, pending.trait_type_args, {}});
@@ -2518,159 +2497,149 @@ void SemanticAnalyzer::validate_trait_implementations() {
         }
         group->impl_decls.push_back(pending.decl);
     }
+    return groups;
+}
 
-    // Process each group
+bool SemanticAnalyzer::check_parent_trait_satisfied(const TraitImplGroup& group,
+                                                    const Vector<TraitImplGroup>& all_groups) {
+    TraitTypeInfo& trait_type_info = group.trait_type->trait_info;
+    if (!trait_type_info.parent) return true;
+
+    StructTypeInfo& struct_type_info = group.struct_type->struct_info;
+    for (const auto& impl : struct_type_info.implemented_traits) {
+        if (impl.trait == trait_type_info.parent) return true;
+    }
+    // Also satisfied if the parent trait is implemented in this same batch.
+    for (const auto& other : all_groups) {
+        if (other.struct_type == group.struct_type && other.trait_type == trait_type_info.parent) {
+            return true;
+        }
+    }
+    error_fmt(group.impl_decls[0]->loc,
+             "trait '{}' requires parent trait '{}' to be implemented for '{}'",
+             trait_type_info.name, trait_type_info.parent->trait_info.name, struct_type_info.name);
+    return false;
+}
+
+void SemanticAnalyzer::validate_and_register_impl_method(const TraitImplGroup& group, Decl* decl,
+                                                         Vector<bool>& implemented) {
+    TraitTypeInfo& trait_type_info = group.trait_type->trait_info;
+    StructTypeInfo& struct_type_info = group.struct_type->struct_info;
+    MethodDecl& method_decl = decl->method_decl;
+
+    for (u32 i = 0; i < trait_type_info.methods.size(); i++) {
+        const TraitMethodInfo& trait_method = trait_type_info.methods[i];
+        if (trait_method.name != method_decl.name) continue;
+        implemented[i] = true;
+
+        // Validate parameter count matches.
+        if (method_decl.params.size() != trait_method.param_types.size()) {
+            error_fmt(decl->loc, "method '{}' parameter count mismatch with trait '{}'",
+                     method_decl.name, trait_type_info.name);
+        }
+
+        // Resolve the impl's param/return types.
+        Vector<Type*> param_types;
+        for (const auto& param : method_decl.params) {
+            Type* ptype = resolve_type_expr(param.type);
+            if (!ptype) ptype = m_types.error_type();
+            param_types.push_back(ptype);
+        }
+        Type* return_type = method_decl.return_type ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
+        if (!return_type) return_type = m_types.error_type();
+
+        // Validate parameter types match the trait signature (Self / trait
+        // type-params concretized against this impl).
+        if (method_decl.params.size() == trait_method.param_types.size()) {
+            for (u32 p = 0; p < param_types.size(); p++) {
+                if (param_types[p]->is_error()) continue;
+                Type* expected = concretize_trait_type(trait_method.param_types[p],
+                                                       group.struct_type, group.trait_type_args);
+                if (param_types[p] != expected) {
+                    auto got_str = type_string(param_types[p]);
+                    auto exp_str = type_string(expected);
+                    error_fmt(decl->loc,
+                             "method '{}' parameter {} has type '{}' but trait '{}' expects '{}'",
+                             method_decl.name, p + 1, got_str.data(), trait_type_info.name, exp_str.data());
+                }
+            }
+        }
+
+        // Validate return type matches the trait signature.
+        if (!return_type->is_error()) {
+            Type* expected_ret = concretize_trait_type(trait_method.return_type,
+                                                       group.struct_type, group.trait_type_args);
+            if (return_type != expected_ret) {
+                auto got_str = type_string(return_type);
+                auto exp_str = type_string(expected_ret);
+                error_fmt(decl->loc,
+                         "method '{}' return type is '{}' but trait '{}' expects '{}'",
+                         method_decl.name, got_str.data(), trait_type_info.name, exp_str.data());
+            }
+        }
+
+        // Register as a regular method on the struct, unless one already exists.
+        bool is_duplicate = false;
+        for (const auto& method : struct_type_info.methods) {
+            if (method.name == method_decl.name) { is_duplicate = true; break; }
+        }
+        if (!is_duplicate) {
+            MethodInfo method_info;
+            method_info.name = method_decl.name;
+            method_info.param_types = m_allocator.alloc_span(param_types);
+            method_info.return_type = return_type;
+            method_info.decl = decl;
+            append_method(struct_type_info, method_info);
+        }
+        return;  // matched a trait method
+    }
+
+    error_fmt(decl->loc, "method '{}' is not defined in trait '{}'",
+             method_decl.name, trait_type_info.name);
+}
+
+void SemanticAnalyzer::finalize_trait_impl(const TraitImplGroup& group, const Vector<bool>& implemented) {
+    TraitTypeInfo& trait_type_info = group.trait_type->trait_info;
+    StructTypeInfo& struct_type_info = group.struct_type->struct_info;
+
+    // Missing required methods; inject defaults where the trait provides one.
+    for (u32 i = 0; i < trait_type_info.methods.size(); i++) {
+        if (implemented[i]) continue;
+        if (trait_type_info.methods[i].has_default) {
+            inject_default_method(group.struct_type, group.trait_type,
+                                  trait_type_info.methods[i], group.trait_type_args);
+        } else {
+            error_fmt(group.impl_decls[0]->loc,
+                     "trait '%.*s' requires method '%.*s' which is not implemented for '%.*s'",
+                     trait_type_info.name.size(), trait_type_info.name.data(),
+                     trait_type_info.methods[i].name.size(), trait_type_info.methods[i].name.data(),
+                     struct_type_info.name.size(), struct_type_info.name.data());
+        }
+    }
+
+    // Append this trait to the struct's implemented_traits list.
+    Vector<TraitImplRecord> trait_records;
+    for (const auto& impl : struct_type_info.implemented_traits) {
+        trait_records.push_back(impl);
+    }
+    trait_records.push_back(TraitImplRecord{group.trait_type, group.trait_type_args});
+    struct_type_info.implemented_traits = m_allocator.alloc_span(trait_records);
+}
+
+void SemanticAnalyzer::validate_trait_implementations() {
+    Vector<TraitImplGroup> groups = group_pending_trait_impls();
     for (auto& group : groups) {
-        Type* struct_type = group.struct_type;
-        Type* trait_type = group.trait_type;
-        Span<Type*> trait_type_args = group.trait_type_args;
-        TraitTypeInfo& trait_type_info = trait_type->trait_info;
-        StructTypeInfo& struct_type_info = struct_type->struct_info;
+        if (!check_parent_trait_satisfied(group, groups)) continue;
 
-        // Check parent trait requirement
-        if (trait_type_info.parent) {
-            // Check that struct also implements parent trait
-            bool has_parent = false;
-            for (const auto& impl : struct_type_info.implemented_traits) {
-                if (impl.trait == trait_type_info.parent) {
-                    has_parent = true;
-                    break;
-                }
-            }
-            // Also check if we're implementing it in this batch
-            if (!has_parent) {
-                for (auto& other_group : groups) {
-                    if (other_group.struct_type == struct_type && other_group.trait_type == trait_type_info.parent) {
-                        has_parent = true;
-                        break;
-                    }
-                }
-            }
-            if (!has_parent) {
-                error_fmt(group.impl_decls[0]->loc,
-                         "trait '{}' requires parent trait '{}' to be implemented for '{}'",
-                         trait_type_info.name, trait_type_info.parent->trait_info.name, struct_type_info.name);
-                continue;
-            }
-        }
-
-        // Track which trait methods are implemented
-        Vector<bool> implemented(trait_type_info.methods.size(), false);
-
+        Vector<bool> implemented(group.trait_type->trait_info.methods.size(), false);
         for (Decl* decl : group.impl_decls) {
-            MethodDecl& method_decl = decl->method_decl;
-
-            // Find the trait method this implements
-            bool found = false;
-            for (u32 i = 0; i < trait_type_info.methods.size(); i++) {
-                if (trait_type_info.methods[i].name == method_decl.name) {
-                    found = true;
-                    implemented[i] = true;
-
-                    // Validate parameter count matches
-                    if (method_decl.params.size() != trait_type_info.methods[i].param_types.size()) {
-                        error_fmt(decl->loc, "method '{}' parameter count mismatch with trait '{}'",
-                                 method_decl.name, trait_type_info.name);
-                    }
-
-                    // Register as a regular method on the struct
-                    // Resolve param types with Self -> struct_type
-                    Vector<Type*> param_types;
-                    for (const auto& param : method_decl.params) {
-                        Type* ptype = resolve_type_expr(param.type);
-                        if (!ptype) ptype = m_types.error_type();
-                        param_types.push_back(ptype);
-                    }
-
-                    Type* return_type = method_decl.return_type ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
-                    if (!return_type) return_type = m_types.error_type();
-
-                    // Validate parameter types match trait signature
-                    if (method_decl.params.size() == trait_type_info.methods[i].param_types.size()) {
-                        for (u32 p = 0; p < param_types.size(); p++) {
-                            if (param_types[p]->is_error()) continue;
-                            Type* expected = resolve_trait_type(trait_type_info.methods[i].param_types[p],
-                                                                struct_type, trait_type_args);
-                            if (param_types[p] != expected) {
-                                auto got_str = type_string(param_types[p]);
-                                auto exp_str = type_string(expected);
-                                error_fmt(decl->loc,
-                                         "method '{}' parameter {} has type '{}' but trait '{}' expects '{}'",
-                                         method_decl.name, p + 1, got_str.data(), trait_type_info.name, exp_str.data());
-                            }
-                        }
-                    }
-
-                    // Validate return type matches trait signature
-                    if (!return_type->is_error()) {
-                        Type* expected_ret = resolve_trait_type(trait_type_info.methods[i].return_type,
-                                                                struct_type, trait_type_args);
-                        if (return_type != expected_ret) {
-                            auto got_str = type_string(return_type);
-                            auto exp_str = type_string(expected_ret);
-                            error_fmt(decl->loc,
-                                     "method '{}' return type is '{}' but trait '{}' expects '{}'",
-                                     method_decl.name, got_str.data(), trait_type_info.name, exp_str.data());
-                        }
-                    }
-
-                    // Check for duplicate method name on struct
-                    bool is_duplicate = false;
-                    for (const auto& method : struct_type_info.methods) {
-                        if (method.name == method_decl.name) {
-                            is_duplicate = true;
-                            break;
-                        }
-                    }
-
-                    if (!is_duplicate) {
-                        MethodInfo method_info;
-                        method_info.name = method_decl.name;
-                        method_info.param_types = m_allocator.alloc_span(param_types);
-                        method_info.return_type = return_type;
-                        method_info.decl = decl;
-
-                        // Add to struct's method list
-                        append_method(struct_type_info, method_info);
-                    }
-                    break;
-                }
-            }
-
-            if (!found) {
-                error_fmt(decl->loc, "method '{}' is not defined in trait '{}'",
-                         method_decl.name, trait_type_info.name);
-            }
+            validate_and_register_impl_method(group, decl, implemented);
         }
-
-        // Check for missing required methods; inject defaults for unimplemented default methods
-        for (u32 i = 0; i < trait_type_info.methods.size(); i++) {
-            if (!implemented[i]) {
-                if (trait_type_info.methods[i].has_default) {
-                    // Inject default implementation
-                    inject_default_method(struct_type, trait_type, trait_type_info.methods[i], trait_type_args);
-                } else {
-                    error_fmt(group.impl_decls[0]->loc,
-                             "trait '%.*s' requires method '%.*s' which is not implemented for '%.*s'",
-                             trait_type_info.name.size(), trait_type_info.name.data(),
-                             trait_type_info.methods[i].name.size(), trait_type_info.methods[i].name.data(),
-                             struct_type_info.name.size(), struct_type_info.name.data());
-                }
-            }
-        }
-
-        // Update struct's implemented_traits list
-        Vector<TraitImplRecord> trait_records;
-        for (const auto& impl : struct_type_info.implemented_traits) {
-            trait_records.push_back(impl);
-        }
-        trait_records.push_back(TraitImplRecord{trait_type, trait_type_args});
-
-        struct_type_info.implemented_traits = m_allocator.alloc_span(trait_records);
+        finalize_trait_impl(group, implemented);
     }
 }
 
-Type* SemanticAnalyzer::resolve_trait_type(Type* abstract_type, Type* struct_type, Span<Type*> trait_type_args) {
+Type* SemanticAnalyzer::concretize_trait_type(Type* abstract_type, Type* struct_type, Span<Type*> trait_type_args) {
     if (abstract_type->is_self()) return struct_type;
     if (abstract_type->is_type_param() && trait_type_args.size() > 0) {
         u32 idx = abstract_type->type_param_info.index;
@@ -2738,9 +2707,9 @@ void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type
     StructTypeInfo& struct_type_info = struct_type->struct_info;
     Vector<Type*> param_types;
     for (auto* param_type : trait_method_info.param_types) {
-        param_types.push_back(resolve_trait_type(param_type, struct_type, trait_type_args));
+        param_types.push_back(concretize_trait_type(param_type, struct_type, trait_type_args));
     }
-    Type* return_type = resolve_trait_type(trait_method_info.return_type, struct_type, trait_type_args);
+    Type* return_type = concretize_trait_type(trait_method_info.return_type, struct_type, trait_type_args);
 
     // Add MethodInfo to struct's method list
     MethodInfo method_info;
