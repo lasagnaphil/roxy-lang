@@ -2000,17 +2000,15 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
             consume_temp_noncopyable(val);
         }
 
-        // If returning an owned identifier, mark it as moved (don't destroy what we're returning)
-        // Note: we do NOT emit Nullify here because the return value register may be
-        // the same as initial_value's register, and nullifying would corrupt the return.
-        // The is_moved flag prevents normal-path cleanup from freeing the returned value.
+        // If returning an owned identifier, mark it as moved (don't destroy what we're returning).
+        // Pass null_ssa/nullify_record = false: the return value register may be the same as
+        // the source's, and nulling/Nullifying would corrupt the return. The is_moved flag
+        // alone prevents normal-path cleanup from freeing the returned value.
         if (rs.value->kind == AstKind::ExprIdentifier) {
             Type* return_type = rs.value->resolved_type;
             if (return_type && return_type->noncopyable()) {
-                OwnedLocalInfo* owned_info = find_owned_local(rs.value->identifier.name);
-                if (owned_info) {
-                    owned_info->is_moved = true;
-                }
+                mark_moved_from(rs.value->identifier.name, /*null_ssa=*/false,
+                                /*nullify_record=*/false);
             }
         }
 
@@ -2129,17 +2127,11 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
         inst->unary = val;
     }
 
-    // Mark the variable as moved so scope cleanup doesn't double-destroy
+    // Mark the variable as moved so scope cleanup doesn't double-destroy. The memory
+    // was just explicitly Delete'd, so leave the SSA register alone (null_ssa=false);
+    // the Nullify annotation still ends the cleanup record scope.
     if (ds.expr->kind == AstKind::ExprIdentifier) {
-        OwnedLocalInfo* owned_info = find_owned_local(ds.expr->identifier.name);
-        if (owned_info) {
-            // Zero the cleanup record's register so exception cleanup skips it
-            if (owned_info->initial_value.is_valid()) {
-                IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-                if (nullify) nullify->unary = owned_info->initial_value;
-            }
-            owned_info->is_moved = true;
-        }
+        mark_moved_from(ds.expr->identifier.name, /*null_ssa=*/false);
     }
 }
 
@@ -2752,18 +2744,7 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
             // Mirror the move-on-arg-pass machinery so scope-exit cleanup of the
             // outer local is suppressed. (Move sources are pre-validated to be
             // direct ExprIdentifier — no nested-source handling needed here.)
-            OwnedLocalInfo* owned_info = find_owned_local(cap.name);
-            if (owned_info && !owned_info->is_moved) {
-                if (cap.type && cap.type->kind == TypeKind::Uniq) {
-                    ValueId null_val = emit_const_null();
-                    define_local(cap.name, null_val, cap.type);
-                }
-                if (owned_info->initial_value.is_valid()) {
-                    IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-                    if (nullify) nullify->unary = owned_info->initial_value;
-                }
-                owned_info->is_moved = true;
-            }
+            mark_moved_from(cap.name);
         }
     }
 
@@ -3044,13 +3025,11 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
             return val;
         }
 
-        // For primitive types and pointer-sized types, dereference the pointer to get the value
-        u32 slot_count = 1;
-        if (type && (type->kind == TypeKind::I64 || type->kind == TypeKind::U64 ||
-                    type->kind == TypeKind::F64 || type->kind == TypeKind::List ||
-                    type->kind == TypeKind::Map || type->kind == TypeKind::String)) {
-            slot_count = 2;
-        }
+        // For primitive types and pointer-sized types, dereference the pointer to get the value.
+        // get_type_slot_count covers every non-struct width (incl. weak=4, uniq/ref/fn=2);
+        // structs returned above. 0 means null/opaque type — preserve the prior 1-slot default.
+        u32 slot_count = get_type_slot_count(type);
+        if (slot_count == 0) slot_count = 1;
         return emit_load_ptr(val, slot_count, type);
     }
 
@@ -3536,12 +3515,10 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
                     if (type && type->is_struct()) {
                         continue;
                     }
-                    u32 slot_count = 1;
-                    if (type && (type->kind == TypeKind::I64 || type->kind == TypeKind::U64 ||
-                                type->kind == TypeKind::F64 || type->kind == TypeKind::List ||
-                                type->kind == TypeKind::Map || type->kind == TypeKind::String)) {
-                        slot_count = 2;
-                    }
+                    // Structs skipped above; get_type_slot_count gives the correct width
+                    // for every remaining type (weak=4, uniq/ref/list/map/string/fn=2).
+                    u32 slot_count = get_type_slot_count(type);
+                    if (slot_count == 0) slot_count = 1;
                     inout_args.push_back({arg.expr->identifier.name, args[i], type, slot_count});
                 }
             }
@@ -3805,21 +3782,9 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
                 if (arg_type && arg_type->noncopyable() &&
                     param_types[i + param_offset] && param_types[i + param_offset]->noncopyable()) {
                     StringView arg_name = arg.expr->identifier.name;
-                    OwnedLocalInfo* owned_info = find_owned_local(arg_name);
-                    if (owned_info && !owned_info->is_moved) {
-                        if (arg_type->kind == TypeKind::Uniq) {
-                            // Null-ify uniq variable so DEL_OBJ on scope exit is a safe no-op
-                            ValueId null_val = emit_const_null();
-                            define_local(arg_name, null_val, arg_type);
-                        }
-                        // Zero the cleanup record's register so exception cleanup skips it
-                        if (owned_info->initial_value.is_valid()) {
-                            IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-                            if (nullify) nullify->unary = owned_info->initial_value;
-                        }
-                        // For value structs: bitwise copy IS the move, just suppress scope cleanup
-                        owned_info->is_moved = true;
-                    }
+                    // For uniq: null-ify so DEL_OBJ on scope exit is a safe no-op. For
+                    // value structs: the bitwise copy IS the move, just suppress cleanup.
+                    mark_moved_from(arg_name);
                 }
             }
         }
@@ -4015,13 +3980,11 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
         if (m_param_is_ptr.count(name)) {
             ValueId ptr = lookup_local(name);
             Type* type = expr->resolved_type;
-            u32 slot_count = 1;
-            if (type && type->is_struct()) {
-                slot_count = type->struct_info.slot_count;
-            } else if (type && (type->kind == TypeKind::I64 || type->kind == TypeKind::U64 ||
-                               type->kind == TypeKind::F64)) {
-                slot_count = 2;
-            }
+            // get_type_slot_count handles structs (struct_info.slot_count) and every other
+            // width uniformly. The old inline check omitted list/map/string/weak, under-counting
+            // their slots when stored through an out/inout pointer.
+            u32 slot_count = get_type_slot_count(type);
+            if (slot_count == 0) slot_count = 1;
             return emit_store_ptr(ptr, value, slot_count, type);
         }
 
@@ -4076,22 +4039,14 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
         }
 
         // Move semantics: if value is a noncopyable identifier, mark source as moved.
-        // Unlike field assignment, we do NOT emit Nullify here because the target
-        // variable now shares the same SSA value/register as the source.
-        // Nullifying would corrupt the target's register.
+        // Unlike field assignment, we pass nullify_record=false: the target variable now
+        // shares the same SSA value/register as the source, so emitting a Nullify on that
+        // register would corrupt the target. The SSA null-out of the source still happens.
         if (assign_expr.value->kind == AstKind::ExprIdentifier) {
             Type* value_type = assign_expr.value->resolved_type;
             if (value_type && value_type->noncopyable()) {
-                StringView value_name = assign_expr.value->identifier.name;
-                OwnedLocalInfo* owned_info = find_owned_local(value_name);
-                if (owned_info && !owned_info->is_moved) {
-                    if (value_type->kind == TypeKind::Uniq) {
-                        // Update SSA mapping so future reads of source see null
-                        ValueId null_val = emit_const_null();
-                        define_local(value_name, null_val, value_type);
-                    }
-                    owned_info->is_moved = true;
-                }
+                mark_moved_from(assign_expr.value->identifier.name, /*null_ssa=*/true,
+                                /*nullify_record=*/false);
             }
         }
 
@@ -4194,21 +4149,7 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
             field_type->noncopyable()) {
             Type* value_type = assign_expr.value->resolved_type;
             if (value_type && value_type->noncopyable()) {
-                StringView value_name = assign_expr.value->identifier.name;
-                OwnedLocalInfo* owned_info = find_owned_local(value_name);
-                if (owned_info && !owned_info->is_moved) {
-                    if (value_type->kind == TypeKind::Uniq) {
-                        // Nullify uniq variable so DEL_OBJ on scope exit is a safe no-op
-                        ValueId null_val = emit_const_null();
-                        define_local(value_name, null_val, value_type);
-                    }
-                    // Zero the cleanup record's register so exception cleanup skips it
-                    if (owned_info->initial_value.is_valid()) {
-                        IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-                        if (nullify) nullify->unary = owned_info->initial_value;
-                    }
-                    owned_info->is_moved = true;
-                }
+                mark_moved_from(assign_expr.value->identifier.name);
             }
         }
 
@@ -4473,19 +4414,7 @@ ValueId IRBuilder::gen_constructor_call(Expr* expr) {
         if (arg.expr->kind != AstKind::ExprIdentifier) continue;
         Type* arg_type = arg.expr->resolved_type;
         if (!arg_type || !arg_type->noncopyable()) continue;
-        StringView arg_name = arg.expr->identifier.name;
-        OwnedLocalInfo* owned_info = find_owned_local(arg_name);
-        if (owned_info && !owned_info->is_moved) {
-            if (arg_type->kind == TypeKind::Uniq) {
-                ValueId null_val_arg = emit_const_null();
-                define_local(arg_name, null_val_arg, arg_type);
-            }
-            if (owned_info->initial_value.is_valid()) {
-                IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-                if (nullify) nullify->unary = owned_info->initial_value;
-            }
-            owned_info->is_moved = true;
-        }
+        mark_moved_from(arg.expr->identifier.name);
     }
 
     return obj;
@@ -4644,19 +4573,7 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         // Nullify source variable when moving a noncopyable value into a regular field
         if (field_info.type && field_info.type->noncopyable() &&
             value_expr && value_expr->kind == AstKind::ExprIdentifier) {
-            StringView source_name = value_expr->identifier.name;
-            OwnedLocalInfo* owned_info = find_owned_local(source_name);
-            if (owned_info && !owned_info->is_moved) {
-                if (field_info.type->kind == TypeKind::Uniq) {
-                    ValueId null_val = emit_const_null();
-                    define_local(source_name, null_val, field_info.type);
-                }
-                if (owned_info->initial_value.is_valid()) {
-                    IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-                    if (nullify) nullify->unary = owned_info->initial_value;
-                }
-                owned_info->is_moved = true;
-            }
+            mark_moved_from(value_expr->identifier.name);
         }
     }
 
@@ -4693,19 +4610,7 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
                     // Nullify source variable when moving a noncopyable value into a variant field
                     if (variant_field_info.type && variant_field_info.type->noncopyable() &&
                         value_expr->kind == AstKind::ExprIdentifier) {
-                        StringView source_name = value_expr->identifier.name;
-                        OwnedLocalInfo* owned_info = find_owned_local(source_name);
-                        if (owned_info && !owned_info->is_moved) {
-                            if (variant_field_info.type->kind == TypeKind::Uniq) {
-                                ValueId null_val = emit_const_null();
-                                define_local(source_name, null_val, variant_field_info.type);
-                            }
-                            if (owned_info->initial_value.is_valid()) {
-                                IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-                                if (nullify) nullify->unary = owned_info->initial_value;
-                            }
-                            owned_info->is_moved = true;
-                        }
+                        mark_moved_from(value_expr->identifier.name);
                     }
                 }
             }
@@ -4849,13 +4754,10 @@ ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {
             // 2. Store the current value to the slot
             // 3. Return the address
 
-            // Calculate slot count
-            u32 slot_count = 1;
-            if (type && (type->kind == TypeKind::I64 || type->kind == TypeKind::U64 ||
-                        type->kind == TypeKind::F64 || type->kind == TypeKind::List ||
-                        type->kind == TypeKind::Map || type->kind == TypeKind::String)) {
-                slot_count = 2;
-            }
+            // Calculate slot count. Structs returned above; get_type_slot_count covers every
+            // remaining width (weak=4, uniq/ref/list/map/string/fn=2). 0 => opaque, default 1.
+            u32 slot_count = get_type_slot_count(type);
+            if (slot_count == 0) slot_count = 1;
 
             // Allocate stack space
             ValueId addr = emit_stack_alloc(slot_count, type);
@@ -4987,21 +4889,7 @@ void IRBuilder::gen_var_decl(Decl* decl) {
 
         // Mark the source variable as moved when initializing from an identifier
         if (var_decl.initializer && var_decl.initializer->kind == AstKind::ExprIdentifier) {
-            StringView source_name = var_decl.initializer->identifier.name;
-            OwnedLocalInfo* source_info = find_owned_local(source_name);
-            if (source_info && !source_info->is_moved) {
-                if (type->kind == TypeKind::Uniq) {
-                    // Null-ify uniq variable so DEL_OBJ on scope exit is a safe no-op
-                    ValueId null_val = emit_const_null();
-                    define_local(source_name, null_val, type);
-                }
-                // Zero the cleanup record's register so exception cleanup skips it
-                if (source_info->initial_value.is_valid()) {
-                    IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-                    if (nullify) nullify->unary = source_info->initial_value;
-                }
-                source_info->is_moved = true;
-            }
+            mark_moved_from(var_decl.initializer->identifier.name);
         }
     }
 }
@@ -5130,6 +5018,27 @@ void IRBuilder::consume_temp_noncopyable(ValueId val, bool adopted_by_variable) 
         }
     }
     // Not found — val is not a tracked temporary (e.g., named variable, or copyable type)
+}
+
+void IRBuilder::mark_moved_from(StringView name, bool null_ssa, bool nullify_record) {
+    OwnedLocalInfo* owned_info = find_owned_local(name);
+    if (!owned_info || owned_info->is_moved) return;
+
+    // For uniq sources, re-point the SSA name at null so future reads (and the
+    // scope-exit Delete) see null instead of the moved-out pointer. Value-struct
+    // sources keep their register — the bitwise copy already transferred them.
+    if (null_ssa && owned_info->type && owned_info->type->kind == TypeKind::Uniq) {
+        ValueId null_val = emit_const_null();
+        define_local(name, null_val, owned_info->type);
+    }
+
+    // Zero the cleanup record's register so exception-path cleanup skips it.
+    if (nullify_record && owned_info->initial_value.is_valid()) {
+        IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+        if (nullify) nullify->unary = owned_info->initial_value;
+    }
+
+    owned_info->is_moved = true;
 }
 
 void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {

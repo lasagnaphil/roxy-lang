@@ -310,6 +310,17 @@ private:
     // the variable's own cleanup record handles it.
     void consume_temp_noncopyable(ValueId val, bool adopted_by_variable = false);
 
+    // Mark the owned local `name` as moved so scope-exit / exception cleanup skip
+    // it. No-op if `name` is not a live (un-moved) owned local. For `uniq` locals
+    // (when null_ssa) it re-points the SSA name at null so a later scope-exit
+    // Delete is a safe no-op; unless nullify_record is false it also emits a
+    // Nullify annotation zeroing the cleanup record's register. Callers that
+    // share the moved-from register with the destination/return value pass
+    // null_ssa=false; callers that already freed the storage (explicit delete)
+    // pass null_ssa=false too. This consolidates the move-marking that was
+    // previously copy-pasted across every move site.
+    void mark_moved_from(StringView name, bool null_ssa = true, bool nullify_record = true);
+
     // RAII helpers: emit destructor + Delete (for uniq) or destructor only (for value struct)
     void emit_implicit_destroy(OwnedLocalInfo& info);
 
