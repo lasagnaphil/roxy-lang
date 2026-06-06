@@ -10,6 +10,8 @@
 #include "roxy/compiler/types.hpp"
 #include "roxy/compiler/type_env.hpp"
 #include "roxy/compiler/symbol_table.hpp"
+#include "roxy/compiler/error_reporter.hpp"
+#include "roxy/compiler/type_checker.hpp"
 #include "roxy/core/tsl/robin_set.h"
 
 namespace rx {
@@ -23,19 +25,6 @@ struct InferredTypeArgs {
     bool success;
     Vector<Type*> type_args;  // indexed by type param position
 };
-
-// Semantic error with location information
-struct SemanticError {
-    SourceLocation loc;
-    const char* message;
-
-    // For formatted messages, we store them in the allocator
-    bool owns_message;
-};
-
-// Maximum number of errors to collect before stopping
-constexpr u32 MAX_SEMANTIC_ERRORS = 20;
-constexpr u32 MAX_LSP_SEMANTIC_ERRORS = 200;
 
 // Move state for uniq ownership tracking
 enum class MoveState : u8 {
@@ -87,8 +76,8 @@ public:
     bool lsp_mode() const;
 
     // Error access
-    bool has_errors() const { return !m_errors.empty(); }
-    const Vector<SemanticError>& errors() const { return m_errors; }
+    bool has_errors() const { return m_reporter.has_errors(); }
+    const Vector<SemanticError>& errors() const { return m_reporter.errors(); }
 
     // Access type environment for external use
     TypeEnv& type_env() { return m_type_env; }
@@ -100,22 +89,14 @@ public:
     SymbolTable& symbols() { return m_symbols; }
 
 private:
-    // Error reporting
-    void error(SourceLocation loc, const char* message);
+    // Error reporting — thin forwarders to m_reporter so the many internal call
+    // sites stay unchanged while the machinery lives in ErrorReporter.
+    void error(SourceLocation loc, const char* message) { m_reporter.error(loc, message); }
     template<typename... Args>
     void error_fmt(SourceLocation loc, const char* fmt, const Args&... args) {
-        if (too_many_errors()) return;
-
-        char buffer[512];
-        format_to(buffer, sizeof(buffer), fmt, args...);
-
-        u32 len = static_cast<u32>(strlen(buffer));
-        char* msg = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
-        memcpy(msg, buffer, len + 1);
-
-        m_errors.push_back({loc, msg, true});
+        m_reporter.error_fmt(loc, fmt, args...);
     }
-    bool too_many_errors() const;
+    bool too_many_errors() const { return m_reporter.too_many_errors(); }
 
     // Auto-import builtin module exports as prelude
     void import_builtin_prelude();
@@ -226,8 +207,6 @@ private:
     // Build a function type for a method call: (ref<self_type>, method_params...) -> return_type
     Type* build_method_function_type(Type* self_type, const MethodInfo* method_info);
 
-    // Cast checking helper
-    bool can_cast(Type* source, Type* target);
     Type* analyze_index_expr(Expr* expr);
     Type* analyze_get_expr(Expr* expr);
     Type* analyze_static_get_expr(Expr* expr);
@@ -268,9 +247,6 @@ private:
     void ensure_self_captured_through(u32 target_idx, Type* struct_type,
                                       SourceLocation loc);
 
-    // Integer literal coercion: concretizes IntLiteral expressions to a target integer type
-    void coerce_int_literal(Expr* expr, Type* target);
-
     // Generic-template-ref coercion: when an identifier was deferred by
     // analyze_identifier_expr (it named a generic function template), and the
     // surrounding context expects a concrete function type, infer the type
@@ -286,12 +262,8 @@ private:
     // monomorphized name, and returns the resulting concrete function type.
     Type* resolve_explicit_generic_template_ref(Expr* expr);
 
-    // Type checking helpers
-    bool is_assignable(Type* target, Type* source) const;
-    bool check_assignable(Type* target, Type* source, SourceLocation loc);
-    bool check_numeric(Type* type, SourceLocation loc);
-    bool check_integer(Type* type, SourceLocation loc);
-    bool check_boolean(Type* type, SourceLocation loc);
+    // Operator result-type helpers (these dispatch through trait bounds, so they
+    // stay on the analyzer; the pure relation/coercion checks live in TypeChecker)
     Type* get_binary_result_type(BinaryOp op, Type* left, Type* right, SourceLocation loc);
     Type* get_unary_result_type(UnaryOp op, Type* operand, SourceLocation loc);
 
@@ -312,20 +284,8 @@ private:
                                  Span<TypeKind> primitive_kinds,
                                  bool register_trait_on_primitives);
 
-    // Convert a Type* to a null-terminated string for use in error messages
-    String type_string(Type* type);
-
-    // Type mismatch error helpers
-    // Returns true if types match, false and reports error if they don't
-    bool require_types_match(Type* left, Type* right, SourceLocation loc, const char* context);
-    // Reports a type conversion error (source -> target)
-    void error_cannot_convert(Type* source, Type* target, SourceLocation loc, const char* context);
-
     // Lvalue checking for assignment
     bool is_lvalue(Expr* expr) const;
-
-    // Reference type conversion rules
-    bool can_convert_ref(Type* from, Type* to) const;
 
     BumpAllocator& m_allocator;
     TypeEnv& m_type_env;
@@ -334,9 +294,9 @@ private:
     NativeRegistry* m_registry;
     UniquePtr<SymbolTable> m_owned_symbols;  // null when using external symbols
     SymbolTable& m_symbols;
-    Vector<SemanticError> m_errors;
+    ErrorReporter m_reporter;
+    TypeChecker m_checker;
     Program* m_program;                   // Current program being analyzed
-    bool m_lsp_mode = false;              // When true, more tolerant of errors
 
     // Coroutine tracking (set while analyzing a function returning Coro<T>)
     bool m_in_coroutine = false;

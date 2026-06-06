@@ -108,6 +108,8 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, 
     , m_registry(registry)
     , m_owned_symbols(new SymbolTable(allocator))
     , m_symbols(*m_owned_symbols)
+    , m_reporter(allocator)
+    , m_checker(m_reporter)
     , m_program(nullptr)
 {
 }
@@ -121,17 +123,14 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, 
     , m_registry(registry)
     , m_owned_symbols(nullptr)
     , m_symbols(external_symbols)
+    , m_reporter(allocator)
+    , m_checker(m_reporter)
     , m_program(nullptr)
 {
 }
 
-void SemanticAnalyzer::set_lsp_mode(bool enable) { m_lsp_mode = enable; }
-bool SemanticAnalyzer::lsp_mode() const { return m_lsp_mode; }
-
-bool SemanticAnalyzer::too_many_errors() const {
-    u32 limit = m_lsp_mode ? MAX_LSP_SEMANTIC_ERRORS : MAX_SEMANTIC_ERRORS;
-    return m_errors.size() >= limit;
-}
+void SemanticAnalyzer::set_lsp_mode(bool enable) { m_reporter.set_lsp_mode(enable); }
+bool SemanticAnalyzer::lsp_mode() const { return m_reporter.lsp_mode(); }
 
 Type* SemanticAnalyzer::register_builtin_trait(
         StringView name, StringView method_name,
@@ -361,13 +360,6 @@ bool SemanticAnalyzer::analyze(Program* program) {
     run_body_analysis(program);
 
     return !has_errors();
-}
-
-// Error reporting
-
-void SemanticAnalyzer::error(SourceLocation loc, const char* message) {
-    if (too_many_errors()) return;
-    m_errors.push_back({loc, message, false});
 }
 
 // Pass 1: Collect type declarations
@@ -662,12 +654,12 @@ void SemanticAnalyzer::resolve_global_var(Decl* decl) {
             var_type = init_type;
             if (var_type->is_int_literal()) {
                 var_type = m_types.i32_type();
-                coerce_int_literal(var_decl.initializer, var_type);
+                m_checker.coerce_int_literal(var_decl.initializer, var_type);
             }
-        } else if (!check_assignable(var_type, init_type, decl->loc)) {
+        } else if (!m_checker.check_assignable(var_type, init_type, decl->loc)) {
             // Error already reported by check_assignable
         } else {
-            coerce_int_literal(var_decl.initializer, var_type);
+            m_checker.coerce_int_literal(var_decl.initializer, var_type);
         }
     } else if (!var_type) {
         error(decl->loc, "variable declaration requires type annotation or initializer");
@@ -1492,13 +1484,13 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
             } else if (var_type->is_int_literal()) {
                 // Default unsuffixed integer literals to i32
                 var_type = m_types.i32_type();
-                coerce_int_literal(var_decl.initializer, var_type);
+                m_checker.coerce_int_literal(var_decl.initializer, var_type);
             }
-        } else if (!check_assignable(var_type, init_type, decl->loc)) {
+        } else if (!m_checker.check_assignable(var_type, init_type, decl->loc)) {
             // Error already reported
         } else {
             // Coerce int literals to the annotated type
-            coerce_int_literal(var_decl.initializer, var_type);
+            m_checker.coerce_int_literal(var_decl.initializer, var_type);
         }
 
         // Consume noncopyable source (field-move check + mark source as moved)
@@ -2307,7 +2299,7 @@ bool SemanticAnalyzer::check_type_arg_bounds(StringView template_name, Span<Type
             bool satisfies = m_types.implements_trait(concrete_type, bound.trait, subst_args);
 
             if (!satisfies) {
-                auto concrete_str = type_string(concrete_type);
+                auto concrete_str = m_checker.type_string(concrete_type);
                 // Build trait name with type args for error message
                 String trait_str;
                 auto append_sv = [&](StringView sv) { for (char c : sv) trait_str.push_back(c); };
@@ -2406,7 +2398,7 @@ Type* SemanticAnalyzer::analyze_type_param_method_call(
         Type* arg_type = analyze_expr(call_expr.arguments[i].expr);
         Type* param_type = substitute(trait_method->param_types[i]);
         if (!arg_type->is_error() && !param_type->is_error()) {
-            check_assignable(param_type, arg_type, call_expr.arguments[i].expr->loc);
+            m_checker.check_assignable(param_type, arg_type, call_expr.arguments[i].expr->loc);
         }
     }
 
@@ -2580,8 +2572,8 @@ void SemanticAnalyzer::validate_and_register_impl_method(const TraitImplGroup& g
                 Type* expected = concretize_trait_type(trait_method.param_types[p],
                                                        group.struct_type, group.trait_type_args);
                 if (param_types[p] != expected) {
-                    auto got_str = type_string(param_types[p]);
-                    auto exp_str = type_string(expected);
+                    auto got_str = m_checker.type_string(param_types[p]);
+                    auto exp_str = m_checker.type_string(expected);
                     error_fmt(decl->loc,
                              "method '{}' parameter {} has type '{}' but trait '{}' expects '{}'",
                              method_decl.name, p + 1, got_str.data(), trait_type_info.name, exp_str.data());
@@ -2594,8 +2586,8 @@ void SemanticAnalyzer::validate_and_register_impl_method(const TraitImplGroup& g
             Type* expected_ret = concretize_trait_type(trait_method.return_type,
                                                        group.struct_type, group.trait_type_args);
             if (return_type != expected_ret) {
-                auto got_str = type_string(return_type);
-                auto exp_str = type_string(expected_ret);
+                auto got_str = m_checker.type_string(return_type);
+                auto exp_str = m_checker.type_string(expected_ret);
                 error_fmt(decl->loc,
                          "method '{}' return type is '{}' but trait '{}' expects '{}'",
                          method_decl.name, got_str.data(), trait_type_info.name, exp_str.data());
@@ -2866,7 +2858,7 @@ Type* SemanticAnalyzer::try_resolve_binary_op(BinaryOp op, Type* left, Type* rig
             Type* return_type = substitute_trait_types(trait_method->return_type, left, found_in_trait);
             Type* param_type = substitute_trait_types(trait_method->param_types[0], left, found_in_trait);
             // Check right operand compatibility
-            if (param_type == right || is_assignable(param_type, right)) {
+            if (param_type == right || m_checker.is_assignable(param_type, right)) {
                 return return_type;
             }
         }
@@ -2975,7 +2967,7 @@ void SemanticAnalyzer::analyze_if_stmt(Stmt* stmt) {
 
     Type* cond_type = analyze_expr(is.condition);
     if (cond_type && !cond_type->is_error()) {
-        check_boolean(cond_type, is.condition->loc);
+        m_checker.check_boolean(cond_type, is.condition->loc);
     }
 
     // Save move states before branching
@@ -3013,7 +3005,7 @@ void SemanticAnalyzer::analyze_while_stmt(Stmt* stmt) {
 
     Type* cond_type = analyze_expr(ws.condition);
     if (cond_type && !cond_type->is_error()) {
-        check_boolean(cond_type, ws.condition->loc);
+        m_checker.check_boolean(cond_type, ws.condition->loc);
     }
 
     // Save move states before loop body
@@ -3079,7 +3071,7 @@ void SemanticAnalyzer::analyze_for_stmt(Stmt* stmt) {
     if (fs.condition) {
         Type* cond_type = analyze_expr(fs.condition);
         if (cond_type && !cond_type->is_error()) {
-            check_boolean(cond_type, fs.condition->loc);
+            m_checker.check_boolean(cond_type, fs.condition->loc);
         }
     }
 
@@ -3155,10 +3147,10 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
         if (expected && coerce_generic_template_ref(rs.value, expected)) {
             actual = rs.value->resolved_type;
         }
-        if (!check_assignable(expected, actual, stmt->loc)) {
+        if (!m_checker.check_assignable(expected, actual, stmt->loc)) {
             // Error already reported
         } else {
-            coerce_int_literal(rs.value, expected);
+            m_checker.coerce_int_literal(rs.value, expected);
         }
 
         // Consume noncopyable return value (field-move check + mark source as moved)
@@ -3520,10 +3512,10 @@ void SemanticAnalyzer::analyze_yield_stmt(Stmt* stmt) {
     Type* actual = analyze_expr(ys.value);
     if (!actual || actual->is_error()) return;
 
-    if (!check_assignable(m_coro_yield_type, actual, stmt->loc)) {
+    if (!m_checker.check_assignable(m_coro_yield_type, actual, stmt->loc)) {
         // Error already reported
     } else {
-        coerce_int_literal(ys.value, m_coro_yield_type);
+        m_checker.coerce_int_literal(ys.value, m_coro_yield_type);
     }
 }
 
@@ -3603,7 +3595,7 @@ Type* SemanticAnalyzer::analyze_string_interp_expr(Expr* expr) {
         }
         // Coerce IntLiteral to i32 so it has a Printable implementation
         if (etype->is_int_literal()) {
-            coerce_int_literal(expression, m_types.i32_type());
+            m_checker.coerce_int_literal(expression, m_types.i32_type());
             etype = expression->resolved_type;
         }
         // Uniform trait check for ALL types (primitives and structs)
@@ -4395,7 +4387,7 @@ Type* SemanticAnalyzer::analyze_unary_expr(Expr* expr) {
         }
 
         error_fmt(expr->loc, "'ref' requires a 'uniq' or 'ref' operand, got '{}'",
-                  type_string(operand_type));
+                  m_checker.type_string(operand_type));
         return m_types.error_type();
     }
 
@@ -4414,14 +4406,14 @@ Type* SemanticAnalyzer::analyze_binary_expr(Expr* expr) {
 
     // Coerce int literals: match the concrete side, or default both to i32
     if (left_type->is_int_literal() && right_type->is_integer()) {
-        coerce_int_literal(binary_expr.left, right_type);
+        m_checker.coerce_int_literal(binary_expr.left, right_type);
         left_type = right_type;
     } else if (right_type->is_int_literal() && left_type->is_integer()) {
-        coerce_int_literal(binary_expr.right, left_type);
+        m_checker.coerce_int_literal(binary_expr.right, left_type);
         right_type = left_type;
     } else if (left_type->is_int_literal() && right_type->is_int_literal()) {
-        coerce_int_literal(binary_expr.left, m_types.i32_type());
-        coerce_int_literal(binary_expr.right, m_types.i32_type());
+        m_checker.coerce_int_literal(binary_expr.left, m_types.i32_type());
+        m_checker.coerce_int_literal(binary_expr.right, m_types.i32_type());
         left_type = m_types.i32_type();
         right_type = m_types.i32_type();
     } else if (right_type->is_int_literal() && !left_type->is_int_literal()) {
@@ -4431,7 +4423,7 @@ Type* SemanticAnalyzer::analyze_binary_expr(Expr* expr) {
             StringView name(method_name, static_cast<u32>(strlen(method_name)));
             const MethodInfo* mi = m_types.lookup_method(left_type, name);
             if (mi && mi->param_types.size() == 1 && mi->param_types[0]->is_integer()) {
-                coerce_int_literal(binary_expr.right, mi->param_types[0]);
+                m_checker.coerce_int_literal(binary_expr.right, mi->param_types[0]);
                 right_type = mi->param_types[0];
             }
         }
@@ -4442,7 +4434,7 @@ Type* SemanticAnalyzer::analyze_binary_expr(Expr* expr) {
             StringView name(method_name, static_cast<u32>(strlen(method_name)));
             const MethodInfo* mi = m_types.lookup_method(right_type, name);
             if (mi && mi->param_types.size() == 1 && mi->param_types[0]->is_integer()) {
-                coerce_int_literal(binary_expr.left, mi->param_types[0]);
+                m_checker.coerce_int_literal(binary_expr.left, mi->param_types[0]);
                 left_type = mi->param_types[0];
             }
         }
@@ -4456,7 +4448,7 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
 
     Type* cond_type = analyze_expr(ternary_expr.condition);
     if (!cond_type->is_error()) {
-        check_boolean(cond_type, ternary_expr.condition->loc);
+        m_checker.check_boolean(cond_type, ternary_expr.condition->loc);
     }
 
     // Save/restore/merge move states across the two branches, mirroring
@@ -4482,14 +4474,14 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
 
     // Coerce int literals in ternary branches
     if (then_type->is_int_literal() && else_type->is_integer()) {
-        coerce_int_literal(ternary_expr.then_expr, else_type);
+        m_checker.coerce_int_literal(ternary_expr.then_expr, else_type);
         then_type = else_type;
     } else if (else_type->is_int_literal() && then_type->is_integer()) {
-        coerce_int_literal(ternary_expr.else_expr, then_type);
+        m_checker.coerce_int_literal(ternary_expr.else_expr, then_type);
         else_type = then_type;
     } else if (then_type->is_int_literal() && else_type->is_int_literal()) {
-        coerce_int_literal(ternary_expr.then_expr, m_types.i32_type());
-        coerce_int_literal(ternary_expr.else_expr, m_types.i32_type());
+        m_checker.coerce_int_literal(ternary_expr.then_expr, m_types.i32_type());
+        m_checker.coerce_int_literal(ternary_expr.else_expr, m_types.i32_type());
         then_type = m_types.i32_type();
         else_type = m_types.i32_type();
     }
@@ -4500,10 +4492,10 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
     }
 
     // Check if one can be converted to the other (probe without errors)
-    if (is_assignable(then_type, else_type)) {
+    if (m_checker.is_assignable(then_type, else_type)) {
         return then_type;
     }
-    if (is_assignable(else_type, then_type)) {
+    if (m_checker.is_assignable(else_type, then_type)) {
         return else_type;
     }
 
@@ -4551,8 +4543,8 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
 
         // Type check (skip for 'out' since it's write-only)
         if (arg.modifier != ParamModifier::Out) {
-            check_assignable(param_types[i], arg_type, arg.expr->loc);
-            coerce_int_literal(arg.expr, param_types[i]);
+            m_checker.check_assignable(param_types[i], arg_type, arg.expr->loc);
+            m_checker.coerce_int_literal(arg.expr, param_types[i]);
         }
 
         // Move semantics: passing owned arg to owned param transfers ownership —
@@ -4855,8 +4847,8 @@ Type* SemanticAnalyzer::check_instantiated_generic_call(
         }
 
         if (param_type && !param_type->is_error() && arg_type && !arg_type->is_error()) {
-            check_assignable(param_type, arg_type, arg.expr->loc);
-            coerce_int_literal(arg.expr, param_type);
+            m_checker.check_assignable(param_type, arg_type, arg.expr->loc);
+            m_checker.coerce_int_literal(arg.expr, param_type);
         }
 
         // Move semantics: passing an owned arg to a noncopyable param consumes it.
@@ -4980,7 +4972,7 @@ Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) 
     for (u32 i = 0; i < ce.arguments.size(); i++) {
         Type* arg_type = analyze_expr(ce.arguments[i].expr);
         if (arg_type && !arg_type->is_error()) {
-            check_assignable(ctor.param_types[i], arg_type, ce.arguments[i].expr->loc);
+            m_checker.check_assignable(ctor.param_types[i], arg_type, ce.arguments[i].expr->loc);
         }
     }
 
@@ -5060,7 +5052,7 @@ Type* SemanticAnalyzer::analyze_map_constructor_call(Expr* expr, CallExpr& ce) {
     for (u32 i = 0; i < ce.arguments.size(); i++) {
         Type* arg_type = analyze_expr(ce.arguments[i].expr);
         if (arg_type && !arg_type->is_error()) {
-            check_assignable(m_types.i32_type(), arg_type, ce.arguments[i].expr->loc);
+            m_checker.check_assignable(m_types.i32_type(), arg_type, ce.arguments[i].expr->loc);
         }
     }
 
@@ -5135,10 +5127,10 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
             for (u32 i = 0; i < ce.arguments.size(); i++) {
                 CallArg& arg = ce.arguments[i];
                 Type* arg_type = analyze_expr(arg.expr);
-                if (!check_assignable(ctor->param_types[i], arg_type, arg.expr->loc)) {
+                if (!m_checker.check_assignable(ctor->param_types[i], arg_type, arg.expr->loc)) {
                     // Error already reported
                 } else {
-                    coerce_int_literal(arg.expr, ctor->param_types[i]);
+                    m_checker.coerce_int_literal(arg.expr, ctor->param_types[i]);
                 }
             }
         }
@@ -5163,10 +5155,10 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
         for (u32 i = 0; i < ce.arguments.size(); i++) {
             CallArg& arg = ce.arguments[i];
             Type* arg_type = analyze_expr(arg.expr);
-            if (!check_assignable(ctor->param_types[i], arg_type, arg.expr->loc)) {
+            if (!m_checker.check_assignable(ctor->param_types[i], arg_type, arg.expr->loc)) {
                 // Error already reported
             } else {
-                coerce_int_literal(arg.expr, ctor->param_types[i]);
+                m_checker.coerce_int_literal(arg.expr, ctor->param_types[i]);
             }
         }
 
@@ -5190,10 +5182,10 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
         for (u32 i = 0; i < ce.arguments.size(); i++) {
             CallArg& arg = ce.arguments[i];
             Type* arg_type = analyze_expr(arg.expr);
-            if (!check_assignable(mi->param_types[i], arg_type, arg.expr->loc)) {
+            if (!m_checker.check_assignable(mi->param_types[i], arg_type, arg.expr->loc)) {
                 // Error already reported
             } else {
-                coerce_int_literal(arg.expr, mi->param_types[i]);
+                m_checker.coerce_int_literal(arg.expr, mi->param_types[i]);
             }
         }
 
@@ -5404,29 +5396,6 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
     return analyze_regular_fun_call(expr, call_expr);
 }
 
-bool SemanticAnalyzer::can_cast(Type* source, Type* target) {
-    if (!source || !target) return false;
-    if (source->is_error() || target->is_error()) return true;  // Allow error types to avoid cascading errors
-
-    // Same type is always castable (no-op)
-    if (source == target) return true;
-
-    // Numeric to numeric: allowed
-    if (source->is_numeric() && target->is_numeric()) return true;
-
-    // Integer/float to bool: allowed
-    if ((source->is_numeric()) && target->is_bool()) return true;
-
-    // Bool to integer/float: allowed
-    if (source->is_bool() && target->is_numeric()) return true;
-
-    // String and void casts are not allowed
-    if (source->kind == TypeKind::String || target->kind == TypeKind::String) return false;
-    if (source->is_void() || target->is_void()) return false;
-
-    return false;
-}
-
 Type* SemanticAnalyzer::analyze_primitive_cast(Expr* expr, Type* target_type) {
     CallExpr& call_expr = expr->call;
 
@@ -5449,9 +5418,9 @@ Type* SemanticAnalyzer::analyze_primitive_cast(Expr* expr, Type* target_type) {
     }
 
     // Check if the cast is valid
-    if (!can_cast(source_type, target_type)) {
-        auto source_str = type_string(source_type);
-        auto target_str = type_string(target_type);
+    if (!m_checker.can_cast(source_type, target_type)) {
+        auto source_str = m_checker.type_string(source_type);
+        auto target_str = m_checker.type_string(target_type);
         error_fmt(expr->loc, "cannot cast '{}' to '{}'", source_str.data(), target_str.data());
         return m_types.error_type();
     }
@@ -5529,8 +5498,8 @@ Type* SemanticAnalyzer::analyze_index_expr(Expr* expr) {
     const MethodInfo* method_info = m_types.lookup_method(base_type, method_name);
     if (method_info && method_info->param_types.size() == 1) {
         if (!idx_type->is_error()) {
-            check_assignable(method_info->param_types[0], idx_type, index_expr.index->loc);
-            coerce_int_literal(index_expr.index, method_info->param_types[0]);
+            m_checker.check_assignable(method_info->param_types[0], idx_type, index_expr.index->loc);
+            m_checker.coerce_int_literal(index_expr.index, method_info->param_types[0]);
         }
         return method_info->return_type;
     }
@@ -5723,7 +5692,7 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
     if (assign_expr.op != AssignOp::Assign) {
         // Coerce int literals to the target type before trait lookup
         if (value_type->is_int_literal() && target_type->is_integer()) {
-            coerce_int_literal(assign_expr.value, target_type);
+            m_checker.coerce_int_literal(assign_expr.value, target_type);
             value_type = target_type;
         }
         // Check for compound assignment trait method (works for both structs and primitives)
@@ -5752,8 +5721,8 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
         }
         get_binary_result_type(binop, target_type, value_type, expr->loc);
     } else {
-        check_assignable(target_type, value_type, assign_expr.value->loc);
-        coerce_int_literal(assign_expr.value, target_type);
+        m_checker.check_assignable(target_type, value_type, assign_expr.value->loc);
+        m_checker.coerce_int_literal(assign_expr.value, target_type);
     }
 
     // Reject self-assignment of noncopyables (e.g. `x = x` on a uniq variable):
@@ -6033,8 +6002,8 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
             if (field_type && coerce_generic_template_ref(fi.value, field_type)) {
                 value_type = fi.value->resolved_type;
             }
-            check_assignable(field_type, value_type, fi.loc);
-            coerce_int_literal(fi.value, field_type);
+            m_checker.check_assignable(field_type, value_type, fi.loc);
+            m_checker.coerce_int_literal(fi.value, field_type);
 
             // Consume noncopyable source (field-move check + mark source as moved)
             if (field_type && field_type->noncopyable()) {
@@ -6079,8 +6048,8 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
 
             // Type-check field value
             Type* value_type = analyze_expr(fi.value);
-            check_assignable(variant_field_info->type, value_type, fi.loc);
-            coerce_int_literal(fi.value, variant_field_info->type);
+            m_checker.check_assignable(variant_field_info->type, value_type, fi.loc);
+            m_checker.coerce_int_literal(fi.value, variant_field_info->type);
 
             // Consume noncopyable source (field-move check + mark source as moved)
             if (variant_field_info->type && variant_field_info->type->noncopyable()) {
@@ -6105,118 +6074,6 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
 }
 
 // ===== Type Checking Helpers =====
-
-bool SemanticAnalyzer::is_assignable(Type* target, Type* source) const {
-    if (!target || !source) return false;
-    if (target->is_error() || source->is_error()) return true;
-    if (target == source) return true;
-    // TypeParam is assignable to itself (same name/index = same parameter)
-    if (target->is_type_param() && source->is_type_param()) {
-        return target->type_param_info.index == source->type_param_info.index
-            && target->type_param_info.name == source->type_param_info.name;
-    }
-    if (source->is_nil() && target->is_reference()) return true;
-    if (target->is_struct() && source->is_struct()) {
-        if (is_subtype_of(source, target)) return true;
-    }
-    if (target->is_reference() && source->is_reference()) {
-        if (target->kind == source->kind) {
-            Type* target_inner = target->ref_info.inner_type;
-            Type* source_inner = source->ref_info.inner_type;
-            if (is_subtype_of(source_inner, target_inner)) return true;
-        }
-    }
-    if (can_convert_ref(source, target)) return true;
-    if (source->is_int_literal() && target->is_integer()) return true;
-    return false;
-}
-
-bool SemanticAnalyzer::check_assignable(Type* target, Type* source, SourceLocation loc) {
-    if (!target || !source) return false;
-    if (target->is_error() || source->is_error()) return true;  // Don't cascade errors
-
-    // Same type is always assignable
-    if (target == source) return true;
-
-    // TypeParam is assignable to itself (same name/index = same parameter)
-    if (target->is_type_param() && source->is_type_param()) {
-        if (target->type_param_info.index == source->type_param_info.index
-            && target->type_param_info.name == source->type_param_info.name) {
-            return true;
-        }
-    }
-
-    // nil is assignable to reference types
-    if (source->is_nil() && target->is_reference()) return true;
-
-    // Struct subtyping: Child assignable to Parent (value slicing for values)
-    if (target->is_struct() && source->is_struct()) {
-        if (is_subtype_of(source, target)) {
-            return true;
-        }
-    }
-
-    // Reference subtyping: ref<Child> -> ref<Parent>, etc. (covariant)
-    // Safe because struct inheritance uses prefix layout — parent fields are
-    // at the same offsets in child objects, and dispatch is static.
-    if (target->is_reference() && source->is_reference()) {
-        if (target->kind == source->kind) {
-            Type* target_inner = target->ref_info.inner_type;
-            Type* source_inner = source->ref_info.inner_type;
-            if (is_subtype_of(source_inner, target_inner)) {
-                return true;
-            }
-        }
-    }
-
-    // Check reference type conversions
-    if (can_convert_ref(source, target)) return true;
-
-    // IntLiteral is assignable to any concrete integer type
-    if (source->is_int_literal() && target->is_integer()) return true;
-
-    // Strict numeric typing: no implicit conversions between numeric types
-    if (target->is_numeric() && source->is_numeric() && target != source) {
-        error_cannot_convert(source, target, loc, "implicitly convert");
-        return false;
-    }
-
-    // Specific error messages for forbidden reference conversions
-    if (source->kind == TypeKind::Ref && target->kind == TypeKind::Uniq) {
-        error(loc, "cannot convert 'ref' to 'uniq': borrowing does not transfer ownership");
-        return false;
-    }
-    if (source->kind == TypeKind::Weak && target->kind == TypeKind::Uniq) {
-        error(loc, "cannot convert 'weak' to 'uniq': weak reference cannot become owner");
-        return false;
-    }
-    if (source->kind == TypeKind::Weak && target->kind == TypeKind::Ref) {
-        error(loc, "cannot convert 'weak' to 'ref': weak reference cannot become strong borrow");
-        return false;
-    }
-
-    // nil can only be assigned to reference types
-    if (source->is_nil() && !target->is_reference()) {
-        error(loc, "'nil' can only be assigned to reference types (uniq, ref, weak)");
-        return false;
-    }
-
-    auto source_str = type_string(source);
-    auto target_str = type_string(target);
-    error_fmt(loc, "cannot assign '{}' to '{}'", source_str.data(), target_str.data());
-    return false;
-}
-
-void SemanticAnalyzer::coerce_int_literal(Expr* expr, Type* target) {
-    if (!expr || !target || !target->is_integer()) return;
-    if (!expr->resolved_type || !expr->resolved_type->is_int_literal()) return;
-    expr->resolved_type = target;
-    // Recursively concretize through transparent wrappers
-    if (expr->kind == AstKind::ExprGrouping)
-        coerce_int_literal(expr->grouping.expr, target);
-    else if (expr->kind == AstKind::ExprUnary)
-        coerce_int_literal(expr->unary.operand, target);
-}
 
 bool SemanticAnalyzer::coerce_generic_template_ref(Expr* expr, Type* expected) {
     if (!expr || expr->kind != AstKind::ExprIdentifier) return true;
@@ -6347,57 +6204,6 @@ Type* SemanticAnalyzer::resolve_explicit_generic_template_ref(Expr* expr) {
     return fn_type;
 }
 
-bool SemanticAnalyzer::check_numeric(Type* type, SourceLocation loc) {
-    if (!type || type->is_error()) return false;
-    if (!type->is_numeric()) {
-        error(loc, "expected numeric type");
-        return false;
-    }
-    return true;
-}
-
-bool SemanticAnalyzer::check_integer(Type* type, SourceLocation loc) {
-    if (!type || type->is_error()) return false;
-    if (!type->is_integer()) {
-        error(loc, "expected integer type");
-        return false;
-    }
-    return true;
-}
-
-bool SemanticAnalyzer::check_boolean(Type* type, SourceLocation loc) {
-    if (!type || type->is_error()) return false;
-    if (!type->is_bool()) {
-        error(loc, "expected boolean type");
-        return false;
-    }
-    return true;
-}
-
-String SemanticAnalyzer::type_string(Type* type) {
-    String str;
-    type_to_string(type, str);
-    str.push_back('\0');
-    return str;
-}
-
-bool SemanticAnalyzer::require_types_match(Type* left, Type* right, SourceLocation loc, const char* context) {
-    if (left == right) return true;
-
-    auto left_str = type_string(left);
-    auto right_str = type_string(right);
-    error_fmt(loc, "{} requires matching types, got '{}' and '{}'",
-              context, left_str.data(), right_str.data());
-    return false;
-}
-
-void SemanticAnalyzer::error_cannot_convert(Type* source, Type* target, SourceLocation loc, const char* context) {
-    auto source_str = type_string(source);
-    auto target_str = type_string(target);
-    error_fmt(loc, "cannot {} '{}' to '{}'",
-              context, source_str.data(), target_str.data());
-}
-
 Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* right, SourceLocation loc) {
     switch (op) {
         case BinaryOp::Add:
@@ -6413,7 +6219,7 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
                 return result;
             // Type mismatch check for better error messages
             if (left->is_numeric() && right->is_numeric()) {
-                require_types_match(left, right, loc, "arithmetic operator");
+                m_checker.require_types_match(left, right, loc, "arithmetic operator");
                 return m_types.error_type();
             }
             error(loc, "invalid operands for arithmetic operator");
@@ -6436,7 +6242,7 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
                 return result;
             // Type mismatch check for better error messages
             if (left->is_numeric() && right->is_numeric()) {
-                require_types_match(left, right, loc, "comparison operator");
+                m_checker.require_types_match(left, right, loc, "comparison operator");
                 return m_types.error_type();
             }
             error(loc, "invalid operands for comparison operator");
@@ -6458,7 +6264,7 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
             if (Type* result = try_resolve_binary_op(op, left, right))
                 return result;
             if (left->is_integer() && right->is_integer()) {
-                require_types_match(left, right, loc, "bitwise operator");
+                m_checker.require_types_match(left, right, loc, "bitwise operator");
                 return m_types.error_type();
             }
             error(loc, "bitwise operators require integer operands");
@@ -6516,37 +6322,6 @@ bool SemanticAnalyzer::is_lvalue(Expr* expr) const {
         default:
             return false;
     }
-}
-
-bool SemanticAnalyzer::can_convert_ref(Type* from, Type* to) const {
-    if (!from || !to) return false;
-
-    // Helper to check inner type compatibility (same type or subtype)
-    auto inner_compatible = [](Type* from_inner, Type* to_inner) -> bool {
-        if (from_inner == to_inner) return true;
-        // Covariant: Child -> Parent
-        if (from_inner && to_inner && from_inner->is_struct() && to_inner->is_struct()) {
-            return is_subtype_of(from_inner, to_inner);
-        }
-        return false;
-    };
-
-    // uniq -> ref conversion
-    if (from->kind == TypeKind::Uniq && to->kind == TypeKind::Ref) {
-        return inner_compatible(from->ref_info.inner_type, to->ref_info.inner_type);
-    }
-
-    // ref -> weak conversion
-    if (from->kind == TypeKind::Ref && to->kind == TypeKind::Weak) {
-        return inner_compatible(from->ref_info.inner_type, to->ref_info.inner_type);
-    }
-
-    // uniq -> weak conversion
-    if (from->kind == TypeKind::Uniq && to->kind == TypeKind::Weak) {
-        return inner_compatible(from->ref_info.inner_type, to->ref_info.inner_type);
-    }
-
-    return false;
 }
 
 }

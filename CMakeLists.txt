@@ -62,6 +62,7 @@ add_library(roxy_compiler
     src/roxy/compiler/types.cpp
     src/roxy/compiler/symbol_table.cpp
     src/roxy/compiler/semantic.cpp
+    src/roxy/compiler/type_checker.cpp
     src/roxy/compiler/ssa_ir.cpp
     src/roxy/compiler/ir_builder.cpp
     src/roxy/compiler/ir_validator.cpp
