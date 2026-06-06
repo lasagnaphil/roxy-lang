@@ -53,6 +53,23 @@ public:
 private:
     // Report an internal compiler error (stores the first error only)
     void report_error(const char* message);
+
+    // build() phases. Each appends to m_module and records failures via m_has_error;
+    // build() bails between phases so a later phase never runs on a half-built module.
+    // has_default_ctor tracks which struct / generic-instance names already have a
+    // user-defined default constructor (written by the decl phases, read by the
+    // synthesized-default-ctor phase).
+    void build_user_decls(Program* program, tsl::robin_map<StringView, bool>& has_default_ctor);
+    void build_synthetic_decls(Span<Decl*> synthetic_decls);
+    void build_generic_fun_instances();
+    void build_generic_struct_ctors_dtors(tsl::robin_map<StringView, bool>& has_default_ctor);
+    void build_synthesized_default_ctors(Program* program,
+                                         const tsl::robin_map<StringView, bool>& has_default_ctor);
+    void build_generic_struct_methods();
+    void build_synthesized_default_dtors(Program* program);
+    void build_coroutine_cleanup_wrappers();
+    void collect_backend_types(Program* program);
+
     // Block management
     IRBlock* create_block(StringView name = {});
     void set_current_block(IRBlock* block);

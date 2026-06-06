@@ -40,13 +40,44 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
     m_has_error = false;
     m_error = nullptr;
     m_module_name = program->module_name;
+    m_module = m_allocator.emplace<IRModule>();
 
-    IRModule* module = m_allocator.emplace<IRModule>();
-    m_module = module;
-
-    // Track which struct types have user-defined default constructors
+    // Maps a struct (or generic-instance mangled) name -> whether it has a
+    // user-defined default constructor. Written by the user-decl and generic
+    // struct-member phases; read by the synthesized-default-ctor phase.
     tsl::robin_map<StringView, bool> has_default_ctor;
 
+    // Each phase appends to m_module and records failures via m_has_error; bail out
+    // between phases so a later phase never runs on a half-built module.
+    build_user_decls(program, has_default_ctor);
+    if (m_has_error) return nullptr;
+
+    build_synthetic_decls(synthetic_decls);
+    if (m_has_error) return nullptr;
+
+    build_generic_fun_instances();
+    if (m_has_error) return nullptr;
+
+    build_generic_struct_ctors_dtors(has_default_ctor);
+    if (m_has_error) return nullptr;
+
+    build_synthesized_default_ctors(program, has_default_ctor);
+    if (m_has_error) return nullptr;
+
+    build_generic_struct_methods();
+    if (m_has_error) return nullptr;
+
+    build_synthesized_default_dtors(program);
+    if (m_has_error) return nullptr;
+
+    build_coroutine_cleanup_wrappers();
+    if (m_has_error) return nullptr;
+
+    collect_backend_types(program);
+    return m_module;
+}
+
+void IRBuilder::build_user_decls(Program* program, tsl::robin_map<StringView, bool>& has_default_ctor) {
     for (auto* decl : program->declarations) {
         if (!decl) continue;
 
@@ -55,7 +86,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             if (decl->fun_decl.type_params.size() > 0) continue;
             if (!decl->fun_decl.is_native && decl->fun_decl.body) {
                 IRFunction* func = build_function(&decl->fun_decl);
-                module->functions.push_back(func);
+                m_module->functions.push_back(func);
             }
         }
         else if (decl->kind == AstKind::DeclStruct) {
@@ -66,7 +97,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             for (auto* method : struct_decl.methods) {
                 if (method && !method->is_native && method->body) {
                     IRFunction* func = build_function(method);
-                    module->functions.push_back(func);
+                    m_module->functions.push_back(func);
                 }
             }
         }
@@ -78,7 +109,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             Type* struct_type = m_type_env.named_type_by_name(constructor_decl.struct_name);
             if (struct_type && constructor_decl.body) {
                 IRFunction* func = build_constructor(&constructor_decl, struct_type);
-                module->functions.push_back(func);
+                m_module->functions.push_back(func);
                 // Track if this is a default constructor (no name)
                 if (constructor_decl.name.empty()) {
                     has_default_ctor[constructor_decl.struct_name] = true;
@@ -93,7 +124,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             Type* struct_type = m_type_env.named_type_by_name(destructor_decl.struct_name);
             if (struct_type && destructor_decl.body) {
                 IRFunction* func = build_destructor(&destructor_decl, struct_type);
-                module->functions.push_back(func);
+                m_module->functions.push_back(func);
             }
         }
         else if (decl->kind == AstKind::DeclMethod) {
@@ -104,13 +135,13 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             Type* struct_type = m_type_env.named_type_by_name(method_decl.struct_name);
             if (struct_type && struct_type->is_struct() && method_decl.body) {
                 IRFunction* func = build_method(&method_decl, struct_type);
-                module->functions.push_back(func);
+                m_module->functions.push_back(func);
             }
         }
     }
+}
 
-    if (m_has_error) return nullptr;
-
+void IRBuilder::build_synthetic_decls(Span<Decl*> synthetic_decls) {
     // Process synthetic (injected default method, lifted lambda) declarations
     for (auto* decl : synthetic_decls) {
         if (!decl) continue;
@@ -119,18 +150,18 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             Type* struct_type = m_type_env.named_type_by_name(method_decl.struct_name);
             if (struct_type && struct_type->is_struct() && method_decl.body) {
                 IRFunction* func = build_method(&method_decl, struct_type);
-                module->functions.push_back(func);
+                m_module->functions.push_back(func);
             }
         } else if (decl->kind == AstKind::DeclFun) {
             if (!decl->fun_decl.is_native && decl->fun_decl.body) {
                 IRFunction* func = build_function(&decl->fun_decl);
-                module->functions.push_back(func);
+                m_module->functions.push_back(func);
             }
         }
     }
+}
 
-    if (m_has_error) return nullptr;
-
+void IRBuilder::build_generic_fun_instances() {
     // Process generic function instances. Each instance is emitted from its
     // template's defining module only (so the body resolves against that
     // module's symbol table), avoiding both duplicate emission across
@@ -145,11 +176,11 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             instance->template_module == m_module_name;
         if (!owns) continue;
         IRFunction* func = build_function(&instance->instantiated_decl->fun_decl);
-        module->functions.push_back(func);
+        m_module->functions.push_back(func);
     }
+}
 
-    if (m_has_error) return nullptr;
-
+void IRBuilder::build_generic_struct_ctors_dtors(tsl::robin_map<StringView, bool>& has_default_ctor) {
     // Generate constructors/destructors for generic struct instances
     for (auto* instance : m_type_env.generics().all_struct_instances()) {
         if (!instance->is_analyzed || !instance->concrete_type) continue;
@@ -158,7 +189,7 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             ConstructorDecl& ctor = ctor_decl->constructor_decl;
             if (ctor.body) {
                 IRFunction* func = build_constructor(&ctor, instance->concrete_type);
-                module->functions.push_back(func);
+                m_module->functions.push_back(func);
                 if (ctor.name.empty()) {
                     has_default_ctor[instance->mangled_name] = true;
                 }
@@ -169,13 +200,14 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             DestructorDecl& dtor = dtor_decl->destructor_decl;
             if (dtor.body) {
                 IRFunction* func = build_destructor(&dtor, instance->concrete_type);
-                module->functions.push_back(func);
+                m_module->functions.push_back(func);
             }
         }
     }
+}
 
-    if (m_has_error) return nullptr;
-
+void IRBuilder::build_synthesized_default_ctors(Program* program,
+                                                const tsl::robin_map<StringView, bool>& has_default_ctor) {
     // Generate synthesized default constructors for structs without user-defined ones
     for (auto* decl : program->declarations) {
         if (!decl) continue;
@@ -189,13 +221,13 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
                 Type* struct_type = m_type_env.named_type_by_name(struct_decl.name);
                 if (struct_type) {
                     IRFunction* func = build_synthesized_default_constructor(struct_type);
-                    module->functions.push_back(func);
+                    m_module->functions.push_back(func);
                 }
             }
         }
     }
 
-    if (m_has_error) return nullptr;
+    if (m_has_error) return;
 
     // Generate synthesized default constructors for generic struct instances
     for (auto* instance : m_type_env.generics().all_struct_instances()) {
@@ -203,13 +235,13 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             // Check if there's a user-defined default constructor for this instance
             if (has_default_ctor.find(instance->mangled_name) == has_default_ctor.end()) {
                 IRFunction* func = build_synthesized_default_constructor(instance->concrete_type);
-                module->functions.push_back(func);
+                m_module->functions.push_back(func);
             }
         }
     }
+}
 
-    if (m_has_error) return nullptr;
-
+void IRBuilder::build_generic_struct_methods() {
     // Generate external methods for generic struct instances
     for (auto* instance : m_type_env.generics().all_struct_instances()) {
         if (!instance->is_analyzed || !instance->concrete_type) continue;
@@ -218,13 +250,13 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             MethodDecl& method = method_decl->method_decl;
             if (method.body) {
                 IRFunction* func = build_method(&method, instance->concrete_type);
-                module->functions.push_back(func);
+                m_module->functions.push_back(func);
             }
         }
     }
+}
 
-    if (m_has_error) return nullptr;
-
+void IRBuilder::build_synthesized_default_dtors(Program* program) {
     // Generate synthesized default destructors for structs with uniq fields
     for (auto* decl : program->declarations) {
         if (!decl) continue;
@@ -239,14 +271,14 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             for (const auto& dtor : struct_type->struct_info.destructors) {
                 if (dtor.name.empty() && dtor.decl == nullptr) {
                     IRFunction* func = build_synthesized_default_destructor(struct_type);
-                    module->functions.push_back(func);
+                    m_module->functions.push_back(func);
                     break;
                 }
             }
         }
     }
 
-    if (m_has_error) return nullptr;
+    if (m_has_error) return;
 
     // Generate synthesized default destructors for generic struct instances with uniq fields
     for (auto* instance : m_type_env.generics().all_struct_instances()) {
@@ -258,59 +290,57 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             for (const auto& dtor : concrete_type->struct_info.destructors) {
                 if (dtor.name.empty() && dtor.decl == nullptr) {
                     IRFunction* func = build_synthesized_default_destructor(concrete_type);
-                    module->functions.push_back(func);
+                    m_module->functions.push_back(func);
                     break;
                 }
             }
         }
     }
+}
 
-    if (m_has_error) return nullptr;
-
+void IRBuilder::build_coroutine_cleanup_wrappers() {
     // Generate cleanup wrapper functions for noncopyable List/Map types in coroutines
-    {
-        tsl::robin_map<Type*, bool> seen_types;
-        Vector<IRFunction*> wrappers;
-        u32 wrapper_index = 0;
+    tsl::robin_map<Type*, bool> seen_types;
+    Vector<IRFunction*> wrappers;
+    u32 wrapper_index = 0;
 
-        for (auto* func : module->functions) {
-            if (!func->is_coroutine) continue;
+    for (auto* func : m_module->functions) {
+        if (!func->is_coroutine) continue;
 
-            // Scan cleanup_info for noncopyable List/Map types
-            for (const auto& cleanup : func->cleanup_info) {
-                if (!cleanup.type) continue;
-                if (cleanup.type->is_container() &&
-                    cleanup.type->noncopyable() &&
-                    seen_types.find(cleanup.type) == seen_types.end()) {
-                    seen_types[cleanup.type] = true;
-                    IRFunction* wrapper = build_cleanup_wrapper(cleanup.type, wrapper_index++);
-                    wrappers.push_back(wrapper);
-                    module->cleanup_wrappers[cleanup.type] = wrapper->name;
-                }
-            }
-
-            // Scan parameters for noncopyable List/Map types
-            for (const auto& param : func->params) {
-                if (!param.type) continue;
-                if (param.type->is_container() &&
-                    param.type->noncopyable() &&
-                    seen_types.find(param.type) == seen_types.end()) {
-                    seen_types[param.type] = true;
-                    IRFunction* wrapper = build_cleanup_wrapper(param.type, wrapper_index++);
-                    wrappers.push_back(wrapper);
-                    module->cleanup_wrappers[param.type] = wrapper->name;
-                }
+        // Scan cleanup_info for noncopyable List/Map types
+        for (const auto& cleanup : func->cleanup_info) {
+            if (!cleanup.type) continue;
+            if (cleanup.type->is_container() &&
+                cleanup.type->noncopyable() &&
+                seen_types.find(cleanup.type) == seen_types.end()) {
+                seen_types[cleanup.type] = true;
+                IRFunction* wrapper = build_cleanup_wrapper(cleanup.type, wrapper_index++);
+                wrappers.push_back(wrapper);
+                m_module->cleanup_wrappers[cleanup.type] = wrapper->name;
             }
         }
 
-        // Add wrappers after iteration to avoid invalidating the iterator
-        for (auto* wrapper : wrappers) {
-            module->functions.push_back(wrapper);
+        // Scan parameters for noncopyable List/Map types
+        for (const auto& param : func->params) {
+            if (!param.type) continue;
+            if (param.type->is_container() &&
+                param.type->noncopyable() &&
+                seen_types.find(param.type) == seen_types.end()) {
+                seen_types[param.type] = true;
+                IRFunction* wrapper = build_cleanup_wrapper(param.type, wrapper_index++);
+                wrappers.push_back(wrapper);
+                m_module->cleanup_wrappers[param.type] = wrapper->name;
+            }
         }
     }
 
-    if (m_has_error) return nullptr;
+    // Add wrappers after iteration to avoid invalidating the iterator
+    for (auto* wrapper : wrappers) {
+        m_module->functions.push_back(wrapper);
+    }
+}
 
+void IRBuilder::collect_backend_types(Program* program) {
     // Collect struct and enum types for C backend code generation
     for (auto* decl : program->declarations) {
         if (!decl) continue;
@@ -319,13 +349,13 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
             if (decl->struct_decl.type_params.size() > 0) continue;
             Type* struct_type = m_type_env.named_type_by_name(decl->struct_decl.name);
             if (struct_type) {
-                module->struct_types.push_back(struct_type);
+                m_module->struct_types.push_back(struct_type);
             }
         }
         else if (decl->kind == AstKind::DeclEnum) {
             Type* enum_type = m_type_env.named_type_by_name(decl->enum_decl.name);
             if (enum_type) {
-                module->enum_types.push_back(enum_type);
+                m_module->enum_types.push_back(enum_type);
             }
         }
     }
@@ -333,11 +363,9 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
     // Collect monomorphized generic struct instances
     for (auto* instance : m_type_env.generics().all_struct_instances()) {
         if (instance->is_analyzed && instance->concrete_type) {
-            module->struct_types.push_back(instance->concrete_type);
+            m_module->struct_types.push_back(instance->concrete_type);
         }
     }
-
-    return module;
 }
 
 IRFunction* IRBuilder::build_function(FunDecl* decl) {
