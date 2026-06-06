@@ -183,6 +183,11 @@ private:
     Type* analyze_expr(Expr* expr);
     Type* analyze_literal_expr(Expr* expr);
     Type* analyze_identifier_expr(Expr* expr);
+    // Closure-capture path of analyze_identifier_expr: if `sym` resolves across
+    // one or more enclosing lambda boundaries, record the capture(s), rewrite
+    // `expr` in place to `__env.<name>`, set *out to the result type, and return
+    // true. Returns false when no capture applies (caller handles normally).
+    bool try_capture_identifier(Expr* expr, Symbol* sym, Type** out);
     Type* analyze_unary_expr(Expr* expr);
     Type* analyze_binary_expr(Expr* expr);
     Type* analyze_ternary_expr(Expr* expr);
@@ -231,6 +236,11 @@ private:
     Type* analyze_this_expr(Expr* expr);
     Type* analyze_super_expr(Expr* expr);
     Type* analyze_struct_literal_expr(Expr* expr);
+    // Phases of analyze_struct_literal_expr: resolve the (possibly generic)
+    // struct type (returns error_type on failure), then type-check each field
+    // initializer and report any missing required fields.
+    Type* resolve_struct_literal_type(Expr* expr, StructLiteralExpr& sl);
+    void check_struct_literal_fields(Expr* expr, StructLiteralExpr& sl, Type* type);
     Type* analyze_string_interp_expr(Expr* expr);
     Type* analyze_lambda_expr(Expr* expr);
     struct LambdaCaptureContext;  // defined below; used by the phase helpers

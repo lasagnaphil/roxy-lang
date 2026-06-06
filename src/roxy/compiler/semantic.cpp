@@ -3676,6 +3676,25 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
         return m_types.error_type();
     }
 
+    // Closure-capture path: if this identifier resolves across a lambda
+    // boundary, record the capture(s) and rewrite the expr in place.
+    Type* captured_type = nullptr;
+    if (try_capture_identifier(expr, sym, &captured_type)) {
+        return captured_type;
+    }
+
+    // Check move state for owned variables (uniq refs and value structs with destructors)
+    // Note: we check here but the actual move marking happens at call sites, return, delete
+    if (sym->type && sym->type->noncopyable()) {
+        check_not_moved(id.name, expr->loc);
+    }
+
+    return sym->type;
+}
+
+bool SemanticAnalyzer::try_capture_identifier(Expr* expr, Symbol* sym, Type** out) {
+    IdentifierExpr& id = expr->identifier;
+
     // Capture-boundary check: if we're inside a lambda body and this identifier
     // resolves to a symbol defined past a `ScopeKind::Lambda` boundary, treat it
     // as a closure capture. Function / struct / enum / trait / module / imported
@@ -3688,123 +3707,120 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
         sym->kind != SymbolKind::Module &&
         sym->kind != SymbolKind::ImportedFunction;
 
-    if (is_capturable_kind && sym->defining_scope && !m_lambda_contexts.empty()) {
-        // Walk from current scope toward sym->defining_scope, collecting the
-        // indices of every lambda context whose boundary scope sits between us
-        // and the symbol's defining scope (innermost first). For nested closures
-        // a lookup can cross multiple boundaries; each enclosing lambda must
-        // also capture the symbol so it can be passed inward through env-fields.
-        Vector<u32> crossed_ctx_indices;
-        for (Scope* sc = m_symbols.current_scope(); sc; sc = sc->parent) {
-            if (sc == sym->defining_scope) break;
-            if (sc->kind == ScopeKind::Lambda) {
-                for (u32 i = 0; i < m_lambda_contexts.size(); i++) {
-                    if (m_lambda_contexts[i]->boundary_scope == sc) {
-                        crossed_ctx_indices.push_back(i);
-                        break;
-                    }
+    if (!is_capturable_kind || !sym->defining_scope || m_lambda_contexts.empty()) {
+        return false;
+    }
+
+    // Walk from current scope toward sym->defining_scope, collecting the
+    // indices of every lambda context whose boundary scope sits between us
+    // and the symbol's defining scope (innermost first). For nested closures
+    // a lookup can cross multiple boundaries; each enclosing lambda must
+    // also capture the symbol so it can be passed inward through env-fields.
+    Vector<u32> crossed_ctx_indices;
+    for (Scope* sc = m_symbols.current_scope(); sc; sc = sc->parent) {
+        if (sc == sym->defining_scope) break;
+        if (sc->kind == ScopeKind::Lambda) {
+            for (u32 i = 0; i < m_lambda_contexts.size(); i++) {
+                if (m_lambda_contexts[i]->boundary_scope == sc) {
+                    crossed_ctx_indices.push_back(i);
+                    break;
                 }
             }
         }
+    }
 
-        if (!crossed_ctx_indices.empty()) {
-            StringView captured_name = id.name;
-            SourceLocation captured_loc = expr->loc;
-            Type* captured_type = sym->type;
+    if (crossed_ctx_indices.empty()) return false;
 
-            // Mode rules (copy-only for transitive captures — [move] is
-            // pre-validated to forbid transit). Implicit capture of a
-            // noncopyable across any boundary is a clear error.
-            if (captured_type && captured_type->noncopyable()) {
-                // The variable is in scope but noncopyable; only [move] makes
-                // it valid, and that path pre-populates the context (so
-                // by_symbol would already contain it). If we're here on first
-                // reference, the user forgot [move].
-                LambdaCaptureContext& innermost = *m_lambda_contexts[crossed_ctx_indices[0]];
-                if (innermost.by_symbol.find(sym) == innermost.by_symbol.end()) {
-                    error_fmt(captured_loc,
-                        "cannot implicitly capture '{}' of noncopyable type; "
-                        "use 'fun[move {}](...)' to move it into the closure",
-                        captured_name, captured_name);
-                    return m_types.error_type();
-                }
+    StringView captured_name = id.name;
+    SourceLocation captured_loc = expr->loc;
+    Type* captured_type = sym->type;
+
+    // Mode rules (copy-only for transitive captures — [move] is
+    // pre-validated to forbid transit). Implicit capture of a
+    // noncopyable across any boundary is a clear error.
+    if (captured_type && captured_type->noncopyable()) {
+        // The variable is in scope but noncopyable; only [move] makes
+        // it valid, and that path pre-populates the context (so
+        // by_symbol would already contain it). If we're here on first
+        // reference, the user forgot [move].
+        LambdaCaptureContext& innermost = *m_lambda_contexts[crossed_ctx_indices[0]];
+        if (innermost.by_symbol.find(sym) == innermost.by_symbol.end()) {
+            error_fmt(captured_loc,
+                "cannot implicitly capture '{}' of noncopyable type; "
+                "use 'fun[move {}](...)' to move it into the closure",
+                captured_name, captured_name);
+            *out = m_types.error_type();
+            return true;
+        }
+    } else {
+        // Use-before-move check on the outer symbol still applies for
+        // copyable captures (e.g., capturing a moved-from i32 isn't
+        // possible since i32 isn't tracked, but for `ref` types the
+        // underlying owner could be).
+        if (!check_not_moved(captured_name, captured_loc)) {
+            *out = m_types.error_type();
+            return true;
+        }
+
+        // Walk crossed contexts from outermost to innermost. The
+        // outermost reads the capture directly from its enclosing
+        // scope (where the symbol is a normal local). Inner contexts
+        // read from the next-outer lambda's __env.<name>, since at
+        // their construction site the variable is no longer in scope
+        // — only the enclosing env is.
+        for (i32 i = static_cast<i32>(crossed_ctx_indices.size()) - 1; i >= 0; i--) {
+            u32 ctx_idx = crossed_ctx_indices[i];
+            LambdaCaptureContext& ctx = *m_lambda_contexts[ctx_idx];
+            if (ctx.by_symbol.find(sym) != ctx.by_symbol.end()) continue;
+
+            bool is_outermost_crossed =
+                (i == static_cast<i32>(crossed_ctx_indices.size()) - 1);
+
+            Expr* src;
+            if (is_outermost_crossed) {
+                // Direct identifier in the enclosing scope.
+                src = make_identifier_expr(captured_name, captured_type, captured_loc);
             } else {
-                // Use-before-move check on the outer symbol still applies for
-                // copyable captures (e.g., capturing a moved-from i32 isn't
-                // possible since i32 isn't tracked, but for `ref` types the
-                // underlying owner could be).
-                if (!check_not_moved(captured_name, captured_loc)) {
-                    return m_types.error_type();
-                }
+                // Read from the immediately-enclosing context's env.
+                // crossed_ctx_indices is innermost-first, so the
+                // *enclosing* of ctx is at crossed_ctx_indices[i+1].
+                u32 enclosing_ctx_idx = crossed_ctx_indices[i + 1];
+                Type* enclosing_env_type =
+                    m_lambda_contexts[enclosing_ctx_idx]->env_struct_type;
+                Type* enclosing_env_ref = enclosing_env_type
+                    ? m_types.ref_type(enclosing_env_type)
+                    : nullptr;
 
-                // Walk crossed contexts from outermost to innermost. The
-                // outermost reads the capture directly from its enclosing
-                // scope (where the symbol is a normal local). Inner contexts
-                // read from the next-outer lambda's __env.<name>, since at
-                // their construction site the variable is no longer in scope
-                // — only the enclosing env is.
-                for (i32 i = static_cast<i32>(crossed_ctx_indices.size()) - 1; i >= 0; i--) {
-                    u32 ctx_idx = crossed_ctx_indices[i];
-                    LambdaCaptureContext& ctx = *m_lambda_contexts[ctx_idx];
-                    if (ctx.by_symbol.find(sym) != ctx.by_symbol.end()) continue;
-
-                    bool is_outermost_crossed =
-                        (i == static_cast<i32>(crossed_ctx_indices.size()) - 1);
-
-                    Expr* src;
-                    if (is_outermost_crossed) {
-                        // Direct identifier in the enclosing scope.
-                        src = make_identifier_expr(captured_name, captured_type, captured_loc);
-                    } else {
-                        // Read from the immediately-enclosing context's env.
-                        // crossed_ctx_indices is innermost-first, so the
-                        // *enclosing* of ctx is at crossed_ctx_indices[i+1].
-                        u32 enclosing_ctx_idx = crossed_ctx_indices[i + 1];
-                        Type* enclosing_env_type =
-                            m_lambda_contexts[enclosing_ctx_idx]->env_struct_type;
-                        Type* enclosing_env_ref = enclosing_env_type
-                            ? m_types.ref_type(enclosing_env_type)
-                            : nullptr;
-
-                        Expr* env_id = make_identifier_expr(StringView("__env", 5),
-                                                            enclosing_env_ref, captured_loc);
-                        src = make_get_expr(env_id, captured_name, captured_type, captured_loc);
-                    }
-
-                    u32 index = static_cast<u32>(ctx.captures.size());
-                    CaptureInfo info{captured_name, captured_type, CaptureMode::Copy,
-                                     sym, captured_loc, src};
-                    ctx.captures.push_back(info);
-                    ctx.by_symbol[sym] = index;
-                }
+                Expr* env_id = make_identifier_expr(StringView("__env", 5),
+                                                    enclosing_env_ref, captured_loc);
+                src = make_get_expr(env_id, captured_name, captured_type, captured_loc);
             }
 
-            // Rewrite the IdentifierExpr in-place to `__env.<name>` referring to
-            // the *innermost* lambda's env (since that's the scope we're
-            // currently analyzing the body of).
-            LambdaCaptureContext& innermost = *m_lambda_contexts[crossed_ctx_indices[0]];
-            Type* innermost_env_type = innermost.env_struct_type;
-            Type* innermost_env_ref = innermost_env_type
-                ? m_types.ref_type(innermost_env_type)
-                : nullptr;
-
-            Expr* env_id = make_identifier_expr(StringView("__env", 5),
-                                                innermost_env_ref, captured_loc);
-
-            expr->kind = AstKind::ExprGet;
-            expr->get.object = env_id;
-            expr->get.name = captured_name;
-            return captured_type;
+            u32 index = static_cast<u32>(ctx.captures.size());
+            CaptureInfo info{captured_name, captured_type, CaptureMode::Copy,
+                             sym, captured_loc, src};
+            ctx.captures.push_back(info);
+            ctx.by_symbol[sym] = index;
         }
     }
 
-    // Check move state for owned variables (uniq refs and value structs with destructors)
-    // Note: we check here but the actual move marking happens at call sites, return, delete
-    if (sym->type && sym->type->noncopyable()) {
-        check_not_moved(id.name, expr->loc);
-    }
+    // Rewrite the IdentifierExpr in-place to `__env.<name>` referring to
+    // the *innermost* lambda's env (since that's the scope we're
+    // currently analyzing the body of).
+    LambdaCaptureContext& innermost = *m_lambda_contexts[crossed_ctx_indices[0]];
+    Type* innermost_env_type = innermost.env_struct_type;
+    Type* innermost_env_ref = innermost_env_type
+        ? m_types.ref_type(innermost_env_type)
+        : nullptr;
 
-    return sym->type;
+    Expr* env_id = make_identifier_expr(StringView("__env", 5),
+                                        innermost_env_ref, captured_loc);
+
+    expr->kind = AstKind::ExprGet;
+    expr->get.object = env_id;
+    expr->get.name = captured_name;
+    *out = captured_type;
+    return true;
 }
 
 // Helper: allocate a NUL-free StringView in the bump allocator.
@@ -5878,6 +5894,16 @@ Type* SemanticAnalyzer::analyze_super_expr(Expr* expr) {
 Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
     StructLiteralExpr& sl = expr->struct_literal;
 
+    Type* type = resolve_struct_literal_type(expr, sl);
+    if (!type || type->is_error()) return m_types.error_type();
+
+    check_struct_literal_fields(expr, sl, type);
+
+    // Return uniq<type> for heap allocation, value type for stack
+    return sl.is_heap ? m_types.uniq_type(type) : type;
+}
+
+Type* SemanticAnalyzer::resolve_struct_literal_type(Expr* expr, StructLiteralExpr& sl) {
     Type* type = nullptr;
 
     // Check for generic struct literal: Box<i32> { value = 42 }
@@ -5950,7 +5976,10 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
         error_fmt(expr->loc, "'{}' is not a struct type", sl.type_name);
         return m_types.error_type();
     }
+    return type;
+}
 
+void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr& sl, Type* type) {
     // Helper to find field default value by searching inheritance chain
     auto find_field_default = [](Type* struct_type, StringView field_name) -> Expr* {
         Type* current = struct_type;
@@ -6073,9 +6102,6 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
             }
         }
     }
-
-    // Return uniq<type> for heap allocation, value type for stack
-    return sl.is_heap ? m_types.uniq_type(type) : type;
 }
 
 // ===== Type Checking Helpers =====
