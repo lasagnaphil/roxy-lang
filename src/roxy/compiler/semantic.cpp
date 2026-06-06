@@ -29,6 +29,18 @@ private:
 };
 }
 
+// Build a MethodInfo with all fields set (native_name defaults to empty).
+static MethodInfo make_method(StringView name, Span<Type*> param_types,
+                              Type* return_type, StringView native_name = StringView()) {
+    MethodInfo method;
+    method.name = name;
+    method.param_types = param_types;
+    method.return_type = return_type;
+    method.decl = nullptr;
+    method.native_name = native_name;
+    return method;
+}
+
 static const ConstructorInfo* find_constructor(Span<ConstructorInfo> constructors, StringView name) {
     for (const auto& constructor : constructors) {
         if (constructor.name == name) {
@@ -2185,187 +2197,6 @@ void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
     methods.push_back(trait_method_info);
 
     trait_type_info.methods = m_allocator.alloc_span(methods);
-}
-
-// Helper to deep-clone an Expr tree
-static Expr* clone_expr(BumpAllocator& alloc, Expr* expr);
-static Stmt* clone_stmt(BumpAllocator& alloc, Stmt* stmt);
-
-static Span<CallArg> clone_call_args(BumpAllocator& alloc, Span<CallArg> args) {
-    if (args.size() == 0) return {};
-    CallArg* data = reinterpret_cast<CallArg*>(alloc.alloc_bytes(sizeof(CallArg) * args.size(), alignof(CallArg)));
-    for (u32 i = 0; i < args.size(); i++) {
-        data[i] = args[i];
-        data[i].expr = clone_expr(alloc, args[i].expr);
-    }
-    return Span<CallArg>(data, args.size());
-}
-
-static Span<FieldInit> clone_field_inits(BumpAllocator& alloc, Span<FieldInit> fields) {
-    if (fields.size() == 0) return {};
-    FieldInit* data = reinterpret_cast<FieldInit*>(alloc.alloc_bytes(sizeof(FieldInit) * fields.size(), alignof(FieldInit)));
-    for (u32 i = 0; i < fields.size(); i++) {
-        data[i] = fields[i];
-        data[i].value = clone_expr(alloc, fields[i].value);
-    }
-    return Span<FieldInit>(data, fields.size());
-}
-
-static Expr* clone_expr(BumpAllocator& alloc, Expr* expr) {
-    if (!expr) return nullptr;
-    Expr* e = alloc.emplace<Expr>();
-    *e = *expr;
-    e->resolved_type = nullptr;  // Will be set by re-analysis
-
-    switch (expr->kind) {
-        case AstKind::ExprLiteral:
-        case AstKind::ExprIdentifier:
-        case AstKind::ExprThis:
-            break;  // No child nodes to clone
-        case AstKind::ExprUnary:
-            e->unary.operand = clone_expr(alloc, expr->unary.operand);
-            break;
-        case AstKind::ExprBinary:
-            e->binary.left = clone_expr(alloc, expr->binary.left);
-            e->binary.right = clone_expr(alloc, expr->binary.right);
-            break;
-        case AstKind::ExprTernary:
-            e->ternary.condition = clone_expr(alloc, expr->ternary.condition);
-            e->ternary.then_expr = clone_expr(alloc, expr->ternary.then_expr);
-            e->ternary.else_expr = clone_expr(alloc, expr->ternary.else_expr);
-            break;
-        case AstKind::ExprCall:
-            e->call.callee = clone_expr(alloc, expr->call.callee);
-            e->call.arguments = clone_call_args(alloc, expr->call.arguments);
-            break;
-        case AstKind::ExprIndex:
-            e->index.object = clone_expr(alloc, expr->index.object);
-            e->index.index = clone_expr(alloc, expr->index.index);
-            break;
-        case AstKind::ExprGet:
-            e->get.object = clone_expr(alloc, expr->get.object);
-            break;
-        case AstKind::ExprStaticGet:
-            break;  // No child nodes
-        case AstKind::ExprAssign:
-            e->assign.target = clone_expr(alloc, expr->assign.target);
-            e->assign.value = clone_expr(alloc, expr->assign.value);
-            break;
-        case AstKind::ExprGrouping:
-            e->grouping.expr = clone_expr(alloc, expr->grouping.expr);
-            break;
-        case AstKind::ExprSuper:
-            break;  // No child nodes
-        case AstKind::ExprStructLiteral:
-            e->struct_literal.fields = clone_field_inits(alloc, expr->struct_literal.fields);
-            break;
-        case AstKind::ExprStringInterp: {
-            // Clone expression children; StringView parts are shared (immutable)
-            u32 n = expr->string_interp.expressions.size();
-            if (n > 0) {
-                Expr** exprs = reinterpret_cast<Expr**>(alloc.alloc_bytes(sizeof(Expr*) * n, alignof(Expr*)));
-                for (u32 i = 0; i < n; i++) {
-                    exprs[i] = clone_expr(alloc, expr->string_interp.expressions[i]);
-                }
-                e->string_interp.expressions = Span<Expr*>(exprs, n);
-            }
-            break;
-        }
-        default:
-            break;
-    }
-    return e;
-}
-
-static Span<Decl*> clone_decl_list(BumpAllocator& alloc, Span<Decl*> decls);
-
-static Stmt* clone_stmt(BumpAllocator& alloc, Stmt* stmt) {
-    if (!stmt) return nullptr;
-    Stmt* s = alloc.emplace<Stmt>();
-    *s = *stmt;
-
-    switch (stmt->kind) {
-        case AstKind::StmtExpr:
-            s->expr_stmt.expr = clone_expr(alloc, stmt->expr_stmt.expr);
-            break;
-        case AstKind::StmtBlock:
-            s->block.declarations = clone_decl_list(alloc, stmt->block.declarations);
-            break;
-        case AstKind::StmtIf:
-            s->if_stmt.condition = clone_expr(alloc, stmt->if_stmt.condition);
-            s->if_stmt.then_branch = clone_stmt(alloc, stmt->if_stmt.then_branch);
-            s->if_stmt.else_branch = clone_stmt(alloc, stmt->if_stmt.else_branch);
-            break;
-        case AstKind::StmtWhile:
-            s->while_stmt.condition = clone_expr(alloc, stmt->while_stmt.condition);
-            s->while_stmt.body = clone_stmt(alloc, stmt->while_stmt.body);
-            break;
-        case AstKind::StmtFor:
-            // initializer is a Decl*
-            s->for_stmt.condition = clone_expr(alloc, stmt->for_stmt.condition);
-            s->for_stmt.increment = clone_expr(alloc, stmt->for_stmt.increment);
-            s->for_stmt.body = clone_stmt(alloc, stmt->for_stmt.body);
-            break;
-        case AstKind::StmtReturn:
-            s->return_stmt.value = clone_expr(alloc, stmt->return_stmt.value);
-            break;
-        case AstKind::StmtBreak:
-        case AstKind::StmtContinue:
-            break;
-        case AstKind::StmtDelete:
-            s->delete_stmt.expr = clone_expr(alloc, stmt->delete_stmt.expr);
-            s->delete_stmt.arguments = clone_call_args(alloc, stmt->delete_stmt.arguments);
-            break;
-        case AstKind::StmtWhen:
-            s->when_stmt.discriminant = clone_expr(alloc, stmt->when_stmt.discriminant);
-            // Clone when cases
-            if (stmt->when_stmt.cases.size() > 0) {
-                WhenCase* cases = reinterpret_cast<WhenCase*>(
-                    alloc.alloc_bytes(sizeof(WhenCase) * stmt->when_stmt.cases.size(), alignof(WhenCase)));
-                for (u32 i = 0; i < stmt->when_stmt.cases.size(); i++) {
-                    cases[i] = stmt->when_stmt.cases[i];
-                    cases[i].body = clone_decl_list(alloc, stmt->when_stmt.cases[i].body);
-                }
-                s->when_stmt.cases = Span<WhenCase>(cases, stmt->when_stmt.cases.size());
-            }
-            s->when_stmt.else_body = clone_decl_list(alloc, stmt->when_stmt.else_body);
-            break;
-        default:
-            break;
-    }
-    return s;
-}
-
-static Decl* clone_decl(BumpAllocator& alloc, Decl* decl) {
-    if (!decl) return nullptr;
-    Decl* d = alloc.emplace<Decl>();
-    *d = *decl;
-
-    switch (decl->kind) {
-        case AstKind::DeclVar:
-            d->var_decl.initializer = clone_expr(alloc, decl->var_decl.initializer);
-            break;
-        case AstKind::StmtExpr:
-            d->stmt.expr_stmt.expr = clone_expr(alloc, decl->stmt.expr_stmt.expr);
-            break;
-        default:
-            // For statement declarations embedded in Decl, clone the statement
-            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtYield) {
-                Stmt* cloned = clone_stmt(alloc, &decl->stmt);
-                if (cloned) d->stmt = *cloned;
-            }
-            break;
-    }
-    return d;
-}
-
-static Span<Decl*> clone_decl_list(BumpAllocator& alloc, Span<Decl*> decls) {
-    if (decls.size() == 0) return {};
-    Decl** data = reinterpret_cast<Decl**>(alloc.alloc_bytes(sizeof(Decl*) * decls.size(), alignof(Decl*)));
-    for (u32 i = 0; i < decls.size(); i++) {
-        data[i] = clone_decl(alloc, decls[i]);
-    }
-    return Span<Decl*>(data, decls.size());
 }
 
 // ===== Generic Trait Bound Resolution =====
@@ -5031,27 +4862,11 @@ void SemanticAnalyzer::populate_enum_methods(Type* type) {
     assert(type && type->is_enum());
 
     // eq(other: Self): bool, ne(other: Self): bool
-    MethodInfo* methods = reinterpret_cast<MethodInfo*>(
-        m_allocator.alloc_bytes(sizeof(MethodInfo) * 2, alignof(MethodInfo)));
-
-    Type** enum_param = reinterpret_cast<Type**>(
-        m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
-    enum_param[0] = type;
-    Span<Type*> param_span(enum_param, 1);
-
-    methods[0].name = StringView("eq", 2);
-    methods[0].param_types = param_span;
-    methods[0].return_type = m_types.bool_type();
-    methods[0].decl = nullptr;
-    methods[0].native_name = StringView();
-
-    methods[1].name = StringView("ne", 2);
-    methods[1].param_types = param_span;
-    methods[1].return_type = m_types.bool_type();
-    methods[1].decl = nullptr;
-    methods[1].native_name = StringView();
-
-    type->enum_info.methods = Span<MethodInfo>(methods, 2);
+    Span<Type*> self_param(m_allocator.emplace<Type*>(type), 1);
+    Vector<MethodInfo> methods;
+    methods.push_back(make_method(StringView("eq", 2), self_param, m_types.bool_type()));
+    methods.push_back(make_method(StringView("ne", 2), self_param, m_types.bool_type()));
+    type->enum_info.methods = m_allocator.alloc_span(methods);
 }
 
 NativeRegistry* SemanticAnalyzer::get_builtin_registry() {
@@ -5068,47 +4883,39 @@ void SemanticAnalyzer::populate_coro_methods(Type* type) {
     Type* yield_type = type->coro_info.yield_type;
     StringView func_name = type->coro_info.func_name;
 
-    // Coroutine has two methods: resume() -> T and done() -> bool
-    MethodInfo* methods = reinterpret_cast<MethodInfo*>(
-        m_allocator.alloc_bytes(sizeof(MethodInfo) * 2, alignof(MethodInfo)));
-
     // Build mangled names: __coro_<func_name>$$resume, __coro_<func_name>$$done
     // These match the names generated by the coroutine lowering pass.
     StringView resume_native = format_to_arena(m_allocator, "__coro_{}$$resume", func_name);
     StringView done_native = format_to_arena(m_allocator, "__coro_{}$$done", func_name);
 
-    // resume() -> yield_type
-    methods[0].name = StringView("resume", 6);
-    methods[0].param_types = Span<Type*>();  // No params (self is implicit)
-    methods[0].return_type = yield_type;
-    methods[0].decl = nullptr;
-    methods[0].native_name = resume_native;
-
-    // done() -> bool
-    methods[1].name = StringView("done", 4);
-    methods[1].param_types = Span<Type*>();  // No params (self is implicit)
-    methods[1].return_type = m_types.bool_type();
-    methods[1].decl = nullptr;
-    methods[1].native_name = done_native;
-
-    type->coro_info.methods = Span<MethodInfo>(methods, 2);
+    // resume() -> yield_type, done() -> bool (no params; self is implicit)
+    Vector<MethodInfo> methods;
+    methods.push_back(make_method(StringView("resume", 6), Span<Type*>(), yield_type, resume_native));
+    methods.push_back(make_method(StringView("done", 4), Span<Type*>(), m_types.bool_type(), done_native));
+    type->coro_info.methods = m_allocator.alloc_span(methods);
 }
 
-void SemanticAnalyzer::populate_list_methods(Type* type) {
-    assert(type && type->is_list());
-    if (type->list_info.methods.size() > 0) return;
+void SemanticAnalyzer::populate_container_methods(
+        const char* registry_name, Span<Type*> type_args,
+        Span<MethodInfo>& out_methods,
+        StringView& out_alloc_name, StringView& out_copy_name) {
+    if (out_methods.size() > 0) return;
 
     NativeRegistry* registry = get_builtin_registry();
     if (!registry) return;
 
-    Type* type_args[] = { type->list_info.element_type };
-    Span<Type*> ta(type_args, 1);
-    Span<MethodInfo> native_methods = registry->instantiate_generic_methods(
-        "List", ta, m_allocator, m_types);
-    type->list_info.alloc_native_name = registry->get_generic_alloc_name("List");
-    type->list_info.copy_native_name = registry->get_generic_copy_name("List");
+    out_methods = registry->instantiate_generic_methods(registry_name, type_args, m_allocator, m_types);
+    out_alloc_name = registry->get_generic_alloc_name(registry_name);
+    out_copy_name = registry->get_generic_copy_name(registry_name);
+}
 
-    type->list_info.methods = native_methods;
+void SemanticAnalyzer::populate_list_methods(Type* type) {
+    assert(type && type->is_list());
+    Type* type_args[] = { type->list_info.element_type };
+    populate_container_methods("List", Span<Type*>(type_args, 1),
+                               type->list_info.methods,
+                               type->list_info.alloc_native_name,
+                               type->list_info.copy_native_name);
 }
 
 Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) {
@@ -5175,19 +4982,11 @@ bool SemanticAnalyzer::is_hashable_key_type(Type* type) {
 
 void SemanticAnalyzer::populate_map_methods(Type* type) {
     assert(type && type->is_map());
-    if (type->map_info.methods.size() > 0) return;
-
-    NativeRegistry* registry = get_builtin_registry();
-    if (!registry) return;
-
     Type* type_args[] = { type->map_info.key_type, type->map_info.value_type };
-    Span<Type*> ta(type_args, 2);
-    Span<MethodInfo> native_methods = registry->instantiate_generic_methods(
-        "Map", ta, m_allocator, m_types);
-    type->map_info.alloc_native_name = registry->get_generic_alloc_name("Map");
-    type->map_info.copy_native_name = registry->get_generic_copy_name("Map");
-
-    type->map_info.methods = native_methods;
+    populate_container_methods("Map", Span<Type*>(type_args, 2),
+                               type->map_info.methods,
+                               type->map_info.alloc_native_name,
+                               type->map_info.copy_native_name);
 }
 
 Type* SemanticAnalyzer::analyze_map_constructor_call(Expr* expr, CallExpr& ce) {

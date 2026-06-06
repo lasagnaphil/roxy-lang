@@ -372,6 +372,12 @@ private:
     void populate_map_methods(Type* map_type);
     void populate_coro_methods(Type* coro_type);
     void populate_enum_methods(Type* enum_type);
+    // Shared by populate_list_methods/populate_map_methods: instantiate the
+    // container's native method table + alloc/copy native names from the
+    // registry, writing into the caller's *_info fields (idempotent).
+    void populate_container_methods(const char* registry_name, Span<Type*> type_args,
+                                    Span<MethodInfo>& out_methods,
+                                    StringView& out_alloc_name, StringView& out_copy_name);
     bool is_hashable_key_type(Type* type);
     NativeRegistry* get_builtin_registry();
 
