@@ -3002,4 +3002,63 @@ TEST_SUITE("E2E RAII") {
         CHECK(module == nullptr);  // Should fail to compile (cross-iteration use-after-move)
     }
 
+    TEST_CASE("move out of conditional over owned variables is rejected") {
+        // `cond ? a : b` reads one operand's pointer and yields it WITHOUT
+        // nullifying the source (unlike a normal move, which nulls the moved
+        // variable so scope-exit DEL_OBJ is a safe no-op). The selected operand
+        // therefore stays live and is destroyed a second time at scope exit —
+        // a double-free. The current cleanup model can't conditionally null a
+        // ternary operand, so this must be rejected at compile time.
+        const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun run(cond: bool): i32 {
+            var a: uniq Point = uniq Point();
+            a.x = 1;
+            var b: uniq Point = uniq Point();
+            b.x = 2;
+            return consume(cond ? a : b);  // double-free hazard — must be rejected
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
+
+    TEST_CASE("move out of conditional over fresh temporaries is also rejected") {
+        // Even when both ternary operands are fresh temporaries, the construct is
+        // rejected: gen_ternary_expr merges the branch values through a phi but
+        // does not reconcile the per-branch noncopyable temporaries with it, so
+        // the taken branch's object is freed twice (its consumer + statement-end
+        // cleanup). Until the IR builder tracks ternary temp ownership through the
+        // phi, noncopyable ternaries are rejected wholesale rather than miscompiled.
+        const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun run(cond: bool): i32 {
+            return consume(cond ? uniq Point { x = 1, y = 0 }
+                                : uniq Point { x = 2, y = 0 });
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
+
 }  // TEST_SUITE("E2E RAII")

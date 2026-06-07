@@ -4529,6 +4529,22 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
         else_type = m_types.i32_type();
     }
 
+    // A ternary that selects a noncopyable value is unsupported. gen_ternary_expr
+    // merges each branch's value through a phi, but the per-branch noncopyable
+    // temporaries are never reconciled with that phi: the taken branch's value is
+    // freed once by its consumer and again by statement-end cleanup (double-free),
+    // and selecting an owned *variable* never nullifies it the way a real move
+    // does. The cleanup model can't conditionally null a ternary operand, so
+    // reject the construct rather than miscompile it.
+    if ((then_type && then_type->noncopyable()) ||
+        (else_type && else_type->noncopyable())) {
+        error(expr->loc,
+            "conditional expression cannot select a noncopyable value; it would move "
+            "an operand without nullifying it (double-free). Use an if/else statement "
+            "with an explicit move in each branch instead.");
+        return m_types.error_type();
+    }
+
     // Types must be compatible
     if (then_type == else_type) {
         return then_type;
