@@ -3061,4 +3061,95 @@ TEST_SUITE("E2E RAII") {
         CHECK(module == nullptr);  // Should fail to compile
     }
 
+    TEST_CASE("move out of noncopyable list element is rejected") {
+        // `list[i]` returns the element by value without nullifying the slot, so
+        // binding it to a new owner aliases the pointer: the owner and the list's
+        // scope-exit cleanup both free it (double-free). Must be rejected.
+        const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var list: List<uniq Point> = List<uniq Point>();
+            list.push(uniq Point { x = 42, y = 0 });
+            var x: uniq Point = list[0];   // move out of list element
+            return x.x;
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
+
+    TEST_CASE("move out of noncopyable map value is rejected") {
+        // Same hazard via map indexing.
+        const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var m: Map<i32, uniq Point> = Map<i32, uniq Point>();
+            m.insert(0, uniq Point { x = 42, y = 0 });
+            var x: uniq Point = m[0];   // move out of map value
+            return x.x;
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
+
+    TEST_CASE("borrowing and reading a noncopyable list element is allowed") {
+        // Soundness guard against over-rejection: the index rejection fires only
+        // when the noncopyable element is *moved* out. Borrowing it as `ref` and
+        // reading a field through it transfer no ownership and must keep working.
+        const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var list: List<uniq Point> = List<uniq Point>();
+            list.push(uniq Point { x = 42, y = 8 });
+            var b: ref Point = list[0];   // borrow
+            return b.x + list[0].y;       // borrow + field read
+        }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 50);
+    }
+
+    TEST_CASE("move out of a user-defined index result is allowed") {
+        // The rejection keys off the `index` method being *native*. A user-defined
+        // `index` (the subscript operator dispatches to any method named `index`)
+        // has a move-checked body, so its noncopyable return is a genuine
+        // ownership transfer (here a fresh temporary) and consuming it is sound —
+        // it must NOT be rejected like the built-in container case.
+        const char* source = R"(
+        struct Point { x: i32; y: i32; }
+        struct Maker { base: i32; }
+        fun Maker.index(i: i32): uniq Point {
+            return uniq Point { x = self.base + i, y = 0 };  // fresh temp, not an alias
+        }
+        fun main(): i32 {
+            var m: Maker = Maker { base = 40 };
+            var p: uniq Point = m[2];   // consume a move-checked method return
+            return p.x;                 // 42
+        }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
+
 }  // TEST_SUITE("E2E RAII")

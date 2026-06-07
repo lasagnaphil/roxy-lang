@@ -1717,6 +1717,29 @@ void SemanticAnalyzer::consume_noncopyable(Expr* expr, SourceLocation loc) {
         if (!expr) return;
     }
 
+    // Moving a noncopyable value out of an index expression can be unsound. `[]`
+    // dispatches to the `index` method, and the distinguishing signal is whether
+    // that method is native: a user-defined `index` (the Index trait) has a
+    // move-checked body, so its noncopyable return is a genuine ownership
+    // transfer and is sound to consume. A *native* `index` (built-in List/Map) is
+    // outside the move checker and returns the element by alias without nullifying
+    // the slot, so the new owner and the container's own scope-exit cleanup both
+    // free it (double-free). Reject the move only for a native index method.
+    // (This is the interim rule until `borrowed`-typed returns make the result a
+    // `ref`, at which point the move-out becomes a plain ref→uniq type error.)
+    if (expr->kind == AstKind::ExprIndex && expr->index.object) {
+        Type* obj_type = expr->index.object->resolved_type;
+        if (obj_type) {
+            const MethodInfo* index_method =
+                m_types.lookup_method(obj_type->base_type(), StringView("index", 5));
+            if (index_method && !index_method->native_name.empty()) {
+                error(loc, "cannot move a noncopyable value out of a container element; "
+                           "borrow it with 'ref' or remove it from the container instead");
+                return;
+            }
+        }
+    }
+
     if (!check_not_field_move(expr, loc)) return;
 
     if (expr->kind == AstKind::ExprIdentifier) {
