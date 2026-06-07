@@ -1,6 +1,6 @@
 # Exception Handling
 
-Exception handling in Roxy provides structured error recovery via `try`/`catch`/`throw`/`finally`. It uses a built-in `Exception` trait, concrete-type catch matching, and handler tables for zero-overhead on the non-exception path.
+Roxy provides structured error recovery via `try`/`catch`/`throw`/`finally`. It uses a built-in `Exception` trait, concrete-`type_id` catch matching, and handler tables for zero-overhead on the non-exception path.
 
 ## Syntax
 
@@ -48,64 +48,27 @@ throw_stmt   = "throw" expression ";" ;
 
 ## Language Rules
 
-- `try` requires at least one `catch` OR a `finally` (or both)
-- `throw` accepts any struct expression that implements the `Exception` trait
-- `throw` implicitly heap-allocates struct literal values
-- `catch (e: Type)` catches only that exact concrete type (no subtype matching)
-- `catch (e)` is a catch-all (matches any exception)
-- Catch clauses are tested top-to-bottom; catch-all must be last
-- `finally` always executes (normal exit, catch exit, or stack unwinding)
-- Code after `throw` is unreachable (dead code)
+- `try` requires at least one `catch` OR a `finally` (or both).
+- `throw` accepts any struct expression that implements the `Exception` trait; struct literal values are implicitly heap-allocated.
+- `catch (e: Type)` catches only that exact concrete type (no subtype matching).
+- `catch (e)` is a catch-all (matches any exception); it must be last.
+- Catch clauses are tested top-to-bottom.
+- `finally` always executes (normal exit, catch exit, or stack unwinding).
+- Code after `throw` is unreachable (dead code).
 
 ## Exception Trait
 
-The `Exception` trait is registered as a built-in trait during semantic analysis (same pattern as `Printable` and `Hash`). It requires a single method: `message(): string`.
+The `Exception` trait is registered as a built-in during semantic analysis (same pattern as `Printable` and `Hash`). It requires a single method, `message(): string`.
 
-**throw validation:** The semantic analyzer checks that the thrown expression's type implements `Exception`. If not: `"thrown type 'X' does not implement the Exception trait"`.
+The analyzer checks that each thrown expression's type implements `Exception`, failing with `"thrown type 'X' does not implement the Exception trait"` otherwise.
 
-**Catch-all type:** When `catch (e)` has no type annotation, `e` gets the opaque `ExceptionRef` type (`TypeKind::ExceptionRef`). Only `message()` can be called on it — field access and other method calls are rejected.
+**Catch-all type:** A `catch (e)` with no type annotation gives `e` the opaque `ExceptionRef` type (`TypeKind::ExceptionRef`). Only `message()` is callable on it — field access and other method calls are rejected. This needs only a single stored function index, avoiding a `dyn Trait` mechanism.
 
 ## Pipeline
 
-### Lexer & Parser
+The lexer recognizes four keywords (`KwTry`, `KwCatch`, `KwThrow`, `KwFinally`). The parser produces `ThrowStmt`, `TryStmt`, and `CatchClause` AST nodes (see `ast.hpp`); semantic analysis validates thrown/caught types against `Exception`, resolves catch variable types, enforces catch-all-last, and assigns `ExceptionRef` to catch-all variables.
 
-Four keywords: `try`, `catch`, `throw`, `finally` (`KwTry`, `KwCatch`, `KwThrow`, `KwFinally`).
-
-Two AST nodes:
-
-```cpp
-struct ThrowStmt {
-    Expr* expr;                   // Expression implementing Exception trait
-};
-
-struct CatchClause {
-    StringView var_name;          // Catch variable name
-    TypeExpr* exception_type;     // Type annotation (nullptr for catch-all)
-    Stmt* body;                   // Block statement
-    SourceLocation loc;
-    Type* resolved_type;          // Set by semantic analysis
-};
-
-struct TryStmt {
-    Stmt* try_body;               // Block statement
-    Span<CatchClause> catches;
-    Stmt* finally_body;           // nullptr if no finally
-};
-```
-
-### Semantic Analysis
-
-- Validates thrown types implement `Exception` trait
-- Resolves typed catch variable types, checks they implement `Exception`
-- Ensures catch-all is last when present
-- Catch-all variable gets `ExceptionRef` type
-- Validates `try` has at least one catch or finally
-
-### IR Generation
-
-`throw` emits `IROp::Throw` (unary operand = exception pointer) followed by an `Unreachable` terminator. Code after throw is dead.
-
-`try/catch/finally` generates the following control flow:
+**IR generation.** `throw` emits `IROp::Throw` (unary operand = exception pointer) followed by an `Unreachable` terminator. A `try/catch/finally` generates this control flow:
 
 ```
 [try body blocks] ──(normal)──> [finally?] → [after-try]
@@ -115,65 +78,21 @@ struct TryStmt {
    └─ no match       → re-throw
 ```
 
-Exception handler metadata is stored on `IRFunction`:
+Handler/finally metadata is recorded on `IRFunction` as `IRExceptionHandler` (try-block range, handler block, `type_id` to match with 0 = catch-all, type name) and `IRFinallyInfo` (see `ssa_ir.hpp`). `finally` is realized by duplicating the finally body per exit path. Variables modified inside try/catch/finally bodies are propagated to the after-try merge via block arguments, like `if`/`when`.
 
-```cpp
-struct IRExceptionHandler {
-    BlockId try_entry;       // First block of try body
-    BlockId try_exit;        // Last block of try body (inclusive)
-    BlockId handler_block;   // Catch handler entry block
-    u32 type_id;             // Concrete type_id to match (0 = catch-all)
-    StringView type_name;    // Struct name for the catch type
-};
+**Bytecode lowering.** `IROp::Throw` lowers to the `THROW` opcode (`0xD2`, ABC: throw `regs[a]`). Handler metadata is translated from block IDs to PC offsets as `BCExceptionHandler` (protected `[try_start_pc, try_end_pc)` range, `handler_pc`, `type_id`, and the `exception_reg` to receive the exception pointer in the handler — see `bytecode.hpp`).
 
-struct IRFinallyInfo {
-    BlockId try_entry, try_exit;
-    BlockId finally_block;
-    BlockId finally_end_block;
-};
-```
+**Runtime.** `THROW` reads the exception pointer from a register, extracts `type_id` from its `ObjectHeader`, looks up the `message()` function index, and stows all three in VM state (`in_flight_exception`, `in_flight_exception_type_id`, `in_flight_message_fn_idx`) before entering the unwinding loop:
 
-Variables modified inside try/catch/finally bodies are propagated through block arguments (phi nodes) to the after-try merge block, following the same pattern as `if`/`when` statements.
-
-### Bytecode Lowering
-
-`IROp::Throw` lowers to `THROW` opcode (`0xD2`, ABC format: throw `regs[a]`).
-
-Handler metadata is converted from block IDs to PC offsets:
-
-```cpp
-struct BCExceptionHandler {
-    u32 try_start_pc;     // Protected range start (inclusive)
-    u32 try_end_pc;       // Protected range end (exclusive)
-    u32 handler_pc;       // Catch handler entry point
-    u32 type_id;          // Concrete type_id to match (0 = catch-all)
-    u8 exception_reg;     // Register to store exception ptr in handler
-};
-```
-
-### Runtime
-
-**VM state:**
-```cpp
-void* in_flight_exception;          // Exception object being propagated
-u32 in_flight_exception_type_id;    // type_id from ObjectHeader
-u32 in_flight_message_fn_idx;       // Function index for message() method
-```
-
-**THROW opcode:** Reads exception pointer from register, extracts `type_id` from `ObjectHeader`, looks up `message()` function index, stores in VM state, then enters the unwinding loop.
-
-**Stack unwinding algorithm:**
-1. Get current frame's function and PC offset
-2. Search `exception_handlers` (in order) for matching handler:
-   - `try_start_pc <= current_pc < try_end_pc`
-   - `type_id` matches or handler is catch-all (`type_id == 0`)
-3. If handler found: set PC to `handler_pc`, store exception ptr in `exception_reg`, clear `in_flight_exception`, resume execution
-4. If no handler: clean up current frame (ref-dec parameters), pop frame, continue unwinding in caller
-5. If call stack is empty: set `vm->error = "Unhandled exception: ..."`, return false
+1. Take the current frame's function and PC offset.
+2. Scan `exception_handlers` in order for a handler whose range covers the PC (`try_start_pc <= pc < try_end_pc`) and whose `type_id` matches (or is catch-all, `type_id == 0`).
+3. If found: set PC to `handler_pc`, store the exception pointer in `exception_reg`, clear `in_flight_exception`, resume.
+4. If not: clean up the current frame (ref-dec parameters), pop it, and continue unwinding in the caller.
+5. If the call stack empties: set `vm->error = "Unhandled exception: ..."` and return false.
 
 ## RPO Block Reordering
 
-Exception handler blocks (catch blocks) are not reachable through normal control flow — they're only entered via exception dispatch. The RPO reordering pass seeds its DFS traversal with handler block IDs in addition to the entry block, ensuring handler blocks are preserved and correctly ordered. Handler block IDs in the metadata are remapped after reordering.
+Catch (handler) blocks are not reachable through normal control flow — they're entered only via exception dispatch. The RPO reordering pass therefore seeds its DFS with the handler block IDs in addition to the entry block, so handler blocks are preserved and correctly ordered; the handler block IDs in the metadata are remapped after reordering.
 
 ## Design Decisions
 

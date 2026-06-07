@@ -24,31 +24,7 @@ Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA
 | Batch processing | Incremental, lazy analysis |
 | Arena allocation | NodeID + hash map |
 
-## LSP Parser
-
-The LSP parser uses error recovery to always produce a tree (implemented — see
-[lsp-server.md](lsp-server.md)):
-
-```cpp
-// Always returns a node, never nullptr
-FunctionDeclSyntax* parse_function() {
-    Token fun_kw = expect_or_synthetic(TokenKind::KW_fun);
-    Token name = expect_or_synthetic(TokenKind::Identifier);
-    // ... always produces tree, may contain ErrorNode children
-}
-```
-
-### LSP Node Storage
-
-```cpp
-class SyntaxTree {
-    std::unordered_map<NodeId, std::unique_ptr<SyntaxNode>> nodes;
-    
-    void replace(NodeId id, std::unique_ptr<SyntaxNode> new_node) {
-        nodes[id] = std::move(new_node);  // Easy incremental update
-    }
-};
-```
+The LSP side reuses the shared lexer and token kinds but runs an error-recovering parser over a lossless CST with incremental, NodeID-keyed storage. See [lsp-server.md](lsp-server.md) for that architecture.
 
 ## Key Design Decisions
 

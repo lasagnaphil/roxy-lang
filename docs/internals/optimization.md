@@ -1,319 +1,178 @@
 # SSA IR Optimization
 
-Design plan for optimization passes on Roxy's SSA IR. Passes are organized into phases by implementation complexity and infrastructure requirements.
+Optimization passes on Roxy's SSA IR. Phase 1 (constant folding, algebraic simplification, cast folding) runs eagerly during IR construction; Phases 2–4 (DCE + copy propagation, control-flow simplification, block-local CSE) run as standalone passes between IR building and lowering.
 
-**Current state:** Phase 1 (constant folding, algebraic simplifications, cast folding) is implemented in `IRBuilder::emit_binary` / `emit_unary` / `gen_primitive_cast`. Phases 2–4 are implemented as standalone passes in `compiler/ir_optimize.{hpp,cpp}`, run from `Compiler::link_modules()` between coroutine lowering and IR validation: Phase 2 (use-count computation, dead code elimination, copy propagation), Phase 3 (branch folding, block merging, trivial block-argument elimination), and Phase 4 (block-local Common Subexpression Elimination). The driver iterates `(branch fold → block merge → trivial-arg-elim → local CSE → re-run Phase 2)` to a fixed point and finishes with `IRFunction::reorder_blocks_rpo()` to drop newly-unreachable blocks and remap BlockId references in exception/finally/cleanup metadata.
+**Current state:** Phase 1 is implemented in `IRBuilder::emit_binary` / `emit_unary` / `gen_primitive_cast`. Phases 2–4 live in `compiler/ir_optimize.{hpp,cpp}` and run from `Compiler::link_modules()` between coroutine lowering and IR validation:
 
-## Overview
+- **Phase 2** — use-count computation, dead code elimination, copy propagation.
+- **Phase 3** — branch folding, block merging, trivial block-argument elimination.
+- **Phase 4** — block-local Common Subexpression Elimination.
+
+The driver iterates `(branch fold → block merge → trivial-arg-elim → local CSE → re-run Phase 2)` to a fixed point, then finishes with `IRFunction::reorder_blocks_rpo()` to drop newly-unreachable blocks and remap `BlockId` references in exception/finally/cleanup metadata.
 
 ```
-Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA IR → [Optimization] → Lowering → Bytecode → VM
+Source → … → IR Builder → SSA IR → [Optimization] → Lowering → Bytecode → VM
 ```
 
-Optimizations slot in between IR building and lowering. Some optimizations (constant folding, algebraic simplifications) can also be applied eagerly during IR building for zero overhead.
+## Shared Infrastructure
 
-## Phase 1: IR Builder Optimizations (No New Infrastructure) — IMPLEMENTED
+- **`values_by_id`** — `IRFunction::values_by_id` is a `Vector<IRInst*>` indexed by `ValueId.id`; `IRFunction::inst_for(ValueId)` returns the defining instruction or `nullptr` (function/block params, which are treated as non-constant). Removed values are poisoned to `nullptr` so later passes catch stale lookups.
+- **Operand enumeration** — `for_each_operand(IRInst*, Fn)` / `for_each_terminator_operand(Terminator&, Fn)` are inline templates switching over every `IROp`. The callback receives a *mutable* `ValueId&`, so one helper serves both reading (use-count, DCE) and rewriting (copy-prop, CSE, arg-elim). Gotcha: `SetField` has **two** operands — `field.object` and the top-level `store_value`.
+- **Side-effect classification** — `has_side_effect(IROp)` is true for memory writes (`SetField`, `StorePtr`, `StructCopy`, `IndexSet`), ref counting (`RefInc`/`RefDec`), object lifecycle (`New`/`Delete` — user ctors/dtors have arbitrary effects), calls (`Call`/`CallNative`/`CallExternal`), control-flow/coroutine (`Throw`/`Yield`), and **`Nullify`**. `Nullify` is load-bearing: lowering reads its position to narrow cleanup scope after a `uniq` move; removing it would re-destroy moved-from owned locals.
+- **Substitution** — copy-prop, trivial-arg-elim, and CSE all build a function-wide `subst[id]` union-find table (path-compressed), then rewrite operands via `for_each_operand`. Redirected values fall to zero uses and are dropped by the next DCE run.
 
-These optimizations are applied during IR construction by checking operands before emitting instructions. No separate pass or use-def analysis needed.
+## Phase 1: IR Builder Optimizations
 
-### Implementation notes
-
-- **Infrastructure:** `IRFunction::values_by_id` is a `Vector<IRInst*>` indexed by `ValueId.id`, populated by `IRFunction::new_value()` (nullptr) and `IRBuilder::emit_inst()` (real pointer). Lookup via `IRFunction::inst_for(ValueId)` returns the defining instruction or nullptr (for function/block params, which fold treats as non-constant). This table is reused by later phases (DCE, CSE).
-- **`And` / `Or` IR ops** are folded too. They aren't emitted by short-circuit `&&`/`||` (those lower to branches), but they are emitted in case-condition merging (`gen_when_stmt`).
-- **Cast folding** is added to `gen_primitive_cast` in addition to fold/simplify on `emit_binary` / `emit_unary`. Folded casts mirror the runtime's `emit_cast_bytecode` semantics (TRUNC_S/TRUNC_U for narrowing, sign-extend on widening signed sources).
-- **Division by zero / `INT64_MIN / -1`:** not folded — the original `DivI` / `ModI` instruction is preserved so the runtime produces "Division by zero" (`src/roxy/vm/interpreter.cpp:585,595`). Compile-time error would require source-location threading through `emit_binary`.
-- **Float folding:** add/sub/mul/div/neg are folded for f32 and f64 using host arithmetic, assuming an IEEE-754 host (true on all currently-targeted platforms). Float comparisons are NOT folded in this phase to avoid NaN-ordering subtleties. Float double-negation (`-(-x)`) is NOT simplified because `-(-0.0)` differs from `-0.0` in sign bit, which matters for `1.0/x`.
-- **Strength reduction:** only `mul x, 2 → add x, x` is implemented. `mul x, pow2 → shl` is skipped (the register VM has no measurable advantage for SHL over MUL). `div x, pow2 → shr` is skipped because Roxy's `i32` / `i64` are signed and arithmetic shift right does not match signed division for negative values (e.g., `(-1) / 2 == 0` but `(-1) >> 1 == -1`).
+Applied during IR construction by inspecting operands before emitting — no separate pass or use-def analysis. `inst_for` provides the defining instruction; only `Const*` operands are treated as constant.
 
 ### Constant Folding
 
-Evaluate operations on constant operands at compile time.
+Evaluate operations on constant operands at compile time. Covers arithmetic, comparisons, logical (`Not`/`And`/`Or`), bitwise, and conversions for i32/i64/f32/f64.
 
-**Before:**
 ```
-v0 = const_i 3
-v1 = const_i 5
+v0 = const_i 3            v2 = const_i 8
+v1 = const_i 5     →
 v2 = add_i v0, v1
 ```
 
-**After:**
-```
-v2 = const_i 8
-```
-
-**Foldable operations:**
-- Arithmetic: `add_i`, `sub_i`, `mul_i`, `div_i`, `mod_i`, `neg_i` (and f32/f64 variants)
-- Comparisons: `eq_i`, `ne_i`, `lt_i`, `le_i`, `gt_i`, `ge_i` (and f32/f64 variants)
-- Logical: `not`, `and`, `or`
-- Bitwise: `bit_and`, `bit_or`, `bit_xor`, `bit_not`, `shl`, `shr`
-- Conversions: `i_to_f64`, `f64_to_i`, `i_to_b`, `b_to_i`
-
-**Implementation:** In `emit_binary()`/`emit_unary()`, check if all operands are `Const*` ops. If so, compute the result and emit a constant instead.
+Notes:
+- `And`/`Or` are folded even though short-circuit `&&`/`||` lower to branches — they appear in case-condition merging (`gen_when_stmt`).
+- **Float folding** uses host IEEE-754 arithmetic for add/sub/mul/div/neg. Float *comparisons* are not folded (NaN ordering), and `-(-x)` is not simplified (`-(-0.0)` differs in sign bit, which matters for `1.0/x`).
+- **Division by zero** and `INT64_MIN / -1` are not folded — the original `DivI`/`ModI` is preserved so the runtime produces "Division by zero". A compile-time error would need source locations threaded through `emit_binary`.
 
 ### Algebraic Simplifications
 
-Pattern-match and simplify operations with known identity/absorbing elements.
+Pattern-match identity / absorbing / self-cancelling forms in `emit_binary`/`emit_unary`:
 
-**Identity rules:**
-- `add_i x, 0` → `x`
-- `sub_i x, 0` → `x`
-- `mul_i x, 1` → `x`
-- `div_i x, 1` → `x`
-- `bit_and x, ~0` → `x`
-- `bit_or x, 0` → `x`
-- `bit_xor x, 0` → `x`
-- `shl x, 0` → `x`, `shr x, 0` → `x`
+- Identity: `add x,0`, `sub x,0`, `mul x,1`, `div x,1`, `bit_and x,~0`, `bit_or x,0`, `bit_xor x,0`, `shl/shr x,0` → `x`
+- Absorbing: `mul x,0` → `0`, `bit_and x,0` → `0`, `bit_or x,~0` → `~0`
+- Self-cancelling: `sub x,x` → `0`, `bit_xor x,x` → `0`
+- Double negation: `neg(neg x)` → `x`, `not(not x)` → `x`
 
-**Absorbing rules:**
-- `mul_i x, 0` → `const_i 0`
-- `bit_and x, 0` → `const_i 0`
-- `bit_or x, ~0` → `const_i ~0`
+### Cast Folding
 
-**Self-cancellation:**
-- `sub_i x, x` → `const_i 0`
-- `bit_xor x, x` → `const_i 0`
+`gen_primitive_cast` folds constant casts, mirroring the runtime's `emit_cast_bytecode` semantics (TRUNC_S/TRUNC_U for narrowing, sign-extend when widening signed sources).
 
-**Double negation:**
-- `neg_i (neg_i x)` → `x`
-- `not (not x)` → `x`
+Strength reduction is limited to `mul x, 2 → add x, x`. `mul x, pow2 → shl` is skipped (no register-VM win); `div x, pow2 → shr` is skipped because Roxy's `i32`/`i64` are signed and arithmetic shift-right doesn't match signed division for negatives (`(-1)/2 == 0` but `(-1)>>1 == -1`).
 
-**Strength reduction:**
-- `mul_i x, 2` → `add_i x, x`
-- `mul_i x, power_of_2` → `shl x, log2(n)`
-- `div_i x, power_of_2` → `shr x, log2(n)` (unsigned only)
+## Phase 2: Use-Count Based Passes
 
-**Implementation:** Same approach as constant folding — check patterns in `emit_binary()`/`emit_unary()` and emit simplified instructions.
-
-## Phase 2: Use-Count Based Passes — IMPLEMENTED
-
-These passes require computing how many times each `ValueId` is used. This is a lightweight analysis: walk all instructions and terminators, count references to each value.
-
-### Implementation notes
-
-- **Files:** `include/roxy/compiler/ir_optimize.hpp`, `src/roxy/compiler/ir_optimize.cpp`. Tests in `tests/unit/test_ir_optimize.cpp`.
-- **Operand enumeration helper:** `for_each_operand(IRInst*, Fn)` and `for_each_terminator_operand(Terminator&, Fn)` are header-defined inline templates with a switch over every `IROp`. The callback receives a *mutable* `ValueId&`, so the same helper serves both reading (use-count, DCE) and rewriting (copy propagation). Block-argument operands inside `Goto`/`Branch` terminators are visited by `for_each_terminator_operand`. **`SetField` has TWO operands**: `inst->field.object` (in the field union) and `inst->store_value` (a top-level `IRInst` field — easy to miss).
-- **Side-effect classification:** `has_side_effect(IROp)` returns true for memory writes (`SetField`, `StorePtr`, `StructCopy`, `IndexSet`), reference counting (`RefInc`, `RefDec`), object lifecycle (`New`, `Delete` — Roxy supports user-defined constructors/destructors with arbitrary side effects), calls (`Call`, `CallNative`, `CallExternal`), control-flow / coroutine (`Throw`, `Yield`), and **`Nullify`**. `Nullify` is critical: lowering reads its position via `m_nullify_pcs` to narrow cleanup scope after a `uniq` move; removing it would re-destroy moved-from owned locals.
-- **DCE algorithm:** worklist-based. Seeds the worklist with every instruction whose result has zero uses, no side effect, and `op != BlockArg` (block-arg trimming is Phase 3). For each removed instruction, decrements the use counts of its operands; any operand whose count reaches zero is added to the worklist. Compacts each block's instruction vector via the two-finger write-index pattern, then truncates with `pop_back()` (Vector::resize() reallocates and would copy out-of-range slots when shrinking). Removed values get `values_by_id[id] = nullptr` (poisoning) so later passes catch stale lookups.
-- **Copy propagation algorithm:** union-find with path compression. `subst[id] = id` initially; for each `IROp::Copy` instruction, set `subst[copy.result.id] = copy.unary.id`; path-compress (halving). Then walk all blocks and rewrite operands of every non-Copy instruction (and every terminator) via the substitution. Skipping rewrite of Copy's own operand keeps DCE's operand-decrement debit pointing at the correct source. After copy-prop runs, dead Copies have zero uses → DCE removes them.
-- **Pure-Copy assumption:** every existing `IROp::Copy` is emitted by `gen_unary_expr` for `UnaryOp::Ref` (`ref expr` syntax) — a borrow that just retypes a uniq pointer as a ref pointer (same runtime representation, 1 slot). It is always semantically `result := source`. If a future change introduces a Copy with runtime meaning (e.g., a strong-ref bump), it must use a new opcode and be added to `has_side_effect()`.
-- **Iteration:** one ordered pass (copy-prop → DCE) reaches a fixed point for Phase 2 alone. Copy-prop is monotone (single union-find sweep is exhaustive); DCE's worklist already iterates internally. When Phase 3 (branch folding, block merging) lands, the driver becomes a `while (changed)` loop. The `BumpAllocator&` parameter is plumbed now (unused by Phase 2) so Phase 3+ branch folding can allocate new constants without an API churn.
-- **No CFG mutation:** Phase 2 only removes / rewrites in place; it never creates unreachable blocks, so a second `reorder_blocks_rpo()` call is not needed.
-
-### Infrastructure: Use-Count Computation
-
-```
-fun compute_use_counts(func: IRFunction) -> Vector<u32>:
-    counts = Vector<u32>(func.next_value_id, 0)
-    for each block in func.blocks:
-        for each inst in block.instructions:
-            for each operand in inst:
-                counts[operand.id] += 1
-        for each operand in block.terminator:
-            counts[operand.id] += 1
-    return counts
-```
-
-Requires a helper to enumerate all `ValueId` operands of an instruction (similar to the existing switch in `lowering.cpp` for liveness marking).
+`compute_use_counts` walks every instruction and terminator, counting references per `ValueId`. Both DCE and copy-prop build on this.
 
 ### Dead Code Elimination
 
-Remove instructions whose results are never used.
+Worklist-based. Seeds with every instruction whose result has zero uses, no side effect, and `op != BlockArg` (block-arg trimming is Phase 3). Removing an instruction decrements its operands' counts; operands reaching zero are re-queued. Each block's instruction vector is compacted with the two-finger write-index pattern, then truncated with `pop_back()` (`Vector::resize()` would reallocate and copy out-of-range slots when shrinking).
 
-**Algorithm:**
-1. Compute use counts for all values.
-2. Build a worklist of instructions with zero uses.
-3. For each dead instruction, decrement use counts of its operands. If any operand's count drops to zero, add it to the worklist.
-4. Repeat until worklist is empty.
-5. Remove all dead instructions from their blocks.
-
-**Side-effectful instructions must be preserved** even with zero uses:
-- Memory writes: `SetField`, `StorePtr`, `StructCopy`
-- Reference counting: `RefInc`, `RefDec`
-- Object lifecycle: `New`, `Delete`
-- Calls: `Call`, `CallNative`, `CallExternal` (may have side effects)
-- Control flow: `Throw`, `Yield`
+```
+v0 = const_i 3   (unused, no side effect)   →   (removed)
+```
 
 ### Copy Propagation
 
-Replace all uses of `v5 = copy v3` with `v3`, then remove the dead copy.
+Union-find with path compression: for each `IROp::Copy`, set `subst[copy.result] = copy.unary`, path-compress, then rewrite all non-Copy operands and terminators. Skipping the Copy's own operand keeps DCE's operand debit pointing at the true source; the now-dead Copies fall to zero uses and DCE removes them.
 
-**Algorithm:**
-1. Find all `Copy` instructions.
-2. For each copy `vN = copy vM`, replace all occurrences of `vN` in subsequent instructions/terminators with `vM`.
-3. Run dead code elimination to clean up.
+```
+v5 = copy v3              ... uses v3 ...
+... uses v5 ...     →     (copy removed by DCE)
+```
 
-**Implementation:** Requires a value replacement helper that walks all instructions and rewrites operands via a `ValueId → ValueId` substitution map.
+**Pure-Copy assumption:** every `IROp::Copy` is emitted by `gen_unary_expr` for `ref expr` — a borrow that retypes a uniq pointer as a ref pointer (same representation, 1 slot), always semantically `result := source`. A future Copy with runtime meaning (e.g. a strong-ref bump) must use a new opcode and be added to `has_side_effect`.
 
-## Phase 3: Control Flow Optimizations — IMPLEMENTED
+Phase 2 only removes/rewrites in place — it never creates unreachable blocks, so no extra `reorder_blocks_rpo()` is needed for it alone.
 
-These passes simplify the control flow graph. They build on Phase 2's infrastructure.
+## Phase 3: Control Flow Optimizations
 
-### Implementation notes
-
-- **Files:** `include/roxy/compiler/ir_optimize.hpp`, `src/roxy/compiler/ir_optimize.cpp`. Tests in `tests/unit/test_ir_optimize.cpp`.
-- **Predecessor computation:** `compute_predecessors(IRFunction*)` returns a `Vector<Vector<BlockId>>` indexed by block.id. We don't populate `IRBlock::predecessors` because that field is unused outside `reorder_blocks_rpo` and could go stale across passes. Each Phase 3 pass that needs predecessors recomputes them locally; block merging refreshes after each successful merge.
-- **Branch folding** (`run_branch_folding`): scans every `Branch` terminator. If the condition's defining instruction is `IROp::ConstBool`, rewrites the terminator to a `Goto` of the taken target's `JumpTarget` (preserving its args). Conditions that are constant-but-not-`ConstBool` (e.g. `ConstInt`) are NOT folded — Phase 1 doesn't normalize integer-truthy conditions. Copy chains are already collapsed by the Phase 2 copy-prop run that precedes Phase 3, so we never look through a Copy to find a constant.
-- **Block merging** (`run_block_merging`): finds block B whose sole predecessor A ends with an unconditional `Goto B(args)`. Substitutes `B.params[i] -> A.goto_target.args[i]` (using the same union-find substitution pattern as copy-prop), rewrites operands of B's instructions and terminator, appends B's instructions to A, and replaces A's terminator with B's. B is emptied in place (params/instructions cleared, terminator set to `None`); `reorder_blocks_rpo()` at the end of `optimize_function` drops it. Self-loops (A == B) and arg-count mismatches are skipped. **Conservative metadata safety:** `block_in_metadata(func, B)` returns true if B's `BlockId` appears in any `IRExceptionHandler` (try_entry, try_exit, handler_block, try_body_blocks), `IRFinallyInfo` (try_entry, try_exit, finally_block, finally_end_block), or `IRCleanupInfo` (start_block, end_block); we skip the merge in that case. Rewriting metadata across a merge is delicate (try_body_blocks is order-sensitive, try_exit is the inclusive end of a contiguous bytecode range), so v1 errs on the safe side. Most merges happen in non-exception, non-RAII code and are unaffected.
-- **Trivial block-argument elimination** (`run_trivial_block_arg_elim`): for each non-entry block B and each parameter `B.params[pi]`, walks every predecessor and uses `arg_for_target(P, B.id, pi)` to fetch the value passed for that parameter. Self-references (a predecessor passing the param itself, e.g. a loop back-edge) are stripped from the unanimity check. If all remaining predecessors agree on a single `common` value, the parameter is replaced (function-wide via union-find substitution), dropped from B's `params`, and the corresponding argument is dropped from each predecessor's jump target. Loop params (whose preds genuinely disagree — entry passes 0, back-edge passes the updated value) are preserved.
-- **Span shrinking:** when dropping arguments from a `Span<BlockArgPair>`, we compact in place and reconstruct the Span with a smaller size (`jt.args = Span<BlockArgPair>(jt.args.data(), w)`). Trailing slots leak in the bump allocator, which is fine — compile lifetime is bounded.
-- **Branch with both arms targeting the same block:** `arg_for_target` requires both arms to agree on the value for the parameter; if they disagree, the parameter is not trivial and is preserved.
-- **Driver fixed point:** Phase 3 passes are wrapped in a `while (changed)` loop that re-runs Phase 2 (copy-prop + DCE) inside the loop to clean up dead values exposed by the CFG mutations (a folded ConstBool condition becomes dead, eliminated params orphan their old argument expressions, etc.). Each pass strictly reduces the IR (fewer branches/blocks/params), so the loop is bounded.
-- **Final cleanup:** `func->reorder_blocks_rpo()` runs once at the end of `optimize_function`. It removes blocks unreachable from entry (folded-away arms, emptied merged-into blocks) and remaps every `BlockId` reference in terminators and in exception/finally/cleanup metadata.
+Predecessors are recomputed locally via `compute_predecessors(IRFunction*)` rather than caching `IRBlock::predecessors` (which would go stale across passes).
 
 ### Branch Folding
 
-If a `Branch` terminator's condition is a known constant, replace it with a `Goto` to the taken target.
+`run_branch_folding` scans every `Branch`; if the condition's defining instruction is `IROp::ConstBool`, it rewrites the terminator to a `Goto` of the taken target (preserving args). Conditions that are constant but not `ConstBool` (e.g. `ConstInt`) are not folded — Phase 1 doesn't normalize integer-truthy conditions. Copy chains are already collapsed by the preceding copy-prop, so it never looks through a Copy.
 
-**Before:**
 ```
-b0:
-    v0 = const_bool true
-    if v0 goto b1(args...) else b2(args...)
-```
-
-**After:**
-```
-b0:
-    goto b1(args...)
+b0:                                  b0:
+    v0 = const_bool true        →        goto b1(args...)
+    if v0 goto b1(..) else b2(..)
 ```
 
-The dead branch target (b2) becomes unreachable and is removed by `reorder_blocks_rpo()`.
+The dead arm (`b2`) becomes unreachable and is dropped by `reorder_blocks_rpo()`.
 
 ### Block Merging
 
-If block B has exactly one predecessor A, and A's terminator is an unconditional `Goto` to B with no other successors, merge B into A.
+`run_block_merging` finds a block B whose sole predecessor A ends with an unconditional `Goto B(args)`. It substitutes `B.params[i] → A.goto.args[i]` (union-find), appends B's instructions to A, replaces A's terminator with B's, and empties B in place for RPO cleanup. Self-loops and arg-count mismatches are skipped. This removes the jump and the block-argument MOVs that lowering would emit.
 
-**Before:**
 ```
-b0:
-    v0 = add_i v1, v2
-    goto b1(v0)
-
-b1(v3):
+b0:                          b0:
+    v0 = add_i v1, v2            v0 = add_i v1, v2
+    goto b1(v0)          →       v4 = mul_i v0, v0
+b1(v3):                          return v4
     v4 = mul_i v3, v3
     return v4
 ```
 
-**After:**
-```
-b0:
-    v0 = add_i v1, v2
-    v4 = mul_i v0, v0
-    return v4
-```
-
-This eliminates unnecessary jumps and the MOV instructions generated for block arguments during lowering.
-
-**Algorithm:**
-1. Compute predecessor counts for each block.
-2. For each block B with exactly one predecessor A where A ends with `Goto` to B:
-   - Substitute B's block parameters with the values A passes as arguments.
-   - Append B's instructions to A.
-   - Replace A's terminator with B's terminator.
-   - Remove B.
-3. Repeat until no more merges possible.
+**Metadata safety:** `block_in_metadata` skips the merge if B's `BlockId` appears in any `IRExceptionHandler`, `IRFinallyInfo`, or `IRCleanupInfo` (try/finally/cleanup ranges are order-sensitive and delicate to rewrite). Most merges are in non-exception, non-RAII code and proceed.
 
 ### Trivial Block Argument Elimination
 
-If all predecessors of a block pass the same value for a block argument, replace the argument with that value.
+`run_trivial_block_arg_elim`: for each non-entry block param, `arg_for_target` fetches the value each predecessor passes. Self-references (a loop back-edge passing the param itself) are stripped from the unanimity check. If the remaining preds all agree on one value, the param is replaced function-wide (union-find), dropped from B's params, and removed from each predecessor's jump target. Loop params (entry passes 0, back-edge passes the updated value) genuinely disagree and are preserved.
 
-**Before:**
 ```
-b1:
-    goto b3(v0)
-b2:
-    goto b3(v0)
-b3(v5):
-    ... uses v5 ...
+b1: goto b3(v0)              b1: goto b3()
+b2: goto b3(v0)        →     b2: goto b3()
+b3(v5): ... uses v5 ...      b3(): ... uses v0 ...
 ```
 
-**After:**
+Dropped args compact the `Span<BlockArgPair>` in place (trailing bump-allocator slots leak harmlessly — compile lifetime is bounded).
+
+### Driver fixed point
+
+Phase 3 passes run in a `while (changed)` loop that re-runs Phase 2 (copy-prop + DCE) each iteration to clean up values exposed by CFG mutation (folded `ConstBool` conditions, orphaned arguments). Every pass strictly shrinks the IR, so the loop is bounded. A single `reorder_blocks_rpo()` at the end removes blocks unreachable from entry and remaps every `BlockId` in terminators and exception/finally/cleanup metadata.
+
+## Phase 4: Local Value Numbering
+
+Block-local Common Subexpression Elimination: within one block, identical pure operations reuse the first result.
+
 ```
-b1:
-    goto b3()
-b2:
-    goto b3()
-b3():
-    ... uses v0 ...
-```
-
-## Phase 4: Local Value Numbering — IMPLEMENTED
-
-### Implementation notes
-
-- **Files:** `include/roxy/compiler/ir_optimize.hpp`, `src/roxy/compiler/ir_optimize.cpp`. Tests in `tests/unit/test_ir_optimize.cpp`.
-- **Eligibility** (`is_cse_eligible`): all `Const*`, all arithmetic (i32/i64/f32/f64), all comparisons, logical (`Not`/`And`/`Or`), bitwise (`BitAnd`/`BitOr`/`BitXor`/`BitNot`/`Shl`/`Shr`), conversions (`I_TO_F64`, `F64_TO_I`, `I_TO_B`, `B_TO_I`), and `Cast`. **Excluded** for safety: memory loads (`GetField`, `GetFieldAddr`, `LoadPtr`, `IndexGet`) — could alias intervening writes; weak-ref reads (`WeakCheck`, `WeakCreate`) — slab generation state changes; fresh-address ops (`StackAlloc`); `BlockArg` (not emitted as a real instruction); `Copy` (already removed by Phase 2 copy-prop); plus everything `has_side_effect` covers.
-- **Hash key** (`CSEKey`): `(IROp op, Type* result_type, u32 a, u32 b, u64 payload)`. Binary ops use `(left.id, right.id, 0)`; unary ops use `(operand.id, 0, 0)`; `Cast` carries `(source.id, 0, source_type ptr)` to disambiguate conversion strategy; constants encode their literal in `payload` (signed bits for `ConstInt`, bit-pattern for `ConstF`/`ConstD` so `+0.0` and `-0.0` keep distinct keys, `bool` as `0`/`1`); `ConstString` uses `(data_ptr, size, 0)` — interned string buffers from the lexer share identity, so identical literals collapse. `result_type` is needed only for `Cast` (different target types of the same source) but kept everywhere as a free safety check; `Type*` identity is reliable because types are interned in `TypeEnv`.
-- **Hash function** uses the FNV-1a prime `1099511628211ULL` as a multiplier rather than `* 31 + x` chains, which collide on small inputs.
-- **Algorithm**: for each block, build a `tsl::robin_map<CSEKey, ValueId, CSEKeyHash, CSEKeyEq>`. First-seen wins. Later equivalents are recorded in a function-wide `subst[id]` table (same shape as Phase 2 copy-prop and Phase 3 trivial-arg-elim). After scanning all blocks, path-compress the substitutions and rewrite all operands and terminator operands via `for_each_operand` / `for_each_terminator_operand`. The redirected duplicates have zero uses and are dropped by the next DCE run inside the driver loop.
-- **Block-local scope**: the hash map is cleared between blocks. Cross-block redundancy elimination needs dominator information (global CSE / GVN, deferred). Phase 3 block merging produces longer straight-line blocks where Phase 4 sees more opportunities — running CSE inside the same fixed-point loop catches them.
-- **Commutativity**: not exploited in v1 — `AddI a b` and `AddI b a` get distinct keys. Adding canonicalization (sort operands by `ValueId.id` for commutative ops) is a one-line change for later.
-- **Driver placement**: inside the Phase 3 fixed-point loop, after `run_trivial_block_arg_elim` and before the re-run of Phase 2. Phase 2's DCE then drops the dead duplicates, possibly freeing operands that expose further optimization opportunities on the next iteration.
-
-### Common Subexpression Elimination (Local)
-
-Within a single block, if two instructions compute the same pure operation with the same operands, reuse the first result.
-
-**Before:**
-```
-b0:
-    v0 = add_i v1, v2
-    v3 = mul_i v0, v4
-    v5 = add_i v1, v2    // redundant
+b0:                              b0:
+    v0 = add_i v1, v2                v0 = add_i v1, v2
+    v3 = mul_i v0, v4        →       v3 = mul_i v0, v4
+    v5 = add_i v1, v2                v6 = mul_i v0, v7   // reuses v0
     v6 = mul_i v5, v7
 ```
 
-**After:**
-```
-b0:
-    v0 = add_i v1, v2
-    v3 = mul_i v0, v4
-    v6 = mul_i v0, v7    // reuses v0
-```
-
-**Algorithm:**
-1. Maintain a hash map: `(IROp, operand1, operand2) → ValueId`.
-2. Before emitting an instruction, check if the same expression already exists.
-3. If found, replace the instruction with a reference to the existing value.
-4. Only applies to pure operations (no calls, memory ops, side effects).
-
-**Pure operations:** All arithmetic, comparison, logical, bitwise, and conversion ops.
-
-## Future Phases (Not Low-Hanging Fruit)
-
-These optimizations require more substantial infrastructure and should be deferred:
-
-- **Global CSE / Global Value Numbering:** Requires dominator tree computation.
-- **Loop-Invariant Code Motion:** Requires loop detection and dominance frontiers.
-- **Function Inlining:** Requires call graph analysis, careful handling of scopes/RAII/exception handlers.
-- **Tail Call Optimization:** Requires detecting tail-call patterns and emitting specialized bytecode.
-- **Escape Analysis:** Requires interprocedural analysis for stack-allocating heap objects.
+- **Eligibility** (`is_cse_eligible`): all `Const*`, arithmetic, comparisons, logical (`Not`/`And`/`Or`), bitwise, conversions, and `Cast`. **Excluded** for safety: memory loads (`GetField`, `GetFieldAddr`, `LoadPtr`, `IndexGet` — may alias intervening writes), weak-ref reads (`WeakCheck`/`WeakCreate` — slab generation state), fresh-address ops (`StackAlloc`), `BlockArg`, `Copy`, and everything `has_side_effect` covers.
+- **Key** (`CSEKey`): `(op, result_type, a, b, payload)`. Binary uses `(left, right, 0)`; unary `(operand, 0, 0)`; `Cast` carries the source type to disambiguate conversion strategy; constants encode their literal in `payload` (bit-patterns for floats keep `+0.0`/`-0.0` distinct); `ConstString` uses `(data, size, 0)` — interned lexer buffers share identity, so equal literals collapse. `Type*` identity is reliable (types are interned in `TypeEnv`). Hashing uses the FNV-1a prime as a multiplier.
+- **Algorithm**: per block, a `tsl::robin_map<CSEKey, ValueId>` records first-seen wins; equivalents go into the shared `subst` table. The map is cleared between blocks — cross-block CSE needs dominator info (global CSE/GVN, deferred). Commutativity is not exploited in v1 (`AddI a b` ≠ `AddI b a`).
+- **Placement**: inside the Phase 3 fixed-point loop, after trivial-arg-elim and before the Phase 2 re-run, so DCE drops the dead duplicates and block merging keeps feeding it longer straight-line blocks.
 
 ## Pass Ordering
 
-Recommended pass ordering within a single optimization run:
-
 ```
-1. Constant Folding + Algebraic Simplifications  (during IR building)
-2. Copy Propagation
-3. Dead Code Elimination
-4. Branch Folding
-5. Block Merging
-6. Trivial Block Argument Elimination
-7. Reorder Blocks (RPO) — already exists
-8. Local CSE
-9. Dead Code Elimination  (second round to clean up CSE)
+1. Constant folding + algebraic simplification   (Phase 1, during IR building)
+2. Copy propagation                              ┐
+3. Dead code elimination                         │
+4. Branch folding                                │ Phases 2–4, iterated
+5. Block merging                                 │ to a fixed point
+6. Trivial block-argument elimination            │
+7. Local CSE                                      ┘
+8. Reorder blocks (RPO) + metadata remap         (once, at the end)
 ```
 
-Passes 2–9 can be iterated to a fixed point, but in practice one or two iterations should suffice.
+## Future Phases
+
+Deferred — these need more infrastructure:
+
+- **Global CSE / GVN** — dominator tree.
+- **Loop-Invariant Code Motion** — loop detection and dominance frontiers.
+- **Function Inlining** — call-graph analysis; careful scope/RAII/handler handling.
+- **Tail Call Optimization** — tail-call detection and specialized bytecode.
+- **Escape Analysis** — interprocedural analysis for stack-allocating heap objects.
 
 ## Files
 
-- `include/roxy/compiler/ssa_ir.hpp` — IR data structures
-- `src/roxy/compiler/ssa_ir.cpp` — IR utilities and printing
-- `include/roxy/compiler/ir_builder.hpp` — IR building (Phase 1 optimizations go here)
-- `src/roxy/compiler/ir_builder.cpp` — IR builder implementation
-- `include/roxy/compiler/ir_optimize.hpp` — Phase 2 passes (DCE, copy propagation, use-count infra)
-- `src/roxy/compiler/ir_optimize.cpp` — Phase 2 implementation
-- `include/roxy/compiler/lowering.hpp` — IR to bytecode lowering
-- `src/roxy/compiler/lowering.cpp` — Lowering implementation
+| File | Purpose |
+|---|---|
+| `include/roxy/compiler/ir_builder.hpp` / `src/roxy/compiler/ir_builder.cpp` | Phase 1 (fold / simplify / cast fold during IR building) |
+| `include/roxy/compiler/ir_optimize.hpp` / `src/roxy/compiler/ir_optimize.cpp` | Phases 2–4 passes and fixed-point driver |
+| `include/roxy/compiler/ssa_ir.hpp` / `src/roxy/compiler/ssa_ir.cpp` | IR data structures, `reorder_blocks_rpo`, printing |
+| `include/roxy/compiler/lowering.hpp` / `src/roxy/compiler/lowering.cpp` | IR → bytecode lowering |
+| `tests/unit/test_ir_optimize.cpp` | Phase 2–4 unit tests |

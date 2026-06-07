@@ -1,149 +1,58 @@
 # Constructors and Destructors
 
-This document describes the implementation of constructors and destructors in Roxy.
+Roxy structs support named constructors and destructors, declared with `fun new` / `fun delete`. They compile to ordinary functions with mangled names that take `self` as an implicit first parameter — there is no constructor-specific runtime. A struct may declare multiple constructors and destructors (distinguished by name); destructors may take parameters.
 
 ## Syntax
 
-### Constructor Declaration
+### Declarations
 
 ```roxy
-// Default constructor (no name after struct)
-fun new StructName(params) {
-    self.field = value;
-}
-
-// Named constructor
-fun new StructName.from_file(path: string) {
-    // initialization logic
-}
-
-// Public constructor (can be called from other modules)
-pub fun new StructName(params) {
-    // ...
-}
-```
-
-### Destructor Declaration
-
-```roxy
-// Default destructor
-fun delete StructName() {
-    // cleanup logic
-}
-
-// Named destructor (can have parameters!)
-fun delete StructName.save_to(path: string) {
-    // save state before cleanup
-}
-```
-
-### Constructor/Destructor Calls
-
-```roxy
-// Stack allocation (returns value type)
-var p: Point = Point(1, 2);
-var q: Point = Point.from_coords(3, 4);
-
-// Heap allocation (returns uniq<Type>)
-var hp: uniq Point = uniq Point(1, 2);
-var hq: uniq Point = uniq Point.from_coords(3, 4);
-
-// Struct literals
-var lit: Point = Point { x = 10, y = 20 };
-var hlit: uniq Point = uniq Point { x = 5, y = 15 };
-
-// Default destructor call
-delete hp;
-
-// Named destructor with arguments
-delete hq.save_to("backup.dat");
-```
-
-## The `self` Keyword
-
-Inside constructors and destructors, use `self` to access struct fields:
-
-```roxy
-struct Point {
-    x: i32;
-    y: i32;
-}
-
-fun new Point(x: i32, y: i32) {
-    self.x = x;  // 'self' refers to the struct being constructed
+fun new Point(x: i32, y: i32) {     // default constructor (no name)
+    self.x = x;
     self.y = y;
 }
 
-fun delete Point() {
-    print(self.x);  // Can access fields in destructor
-}
+fun new Point.from_file(path: string) { ... }   // named constructor
+pub fun new Point(...) { ... }                  // callable from other modules
+
+fun delete Point() { ... }                      // default destructor
+fun delete Point.save_to(path: string) { ... }  // named destructor (may take params)
 ```
 
-The `self` keyword is a reference to the current struct instance (`ref<StructType>`).
+Inside a constructor or destructor, `self` is a `ref<StructType>` to the instance being built or torn down, used to read and write fields.
+
+### Calls
+
+```roxy
+var p: Point        = Point(1, 2);            // stack allocation (value type)
+var q: Point        = Point.from_coords(3, 4);
+var hp: uniq Point  = uniq Point(1, 2);       // heap allocation (uniq<Point>)
+var hq: uniq Point  = uniq Point.from_coords(3, 4);
+
+var lit: Point      = Point { x = 10, y = 20 };       // struct literal
+var hlit: uniq Point = uniq Point { x = 5, y = 15 };
+
+delete hp;                       // default destructor
+delete hq.save_to("backup.dat"); // named destructor with arguments
+```
+
+The same constructor works for both stack and heap allocation; `uniq` selects heap.
 
 ## Synthesized Default Constructors
 
-If no constructor is defined for a struct, the compiler synthesizes a default constructor that:
-
-1. **Zero-initializes** all fields to their zero values:
-   - `i32`, `i64`, `f32`, `f64` → `0`
-   - `bool` → `false`
-   - `string` → `""`
-   - Pointers/references → `null`
-
-2. **Uses field default values** if declared:
+If a struct declares no constructor, the compiler synthesizes one that initializes each field to its declared default value, or to its zero value when no default is given (`0` for numerics, `false` for `bool`, `""` for `string`, `null` for pointers/references).
 
 ```roxy
 struct Config {
-    width: i32 = 800;   // Uses 800
-    height: i32 = 600;  // Uses 600
-    debug: bool;        // Zero-init to false
+    width: i32 = 800;   // 800
+    height: i32 = 600;  // 600
+    debug: bool;        // zero-init to false
 }
 
-// Synthesized default constructor initializes:
-// width = 800, height = 600, debug = false
-var c: Config = Config();
+var c: Config = Config();   // width=800, height=600, debug=false
 ```
 
-## Implementation Details
-
-### AST Nodes
-
-```cpp
-// include/roxy/compiler/ast.hpp
-
-struct ConstructorDecl {
-    StringView struct_name;  // e.g., "Point"
-    StringView name;         // empty for default, e.g., "from_file" for named
-    Span<Param> params;
-    Stmt* body;
-    bool is_pub;
-};
-
-struct DestructorDecl {
-    StringView struct_name;
-    StringView name;         // empty for default
-    Span<Param> params;      // Destructors CAN have parameters
-    Stmt* body;
-    bool is_pub;
-};
-
-// Constructor calls are parsed as CallExpr with is_heap flag
-struct CallExpr {
-    Expr* callee;
-    Span<CallArg> arguments;
-    StringView constructor_name;  // For named constructors: Point.from_coords() -> "from_coords"
-    bool is_heap;                 // true for "uniq Type(...)" constructor calls
-};
-
-struct DeleteStmt {
-    Expr* expr;
-    StringView destructor_name;   // empty for default
-    Span<CallArg> arguments;      // destructors can have args
-};
-```
-
-### Name Mangling
+## Name Mangling
 
 Constructors and destructors are compiled as regular functions with mangled names:
 
@@ -154,103 +63,28 @@ Constructors and destructors are compiled as regular functions with mangled name
 | `fun delete Point()` | `Point$$delete` |
 | `fun delete Point.save_to(...)` | `Point$$delete$$save_to` |
 
-### IR Generation
+## How It Works
 
-Constructors and destructors receive `self` as an implicit first parameter:
+Constructor calls are parsed as `CallExpr`s carrying the (possibly empty) constructor name and an `is_heap` flag (`uniq Type(...)`); `delete` is a `DeleteStmt` carrying the destructor name and arguments. Per-struct constructor and destructor metadata (name, parameter types, declaring `Decl`, `is_pub`) lives in `StructTypeInfo`. See `compiler/ast.hpp` and `compiler/types.hpp`.
 
-```cpp
-// In ir_builder.cpp
+Each constructor and destructor receives `self` as an implicit first parameter — the IR builder prepends a `ref<struct_type>` block parameter named `self` and binds it in the local scope before generating the body (`ir_builder.cpp`).
 
-void IRBuilder::build_constructor(Decl* decl, Type* struct_type) {
-    // First parameter is 'self' pointer
-    BlockParam self_param;
-    self_param.value = m_current_func->new_value();
-    self_param.type = m_types.ref_type(struct_type);
-    self_param.name = "self";
-    m_current_func->params.push_back(self_param);
+Call compilation:
 
-    // Add 'self' to local scope
-    define_local("self", self_param.value, self_param.type);
+- **Constructor call** — `StackAlloc` (stack) or `emit_new` (heap) for the instance, then `Point$$new(self_ptr, args...)`, then return the pointer/value.
+- **`delete` statement** — call the named destructor `Point$$delete$$save_to(obj, args...)`, then `emit_delete` to free memory.
 
-    // Generate body...
-}
-```
+### Implicit destruction at scope exit
 
-### Constructor Call Compilation
-
-```
-Point(args)        // stack allocation
-uniq Point(args)   // heap allocation
-    ↓
-1. StackAlloc (for stack) or emit_new (for heap)
-2. Call constructor: Point$$new(self_ptr, args...)
-3. Return pointer/value
-```
-
-### `delete` Statement Compilation
-
-```
-delete obj.save_to(args)
-    ↓
-1. Call destructor: Point$$delete$$save_to(obj, args...)
-2. emit_delete (free memory)
-```
-
-### Implicit Destruction at Scope Exit
-
-When a `uniq` variable goes out of scope without being explicitly deleted or moved, the compiler automatically emits cleanup:
-
-```
-scope exit with live uniq 'obj' of type Point (has default destructor)
-    ↓
-1. Call default destructor: Point$$delete(obj)
-2. emit_delete (free memory)
-3. Mark obj as moved (prevent double-delete)
-```
-
-If no default destructor exists, only `emit_delete` is emitted. Cleanup proceeds in LIFO order (last declared, first destroyed). See [memory.md](memory.md) for details on RAII semantics.
-
-## Type System Integration
-
-Constructor and destructor information is stored in `StructTypeInfo`:
-
-```cpp
-struct ConstructorInfo {
-    StringView name;           // empty for default
-    Span<Type*> param_types;
-    Decl* decl;
-    bool is_pub;
-};
-
-struct DestructorInfo {
-    StringView name;
-    Span<Type*> param_types;
-    Decl* decl;
-    bool is_pub;
-};
-
-struct StructTypeInfo {
-    // ... existing fields ...
-    Vector<ConstructorInfo> constructors;
-    Vector<DestructorInfo> destructors;
-};
-```
+When a `uniq` variable leaves scope without being explicitly deleted or moved, the compiler emits cleanup automatically: call the default destructor `Point$$delete(obj)` (if one exists), `emit_delete`, and mark `obj` as moved to prevent a double-delete. With no default destructor, only `emit_delete` runs. Cleanup is LIFO (last declared, first destroyed). See [memory.md](memory.md) for RAII semantics.
 
 ## Semantic Analysis
 
-The semantic analyzer performs these checks:
-
-1. **Struct existence**: The struct name in constructor/destructor must be defined
-2. **Duplicate names**: No two constructors (or destructors) can have the same name
-3. **Parameter type resolution**: All parameter types must be valid
-4. **`self` context**: `self` can only be used inside constructors/destructors
-5. **Constructor lookup**: `new` expressions must reference valid constructors
-6. **Destructor lookup**: `delete` statements must reference valid destructors
-7. **Argument matching**: Arguments must match constructor/destructor parameters
+The analyzer checks that: the named struct exists; no two constructors (or destructors) share a name; parameter types resolve; `self` appears only inside constructors/destructors; `new` expressions and `delete` statements reference valid constructors/destructors; and arguments match the resolved parameters.
 
 ## Examples
 
-### Basic Constructor/Destructor
+### Basic constructor/destructor
 
 ```roxy
 struct Counter {
@@ -262,17 +96,17 @@ fun new Counter(initial: i32) {
 }
 
 fun delete Counter() {
-    print(self.value);  // Print final value on cleanup
+    print(self.value);   // print final value on cleanup
 }
 
 fun main(): i32 {
     var c: uniq Counter = uniq Counter(42);
-    delete c;  // Prints "42"
+    delete c;            // prints "42"
     return 0;
 }
 ```
 
-### Multiple Constructors
+### Multiple constructors
 
 ```roxy
 struct Point {
@@ -290,20 +124,14 @@ fun new Point.from_coords(x: i32, y: i32) {
     self.y = y;
 }
 
-fun new Point.from_value(val: i32) {
-    self.x = val;
-    self.y = val;
-}
-
 fun main(): i32 {
-    var p1: Point = Point();                  // (0, 0)
-    var p2: Point = Point.from_coords(3, 4);  // (3, 4)
-    var p3: Point = Point.from_value(5);      // (5, 5)
+    var p1: Point = Point();                 // (0, 0)
+    var p2: Point = Point.from_coords(3, 4); // (3, 4)
     return 0;
 }
 ```
 
-### Named Destructor with Parameters
+### Named destructor with parameters
 
 ```roxy
 struct Resource {
@@ -327,18 +155,19 @@ fun main(): i32 {
     var r1: uniq Resource = uniq Resource(1);
     var r2: uniq Resource = uniq Resource(2);
 
-    delete r2.with_message(999);  // Prints "999" then "2"
-    delete r1;                     // Prints "1"
+    delete r2.with_message(999);  // prints "999" then "2"
+    delete r1;                     // prints "1"
     return 0;
 }
 ```
 
-## Related Files
+## Files
 
-| File | Description |
-|------|-------------|
-| `include/roxy/compiler/ast.hpp` | AST node definitions |
-| `src/roxy/compiler/parser.cpp` | Parser for constructor/destructor syntax |
-| `src/roxy/compiler/semantic.cpp` | Semantic analysis and type checking |
-| `src/roxy/compiler/ir_builder.cpp` | IR generation for constructors/destructors |
-| `tests/e2e/test_constructors.cpp` | End-to-end tests |
+| File | Purpose |
+|------|---------|
+| `include/roxy/compiler/ast.hpp` | `ConstructorDecl` / `DestructorDecl` / `CallExpr` / `DeleteStmt` |
+| `include/roxy/compiler/types.hpp` | `ConstructorInfo` / `DestructorInfo` in `StructTypeInfo` |
+| `src/roxy/compiler/parser.cpp` | constructor/destructor syntax and call parsing |
+| `src/roxy/compiler/semantic.cpp` | semantic analysis and type checking |
+| `src/roxy/compiler/ir_builder.cpp` | IR generation, implicit `self`, scope-exit cleanup |
+| `tests/e2e/test_constructors.cpp` | E2E tests |

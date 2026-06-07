@@ -1,79 +1,44 @@
 # C Backend (AOT Compilation)
 
-> **Status:** Phases 1–4 fully implemented; Phase 5 partially implemented (function-level + statement-level `#line` directives). Phase 4 covers runtime context plumbing, AOT wrapper `main()`, the runtime unification refactor (slab + vmem moved to `roxy_rt`, unified `ObjectHeader`/`StringHeader`/`ListHeader`/`MapHeader`, ctx-dispatched allocation, string interning through ctx, single map-dispatch path with VM trampolines for bytecode Hash/Eq, `rx::RoxyString`/`RoxyList`/`RoxyMap` aliased to `roxy::String`/`List`/`Map`), `RoxyVM*` dropped from embedder native function signatures, AOT NativeRegistry dispatch for user-registered natives, `MapHeader` slimmed back to its pre-bridge size by moving VM-only dispatch indices to a per-VM side-table, AOT symbol metadata in `NativeRegistry` (`aot_symbol_name` on each entry; `bind<>(roxy_name, aot_symbol)` overload for renamed AOT symbols; dual-mode `bind_native(func, sig, aot_symbol)` overload), and automatic `extern` declarations in generated AOT source so user natives can be supplied either via inline-definition headers OR separately-compiled `.cpp` translation units. Phase 5 work landed: function-level + statement-level `#line` directives in generated AOT source attributing body lines to the original Roxy source. Other Phase 5 items (DCE, Relooper, `switch` lowering, readable variable names) deliberately not pursued — see the Phase 5 checklist for reasoning.
+> **Status:** Phases 1–4 fully implemented; Phase 5 partially implemented (function- and statement-level `#line` directives). Other Phase 5 items (DCE, Relooper, `switch` lowering, readable variable names) are deliberately not pursued — the C compiler's optimizer covers them and they don't affect debugger UX.
 
-The C backend translates Roxy's SSA IR into a `.cpp` file. The core logic is C-style (structs, gotos, typed variables), while native function bindings use C++ to interface directly with the embedder's C++ code. The output can be compiled by any C++ compiler (g++, clang++, MSVC).
+The C backend (`CEmitter`) translates Roxy's SSA IR into a `.cpp` file that any C++ compiler can build. The body is C-style (structs, gotos, typed `vN` locals); native bindings and the public header use C++ to interface directly with the embedder. It operates on the same `IRModule` the bytecode lowering uses, so all frontend work (type checking, method/operator resolution, monomorphization, struct layout) is already done.
 
 ## Pipeline
 
 ```
-Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA IR
-                                                                    ├→ Lowering → Bytecode → VM          (interpreter)
-                                                                    └→ CEmitter → .cpp file → g++/clang++ (AOT)
+Source → ... → SSA IR
+                 ├→ Lowering → Bytecode → VM          (interpreter)
+                 └→ CEmitter → .cpp file → g++/clang++ (AOT)
 ```
 
-The C emitter operates on the same `IRModule` that the bytecode lowering pass uses. All frontend work (type checking, method resolution, operator rewriting, monomorphization, struct layout) is already done at the IR level.
-
-## Why SSA IR → C
-
-| Source Level | Pros | Cons |
-|--------------|------|------|
-| AST | Readable output | Must re-implement lowering, method dispatch, operator dispatch, monomorphization |
-| **SSA IR** | **All semantic work done, typed, structured** | **Need control flow emission strategy** |
-| Bytecode | Simplest transform | Loses types, produces unreadable register-shuffling C |
-
-SSA IR is the sweet spot: every operation is typed, structs are laid out, generics are monomorphized, and operators are desugared into method calls. The mapping to C is mechanical.
+SSA IR is the chosen translation source: every op is typed, structs are laid out, generics are monomorphized, and operators are desugared into method calls, so the mapping to C is mechanical. (AST would force re-implementing all of that; bytecode loses types and produces unreadable register-shuffling C.)
 
 ## Type Mapping
 
 ### Primitives
 
-| Roxy Type | C Type | Header |
-|-----------|--------|--------|
+| Roxy | C | Header |
+|------|---|--------|
 | `void` | `void` | — |
 | `bool` | `bool` | `<stdbool.h>` |
-| `i8` | `int8_t` | `<stdint.h>` |
-| `i16` | `int16_t` | `<stdint.h>` |
-| `i32` | `int32_t` | `<stdint.h>` |
-| `i64` | `int64_t` | `<stdint.h>` |
-| `u8` | `uint8_t` | `<stdint.h>` |
-| `u16` | `uint16_t` | `<stdint.h>` |
-| `u32` | `uint32_t` | `<stdint.h>` |
-| `u64` | `uint64_t` | `<stdint.h>` |
-| `f32` | `float` | — |
-| `f64` | `double` | — |
+| `i8`–`i64` | `int8_t`–`int64_t` | `<stdint.h>` |
+| `u8`–`u64` | `uint8_t`–`uint64_t` | `<stdint.h>` |
+| `f32` / `f64` | `float` / `double` | — |
 | `string` | `roxy_string*` | `roxy_rt.h` |
 
 ### Compound Types
 
-| Roxy Type | C Type |
-|-----------|--------|
+| Roxy | C |
+|------|---|
 | `struct Point { x: i32; y: i32; }` | `typedef struct { int32_t x; int32_t y; } Point;` |
 | `enum Color { Red, Green, Blue }` | `typedef enum { Color_Red, Color_Green, Color_Blue } Color;` |
-| `List<T>` | `roxy_list*` |
+| `List<T>` / `Map<K,V>` | `roxy_list*` / `roxy_map*` |
 | `uniq T` | `T*` (owns the allocation) |
 | `ref T` | `T*` (borrowing, ref-counted) |
-| `weak T` | `roxy_weak` (pointer + generation) |
+| `weak T` | `roxy_weak` (`{void* ptr; uint64_t generation;}`) |
 
-### Reference Types in C
-
-```c
-// Weak reference carries a generation for validation
-typedef struct {
-    void* ptr;
-    uint64_t generation;
-} roxy_weak;
-```
-
-All reference types (`uniq`, `ref`, `weak`) point to data preceded by an `ObjectHeader`, consistent with the VM's existing layout:
-
-```c
-typedef struct {
-    uint64_t weak_generation;   // 0 = dead/tombstoned
-    uint32_t ref_count;
-    uint32_t type_id;
-} roxy_object_header;
-```
+All reference types point to data preceded by a `roxy_object_header` (`{uint64_t weak_generation; uint32_t ref_count; uint32_t type_id;}`), matching the VM's layout. `weak_generation == 0` means dead/tombstoned.
 
 ## IR to C Mapping
 
@@ -81,524 +46,112 @@ typedef struct {
 
 ```
 v0 = const_int 42          →  int32_t v0 = 42;
-v1 = const_bool true       →  bool v1 = true;
-v2 = const_f64 3.14        →  double v2 = 3.14;
 v3 = const_string "hello"  →  roxy_string* v3 = roxy_string_from_literal("hello", 5);
-v4 = const_null             →  void* v4 = NULL;
-// Enum-typed integer constants require explicit cast:
-v5 = const_int 1 (Color)   →  Color v5 = (Color)1;
+v4 = const_null            →  void* v4 = NULL;
+v5 = const_int 1 (Color)   →  Color v5 = (Color)1;   // enum-typed constants need a cast
 ```
 
-### Arithmetic and Comparisons
+### Arithmetic, Comparisons, Conversions
 
-Binary operations map directly to C operators:
+Binary/unary ops map directly to C operators; conversions map to C-style casts:
 
 ```
 v2 = add_i v0, v1    →  int64_t v2 = v0 + v1;
-v2 = sub_d v0, v1    →  double v2 = v0 - v1;
-v2 = eq_i v0, v1     →  bool v2 = (v0 == v1);
 v2 = lt_f v0, v1     →  bool v2 = (v0 < v1);
-v1 = neg_i v0        →  int64_t v1 = -v0;
 v1 = not v0          →  bool v1 = !v0;
-v2 = bit_and v0, v1  →  int64_t v2 = (v0 & v1);
-```
-
-### Type Conversions
-
-```
 v1 = i_to_f64 v0     →  double v1 = (double)v0;
-v1 = f64_to_i v0     →  int64_t v1 = (int64_t)v0;
 v1 = i_to_b v0       →  bool v1 = (v0 != 0);
-v1 = b_to_i v0       →  int64_t v1 = (int64_t)v0;
-v1 = cast v0         →  // Depends on source/target types (CastData)
 ```
 
 ### Structs
 
-Roxy structs map directly to C structs. The slot-based layout is compatible since field ordering is identical.
+Roxy structs map directly to C structs — slot-based layout is field-order compatible. Types are forward-declared (`typedef struct Name Name;`) then defined in dependency order (Kahn topological sort over field types).
+
+`StackAlloc` becomes a local declaration. Because the rest of the IR refers to structs through pointers, the emitter emits both the backing value and a pointer to it, and zero-initializes with `memset` (not `= {0}`, which fails in C++ when the first field is an enum):
 
 ```
-// Struct type emission (dependency-sorted, forward declared)
-typedef struct Point Point;
-
-struct Point {
-    int32_t x;
-    int32_t y;
-};
-
-// Stack allocation: backing storage + pointer (two declarations)
 v0 = stack_alloc 2          →  Point v0_struct; memset(&v0_struct, 0, sizeof(v0_struct));
-                                Point* v0;
-                                // then at block entry:
-                                v0 = &v0_struct;
-
-// Field access uses -> since StackAlloc values are pointers
-v1 = const_int 10
+                                Point* v0;          // v0 = &v0_struct; at block entry
 v2 = set_field v0.x <- v1   →  v0->x = v1;
 v3 = get_field v0.y         →  int32_t v3 = v0->y;
-
-// For scalar StackAlloc (out/inout on primitives), dereference instead:
-v1 = stack_alloc 1 (i32)    →  int32_t v1_struct; memset(...);
-                                int32_t* v1;
-v2 = set_field v1.n <- v0   →  *v1 = v0;   // not v1->n
-v3 = get_field v1.n          →  int32_t v3 = *v1;
 ```
 
-The `StackAlloc` IR instruction becomes a local variable declaration. We emit both the struct value and a pointer to it, since the rest of the IR refers to structs through pointers. We use `memset` for zero-initialization instead of `= {0}` to avoid C++ compilation issues when the first field is an enum type.
+For a scalar `StackAlloc` (out/inout on a primitive) the value is dereferenced instead: `set_field v1.n <- v0` → `*v1 = v0;`.
 
-Struct types are forward-declared (`typedef struct Name Name;`) before their full definitions, and definitions are emitted in dependency order (topological sort based on field types).
-
-### Struct Copy
-
-```
-struct_copy v1, v0, 2       →  memcpy(v1, v0, 2 * sizeof(uint32_t));
-                                // Or: *v1 = *v0;  (if types are known)
-```
-
-When the concrete struct type is known (which it always is from `IRInst.type`), prefer `*dst = *src` over `memcpy` for clarity and potentially better optimization.
+`struct_copy v1, v0, 2` emits `*v1 = *v0;` when the concrete type is known (always, from `IRInst.type`), falling back to `memcpy(v1, v0, ...)` otherwise.
 
 ### Functions
 
-IR functions become C functions. Parameters are typed by their IR types. The runtime context is accessed via thread-local storage (see [Thread-Local Runtime Context](#thread-local-runtime-context)), so functions do not take a `roxy_ctx*` parameter.
+IR functions become C functions with IR-typed parameters; no `roxy_ctx*` is threaded through (the context is thread-local — see below). Struct parameters are always pointers, since the IR uses pointer semantics for struct values.
 
 ```
-// fun add(a: i32, b: i32): i32
-fn add(a, b) -> i32 {
-    v2 = add_i v0, v1
-    return v2
-}
+fn add(v0, v1) -> i32 { v2 = add_i v0, v1; return v2 }
 →
-int32_t add(int32_t v0, int32_t v1) {
-    int32_t v2 = v0 + v1;
-    return v2;
-}
+int32_t add(int32_t v0, int32_t v1) { int32_t v2 = v0 + v1; return v2; }
 ```
 
-Struct parameters are always emitted as pointers, since the IR uses pointer semantics (get_field/set_field with `->`) for all struct values:
+- **Inheritance:** passing a child pointer where a parent is expected emits an explicit cast — `Animal__new((Animal*)v0);`.
+- **Out/inout:** params flagged in `IRFunction::param_is_ptr` become pointer params; `load_ptr`/`store_ptr` lower to `*v0` reads/writes.
+- **Large struct returns (slot_count > 4):** the IR builder adds a hidden `__ret_ptr` last parameter and rewrites the return into a `struct_copy` + void return. The emitter detects `returns_large_struct()`, emits a `void` return type, and skips the call-site assignment — the caller passes its `StackAlloc` pointer as the output argument.
+
+### Control Flow — Labels + Gotos
+
+Each `IRBlock` becomes a labeled section; block arguments become local variables assigned before the `goto`. Gotos are trivially correct for any CFG shape, and C compilers reconstruct structured control flow internally, so there is no performance penalty.
 
 ```
-// fun sum_point(p: Point): i32
-void sum_point(Point* v0) { ... }
-```
-
-For struct inheritance, when a child struct pointer is passed to a function expecting a parent struct pointer, an explicit C cast is emitted:
-
-```
-// Dog$$new calls Animal$$new(self) — self is Dog*
-Animal__new((Animal*)v0);
-```
-
-#### Out/Inout Parameters
-
-Parameters marked as pointers in `IRFunction::param_is_ptr` become pointer parameters:
-
-```
-// fun double_point(p: inout Point)
-fn double_point(p) {       // param_is_ptr[0] = true
-    v1 = load_ptr v0
-    ...
-    store_ptr v0, v2
-}
-→
-void double_point(Point* v0) {
-    Point v1 = *v0;
-    ...
-    *v0 = v2;
-}
-```
-
-#### Large Struct Returns (>16 bytes)
-
-Functions that return large structs use a hidden output pointer (same convention as the bytecode lowering). The IR builder adds a `__ret_ptr` parameter and transforms the return into a `struct_copy` + void return. The emitter detects `returns_large_struct()` and emits void return type. At the call site, assignment is skipped since the function returns void — the caller provides a StackAlloc pointer as the output parameter:
-
-```
-// fun make_big(x: i32): BigStruct    (slot_count > 4)
-→
-// Callee: void return, hidden output pointer is last param
-void make_big(int32_t v0, BigData* v1) {
-    BigData v2_struct; memset(&v2_struct, 0, sizeof(v2_struct));
-    BigData* v2;
-    // ... fill fields in v2 ...
-    memcpy(v1, v2, 20);  // struct_copy to output pointer
-    return;
-}
-
-// Caller: no assignment from void call
-BigData v0_struct; memset(&v0_struct, 0, sizeof(v0_struct));
-BigData* v0 = &v0_struct;
-make_big(v1, v0);        // v0 is the output pointer
-v3 = v0->a;              // read fields from output pointer
-```
-
-### Control Flow
-
-#### Strategy: Labels + Gotos
-
-Each `IRBlock` becomes a labeled section. Block arguments become local variables assigned before `goto`.
-
-```
-// SSA IR:
-entry:
-    v0 = const_int 0
-    v1 = const_int 1
-    goto loop(v0, v1)
-
 loop(sum, i):
-    v4 = le_i v3, v2
+    v4 = le_i i, v2
     if v4 goto body else exit(sum)
-
 body:
     v5 = add_i sum, i
-    v6 = add_i i, const_int(1)
-    goto loop(v5, v6)
-
-exit(result):
-    return result
+    goto loop(v5, ...)
 ```
-
 ```cpp
-// Generated C:
-int64_t sum_of_n(int64_t v2) {
-    int64_t v0, v1, v3, v4, v5, v6;
-    // Block argument variables
-    int64_t loop_arg0, loop_arg1;
-    int64_t exit_arg0;
-
-entry:
-    v0 = 0;
-    v1 = 1;
-    loop_arg0 = v0;
-    loop_arg1 = v1;
-    goto loop;
-
 loop:;
     int64_t sum = loop_arg0;
     int64_t i = loop_arg1;
     v4 = (i <= v2);
     if (v4) goto body; else { exit_arg0 = sum; goto exit; }
-
 body:
     v5 = sum + i;
-    v6 = i + 1;
-    loop_arg0 = v5;
-    loop_arg1 = v6;
+    loop_arg0 = v5; ...
     goto loop;
-
-exit:;
-    int64_t result = exit_arg0;
-    return result;
-}
 ```
-
-Gotos are trivially correct for any CFG shape. C compilers (gcc, clang) optimize gotos into structured control flow internally, so there is no performance penalty.
-
-#### Future: Structured Control Flow Reconstruction
-
-For readable output, a Relooper or Stackifier algorithm could reconstruct `if`/`else`/`while` from the CFG. This is an optional enhancement — gotos work correctly and produce efficient machine code.
 
 ### Function Calls
 
-Function calls are direct — no context parameter is threaded through. The runtime context is available via thread-local storage when needed.
+Direct calls, no context parameter. `$$` in mangled names becomes `__` (`$` is not valid in C):
 
 ```
-// Regular call
-v2 = call "add" [v0, v1]           →  int32_t v2 = add(v0, v1);
-
-// Method call (mangled name)
-v2 = call "Point$$sum" [v1]        →  int32_t v2 = Point__sum(v1);
-
-// External call (cross-module, resolved after linking)
-v2 = call_external "math", "sin" [v0]  →  double v2 = math__sin(v0);
-
-// Native call (built-in runtime function)
-v2 = call_native "print" [v1]      →  roxy_print(v1);
-
-// Native call (user-registered C++ function)
-v2 = call_native "my_add" [v0, v1] →  int32_t v2 = my_add(v0, v1);
+v2 = call "add" [v0, v1]               →  int32_t v2 = add(v0, v1);
+v2 = call "Point$$sum" [v1]            →  int32_t v2 = Point__sum(v1);
+v2 = call_external "math", "sin" [v0]  →  double v2 = math__sin(v0);   // cross-module
+v2 = call_native "print" [v1]          →  roxy_print(v1);               // built-in
+v2 = call_native "my_add" [v0, v1]     →  int32_t v2 = my_add(v0, v1);  // user native
 ```
 
-Note: `$$` in mangled names is replaced with `__` in C identifiers (since `$` is not standard C).
+### Object Lifecycle, Ref Counting, Pointers
 
-## Native Function Bindings
+```
+v1 = new "Point" [args]   →  Point* v1 = (Point*)roxy_alloc(sizeof(Point), TYPEID_Point);
+                             Point__new(v1, args);            // if a constructor exists
+delete v0                 →  Point__delete(v0); roxy_free(v0);
+ref_inc v0                →  roxy_ref_inc(v0);
+weak_check v0             →  bool v1 = roxy_weak_valid(v0.ptr, v0.generation);
+v1 = load_ptr v0          →  int32_t v1 = *v0;
+nullify v0                →  memset(&v0_struct, 0, sizeof(v0_struct));   // or v0 = 0 for scalars
+```
 
-### The Problem
+Address-of (for out/inout) is handled by `StackAlloc` (`&v0_struct`) and `GetFieldAddr` — there is no dedicated `var_addr` op.
 
-In the VM path, native functions have the signature `void (*NativeFunction)(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg)` — they read arguments from VM registers and write results back. This is completely VM-specific: there is no register file or `RoxyVM*` in the AOT path.
+### Tagged Unions
 
-The C backend needs a different mechanism to call native functions. Since Roxy is designed for C++ embedding (game engines), the generated `.cpp` file calls the embedder's C++ functions directly with typed arguments.
-
-### Thread-Local Runtime Context
-
-The AOT path uses a lightweight runtime context struct, accessed via thread-local storage. This avoids threading a `roxy_ctx*` parameter through every function call.
+A tagged union emits a struct with a discriminant field plus an anonymous `union` of anonymous per-variant structs (so variant fields are directly accessible on the parent). The `when` statement lowers to the same comparison chain as bytecode, mapping to `if`/`else if`:
 
 ```c
-// roxy_rt.h
-typedef struct roxy_ctx {
-    void* allocator;        // slab allocator or malloc-based allocator state
-    void* exception_state;  // current exception + handler stack for try/catch
-    void* user_data;        // embedder-provided state (game engine, etc.)
-} roxy_ctx;
-
-// Thread-local context access
-void roxy_set_ctx(roxy_ctx* ctx);
-roxy_ctx* roxy_get_ctx(void);
-```
-
-The `roxy_ctx` is designed to be embedded inside `RoxyVM`, so that native functions written for the AOT path also work in the VM path:
-
-```cpp
-// vm.hpp
-struct RoxyVM {
-    roxy_ctx ctx;           // AOT-compatible subset (first member)
-    CallFrame* call_stack;  // VM-only
-    u64* registers;         // VM-only
-    // ...
-};
-```
-
-In **VM mode**, the interpreter calls `roxy_set_ctx(&vm->ctx)` before entering Roxy code. In **AOT mode**, the embedder calls `roxy_set_ctx()` at the entry point. All generated code, runtime functions, and native functions access the context via `roxy_get_ctx()` when needed (e.g., for allocation or exception handling).
-
-The runtime header also provides a C++ RAII guard for scoped context management:
-
-```cpp
-// roxy_rt.h
-namespace roxy {
-
-class ScopedContext {
-    roxy_ctx* m_prev;
-public:
-    explicit ScopedContext(roxy_ctx* ctx) : m_prev(roxy_get_ctx()) { roxy_set_ctx(ctx); }
-    ~ScopedContext() { roxy_set_ctx(m_prev); }
-
-    ScopedContext(const ScopedContext&) = delete;
-    ScopedContext& operator=(const ScopedContext&) = delete;
-};
-
-} // namespace roxy
-```
-
-### Native Function Signatures
-
-Since the runtime context is thread-local, native functions do not take `roxy_ctx*` as a parameter. They are plain C++ functions with only their logical parameters:
-
-```cpp
-// These work in BOTH VM mode and AOT mode
-i32 my_add(i32 a, i32 b) { return a + b; }
-f64 my_sqrt(f64 x) { return std::sqrt(x); }
-
-roxy::String greet(roxy::String name) {
-    return roxy::String::alloc("hello ").concat(name);
-}
-
-i32 point_sum(Point* self) { return self->x + self->y; }
-
-// Native functions that need the context (e.g., for user_data) call roxy_get_ctx():
-void spawn_enemy(f32 x, f32 y) {
-    auto* engine = (GameEngine*)roxy_get_ctx()->user_data;
-    engine->spawn_at(x, y);
-}
-```
-
-### How Each Binding Category Maps
-
-| Binding Style | VM Mode | AOT Mode |
-|---|---|---|
-| `bind<FnPtr>("name")` | `FunctionBinder` wraps FnPtr, VM sets TLS ctx | Emit direct call to FnPtr |
-| `bind_native(fn, sig)` | Calls `fn(vm, dst, argc, first_arg)` | Needs AOT-compatible overload (see below) |
-| `bind_method<FnPtr>(...)` | Same as bind — binder wraps | Emit direct call with `self*` |
-| `bind_method(fn, sig)` | VM-style manual wrapper | Needs AOT-compatible overload |
-| Built-in (print, list, etc.) | VM native functions | `roxy_rt` C functions (use TLS ctx internally) |
-
-#### Auto-bound functions (`bind<FnPtr>`)
-
-This is the cleanest path. The template already captures the real C++ function pointer, and the emitter references it directly:
-
-```cpp
-// Embedder code
-i32 my_add(i32 a, i32 b) { return a + b; }
-registry.bind<my_add>("add");
-```
-
-```cpp
-// Generated .cpp — direct call, no wrapper overhead
-int32_t v2 = my_add(v0, v1);
-```
-
-The `FunctionBinder` template stores both the VM wrapper (for interpreter use) and the original function pointer (for the C emitter to reference by symbol name). In VM mode, the binder sets the thread-local context before invoking the native function.
-
-#### Signature-bound functions (`bind_native`)
-
-For functions registered with the signature-based API, only a `NativeFunction` (VM-specific wrapper) is provided. To support AOT, a new overload accepts both:
-
-```cpp
-// New API: provide both VM wrapper and AOT-compatible function
-registry.bind_native(vm_wrapper, aot_function, "fun foo(a: i32, b: i32): i32");
-
-// Or: migrate to bind<FnPtr> which handles both automatically
-registry.bind<my_foo>("foo");  // preferred
-```
-
-The signature-only `bind_native(fn, sig)` overload remains for VM-only use. Functions registered without an AOT-compatible version will produce a compile error if the C emitter encounters a `CallNative` referencing them.
-
-#### Built-in runtime functions
-
-Built-in natives (print, string ops, list ops, map ops) are provided by the `roxy_rt` runtime library. They access the context via `roxy_get_ctx()` internally, so their public API is context-free:
-
-```c
-// roxy_rt.h
-void roxy_print(roxy_string* s);
-roxy_string* roxy_string_concat(roxy_string* a, roxy_string* b);
-roxy_list* roxy_list_new(int32_t capacity);
-void roxy_list_push(roxy_list* list, uint64_t value);
-```
-
-The C emitter maps built-in native names to their `roxy_rt` equivalents:
-
-| Native Name | C Identifier |
-|---|---|
-| `print` | `roxy_print` |
-| `str_concat` | `roxy_string_concat` |
-| `str_eq` | `roxy_string_eq` |
-| `List$$push` (monomorphized) | `roxy_list_push` |
-| `Map$$insert` (monomorphized) | `roxy_map_insert` |
-
-#### Native struct methods
-
-Native methods on structs are called with the `self` pointer as a typed argument:
-
-```cpp
-// Embedder code
-i32 point_product(Point* self) { return self->x * self->y; }
-registry.bind_method<point_product>("Point", "product");
-```
-
-```cpp
-// Generated .cpp
-int32_t v2 = point_product(v0);  // v0 is Point*
-```
-
-### Generic Native Types (List, Map) in AOT
-
-Generic native types like `List<T>` and `Map<K, V>` are type-erased at runtime — all Roxy values are 64 bits, so a single implementation handles all element types. The same approach works in AOT:
-
-```cpp
-// Generated .cpp for List<i32> operations
-roxy_list* v0 = roxy_list_new(16);              // capacity 16
-roxy_list_push(v0, (uint64_t)42);               // push i32 (widened to u64)
-int32_t v1 = (int32_t)roxy_list_get(v0, 0);    // get and narrow back to i32
-
-// Generated .cpp for Map<string, i32> operations
-roxy_map* v2 = roxy_map_new(ROXY_KEY_STRING, 16);
-roxy_map_insert(v2, (uint64_t)key_str, (uint64_t)42);
-int32_t v3 = (int32_t)roxy_map_get(v2, (uint64_t)key_str);
-```
-
-The `uint64_t` casts at the call boundary match the VM's type-erased value representation. The C++ compiler optimizes these to no-ops on 64-bit platforms for integer types.
-
-### AOT Entry Point
-
-The generated `.cpp` file includes a `main` function that initializes the runtime context, sets the thread-local, and calls the Roxy `main` entry point:
-
-```cpp
-// Generated at the bottom of the .cpp file
-int main(int argc, char** argv) {
-    roxy_ctx ctx;
-    roxy_ctx_init(&ctx);
-    roxy_set_ctx(&ctx);
-    int32_t result = main_entry();
-    roxy_ctx_destroy(&ctx);
-    return result;
-}
-```
-
-For library use (embedding without a standalone binary), the embedder creates the context and uses the scoped guard:
-
-```cpp
-// Embedder code
-roxy_ctx ctx;
-roxy_ctx_init(&ctx);
-ctx.user_data = &my_game_engine;
-
-{
-    roxy::ScopedContext guard(&ctx);
-
-    // Call exported Roxy functions directly — no ctx parameter needed
-    int32_t score = calculate_score(player_ptr);
-    update_world(dt);
-}
-
-roxy_ctx_destroy(&ctx);
-```
-
-### Object Lifecycle
-
-```
-// Heap allocation
-v1 = new "Point" [args...]
-→
-Point* v1 = (Point*)roxy_alloc(sizeof(Point), TYPEID_Point);
-Point__new(v1, args...);  // constructor call (if any)
-
-// Deallocation
-delete v0
-→
-Point__delete(v0);   // destructor call (if any)
-roxy_free(v0);
-```
-
-### Reference Counting
-
-```
-ref_inc v0    →  roxy_ref_inc(v0);
-ref_dec v0    →  roxy_ref_dec(v0);
-weak_check v0 →  bool v1 = roxy_weak_valid(v0.ptr, v0.generation);
-```
-
-### Pointer Operations
-
-```
-v1 = load_ptr v0          →  int32_t v1 = *v0;    // type from IRInst.type
-store_ptr v0, v1           →  *v0 = v1;
-// Address-of (for out/inout params) is handled by StackAlloc (backing-storage
-// address &v0_struct) and GetFieldAddr — there is no dedicated var_addr op.
-```
-
-### Nullify
-
-Zeros a value for move semantics cleanup:
-
-```
-// For struct backing storage:
-nullify v0  →  memset(&v0_struct, 0, sizeof(v0_struct));
-
-// For primitives/pointers:
-nullify v0  →  v0 = 0;
-```
-
-## Tagged Unions
-
-Tagged unions emit a C struct with a discriminant field and a union:
-
-```roxy
-enum SkillType { Attack, Defend }
-struct AttackData { damage: i32; crit_chance: f32; }
-struct DefendData { damage_reduce: f32; }
-
 struct Skill {
-    name: string;
-    when type: SkillType {
-        case Attack: attack: AttackData;
-        case Defend: defend: DefendData;
-    }
-}
-```
-
-```c
-typedef struct Skill Skill;
-
-struct Skill {
-    void* name;       // string (void* placeholder until Phase 3)
-    SkillType type;   // discriminant field
+    void* name;
+    SkillType type;        // discriminant
     union {
         struct { int32_t damage; float crit_chance; }; /* Attack */
         struct { float damage_reduce; };               /* Defend */
@@ -606,1032 +159,139 @@ struct Skill {
 };
 ```
 
-Note: variant fields are emitted as anonymous structs within the union, with field names directly accessible on the parent struct. Each variant struct is annotated with a comment showing the case name.
+## Thread-Local Runtime Context
 
-The `when` statement compiles to a chain of comparisons (same as bytecode lowering), which maps to `if`/`else if` in C:
-
-```c
-if (skill->type == SkillType_Attack) {
-    // case Attack
-} else if (skill->type == SkillType_Defend) {
-    // case Defend
-}
-```
-
-For larger enums, a `switch` statement could be emitted instead.
-
-## Runtime Library (`roxy_rt.h`)
-
-The runtime provides C implementations of features that require allocation or complex logic. Functions that need the runtime context (for allocation, etc.) access it internally via `roxy_get_ctx()`. The public API is context-free.
-
-### Context Lifecycle
+The VM's native ABI (`void(RoxyVM*, u8 dst, u8 argc, u8 first_arg)` reading/writing registers) has no analogue in AOT — there is no register file or `RoxyVM*`. Instead the AOT path carries runtime state in a small `roxy_ctx` (`allocator` / `exception_state` / `user_data`) accessed through thread-local storage, so it never appears in a function signature:
 
 ```c
-// Initialize/destroy the AOT runtime context
-void roxy_ctx_init(roxy_ctx* ctx);
-void roxy_ctx_destroy(roxy_ctx* ctx);
-
-// Thread-local context access
 void roxy_set_ctx(roxy_ctx* ctx);
 roxy_ctx* roxy_get_ctx(void);
 ```
 
-### Core
+`roxy_ctx` is the first member of `RoxyVM`, so the same native functions work in both modes. In **VM mode** the interpreter brackets every public entry with `roxy::ScopedContext(&vm->ctx)` (an RAII guard in `roxy_rt.h` that saves/restores the previous ctx). In **AOT mode** the generated `main()` (or the embedder, via `ScopedContext`) sets it. All generated code, runtime functions, and natives call `roxy_get_ctx()` when they need allocation or exception state.
 
-```c
-// Object allocation/deallocation (use roxy_get_ctx() internally)
-void* roxy_alloc(uint32_t data_size, uint32_t type_id);
-void roxy_free(void* data);
+Because the context is thread-local, native functions are plain C++ taking only their logical parameters — `i32 my_add(i32 a, i32 b)`, `i32 point_sum(Point* self)` — and reach engine state via `(GameEngine*)roxy_get_ctx()->user_data` when needed.
 
-// Reference counting
-void roxy_ref_inc(void* data);
-void roxy_ref_dec(void* data);  // frees if count reaches 0 + no uniq owner
+### Native Binding Categories
 
-// Weak references
-roxy_weak roxy_weak_create(void* data);
-bool roxy_weak_valid(void* ptr, uint64_t generation);
-uint64_t roxy_weak_generation(void* data);  // read generation from ObjectHeader
-```
+| Binding style | VM mode | AOT mode |
+|---|---|---|
+| `bind<FnPtr>("name")` | `FunctionBinder` wraps FnPtr, VM sets TLS ctx | direct call to FnPtr |
+| `bind_method<FnPtr>(...)` | binder wraps | direct call with `self*` |
+| `bind_native(fn, sig)` | VM-style manual wrapper | needs `bind_native(vm_fn, sig, aot_symbol)` overload |
+| Built-in (print, list, …) | VM native functions | `roxy_rt` C functions (use TLS ctx internally) |
 
-### Strings
+`bind<FnPtr>` is the cleanest path: the template stores both the VM wrapper and the original function pointer, which the emitter references directly (no wrapper overhead). For the signature-based API, the dual-mode `bind_native(vm_fn, sig, aot_symbol)` overload supplies an AOT-compatible function; the VM-only `bind_native(fn, sig)` remains, but a `CallNative` referencing it from the emitter is a compile error. Built-in natives map by name to `roxy_rt` equivalents (`print` → `roxy_print`, `List$$push` → `roxy_list_push`, etc.).
 
-```c
-// String operations (allocating functions use roxy_get_ctx() internally)
-roxy_string* roxy_string_from_literal(const char* data, uint32_t length);
-roxy_string* roxy_string_concat(roxy_string* a, roxy_string* b);
-bool roxy_string_eq(roxy_string* a, roxy_string* b);
-int32_t roxy_string_len(roxy_string* s);
-const char* roxy_string_chars(roxy_string* s);
-void roxy_string_print(roxy_string* s);
+When `emit_native_call`'s static-table lookup misses, the emitter consults `CEmitterConfig::native_registry` and emits a typed direct call using the entry's `aot_symbol_name` (defaults to the registered Roxy name; `bind<>(roxy_name, aot_symbol)` lets them diverge). The emitter pre-scans IR for user-native `CallNative` ops and writes `extern Ret name(Args...);` declarations into the source preamble, so AOT binaries link against either inline-defined `native_include_paths` headers or separately-compiled `.cpp` translation units.
 
-// to_string conversions (for f-string interpolation)
-roxy_string* roxy_i32_to_string(int32_t v);
-roxy_string* roxy_i64_to_string(int64_t v);
-roxy_string* roxy_f32_to_string(float v);
-roxy_string* roxy_f64_to_string(double v);
-roxy_string* roxy_bool_to_string(bool v);
-```
+### Generic Native Types in AOT
 
-### Lists
-
-```c
-roxy_list* roxy_list_new(int32_t capacity);
-int32_t roxy_list_len(roxy_list* list);
-int32_t roxy_list_cap(roxy_list* list);
-void roxy_list_push(roxy_list* list, uint64_t value);
-uint64_t roxy_list_pop(roxy_list* list);
-uint64_t roxy_list_get(roxy_list* list, int32_t index);
-void roxy_list_set(roxy_list* list, int32_t index, uint64_t value);
-```
-
-### Maps
-
-```c
-roxy_map* roxy_map_new(int32_t key_kind, int32_t capacity);
-int32_t roxy_map_len(roxy_map* map);
-void roxy_map_insert(roxy_map* map, uint64_t key, uint64_t value);
-uint64_t roxy_map_get(roxy_map* map, uint64_t key);
-bool roxy_map_contains(roxy_map* map, uint64_t key);
-bool roxy_map_remove(roxy_map* map, uint64_t key);
-void roxy_map_clear(roxy_map* map);
-roxy_list* roxy_map_keys(roxy_map* map);
-roxy_list* roxy_map_values(roxy_map* map);
-```
-
-### I/O
-
-```c
-void roxy_print(roxy_string* s);
-```
-
-### Runtime RAII Templates
-
-The runtime header provides C++ class templates for Roxy's reference types. These are used by the generated header's factory functions to give the embedder idiomatic C++ ownership semantics.
-
-#### `roxy::uniq<T>` — Unique Ownership
-
-Maps to Roxy's `uniq T`. Owns the allocation, calls the destructor and frees on scope exit. Move-only (no copy). Uses `roxy_get_ctx()` internally — no stored context pointer.
+`List<T>` / `Map<K,V>` are type-erased — every Roxy value is 64 bits, so one C implementation serves all element types. Call boundaries cast through `uint64_t` (a no-op on 64-bit platforms for integers):
 
 ```cpp
-// roxy_rt.h
-namespace roxy {
-
-typedef void (*destructor_fn)(void*);
-
-template<typename T>
-class uniq {
-    T* m_ptr;
-    destructor_fn m_destructor;
-
-public:
-    uniq(T* ptr, void (*dtor)(T*))
-        : m_ptr(ptr)
-        , m_destructor(reinterpret_cast<destructor_fn>(dtor)) {}
-
-    ~uniq() {
-        if (m_ptr) {
-            if (m_destructor) m_destructor(m_ptr);
-            roxy_free(m_ptr);
-        }
-    }
-
-    // Move semantics
-    uniq(uniq&& other) noexcept
-        : m_ptr(other.m_ptr), m_destructor(other.m_destructor) {
-        other.m_ptr = nullptr;
-    }
-    uniq& operator=(uniq&& other) noexcept {
-        if (this != &other) {
-            if (m_ptr) { if (m_destructor) m_destructor(m_ptr); roxy_free(m_ptr); }
-            m_ptr = other.m_ptr; m_destructor = other.m_destructor;
-            other.m_ptr = nullptr;
-        }
-        return *this;
-    }
-
-    // No copy
-    uniq(const uniq&) = delete;
-    uniq& operator=(const uniq&) = delete;
-
-    // Access
-    T* get() const { return m_ptr; }
-    T* operator->() const { return m_ptr; }
-    T& operator*() const { return *m_ptr; }
-    explicit operator bool() const { return m_ptr != nullptr; }
-
-    // Release ownership (caller takes responsibility)
-    T* release() { T* p = m_ptr; m_ptr = nullptr; return p; }
-};
-
-} // namespace roxy
+roxy_list* v0 = roxy_list_new(16);
+roxy_list_push(v0, (uint64_t)42);
+int32_t v1 = (int32_t)roxy_list_get(v0, 0);
 ```
 
-#### `roxy::ref<T>` — Shared Reference
+## Runtime Library (`roxy_rt.h`)
 
-Maps to Roxy's `ref T`. Ref-counted, copyable. The last copy to be destroyed frees the object. Uses `roxy_get_ctx()` internally.
+The runtime provides C implementations of everything needing allocation or complex logic — allocation, ref-counting, weak refs, strings, lists, maps (incl. struct keys with custom hash/eq), `to_string` conversions, and `print`. Allocating functions read `roxy_get_ctx()` internally, so the public API is context-free. See `rt/roxy_rt.h` for the full function list.
 
-```cpp
-// roxy_rt.h
-namespace roxy {
+### Memory Management
 
-template<typename T>
-class ref {
-    T* m_ptr;
+Allocation flows through `roxy_ctx.allocator`, a `roxy_allocator` vtable (`alloc` / `free` / `owns` / `userdata`). Two implementations live in `roxy_rt`:
 
-public:
-    explicit ref(T* ptr) : m_ptr(ptr) {
-        if (m_ptr) roxy_ref_inc(m_ptr);
-    }
+1. **Slab allocator** (`rt/slab_allocator.{hpp,cpp}`, moved out of `vm/` during runtime unification) — used by both VM and AOT. Freed slots stay mapped (zeroed) so stale weak refs reliably read "dead", and recycled slots get fresh random generations. AOT brings up a process-wide slab via `roxy_rt_init` / `roxy_rt_shutdown`; VM allocates a per-VM `SlabAllocator` and installs it via `make_slab_allocator_vtable(...)`.
+2. **Malloc allocator** (`roxy_malloc_allocator`) — defensive fallback when `roxy_get_ctx()` or `ctx->allocator` is null (e.g. static initializers before `roxy_rt_init`). Generations come from a thread-local xorshift64; weak-ref soundness is best-effort since libc may reuse addresses.
 
-    ~ref() {
-        if (m_ptr) roxy_ref_dec(m_ptr);
-    }
+`roxy_alloc(data_size, type_id)` writes the `roxy_object_header` with the allocator's generation and returns the data pointer. `roxy_free(data)` lets the active allocator tombstone `weak_generation` and reclaim the memory.
 
-    // Copy (increments ref count)
-    ref(const ref& other) : m_ptr(other.m_ptr) {
-        if (m_ptr) roxy_ref_inc(m_ptr);
-    }
-    ref& operator=(const ref& other) {
-        if (this != &other) {
-            if (m_ptr) roxy_ref_dec(m_ptr);
-            m_ptr = other.m_ptr;
-            if (m_ptr) roxy_ref_inc(m_ptr);
-        }
-        return *this;
-    }
+### C++ RAII Templates and Wrappers
 
-    // Move (no ref count change)
-    ref(ref&& other) noexcept : m_ptr(other.m_ptr) {
-        other.m_ptr = nullptr;
-    }
-    ref& operator=(ref&& other) noexcept {
-        if (this != &other) {
-            if (m_ptr) roxy_ref_dec(m_ptr);
-            m_ptr = other.m_ptr;
-            other.m_ptr = nullptr;
-        }
-        return *this;
-    }
+`roxy_rt.h` provides C++ templates that the generated header's factories hand to the embedder for idiomatic ownership (all use `roxy_get_ctx()` internally, no stored ctx pointer):
 
-    // Access
-    T* get() const { return m_ptr; }
-    T* operator->() const { return m_ptr; }
-    T& operator*() const { return *m_ptr; }
-};
+- **`roxy::uniq<T>`** — maps to `uniq T`; move-only, calls destructor + `roxy_free` on scope exit.
+- **`roxy::ref<T>`** — maps to `ref T`; ref-counted, copyable; last copy frees.
+- **`roxy::weak<T>`** — maps to `weak T`; non-owning, nullable; stores pointer + generation, `valid()`/`lock()` check liveness.
 
-} // namespace roxy
-```
-
-#### `roxy::weak<T>` — Weak Reference
-
-Maps to Roxy's `weak T`. Non-owning, nullable. Stores a pointer and a generation counter for dangling detection. Does not affect ref count or ownership.
-
-```cpp
-// roxy_rt.h
-namespace roxy {
-
-template<typename T>
-class weak {
-    T* m_ptr;
-    uint64_t m_generation;
-
-public:
-    weak() : m_ptr(nullptr), m_generation(0) {}
-
-    // Create from a live uniq or ref
-    explicit weak(T* ptr)
-        : m_ptr(ptr)
-        , m_generation(roxy_weak_generation(ptr)) {}
-
-    // Check if the referenced object is still alive
-    bool valid() const {
-        return m_ptr && roxy_weak_valid(m_ptr, m_generation);
-    }
-
-    // Access (asserts if dangling)
-    T* lock() const {
-        assert(valid() && "weak reference is dangling");
-        return m_ptr;
-    }
-
-    T* lock_or_null() const {
-        return valid() ? m_ptr : nullptr;
-    }
-
-    // Copyable (no ownership, no ref count)
-    weak(const weak&) = default;
-    weak& operator=(const weak&) = default;
-    weak(weak&&) = default;
-    weak& operator=(weak&&) = default;
-};
-
-} // namespace roxy
-```
-
-The generated header uses these templates in factory functions — see [Generated Header](#generated-header-scriptshpp) for examples.
-
-### Container and String Wrappers
-
-The runtime header also provides typed C++ wrappers for Roxy's built-in container and string types. These are thin non-owning facades over the type-erased C runtime functions (`roxy_string_*`, `roxy_list_*`, `roxy_map_*`).
-
-These are refactored from the existing VM binding wrappers (`rx::RoxyString`, `rx::RoxyList<T>`, `rx::RoxyMap<K, V>` in `include/roxy/vm/binding/`). The key change is replacing `RoxyVM*` with `roxy_ctx*` and calling the `roxy_rt` C functions instead of the VM-internal free functions. After the refactor, the VM binding wrappers become thin aliases to the `roxy::` versions.
-
-#### `roxy::String`
-
-```cpp
-// roxy_rt.h
-namespace roxy {
-
-class String {
-    void* m_data;
-
-public:
-    explicit String(void* data) : m_data(data) {}
-
-    // Factory (uses roxy_get_ctx() internally for allocation)
-    static String alloc(const char* data, uint32_t length) {
-        return String(roxy_string_from_literal(data, length));
-    }
-    static String alloc(const char* data) {
-        return alloc(data, (uint32_t)strlen(data));
-    }
-
-    // Access
-    uint32_t length() const { return roxy_string_len((roxy_string*)m_data); }
-    const char* c_str() const { return roxy_string_chars((roxy_string*)m_data); }
-
-    // Operations
-    bool equals(const String& other) const {
-        return roxy_string_eq((roxy_string*)m_data, (roxy_string*)other.m_data);
-    }
-    String concat(String other) const {
-        return String(roxy_string_concat((roxy_string*)m_data, (roxy_string*)other.m_data));
-    }
-
-    bool is_valid() const { return m_data != nullptr; }
-    void* data() const { return m_data; }
-};
-
-} // namespace roxy
-```
-
-#### `roxy::List<T>`
-
-```cpp
-// roxy_rt.h
-namespace roxy {
-
-template<typename T>
-class List {
-    void* m_data;
-
-public:
-    explicit List(void* data) : m_data(data) {}
-
-    // Factory
-    static List<T> alloc(int32_t capacity) {
-        return List<T>(roxy_list_new(capacity));
-    }
-
-    // Element access (bounds-checked)
-    T get(int32_t index) const {
-        return (T)roxy_list_get((roxy_list*)m_data, index);
-    }
-    void set(int32_t index, T value) {
-        roxy_list_set((roxy_list*)m_data, index, (uint64_t)value);
-    }
-
-    // Mutation
-    void push(T value) {
-        roxy_list_push((roxy_list*)m_data, (uint64_t)value);
-    }
-    T pop() {
-        return (T)roxy_list_pop((roxy_list*)m_data);
-    }
-
-    // Info
-    int32_t len() const { return roxy_list_len((roxy_list*)m_data); }
-    int32_t cap() const { return roxy_list_cap((roxy_list*)m_data); }
-
-    bool is_valid() const { return m_data != nullptr; }
-    void* data() const { return m_data; }
-};
-
-} // namespace roxy
-```
-
-#### `roxy::Map<K, V>`
-
-```cpp
-// roxy_rt.h
-namespace roxy {
-
-template<typename K, typename V>
-class Map {
-    void* m_data;
-
-public:
-    explicit Map(void* data) : m_data(data) {}
-
-    // Factory
-    static Map<K, V> alloc(int32_t key_kind, int32_t capacity = 0) {
-        return Map<K, V>(roxy_map_new(key_kind, capacity));
-    }
-
-    // Lookup
-    V get(K key) const {
-        return (V)roxy_map_get((roxy_map*)m_data, (uint64_t)key);
-    }
-    bool contains(K key) const {
-        return roxy_map_contains((roxy_map*)m_data, (uint64_t)key);
-    }
-
-    // Mutation
-    void insert(K key, V value) {
-        roxy_map_insert((roxy_map*)m_data, (uint64_t)key, (uint64_t)value);
-    }
-    bool remove(K key) {
-        return roxy_map_remove((roxy_map*)m_data, (uint64_t)key);
-    }
-    void clear() {
-        roxy_map_clear((roxy_map*)m_data);
-    }
-
-    // Bulk access
-    List<K> keys() const {
-        return List<K>(roxy_map_keys((roxy_map*)m_data));
-    }
-    List<V> values() const {
-        return List<V>(roxy_map_values((roxy_map*)m_data));
-    }
-
-    // Info
-    int32_t len() const { return roxy_map_len((roxy_map*)m_data); }
-
-    bool is_valid() const { return m_data != nullptr; }
-    void* data() const { return m_data; }
-};
-
-} // namespace roxy
-```
-
-#### Refactoring Plan
-
-The existing VM binding wrappers (`rx::RoxyString`, `rx::RoxyList<T>`, `rx::RoxyMap<K, V>`) are refactored in two steps:
-
-1. **Move to `roxy_rt.h`**: The wrapper logic moves to `roxy::String`, `roxy::List<T>`, `roxy::Map<K, V>` in the runtime header. These call the `roxy_rt` C functions and take `roxy_ctx*`.
-
-2. **VM binding aliases**: The existing `rx::RoxyString`, `rx::RoxyList<T>`, `rx::RoxyMap<K, V>` become thin aliases that forward to the `roxy::` versions. The `RoxyType<T>` specializations remain in the VM binding layer since they depend on `TypeCache`.
-
-```cpp
-// include/roxy/vm/binding/roxy_string.hpp (after refactor)
-namespace rx {
-    using RoxyString = roxy::String;
-    // RoxyType<RoxyString> specialization stays here
-}
-```
-
-This way existing embedder code using `rx::RoxyString` continues to work, while new code can use `roxy::String` directly. Both VM and AOT paths share the same wrapper implementations.
-
-### Memory Management Strategy
-
-Allocation flows through `roxy_ctx.allocator`, a vtable defined in `roxy_rt.h`:
-
-```c
-typedef struct roxy_allocator {
-    void* (*alloc)(void* userdata, uint32_t total_size, uint64_t* out_generation);
-    void  (*free)(void* userdata, void* header_ptr);
-    bool  (*owns)(void* userdata, void* ptr);
-    void* userdata;
-} roxy_allocator;
-```
-
-Two built-in implementations live in `roxy_rt`:
-
-1. **Slab allocator** (`include/roxy/rt/slab_allocator.hpp`, moved out of `vm/` during the runtime unification refactor). Used by both VM and AOT-compiled programs. Provides generation-based weak-ref soundness — freed slots stay mapped (zeroed) so stale weak refs reliably observe "dead", and slot recycle uses fresh random generations to avoid collision. AOT mode brings up a process-wide slab via `roxy_rt_init`/`roxy_rt_shutdown`; VM mode allocates a per-VM `SlabAllocator` and plugs it in via `make_slab_allocator_vtable(...)`.
-2. **Malloc allocator** (`roxy_malloc_allocator` in `roxy_rt.cpp`): defensive fallback when `roxy_get_ctx()` returns null or `ctx->allocator` is null (e.g. static initializers running before `roxy_rt_init`). Generations come from a thread-local xorshift64; weak-ref soundness is best-effort because libc may reuse freed addresses.
-
-`roxy_alloc(data_size, type_id)` writes the `roxy_object_header` itself with the generation produced by the allocator and returns the data pointer. `roxy_free(data)` looks up the active allocator, lets it tombstone `weak_generation` (slab does this by zeroing the slot; malloc does it explicitly), and reclaims memory.
+It also provides thin typed facades over the type-erased C container functions — **`roxy::String`**, **`roxy::List<T>`**, **`roxy::Map<K,V>`**. The VM bindings `rx::RoxyString` / `rx::RoxyList<T>` / `rx::RoxyMap<K,V>` are now `using` aliases of these, so VM and AOT share one wrapper implementation; the `RoxyType<T>` specializations stay in the VM binding layer (they depend on `TypeCache`). See `rt/roxy_rt.h`.
 
 ## Emitter Architecture
 
-### CEmitter Class
+`CEmitter(BumpAllocator&, const CEmitterConfig&)` exposes `emit_source()` and `emit_header()`. `CEmitterConfig` carries `native_include_paths`, `native_registry`, and an `emit_main_entry` toggle. Per-function state tracks `m_value_types`, the set of `StackAlloc` result values, and `m_pointer_values` (StackAlloc, struct/ref/uniq/out/inout params, and `GetFieldAddr` results) — the last decides whether `emit_field_access` uses `->` or `.`. See `compiler/c_emitter.hpp`.
+
+`emit_source()` produces one `.cpp` with: standard includes, native include paths, enum typedefs, struct forward declarations, dependency-sorted struct definitions, function forward declarations, then function bodies. `emit_header()` produces a `.hpp` with `pub` enums, `pub` structs (with inline method wrappers), `make_<T>` / `make_<T>__<ctor>` factories returning `roxy::uniq<T>`, and `pub` function declarations.
+
+### Generated Output
+
+The `.hpp` is what the embedder `#include`s. `pub` structs get inline method wrappers (zero overhead — same codegen as the free-function call) and heap-allocatable structs get RAII factories:
 
 ```cpp
-struct CEmitterConfig {
-    Vector<String> native_include_paths;  // Embedder headers to #include
-    bool emit_main_entry = true;          // Emit standalone main() entry point
-};
-
-class CEmitter {
-public:
-    CEmitter(BumpAllocator& alloc, const CEmitterConfig& config);
-
-    void emit_source(const IRModule* module, String& output);
-    void emit_header(const IRModule* module, String& output);
-
-private:
-    // Type emission
-    void emit_type(Type* type, String& out);
-    void emit_mangled_name(StringView name, String& out);  // $$ → __, $ → _
-
-    // Type definition emission
-    void emit_enum_typedefs(const IRModule* module, String& out);
-    void emit_struct_forward_declarations(const IRModule* module, String& out);
-    void emit_struct_typedefs(const IRModule* module, String& out);
-
-    // Function emission
-    void emit_function_prototype(const IRFunction* func, String& out);
-    void emit_function(const IRFunction* func, String& out);
-    void emit_block(const IRBlock* block, const IRFunction* func, String& out);
-    void emit_instruction(const IRInst* inst, String& out);
-    void emit_terminator(const IRBlock* block, const IRFunction* func, String& out);
-
-    // Block argument helpers
-    void emit_block_arg_declarations(const IRFunction* func, String& out);
-    void emit_block_arg_assignments(const JumpTarget& target, String& out);
-
-    // Value helpers
-    void emit_value(ValueId id, String& out);
-
-    // Per-function state helpers
-    Type* get_value_type(ValueId id);
-    bool is_stack_alloc_value(ValueId id);
-    bool is_pointer_value(ValueId id);
-    bool is_scalar_stack_alloc(ValueId id);
-
-    // Field access: emit v0->field or v0.field depending on pointer tracking
-    void emit_field_access(ValueId object, StringView field_name, String& out);
-
-    void collect_value_types(const IRFunction* func);
-    const IRFunction* find_function(StringView name);
-
-    // Configuration
-    CEmitterConfig m_config;
-    BumpAllocator& m_alloc;
-
-    // Module-level state (set during emit_source)
-    const IRModule* m_module = nullptr;
-
-    // Per-function state
-    tsl::robin_map<u32, Type*> m_value_types;         // ValueId.id -> Type*
-    tsl::robin_set<u32> m_stack_alloc_values;          // StackAlloc result ValueIds
-    tsl::robin_set<u32> m_pointer_values;              // Pointer values (StackAlloc, struct params, GetFieldAddr)
-};
-```
-
-The `m_pointer_values` set tracks which SSA values are struct pointers (from StackAlloc, struct params, ref/uniq params, out/inout params, and GetFieldAddr results). This determines whether `emit_field_access` uses `->` or `.` notation.
-
-### Output Structure
-
-`emit_source()` produces a single `.cpp` file with the following sections in order:
-
-1. Standard includes (`<stdint.h>`, `<stdbool.h>`, `<stdio.h>`, `<stdlib.h>`, `<string.h>`)
-2. Native include paths (from `CEmitterConfig`)
-3. Enum typedefs
-4. Struct forward declarations (`typedef struct Name Name;`)
-5. Struct definitions (dependency-sorted by field types)
-6. Function forward declarations (all functions)
-7. Function bodies
-
-`emit_header()` produces a `.hpp` public header (Phase 3+: pub structs, enums, pub function declarations).
-
-The CEmitter is designed to produce two files: a `.hpp` public header and a `.cpp` implementation.
-
-#### Generated Header (`scripts.hpp`)
-
-The header contains `pub` struct/enum types and `pub` function declarations. This is what the embedder `#include`s to call Roxy functions from C++.
-
-For `pub` structs with methods, the header emits inline C++ method wrappers so the embedder can use natural `obj.method(ctx, ...)` syntax instead of calling mangled free functions. For structs that can be heap-allocated via `uniq`/`ref`, the header also emits typed factory functions that return `roxy::uniq<T>` / `roxy::ref<T>` RAII wrappers (provided by `roxy_rt.h` — see [Runtime RAII Templates](#runtime-raii-templates)).
-
-```cpp
-/* Generated by Roxy C Backend */
+// scripts.hpp
 #pragma once
 #include "roxy_rt.h"
 
-/* Mangled function forward declarations (called by inline wrappers) */
-int32_t Point__sum(Point* self);
-int32_t Point__scaled(Point* self, int32_t factor);
-
-void Player__take_damage(Player* self, int32_t amount);
-bool Player__is_alive(Player* self);
+int32_t Point__sum(Point* self);            // mangled forward decl
 void Player__new(Player* self, roxy_string* name, int32_t health);
 void Player__delete(Player* self);
 
-/* Enum definitions */
-typedef enum { Color_Red = 0, Color_Green = 1, Color_Blue = 2 } Color;
-
-/* Struct definitions with C++ method wrappers */
-
 struct Point {
-    int32_t x;
-    int32_t y;
-
-    // Inline method wrappers (zero overhead — same codegen as calling free functions)
-    int32_t sum() { return Point__sum(this); }
-    int32_t scaled(int32_t factor) { return Point__scaled(this, factor); }
+    int32_t x; int32_t y;
+    int32_t sum() { return Point__sum(this); }   // inline wrapper
 };
 
-struct Player {
-    roxy_string* name;
-    int32_t health;
-
-    void take_damage(int32_t amount) { Player__take_damage(this, amount); }
-    bool is_alive() { return Player__is_alive(this); }
-};
-
-/* RAII factory functions for heap-allocated types */
-
-// For: var p: uniq Player = new Player("hero", 100);
 inline roxy::uniq<Player> make_Player(roxy_string* name, int32_t health) {
     Player* ptr = (Player*)roxy_alloc(sizeof(Player), TYPEID_Player);
     Player__new(ptr, name, health);
     return roxy::uniq<Player>(ptr, Player__delete);
 }
 
-/* Public free function declarations */
-int32_t calculate_score(Point* v0);
-void update_player(Player* v0, float v1);
 int32_t main_entry();
 ```
 
-The embedder uses this naturally from C++:
-
-```cpp
-#include "scripts.hpp"
-
-void game_tick() {
-    // Value-type struct — stack-allocated, method wrappers
-    Point p = {3, 4};
-    int32_t s = p.sum();
-    int32_t t = p.scaled(10);
-
-    // Heap-allocated with RAII — automatically freed at scope exit
-    auto player = make_Player(roxy_string_from_literal("hero", 4), 100);
-    player->take_damage(25);
-    if (player->is_alive()) { /* ... */ }
-    // ~roxy::uniq<Player> calls Player__delete + roxy_free automatically
-}
-```
-
-Only types and functions marked `pub` in the Roxy source appear in the header. Non-`pub` items are internal to the `.cpp`.
-
-#### Generated Source (`scripts.cpp`)
-
-```cpp
-/* Generated by Roxy C Backend */
-#include "scripts.hpp"
-
-/* Embedder native function headers (from CEmitterConfig::native_include_paths) */
-#include "engine/native_bindings.hpp"
-
-/* Native function declarations (from NativeRegistry) */
-extern int32_t my_add(int32_t a, int32_t b);
-extern int32_t point_product(Point* self);
-
-/* Internal (non-pub) function prototypes */
-static int32_t Point__sum(Point* self);
-static int32_t helper(int32_t v0);
-
-/* Function definitions */
-static int32_t Point__sum(Point* self) {
-    int32_t v1 = self->x;
-    int32_t v2 = self->y;
-    int32_t v3 = v1 + v2;
-    return v3;
-}
-
-int32_t calculate_score(Point* v0) {
-    // ... pub function — external linkage ...
-}
-
-// ... more function definitions ...
-
-/* Entry point (standalone binary mode, optional) */
-int main(int argc, char** argv) {
-    roxy_ctx ctx;
-    roxy_ctx_init(&ctx);
-    roxy_set_ctx(&ctx);
-    int32_t result = main_entry();
-    roxy_ctx_destroy(&ctx);
-    return result;
-}
-```
-
-The `.cpp` includes its own `.hpp` header (which brings in `roxy_rt.h` and the public type/function declarations), then adds the embedder's native headers and internal definitions. Functions without `pub` are emitted as `static`. No `roxy_ctx*` parameter is passed — the context is accessed via thread-local storage.
+Only `pub` types/functions appear in the header; everything else is `static` in the `.cpp`. The `.cpp` includes its own `.hpp`, then the embedder's native headers, then `extern` declarations for user natives, then `static` prototypes and all bodies. In standalone mode it ends with a `main()` that does `roxy_ctx_init` → `roxy_set_ctx` → `main_entry()` → `roxy_ctx_destroy`. The embedder uses the header naturally — `Point p = {3,4}; p.sum();`, `auto pl = make_Player(...); pl->take_damage(25);` — bracketing calls with `roxy::ScopedContext`.
 
 ## Build Integration
 
-### Game Engine Example
+A CMake `add_custom_command` runs the compiler (`--backend=c --output-dir=... --native-includes=...`) to emit `scripts.{hpp,cpp}` before the main build; the generated `.cpp` is compiled and linked alongside engine code against `roxy_rt`. `--native-includes` maps to `CEmitterConfig::native_include_paths`, telling the emitter which embedder headers to `#include`.
 
-A typical game engine project using Roxy with the C backend:
+## Phase 5: `#line` Directives
 
-```
-my_game/
-├── engine/
-│   ├── engine.hpp              # Game engine types
-│   ├── engine.cpp
-│   └── native_bindings.hpp     # Native function definitions (use roxy_get_ctx() for engine access)
-├── scripts/
-│   ├── player.roxy             # Roxy game scripts
-│   └── enemy.roxy
-├── generated/                  # Output from CEmitter (gitignored)
-│   ├── scripts.hpp             # Public API: pub structs + pub function declarations
-│   └── scripts.cpp             # Implementation: all function bodies
-└── CMakeLists.txt
-```
-
-**engine/native_bindings.hpp** — the embedder's native functions:
-
-```cpp
-#pragma once
-#include "engine.hpp"
-#include <roxy/rt/roxy_rt.h>
-
-struct Vec2 { float x; float y; };
-
-inline Vec2 get_position(Entity* entity) {
-    auto* engine = (GameEngine*)roxy_get_ctx()->user_data;
-    return engine->get_position(entity);
-}
-
-inline void apply_damage(Entity* target, int32_t amount) {
-    auto* engine = (GameEngine*)roxy_get_ctx()->user_data;
-    engine->damage(target, amount);
-}
-```
-
-**scripts/player.roxy**:
-
-```roxy
-pub struct Stats {
-    health: i32;
-    armor: i32;
-
-    pub fun effective_health(): i32 {
-        return self.health + self.armor * 2;
-    }
-}
-
-pub fun new Stats(health: i32, armor: i32) {
-    self.health = health;
-    self.armor = armor;
-}
-
-pub fun update_player(entity: ref Entity, dt: f32) {
-    var pos = get_position(entity);
-    if pos.x > 100.0 {
-        apply_damage(entity, 10);
-    }
-}
-```
-
-**generated/scripts.hpp** — generated by CEmitter:
-
-```cpp
-/* Generated by Roxy C Backend — do not edit */
-#pragma once
-#include "roxy_rt.h"
-
-/* Mangled function forward declarations */
-int32_t Stats__effective_health(Stats* self);
-void Stats__new(Stats* self, int32_t health, int32_t armor);
-
-/* Struct definitions with C++ method wrappers */
-struct Stats {
-    int32_t health;
-    int32_t armor;
-
-    int32_t effective_health() { return Stats__effective_health(this); }
-
-    // Constructor wrapper
-    static Stats create(int32_t health, int32_t armor) {
-        Stats self = {0};
-        Stats__new(&self, health, armor);
-        return self;
-    }
-};
-
-/* Public free function declarations */
-void update_player(Entity* v0, float v1);
-```
-
-**generated/scripts.cpp** — generated by CEmitter:
-
-```cpp
-/* Generated by Roxy C Backend — do not edit */
-#include "scripts.hpp"
-#include "engine/native_bindings.hpp"
-
-extern Vec2 get_position(Entity* entity);
-extern void apply_damage(Entity* target, int32_t amount);
-
-int32_t Stats__effective_health(Stats* self) {
-    int32_t v1 = self->health;
-    int32_t v2 = self->armor;
-    int32_t v3 = v2 * 2;
-    int32_t v4 = v1 + v3;
-    return v4;
-}
-
-void Stats__new(Stats* self, int32_t v1, int32_t v2) {
-    self->health = v1;
-    self->armor = v2;
-}
-
-void update_player(Entity* v0, float v1) {
-    Vec2 v2_struct = {0}; Vec2* v2 = &v2_struct;
-    v2_struct = get_position(v0);
-    float v3 = v2->x;
-    bool v4 = (v3 > 100.0f);
-    if (v4) goto then_0; else goto end_0;
-then_0:
-    apply_damage(v0, 10);
-end_0:;
-}
-```
-
-**engine/engine.cpp** — the embedder uses the generated header with natural C++ syntax:
-
-```cpp
-#include "engine.hpp"
-#include "generated/scripts.hpp"  // just #include — no manual extern declarations
-
-void GameEngine::tick(float dt) {
-    // Set up the thread-local context (typically done once at engine startup)
-    roxy::ScopedContext guard(&m_roxy_ctx);
-
-    // Value-type struct with method wrappers — no ctx needed!
-    auto stats = Stats::create(100, 30);
-    int32_t ehp = stats.effective_health();  // natural C++ method call
-
-    for (auto* entity : m_entities) {
-        update_player(entity, dt);  // direct C++ call
-    }
-}
-```
-
-### CMake Integration
-
-The Roxy compiler runs as a custom command before the main build:
-
-```cmake
-# Build step 1: Roxy source → generated .hpp/.cpp
-add_custom_command(
-    OUTPUT ${CMAKE_BINARY_DIR}/generated/scripts.hpp
-           ${CMAKE_BINARY_DIR}/generated/scripts.cpp
-    COMMAND roxy_compiler
-        --backend=c
-        --output-dir=${CMAKE_BINARY_DIR}/generated
-        --native-includes="engine/native_bindings.hpp"
-        scripts/player.roxy scripts/enemy.roxy
-    DEPENDS scripts/player.roxy scripts/enemy.roxy
-    COMMENT "Compiling Roxy scripts to C++"
-)
-
-# Build step 2: compile everything together
-add_executable(my_game
-    engine/engine.cpp
-    ${CMAKE_BINARY_DIR}/generated/scripts.cpp
-)
-target_link_libraries(my_game roxy_rt)
-target_include_directories(my_game PRIVATE ${CMAKE_BINARY_DIR}/generated)
-```
-
-The `--native-includes` flag maps to `CEmitterConfig::native_include_paths`, telling the emitter which headers to `#include` in the generated `.cpp` for native function access.
-
-## Implementation Phases
-
-### Phase 1: Scaffold + Primitives ✓
-
-- [x] Create `include/roxy/compiler/c_emitter.hpp` and `src/roxy/compiler/c_emitter.cpp`
-- [x] Implement `CEmitterConfig` (native include paths, emit main entry toggle)
-- [x] Implement `emit_source()` — emit `.cpp` with includes, all function bodies
-- [x] Emit C type names for all primitive `TypeKind` variants
-- [x] Emit constants: `ConstInt`, `ConstBool`, `ConstF`, `ConstD`, `ConstNull`
-- [x] Emit arithmetic operations: `AddI`, `SubI`, `MulI`, `DivI`, `ModI`, `NegI`, and f32/f64 variants
-- [x] Emit comparison operations: `EqI`, `NeI`, `LtI`, `LeI`, `GtI`, `GeI`, and f32/f64 variants
-- [x] Emit logical/bitwise: `Not`, `And`, `Or`, `BitAnd`, `BitOr`, `BitXor`, `BitNot`, `Shl`, `Shr`
-- [x] Emit type conversions: `I_TO_F64`, `F64_TO_I`, `I_TO_B`, `B_TO_I`, `Cast`
-- [x] Emit `Copy` instruction
-- [x] Emit control flow: `Goto` → `goto`, `Branch` → `if-goto-else`, `Return` → `return`
-- [x] Emit block arguments as local variables with assignment before `goto`
-- [x] Emit function calls: `Call` → direct call, `CallExternal` → cross-module call
-- [x] Emit `main` function as `int main(void)` when `emit_main_entry` is true
-- [x] Add E2E tests: compile Roxy → C++ → c++ → run → check exit code (12 tests)
-
-### Phase 2: Structs, Enums, and Pointer Operations ✓
-
-- [x] Add `struct_types` / `enum_types` vectors to `IRModule`, populated by `IRBuilder::build()`
-- [x] Emit `typedef enum` for all enum types (with variant values from AST)
-- [x] Emit `typedef struct` forward declarations for all struct types
-- [x] Emit struct definitions sorted by dependency order (Kahn's algorithm topological sort)
-- [x] Handle tagged unions → C struct with anonymous `union` member
-- [x] Handle `StackAlloc` → backing storage + pointer (two declarations, `memset` zero-init)
-- [x] Handle `GetField`/`SetField` → `ptr->field` or `ptr.field` (pointer tracking)
-- [x] Handle scalar `GetField`/`SetField` on non-struct StackAlloc → `*ptr` dereference
-- [x] Handle `GetFieldAddr` → `&ptr->field` (result tracked as pointer value)
-- [x] Handle `StructCopy` → `memcpy`
-- [x] Handle struct function parameters → always emitted as pointers
-- [x] Handle struct inheritance → explicit C cast for child-to-parent pointer args
-- [x] Handle large struct returns via hidden output pointer (void return, skip call-site assignment)
-- [x] Handle `LoadPtr`/`StorePtr` for out/inout parameter reads/writes
-- [x] Handle `VarAddr` → `&v_struct` for StackAlloc values, `&v` for others
-- [x] Handle `Cast` → C-style cast `(TargetType)source`
-- [x] Handle `Nullify` → `memset` for struct backing, `= 0` for scalars
-- [x] Handle enum-typed `ConstInt` → explicit cast `(EnumType)N`
-- [x] Handle struct return values → dereference StackAlloc pointer in `return *v`
-- [x] E2E tests for structs, enums, tagged unions, out/inout, large struct return, cast (15 tests)
-- [x] Emit inline C++ method wrappers on pub structs in `.hpp` header (Phase 3)
-- [x] Emit `make_<T>` / `make_<T>__<ctor>` RAII factory functions returning `roxy::uniq<T>` (Phase 3 — superseded the static `create()` wrapper sketch with a heap-allocating factory better matched to embedder use)
-
-### Phase 3: Runtime Library ✓
-
-- [x] Create `roxy_rt.h` and `roxy_rt.cpp`
-- [x] Implement `roxy_alloc`/`roxy_free` (malloc-based with `ObjectHeader`)
-- [x] Implement `roxy_ref_inc`/`roxy_ref_dec`
-- [x] Implement `roxy_weak_create`/`roxy_weak_valid`/`roxy_weak_generation`
-- [x] Implement `roxy::uniq<T>` template (move-only, destructor + free on scope exit)
-- [x] Implement `roxy::ref<T>` template (ref-counted, copyable)
-- [x] Implement `roxy::weak<T>` template (non-owning, generation-checked validity)
-- [x] Implement `roxy::String` wrapper (thin facade over `roxy_string_*` C functions)
-- [x] Implement `roxy::List<T>` wrapper (`sizeof(T)`-derived `element_slot_count`, byte-pointer push/get/set)
-- [x] Implement `roxy::Map<K, V>` wrapper (caller-supplied `key_kind` + optional `hash_fn`/`eq_fn`)
-- [x] Implement string C functions (`roxy_string_from_literal`, `roxy_string_concat`, `roxy_string_eq`, etc.)
-- [x] Implement `to_string` conversions for primitives
-- [x] Implement list C functions (variable-sized: `roxy_list_alloc`/`init`/`push`/`pop`/`get`/`set`/`copy`/`delete`)
-- [x] Implement map C functions including struct-key variants (`roxy_map_alloc`/`init`/`insert`/`get`/`contains`/`remove`/`clear`/`keys`/`values`/`copy`/iteration)
-- [x] Implement print functions
-- [x] Handle `New`/`Delete` IR ops → `roxy_alloc`/`roxy_free` + constructor/destructor calls
-- [x] Handle `RefInc`/`RefDec`/`WeakCheck` IR ops
-- [x] Handle `ConstString` → `roxy_string_from_literal`
-- [x] Handle `CallNative` → dispatch to runtime functions
-- [x] Add `is_pub` to `IRFunction` (populated from `FunDecl`/`MethodDecl`/`ConstructorDecl`/`DestructorDecl::is_pub`; synthesized default ctors/dtors inherit visibility from their struct decl)
-- [x] Implement `emit_header()`: pub enum typedefs, pub struct forward declarations, pub struct definitions with inline C++ method wrappers (pub methods only), pub function prototypes, `make_<T>` / `make_<T>__<ctor>` factories returning `roxy::uniq<T>`
-- [x] E2E tests for strings, lists, heap allocation, ref counting, header emission
-
-**Deferred to Phase 4:** Refactoring `rx::RoxyString` / `rx::RoxyList<T>` / `rx::RoxyMap<K, V>` to alias `roxy::String` / `roxy::List<T>` / `roxy::Map<K, V>`. The existing VM bindings take `RoxyVM*` for allocation; the AOT wrappers don't (they call the context-free `roxy_rt` C functions directly). A clean alias requires Phase 4's `roxy_ctx` so allocation is uniformly TLS-driven across both modes.
-
-### Phase 4: Native Function Integration
-
-**Step 1–3 landed:** runtime context plumbing and AOT entry. The interpreter
-calls `roxy::ScopedContext(&vm->ctx)` on every public entry, and AOT-generated
-binaries do the same in their wrapper `main()`. Native runtime functions can
-already use `roxy_get_ctx()` regardless of which path invoked them.
-
-- [x] Define `roxy_ctx` struct in `roxy_rt.h` (`allocator` / `exception_state` / `user_data` placeholders)
-- [x] Implement thread-local `roxy_set_ctx`/`roxy_get_ctx` in runtime library
-- [x] Implement `roxy::ScopedContext` RAII guard
-- [x] Implement `roxy_ctx_init`/`roxy_ctx_destroy` in runtime library
-- [x] Add `roxy_ctx ctx` as first member of `RoxyVM`
-- [x] Activate the VM's context on entry: `vm_call_index` brackets `interpret(vm)` with a `roxy::ScopedContext`
-- [x] Emit standalone `main()` entry point: user's `fun main` is renamed to `main_entry()` and the generated wrapper `int main(int argc, char** argv)` calls `roxy_ctx_init` / `roxy_set_ctx` before forwarding and `roxy_ctx_destroy` after
-- [x] Unit tests for the ctx API (`tests/unit/test_runtime_ctx.cpp`) and source-structure tests for the AOT wrapper (`E2E - C Backend AOT: …` in `tests/e2e/test_c_backend.cpp`)
-- [x] **Runtime unification refactor** (12 commits, see Files table below). Moved slab + vmem to `roxy_rt`; collapsed `ObjectHeader`/`StringHeader`/`ListHeader`/`MapHeader` to one definition; `roxy_alloc` dispatches through `roxy_ctx.allocator` (slab in both modes); string intern table moved into ctx; `vm/string.cpp`/`list.cpp`/`map.cpp` are thin shims over `roxy_rt`'s implementations; VM-mode struct-key Hash/Eq routes through a thread-local trampoline (`vm/map_dispatch.cpp`); `rx::RoxyString` / `rx::RoxyList<T>` / `rx::RoxyMap<K, V>` are now `using` aliases of `roxy::String` / `roxy::List<T>` / `roxy::Map<K, V>`.
-- [x] Refactor `rx::RoxyString` / `rx::RoxyList<T>` / `rx::RoxyMap<K, V>` to alias `roxy::String` / `roxy::List<T>` / `roxy::Map<K, V>` (landed as part of the runtime unification above)
-- [x] Update `FunctionBinder` to drop `RoxyVM*` from native function signatures. Embedder native functions are now plain `Ret(Args...)`; ones that need runtime state call `roxy_get_ctx()` directly. `bind<>` and `bind_method<>` updated to match (no static_assert demanding `RoxyVM*` first; resolver helpers reorganized).
-- [x] Drop `hash_fn_index`/`eq_fn_index` from `MapHeader`. Moved to a per-VM side-table (`tsl::robin_map<void*, MapDispatchInfo>` on `RoxyVM`); `MapDispatchScope` looks them up there. The map type's destructor unregisters the entry on free so a recycled slab slot can't inherit stale dispatch indices.
-- [x] Migrate `object_alloc`/`object_free` to route through `vm->slab_vtable` (the `roxy_allocator` adapter) instead of calling `vm->allocator->alloc/free` directly. Same slab, same behaviour — but VM allocations now share the same code path AOT-compiled programs use.
-- [x] CEmitter NativeRegistry dispatch: when `emit_native_call`'s static-table lookup misses, consult `CEmitterConfig::native_registry`; hits emit a typed direct call to the user's C++ function (assumed declared via `native_include_paths`). Test infra `compile_and_run_cpp_with_registry` writes an inline native-header to a temp file and links it with the generated source. Two E2E tests verify a user-bound `my_aot_add(40, 2)` returns 42 from an AOT binary.
-- [x] Store AOT function-pointer/symbol metadata in `NativeRegistry` entries: `NativeFunctionEntry::aot_symbol_name` carries the C++ symbol name (defaults to the registered Roxy name; `bind<FnPtr>(roxy_name, aot_symbol)` lets them diverge).
-- [x] Add `bind_native(vm_fn, sig, aot_symbol)` overload for dual VM/AOT registration — VM-side wrapper and AOT-side typed function can have different C++ symbols.
-- [x] Emit `extern` declarations for user-registered native functions: `CEmitter::collect_extern_native_decls` pre-scans IR for `CallNative` ops; `emit_extern_native_decls` writes `extern Ret name(Args...);` lines in the source preamble. AOT binaries link against either inline-defined `native_include_paths` headers or separately-compiled `.cpp` translation units.
-- [x] Cross-module calls (`CallExternal`) → emit as `module__func(args...)`; resolved at C-compile time across the bundled module set (handled in `c_emitter.cpp` since Phase 1)
-
-### Phase 5: Polish
-
-- [x] Emit `#line` directives mapping back to Roxy source. Both function-level AND statement-level granularity: `IRFunction::source_line` is populated from each AST decl's `body->loc.line` for the function-body header; `IRInst::source_line` is populated by `IRBuilder::emit_inst` from `m_current_source_line` (set at each `gen_stmt`/`gen_decl` boundary). The C emitter writes `#line N "<source_path>"` at function entry and again at every statement-line transition within the body, with deduplication so consecutive insts on the same source line don't repeat the directive.
-- _(skipped — not pursued)_ Dead code elimination of unreachable blocks: the C compiler's optimizer already discards unreachable code; Roxy-side DCE would only shrink the emitted source, not the binary.
-- _(skipped — not pursued)_ Structured control flow reconstruction (Relooper/Stackifier): goto-based output is portable and the C compiler's optimizer handles it identically; readability is the only gain.
-- _(skipped — not pursued)_ Emit `switch` for large enum `when` statements: same reasoning — the C compiler's switch optimizer turns long `if/else` chains into the same code.
-- _(skipped — not pursued)_ Readable variable names: `v0`, `v1` is fine for generated code. Debugger users care about Roxy source lines (covered by `#line`), not generated identifiers.
-
-## Testing Strategy
-
-C backend tests use `compile_and_run_cpp()` which runs the full pipeline: Roxy source → semantic analysis → IR builder → CEmitter → write `.cpp` to temp file → compile with `c++` → run binary → check exit code.
-
-```cpp
-// In tests/e2e/test_c_backend.cpp
-TEST_CASE("E2E - C Backend: Integer arithmetic") {
-    const char* source = R"(
-        fun main(): i32 {
-            var x: i32 = 10;
-            var y: i32 = 20;
-            return x + y;
-        }
-    )";
-    CBackendResult result = compile_and_run_cpp(source);
-    CHECK(result.compile_success);
-    CHECK(result.run_success);
-    CHECK(result.exit_code == 30);
-}
-```
-
-Helper functions (in `tests/e2e/test_helpers.hpp`):
-- `compile_to_cpp(source, debug)` — runs Roxy frontend + IR builder + CEmitter, returns C++ source string
-- `compile_and_run_cpp(source, debug)` — calls `compile_to_cpp`, writes to temp file, compiles with `c++ -std=c++17`, runs binary, returns `CBackendResult` with exit code + stdout
-
-Pass `debug=true` to print the IR and generated C++ source for debugging.
-
-Current test count: 78 C-backend E2E tests (12 Phase 1 + 15 Phase 2 + 31 Phase 3 + 2 Phase 4 step-3 tests covering the AOT main wrapper + 5 Phase 4 step-4 tests covering AOT NativeRegistry dispatch, AOT symbol override, and cross-TU linkage against extern decls + 5 Phase 5 tests covering function-level + statement-level `#line` directive emission and deduplication), plus 5 unit tests for the runtime context API in `tests/unit/test_runtime_ctx.cpp`.
-
-## Name Mangling in C
-
-The `$$` separator used internally is not valid in C identifiers. The emitter translates:
-
-| Roxy Mangled Name | C Identifier |
-|-------------------|--------------|
-| `Point$$sum` | `Point__sum` |
-| `Point$$new` | `Point__new` |
-| `Point$$new$$from_coords` | `Point__new__from_coords` |
-| `identity$i32` | `identity_i32` |
-| `Box$i32` | `Box_i32` |
-| `Pair$i32$f64` | `Pair_i32_f64` |
-
-Rule: `$$` → `__`, `$` → `_`.
+The emitter attributes generated body lines back to Roxy source at both function and statement granularity. `IRFunction::source_line` (from each AST decl's `body->loc.line`) seeds a `#line N "<source_path>"` at function entry; `IRInst::source_line` (set by `IRBuilder::emit_inst` from `m_current_source_line`, updated at each `gen_stmt`/`gen_decl` boundary) re-emits the directive at every statement-line transition, deduplicated so consecutive insts on one source line don't repeat it. This gives gdb/lldb users Roxy-source line mapping.
 
 ## Comparison with Bytecode Path
 
 | Aspect | Bytecode + VM | C Backend |
 |--------|---------------|-----------|
-| Startup time | Fast (no compilation) | Slow (requires C++ compiler) |
-| Runtime performance | Slower (interpreter overhead) | Fast (native code) |
-| Portability | Anywhere VM runs | Anywhere a C++ compiler exists |
-| Debugging | VM debugger | gdb/lldb with `#line` directives |
-| Binary size | Small (VM + bytecode) | Larger (full native binary) |
-| Hot reload | Possible (reload bytecode) | Requires recompilation |
+| Startup | Fast (no compilation) | Slow (needs C++ compiler) |
+| Runtime perf | Slower (interpreter) | Fast (native) |
+| Portability | Anywhere the VM runs | Anywhere a C++ compiler exists |
+| Debugging | VM debugger | gdb/lldb with `#line` |
+| Hot reload | Reload bytecode | Requires recompilation |
 
 The two paths complement each other: interpreter for development, C backend for shipping.
 
+## Testing
+
+`compile_and_run_cpp(source)` runs the full pipeline (Roxy → IR → CEmitter → temp `.cpp` → `c++ -std=c++17` → run → check exit code + stdout). `compile_to_cpp` returns the C++ string; `compile_and_run_cpp_with_registry` links an inline native header for AOT NativeRegistry tests; pass `debug=true` to dump IR and generated source. Because these invoke the system compiler, the suite must run outside the sandbox.
+
 ## Files
 
-| File | Purpose | Status |
-|------|---------|--------|
-| `include/roxy/compiler/c_emitter.hpp` | CEmitter + CEmitterConfig class declarations | Implemented |
-| `src/roxy/compiler/c_emitter.cpp` | C emission implementation (`emit_header`, `emit_source`) | Implemented |
-| `include/roxy/compiler/ssa_ir.hpp` | `IRModule::struct_types` / `enum_types` for type emission | Implemented |
-| `src/roxy/compiler/ir_builder.cpp` | Populates `struct_types` / `enum_types` in `build()` | Implemented |
-| `tests/e2e/test_c_backend.cpp` | E2E tests (70 tests, including AOT main wrapper + AOT NativeRegistry dispatch) | Implemented |
-| `tests/unit/test_runtime_ctx.cpp` | Unit tests for `roxy_ctx_init`/`roxy_set_ctx`/`roxy_get_ctx`/`ScopedContext` + allocator defaulting | Implemented |
-| `include/roxy/rt/slab_allocator.hpp` | Slab allocator + `make_slab_allocator_vtable` adapter (moved from `vm/`) | Implemented |
-| `src/roxy/rt/slab_allocator.cpp` | Slab allocator impl + vtable factory | Implemented |
-| `include/roxy/rt/vmem.hpp` | Virtual memory ops (moved from `vm/`) | Implemented |
-| `src/roxy/rt/vmem_unix.cpp`, `src/roxy/rt/vmem_win32.cpp` | Platform vmem impls | Implemented |
-| `include/roxy/rt/string_intern.hpp` | `StringInternTable` definition | Implemented |
-| `src/roxy/rt/string_intern.cpp` | C-callable `roxy_string_intern_lookup`/`_insert` | Implemented |
-| `include/roxy/vm/map_dispatch.hpp` | `MapDispatchFrame` + `MapDispatchInfo` + trampoline-getter + side-table API | Implemented |
-| `src/roxy/vm/map_dispatch.cpp` | Thread-local dispatch stack + `vm_hash_trampoline`/`vm_eq_trampoline` + per-VM side-table impls | Implemented |
-| `tests/e2e/test_helpers.hpp` | `compile_to_cpp()`, `compile_to_hpp()`, `compile_and_run_cpp()`, `compile_and_run_cpp_with_registry()`, `header_compiles()` helpers | Implemented |
-| `include/roxy/rt/roxy_rt.h` | C runtime library header + C++ RAII templates / container wrappers | Implemented |
-| `src/roxy/rt/roxy_rt.cpp` | C runtime library implementation | Implemented |
-| *(generated)* `<name>.hpp` | Public API header: pub structs, enums, inline method wrappers, `make_<T>` factories, pub function declarations | Implemented |
-| *(generated)* `<name>.cpp` | Implementation: includes, native decls, all function bodies | Implemented |
-
-## Dependencies
-
-The C backend uses all existing frontend components:
-- Lexer, Parser, Semantic Analysis, IR Builder (all implemented)
-- `IRModule` with `struct_types` / `enum_types` populated by `IRBuilder::build()`
-- `BumpAllocator` for string storage during emission
-- For Phase 3+: `NativeRegistry` — the CEmitter will read registered native function entries to emit declarations and direct calls
-- For Phase 4+: Changes to existing code: `RoxyVM` gains a `roxy_ctx` first member; interpreter calls `roxy_set_ctx(&vm->ctx)` on entry; `FunctionBinder` no longer passes `vm`/`ctx` to native functions (they use `roxy_get_ctx()` if needed); native function signatures drop the `RoxyVM*`/`roxy_ctx*` first parameter
+| File | Purpose |
+|------|---------|
+| `include/roxy/compiler/c_emitter.hpp` | `CEmitter` + `CEmitterConfig` declarations |
+| `src/roxy/compiler/c_emitter.cpp` | C/header emission (`emit_source`, `emit_header`, native-call/extern-decl logic) |
+| `include/roxy/compiler/ssa_ir.hpp` | `IRModule::struct_types` / `enum_types`, `IRFunction/IRInst::source_line` |
+| `src/roxy/compiler/ir_builder.cpp` | Populates `struct_types` / `enum_types`; per-inst `source_line` |
+| `include/roxy/rt/roxy_rt.h` | C runtime header + C++ RAII templates / container wrappers |
+| `src/roxy/rt/roxy_rt.cpp` | C runtime implementation |
+| `include/roxy/rt/slab_allocator.{hpp}`, `src/roxy/rt/slab_allocator.cpp` | Slab allocator + `make_slab_allocator_vtable` (moved from `vm/`) |
+| `include/roxy/rt/vmem.hpp`, `src/roxy/rt/vmem_{unix,win32}.cpp` | Virtual memory ops |
+| `include/roxy/rt/string_intern.{hpp}`, `src/roxy/rt/string_intern.cpp` | Intern table + C-callable lookup/insert |
+| `include/roxy/vm/map_dispatch.{hpp}`, `src/roxy/vm/map_dispatch.cpp` | VM Hash/Eq trampolines + per-VM dispatch side-table |
+| `include/roxy/vm/binding/binder.hpp`, `registry.hpp` | `bind<>` / `bind_native` overloads, `aot_symbol_name` metadata |
+| `tests/e2e/test_c_backend.cpp` | E2E tests |
+| `tests/unit/test_runtime_ctx.cpp` | `roxy_ctx` / `ScopedContext` unit tests |
+| `tests/e2e/test_helpers.hpp` | `compile_to_cpp` / `compile_and_run_cpp[_with_registry]` / `header_compiles` helpers |

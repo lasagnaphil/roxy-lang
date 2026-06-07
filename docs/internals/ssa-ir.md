@@ -1,6 +1,6 @@
 # SSA IR
 
-Roxy uses SSA (Static Single Assignment) IR with block arguments instead of phi nodes.
+Roxy uses SSA (Static Single Assignment) IR with block arguments instead of phi nodes. The IR builder converts the AST into this form; lowering translates it to register-based bytecode (see `bytecode.md`).
 
 ## Block Arguments vs Phi Nodes
 
@@ -11,7 +11,7 @@ loop:
     i = phi [1, entry], [i2, body]
 ```
 
-Roxy uses block arguments instead:
+Roxy uses block arguments instead — successor values are passed at the jump site, and blocks declare parameters:
 ```
 entry:
     goto loop(0, 1)              // initial values
@@ -29,14 +29,13 @@ exit(result):
     return result
 ```
 
-**Rationale:** Cleaner dataflow representation, easier lowering to bytecode.
+This gives a cleaner dataflow representation that lowers directly to bytecode: block arguments become MOVs at jump sites, with no phi resolution pass.
 
 ## IR Structure
 
-```cpp
-struct ValueId { u32 id; };
-struct BlockId { u32 id; };
+An `IRModule` holds `IRFunction`s; each function has block parameters, a return type, and a list of `IRBlock`s. A block has parameters, a list of `IRInst*`, and a terminator. Each `IRInst` carries an op, a result `ValueId`, a `Type*`, and a union of op-specific operand data (`ConstData`, `BinaryData`, `CallData`, `FieldData`, etc.). Definitions are in `ssa_ir.hpp`.
 
+```cpp
 enum class IROp : u8 {
     // Constants (6)
     ConstNull, ConstBool, ConstInt, ConstF, ConstD, ConstString,
@@ -108,70 +107,11 @@ enum class IROp : u8 {
     Yield,
 };
 // Total: 80 IR operations
-
-struct IRInst {
-    IROp op;
-    ValueId result;
-    Type* type;
-    
-    union {
-        ConstData const_data;
-        BinaryData binary;
-        UnaryData unary;
-        CallData call;
-        FieldData field;
-        IndexData index;
-        StackAllocData stack_alloc;
-        // ...
-    };
-};
-
-struct IRBlock {
-    BlockId id;
-    Vector<BlockParam> params;      // Block arguments
-    Vector<IRInst*> instructions;
-    Terminator terminator;
-};
-
-struct IRFunction {
-    StringView name;
-    Vector<BlockParam> params;      // Function parameters
-    Type* return_type;
-    Vector<IRBlock*> blocks;
-    u32 next_value_id;
-};
 ```
 
 ## Terminators
 
-Each block ends with a terminator:
-
-```cpp
-enum class TerminatorKind {
-    None,       // Block not yet terminated
-    Goto,       // Unconditional jump
-    Branch,     // Conditional jump
-    Return,     // Function return
-};
-
-struct Terminator {
-    TerminatorKind kind;
-    
-    // For Goto
-    BlockId target;
-    Vector<BlockArgPair> args;
-    
-    // For Branch
-    ValueId condition;
-    BlockId then_block;
-    BlockId else_block;
-    Vector<BlockArgPair> then_args;
-    Vector<BlockArgPair> else_args;
-    
-    // For Return
-    ValueId return_value;
-};
-```
+Each block ends with a `Terminator` of one of four kinds: `None` (not yet terminated), `Goto` (unconditional jump with block-argument pairs), `Branch` (condition value plus then/else targets, each with its own argument pairs), and `Return` (return value). See `ssa_ir.hpp`.
 
 ## Lowering to Bytecode
 
@@ -196,83 +136,31 @@ exit:
     RET
 ```
 
-## BytecodeBuilder
+`BytecodeBuilder` (`lowering.hpp`) drives this. Key decisions:
 
-```cpp
-class BytecodeBuilder {
-public:
-    BCModule* build(IRModule* ir_module);
-    BCFunction* build_function(IRFunction* ir_func);
-
-private:
-    // Register allocation: ValueId -> register number
-    u8 allocate_register(ValueId value);
-    u8 get_register(ValueId value);
-
-    // Register spilling (when >255 simultaneously-live values)
-    void spill_furthest();
-    u8 get_result_register(ValueId value);
-    u8 ensure_in_register(ValueId value, u8 scratch_index);
-    void spill_if_needed(ValueId value, u8 reg);
-
-    // Liveness analysis
-    void compute_liveness(IRFunction* ir_func);
-    void expire_before(u32 current_point);
-
-    // Constant pool management
-    u16 add_constant(const BCConstant& c);
-
-    // Block lowering
-    void lower_instruction(IRInst* inst);
-    void lower_terminator(IRBlock* block);
-
-    // Block argument handling
-    void emit_block_args(const JumpTarget& target);
-
-    // Two-pass jump resolution
-    void patch_jumps();
-};
-```
-
-Key lowering decisions:
-- **Two-pass emission**: First pass records block offsets, second pass patches jump targets
-- **Constant pool**: Values that don't fit in 16-bit immediate go to constant pool
-- **Block arguments**: Lowered to MOV instructions before each jump
+- **Two-pass emission** — the first pass records block offsets, the second patches jump targets.
+- **Constant pool** — values that don't fit in a 16-bit immediate are emitted from the constant pool.
+- **Block arguments** — lowered to MOVs before each jump.
 
 ### Register Allocation
 
-The register file uses 8-bit indices (0–254, with 0xFF as sentinel), giving a hard cap of 255 registers per function. The allocator uses liveness-based allocation with register reuse:
+The register file uses 8-bit indices (0–254, with 0xFF as a sentinel), a hard cap of 255 registers per function. Allocation is liveness-based with free-list reuse:
 
-1. **Liveness analysis** (`compute_liveness`): Computes def/last-use intervals for all SSA values over a linear program-point numbering. Five passes handle definition points, operand uses, block-param extensions for parallel assignment safety, loop back-edge extensions (fixed-point iteration for nested loops), and same-block classification.
-
-2. **Free-list allocation** (`allocate_register`): Values whose def and last-use are within the same block can reuse freed registers from a free list. Cross-block values (including block params) always get fresh registers to preserve zero-initialization semantics for partially-defined values (e.g., AND/OR short-circuit patterns).
-
-3. **Active set expiry** (`expire_before`): Before each allocation point, values whose last-use has passed are expired and their registers returned to the free list, sorted by last-use ascending.
-
-4. **Pre-colored parameters**: Function parameters are assigned to registers R0, R1, ... before the main allocation loop. Call results use bump allocation to guarantee contiguous register blocks for the calling convention.
+- **Liveness** computes def/last-use intervals over a linear program-point numbering, with extra passes for block-param extension (parallel-assignment safety), loop back-edge extension (fixed-point for nested loops), and same-block classification.
+- **Free-list reuse** lets values whose def and last-use lie within one block reclaim freed registers; cross-block values and block params always get fresh registers to preserve zero-initialization for partially-defined values (e.g. AND/OR short-circuit).
+- **Expiry** returns registers of passed last-uses to the free list before each allocation point. Function parameters are pre-colored to R0, R1, …, and call results use bump allocation to keep argument blocks contiguous for the calling convention.
 
 ### Register Spilling
 
-When register pressure exceeds 255, spilling evicts long-lived values to the local stack using a furthest-first eviction strategy:
-
-1. **Trigger**: When `allocate_register()` finds both the bump pointer at the limit and the free list empty, it calls `spill_furthest()`.
-
-2. **Scratch register setup** (first spill only): Two dedicated scratch registers are permanently reserved by evicting the two values with the furthest `last_use_point` from the active set. These scratch registers handle all subsequent reload/spill operations during emission.
-
-3. **Furthest-first eviction**: Each spill evicts the active value with the latest `last_use_point`, freeing its register for the caller.
-
-4. **Emission**: During bytecode emission, spill-aware methods replace the normal register lookup:
-   - `get_result_register(value)` — returns the value's register, or scratch[0] for spilled destinations
-   - `ensure_in_register(value, scratch_index)` — returns the value's register, or emits `RELOAD_REG` into the specified scratch register for spilled operands
-   - `spill_if_needed(value, reg)` — emits `SPILL_REG` after writing a spilled value's result
-
-**Zero overhead**: Functions that don't trigger spilling never reserve scratch registers and never emit `SPILL_REG`/`RELOAD_REG` instructions.
+When pressure exceeds 255 registers — the bump pointer is at the limit and the free list is empty — `spill_furthest()` evicts the active value with the latest last-use to the local stack, freeing its register. On the first spill, two scratch registers are permanently reserved (by evicting the two furthest-last-use values) to handle all subsequent reloads/spills during emission: spilled destinations write through `scratch[0]`, spilled operands are reloaded via `RELOAD_REG`, and spilled results are written back via `SPILL_REG`. Functions that never trigger spilling reserve no scratch registers and emit no spill/reload instructions.
 
 ## Files
 
-- `include/roxy/compiler/ssa_ir.hpp` - IR data structures
-- `src/roxy/compiler/ssa_ir.cpp` - IR utilities and printing
-- `include/roxy/compiler/ir_builder.hpp` - AST to IR conversion
-- `src/roxy/compiler/ir_builder.cpp` - IR builder implementation
-- `include/roxy/compiler/lowering.hpp` - IR to bytecode conversion
-- `src/roxy/compiler/lowering.cpp` - Lowering implementation
+| File | Purpose |
+|---|---|
+| `include/roxy/compiler/ssa_ir.hpp` | IR data structures |
+| `src/roxy/compiler/ssa_ir.cpp` | IR utilities and printing |
+| `include/roxy/compiler/ir_builder.hpp` | AST → IR conversion |
+| `src/roxy/compiler/ir_builder.cpp` | IR builder implementation |
+| `include/roxy/compiler/lowering.hpp` | IR → bytecode conversion |
+| `src/roxy/compiler/lowering.cpp` | Lowering implementation |

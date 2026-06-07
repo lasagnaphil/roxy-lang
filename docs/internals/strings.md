@@ -1,20 +1,10 @@
 # Strings
 
-This document describes the runtime string implementation in Roxy.
-
-## Overview
-
-Strings in Roxy are heap-allocated objects managed through the object system. They support:
-- String literals with escape sequences
-- F-string interpolation (`f"hello {expr}"`)
-- Concatenation via `+` operator or `str_concat()` function
-- Equality/inequality comparison via `==`/`!=` operators
-- Length query via `str_len()` function
-- Printing via `print()` function
+Strings in Roxy are heap-allocated, immutable objects managed through the object system. They support literals with escape sequences, f-string interpolation (`f"hello {expr}"`), `+` concatenation, `==`/`!=` comparison, length query, and printing. All operations are native functions; the `+` and `==`/`!=` operators are rewritten to native calls during IR building. The runtime layout is unified — VM and AOT-compiled programs share the same string representation from `roxy_rt.h`.
 
 ## Memory Layout
 
-Strings are allocated through the object system with the following memory layout:
+A string is allocated through the object system as three contiguous regions:
 
 ```
 ┌─────────────────┬─────────────────┬─────────────────────────┐
@@ -23,30 +13,11 @@ Strings are allocated through the object system with the following memory layout
 └─────────────────┴─────────────────┴─────────────────────────┘
 ```
 
-### StringHeader
-
-```cpp
-struct StringHeader {
-    u32 length;    // String length (excluding null terminator)
-    u32 hash;      // Low 32 bits of XXH3_64bits(chars, length); cached at alloc
-};
-```
-
-`StringHeader` is the unified `roxy_string_header` from `roxy_rt.h`; both VM and AOT-compiled programs share the same layout. Strings are immutable, so capacity is always `length+1` and isn't stored. The 8-byte slot is reused for a cached hash — `Map<string, V>` lookups read this field directly to avoid re-hashing on every probe.
-
-The character data immediately follows the header and is always null-terminated for C interoperability.
+`StringHeader` (the unified `roxy_string_header` from `roxy_rt.h`) is `{u32 length, u32 hash}`: `length` excludes the null terminator, and `hash` is the low 32 bits of `XXH3_64bits(chars, length)`, cached at allocation. Because strings are immutable, capacity is always `length + 1` and isn't stored — the 8-byte slot is reused for the cached hash, which `Map<string, V>` reads directly to avoid re-hashing on every probe. The character data immediately follows the header and is always null-terminated for C interoperability.
 
 ## String Literals
 
-String literals in source code are enclosed in double quotes:
-
-```
-var s: string = "hello world";
-```
-
-### Escape Sequences
-
-The parser processes the following escape sequences:
+Literals are enclosed in double quotes (`var s: string = "hello world";`). The parser processes these escape sequences:
 
 | Escape | Character |
 |--------|-----------|
@@ -59,33 +30,34 @@ The parser processes the following escape sequences:
 | `\{`   | Literal `{` (in f-strings and regular strings) |
 | `\}`   | Literal `}` (in f-strings and regular strings) |
 
-Example:
-```
-var msg: string = "Line 1\nLine 2\tTabbed";
-```
-
 ## F-String Interpolation
 
-F-strings provide string interpolation using the `f"..."` syntax. Expressions inside `{}` are converted to strings and concatenated:
+F-strings interpolate expressions using `f"..."` syntax: text segments between `{}` are literal content, and expressions inside `{}` are converted to strings and concatenated. Use `\{` and `\}` for literal braces.
 
-```
+```roxy
 var name: string = "World";
-var greeting: string = f"Hello, {name}!";  // "Hello, World!"
+var count: i32 = 3;
+print(f"Hello, {name}!");        // "Hello, World!"
+print(f"{name} v{count}");       // "World v3"
+print(f"sum = {count + 1}");     // "sum = 4"
 ```
 
-### Syntax
+Any expression is allowed inside `{}`, including function calls and struct literals — the lexer tracks brace nesting depth, so `f"point: {Point { x = 1, y = 2 }}"` parses correctly.
+
+### Compilation pipeline
+
+1. **Lexer** — produces `FStringBegin` / `FStringMid` / `FStringEnd` tokens with brace-depth tracking.
+2. **Parser** — builds an `ExprStringInterp` AST node holding text parts and expression sub-trees.
+3. **Semantic analysis** — validates each interpolated expression implements the `Printable` trait.
+4. **IR builder** — inserts `to_string()` calls for non-string expressions, then chains `str_concat` calls in a left-fold. For example, `f"x = {x}, y = {y}"` generates:
 
 ```
-f"text {expression} more text {expression} end"
+str_concat(str_concat(str_concat("x = ", i32$$to_string(x)), ", y = "), i32$$to_string(y))
 ```
 
-- Text segments between `{}` are literal string content
-- Expressions inside `{}` can be any valid expression: variables, arithmetic, function calls, etc.
-- Use `\{` and `\}` to include literal braces
+### Printable trait
 
-### Supported Types
-
-Any type that implements the builtin `Printable` trait can be interpolated. The following primitive types implement `Printable` automatically:
+`Printable` is a builtin trait registered during semantic analysis, requiring one method `to_string(): string`. Primitive types have native `to_string()` implementations registered automatically:
 
 | Type | Example | Output |
 |------|---------|--------|
@@ -96,125 +68,30 @@ Any type that implements the builtin `Printable` trait can be interpolated. The 
 | `f64` | `f"{3.14}"` | `"3.14"` |
 | `string` | `f"{'hello'}"` | `"hello"` |
 
-Structs that implement the `Printable` trait (by providing a `to_string(): string` method) can also be interpolated.
+User structs implement `Printable` by providing a `to_string()` method via the standard trait mechanism, after which they can be interpolated:
 
-### Expressions in Interpolations
-
-Arbitrary expressions are supported inside `{}`:
-
-```
-var a: i32 = 3;
-var b: i32 = 4;
-print(f"{a} + {b} = {a + b}");  // "3 + 4 = 7"
-
-fun double_it(x: i32): i32 { return x * 2; }
-print(f"result: {double_it(5)}");  // "result: 10"
-```
-
-Struct literals with braces work correctly because the lexer tracks brace nesting depth:
-
-```
-print(f"point: {Point { x = 1, y = 2 }}");
-```
-
-### Compilation Pipeline
-
-F-strings are processed through each stage of the compiler:
-
-1. **Lexer**: Produces `FStringBegin`, `FStringMid`, `FStringEnd` tokens with brace depth tracking
-2. **Parser**: Builds an `ExprStringInterp` AST node containing text parts and expression sub-trees
-3. **Semantic analysis**: Validates each interpolated expression implements the `Printable` trait
-4. **IR builder**: Generates `to_string()` calls for non-string expressions, then chains `str_concat` calls in a left-fold
-
-For example, `f"x = {x}, y = {y}"` generates IR equivalent to:
-
-```
-str_concat(str_concat(str_concat("x = ", i32$$to_string(x)), ", y = "), i32$$to_string(y))
-```
-
-### Printable Trait
-
-The `Printable` trait is a builtin trait registered during semantic analysis. It requires one method:
-
-```
-// Trait definition (built-in, not user-declared):
-// trait Printable;
-// fun Printable.to_string(): string;
-```
-
-Primitive types have their `to_string()` implementations registered as native functions. User-defined structs can implement `Printable` by providing a `to_string()` method via the standard trait mechanism:
-
-```
-trait Printable;
-fun Printable.to_string(): string;
-
-struct Point {
-    x: i32;
-    y: i32;
-}
-
+```roxy
 fun Point.to_string(): string for Printable {
     return f"({self.x}, {self.y})";
 }
 
-// Now Point can be interpolated:
 var p: Point = Point { x = 1, y = 2 };
 print(f"point = {p}");  // "point = (1, 2)"
 ```
 
 ## String Operations
 
-### Concatenation
+| Operation | Surface syntax | Lowers to |
+|---|---|---|
+| Concatenation | `a + b` | `str_concat(a, b)` |
+| Equality | `a == b` | `str_eq(a, b)` |
+| Inequality | `a != b` | `str_ne(a, b)` |
+| Length | — | `str_len(s)` |
+| Printing | — | `print(s)` |
 
-String concatenation can be done via the `+` operator or the `str_concat()` function:
+Operator rewriting happens in `gen_binary_expr()`, which detects string operands (`left_type->kind == TypeKind::String`) and substitutes the matching native call. Equality first compares pointers (fast path), then lengths, then uses `memcmp`.
 
-```
-var a: string = "hello";
-var b: string = " world";
-var c: string = a + b;           // Using + operator
-var d: string = str_concat(a, b); // Using function
-```
-
-The `+` operator is rewritten by the IR builder to a `str_concat` native function call.
-
-### Equality Comparison
-
-Strings can be compared for equality using `==` and `!=`:
-
-```
-if (name == "admin") {
-    // ...
-}
-if (password != "") {
-    // ...
-}
-```
-
-These operators are rewritten by the IR builder to `str_eq` and `str_ne` native function calls respectively. Comparison is done by:
-1. Checking if pointers are identical (fast path)
-2. Comparing lengths
-3. Using `memcmp` for character-by-character comparison
-
-### Length
-
-Get the length of a string using `str_len()`:
-
-```
-var s: string = "hello";
-var len: i32 = str_len(s);  // Returns 5
-```
-
-### Printing
-
-Print a string to stdout using `print()`:
-
-```
-print("Hello, World!");
-```
-
-## Native Functions
-
-All string operations are implemented as native functions:
+### Native functions
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -230,37 +107,30 @@ All string operations are implemented as native functions:
 | `f64$$to_string` | `(f64) -> string` | Convert f64 to string (via `%g`) |
 | `string$$to_string` | `(string) -> string` | Identity (returns input) |
 
-## Implementation Details
+## String Interning
 
-### Constant Loading
+String literals are interned. On a `LOAD_CONST` for a string constant, the interpreter calls `string_alloc()` (a thin shim over `roxy_string_from_literal`), which probes the active context's intern table: a hit returns the existing pointer; a miss allocates a new string object and inserts it. Repeated `LOAD_CONST` of the same literal therefore returns the same pointer. The intern table lives in `roxy_ctx.string_intern` — populated by VM mode at `vm_init`, optional in AOT mode.
 
-When the interpreter encounters a `LOAD_CONST` instruction for a string constant, it:
-1. Reads the string data and length from the constant pool
-2. Calls `string_alloc()` (a thin shim over `roxy_string_from_literal`) which probes the active context's intern table
-3. On a hit, returns the existing pointer; on a miss, allocates a new string object and inserts it into the intern table
+## Memory Management
 
-The intern table lives in `roxy_ctx.string_intern` — populated by VM mode at `vm_init`, optional in AOT mode. Repeated LOAD_CONST of the same literal returns the same pointer.
+Strings are managed through the unified runtime. They are allocated via `roxy_alloc()` (with `ROXY_TYPEID_STRING`), which dispatches through `roxy_ctx.allocator` — the slab in both VM and AOT modes (after `roxy_rt_init`) — and reference-counted via their `ObjectHeader`.
 
-### IR Builder Rewriting
+## Example
 
-The IR builder detects binary operations on string operands and rewrites them:
+```roxy
+fun greet(name: string): string {
+    return "Hello, " + name + "!";
+}
 
+fun main(): i32 {
+    var greeting: string = greet("World");
+    print(greeting);
+    if (greeting == "Hello, World!") {
+        return str_len(greeting);  // Returns 13
+    }
+    return 0;
+}
 ```
-// Source code
-var result: string = a + b;
-
-// Becomes equivalent to
-var result: string = str_concat(a, b);
-```
-
-This is done in `gen_binary_expr()` by checking if `left_type->kind == TypeKind::String`.
-
-### Memory Management
-
-Strings are managed through the unified runtime:
-- Allocated via `roxy_alloc()` (with `ROXY_TYPEID_STRING`), which dispatches through `roxy_ctx.allocator` — the slab in both VM mode and AOT mode (after `roxy_rt_init`)
-- Reference counted via `ObjectHeader`
-- Memory layout includes `ObjectHeader` for ref counting support
 
 ## Files
 
@@ -279,49 +149,3 @@ Strings are managed through the unified runtime:
 | `include/roxy/compiler/ast.hpp` | `ExprStringInterp` AST node |
 | `src/roxy/compiler/semantic.cpp` | Printable trait registration, f-string type checking |
 | `include/roxy/compiler/types.hpp` | Primitive method/trait tables in `TypeCache` |
-
-## Examples
-
-### String Concatenation
-
-```
-fun greet(name: string): string {
-    return "Hello, " + name + "!";
-}
-
-fun main(): i32 {
-    var greeting: string = greet("World");
-    print(greeting);
-
-    if (greeting == "Hello, World!") {
-        return str_len(greeting);  // Returns 13
-    }
-    return 0;
-}
-```
-
-### F-String Interpolation
-
-```
-fun main(): i32 {
-    var name: string = "World";
-    var count: i32 = 3;
-    var score: f64 = 9.5;
-
-    // Basic interpolation
-    print(f"Hello, {name}!");           // "Hello, World!"
-
-    // Multiple types
-    print(f"{name} v{count}: {score}"); // "World v3: 9.5"
-
-    // Expressions in braces
-    var a: i32 = 3;
-    var b: i32 = 4;
-    print(f"{a} + {b} = {a + b}");     // "3 + 4 = 7"
-
-    // Escaped braces
-    print(f"use \{ and \}");            // "use { and }"
-
-    return 0;
-}
-```

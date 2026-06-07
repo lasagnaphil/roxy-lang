@@ -12,20 +12,9 @@ Format ABI:  [opcode:8][dst:8][imm16:16]          — immediate (constants, load
 Format AOFF: [opcode:8][reg:8][offset:16]         — branch/field access (jumps)
 ```
 
-Helper functions for encoding/decoding:
-
-```cpp
-u32 encode_abc(Opcode op, u8 dst, u8 src1, u8 src2);
-u32 encode_abi(Opcode op, u8 dst, u16 imm);
-u32 encode_aoff(Opcode op, u8 reg, i16 offset);
-
-Opcode decode_opcode(u32 instr);
-u8 decode_a(u32 instr);  // dst or reg
-u8 decode_b(u32 instr);  // src1
-u8 decode_c(u32 instr);  // src2
-u16 decode_imm16(u32 instr);
-i16 decode_offset(u32 instr);
-```
+Encoding/decoding helpers live in `bytecode.hpp`: `encode_abc` / `encode_abi` /
+`encode_aoff`, and `decode_opcode` / `decode_a` (dst or reg) / `decode_b` (src1) /
+`decode_c` (src2) / `decode_imm16` / `decode_offset`.
 
 ## Calling Convention
 
@@ -60,8 +49,8 @@ Each function call allocates a new register window from the shared register file
 
 ## RK (Register-or-Constant) Encoding
 
-To eliminate `LOAD_INT`/`LOAD_CONST` materialization for the common case of an
-arithmetic op or comparison against a compile-time constant (e.g. `i + 1`,
+To avoid `LOAD_INT`/`LOAD_CONST` materialization when an arithmetic op or
+comparison operates against a compile-time constant (e.g. `i + 1`,
 `zx2 + zy2 > 4.0`), each RK-eligible opcode has a parallel `*_RK` variant:
 
 ```
@@ -69,37 +58,29 @@ Format: [op_RK:8][dst:8][src1:8][const_idx:8]
             // dst = src1 OP K[const_idx]
 ```
 
-The encoding mirrors ABC, but the `c` field is read as an 8-bit index into the
-function's constant pool (`BCFunction::constants`) rather than a register
-number. Specialized inline loaders in the interpreter (`rk_const_i64`,
-`rk_const_f32`, `rk_const_f64`) bypass the type-switch in `load_constant` —
-the lowering pass guarantees that `*_I_RK` opcodes only reference `Int`-typed
-constants, `*_D_RK` only `Float`, and `*_F_RK` references `Int` constants
-holding f32 bit patterns.
+The encoding mirrors ABC, but `c` is read as an 8-bit index into the function's
+constant pool rather than a register number. Specialized inline loaders
+(`rk_const_i64`, `rk_const_f32`, `rk_const_f64`) bypass `load_constant`'s
+type-switch — lowering guarantees `*_I_RK` references only `Int` constants,
+`*_D_RK` only `Float`, and `*_F_RK` only `Int` constants holding f32 bit
+patterns.
 
-**Lowering** (`compute_const_use_modes` in `lowering.cpp`): a pre-pass walks
-the IR and marks each constant SSA value with whether all its uses are
-RK-eligible (RHS of any RK op, or either side of a commutative RK op).
-Constants flagged "RK-only" skip both register allocation and `LOAD_*`
-emission — the RK opcode reads them straight from the constant pool.
-Commutative ops (`AddI`, `MulI`, `AddD`, etc.) are canonicalized so the
+**Lowering** (`compute_const_use_modes` in `lowering.cpp`): a pre-pass marks each
+constant SSA value with whether all its uses are RK-eligible (RHS of any RK op,
+or either side of a commutative RK op). "RK-only" constants skip both register
+allocation and `LOAD_*` emission — the RK opcode reads them straight from the
+pool. Commutative ops (`AddI`, `MulI`, `AddD`, ...) are canonicalized so the
 constant lands on the RHS.
 
-**Why opcode-variant RK over Lua's operand-bit RK**: Lua steals a bit from
-each operand field for the K flag, shrinking register space to 128 entries
-and forcing aggressive spilling. Opcode-variant RK keeps Roxy's 8-bit
-register fields (256 entries) at the cost of more opcodes — still well within
-the 256-opcode budget.
+The constant-pool index is 8 bits: functions exceeding **256 constants** fall
+back to materialization (the `LOAD_CONST` path uses 16-bit `imm16` and is
+unaffected). Opcode-variant RK keeps Roxy's full 8-bit (256-entry) register
+fields, at the cost of more opcodes — still within the 256-opcode budget.
 
-**Constant pool index limit**: 8 bits (256 entries). Functions exceeding 256
-constants fall back to materialization (the existing `LOAD_CONST` path uses
-16-bit `imm16` and is unaffected).
-
-**Integer comparison RK** (`*_I_RK` opcodes): defined but not currently emitted
-by the lowering pass. The existing `fuse_compare_branch()` turns `LT_I + JMP_IF_NOT`
-into a single `JMP_IF_GE_I` (one dispatch); RK comparisons would lose this
-fusion (two dispatches: `LT_I_RK + JMP_IF_NOT`). When `JMP_IF_*_I_RK` fused
-variants land, lowering will start emitting integer compare RK.
+**Integer comparison RK** (`*_I_RK`): defined but not currently emitted.
+`fuse_compare_branch()` turns `LT_I + JMP_IF_NOT` into a single `JMP_IF_GE_I`
+(one dispatch); integer RK comparisons would lose this fusion (two dispatches).
+Lowering will emit integer compare RK once `JMP_IF_*_I_RK` fused variants land.
 
 ## Type Conversion Opcodes
 
@@ -118,42 +99,17 @@ variants land, lowering will start emitting integer compare RK.
 
 ## Bytecode Structures
 
-```cpp
-// Constant pool entry
-struct BCConstant {
-    enum Type : u8 { Null, Bool, Int, Float, String };
-    Type type;
-    union {
-        bool as_bool;
-        i64 as_int;
-        f64 as_float;
-        struct { const char* data; u32 length; } as_string;
-    };
-};
+Defined in `bytecode.hpp`:
 
-// Bytecode function
-struct BCFunction {
-    StringView name;
-    u32 param_count;
-    u32 register_count;
-    u32 local_stack_slots;        // Slots needed for local structs
-    Vector<u32> code;             // Bytecode instructions
-    Vector<BCConstant> constants; // Constant pool
-};
-
-// Bytecode module
-struct BCModule {
-    StringView name;
-    Vector<BCFunction*> functions;
-    Vector<BCNativeFunction> native_functions;
-};
-```
+- **`BCConstant`** — a tagged constant-pool entry (`Null`/`Bool`/`Int`/`Float`/`String`) with a union payload.
+- **`BCFunction`** — name, `param_count`, `register_count`, `local_stack_slots` (slots for local structs), the `code` instruction vector, and the `constants` pool.
+- **`BCModule`** — name, a vector of `BCFunction*`, and a vector of `BCNativeFunction`.
 
 ## Special Instruction Encodings
 
 ### Field Access (Two-Word Instructions)
 
-Field access instructions use two words to encode the slot offset:
+Field access encodes the slot offset in a second word:
 
 ```
 GET_FIELD: [GET_FIELD dst obj slot_count][slot_offset:16]
@@ -161,11 +117,11 @@ SET_FIELD: [SET_FIELD obj val slot_count][slot_offset:16]
 STACK_ADDR: [STACK_ADDR dst][slot_offset:16]
 ```
 
-The `slot_count` (1 or 2) determines whether to read/write 32-bit or 64-bit values.
+`slot_count` (1 or 2) determines whether to read/write 32-bit or 64-bit values.
 
 ### Fused Compare-and-Branch
 
-Both integer and f64 comparisons can fuse with the following `JMP_IF`/`JMP_IF_NOT`
+Both integer and f64 comparisons can fuse with a following `JMP_IF`/`JMP_IF_NOT`
 into a single two-word instruction:
 
 ```
@@ -173,34 +129,35 @@ Non-RK: [op:8][_:8][src1:8][src2:8] + [offset:i32]
 RK:     [op:8][_:8][src1:8][const_idx:8] + [offset:i32]
 ```
 
-Fusion runs as a post-emission peephole pass (`fuse_compare_branch`) that
-scans for adjacent compare + branch pairs whose registers match, then
-substitutes the fused opcode (negating the predicate when the branch is
-`JMP_IF_NOT`). Compares whose result is read in another block are tracked
-in `m_unfusable_cmp_pcs` and skipped — fusion drops the register write.
+Fusion is a post-emission peephole pass (`fuse_compare_branch`) that scans for
+adjacent compare + branch pairs with matching registers, then substitutes the
+fused opcode (negating the predicate when the branch is `JMP_IF_NOT`). Compares
+whose result is read in another block are tracked in `m_unfusable_cmp_pcs` and
+skipped — fusion drops the register write.
 
 Currently fused: `EQ_I`/`NE_I`/`LT_I`/`LE_I`/`GT_I`/`GE_I` (signed integer),
-`EQ_D`/`NE_D`/`LT_D`/`LE_D`/`GT_D`/`GE_D` (f64), and the f64 RK variants.
-f32 fused branches and integer-RK fused branches are not yet implemented.
+`EQ_D`/`NE_D`/`LT_D`/`LE_D`/`GT_D`/`GE_D` (f64), and the f64 RK variants. f32
+fused branches and integer-RK fused branches are not yet implemented.
 
 ### Function Calls (Two-Word Instructions)
 
-`CALL` and `CALL_NATIVE` are two-word instructions to lift the 256-function
-ceiling that an 8-bit operand-field func_idx would impose:
+`CALL` and `CALL_NATIVE` are two-word instructions, lifting the 256-function
+ceiling an 8-bit operand-field func_idx would impose:
 
 ```
 CALL:        [CALL:8 dst:8 _:8 arg_count:8][func_idx:32]
 CALL_NATIVE: [CALL_NATIVE:8 dst:8 _:8 arg_count:8][func_idx:32]
 ```
 
-Args are passed in registers `dst+ret_reg_count`, `dst+ret_reg_count+1`, ...
-(see calling convention above). The full 32-bit func_idx is read directly
-into a register-sized temporary; the upper bits are reserved for future
-inline-cache slots or tail-call flags.
+Args are passed in registers `dst+ret_reg_count`, `dst+ret_reg_count+1`, ... (see
+calling convention). The full 32-bit func_idx is read into a register-sized
+temporary; upper bits are reserved for future inline-cache slots or tail-call
+flags.
 
 ### Register Spill/Reload
 
-When register pressure exceeds the 255-register limit, the lowering pass spills long-lived values to the local stack. Two single-word ABI-format instructions handle this:
+When register pressure exceeds the 255-register limit, lowering spills
+long-lived values to the local stack via two single-word ABI instructions:
 
 ```
 SPILL_REG  (0xB8): [SPILL_REG:8][reg:8][slot_offset:16]
@@ -210,9 +167,12 @@ RELOAD_REG (0xB9): [RELOAD_REG:8][reg:8][slot_offset:16]
     regs[reg] = local_stack[base + slot_offset]    (2 u32 slots → 8 bytes)
 ```
 
-Each spilled value occupies 2 u32 stack slots (one u64 register value). Functions that don't require spilling never emit these instructions.
+Each spilled value occupies 2 u32 stack slots (one u64 register value).
+Functions that don't require spilling never emit these instructions.
 
 ## Files
 
-- `include/roxy/vm/bytecode.hpp` - Opcode definitions, encoding/decoding helpers
-- `src/roxy/vm/bytecode.cpp` - Bytecode utilities
+| File | Purpose |
+|---|---|
+| `include/roxy/vm/bytecode.hpp` | Opcode definitions, encoding/decoding helpers, `BCConstant`/`BCFunction`/`BCModule` |
+| `src/roxy/vm/bytecode.cpp` | Bytecode utilities |

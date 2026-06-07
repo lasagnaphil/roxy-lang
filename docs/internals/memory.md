@@ -1,6 +1,6 @@
 # Memory Model
 
-Roxy uses a reference-counted memory model with three reference types and no garbage collector.
+Roxy uses a reference-counted memory model with three reference types and no garbage collector. Heap objects are managed by a custom slab allocator with Vale-style random generational references for weak-reference soundness.
 
 ## Reference Types
 
@@ -12,34 +12,15 @@ Roxy uses a reference-counted memory model with three reference types and no gar
 
 ### Critical Rule: No `ref` in Fields
 
-To prevent reference cycles, `ref` can only be used for:
-- Function parameters
-- Local variables
-
-Struct fields must use `uniq` (ownership) or `weak` (back-references).
+To prevent reference cycles, `ref` is restricted to function parameters and local variables. Struct fields must use `uniq` (ownership) or `weak` (back-references).
 
 ## Object Header
 
-Every heap-allocated object has a header (16 bytes):
-
-```cpp
-struct ObjectHeader {
-    u64 weak_generation;    // 64-bit random generation; 0 = dead/tombstoned
-    u32 ref_count;          // Number of active 'ref' pointers
-    u32 type_id;            // Type identifier for runtime type info
-
-    bool is_alive() const { return weak_generation != 0; }
-    void* data();           // Get pointer to object data (after header)
-};
-```
+Every heap-allocated object is prefixed by a 16-byte `ObjectHeader`: a 64-bit random `weak_generation` (0 = dead/tombstoned), a `ref_count` of active `ref` pointers, and a `type_id` for runtime type info. `is_alive()` is `weak_generation != 0`. The unified definition lives in `roxy_rt.h` as `roxy_object_header`.
 
 ## Slab Allocator
 
-Roxy uses a custom slab allocator for heap objects with the following features:
-
-### Size Classes
-
-Objects are allocated from fixed-size slabs based on their size:
+Heap objects are allocated from fixed-size slabs chosen by object size:
 
 | Class | Slot Size |
 |-------|-----------|
@@ -53,115 +34,46 @@ Objects are allocated from fixed-size slabs based on their size:
 | 7 | 4096 bytes |
 | 8+ | Large objects (multiple pages) |
 
-### Virtual Memory
-
-The allocator uses platform-specific virtual memory operations:
-
-```cpp
-struct VirtualMemoryOps {
-    static void* reserve(u64 size);           // Reserve address space
-    static bool commit(void* addr, u64 size); // Commit physical memory
-    static bool decommit(void* addr, u64 size); // Release physical memory
-    static void release(void* addr, u64 size);  // Release address space
-    static bool remap_to_zero(void* addr, u64 size); // Zero + read-only
-    static u64 page_size();                   // System page size
-};
-```
+The allocator backs slabs with platform-specific virtual memory operations (`reserve`/`commit`/`decommit`/`release`/`remap_to_zero`/`page_size`); see `include/roxy/rt/vmem.hpp`.
 
 ### Tombstoning and Recycling
 
 When an object is freed:
 1. The entire slot (header + data) is zeroed, so `weak_generation` reads as 0 and `is_alive()` returns false.
 2. The slot is pushed back onto its slab's intrusive free list, ready for the next allocation in that size class.
-3. Memory stays mapped throughout, so weak references can keep dereferencing safely (they will see `is_alive() == false` until the slot is re-allocated).
+3. Memory stays mapped throughout, so weak references can keep dereferencing safely (they see `is_alive() == false` until the slot is re-allocated).
 
-The intrusive next-pointer is stored at offset `sizeof(ObjectHeader)` (past the header), not at offset 0, so `weak_generation` keeps reading as zero while the slot is parked on the free list.
+The intrusive next-pointer sits at offset `sizeof(ObjectHeader)` (past the header), not offset 0, so `weak_generation` keeps reading as zero while the slot is parked on the free list.
 
-Safety against stale weak references after recycle is provided by the 64-bit random `weak_generation`: when the slot is reused, the new occupant gets a fresh random generation, so any weak reference still holding the old generation will mismatch and return false. Collision probability is 2⁻⁶⁴ per recycle.
+Stale-weak-reference safety after recycle comes from the 64-bit random `weak_generation`: a reused slot gets a fresh random generation, so any weak reference still holding the old generation mismatches and returns false. Collision probability is 2⁻⁶⁴ per recycle.
 
 ### Slab Reclamation
 
-Recycling solves slot-level fragmentation, but a slab whose live set has shrunk to zero still occupies physical memory. The allocator exposes an explicit reclamation pass:
-
-```cpp
-// Scan all slabs and reclaim drained ones (live_count == 0)
-// Returns number of pages reclaimed
-u32 reclaim_tombstoned();
-```
-
-A slab is reclaimable when `live_count == 0` — no allocated objects remain. The slab may still have FREE slots reachable from its free list; reclamation:
-- Calls `remap_to_zero()` on the whole slab (releases physical memory, keeps vaddr mapped as zeros).
-- Sets `free_head = 0xFFFFFFFF` so `find_or_create_slab` will not hand out slots from this slab afterwards.
-- Marks the slab as `remapped` to avoid redundant reclamation.
-
-The `remapped` flag ensures idempotency — calling `reclaim_tombstoned()` multiple times is safe and efficient.
+Recycling solves slot-level fragmentation, but a slab whose live set has shrunk to zero still occupies physical memory. `reclaim_tombstoned()` scans all slabs and reclaims drained ones (`live_count == 0`), returning the number of pages reclaimed. For each reclaimable slab it calls `remap_to_zero()` on the whole slab (releases physical memory, keeps the vaddr mapped as zeros), sets `free_head = 0xFFFFFFFF` so no further slots are handed out, and marks the slab `remapped`. The `remapped` flag makes repeated reclamation passes idempotent.
 
 ## Random Generational References
 
-Weak references use 64-bit random generations (Vale-style) for validation:
+Weak references validate against 64-bit random generations (Vale-style) rather than incrementing counters: random generations prevent reuse attacks and avoid 32-bit wrap-around. The PRNG is xorshift128+ (`RandomGen`, seeded via SplitMix64 from a high-resolution timer plus process ID).
 
-### Why Random Generations?
-
-- **64-bit random** prevents generation reuse attacks
-- **No wrap-around** issues (unlike 32-bit incrementing counters)
-- **xorshift128+** PRNG is fast and has good statistical properties
-
-### Random Number Generator
-
-```cpp
-struct RandomGen {
-    u64 state[2];
-
-    void seed(u64 s);   // SplitMix64 initialization
-    u64 next();         // xorshift128+ algorithm
-};
-```
-
-Seeding uses high-resolution timer + process ID for uniqueness.
-
-## Reference Counting Operations
-
-```cpp
-// Reference counting operations
-void ref_inc(void* data);
-bool ref_dec(RoxyVM* vm, void* data);
-
-// Weak reference operations (64-bit generation)
-u64 weak_ref_create(void* data);
-bool weak_ref_valid(void* data, u64 generation);
-
-// Object allocation/deallocation
-void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size);
-void object_free(RoxyVM* vm, void* data);
-```
-
-### Weak Reference Validation
-
-```cpp
-bool weak_ref_valid(void* data, u64 generation) {
-    if (data == nullptr) return false;
-    // Safe to read: memory is always mapped (active or tombstoned)
-    ObjectHeader* header = get_header_from_data(data);
-    return header->is_alive() && (header->weak_generation == generation);
-}
-```
+`weak_ref_valid(data, generation)` returns false on a null pointer; otherwise it reads the header (always safe — memory stays mapped whether active or tombstoned) and returns `is_alive() && weak_generation == generation`. Ref counting, weak-ref create/validate, and object alloc/free are declared in `include/roxy/vm/object.hpp`.
 
 ## Constraint Reference Model
 
-Roxy uses a "constraint reference" model where:
+Roxy uses a "constraint reference" model:
 
-1. `uniq` owns the object but doesn't affect `ref_count`
-2. `ref` borrows increment `ref_count` at creation, decrement at destruction
-3. `delete` fails at runtime if `ref_count > 0`
-4. This prevents use-after-free while allowing flexible borrowing
+1. `uniq` owns the object but doesn't affect `ref_count`.
+2. Creating a `ref` borrow increments `ref_count`; destroying it decrements.
+3. `delete` fails at runtime if `ref_count > 0`.
+
+This prevents use-after-free while allowing flexible borrowing.
 
 ## Implicit Destruction (RAII)
 
-`uniq` variables are automatically cleaned up when they go out of scope. This eliminates the need for manual `delete` in most cases. The same applies to value-type structs with destructors and noncopyable containers (`List<T>` / `Map<K,V>` where `T`, `K`, or `V` is noncopyable).
+`uniq` variables are automatically cleaned up at scope exit, eliminating manual `delete` in most cases. The same applies to value-type structs with destructors and to noncopyable containers (`List<T>` / `Map<K,V>` where `T`, `K`, or `V` is noncopyable).
 
 ### Scope Exit Cleanup
 
-At every scope exit point, the compiler emits implicit cleanup for all live noncopyable locals declared in that scope, in LIFO (reverse declaration) order:
+At every scope exit point the compiler emits implicit cleanup for all live noncopyable locals declared in that scope, in LIFO (reverse declaration) order:
 
 | Exit Point | What's Cleaned Up |
 |------------|-------------------|
@@ -171,41 +83,36 @@ At every scope exit point, the compiler emits implicit cleanup for all live nonc
 | `continue` | Uniqs in scopes inside the loop body |
 | End of function (implicit return) | All uniqs in function scope |
 
-If the struct type has a default destructor (`fun delete StructName()`), it is called before freeing memory. For noncopyable containers, the compiler emits a cleanup loop that destroys each element before freeing the container's internal buffers and slab header (see `docs/internals/arrays.md` and `docs/internals/maps.md`).
+If the struct type has a destructor (`fun delete StructName()`), it runs before the memory is freed. For noncopyable containers, the compiler emits a cleanup loop that destroys each element before freeing the container's buffers and slab header (see `docs/internals/list.md` and `docs/internals/maps.md`).
 
 ### Null Safety
 
-`DEL_OBJ` on a null pointer is a safe no-op. This means:
-- `var x: uniq T = nil;` → scope cleanup is safe
-- Moved variables are null-ified after move → no double-free
-
-### Example
+`DEL_OBJ` on a null pointer is a safe no-op, so `var x: uniq T = nil;` cleans up safely and moved variables (null-ified after move) never double-free.
 
 ```roxy
 fun process(): i32 {
     var p: uniq Point = uniq Point();
     p.x = 42;
-    var result: i32 = p.x;
-    return result;
+    return p.x;
     // p is implicitly deleted here (before the function actually returns)
 }
 ```
 
 ## Move Semantics
 
-Passing a noncopyable variable to a function parameter of matching noncopyable type **moves** ownership to the callee. The caller's variable becomes invalid. This applies to `uniq` references, value-type structs with destructors, and noncopyable containers (`List<T>` / `Map<K,V>` where inner types are noncopyable).
+Passing a noncopyable variable to a function parameter of matching noncopyable type **moves** ownership to the callee; the caller's variable becomes invalid. This applies to `uniq` references, value-type structs with destructors, and noncopyable containers (`List<T>` / `Map<K,V>` with noncopyable inner types).
 
 ### Rules
 
-- Passing a noncopyable value to a matching parameter → ownership transferred, caller's variable consumed
-- Returning a noncopyable value → ownership transferred to caller, variable not deleted at scope exit
-- Initializing a new variable from a noncopyable source (`var copy = items`) → ownership transferred
-- Explicit `delete` → variable consumed
-- Reassigning a noncopyable variable → old value is implicitly destroyed before new value is assigned
+- Passing a noncopyable value to a matching parameter → ownership transferred, caller's variable consumed.
+- Returning a noncopyable value → ownership transferred to caller, variable not deleted at scope exit.
+- Initializing a new variable from a noncopyable source (`var copy = items`) → ownership transferred.
+- Explicit `delete` → variable consumed.
+- Reassigning a noncopyable variable → old value is implicitly destroyed before the new value is assigned.
 
 ### Use-After-Move Detection
 
-The semantic analyzer tracks move state for each noncopyable local variable:
+The semantic analyzer tracks a move state per noncopyable local; using a `Moved` or `MaybeValid` variable is a compile-time error:
 
 | State | Meaning |
 |-------|---------|
@@ -213,16 +120,7 @@ The semantic analyzer tracks move state for each noncopyable local variable:
 | `Moved` | Ownership transferred — use is a compile error |
 | `MaybeValid` | Conditionally moved (e.g., moved in one `if` branch but not the other) |
 
-Using a `Moved` or `MaybeValid` variable is a compile-time error.
-
-### Example
-
 ```roxy
-fun consume(p: uniq Point): i32 {
-    return p.x;
-    // p is implicitly deleted at scope exit
-}
-
 fun main(): i32 {
     var p: uniq Point = uniq Point();
     p.x = 42;
@@ -232,24 +130,19 @@ fun main(): i32 {
 }
 ```
 
-### Auto-Delete on Reassignment
-
-```roxy
-var p: uniq Point = uniq Point();  // p owns Point A
-p = uniq Point();                   // Point A is implicitly deleted, p now owns Point B
-// Point B is implicitly deleted at scope exit
-```
+Reassignment auto-deletes the old value: after `p = uniq Point()`, the previously-owned object is destroyed and `p` owns the new one, which is itself deleted at scope exit.
 
 ## Files
 
-- `include/roxy/vm/object.hpp` - `ObjectHeader` (alias of `roxy_object_header`), ref counting declarations
-- `src/roxy/vm/object.cpp` - Object allocation and ref counting implementation
-- `include/roxy/rt/roxy_rt.h` - Unified `roxy_object_header` + `roxy_allocator` vtable type
-- `src/roxy/rt/roxy_rt.cpp` - `roxy_alloc`/`roxy_free` dispatching through ctx; default malloc allocator
-- `include/roxy/rt/vmem.hpp` - Virtual memory operations interface
-- `src/roxy/rt/vmem_win32.cpp` - Windows virtual memory implementation
-- `src/roxy/rt/vmem_unix.cpp` - Unix virtual memory implementation
-- `include/roxy/rt/slab_allocator.hpp` - Slab allocator declarations + vtable adapter
-- `src/roxy/rt/slab_allocator.cpp` - Slab allocator implementation; `make_slab_allocator_vtable`
+| File | Purpose |
+|------|---------|
+| `include/roxy/vm/object.hpp` | `ObjectHeader` (alias of `roxy_object_header`), ref-counting declarations |
+| `src/roxy/vm/object.cpp` | Object allocation and ref counting |
+| `include/roxy/rt/roxy_rt.h` | Unified `roxy_object_header` + `roxy_allocator` vtable type |
+| `src/roxy/rt/roxy_rt.cpp` | `roxy_alloc`/`roxy_free` dispatching through ctx; default malloc allocator |
+| `include/roxy/rt/vmem.hpp` | Virtual memory operations interface |
+| `src/roxy/rt/vmem_{win32,unix}.cpp` | Platform virtual memory implementations |
+| `include/roxy/rt/slab_allocator.hpp` | Slab allocator declarations + vtable adapter |
+| `src/roxy/rt/slab_allocator.cpp` | Slab allocator implementation; `make_slab_allocator_vtable` |
 
-The slab allocator lives in `roxy_rt` (was previously under `vm/`). VM mode plugs a per-VM `SlabAllocator` into `roxy_ctx.allocator` via the vtable; AOT mode does the same with a process-wide slab created by `roxy_rt_init`. Both paths get identical generation-based weak-ref soundness — the malloc fallback only kicks in when `roxy_rt_init` hasn't been called and no ctx is active.
+The slab allocator lives in `roxy_rt` (previously under `vm/`). VM mode plugs a per-VM `SlabAllocator` into `roxy_ctx.allocator` via the vtable; AOT mode does the same with a process-wide slab created by `roxy_rt_init`. Both paths get identical generation-based weak-ref soundness — the malloc fallback only kicks in when `roxy_rt_init` hasn't been called and no ctx is active.

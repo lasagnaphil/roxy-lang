@@ -1,6 +1,6 @@
 # Coroutines
 
-Roxy supports generator-style stackless coroutines via the built-in `Coro<T>` type. Coroutine functions are transformed at compile time into state machines, producing init, resume, and done functions with no special bytecode opcodes required.
+Roxy has generator-style stackless coroutines via the built-in `Coro<T>` type. A coroutine function is transformed at compile time into a state machine — three ordinary functions (init / resume / done) — so no special bytecode opcodes are needed.
 
 ## Syntax
 
@@ -18,201 +18,92 @@ fun fibonacci(): Coro<i32> {
 
 fun main(): i32 {
     var gen = fibonacci();
-    var x: i32 = gen.resume();   // 0
-    var y: i32 = gen.resume();   // 1
-    var z: i32 = gen.resume();   // 1
+    var x: i32 = gen.resume();        // 0
+    var y: i32 = gen.resume();        // 1
+    var z: i32 = gen.resume();        // 1
     var finished: bool = gen.done();  // false
-    gen.resume();                // runs past last yield, now done
-    finished = gen.done();       // true
-    return x + y + z;           // 2
+    gen.resume();                     // runs past last yield, now done
+    finished = gen.done();            // true
+    return x + y + z;                 // 2
 }
 ```
 
-## Grammar
-
-```
-yield_stmt = "yield" expression ";" ;
-```
+Grammar: `yield_stmt = "yield" expression ";"`.
 
 ## Language Rules
 
-- `yield` can only appear inside a coroutine function (one whose return type is `Coro<T>`)
-- The yielded expression must be assignable to `T`
-- Coroutine functions cannot return a value; only bare `return;` is allowed (use `yield` instead)
-- `Coro<T>` is a built-in parameterized type — it cannot be user-defined
-- `Coro<T>` requires exactly one type argument
-- Calling a coroutine function returns a `Coro<T>` object; it does not execute the body
-- `.resume()` executes the body up to the next `yield`, returning the yielded value
-- `.done()` returns `true` after execution has passed the last yield point
+- `yield` can only appear inside a coroutine function (return type `Coro<T>`); the yielded expression must be assignable to `T`.
+- A coroutine function cannot return a value — only bare `return;` is allowed (use `yield` to produce values).
+- `Coro<T>` is a built-in parameterized type taking exactly one type argument; it cannot be user-defined.
+- Calling a coroutine function returns a `Coro<T>` object without executing the body.
+- `.resume()` executes the body up to the next `yield`, returning the yielded value.
+- `.done()` returns `true` once execution has passed the last yield point.
 
-## Coro\<T\> Type
+## `Coro<T>` Type
 
-`Coro<T>` is represented by `TypeKind::Coroutine` with `CoroutineTypeInfo`:
-
-```cpp
-struct CoroutineTypeInfo {
-    Type* yield_type;              // T in Coro<T>
-    Type* generated_struct_type;   // Synthetic struct holding coroutine state
-    Span<MethodInfo> methods;      // resume() and done()
-    StringView func_name;          // Name of the coroutine function (for method mangling)
-};
-```
-
-Two methods are registered on each `Coro<T>` type:
+`Coro<T>` is `TypeKind::Coroutine`, carrying `CoroutineTypeInfo` (yield type `T`, the generated state struct, the `resume`/`done` methods, and the function name used for method mangling — see `compiler/types.hpp`). Two methods are registered on each `Coro<T>`:
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `resume()` | `() → T` | Execute to next yield, return yielded value |
-| `done()` | `() → bool` | Check if coroutine has finished |
+| `done()` | `() → bool` | True once the coroutine has finished |
 
 ## Pipeline
 
-### Lexer & Parser
+**Lexer & parser.** One keyword (`yield` / `KwYield`) and one AST node (`YieldStmt` holding the yielded expression). The parser matches `KwYield`, parses the expression, and requires a trailing semicolon.
 
-One keyword: `yield` (`KwYield`).
+**Semantic analysis.** When `Coro` appears as a type name with one type argument, the analyzer interns the type via `TypeCache::coroutine_type(yield_type)` and registers its `resume()` / `done()` methods. While analyzing a function whose return type `is_coroutine()`, it sets `m_in_coroutine` / `m_coro_yield_type` (restored after the body), validates that each `yield` is inside a coroutine and assignable to the yield type, and rejects `return <value>`. `populate_coro_methods()` builds a per-function `Coro<T>` (storing the function name for mangling) and registers `resume` → `__coro_<func>$$resume` and `done` → `__coro_<func>$$done`.
 
-One AST node:
+**IR generation.** A function returning `Coro<T>` gets coroutine metadata on its `IRFunction` (yield type, state struct type, `Coro<T>` type). `IROp::Yield` is a block terminator (like `Return`/`Throw`) whose operand is the yielded value. Immediately after emitting `Yield`, the builder captures the live locals across the yield using the existing SSA block-argument mechanism: it collects all live locals, creates a `coro.resume` block with one block parameter per live variable, terminates the current block with a `Goto` passing the current values, then switches to the resume block and rebinds the locals to its parameters.
 
-```cpp
-struct YieldStmt {
-    Expr* value;  // Expression to yield
-};
-```
+## Coroutine Lowering Pass
 
-The parser matches `TokenKind::KwYield`, parses the yield expression, and requires a trailing semicolon.
+`coroutine_lower()` runs after IR generation and before bytecode lowering, transforming each coroutine into three ordinary functions.
 
-### Semantic Analysis
-
-**Coro\<T\> detection:** When the parser encounters `Coro` as a type name with one type argument, the semantic analyzer calls `TypeCache::coroutine_type(yield_type)` to create the interned type. It then calls `populate_coro_methods()` to register `resume()` and `done()` methods.
-
-**Function-level tracking:** When analyzing a function declaration, if the return type is a coroutine (`return_type->is_coroutine()`), the analyzer sets `m_in_coroutine = true` and `m_coro_yield_type` to the yield type. These are restored after the function body is analyzed.
-
-**Yield validation:** Checks that (1) we are inside a coroutine function, and (2) the yielded expression is assignable to the coroutine's yield type.
-
-**Return validation:** Inside coroutine functions, `return` with a value produces an error: `"coroutine functions cannot return a value; use 'yield' instead"`. Bare `return;` is allowed.
-
-**Method population:** `populate_coro_methods()` creates a per-function `Coro<T>` type via `coroutine_type_for_func()` (not interned, stores the function name for method name mangling) and registers two methods:
-
-- `resume()` → native name `__coro_<func_name>$$resume`
-- `done()` → native name `__coro_<func_name>$$done`
-
-### IR Generation
-
-**Coroutine metadata:** When the IR builder encounters a function returning `Coro<T>`, it sets metadata on `IRFunction`:
-
-```cpp
-bool is_coroutine = false;
-Type* coro_yield_type = nullptr;      // T in Coro<T>
-Type* coro_struct_type = nullptr;     // Synthetic struct holding state
-Type* coro_type = nullptr;            // The Coro<T> type itself
-```
-
-**Yield instruction:** `IROp::Yield` is a block terminator (like `Return` and `Throw`). Its `unary` operand holds the yielded value.
-
-**Live variable capture:** After emitting the `Yield` instruction, the IR builder:
-
-1. Collects all currently live local variables (names, values, types) from the scope stack
-2. Creates a `coro.resume` block with one block parameter per live variable
-3. Finishes the current block with a `Goto` to the resume block, passing current values as block arguments
-4. Switches to the resume block and updates locals to point to the new block parameters
-
-This captures the exact set of variables that need to survive across yield points, using the existing SSA block argument mechanism.
-
-### Coroutine Lowering Pass
-
-The coroutine lowering pass (`coroutine_lower()`) runs after IR generation and before bytecode lowering. It transforms each coroutine function into three ordinary functions.
-
-**Yield point discovery:** Scans all blocks for `IROp::Yield` instructions. Each yield block must be terminated by a `Goto` to its resume block (set up by the IR builder).
-
-```cpp
-struct YieldPoint {
-    u32 block_index;          // Block containing the Yield
-    u32 inst_index;           // Instruction index within the block
-    ValueId yielded_value;    // The value being yielded
-    BlockId resume_block_id;  // Target resume block
-};
-```
-
-**Promoted variable identification:** Extracts variable names and types from resume block parameters. These are the locals that must be saved/restored across yield points. Deduplication ensures each variable appears once in the struct.
-
-```cpp
-struct PromotedVar {
-    StringView name;
-    Type* type;
-    u32 field_slot_offset;    // Slot offset in the coroutine struct
-    u32 field_slot_count;     // Slot count of this field
-};
-```
-
-**Synthetic struct generation:** Creates a struct named `__coro_<func_name>` with fields:
+It first finds every `Yield` (each block ends in a `Goto` to its resume block) and derives the **promoted variables** from the resume blocks' parameters — the locals that must survive across yields, deduplicated. It then synthesizes a struct `__coro_<func>` holding the state machine:
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `__state` | `i32` | Current state machine state |
+| `__state` | `i32` | Current state-machine state |
 | `__yield_val` | `T` | Cached yield value |
-| `<param>` | (varies) | One field per function parameter |
-| `<local>` | (varies) | One field per promoted local variable |
+| `<param>` | varies | One field per function parameter |
+| `<local>` | varies | One field per promoted local |
 
-**Init function:** Replaces the original function. Same name and parameters, returns `Coro<T>`. Body:
+**Init function** replaces the original (same name/params, returns `Coro<T>`): allocate the struct with `New`, set `__state = 0`, copy each parameter into its field, return the struct.
 
-1. Allocate the synthetic struct with `New`
-2. Set `__state = 0`
-3. Copy each parameter to its struct field
-4. Return the struct as a `Coro<T>` object
+**Resume function** (`__coro_<func>$$resume`, takes `ref<struct> self`) is built by transforming the function in place:
 
-**Resume function:** Generated by transforming the original function in-place via two phases.
+- *Promote variables.* Replace the original params with a single `self`. In every block, prepend `GetField` loads for all promoted vars and remap uses of their original ValueIds to those loads; on each jump edge that carried promoted arguments, insert `SetField` stores before the terminator; then drop the promoted block parameters and arguments. Per-block loads (rather than a single global remap) are required because the IR builder rebinds local names to resume-block param ValueIds after a yield, so later blocks not dominated by the resume block would otherwise see non-dominating references. Catch blocks are special-cased: their exception block parameter is never treated as promoted, and if a catch variable name collides with a promoted var, a `SetField` at the top of the catch writes the exception value into the struct.
+- *Split at yields, add dispatch.* Each `Yield` becomes `SetField(__yield_val)`, `SetField(__state, next_state)`, `Return(GetField(__yield_val))`. Each `Return` (coroutine end) becomes `SetField(__state, CORO_STATE_DONE)` + `Return(default)`. A dispatch if-else chain at entry branches on `__state` to the original entry (state 0) or the resume blocks (states 1..N), trapping on invalid states. Exception-handler BlockIds are remapped alongside terminator targets so handlers stay valid.
 
-*Phase 1 — Promote variables to struct fields:* Replaces the original function parameters with a single `self` parameter (`ref<struct>`). For every block, prepends `GetField` loads for all promoted variables and remaps all uses of their original SSA ValueIds to the block-local loads. For each jump edge that carried promoted arguments, inserts `SetField` stores before the terminator. Promoted block parameters and their corresponding jump arguments are then removed. Exception handler catch blocks receive special treatment: their block parameter (the exception variable, set by VM dispatch) is never classified as promoted, even if its name matches a promoted variable. If a catch variable name does collide with a promoted var, a `SetField` store is inserted at the top of the catch block to write the exception value into the struct before the `GetField` loads.
+**Done function** (`__coro_<func>$$done`, takes `ref<struct> self`) loads `__state`, compares it to `CORO_STATE_DONE` (`0x7FFFFFFF`, a positive sentinel above all yield-point states), and returns the boolean.
 
-Per-block loading is necessary because the IR builder rebinds local names to resume block param ValueIds after a yield, and subsequent code may use those ValueIds in blocks not dominated by the resume block (e.g., an outer loop increment generated after an inner loop yield). A global remap would produce non-dominating references; per-block `GetField` loads ensure every block has its own valid definition.
-
-*Phase 2 — Split at yields, add dispatch:* Re-scans for `Yield` instructions (whose indices shifted during Phase 1). For each yield: replaces it with `SetField(__yield_val)`, `SetField(__state, next_state)`, and `Return(GetField(__yield_val))`, keeping any Phase 1 `SetField` stores that follow. For each `Return` terminator (coroutine end): replaces with `SetField(__state, CORO_STATE_DONE)` and `Return(default_value)`. Finally, builds a dispatch if-else chain at function entry that branches on `__state` to the original entry block (state 0) or the resume blocks (states 1..N), with a trap/unreachable for invalid states. After block rearrangement, exception handler BlockIds (`try_entry`, `try_exit`, `handler_block`) are remapped alongside terminator targets so that handlers remain valid in the resume function.
-
-**Done function:** Named `__coro_<func_name>$$done`. Takes `ref<struct>` as `self`, returns `bool`. Loads `__state`, compares with `CORO_STATE_DONE`, returns the boolean result.
-
-### Bytecode
-
-No new opcodes are required. The coroutine lowering pass transforms all `Yield` instructions into ordinary field stores and returns before bytecode lowering runs. If a `Yield` instruction reaches bytecode lowering, it triggers an assertion failure:
-
-```cpp
-case IROp::Yield:
-    assert(false && "IROp::Yield should have been lowered by coroutine_lower()");
-```
-
-The generated init/resume/done functions use only standard opcodes: `New`, `GetField`, `SetField`, `EqI`, `Branch`, `Goto`, `Return`, etc.
+**Bytecode.** No new opcodes. All `Yield` instructions are lowered to field stores and returns before bytecode lowering; a `Yield` reaching lowering is an assertion failure. The generated functions use only standard opcodes (`New`, `GetField`, `SetField`, `EqI`, `Branch`, `Goto`, `Return`, …).
 
 ## Design Decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Detection mechanism | Return type `Coro<T>` | No special keyword needed; fits existing type system |
-| Execution model | Stackless state machine | Simple, no stack copying; suits generator pattern |
-| Lowering level | IR-level transformation | Reuses existing SSA infrastructure; no bytecode changes |
-| Done sentinel | `__state == 0x7FFFFFFF` | Positive sentinel; state values 0..N used for yield points |
-| Two-phase in-place lowering | Promote then split | No block cloning or value remapping between functions |
-| Per-block GetField loads | Load all promoted vars in every block | Handles non-dominating SSA uses from IR builder's name-based local rebinding |
-| Live variable capture | Block arguments | Natural fit with SSA block parameter mechanism |
+| Detection mechanism | Return type `Coro<T>` | No special keyword; fits the type system |
+| Execution model | Stackless state machine | Simple, no stack copying; suits generators |
+| Lowering level | IR-level transformation | Reuses SSA infrastructure; no bytecode changes |
+| Done sentinel | `__state == 0x7FFFFFFF` | Positive sentinel above states 0..N |
+| Two-phase in-place lowering | Promote then split | No block cloning or cross-function value remapping |
+| Per-block `GetField` loads | Load all promoted vars per block | Handles non-dominating uses from name-based local rebinding |
+| Live variable capture | Block arguments | Natural fit with SSA block parameters |
 
 ## Supported Yield Placements
 
 - Straight-line code (sequential yields)
 - `if`/`else` branches (including deeply nested)
-- `while` and `for` loops (including nested loops)
-- Loops with `break` and `continue`
+- `while`/`for` loops, including nested loops and loops with `break`/`continue`
 - `when` statements (enum pattern matching)
-- `try` blocks (exception handlers are preserved through coroutine lowering)
-- `catch` blocks (exception parameters are preserved as non-promoted block params)
+- `try` blocks and `catch` blocks (handlers are preserved; the exception parameter stays a non-promoted block param)
 
 ## Restrictions
 
-- `yield` inside `finally` is a compile-time error (finally runs in multiple contexts — normal exit and exception exit — making coroutine state management infeasible)
-- `return <value>` inside a coroutine is a compile-time error (use `yield` to produce values; bare `return;` is allowed to end the coroutine early)
-
-## Future Work
-
-- **Sending values into coroutine** via `resume(value)` — currently resume takes no arguments
-- **Async/await sugar** — higher-level syntax built on coroutines
-- **Coroutine composition / `yield from`** — delegate to nested coroutine
+- `yield` inside `finally` is a compile-time error — `finally` runs in multiple contexts (normal and exception exit), making coroutine state management infeasible.
+- `return <value>` inside a coroutine is a compile-time error — use `yield` to produce values; bare `return;` ends the coroutine early.
 
 ## Files
 
@@ -225,8 +116,8 @@ The generated init/resume/done functions use only standard opcodes: `New`, `GetF
 | `src/roxy/compiler/types.cpp` | `coroutine_type()`, `coroutine_type_for_func()`, `lookup_coro_method()` |
 | `src/roxy/compiler/semantic.cpp` | Coro\<T\> detection, `populate_coro_methods()`, yield/return validation |
 | `include/roxy/compiler/ssa_ir.hpp` | `IROp::Yield`, coroutine metadata on `IRFunction` |
-| `src/roxy/compiler/ir_builder.cpp` | `gen_yield_stmt()`, live variable capture, resume blocks |
-| `src/roxy/compiler/coroutine_lowering.cpp` | State machine transformation: init/resume/done functions |
+| `src/roxy/compiler/ir_builder.cpp` | `gen_yield_stmt()`, live-variable capture, resume blocks |
+| `src/roxy/compiler/coroutine_lowering.cpp` | State machine transformation: init/resume/done |
 | `src/roxy/compiler/lowering.cpp` | Yield assertion (must not reach bytecode) |
 | `src/roxy/compiler/ir_validator.cpp` | Post-lowering Yield validation |
-| `tests/e2e/test_coroutines.cpp` | E2E test suite (20 tests) |
+| `tests/e2e/test_coroutines.cpp` | E2E test suite |

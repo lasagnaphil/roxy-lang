@@ -4,18 +4,9 @@ Roxy supports dynamically-sized lists with bounds checking, using generic syntax
 
 ## List Layout
 
-Lists are stored as objects with a ListHeader. `ListHeader` is the unified `roxy_list_header` from `roxy_rt.h` — both VM and AOT-compiled programs share one definition. Elements are in a separate malloc'd buffer:
+Lists are stored as objects with a `ListHeader` — the unified `roxy_list_header` from `roxy_rt.h`, shared by both VM and AOT-compiled programs. The header carries `length`, `capacity`, `element_slot_count` (u32 slots per element), an `element_is_inline` flag (primitives are packed in slots; structs are passed by pointer), and a pointer to a separate elements buffer. See `rt/roxy_rt.h` for the full definition.
 
-```c
-typedef struct {
-    uint32_t length;
-    uint32_t capacity;
-    uint32_t element_slot_count;  // u32 slots per element (1, 2, or N for structs)
-    uint8_t  element_is_inline;   // 1 = primitive packed in slots; 0 = struct (caller passes ptr)
-    uint8_t  _pad[3];
-    uint32_t* elements;           // capacity * element_slot_count u32 slots
-} roxy_list_header;
-
+```
 // Memory layout: [ObjectHeader][ListHeader]
 // Elements buffer: [u32 * capacity * element_slot_count] (separate allocation)
 ```
@@ -76,36 +67,11 @@ When pushing beyond capacity, the list doubles its capacity (minimum 8 elements)
 ## Usage Example
 
 ```roxy
-fun quicksort(lst: List<i32>, low: i32, high: i32) {
-    if (low < high) {
-        var pivot: i32 = lst[high];
-        var i: i32 = low - 1;
-        for (var j: i32 = low; j < high; j = j + 1) {
-            if (lst[j] <= pivot) {
-                i = i + 1;
-                var temp: i32 = lst[i];
-                lst[i] = lst[j];
-                lst[j] = temp;
-            }
-        }
-        var temp: i32 = lst[i + 1];
-        lst[i + 1] = lst[high];
-        lst[high] = temp;
-        var pi: i32 = i + 1;
-        quicksort(lst, low, pi - 1);
-        quicksort(lst, pi + 1, high);
-    }
-}
-
 fun main(): i32 {
     var lst: List<i32> = List<i32>();
     lst.push(5);
     lst.push(2);
     lst.push(8);
-    lst.push(1);
-    lst.push(9);
-
-    quicksort(lst, 0, lst.len() - 1);
 
     for (var i: i32 = 0; i < lst.len(); i = i + 1) {
         print(lst[i]);

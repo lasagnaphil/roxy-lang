@@ -1,72 +1,71 @@
 # Operator Overloading
 
-Operators in Roxy are implemented via traits. The compiler rewrites operators into trait method calls, enabling user-defined types to support standard operators.
+Operators in Roxy are implemented via traits. The compiler rewrites each operator into a trait method call, so user-defined types support standard operators through the same dispatch path as primitives.
 
-**Implemented:** All arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`), bitwise (`&`, `|`, `^`, `~`, `<<`, `>>`), unary (`-`, `~`), compound assignment (`+=`, `-=`, etc.), and indexing (`[]`) operator dispatch for both struct types and primitive types, through a unified trait method lookup. Compound assignment trait methods are also registered on primitives. List types participate in the unified dispatch via `index`/`index_mut` methods registered alongside their native methods.
+Dispatch covers arithmetic (`+ - * / %`), comparison (`== != < <= > >=`), bitwise (`& | ^ ~ << >>`), unary (`-`, `~`), compound assignment (`+=` etc.), and indexing (`[]`), for both struct and primitive types, through a unified trait-method lookup. Lists participate via `index`/`index_mut` methods registered alongside their native methods.
 
 See `traits.md` for the general trait system design.
 
 ## Operator Traits
 
-### Comparison Traits
+The operator traits are builtin trait declarations (no user-visible source; declared in semantic analysis). Each maps an operator to a method name. `Rhs` defaults to `Self` on the binary arithmetic/bitwise traits.
+
+### Comparison
 
 | Trait | Methods | Operators |
 |-------|---------|-----------|
 | `Eq` | `eq`, `ne` | `==`, `!=` |
 | `Ord` : `Eq` | `cmp`, `lt`, `le`, `gt`, `ge` | `<`, `<=`, `>`, `>=` |
 
-### Arithmetic Traits
+`ne` defaults to `!eq`; the `Ord` comparisons default to `cmp(other)` (which returns -1/0/1) against 0.
 
-| Trait | Methods | Operators | Notes |
-|-------|---------|-----------|-------|
-| `Add<Rhs>` | `add` | `+` | `Rhs` defaults to `Self` |
-| `Sub<Rhs>` | `sub` | `-` | `Rhs` defaults to `Self` |
-| `Mul<Rhs>` | `mul` | `*` | `Rhs` defaults to `Self` |
-| `Div<Rhs>` | `div` | `/` | `Rhs` defaults to `Self` |
-| `Mod<Rhs>` | `mod` | `%` | `Rhs` defaults to `Self` |
-| `Neg` | `neg` | `-x` | Unary negation |
+### Arithmetic
 
-### Compound Assignment Traits
+| Trait | Method | Operator |
+|-------|--------|----------|
+| `Add<Rhs>` | `add` | `+` |
+| `Sub<Rhs>` | `sub` | `-` |
+| `Mul<Rhs>` | `mul` | `*` |
+| `Div<Rhs>` | `div` | `/` |
+| `Mod<Rhs>` | `mod` | `%` |
+| `Neg` | `neg` | `-x` (unary) |
 
-| Trait | Methods | Operators | Notes |
-|-------|---------|-----------|-------|
-| `AddAssign<Rhs>` | `add_assign` | `+=` | Modifies `self` in-place |
-| `SubAssign<Rhs>` | `sub_assign` | `-=` | Modifies `self` in-place |
-| `MulAssign<Rhs>` | `mul_assign` | `*=` | Modifies `self` in-place |
-| `DivAssign<Rhs>` | `div_assign` | `/=` | Modifies `self` in-place |
-| `ModAssign<Rhs>` | `mod_assign` | `%=` | Modifies `self` in-place |
+### Compound Assignment
 
-### Bitwise Traits
+These modify `self` in-place (return `void`).
 
-| Trait | Methods | Operators | Notes |
-|-------|---------|-----------|-------|
-| `BitAnd<Rhs>` | `bit_and` | `&` | `Rhs` defaults to `Self` |
-| `BitOr<Rhs>` | `bit_or` | `\|` | `Rhs` defaults to `Self` |
-| `BitXor<Rhs>` | `bit_xor` | `^` | `Rhs` defaults to `Self` |
-| `BitNot` | `bit_not` | `~` | Unary bitwise NOT |
-| `Shl<Rhs>` | `shl` | `<<` | Shift left |
-| `Shr<Rhs>` | `shr` | `>>` | Shift right |
-
-### Bitwise Assignment Traits
-
-| Trait | Methods | Operators |
-|-------|---------|-----------|
+| Trait | Method | Operator |
+|-------|--------|----------|
+| `AddAssign<Rhs>` | `add_assign` | `+=` |
+| `SubAssign<Rhs>` | `sub_assign` | `-=` |
+| `MulAssign<Rhs>` | `mul_assign` | `*=` |
+| `DivAssign<Rhs>` | `div_assign` | `/=` |
+| `ModAssign<Rhs>` | `mod_assign` | `%=` |
 | `BitAndAssign<Rhs>` | `bit_and_assign` | `&=` |
 | `BitOrAssign<Rhs>` | `bit_or_assign` | `\|=` |
 | `BitXorAssign<Rhs>` | `bit_xor_assign` | `^=` |
 | `ShlAssign<Rhs>` | `shl_assign` | `<<=` |
 | `ShrAssign<Rhs>` | `shr_assign` | `>>=` |
 
-### Indexing Traits
+### Bitwise
 
-| Trait | Methods | Operators | Notes |
-|-------|---------|-----------|-------|
-| `Index<Idx>` | `index` | `a[i]` | Read access |
-| `IndexMut<Idx>` | `index_mut` | `a[i] = v` | Write access |
+| Trait | Method | Operator |
+|-------|--------|----------|
+| `BitAnd<Rhs>` | `bit_and` | `&` |
+| `BitOr<Rhs>` | `bit_or` | `\|` |
+| `BitXor<Rhs>` | `bit_xor` | `^` |
+| `BitNot` | `bit_not` | `~` (unary) |
+| `Shl<Rhs>` | `shl` | `<<` |
+| `Shr<Rhs>` | `shr` | `>>` |
+
+### Indexing
+
+| Trait | Method | Operator | Access |
+|-------|--------|----------|--------|
+| `Index<Idx>` | `index` | `a[i]` | read |
+| `IndexMut<Idx>` | `index_mut` | `a[i] = v` | write |
 
 ### Non-Overloadable Operators
-
-These operators are **not** overloadable:
 
 | Operators | Reason |
 |-----------|--------|
@@ -76,278 +75,89 @@ These operators are **not** overloadable:
 | `.` | Member access |
 | `::` | Scope resolution |
 
-## Trait Definitions
-
-```roxy
-// === Comparison ===
-trait Eq;
-fun Eq.eq(other: Self): bool;
-fun Eq.ne(other: Self): bool { return !self.eq(other); }
-
-trait Ord : Eq;
-fun Ord.cmp(other: Self): i32;  // -1, 0, or 1
-fun Ord.lt(other: Self): bool { return self.cmp(other) < 0; }
-fun Ord.le(other: Self): bool { return self.cmp(other) <= 0; }
-fun Ord.gt(other: Self): bool { return self.cmp(other) > 0; }
-fun Ord.ge(other: Self): bool { return self.cmp(other) >= 0; }
-
-// === Arithmetic ===
-trait Add<Rhs>;      // Rhs defaults to Self
-fun Add.add(other: Rhs): Self;
-
-trait Sub<Rhs>;
-fun Sub.sub(other: Rhs): Self;
-
-trait Mul<Rhs>;
-fun Mul.mul(other: Rhs): Self;
-
-trait Div<Rhs>;
-fun Div.div(other: Rhs): Self;
-
-trait Mod<Rhs>;
-fun Mod.mod(other: Rhs): Self;
-
-trait Neg;
-fun Neg.neg(): Self;
-
-// === Compound Assignment ===
-trait AddAssign<Rhs>;
-fun AddAssign.add_assign(other: Rhs);  // modifies self in-place
-
-trait SubAssign<Rhs>;
-fun SubAssign.sub_assign(other: Rhs);
-
-trait MulAssign<Rhs>;
-fun MulAssign.mul_assign(other: Rhs);
-
-trait DivAssign<Rhs>;
-fun DivAssign.div_assign(other: Rhs);
-
-trait ModAssign<Rhs>;
-fun ModAssign.mod_assign(other: Rhs);
-
-// === Bitwise ===
-trait BitAnd<Rhs>;
-fun BitAnd.bit_and(other: Rhs): Self;
-
-trait BitOr<Rhs>;
-fun BitOr.bit_or(other: Rhs): Self;
-
-trait BitXor<Rhs>;
-fun BitXor.bit_xor(other: Rhs): Self;
-
-trait BitNot;
-fun BitNot.bit_not(): Self;
-
-trait Shl<Rhs>;
-fun Shl.shl(other: Rhs): Self;
-
-trait Shr<Rhs>;
-fun Shr.shr(other: Rhs): Self;
-
-// === Bitwise Assignment ===
-trait BitAndAssign<Rhs>;
-fun BitAndAssign.bit_and_assign(other: Rhs);
-
-trait BitOrAssign<Rhs>;
-fun BitOrAssign.bit_or_assign(other: Rhs);
-
-trait BitXorAssign<Rhs>;
-fun BitXorAssign.bit_xor_assign(other: Rhs);
-
-trait ShlAssign<Rhs>;
-fun ShlAssign.shl_assign(other: Rhs);
-
-trait ShrAssign<Rhs>;
-fun ShrAssign.shr_assign(other: Rhs);
-
-// === Indexing ===
-trait Index<Idx>;
-fun Index.index(i: Idx): Self;
-
-trait IndexMut<Idx>;
-fun IndexMut.index_mut(i: Idx, value: Self);
-```
-
 ## Compiler Rewrites
 
-The compiler transforms operators into trait method calls:
+Each operator is rewritten to its trait method call (binary trait `Rhs` shown as `_`, resolved by lookup):
 
-**Arithmetic:**
+| Operator | Rewrite | Operator | Rewrite |
+|----------|---------|----------|---------|
+| `a + b` | `a.add(b)` | `a += b` | `a.add_assign(b)` |
+| `a - b` | `a.sub(b)` | `a -= b` | `a.sub_assign(b)` |
+| `a * b` | `a.mul(b)` | `a *= b` | `a.mul_assign(b)` |
+| `a / b` | `a.div(b)` | `a /= b` | `a.div_assign(b)` |
+| `a % b` | `a.mod(b)` | `a %= b` | `a.mod_assign(b)` |
+| `-a` | `a.neg()` | | |
+| `a == b` | `a.eq(b)` | `a != b` | `a.ne(b)` |
+| `a < b` | `a.lt(b)` | `a <= b` | `a.le(b)` |
+| `a > b` | `a.gt(b)` | `a >= b` | `a.ge(b)` |
+| `a & b` | `a.bit_and(b)` | `a &= b` | `a.bit_and_assign(b)` |
+| `a \| b` | `a.bit_or(b)` | `a \|= b` | `a.bit_or_assign(b)` |
+| `a ^ b` | `a.bit_xor(b)` | `a ^= b` | `a.bit_xor_assign(b)` |
+| `a << b` | `a.shl(b)` | `a <<= b` | `a.shl_assign(b)` |
+| `a >> b` | `a.shr(b)` | `a >>= b` | `a.shr_assign(b)` |
+| `~a` | `a.bit_not()` | | |
+| `a[i]` | `a.index(i)` | `a[i] = v` | `a.index_mut(i, v)` |
 
-| Operator | Rewritten To | Trait |
-|----------|--------------|-------|
-| `a + b` | `a.add(b)` | `Add<_>` |
-| `a - b` | `a.sub(b)` | `Sub<_>` |
-| `a * b` | `a.mul(b)` | `Mul<_>` |
-| `a / b` | `a.div(b)` | `Div<_>` |
-| `a % b` | `a.mod(b)` | `Mod<_>` |
-| `-a` | `a.neg()` | `Neg` |
+## Example
 
-**Compound Assignment:**
-
-| Operator | Rewritten To | Trait |
-|----------|--------------|-------|
-| `a += b` | `a.add_assign(b)` | `AddAssign<_>` |
-| `a -= b` | `a.sub_assign(b)` | `SubAssign<_>` |
-| `a *= b` | `a.mul_assign(b)` | `MulAssign<_>` |
-| `a /= b` | `a.div_assign(b)` | `DivAssign<_>` |
-| `a %= b` | `a.mod_assign(b)` | `ModAssign<_>` |
-
-**Comparison:**
-
-| Operator | Rewritten To | Trait |
-|----------|--------------|-------|
-| `a == b` | `a.eq(b)` | `Eq` |
-| `a != b` | `a.ne(b)` | `Eq` |
-| `a < b` | `a.lt(b)` | `Ord` |
-| `a <= b` | `a.le(b)` | `Ord` |
-| `a > b` | `a.gt(b)` | `Ord` |
-| `a >= b` | `a.ge(b)` | `Ord` |
-
-**Bitwise:**
-
-| Operator | Rewritten To | Trait |
-|----------|--------------|-------|
-| `a & b` | `a.bit_and(b)` | `BitAnd<_>` |
-| `a \| b` | `a.bit_or(b)` | `BitOr<_>` |
-| `a ^ b` | `a.bit_xor(b)` | `BitXor<_>` |
-| `~a` | `a.bit_not()` | `BitNot` |
-| `a << b` | `a.shl(b)` | `Shl<_>` |
-| `a >> b` | `a.shr(b)` | `Shr<_>` |
-
-**Bitwise Assignment:**
-
-| Operator | Rewritten To | Trait |
-|----------|--------------|-------|
-| `a &= b` | `a.bit_and_assign(b)` | `BitAndAssign<_>` |
-| `a \|= b` | `a.bit_or_assign(b)` | `BitOrAssign<_>` |
-| `a ^= b` | `a.bit_xor_assign(b)` | `BitXorAssign<_>` |
-| `a <<= b` | `a.shl_assign(b)` | `ShlAssign<_>` |
-| `a >>= b` | `a.shr_assign(b)` | `ShrAssign<_>` |
-
-**Indexing:**
-
-| Operator | Rewritten To | Trait |
-|----------|--------------|-------|
-| `a[i]` (read) | `a.index(i)` | `Index<_>` |
-| `a[i] = v` (write) | `a.index_mut(i, v)` | `IndexMut<_>` |
-
-## Example: Vector Math
+A struct opts into an operator by implementing the trait method with a `for Trait` clause. Same-type operations default `Rhs` to `Self`; mixed-type operations name the right-hand type explicitly.
 
 ```roxy
 struct Vec2 { x: f64; y: f64; }
 
-// Same-type operations (no generics needed)
-fun Vec2.add(other: Vec2): Vec2 for Add {
+fun Vec2.add(other: Vec2): Vec2 for Add {        // Rhs = Self
     return Vec2 { x = self.x + other.x, y = self.y + other.y };
 }
 
-fun Vec2.sub(other: Vec2): Vec2 for Sub {
-    return Vec2 { x = self.x - other.x, y = self.y - other.y };
+fun Vec2.mul(scalar: f64): Vec2 for Mul<f64> {   // mixed-type, requires generics
+    return Vec2 { x = self.x * scalar, y = self.y * scalar };
 }
 
-fun Vec2.neg(): Vec2 for Neg {
-    return Vec2 { x = -self.x, y = -self.y };
+fun Vec2.add_assign(other: Vec2) for AddAssign { // in-place
+    self.x = self.x + other.x;
+    self.y = self.y + other.y;
 }
 
 fun Vec2.eq(other: Vec2): bool for Eq {
     return self.x == other.x && self.y == other.y;
 }
 
-// In-place operations
-fun Vec2.add_assign(other: Vec2) for AddAssign {
-    self.x = self.x + other.x;
-    self.y = self.y + other.y;
-}
-
-// Mixed-type operations (requires generics)
-fun Vec2.mul(scalar: f64): Vec2 for Mul<f64> {
-    return Vec2 { x = self.x * scalar, y = self.y * scalar };
-}
-
-fun Vec2.div(scalar: f64): Vec2 for Div<f64> {
-    return Vec2 { x = self.x / scalar, y = self.y / scalar };
-}
-
-fun Vec2.mul_assign(scalar: f64) for MulAssign<f64> {
-    self.x = self.x * scalar;
-    self.y = self.y * scalar;
-}
-
-// Usage
-fun main(): i32 {
-    var a: Vec2 = Vec2 { x = 1.0, y = 2.0 };
-    var b: Vec2 = Vec2 { x = 3.0, y = 4.0 };
-
-    var c: Vec2 = a + b;      // Vec2.add(b)
-    var d: Vec2 = a - b;      // Vec2.sub(b)
-    var e: Vec2 = -a;         // Vec2.neg()
-    var f: Vec2 = a * 2.0;    // Vec2.mul(2.0) - requires generics
-    var g: Vec2 = a / 2.0;    // Vec2.div(2.0) - requires generics
-
-    a += b;                   // Vec2.add_assign(b)
-    a *= 2.0;                 // Vec2.mul_assign(2.0) - requires generics
-
+fun main() {
+    var a = Vec2 { x = 1.0, y = 2.0 };
+    var b = Vec2 { x = 3.0, y = 4.0 };
+    var c = a + b;     // a.add(b)
+    var d = a * 2.0;   // a.mul(2.0)
+    a += b;            // a.add_assign(b)
     if (a == b) { /* ... */ }
-    if (a != b) { /* ... */ }
-
-    return 0;
 }
 ```
 
-## Builtin Implementations
+Mixed-type operator traits (`Mul<f64>`, `Add<i32>`) rely on generic traits — see `traits.md` § Generic Traits.
 
-Primitive types have compiler-registered built-in operator methods. These are registered during semantic analysis (Pass 1.8) via `register_primitive_operator_methods()` using the existing `TypeCache::register_primitive_method()` API. They are not user-writable — the IR builder emits direct IR ops (e.g., `AddI`, `SubF`) rather than method calls.
+## Unified Dispatch
 
-**Integer types (i32, i64):**
-- Arithmetic: `add`, `sub`, `mul`, `div`, `mod` (param: Self, return: Self)
-- Bitwise: `bit_and`, `bit_or`, `bit_xor`, `shl`, `shr` (param: Self, return: Self)
-- Comparison: `eq`, `ne`, `lt`, `le`, `gt`, `ge` (param: Self, return: bool)
-- Unary: `neg`, `bit_not` (no params, return: Self)
-- Compound assignment: `add_assign`, `sub_assign`, `mul_assign`, `div_assign`, `mod_assign`, `bit_and_assign`, `bit_or_assign`, `bit_xor_assign`, `shl_assign`, `shr_assign` (param: Self, return: void)
+Both primitive and struct operators resolve through one path, but codegen diverges.
 
-**Float types (f32, f64):**
-- Arithmetic: `add`, `sub`, `mul`, `div` (param: Self, return: Self)
-- Comparison: `eq`, `ne`, `lt`, `le`, `gt`, `ge` (param: Self, return: bool)
-- Unary: `neg` (no params, return: Self)
-- Compound assignment: `add_assign`, `sub_assign`, `mul_assign`, `div_assign` (param: Self, return: void)
+- **Registration (Pass 1.8):** `register_primitive_operator_methods()` registers operator methods on primitive types via `TypeCache::register_primitive_method()`; `populate_list_methods()` registers `index`/`index_mut` on list types. Primitive methods are not user-writable.
+- **Resolution:** `try_resolve_binary_op()`, `try_resolve_unary_op()`, and `analyze_index_expr()` call `TypeCache::lookup_method()`, which dispatches to struct hierarchy, primitive, or list lookup. Type checking is uniform across all kinds.
+- **Code generation:** primitives emit **direct IR ops** (`AddI`, `SubF`, …) rather than method calls; structs emit trait-method calls; lists/maps emit `CallNative` to their registered `index`/`index_mut` functions.
 
-**Bool:**
-- Comparison: `eq`, `ne` (param: Self, return: bool)
+Which primitive types carry which operators:
 
-**List types (`List<T>`):**
-- `index` (param: i32, return: T) — subscript read
-- `index_mut` (params: i32, T, return: void) — subscript write
+| Type | Arithmetic | Bitwise | Comparison | Unary | Compound assign |
+|------|-----------|---------|-----------|-------|-----------------|
+| `i32`, `i64` | `add sub mul div mod` | `bit_and bit_or bit_xor shl shr` | all six | `neg bit_not` | all integer forms |
+| `f32`, `f64` | `add sub mul div` | — | all six | `neg` | `add/sub/mul/div_assign` |
+| `bool` | — | — | `eq ne` | — | — |
+| `List<T>` | — | — | — | — | `index` / `index_mut` |
 
-```roxy
-// Conceptual representation (not user-writable):
-fun i32.add(other: i32): i32 for Add { /* intrinsic */ }
-fun i32.sub(other: i32): i32 for Sub { /* intrinsic */ }
-fun i32.eq(other: i32): bool for Eq { /* intrinsic */ }
-fun i32.neg(): i32 for Neg { /* intrinsic */ }
-fun i32.bit_and(other: i32): i32 for BitAnd { /* intrinsic */ }
-// ... etc for all primitive types
-```
+The shared operator→method-name mappings live in `include/roxy/compiler/operator_traits.hpp` (`binary_op_to_trait_method()`, `unary_op_to_trait_method()`, `assign_op_to_trait_method()`), used by both semantic analysis and IR generation.
 
-## Unified Dispatch Architecture
+## Files
 
-The semantic analyzer uses a unified dispatch path for both primitive and struct operator resolution:
-
-1. **Registration (Pass 1.8):** `register_primitive_operator_methods()` registers operator methods on primitive types using `TypeCache::register_primitive_method()`. `populate_list_methods()` registers `index`/`index_mut` methods on list types alongside their native methods.
-2. **Resolution:** `try_resolve_binary_op()`, `try_resolve_unary_op()`, and `analyze_index_expr()` call `TypeCache::lookup_method()`, which handles structs (via `lookup_method_in_hierarchy()`), primitives (via `lookup_primitive_method()`), and lists (via `lookup_list_method()`).
-3. **Code generation:** The IR builder still distinguishes primitives from structs/lists/maps — primitives emit direct IR ops (`AddI`, `SubF`, etc.), while structs emit trait method calls and lists/maps emit `CallNative` to their registered `index`/`index_mut` native functions. The type checker validates uniformly via method lookup, but codegen emits intrinsics for primitives.
-
-The shared operator-to-method-name mappings live in `include/roxy/compiler/operator_traits.hpp` (`binary_op_to_trait_method()`, `unary_op_to_trait_method()`, `assign_op_to_trait_method()`), used by both semantic analysis and IR generation.
-
-## Generics Requirement
-
-Generic traits with type parameters are implemented (see `traits.md` § Generic Traits). This enables both same-type and mixed-type operator traits:
-
-```roxy
-// Same-type: Rhs = Self
-fun Vec2.add(other: Vec2): Vec2 for Add<Vec2> { ... }
-
-// Mixed-type: Rhs = i32
-fun Vec2.mul(scalar: i32): Vec2 for Mul<i32> { ... }
-```
+| File | Purpose |
+|------|---------|
+| `include/roxy/compiler/operator_traits.hpp` | operator → method-name mappings |
+| `src/roxy/compiler/semantic.cpp` | trait/primitive registration, operator resolution |
+| `src/roxy/compiler/ir_builder.cpp` | direct IR ops for primitives, trait calls for structs |
+| `tests/e2e/test_traits.cpp` | operator-overloading E2E tests |

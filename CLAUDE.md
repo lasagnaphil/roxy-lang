@@ -355,7 +355,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Details:** `docs/internals/vm.md` | **Files:** `vm/vm.hpp`, `vm/interpreter.hpp`
 
 **Lists** - Dynamic lists (`List<T>`) with bounds checking, push/pop/len/cap methods. Noncopyable when `T` is noncopyable (move semantics, element cleanup at scope exit).
-**Details:** `docs/internals/arrays.md` | **Files:** `vm/list.hpp`
+**Details:** `docs/internals/list.md` | **Files:** `vm/list.hpp`
 
 **Maps** - Hash tables (`Map<K, V>`) with Robin Hood open addressing, backward-shift deletion, insert/get/remove/contains/clear/keys/values methods, index operator support. Builtin `Hash` trait for primitives. Noncopyable when `K` or `V` is noncopyable.
 **Details:** `docs/internals/maps.md` | **Files:** `vm/map.hpp`, `vm/map.cpp`
@@ -457,7 +457,7 @@ On Windows, use `.exe` extension.
   - `ssa-ir.md` - Block arguments, lowering to bytecode
   - `memory.md` - Reference types, object header, slab allocator
   - `structs.md` - Stack-allocated structs, slot-based layout, struct parameters/returns
-  - `arrays.md` - Dynamic lists (`List<T>`), bounds checking
+  - `list.md` - Dynamic lists (`List<T>`), bounds checking
   - `maps.md` - Hash tables (`Map<K, V>`), Robin Hood open addressing
   - `strings.md` - String objects, concatenation, comparison
   - `interop.md` - Native functions, automatic C++ binding
