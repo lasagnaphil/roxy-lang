@@ -3206,4 +3206,94 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 5);
     }
 
+    TEST_CASE("moving a pointer field out destroys it exactly once") {
+        // Moving a noncopyable pointer field (`o.a`) out of a value struct nulls
+        // that field in the root, so the root's destructor no-ops it (frees only
+        // the *sibling* `o.b`) instead of re-destroying the moved-out value. Each
+        // Foo destructor must run exactly once; the bug was a double-destruction
+        // of `o.a` (the root re-freed what the move transferred out).
+        const char* prelude = R"(
+        struct Foo { id: i32; }
+        fun delete Foo() { print(f"~Foo {self.id}"); }
+        struct Bag { a: uniq Foo; b: uniq Foo; }
+        struct Holder { only: uniq Foo; }
+        fun take(f: uniq Foo) { }
+    )";
+
+        SUBCASE("var decl") {
+            std::string src = std::string(prelude) + R"(
+            fun main(): i32 {
+                var o: Bag = Bag { a = uniq Foo { id = 1 }, b = uniq Foo { id = 2 } };
+                var x: uniq Foo = o.a;
+                return 0;
+            }
+        )";
+            TestResult r = run_and_capture(src.c_str(), "main");
+            CHECK(r.success);
+            CHECK(r.stdout_output == "~Foo 1\n~Foo 2\n");
+        }
+
+        SUBCASE("call argument") {
+            std::string src = std::string(prelude) + R"(
+            fun main(): i32 {
+                var o: Bag = Bag { a = uniq Foo { id = 1 }, b = uniq Foo { id = 2 } };
+                take(o.a);
+                return 0;
+            }
+        )";
+            TestResult r = run_and_capture(src.c_str(), "main");
+            CHECK(r.success);
+            CHECK(r.stdout_output == "~Foo 1\n~Foo 2\n");
+        }
+
+        SUBCASE("struct literal field") {
+            std::string src = std::string(prelude) + R"(
+            fun main(): i32 {
+                var o: Bag = Bag { a = uniq Foo { id = 1 }, b = uniq Foo { id = 2 } };
+                var h: Holder = Holder { only = o.a };
+                return 0;
+            }
+        )";
+            TestResult r = run_and_capture(src.c_str(), "main");
+            CHECK(r.success);
+            CHECK(r.stdout_output == "~Foo 1\n~Foo 2\n");
+        }
+
+        SUBCASE("assign to variable") {
+            std::string src = std::string(prelude) + R"(
+            fun main(): i32 {
+                var o: Bag = Bag { a = uniq Foo { id = 1 }, b = uniq Foo { id = 2 } };
+                var y: uniq Foo = nil;
+                y = o.a;
+                return 0;
+            }
+        )";
+            TestResult r = run_and_capture(src.c_str(), "main");
+            CHECK(r.success);
+            CHECK(r.stdout_output == "~Foo 1\n~Foo 2\n");
+        }
+    }
+
+    TEST_CASE("moving a value-struct field out is rejected") {
+        // A noncopyable *value-struct* field can't be moved out (the container
+        // can't track a partial move). Must be a compile error.
+        const char* source = R"(
+        struct Foo { id: i32; }
+        fun delete Foo() { print(f"~Foo {self.id}"); }
+        struct Inner { val: uniq Foo; }
+        struct Outer { a: Inner; b: Inner; }
+        fun main(): i32 {
+            var o: Outer = Outer {
+                a = Inner { val = uniq Foo { id = 1 } },
+                b = Inner { val = uniq Foo { id = 2 } }
+            };
+            var x: Inner = o.a;   // value-struct field move -> error
+            return 0;
+        }
+    )";
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
+
 }  // TEST_SUITE("E2E RAII")

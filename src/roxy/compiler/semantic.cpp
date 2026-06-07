@@ -1731,14 +1731,31 @@ bool SemanticAnalyzer::check_not_field_move(Expr* expr, SourceLocation loc) {
     Type* field_type = expr->resolved_type;
     if (!field_type || !field_type->noncopyable()) return true;
 
-    // Allow moving a noncopyable field out of a local value-struct variable,
-    // including nested chains like `obj.inner.field` provided every link in the
-    // chain is a value struct (no references). A reference type anywhere along
-    // the chain breaks the rule: we can read through `uniq`/`ref`/`weak` but
-    // can't take ownership of storage we don't own. After the move the root
-    // variable is marked moved (unusable); the IR builder skips its scope-exit
-    // destructor so the remaining noncopyable fields leak rather than
-    // double-free.
+    // A noncopyable *value-struct* field can't be moved out. The containing
+    // struct is destroyed by a type-level descriptor that walks every field, so
+    // it would re-run the moved field's destructor (double-free); and unlike a
+    // pointer field it can't be nulled in place (the move-target aliases the same
+    // inline storage). Pointer-valued noncopyable fields (uniq/List/Map/Coro/fun)
+    // are fine — they are nulled in the root at the move (see the IR builder).
+    if (field_type->is_struct()) {
+        error(loc, "cannot move a value-type struct field out of a struct: the "
+                   "container can't track a partial move. Move the whole struct, "
+                   "borrow the field with 'ref', or make the field 'uniq'");
+        return false;
+    }
+
+    // Allow moving a noncopyable *pointer* field (uniq/List/Map/...) out of a
+    // local value-struct variable, including nested chains like `obj.inner.field`
+    // provided every link in the chain is a value struct (no references). A
+    // reference type anywhere along the chain breaks the rule: we can read through
+    // `uniq`/`ref`/`weak` but can't take ownership of storage we don't own.
+    //
+    // The root is marked moved here for *use-checking* — conservatively the whole
+    // variable becomes unusable, even though its sibling fields are still valid.
+    // But its scope-exit cleanup still runs: the IR builder nulls the moved-out
+    // field in the root (nullify_moved_field_source) so the root's destructor
+    // no-ops that field and frees the surviving siblings, instead of re-freeing
+    // the value the move transferred out.
     Expr* current = expr->get.object;
     while (current->kind == AstKind::ExprGet) {
         Type* parent_type = current->resolved_type;

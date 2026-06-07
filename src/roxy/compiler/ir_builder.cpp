@@ -2011,6 +2011,9 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
                                 /*nullify_record=*/false);
             }
         }
+        // `return o.field`: null the moved-out field before scope cleanup destroys
+        // the root (val already read its value above).
+        nullify_moved_field_source(rs.value);
 
         // Emit cleanup for all scopes (return exits entire function)
         emit_scope_cleanup(1);
@@ -3490,6 +3493,9 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
             // scope so exception cleanup skips this value after the transfer.
             if (arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
                 consume_temp_noncopyable(args[i]);
+                // `f(o.field)`: null the moved-out field in the root (args[i]
+                // already read its value above) so the root's destructor no-ops it.
+                nullify_moved_field_source(arg.expr);
             }
 
             // Wrap uniq/ref → weak conversion for call arguments
@@ -4035,6 +4041,10 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
                             /*nullify_record=*/false);
         }
     }
+    // `y = o.field`: null the moved-out source field in its root.
+    if (assign_expr.value->resolved_type && assign_expr.value->resolved_type->noncopyable()) {
+        nullify_moved_field_source(assign_expr.value);
+    }
 
     return value;
 }
@@ -4143,29 +4153,10 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
     // Field-move nullify: if the RHS is a field access on a local value-struct
     // (e.g. `self.things = src.items` where `src` is a by-value noncopyable
     // struct param), the semantic analyzer marked the RHS as moved, but nothing
-    // has actually cleared the source field. When the enclosing struct goes
-    // out of scope, its destructor walks its own fields and destroys
-    // `src.items` — freeing the list a second time after we stored the same
-    // pointer into `self.things`. Null the source field so the eventual
-    // destroy-on-scope-exit is a safe `Delete(null)`.
-    if (assign_expr.value->kind == AstKind::ExprGet && field_type &&
-        field_type->noncopyable()) {
-        Type* value_type = assign_expr.value->resolved_type;
-        if (value_type && value_type->noncopyable()) {
-            GetExpr& src_get = assign_expr.value->get;
-            Type* src_obj_type = src_get.object->resolved_type;
-            Type* src_struct_type = src_obj_type ? src_obj_type->base_type() : nullptr;
-            if (src_struct_type && src_struct_type->is_struct()) {
-                const FieldInfo* src_field = src_struct_type->struct_info.find_field(src_get.name);
-                if (src_field) {
-                    ValueId src_obj_ptr = gen_expr(src_get.object);
-                    ValueId null_val = emit_const_null();
-                    emit_set_field(src_obj_ptr, src_field->name,
-                                   src_field->slot_offset, src_field->slot_count,
-                                   null_val, m_types.void_type());
-                }
-            }
-        }
+    // has actually cleared the source field — the enclosing struct's destructor
+    // would later free it a second time. Null the source field.
+    if (field_type && field_type->noncopyable()) {
+        nullify_moved_field_source(assign_expr.value);
     }
 
     return result;
@@ -4557,9 +4548,12 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         }
 
         // Nullify source variable when moving a noncopyable value into a regular field
-        if (field_info.type && field_info.type->noncopyable() &&
-            value_expr && value_expr->kind == AstKind::ExprIdentifier) {
-            mark_moved_from(value_expr->identifier.name);
+        if (field_info.type && field_info.type->noncopyable() && value_expr) {
+            if (value_expr->kind == AstKind::ExprIdentifier) {
+                mark_moved_from(value_expr->identifier.name);
+            }
+            // `Foo { x = o.field }`: null the moved-out source field in its root.
+            nullify_moved_field_source(value_expr);
         }
     }
 
@@ -4594,9 +4588,11 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
                     }
 
                     // Nullify source variable when moving a noncopyable value into a variant field
-                    if (variant_field_info.type && variant_field_info.type->noncopyable() &&
-                        value_expr->kind == AstKind::ExprIdentifier) {
-                        mark_moved_from(value_expr->identifier.name);
+                    if (variant_field_info.type && variant_field_info.type->noncopyable()) {
+                        if (value_expr->kind == AstKind::ExprIdentifier) {
+                            mark_moved_from(value_expr->identifier.name);
+                        }
+                        nullify_moved_field_source(value_expr);
                     }
                 }
             }
@@ -4877,6 +4873,8 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         if (var_decl.initializer && var_decl.initializer->kind == AstKind::ExprIdentifier) {
             mark_moved_from(var_decl.initializer->identifier.name);
         }
+        // `var x = o.field`: null the moved-out field in the root.
+        nullify_moved_field_source(var_decl.initializer);
     }
 }
 
@@ -5025,6 +5023,24 @@ void IRBuilder::mark_moved_from(StringView name, bool null_ssa, bool nullify_rec
     }
 
     owned_info->is_moved = true;
+}
+
+void IRBuilder::nullify_moved_field_source(Expr* consumed) {
+    if (!consumed || consumed->kind != AstKind::ExprGet) return;
+    Type* field_type = consumed->resolved_type;
+    if (!field_type || !field_type->noncopyable()) return;
+
+    GetExpr& src_get = consumed->get;
+    Type* src_obj_type = src_get.object->resolved_type;
+    Type* src_struct_type = src_obj_type ? src_obj_type->base_type() : nullptr;
+    if (!src_struct_type || !src_struct_type->is_struct()) return;
+    const FieldInfo* src_field = src_struct_type->struct_info.find_field(src_get.name);
+    if (!src_field) return;
+
+    ValueId src_obj_ptr = gen_expr(src_get.object);
+    ValueId null_val = emit_const_null();
+    emit_set_field(src_obj_ptr, src_field->name, src_field->slot_offset,
+                   src_field->slot_count, null_val, m_types.void_type());
 }
 
 void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {

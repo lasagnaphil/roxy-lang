@@ -389,6 +389,15 @@ private:
     // previously copy-pasted across every move site.
     void mark_moved_from(StringView name, bool null_ssa = true, bool nullify_record = true);
 
+    // When a noncopyable pointer field is moved out (`var x = o.field`,
+    // `f(o.field)`, `return o.field`, `Foo { x = o.field }`, `y = o.field`), null
+    // the source field in the root struct so the root's destructor sees null
+    // there and no-ops it, instead of re-freeing the value the move transferred
+    // out. No-op unless `consumed` is a field access of a noncopyable field.
+    // (Semantic analysis rejects moving a *value-struct* field out, so only
+    // pointer-valued fields — uniq/List/Map/Coro/fun — reach here.)
+    void nullify_moved_field_source(Expr* consumed);
+
     // RAII helpers: emit destructor + Delete (for uniq) or destructor only (for value struct)
     void emit_implicit_destroy(OwnedLocalInfo& info);
 

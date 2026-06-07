@@ -110,6 +110,12 @@ Passing a noncopyable variable to a function parameter of matching noncopyable t
 - Explicit `delete` → variable consumed.
 - Reassigning a noncopyable variable → old value is implicitly destroyed before the new value is assigned.
 
+### Moving a Field Out
+
+A noncopyable **pointer** field (`uniq`/`List`/`Map`/…) may be moved out of a local value struct (`var x = o.field`, `f(o.field)`, `return o.field`, `Foo { x = o.field }`, `y = o.field`). The compiler nulls that field in the root at the move site, so the root's destructor no-ops it and still frees the surviving sibling fields — no double-free, no leak. For use-checking the *whole* root is conservatively marked moved (so siblings can't be read afterward, even though they remain valid; per-field move state is not tracked).
+
+Moving a noncopyable **value-struct** field out is a compile error: the container is destroyed by a type-level descriptor that can't skip a partially-moved field, and the move-target aliases the same inline storage. Move the whole struct, borrow the field with `ref`, or make the field `uniq`.
+
 ### Use-After-Move Detection
 
 The semantic analyzer tracks a move state per noncopyable local; using a `Moved` or `MaybeValid` variable is a compile-time error:
