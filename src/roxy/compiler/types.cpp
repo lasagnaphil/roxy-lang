@@ -248,13 +248,14 @@ Type* TypeCache::borrowed(Type* inner_type) {
     if (inner_type->kind == TypeKind::Function) {
         return ref_type(inner_type);
     }
-    // Everything else is identity: copyable values copy out, `ref`/`weak` are
-    // already borrows, and the remaining noncopyable kinds (coroutine, value
-    // struct, List/Map) keep their type so in-place use (field reads, method
-    // calls) still works. Unsound *binds* of those are still caught by the
-    // move-checker's native-index guard (see consume_noncopyable). A fuller
-    // `borrowed` would demote those too (e.g. value structs would error for lack
-    // of a header) — deferred.
+    // Everything else is identity. Copyable values/structs copy out; `ref`/`weak`
+    // are already borrows; and the remaining noncopyable kinds (inline value
+    // struct, coroutine, List/Map) keep their type so all their *safe* uses keep
+    // working — for a value struct that means storage + RAII cleanup + in-place
+    // field reads / method calls (it has no object header, so it genuinely can't
+    // be borrowed *out*, but it doesn't need to be for those). The move-checker's
+    // native-index guard (see consume_noncopyable) is the right backstop here: it
+    // rejects only the unsound bind/move-out while leaving everything else intact.
     return inner_type;
 }
 
