@@ -2899,4 +2899,39 @@ TEST_SUITE("E2E RAII") {
         CHECK(module == nullptr);
     }
 
+    // ===== Diagnostic tests for suspected move-state holes =====
+    // These document the *desired* behavior. If a CHECK fails, it confirms the
+    // corresponding analysis hole is real.
+
+    TEST_CASE("move through parenthesized identifier is tracked") {
+        // consume_noncopyable() peels groupings before marking the source moved.
+        // A move whose argument is wrapped in a grouping — consume((p)) — denotes
+        // the same storage as consume(p) and must transfer ownership, so the
+        // later use of p is a compile error (use of moved value). Without the
+        // grouping unwrap, the move would launder past the identifier check and
+        // leave p Live — a use-after-move false negative.
+        const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            p.x = 42;
+            var result: i32 = consume((p));  // move through grouping
+            // p is moved — using it here should be a compile error
+            return p.x;
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
+
 }  // TEST_SUITE("E2E RAII")

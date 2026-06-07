@@ -1594,6 +1594,16 @@ void SemanticAnalyzer::consume_noncopyable(Expr* expr, SourceLocation loc) {
     Type* type = expr->resolved_type;
     if (!type || !type->noncopyable()) return;
 
+    // Look through parenthesization: `(p)` denotes the same storage as `p`
+    // (is_lvalue() recurses through grouping the same way). A move whose source
+    // is wrapped in a grouping must still mark the underlying variable moved;
+    // otherwise `consume((p))` launders the move past the identifier check below
+    // and leaves `p` Live — a use-after-move false negative.
+    while (expr->kind == AstKind::ExprGrouping) {
+        expr = expr->grouping.expr;
+        if (!expr) return;
+    }
+
     if (!check_not_field_move(expr, loc)) return;
 
     if (expr->kind == AstKind::ExprIdentifier) {
