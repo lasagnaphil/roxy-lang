@@ -438,12 +438,12 @@ public:
     Type* weak_type(Type* inner_type);
 
     // The `borrowed` type-level transform: demote an owning type to a borrow.
-    //   copyable T   -> T            (copy out; no aliasing concern)
     //   uniq T       -> ref T        (owning heap reference -> borrow)
-    //   ref T/weak T -> unchanged    (already a borrow; idempotent)
-    //   headerless noncopyable value type (struct with dtor, noncopyable
-    //     List/Map, Coro, function) -> nullptr (no object header to borrow
-    //     against; the caller reports an error and steers toward `uniq`).
+    //   fun(...)     -> ref fun(...) (closure value is a heap env pointer)
+    //   everything else -> unchanged (copyable copies out; ref/weak already a
+    //     borrow; inline value struct / coroutine / List / Map keep their type —
+    //     their safe uses don't need a borrow, and the move-checker's native-index
+    //     guard backstops the unsound move-out). Never returns null.
     Type* borrowed(Type* inner_type);
 
     // Factory methods for named types (not interned - unique per declaration)

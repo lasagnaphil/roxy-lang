@@ -161,11 +161,10 @@ Type* NativeRegistry::resolve_type_expr(TypeExpr* expr,
     }
 
     // `borrowed T` in a native signature (e.g. `index(idx: i32): borrowed T`):
-    // demote the resolved type to a borrow once T is known. A headerless
-    // noncopyable element has no sound borrow, so it resolves to error.
+    // demote the resolved type to a borrow once T is known (uniq T -> ref T,
+    // fun -> ref fun, everything else unchanged).
     if (expr->is_borrowed && result && !result->is_error()) {
-        Type* demoted = types.borrowed(result);
-        result = demoted ? demoted : types.error_type();
+        result = types.borrowed(result);
     }
 
     return result;

@@ -1318,12 +1318,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             case RefKind::None: break;
         }
         if (type_expr->is_borrowed) {
-            Type* demoted = m_types.borrowed(base_type);
-            if (!demoted) {
-                error(type_expr->loc, "cannot borrow a noncopyable function value");
-                return m_types.error_type();
-            }
-            base_type = demoted;
+            base_type = m_types.borrowed(base_type);
         }
         return base_type;
     }
@@ -1452,19 +1447,10 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
         case RefKind::None: break;
     }
 
-    // `borrowed`: demote the resolved type to a borrow (uniq T -> ref T, copyable
-    // unchanged). A headerless noncopyable value type can't be borrowed.
+    // `borrowed`: demote the resolved type to a borrow (uniq T -> ref T,
+    // fun -> ref fun, everything else unchanged).
     if (type_expr->is_borrowed) {
-        Type* demoted = m_types.borrowed(base_type);
-        if (!demoted) {
-            auto type_str = m_checker.type_string(base_type);
-            error_fmt(type_expr->loc,
-                "cannot borrow noncopyable value type '{}': it has no object header "
-                "for the borrow check; store it behind 'uniq' to borrow it",
-                type_str.data());
-            return m_types.error_type();
-        }
-        base_type = demoted;
+        base_type = m_types.borrowed(base_type);
     }
 
     return base_type;
