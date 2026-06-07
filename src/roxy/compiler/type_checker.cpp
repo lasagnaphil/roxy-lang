@@ -154,6 +154,15 @@ bool TypeChecker::can_convert_ref(Type* from, Type* to) const {
         return inner_compatible(from->ref_info.inner_type, to->ref_info.inner_type);
     }
 
+    // fun -> ref fun / fun -> weak fun: a function value is a pointer to a heap
+    // closure env, so borrowing one mirrors uniq -> ref / uniq -> weak. The
+    // borrow's inner type is the function signature itself (function types are
+    // interned, so identity compares signatures).
+    if (from->kind == TypeKind::Function &&
+        (to->kind == TypeKind::Ref || to->kind == TypeKind::Weak)) {
+        return from == to->ref_info.inner_type;
+    }
+
     return false;
 }
 

@@ -1131,6 +1131,43 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
+    TEST_CASE("function-to-borrow conversion") {
+        SUBCASE("pass a fun to a ref fun parameter and call it") {
+            // `fun -> ref fun` borrows the closure (like uniq -> ref); the borrow
+            // is callable, and the caller's `f` stays usable afterward.
+            const char* source = R"(
+            fun apply(rf: ref fun(i32) -> i32, x: i32): i32 {
+                return rf(x);
+            }
+            fun main(): i32 {
+                var f = fun(x: i32): i32 => x + 1;
+                var a: i32 = apply(f, 41);   // f borrowed as ref fun
+                var b: i32 = apply(f, 9);    // f still usable
+                return a + b;                // 42 + 10 == 52
+            }
+        )";
+            TestResult result = run_and_capture(source, "main");
+            CHECK(result.success);
+            CHECK(result.value == 52);
+        }
+
+        SUBCASE("pass a fun to a weak fun parameter and call it") {
+            // `fun -> weak fun` captures the env generation via WeakCreate.
+            const char* source = R"(
+            fun apply(wf: weak fun(i32) -> i32, x: i32): i32 {
+                return wf(x);
+            }
+            fun main(): i32 {
+                var f = fun(x: i32): i32 => x * 3;
+                return apply(f, 14);   // 42
+            }
+        )";
+            TestResult result = run_and_capture(source, "main");
+            CHECK(result.success);
+            CHECK(result.value == 42);
+        }
+    }
+
     TEST_CASE("borrowed function values are callable") {
         SUBCASE("borrow a function out of a list and call it") {
             // `List<fun>.index` returns `borrowed fun` == `ref fun`, so a bound

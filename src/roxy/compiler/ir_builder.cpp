@@ -1389,8 +1389,11 @@ ValueId IRBuilder::emit_weak_create(ValueId ptr, Type* weak_type) {
 
 ValueId IRBuilder::maybe_wrap_weak(ValueId value, Type* source_type, Type* target_type) {
     if (!source_type || !target_type) return value;
+    // A function value is a heap env pointer with a header, so `fun -> weak fun`
+    // is created the same way as uniq/ref -> weak.
     if (target_type->kind == TypeKind::Weak &&
-        (source_type->kind == TypeKind::Uniq || source_type->kind == TypeKind::Ref)) {
+        (source_type->kind == TypeKind::Uniq || source_type->kind == TypeKind::Ref ||
+         source_type->kind == TypeKind::Function)) {
         return emit_weak_create(value, target_type);
     }
     return value;
