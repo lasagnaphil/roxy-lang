@@ -517,6 +517,9 @@ TypeExpr* GenericInstantiator::substitute_type_expr(TypeExpr* type_expr, const T
             if (type_expr->ref_kind != RefKind::None && concrete_expr->ref_kind == RefKind::None) {
                 concrete_expr->ref_kind = type_expr->ref_kind;
             }
+            // Preserve a `borrowed` modifier across substitution (e.g. `borrowed T`
+            // with T = uniq Point becomes `borrowed uniq Point` -> resolves to ref Point).
+            if (type_expr->is_borrowed) concrete_expr->is_borrowed = true;
             return concrete_expr;
         }
     }

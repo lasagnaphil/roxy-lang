@@ -154,6 +154,11 @@ struct TypeExpr {
     StringView name;
     SourceLocation loc;
     RefKind ref_kind = RefKind::None;
+    // `borrowed T`: a resolve-time transform applied on top of the resolved type
+    //   borrowed (copyable T) -> T,  borrowed (uniq T) -> ref T,  ref/weak idempotent.
+    // Composes with ref_kind (e.g. `borrowed uniq T` sets both). Never persists as
+    // a Type — resolution maps it to a concrete type.
+    bool is_borrowed = false;
     Span<TypeExpr*> type_args;
     TypeExpr* return_type = nullptr;  // Function only
 };

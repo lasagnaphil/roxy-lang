@@ -129,37 +129,46 @@ Type* NativeRegistry::resolve_type_expr(TypeExpr* expr,
     if (!expr) return types.void_type();
 
     StringView name = expr->name;
+    Type* result = types.error_type();
 
     // Check if it's a type parameter name
+    bool resolved = false;
     for (u32 i = 0; i < type_param_names.size(); i++) {
         if (name == type_param_names[i]) {
-            if (i < type_args.size()) {
-                return type_args[i];
+            // Concrete arg, or a type param placeholder when uninstantiated.
+            result = (i < type_args.size()) ? type_args[i] : types.type_param(name, i);
+            resolved = true;
+            break;
+        }
+    }
+
+    if (!resolved) {
+        // Primitive types
+        Type* primitive = types.primitive_by_name(name);
+        if (primitive) {
+            result = primitive;
+        } else if (expr->type_args.size() > 0) {
+            // Generic type application: List<T>, Map<K, V>
+            if (name == StringView("List", 4) && expr->type_args.size() == 1) {
+                Type* elem = resolve_type_expr(expr->type_args[0], type_param_names, type_args, types);
+                result = types.list_type(elem);
+            } else if (name == StringView("Map", 3) && expr->type_args.size() == 2) {
+                Type* key = resolve_type_expr(expr->type_args[0], type_param_names, type_args, types);
+                Type* val = resolve_type_expr(expr->type_args[1], type_param_names, type_args, types);
+                result = types.map_type(key, val);
             }
-            // No concrete arg — return a type param placeholder
-            return types.type_param(name, i);
         }
     }
 
-    // Primitive types
-    Type* primitive = types.primitive_by_name(name);
-    if (primitive) return primitive;
-
-    // Generic type application: List<T>, Map<K, V>
-    if (expr->type_args.size() > 0) {
-        // Resolve type args recursively
-        if (name == StringView("List", 4) && expr->type_args.size() == 1) {
-            Type* elem = resolve_type_expr(expr->type_args[0], type_param_names, type_args, types);
-            return types.list_type(elem);
-        }
-        if (name == StringView("Map", 3) && expr->type_args.size() == 2) {
-            Type* key = resolve_type_expr(expr->type_args[0], type_param_names, type_args, types);
-            Type* val = resolve_type_expr(expr->type_args[1], type_param_names, type_args, types);
-            return types.map_type(key, val);
-        }
+    // `borrowed T` in a native signature (e.g. `index(idx: i32): borrowed T`):
+    // demote the resolved type to a borrow once T is known. A headerless
+    // noncopyable element has no sound borrow, so it resolves to error.
+    if (expr->is_borrowed && result && !result->is_error()) {
+        Type* demoted = types.borrowed(result);
+        result = demoted ? demoted : types.error_type();
     }
 
-    return types.error_type();
+    return result;
 }
 
 // NativeRegistry method implementations

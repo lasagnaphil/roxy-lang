@@ -232,6 +232,25 @@ Type* TypeCache::weak_type(Type* inner_type) {
     return intern_type(type);
 }
 
+Type* TypeCache::borrowed(Type* inner_type) {
+    if (!inner_type || inner_type->is_error()) return inner_type;
+    // The one demotion the prototype performs: an owning heap reference becomes a
+    // borrow of its pointee. This is the case that matters for `List<uniq T>` /
+    // `Map<K, uniq V>` indexing, where it turns a move-out into a plain ref→uniq
+    // type error.
+    if (inner_type->kind == TypeKind::Uniq) {
+        return ref_type(inner_type->inner_type());
+    }
+    // Everything else is identity: copyable values copy out, `ref`/`weak` are
+    // already borrows, and the remaining noncopyable kinds (function/closure env,
+    // coroutine, value struct, List/Map) keep their type so in-place use (calls,
+    // field reads, method calls) still works. Unsound *binds* of those are still
+    // caught by the move-checker's native-index guard (see consume_noncopyable).
+    // A fuller `borrowed` would demote those too (e.g. value structs would error
+    // for lack of a header) — deferred.
+    return inner_type;
+}
+
 Type* TypeCache::struct_type(StringView name, Decl* decl, StringView module_name) {
     Type* type = m_allocator.emplace<Type>();
     type->kind = TypeKind::Struct;

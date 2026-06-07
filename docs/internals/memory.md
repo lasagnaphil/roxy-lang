@@ -132,6 +132,23 @@ fun main(): i32 {
 
 Reassignment auto-deletes the old value: after `p = uniq Point()`, the previously-owned object is destroyed and `p` owns the new one, which is itself deleted at scope exit.
 
+## The `borrowed` Type Modifier
+
+`borrowed T` is a **resolve-time type transform** that demotes an owning type to a borrow. It lets a function or method express "I return a *view* of this, not ownership" — most importantly the container subscript operator, where returning an owning `uniq T` by alias would double-free (the caller and the container both free it).
+
+The mapping (`TypeCache::borrowed`):
+
+| `borrowed X` | → | rationale |
+|---|---|---|
+| `uniq T` | `ref T` | borrow the heap pointee instead of transferring it |
+| copyable `T` | `T` | a copy aliases nothing; no demotion needed |
+| `ref T` / `weak T` | unchanged | already a borrow |
+| other noncopyable (function, value struct, `List`/`Map`) | unchanged *(prototype)* | see below |
+
+`borrowed` is a **soft keyword** recognized only in type position (it stays usable as an ordinary identifier elsewhere); it never persists as a `Type` — resolution maps it to a concrete type, and it rides on `TypeExpr` through generic substitution so `borrowed T` resolves per monomorphization. The native `List`/`Map` `index` methods are typed `borrowed T` / `borrowed V`, so `var x: uniq Point = list[i]` is a plain `ref → uniq` type error.
+
+**Prototype scope.** Today `borrowed` only demotes `uniq` (and copies copyables); for other noncopyable element kinds it is the identity, and the move-checker's native-index guard (`consume_noncopyable`) remains the backstop that rejects unsound *binds* of those (function values, inline value structs) while still allowing in-place use (calls, field reads, method calls). A fuller `borrowed` would also demote those — value structs to a compile error (no object header to borrow against; store behind `uniq`), function/coroutine/container values to `ref` once `ref`-of-callable dispatch lands.
+
 ## Files
 
 | File | Purpose |

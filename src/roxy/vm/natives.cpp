@@ -1009,7 +1009,9 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_method(native_list_cap,       "fun List<T>.cap(): i32");
     registry.bind_method(native_list_push,      "fun List<T>.push(val: T)");
     registry.bind_method(native_list_pop,       "fun List<T>.pop(): T");
-    registry.bind_method(native_list_index,     "fun List<T>.index(idx: i32): T");
+    // index borrows the element (borrowed T -> ref T for noncopyable elements,
+    // T for copyable); pop transfers ownership and stays `: T`.
+    registry.bind_method(native_list_index,     "fun List<T>.index(idx: i32): borrowed T");
     registry.bind_method(native_list_index_mut, "fun List<T>.index_mut(idx: i32, val: T)");
 
     // Free functions
@@ -1062,13 +1064,13 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_generic_copy_constructor("Map", "map_copy", native_map_copy);
     registry.bind_method(native_map_len,       "fun Map<K, V>.len(): i32");
     registry.bind_method(native_map_contains,  "fun Map<K, V>.contains(key: K): bool");
-    registry.bind_method(native_map_get,       "fun Map<K, V>.get(key: K): V");
+    registry.bind_method(native_map_get,       "fun Map<K, V>.get(key: K): borrowed V");
     registry.bind_method(native_map_insert,    "fun Map<K, V>.insert(key: K, val: V)");
     registry.bind_method(native_map_remove,    "fun Map<K, V>.remove(key: K): bool");
     registry.bind_method(native_map_clear,     "fun Map<K, V>.clear()");
     registry.bind_method(native_map_keys,      "fun Map<K, V>.keys(): List<K>");
     registry.bind_method(native_map_values,    "fun Map<K, V>.values(): List<V>");
-    registry.bind_method(native_map_index,     "fun Map<K, V>.index(key: K): V");
+    registry.bind_method(native_map_index,     "fun Map<K, V>.index(key: K): borrowed V");
     registry.bind_method(native_map_index_mut, "fun Map<K, V>.index_mut(key: K, val: V)");
 
     // Internal map bucket iteration functions (used by emit_map_cleanup for noncopyable elements)

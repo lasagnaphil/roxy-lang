@@ -2308,8 +2308,18 @@ TypeExpr* Parser::type_expression() {
     TypeExpr* type = alloc<TypeExpr>();
     type->kind = TypeExprKind::Named;
     type->ref_kind = RefKind::None;
+    type->is_borrowed = false;
     type->type_args = Span<TypeExpr*>();
     type->return_type = nullptr;
+
+    // `borrowed T`: a leading soft keyword in type position. Recognized
+    // contextually (not a reserved keyword) so `borrowed` stays usable as an
+    // ordinary identifier elsewhere; a type never begins with two identifiers,
+    // so a leading `borrowed` here is unambiguously the modifier.
+    if (check(TokenKind::Identifier) && m_current.text() == "borrowed") {
+        advance();
+        type->is_borrowed = true;
+    }
 
     // Check for reference modifiers
     if (match(TokenKind::KwUniq)) {

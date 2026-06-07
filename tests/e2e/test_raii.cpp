@@ -3062,9 +3062,11 @@ TEST_SUITE("E2E RAII") {
     }
 
     TEST_CASE("move out of noncopyable list element is rejected") {
-        // `list[i]` returns the element by value without nullifying the slot, so
-        // binding it to a new owner aliases the pointer: the owner and the list's
-        // scope-exit cleanup both free it (double-free). Must be rejected.
+        // `List<uniq T>.index` returns `borrowed T` == `ref T`, so binding the
+        // result to a `uniq` owner is a plain ref->uniq type error (a borrow does
+        // not transfer ownership). This replaces the earlier move-checker stopgap
+        // for uniq elements — moving the element out would otherwise double-free
+        // it (owner + the list's own cleanup).
         const char* source = R"(
         struct Point {
             x: i32;
@@ -3074,7 +3076,7 @@ TEST_SUITE("E2E RAII") {
         fun main(): i32 {
             var list: List<uniq Point> = List<uniq Point>();
             list.push(uniq Point { x = 42, y = 0 });
-            var x: uniq Point = list[0];   // move out of list element
+            var x: uniq Point = list[0];   // ref Point -> uniq Point: type error
             return x.x;
         }
     )";
@@ -3085,7 +3087,7 @@ TEST_SUITE("E2E RAII") {
     }
 
     TEST_CASE("move out of noncopyable map value is rejected") {
-        // Same hazard via map indexing.
+        // Same hazard via map indexing: `index` returns `borrowed V` == `ref V`.
         const char* source = R"(
         struct Point {
             x: i32;
@@ -3095,7 +3097,31 @@ TEST_SUITE("E2E RAII") {
         fun main(): i32 {
             var m: Map<i32, uniq Point> = Map<i32, uniq Point>();
             m.insert(0, uniq Point { x = 42, y = 0 });
-            var x: uniq Point = m[0];   // move out of map value
+            var x: uniq Point = m[0];   // ref Point -> uniq Point: type error
+            return x.x;
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
+
+    TEST_CASE("move out of noncopyable Map.get() result is rejected") {
+        // `get` returns `borrowed V` too, so the same hazard via the named
+        // accessor (not the `[]` operator) is also a ref->uniq type error. The
+        // ExprIndex-scoped move-checker guard would NOT catch this call form;
+        // routing `get` through the shared `borrowed` conversion does.
+        const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun main(): i32 {
+            var m: Map<i32, uniq Point> = Map<i32, uniq Point>();
+            m.insert(0, uniq Point { x = 42, y = 0 });
+            var x: uniq Point = m.get(0);   // ref Point -> uniq Point: type error
             return x.x;
         }
     )";
@@ -3150,6 +3176,34 @@ TEST_SUITE("E2E RAII") {
         TestResult result = run_and_capture(source, "main");
         CHECK(result.success);
         CHECK(result.value == 42);
+    }
+
+    TEST_CASE("borrowed uniq T resolves to ref T (a borrow)") {
+        // The `borrowed` type modifier demotes `uniq T` to `ref T`: the source is
+        // borrowed, not moved, so `owner` stays usable afterward.
+        const char* source = R"(
+        struct Point { x: i32; y: i32; }
+        fun main(): i32 {
+            var owner: uniq Point = uniq Point { x = 42, y = 0 };
+            var b: borrowed uniq Point = owner;   // -> ref Point (borrow)
+            return b.x + owner.x;                 // owner not moved: 42 + 42 == 84
+        }
+    )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 84);
+    }
+
+    TEST_CASE("borrowed copyable T resolves to T (a copy)") {
+        const char* source = R"(
+        fun main(): i32 {
+            var b: borrowed i32 = 5;   // copyable -> i32 (copy out)
+            return b;
+        }
+    )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 5);
     }
 
 }  // TEST_SUITE("E2E RAII")

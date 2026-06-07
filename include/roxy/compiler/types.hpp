@@ -437,6 +437,15 @@ public:
     Type* ref_type(Type* inner_type);
     Type* weak_type(Type* inner_type);
 
+    // The `borrowed` type-level transform: demote an owning type to a borrow.
+    //   copyable T   -> T            (copy out; no aliasing concern)
+    //   uniq T       -> ref T        (owning heap reference -> borrow)
+    //   ref T/weak T -> unchanged    (already a borrow; idempotent)
+    //   headerless noncopyable value type (struct with dtor, noncopyable
+    //     List/Map, Coro, function) -> nullptr (no object header to borrow
+    //     against; the caller reports an error and steers toward `uniq`).
+    Type* borrowed(Type* inner_type);
+
     // Factory methods for named types (not interned - unique per declaration)
     Type* struct_type(StringView name, Decl* decl, StringView module_name = StringView(nullptr, 0));
     Type* enum_type(StringView name, Decl* decl, Type* underlying = nullptr);
