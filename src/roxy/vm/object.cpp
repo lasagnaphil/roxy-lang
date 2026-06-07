@@ -99,6 +99,11 @@ void object_free(RoxyVM* vm, void* data) {
 
     ObjectHeader* header = get_header_from_data(data);
 
+    // Double-delete tripwire (debug): freeing a tombstoned slot means it was
+    // already freed. Catch it before the destructor re-runs. Best-effort — a
+    // recycled slot reads alive again (see delete_value for the full note).
+    assert(is_alive(header) && "double-delete: object already freed");
+
     // Call destructor if registered. The destructor still receives `vm`
     // because some impls (e.g. the map-dispatch unregister hook) need
     // access to per-VM state.

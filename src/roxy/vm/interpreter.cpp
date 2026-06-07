@@ -276,6 +276,16 @@ static void delete_value(RoxyVM* vm, void* ptr,
                          const BCFunction* func) {
     if (!ptr) return;
 
+    // Double-delete tripwire (debug). A heap object (`free_obj`) reached here
+    // must still be alive; a tombstoned slot means it was already freed — catch
+    // it *before* re-running the destructor on stale data. This fires earlier
+    // than `free_in_slab`'s ALIVE assert, which a destructor that allocates can
+    // mask by recycling the slot mid-destruction. Best-effort: a slot already
+    // recycled into a new live object reads alive again, so this is a debug aid,
+    // not a runtime guard (raw owning pointers carry no generation to check).
+    assert((!desc.free_obj || is_alive(get_header_from_data(ptr))) &&
+           "double-delete: heap object already freed");
+
     // Recursive cleanup of owned resources. The heap free (if any) is applied
     // uniformly afterward via desc.free_obj.
     switch (desc.cleanup) {
