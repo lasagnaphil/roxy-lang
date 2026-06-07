@@ -4,7 +4,7 @@ Traits define shared behavior across types, enabling polymorphism without functi
 
 **Implemented:** trait declarations, required/default methods, `for Trait` impls, trait inheritance, `Self` type, generic traits with type parameters (`trait Add<Rhs>`), operator dispatch for all overloadable operators (arithmetic, comparison, bitwise, unary, compound-assignment, indexing) on both structs and primitives (see `operator-overloading.md`), and trait bounds on generics (`<T: Trait>`, with instantiation-site and definition-site checking — see `generics.md`).
 
-**Not yet implemented:** a standard-library trait set (`Clone`, `Default`, `Iterator`, …) and generic trait inheritance (`trait AddAssign<Rhs> : Add<Rhs>`). `Printable` and `Hash` are the only builtin traits.
+**Not yet implemented:** a standard-library trait set (`Clone`, `Default`, `Iterator`, …) and generic trait inheritance (`trait AddAssign<Rhs> : Add<Rhs>`). The builtin traits (registered in semantic analysis, usable without a user declaration) are `Printable`, `Hash`, `Eq`, `Exception`, and the subscript-operator traits `Index<Idx, Output>` / `IndexMut<Idx, Output>`. Other operator traits (`Add<Rhs>`, `Ord`, …) are user-declared (see `operator-overloading.md`).
 
 ## Declaring Traits and Methods
 

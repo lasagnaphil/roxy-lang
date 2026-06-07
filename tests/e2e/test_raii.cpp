@@ -3129,15 +3129,15 @@ TEST_SUITE("E2E RAII") {
     }
 
     TEST_CASE("move out of a user-defined index result is allowed") {
-        // The rejection keys off the `index` method being *native*. A user-defined
-        // `index` (the subscript operator dispatches to any method named `index`)
-        // has a move-checked body, so its noncopyable return is a genuine
-        // ownership transfer (here a fresh temporary) and consuming it is sound —
-        // it must NOT be rejected like the built-in container case.
+        // The rejection keys off the `index` method being *native*. A user `index`
+        // (here via the builtin `Index<Idx, Output>` trait) has a move-checked
+        // body, so its noncopyable return is a genuine ownership transfer (a fresh
+        // temporary) and consuming it is sound — it must NOT be rejected like the
+        // built-in container case.
         const char* source = R"(
         struct Point { x: i32; y: i32; }
         struct Maker { base: i32; }
-        fun Maker.index(i: i32): uniq Point {
+        fun Maker.index(i: i32): uniq Point for Index<i32, uniq Point> {
             return uniq Point { x = self.base + i, y = 0 };  // fresh temp, not an alias
         }
         fun main(): i32 {

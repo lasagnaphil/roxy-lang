@@ -117,6 +117,46 @@ Type* SemanticAnalyzer::register_builtin_trait(
     return trait_type;
 }
 
+Type* SemanticAnalyzer::register_builtin_index_trait(StringView name, StringView method_name,
+                                                     bool is_mut) {
+    Type* trait_type = m_types.trait_type(name, nullptr);
+    m_type_env.register_trait_type(name, trait_type);
+
+    // Two type params: <Idx, Output>. Output appears in the method's return type
+    // (index) or value parameter (index_mut), since Roxy has no associated types.
+    Vector<TypeParam> tparams;
+    TypeParam idx_param; idx_param.name = StringView("Idx", 3);
+    idx_param.loc = SourceLocation{}; idx_param.bounds = Span<TypeExpr*>();
+    TypeParam out_param; out_param.name = StringView("Output", 6);
+    out_param.loc = SourceLocation{}; out_param.bounds = Span<TypeExpr*>();
+    tparams.push_back(idx_param);
+    tparams.push_back(out_param);
+    trait_type->trait_info.type_params = m_allocator.alloc_span(tparams);
+
+    Type* idx_tp = m_types.type_param(StringView("Idx", 3), 0);
+    Type* out_tp = m_types.type_param(StringView("Output", 6), 1);
+
+    Vector<Type*> method_params;
+    method_params.push_back(idx_tp);
+    Type* return_type;
+    if (is_mut) {
+        method_params.push_back(out_tp);       // index_mut(idx: Idx, val: Output)
+        return_type = m_types.void_type();
+    } else {
+        return_type = out_tp;                  // index(idx: Idx): Output
+    }
+
+    TraitMethodInfo tmi;
+    tmi.name = method_name;
+    tmi.param_types = m_allocator.alloc_span(method_params);
+    tmi.return_type = return_type;
+    tmi.decl = nullptr;
+    tmi.has_default = false;
+    trait_type->trait_info.methods =
+        Span<TraitMethodInfo>(m_allocator.emplace<TraitMethodInfo>(tmi), 1);
+    return trait_type;
+}
+
 void SemanticAnalyzer::run_declaration_passes(Program* program) {
     m_program = program;
 
@@ -210,6 +250,22 @@ void SemanticAnalyzer::run_declaration_passes(Program* program) {
             Span<Type*>(nullptr, 0), m_types.string_type(),
             Span<TypeKind>(exc_kinds, 1), /*register_trait_on_primitives=*/false);
         m_type_env.set_exception_type(exception_trait_type);
+    }
+
+    // Builtin subscript-operator traits. `a[i]` rewrites to `a.index(i)` and
+    // `a[i] = v` to `a.index_mut(i, v)`; the dispatch is structural (any matching
+    // method), but these traits let user types formally opt in with
+    // `for Index<Idx, Output>` / `for IndexMut<Idx, Output>`. Built with two type
+    // params because Roxy has no associated types for the element (output) type.
+    // Registered with decl == nullptr so a user `trait Index<Idx, Output>;` merges
+    // rather than colliding (see the trait-decl handler).
+    if (!m_type_env.trait_type_by_name(StringView("Index", 5))) {
+        register_builtin_index_trait(StringView("Index", 5), StringView("index", 5),
+                                     /*is_mut=*/false);
+    }
+    if (!m_type_env.trait_type_by_name(StringView("IndexMut", 8))) {
+        register_builtin_index_trait(StringView("IndexMut", 8), StringView("index_mut", 9),
+                                     /*is_mut=*/true);
     }
 
     // Pass 1.8: Register built-in operator trait methods for primitive types

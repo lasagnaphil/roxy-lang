@@ -1022,4 +1022,105 @@ TEST_SUITE("E2E Traits") {
         CHECK(!result.success);
     }
 
+    TEST_CASE("Index/IndexMut builtin trait impls dispatch") {
+        // `for Index<Idx, Output>` / `for IndexMut<Idx, Output>` formally opt the
+        // struct into the subscript operator; dispatch is the same structural
+        // path as a plain `index`/`index_mut` method.
+        const char* source = R"(
+        struct Grid {
+            a: i32;
+            b: i32;
+            c: i32;
+        }
+
+        fun Grid.index(i: i32): i32 for Index<i32, i32> {
+            if (i == 0) return self.a;
+            if (i == 1) return self.b;
+            return self.c;
+        }
+
+        fun Grid.index_mut(i: i32, val: i32) for IndexMut<i32, i32> {
+            if (i == 0) { self.a = val; return; }
+            if (i == 1) { self.b = val; return; }
+            self.c = val;
+        }
+
+        fun main(): i32 {
+            var g: Grid = Grid { a = 10, b = 20, c = 30 };
+            g[1] = 99;            // index_mut
+            return g[0] + g[1];   // index: 10 + 99 == 109
+        }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 109);
+    }
+
+    TEST_CASE("Index with noncopyable Output type arg") {
+        // Output may be a noncopyable type; `for Index<i32, uniq Point>` validates
+        // the index method returns exactly `uniq Point`.
+        const char* source = R"(
+        struct Point { x: i32; y: i32; }
+        struct Maker { base: i32; }
+
+        fun Maker.index(i: i32): uniq Point for Index<i32, uniq Point> {
+            return uniq Point { x = self.base + i, y = 0 };
+        }
+
+        fun main(): i32 {
+            var m: Maker = Maker { base = 40 };
+            var p: uniq Point = m[2];   // user index -> move-checked transfer
+            return p.x;                 // 42
+        }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
+
+    TEST_CASE("Index error: Output type arg mismatches method return") {
+        // The `for Index<Idx, Output>` clause is validated against the method
+        // signature: a wrong Output is a compile error.
+        const char* source = R"(
+        struct Grid {
+            a: i32;
+        }
+
+        fun Grid.index(i: i32): i32 for Index<i32, i64> {  // returns i32, Output=i64
+            return self.a;
+        }
+
+        fun main(): i32 {
+            var g: Grid = Grid { a = 1 };
+            return 0;
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
+
+    TEST_CASE("Index error: Idx type arg mismatches index parameter") {
+        const char* source = R"(
+        struct Grid {
+            a: i32;
+        }
+
+        fun Grid.index(i: i32): i32 for Index<i64, i32> {  // param i32, Idx=i64
+            return self.a;
+        }
+
+        fun main(): i32 {
+            return 0;
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
+
 }  // TEST_SUITE("E2E Traits")

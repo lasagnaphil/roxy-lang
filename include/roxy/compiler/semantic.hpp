@@ -284,6 +284,12 @@ private:
                                  Span<TypeKind> primitive_kinds,
                                  bool register_trait_on_primitives);
 
+    // Register a builtin generic operator trait for the subscript operator:
+    //   Index<Idx, Output>     with  index(idx: Idx): Output
+    //   IndexMut<Idx, Output>  with  index_mut(idx: Idx, val: Output)
+    // `is_mut` selects index_mut (void return, extra value param) vs index.
+    Type* register_builtin_index_trait(StringView name, StringView method_name, bool is_mut);
+
     // Lvalue checking for assignment
     bool is_lvalue(Expr* expr) const;
 

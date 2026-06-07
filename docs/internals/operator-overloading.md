@@ -8,7 +8,9 @@ See `traits.md` for the general trait system design.
 
 ## Operator Traits
 
-The operator traits are builtin trait declarations (no user-visible source; declared in semantic analysis). Each maps an operator to a method name. `Rhs` defaults to `Self` on the binary arithmetic/bitwise traits.
+Operator dispatch is **structural**: the compiler rewrites each operator to a method call (`a + b` → `a.add(b)`, `a[i]` → `a.index(i)`) and resolves it by method name, so a type opts into an operator simply by defining the method — the `for Trait` clause is optional bookkeeping (it validates the signature and injects defaults). `Rhs` defaults to `Self` on the binary arithmetic/bitwise traits.
+
+Most operator traits below (`Add<Rhs>`, `Mul<Rhs>`, `Ord`, …) are **not** builtin — user code declares them (`trait Add<Rhs>;`) when it wants the `for` clause. The exceptions, registered as builtin traits in semantic analysis so `for ...` works without a user declaration, are `Eq`, `Exception`, and the subscript traits `Index<Idx, Output>` / `IndexMut<Idx, Output>`.
 
 ### Comparison
 
@@ -62,8 +64,10 @@ These modify `self` in-place (return `void`).
 
 | Trait | Method | Operator | Access |
 |-------|--------|----------|--------|
-| `Index<Idx>` | `index` | `a[i]` | read |
-| `IndexMut<Idx>` | `index_mut` | `a[i] = v` | write |
+| `Index<Idx, Output>` | `index` | `a[i]` | read |
+| `IndexMut<Idx, Output>` | `index_mut` | `a[i] = v` | write |
+
+`Index` / `IndexMut` are builtin generic traits (registered in semantic Pass 1.7). They carry **two** type parameters — the index type `Idx` and the element type `Output` — because Roxy has no associated types to name the element type the way Rust's `Index { type Output; }` does. So `index(idx: Idx): Output` and `index_mut(idx: Idx, val: Output)`; an impl writes `for Index<i32, uniq Cell>`. The `for` clause is optional (subscripting dispatches structurally on the method name) but validates the index/element types against the method signature when present. `List<T>` / `Map<K, V>` provide `index` / `index_mut` via native methods rather than the trait.
 
 ### Non-Overloadable Operators
 
@@ -138,7 +142,7 @@ Mixed-type operator traits (`Mul<f64>`, `Add<i32>`) rely on generic traits — s
 
 Both primitive and struct operators resolve through one path, but codegen diverges.
 
-- **Registration (Pass 1.8):** `register_primitive_operator_methods()` registers operator methods on primitive types via `TypeCache::register_primitive_method()`; `populate_list_methods()` registers `index`/`index_mut` on list types. Primitive methods are not user-writable.
+- **Registration (Pass 1.7–1.8):** `register_builtin_index_trait()` registers the builtin `Index<Idx, Output>` / `IndexMut<Idx, Output>` traits (Pass 1.7, alongside `Eq` / `Exception`); `register_primitive_operator_methods()` registers operator methods on primitive types via `TypeCache::register_primitive_method()` (Pass 1.8); `populate_list_methods()` registers `index`/`index_mut` on list types. Primitive methods are not user-writable.
 - **Resolution:** `try_resolve_binary_op()`, `try_resolve_unary_op()`, and `analyze_index_expr()` call `TypeCache::lookup_method()`, which dispatches to struct hierarchy, primitive, or list lookup. Type checking is uniform across all kinds.
 - **Code generation:** primitives emit **direct IR ops** (`AddI`, `SubF`, …) rather than method calls; structs emit trait-method calls; lists/maps emit `CallNative` to their registered `index`/`index_mut` functions.
 
