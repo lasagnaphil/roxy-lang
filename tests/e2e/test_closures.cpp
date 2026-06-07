@@ -1131,4 +1131,41 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
+    TEST_CASE("borrowed function values are callable") {
+        SUBCASE("borrow a function out of a list and call it") {
+            // `List<fun>.index` returns `borrowed fun` == `ref fun`, so a bound
+            // element is a borrow of the list's closure (no double-free) and is
+            // still callable.
+            const char* source = R"(
+            fun main(): i32 {
+                var fs: List<fun(i32) -> i32> = List<fun(i32) -> i32>();
+                fs.push(fun(x: i32): i32 => x + 1);
+                fs.push(fun(x: i32): i32 => x * 2);
+                var g: ref fun(i32) -> i32 = fs[1];   // borrow, not move
+                return fs[0](10) + g(10);             // 11 + 20 == 31
+            }
+        )";
+            TestResult result = run_and_capture(source, "main");
+            CHECK(result.success);
+            CHECK(result.value == 31);
+        }
+
+        SUBCASE("moving a function out of a list is rejected") {
+            // Binding to an owning `fun` would move the closure out from under the
+            // list (double-free). Since index yields `ref fun`, this is a plain
+            // ref->fun type error.
+            const char* source = R"(
+            fun main(): i32 {
+                var fs: List<fun(i32) -> i32> = List<fun(i32) -> i32>();
+                fs.push(fun(x: i32): i32 => x + 1);
+                var moved: fun(i32) -> i32 = fs[0];   // ref fun -> fun: type error
+                return moved(10);
+            }
+        )";
+            BumpAllocator allocator(65536);
+            BCModule* module = compile(allocator, source);
+            CHECK(module == nullptr);  // Should fail to compile
+        }
+    }
+
 }  // TEST_SUITE("E2E Closures")

@@ -5414,12 +5414,15 @@ Type* SemanticAnalyzer::analyze_regular_fun_call(Expr* expr, CallExpr& ce) {
     Type* callee_type = analyze_expr(ce.callee);
     if (callee_type->is_error()) return m_types.error_type();
 
-    if (!callee_type->is_function()) {
+    // A borrowed function value (`ref fun` / `weak fun`) is the same env-pointer
+    // representation as a `fun` value, so it is callable too — unwrap the borrow.
+    Type* fn_type = callee_type->base_type();
+    if (!fn_type->is_function()) {
         error(ce.callee->loc, "expression is not callable");
         return m_types.error_type();
     }
 
-    FunctionTypeInfo& fti = callee_type->func_info;
+    FunctionTypeInfo& fti = fn_type->func_info;
 
     // Check argument count
     if (ce.arguments.size() != fti.param_types.size()) {

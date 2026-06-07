@@ -141,13 +141,16 @@ The mapping (`TypeCache::borrowed`):
 | `borrowed X` | → | rationale |
 |---|---|---|
 | `uniq T` | `ref T` | borrow the heap pointee instead of transferring it |
+| `fun(...) -> R` | `ref fun(...) -> R` | a closure value is a heap env pointer; `ref fun` shares its representation and is callable |
 | copyable `T` | `T` | a copy aliases nothing; no demotion needed |
 | `ref T` / `weak T` | unchanged | already a borrow |
-| other noncopyable (function, value struct, `List`/`Map`) | unchanged *(prototype)* | see below |
+| other noncopyable (value struct, coroutine, `List`/`Map`) | unchanged *(prototype)* | see below |
 
-`borrowed` is a **soft keyword** recognized only in type position (it stays usable as an ordinary identifier elsewhere); it never persists as a `Type` — resolution maps it to a concrete type, and it rides on `TypeExpr` through generic substitution so `borrowed T` resolves per monomorphization. The native `List`/`Map` `index` methods are typed `borrowed T` / `borrowed V`, so `var x: uniq Point = list[i]` is a plain `ref → uniq` type error.
+`borrowed` is a **soft keyword** recognized only in type position (it stays usable as an ordinary identifier elsewhere); it never persists as a `Type` — resolution maps it to a concrete type, and it rides on `TypeExpr` through generic substitution so `borrowed T` resolves per monomorphization. The native `List`/`Map` `index` (and `Map.get`) methods are typed `borrowed T` / `borrowed V`, so `var x: uniq Point = list[i]` is a plain `ref → uniq` type error.
 
-**Prototype scope.** Today `borrowed` only demotes `uniq` (and copies copyables); for other noncopyable element kinds it is the identity, and the move-checker's native-index guard (`consume_noncopyable`) remains the backstop that rejects unsound *binds* of those (function values, inline value structs) while still allowing in-place use (calls, field reads, method calls). A fuller `borrowed` would also demote those — value structs to a compile error (no object header to borrow against; store behind `uniq`), function/coroutine/container values to `ref` once `ref`-of-callable dispatch lands.
+**Callable borrows.** A `ref fun` / `weak fun` borrows a closure value, which is a pointer to a heap-allocated env (with a header). Because it shares the env-pointer representation of `fun`, it is callable: the call paths (`analyze_regular_fun_call`, the IR builder's indirect-call dispatch) unwrap the borrow via `base_type()` before reading the call index. So `List<fun>` indexing yields a `ref fun` that can be both stored and invoked, without moving the closure out from under the list.
+
+**Prototype scope.** `borrowed` demotes `uniq` and `fun` (and copies copyables); for the remaining noncopyable kinds (inline value structs, coroutines, `List`/`Map`) it is the identity, and the move-checker's native-index guard (`consume_noncopyable`) remains the backstop that rejects unsound *binds* of those while still allowing in-place use (field reads, method calls). A fuller `borrowed` would also demote those — value structs to a compile error (no object header to borrow against; store behind `uniq`), coroutines/containers to `ref` once their `ref`-receiver dispatch lands. (Passing a bare `fun` to a `ref fun` parameter still needs a `fun → ref fun` conversion, which is not yet implemented — borrows arrive via `borrowed`-typed returns for now.)
 
 ## Files
 

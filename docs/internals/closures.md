@@ -71,6 +71,10 @@ A function value is a `uniq` pointer to a heap-allocated **env struct** (2 slots
 
 `TypeKind::Function` is the user-facing signature type; at codegen, function values are 2-slot pointers, type-erased from their concrete `__lambda_<id>_env` type. Closures reuse the `Ptr` value variant — no new runtime type.
 
+### Calling a borrowed function (`ref fun`)
+
+A `ref fun(...)` / `weak fun(...)` borrows a function value. Since a borrow shares the env-pointer representation, it is **callable**: the call paths (`analyze_regular_fun_call`, and the IR builder's local-var / struct-field / general indirect-call dispatch) unwrap the borrow with `base_type()` before reading `__call_idx`, then emit the same `CALL_INDIRECT`. This is what lets `List<fun>` indexing return a `borrowed fun` (= `ref fun`, see [memory.md](memory.md#the-borrowed-type-modifier)) that callers can both store and invoke without moving the closure out of the list. (Producing a `ref fun` by passing a bare `fun` to a `ref fun` parameter — a `fun → ref fun` conversion — is not yet implemented; borrows currently arrive via `borrowed`-typed returns.)
+
 ## How It Works
 
 Each lambda is **lifted** to a top-level function; captured variables are read from the env through a hidden `__env` parameter:

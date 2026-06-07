@@ -3491,6 +3491,7 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
 
             // Wrap uniq/ref → weak conversion for call arguments
             Type* callee_func_type = call_expr.callee->resolved_type;
+            if (callee_func_type) callee_func_type = callee_func_type->base_type();
             if (callee_func_type && callee_func_type->is_function() &&
                 i < callee_func_type->func_info.param_types.size()) {
                 Type* param_type = callee_func_type->func_info.param_types[i];
@@ -3536,7 +3537,7 @@ ValueId IRBuilder::gen_call_direct(Expr* expr, const CallLowering& lowered) {
     ValueId result;
     // Indirect call: callee is a local holding a closure value (Function-typed).
     // Detect via the local scope map — symbol lookups don't see function-body locals.
-    if (LocalVar* lv = find_local(orig_name); lv && lv->type && lv->type->is_function()) {
+    if (LocalVar* lv = find_local(orig_name); lv && lv->type && lv->type->base_type()->is_function()) {
         ValueId closure_val = gen_identifier_expr(call_expr.callee);
         result = emit_call_indirect(closure_val, final_args, expr->resolved_type);
     }
@@ -3616,7 +3617,7 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
     // could collide with a method name (and we want the field).
     const FieldInfo* fn_field = (struct_type && struct_type->is_struct())
         ? struct_type->struct_info.find_field(get_expr.name) : nullptr;
-    if (fn_field && fn_field->type && fn_field->type->is_function()) {
+    if (fn_field && fn_field->type && fn_field->type->base_type()->is_function()) {
         // Read the closure value from the field, then CALL_INDIRECT.
         ValueId closure_val = gen_expr(call_expr.callee);
         return emit_call_indirect(closure_val, final_args, expr->resolved_type);
@@ -3664,6 +3665,7 @@ void IRBuilder::mark_call_args_moved(Expr* expr) {
     // would trip a false use-after-move on the next loop iteration and (for noncopyable
     // types) null out a local the caller still owns.
     Type* callee_func_type = call_expr.callee->resolved_type;
+    if (callee_func_type) callee_func_type = callee_func_type->base_type();
     if (!callee_func_type || !callee_func_type->is_function()) return;
     Span<Type*> param_types = callee_func_type->func_info.param_types;
     // Method calls include implicit 'self' as param_types[0]; user args start at 1.
@@ -3736,9 +3738,10 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     else if (call_expr.callee->kind == AstKind::ExprGet) {
         result = gen_call_member(expr, lowered);
     }
-    else if (callee_type && callee_type->is_function()) {
+    else if (callee_type && callee_type->base_type()->is_function()) {
         // General indirect call: callee is some Function-typed expression (call
-        // result, index, field access, ...). Evaluate it and dispatch via CALL_INDIRECT.
+        // result, index, field access, ...) — including a borrowed `ref fun`,
+        // which shares the env-pointer representation. Evaluate and CALL_INDIRECT.
         ValueId closure_val = gen_expr(call_expr.callee);
         result = emit_call_indirect(closure_val, lowered.final_args, expr->resolved_type);
     }

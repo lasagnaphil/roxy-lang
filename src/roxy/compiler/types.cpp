@@ -241,13 +241,20 @@ Type* TypeCache::borrowed(Type* inner_type) {
     if (inner_type->kind == TypeKind::Uniq) {
         return ref_type(inner_type->inner_type());
     }
+    // A function value is a pointer to a heap-allocated closure env (with a
+    // header), so borrow it as `ref fun(...)` — same env-pointer representation,
+    // and callable (see the call paths in ir_builder / semantic). This lets
+    // `List<fun>` indexing yield a borrow instead of aliasing the owned closure.
+    if (inner_type->kind == TypeKind::Function) {
+        return ref_type(inner_type);
+    }
     // Everything else is identity: copyable values copy out, `ref`/`weak` are
-    // already borrows, and the remaining noncopyable kinds (function/closure env,
-    // coroutine, value struct, List/Map) keep their type so in-place use (calls,
-    // field reads, method calls) still works. Unsound *binds* of those are still
-    // caught by the move-checker's native-index guard (see consume_noncopyable).
-    // A fuller `borrowed` would demote those too (e.g. value structs would error
-    // for lack of a header) — deferred.
+    // already borrows, and the remaining noncopyable kinds (coroutine, value
+    // struct, List/Map) keep their type so in-place use (field reads, method
+    // calls) still works. Unsound *binds* of those are still caught by the
+    // move-checker's native-index guard (see consume_noncopyable). A fuller
+    // `borrowed` would demote those too (e.g. value structs would error for lack
+    // of a header) — deferred.
     return inner_type;
 }
 
