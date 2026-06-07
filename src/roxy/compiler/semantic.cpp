@@ -1530,6 +1530,119 @@ bool SemanticAnalyzer::merge_branch_snapshots(const Vector<MoveStateSnapshot>& s
     return false;
 }
 
+bool SemanticAnalyzer::expr_references_name(Expr* expr, StringView name) const {
+    if (!expr) return false;
+    switch (expr->kind) {
+        case AstKind::ExprIdentifier:
+            return expr->identifier.name == name;
+        case AstKind::ExprLiteral:
+        case AstKind::ExprThis:
+        case AstKind::ExprSuper:
+        case AstKind::ExprStaticGet:
+            return false;
+        case AstKind::ExprUnary:
+            return expr_references_name(expr->unary.operand, name);
+        case AstKind::ExprBinary:
+            return expr_references_name(expr->binary.left, name) ||
+                   expr_references_name(expr->binary.right, name);
+        case AstKind::ExprTernary:
+            return expr_references_name(expr->ternary.condition, name) ||
+                   expr_references_name(expr->ternary.then_expr, name) ||
+                   expr_references_name(expr->ternary.else_expr, name);
+        case AstKind::ExprCall: {
+            if (expr_references_name(expr->call.callee, name)) return true;
+            for (const auto& arg : expr->call.arguments) {
+                if (expr_references_name(arg.expr, name)) return true;
+            }
+            return false;
+        }
+        case AstKind::ExprIndex:
+            return expr_references_name(expr->index.object, name) ||
+                   expr_references_name(expr->index.index, name);
+        case AstKind::ExprGet:
+            return expr_references_name(expr->get.object, name);
+        case AstKind::ExprAssign:
+            return expr_references_name(expr->assign.target, name) ||
+                   expr_references_name(expr->assign.value, name);
+        case AstKind::ExprGrouping:
+            return expr_references_name(expr->grouping.expr, name);
+        case AstKind::ExprStructLiteral: {
+            for (const auto& field : expr->struct_literal.fields) {
+                if (expr_references_name(field.value, name)) return true;
+            }
+            return false;
+        }
+        case AstKind::ExprStringInterp: {
+            for (Expr* sub : expr->string_interp.expressions) {
+                if (expr_references_name(sub, name)) return true;
+            }
+            return false;
+        }
+        default:
+            // Lambdas (which may capture the variable) and any future expression
+            // kind: assume a reference so we never wrongly exempt a real hazard.
+            return true;
+    }
+}
+
+bool SemanticAnalyzer::loop_reassigns_var_first(Stmt* body, StringView var_name) const {
+    if (!body) return false;
+
+    // Find the leading statement. For a braced block, that is its first
+    // declaration — which must be a plain expression statement (a leading var
+    // decl introduces a new name, never a reassignment of the outer variable).
+    // `Decl::kind` holds the statement kind directly for statement-wrapped decls.
+    Stmt* first = body;
+    if (body->kind == AstKind::StmtBlock) {
+        if (body->block.declarations.size() == 0) return false;
+        Decl* decl = body->block.declarations[0];
+        if (!decl || decl->kind != AstKind::StmtExpr) return false;
+        first = &decl->stmt;
+    }
+
+    // The leading statement must be a plain `var_name = rhs` assignment.
+    if (first->kind != AstKind::StmtExpr) return false;
+    Expr* e = first->expr_stmt.expr;
+    if (!e || e->kind != AstKind::ExprAssign) return false;
+    const AssignExpr& assign = e->assign;
+    if (assign.op != AssignOp::Assign) return false;  // compound ops read the target first
+    if (!assign.target || assign.target->kind != AstKind::ExprIdentifier) return false;
+    if (assign.target->identifier.name != var_name) return false;
+
+    // The RHS must not read the variable (else it observes a possibly-moved value).
+    return !expr_references_name(assign.value, var_name);
+}
+
+void SemanticAnalyzer::check_loop_cross_iteration_moves(
+        Stmt* body,
+        const MoveStateSnapshot& pre_loop_states,
+        const MoveStateSnapshot& post_body_states,
+        SourceLocation loc) {
+    for (auto& [sym, pre_state] : pre_loop_states) {
+        if (pre_state != MoveState::Live) continue;
+        auto post_it = post_body_states.find(sym);
+        if (post_it == post_body_states.end()) continue;
+        MoveState post = post_it->second;
+        if (post != MoveState::Moved && post != MoveState::MaybeValid) continue;
+
+        // A variable refreshed by the body's leading statement is Live again
+        // before any use on every iteration, so the back-edge state is harmless.
+        if (sym && loop_reassigns_var_first(body, sym->name)) continue;
+
+        if (post == MoveState::Moved) {
+            error_fmt(loc,
+                "variable '{}' is moved in the loop body and never reassigned; "
+                "it would be used after move on the next iteration",
+                sym ? sym->name : StringView());
+        } else {
+            error_fmt(loc,
+                "variable '{}' may be moved in the loop body without being "
+                "reassigned; it could be used after move on the next iteration",
+                sym ? sym->name : StringView());
+        }
+    }
+}
+
 bool SemanticAnalyzer::check_not_moved(StringView name, SourceLocation loc) {
     Symbol* sym = m_symbols.lookup(name);
     if (!sym) return true;
@@ -2990,29 +3103,7 @@ void SemanticAnalyzer::analyze_while_stmt(Stmt* stmt) {
 
     MoveStateSnapshot post_body_states = save_move_states();
 
-    // Cross-iteration check: if a variable was Live before the loop
-    // but is Moved/MaybeValid after the body, it would be use-after-move
-    // on the next iteration.
-    for (auto& [name, pre_state] : pre_loop_states) {
-        if (pre_state != MoveState::Live) continue;
-        auto post_it = post_body_states.find(name);
-        if (post_it != post_body_states.end() && post_it->second == MoveState::Moved) {
-            // Check if the variable was reassigned (marked live) then moved again —
-            // that's fine (e.g. linked list building pattern). Only error if it's
-            // moved without any reassignment path.
-            // The mark_live in analyze_assign_expr fires before mark_moved for the source,
-            // so if the variable is the target of an assignment AND moved as a source,
-            // it ends up Moved — which is correct. But if it's ONLY moved (never reassigned),
-            // that's a cross-iteration error.
-            error_fmt(stmt->loc,
-                "variable '{}' is moved in loop body without reassignment; "
-                "would be use-after-move on next iteration", name);
-        }
-        if (post_it != post_body_states.end() && post_it->second == MoveState::MaybeValid) {
-            error_fmt(stmt->loc,
-                "variable '{}' may be moved in loop body without reassignment", name);
-        }
-    }
+    check_loop_cross_iteration_moves(ws.body, pre_loop_states, post_body_states, stmt->loc);
 
     // After loop: merge pre-loop with post-body (loop may execute 0 times)
     restore_move_states(pre_loop_states);
@@ -3064,20 +3155,7 @@ void SemanticAnalyzer::analyze_for_stmt(Stmt* stmt) {
 
     MoveStateSnapshot post_body_states = save_move_states();
 
-    // Cross-iteration check: same logic as while loop
-    for (auto& [name, pre_state] : pre_loop_states) {
-        if (pre_state != MoveState::Live) continue;
-        auto post_it = post_body_states.find(name);
-        if (post_it != post_body_states.end() && post_it->second == MoveState::Moved) {
-            error_fmt(stmt->loc,
-                "variable '{}' is moved in loop body without reassignment; "
-                "would be use-after-move on next iteration", name);
-        }
-        if (post_it != post_body_states.end() && post_it->second == MoveState::MaybeValid) {
-            error_fmt(stmt->loc,
-                "variable '{}' may be moved in loop body without reassignment", name);
-        }
-    }
+    check_loop_cross_iteration_moves(fs.body, pre_loop_states, post_body_states, stmt->loc);
 
     // After loop: merge pre-loop with post-body (loop may execute 0 times)
     restore_move_states(pre_loop_states);

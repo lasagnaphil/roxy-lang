@@ -471,6 +471,26 @@ private:
     void check_scope_exit_uniq_destructors(const Scope* scope, SourceLocation loc);
     void check_all_scopes_uniq_destructors(SourceLocation loc, ScopeKind stop_kind);
 
+    // Cross-iteration use-after-move check shared by while/for. A loop-carried
+    // noncopyable variable that is Live before the loop but Moved/MaybeValid
+    // after the body would be used-after-move on the next iteration — unless the
+    // body unconditionally reassigns it first (see loop_reassigns_var_first).
+    void check_loop_cross_iteration_moves(Stmt* body,
+                                          const MoveStateSnapshot& pre_loop_states,
+                                          const MoveStateSnapshot& post_body_states,
+                                          SourceLocation loc);
+
+    // True if the loop `body`'s first executable statement is a plain `=`
+    // assignment to `var_name` whose RHS does not reference it. Such a variable
+    // is refreshed at the top of every iteration before any use, so it cannot be
+    // a cross-iteration use-after-move regardless of the back-edge state.
+    // Conservative: only the leading top-level statement is examined.
+    bool loop_reassigns_var_first(Stmt* body, StringView var_name) const;
+
+    // True if `expr` (recursively) contains an identifier reference to `name`.
+    // Conservative — unknown expression shapes are treated as referencing it.
+    bool expr_references_name(Expr* expr, StringView name) const;
+
     // Check if a uniq variable is in a moved state and report an error
     bool check_not_moved(StringView name, SourceLocation loc);
 

@@ -2934,4 +2934,72 @@ TEST_SUITE("E2E RAII") {
         CHECK(module == nullptr);  // Should fail to compile
     }
 
+    TEST_CASE("reassign-before-move in loop body is legal") {
+        // p is Live before the loop, reassigned at the TOP of every iteration,
+        // and only then moved. Each iteration refreshes p before any use, so
+        // there is no cross-iteration use-after-move. The cross-iteration check
+        // exempts variables whose first body statement is a plain reassignment
+        // (loop_reassigns_var_first), so this compiles and runs, returning
+        // 0 + 1 + 2 == 3.
+        const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            var i: i32 = 0;
+            var total: i32 = 0;
+            while (i < 3) {
+                p = uniq Point();          // reassigned at top of every iteration
+                p.x = i;
+                total = total + consume(p); // then moved
+                i = i + 1;
+            }
+            return total;
+        }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
+
+    TEST_CASE("move in loop body without reassignment is still rejected") {
+        // Soundness guard for the reassign-before-move exemption: a variable that
+        // is moved in the loop body and NOT refreshed by a leading reassignment
+        // would be used-after-move on the next iteration, so it must still be a
+        // compile error. (Here the move precedes the reassignment, so the leading
+        // statement is the move, not a refresh.)
+        const char* source = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun run(): i32 {
+            var p: uniq Point = uniq Point();
+            var i: i32 = 0;
+            while (i < 3) {
+                var r: i32 = consume(p);  // p moved, never reassigned in body
+                i = i + 1;
+            }
+            return 0;
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile (cross-iteration use-after-move)
+    }
+
 }  // TEST_SUITE("E2E RAII")
