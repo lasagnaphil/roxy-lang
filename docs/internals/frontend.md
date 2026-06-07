@@ -1,6 +1,6 @@
 # Frontend Architecture
 
-The Roxy frontend consists of a compiler and a planned LSP server that share some components.
+The Roxy frontend consists of a compiler and an LSP server that share some components (lexer, token kinds). See [lsp-server.md](lsp-server.md) for the LSP architecture.
 
 ## Compiler Pipeline
 
@@ -24,9 +24,10 @@ Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA
 | Batch processing | Incremental, lazy analysis |
 | Arena allocation | NodeID + hash map |
 
-## LSP Parser (Planned)
+## LSP Parser
 
-The LSP parser will use error recovery to always produce a tree:
+The LSP parser uses error recovery to always produce a tree (implemented — see
+[lsp-server.md](lsp-server.md)):
 
 ```cpp
 // Always returns a node, never nullptr
@@ -79,10 +80,10 @@ The compiler parser is a recursive descent parser with Pratt parsing for express
 
 ## AST
 
-Complete AST node definitions:
-- 24 expression types (literals, binary ops, unary ops, calls, etc.)
-- 9 statement types (if, while, for, return, block, etc.)
-- 5 declaration types (function, variable, struct, enum, import)
+Complete AST node definitions (see `compiler/ast.hpp`, `enum class AstKind`):
+- Expression nodes (literals, binary/unary ops, calls, index, get, lambda, etc.)
+- Statement nodes (if, while, for, return, block, when, try, throw, yield, etc.)
+- Declaration nodes (var, fun, struct, field, enum, import, constructor, destructor, method, trait)
 
 ## Semantic Analysis
 

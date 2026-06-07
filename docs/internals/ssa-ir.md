@@ -37,7 +37,7 @@ exit(result):
 struct ValueId { u32 id; };
 struct BlockId { u32 id; };
 
-enum class IROp {
+enum class IROp : u8 {
     // Constants (6)
     ConstNull, ConstBool, ConstInt, ConstF, ConstD, ConstString,
 
@@ -62,37 +62,52 @@ enum class IROp {
     // Logical (3)
     Not, And, Or,
 
-    // Bitwise (3)
-    BitAnd, BitOr, BitNot,
+    // Bitwise (6)
+    BitAnd, BitOr, BitXor, BitNot, Shl, Shr,
 
     // Conversions (4)
-    I2F, F2I, I2B, B2I,
+    I_TO_F64, F64_TO_I, I_TO_B, B_TO_I,
 
     // Memory (4)
     StackAlloc, GetField, GetFieldAddr, SetField,
 
-    // Reference counting (3)
-    RefInc, RefDec, WeakCheck,
+    // Reference counting (4)
+    RefInc, RefDec, WeakCheck, WeakCreate,
 
     // Object lifecycle (2)
     New, Delete,
 
-    // Functions (2)
-    Call, CallNative,
+    // Closures (2)
+    Closure, AssertHeap,
 
-    // Structs (1)
-    StructCopy,
+    // Functions / calls (4)
+    Call, CallNative, CallExternal, CallIndirect,
 
-    // Pointers (3)
-    LoadPtr, StorePtr, VarAddr,
+    // Container indexing (2)
+    IndexGet, IndexSet,
 
     // Meta (2)
     BlockArg, Copy,
 
+    // Structs (1)
+    StructCopy,
+
+    // Pointers (2)
+    LoadPtr, StorePtr,
+
     // Casting (1)
     Cast,
+
+    // Cleanup (1)
+    Nullify,
+
+    // Exceptions (1)
+    Throw,
+
+    // Coroutines (1)
+    Yield,
 };
-// Total: 54 IR operations
+// Total: 80 IR operations
 
 struct IRInst {
     IROp op;

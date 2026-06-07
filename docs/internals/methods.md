@@ -63,9 +63,9 @@ Methods are compiled as regular functions with mangled names using the `$` separ
 
 | Method Declaration | Mangled Name |
 |-------------------|--------------|
-| `fun Point.sum()` | `Point$sum` |
-| `fun Point.add(dx, dy)` | `Point$add` |
-| `fun Counter.increment()` | `Counter$increment` |
+| `fun Point.sum()` | `Point$$sum` |
+| `fun Point.add(dx, dy)` | `Point$$add` |
+| `fun Counter.increment()` | `Counter$$increment` |
 
 ### Implicit `self` Parameter
 
@@ -73,7 +73,7 @@ Every method has an implicit first parameter named `self` with type `ref<StructT
 
 ```
 // Logical signature of Point.sum():
-fun Point$sum(self: ref<Point>): i32
+fun Point$$sum(self: ref<Point>): i32
 ```
 
 When calling `p.sum()`, the compiler automatically passes `p` as the first argument.
@@ -158,8 +158,9 @@ Non-public methods are module-private.
 ## Limitations
 
 - **No method overloading**: Each struct can have only one method with a given name
-- **No inheritance**: Methods are not inherited (struct inheritance not yet implemented)
-- **No `super`**: The `super` keyword is not yet supported for method dispatch
+
+Methods *are* inherited and can be overridden, and `super` dispatches to the parent's
+implementation — see [inheritance.md](inheritance.md).
 
 ## Related Files
 

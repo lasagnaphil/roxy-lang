@@ -6,7 +6,7 @@ Roxy uses a reference-counted memory model with three reference types and no gar
 
 | Type | Owns? | Nullable? | On dangling |
 |------|-------|-----------|-------------|
-| `uniq` | Yes | No | N/A (is owner) |
+| `uniq` | Yes | Yes | N/A (is owner) |
 | `ref` | No | No | Assert/crash |
 | `weak` | No | Yes | Returns null or asserts |
 

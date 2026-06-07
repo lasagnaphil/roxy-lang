@@ -1,18 +1,18 @@
 # Recursive Types
 
-This document describes the design for supporting recursive (self-referential) value types in Roxy.
+This document describes how Roxy supports recursive (self-referential) value types.
 
-## Current State
+## Background
 
-Roxy structs are value types laid out sequentially in memory (slot-based, no padding). A struct containing another struct embeds it directly. This makes recursive types impossible without indirection — `struct Node { value: i32; next: Node; }` would have infinite size.
+Roxy structs are value types laid out sequentially in memory (slot-based, no padding). A struct containing another struct embeds it directly, so a direct value-type cycle — `struct Node { value: i32; next: Node; }` — would have infinite size and is rejected at compile time.
 
-`uniq T` fields provide pointer indirection (2 slots = 8 bytes, just a pointer) and can break the size cycle. Additionally, `uniq` is already nullable — `nil` can be assigned to `uniq` variables and fields, providing a natural base case for recursion.
+`uniq T` fields provide pointer indirection (2 slots = 8 bytes, just a pointer) and break the size cycle. Additionally, `uniq` is nullable — `nil` can be assigned to `uniq` variables and fields, providing a natural base case for recursion.
 
-However, recursive types are not yet supported because:
+Recursive types are fully supported. Three pieces make this work, each detailed below:
 
-1. **Type resolution may reject self-references.** The semantic analyzer resolves struct fields in Pass 2; a struct referencing itself via `uniq` may not be handled correctly depending on resolution order.
-2. **No cycle detection for direct embedding.** If a user writes `struct Node { next: Node; }` (without `uniq`), the layout computation may loop infinitely instead of producing a clear error.
-3. **Recursive destruction untested.** Cleanup of recursive ownership chains (e.g., linked list nodes) needs to work correctly with the existing destructor/cleanup mechanism.
+1. **Self-reference resolution.** The semantic analyzer registers struct names in Pass 1, so a field of type `uniq Node` inside `Node` resolves correctly in Pass 2 — `uniq T` is always pointer-sized regardless of `T`'s layout.
+2. **Cycle detection for direct embedding.** A direct value-type cycle (`struct Node { next: Node; }`, no indirection) produces a clear "infinite size" error instead of looping forever.
+3. **Recursive destruction.** Cleanup of recursive ownership chains (linked lists, trees) is descriptor-driven, so deep chains destroy without overflowing the native stack.
 
 ## Goals
 
@@ -156,7 +156,7 @@ During semantic analysis Pass 2 (`resolve_type_members`), when a struct field re
 3. The slot count for `uniq Node` is always 2 (pointer), regardless of whether `Node`'s own fields are fully resolved
 4. No cycle in slot count computation — indirection breaks the recursion
 
-**Verification needed:** Confirm that the current implementation of `get_type_slot_count()` doesn't try to recursively resolve the struct's full layout when computing the slot count of a `uniq` field pointing to the same struct. Since `uniq T` always returns 2 slots regardless of `T`, this should work, but needs testing.
+`get_type_slot_count()` does not recursively resolve a struct's full layout when computing the slot count of a `uniq` field pointing to the same struct — `uniq T` always returns 2 slots regardless of `T`, which is what breaks the recursion. This is covered by the E2E tests listed below.
 
 ### Cycle Detection for Direct Embedding
 

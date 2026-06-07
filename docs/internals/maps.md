@@ -38,7 +38,7 @@ The frame's bytecode-function indices (`hash_fn_idx` / `eq_fn_idx`) live in a pe
 
 ## Robin Hood Open Addressing
 
-- **Hash:** Dispatch via `MapKeyKind` (Integer, Float32, Float64, String)
+- **Hash:** Dispatch via `MapKeyKind` (Integer, Float32, Float64, String, Struct)
 - **Insert:** Linear probe from `hash & (capacity-1)`. Robin Hood swapping when probe distance of existing entry < our distance.
 - **Lookup:** Probe until key match or entry with shorter distance (early termination).
 - **Remove:** Backward-shift deletion (no tombstones). Shifts subsequent entries toward their ideal position to fill the gap.
@@ -52,7 +52,8 @@ enum class MapKeyKind : u8 {
     Integer,    // bool, i8..i64, u8..u64, enum
     Float32,    // Normalize -0→+0, hash bit representation
     Float64,    // Normalize -0→+0, hash bit representation
-    String,     // FNV-1a hash, string_equals for equality
+    String,     // hash via cached header field, string_equals for equality
+    Struct,     // bytewise FNV-1a + memcmp, or user-defined Hash/Eq trait methods
 };
 ```
 
@@ -62,12 +63,16 @@ The `MapKeyKind` is determined at compile time from the key type and passed as a
 
 - **Integers:** SplitMix64 bit mixer
 - **Floats:** Normalize -0.0 → +0.0, then hash bit representation as integer
-- **Strings:** FNV-1a on string bytes (matching existing StringView hash)
+- **Strings:** XXH3 hash cached in the string header (see `strings.md`) — read directly, no re-hash per probe
 - **Bools:** Direct 0/1
 
-### Struct Keys (Deferred)
+### Struct Keys
 
-Struct keys require calling Roxy `hash()` / `eq()` methods from native C code (VM re-entry). This will be implemented as a follow-up. Currently, using a struct as a Map key produces a compile-time error.
+Struct keys are supported. A struct used as a `Map` key hashes and compares via its
+`Hash` / `Eq` trait methods, or — with no user-defined impl — a bytewise FNV-1a hash
+plus `memcmp`. In VM mode, dispatching to user `hash()` / `eq()` re-enters the bytecode
+interpreter through the thread-local trampolines in `vm/map_dispatch.cpp` (see the
+dispatch-frame discussion above).
 
 ## Hash Trait
 
@@ -102,8 +107,9 @@ m[key] = val;           // write (insert or update)
 ```cpp
 #include "roxy/vm/binding/roxy_map.hpp"
 
-// In a bound function receiving RoxyVM*:
-auto map = RoxyMap<i32, i32>::alloc(vm, MapKeyKind::Integer, 16);
+// In a bound C++ function (no RoxyVM* parameter — the runtime context is
+// thread-local). RoxyMap<K, V> is an alias of roxy::Map<K, V>.
+auto map = RoxyMap<i32, i32>::alloc((i32)MapKeyKind::Integer, 16);
 map.insert(42, 100);
 bool found = map.contains(42);
 i32 val = map.get(42);

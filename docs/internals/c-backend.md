@@ -559,8 +559,8 @@ weak_check v0 →  bool v1 = roxy_weak_valid(v0.ptr, v0.generation);
 ```
 v1 = load_ptr v0          →  int32_t v1 = *v0;    // type from IRInst.type
 store_ptr v0, v1           →  *v0 = v1;
-v1 = var_addr "x"          →  int32_t* v1 = &v0;  // v0 is the SSA value for variable "x"
-                               // For StackAlloc values: &v0_struct (backing storage address)
+// Address-of (for out/inout params) is handled by StackAlloc (backing-storage
+// address &v0_struct) and GetFieldAddr — there is no dedicated var_addr op.
 ```
 
 ### Nullify
@@ -1117,7 +1117,6 @@ private:
     tsl::robin_map<u32, Type*> m_value_types;         // ValueId.id -> Type*
     tsl::robin_set<u32> m_stack_alloc_values;          // StackAlloc result ValueIds
     tsl::robin_set<u32> m_pointer_values;              // Pointer values (StackAlloc, struct params, GetFieldAddr)
-    tsl::robin_map<u32, ValueId> m_var_name_to_value;  // Variable name hash -> ValueId (for VarAddr)
 };
 ```
 

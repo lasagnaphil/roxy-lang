@@ -318,7 +318,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Parser** - Recursive descent with Pratt parsing for expressions. Fail-fast design.
 **Details:** `docs/internals/frontend.md` | **Files:** `compiler/parser.hpp`, `compiler/parser.cpp`
 
-**AST** - 15 expression types, 9 statement types, 7 declaration types.
+**AST** - Expression, statement, and declaration node kinds (literals, operators, calls, control flow, structs, enums, traits, etc.).
 **Files:** `compiler/ast.hpp`
 
 **Semantic Analysis** - Multi-pass analyzer with symbol resolution, type inference, type checking, and move-state tracking for `uniq` variables (use-after-move detection).
@@ -341,13 +341,13 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Details:** `docs/internals/recursive-types.md` | **Tests:** `tests/e2e/test_recursive_types.cpp`
 
 ### IR and Bytecode
-**SSA IR** - Block arguments (not phi nodes), 43+ operations for all basic operations.
+**SSA IR** - Block arguments (not phi nodes); operations spanning arithmetic, comparisons, memory, calls, control flow, object lifecycle, and closures.
 **Details:** `docs/internals/ssa-ir.md` | **Files:** `compiler/ssa_ir.hpp`, `compiler/ir_builder.hpp`
 
 **IR Optimizations** - Phase 1 (constant folding, algebraic simplifications, cast folding) eagerly applied during IR building. Phases 2 (DCE, copy propagation), 3 (branch folding, block merging, trivial block-argument elimination), and 4 (block-local Common Subexpression Elimination) as standalone passes between coroutine lowering and IR validation, iterated to a fixed point with a final RPO sweep.
 **Details:** `docs/internals/optimization.md` | **Files:** `compiler/ir_optimize.hpp`, `compiler/ir_optimize.cpp`
 
-**Bytecode** - 32-bit fixed-width register-based, 64+ opcodes, three instruction formats (ABC, ABI, AOFF). Liveness-based register allocation with free-list reuse; register spilling via furthest-first eviction when pressure exceeds 255 registers.
+**Bytecode** - 32-bit fixed-width register-based, three instruction formats (ABC, ABI, AOFF). Liveness-based register allocation with free-list reuse; register spilling via furthest-first eviction when pressure exceeds 255 registers.
 **Details:** `docs/internals/bytecode.md`, `docs/internals/ssa-ir.md` | **Files:** `vm/bytecode.hpp`, `compiler/lowering.hpp`
 
 ### Runtime
