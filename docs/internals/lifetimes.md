@@ -1,10 +1,16 @@
 # Lifetime & Borrow Soundness
 
-> **Status:** Design / proposed, not yet implemented. This document specifies the
-> intended *constraint-reference* model and how to make it sound and complete.
-> It supersedes [memory.md](memory.md)'s description where the two differ:
-> memory.md states the same model but describes its current — incomplete and
-> unsound — implementation.
+> **Status:** Largely implemented (VM). The *constraint-reference* model below
+> is live: `ref` is a fully-counted borrow, the free-trap is centralized across
+> every free path, the three audited findings are fixed, the `out`/`inout`
+> second-class rule and `[ref self]` capture counting are enforced. Still
+> **deferred**: call-site heap-root counting (§6/§8, the receiver/`out`-`inout`
+> root borrow — parked pending class polymorphic dispatch), refcount elision
+> (§11, always a later phase), and full AOT/C-backend parity beyond the
+> `roxy_free` trap. See the per-item status in [§13](#13-implementation-status).
+>
+> This supersedes [memory.md](memory.md) where the two differ; memory.md states
+> the same model but describes the older, incomplete implementation.
 
 **In one sentence:** `ref` is a *constraint reference* — a borrow of a **heap**
 object that increments a count in the object's header while it lives, and an
@@ -31,7 +37,8 @@ An audit found three classes of memory unsafety in ordinary safe Roxy code:
 The model memory.md describes — "creating a `ref` increments `ref_count`,
 destroying it decrements, `delete` fails if `ref_count > 0`" — is *correct*. It
 was simply half-built: incomplete counting and a free-trap on only one of the
-several free paths. This document specifies the complete version.
+several free paths. This document specifies the complete version, **now
+implemented** — all three findings are fixed (§7, §13).
 
 ## 2. The model: constraint references
 
@@ -111,6 +118,25 @@ on the same paths: normal scope exit, `return`, `break`, `continue`, and
 exception unwinding. A returned `ref` is *not* decremented at the returning frame
 — its count hands off to the caller, mirroring how a moved `uniq` is not dropped.
 
+**Implemented as:** `ref` locals are `OwnedKind::RefBorrow` entries in the same
+`m_owned_locals` list as `uniq` locals, so they get LIFO scope cleanup and
+exception records for free; a new `BCCleanupKind::RefDec` cleanup-record kind
+makes `execute_cleanup` decrement rather than destroy. Two subtleties the audit
+under-stated surfaced here:
+
+- **Ref *parameters* leaked on exception unwind.** Their decrement was emitted
+  only at the normal-path `return`; an exception thrown *through* a `ref`-param
+  frame (e.g. the Lox interpreter's `ReturnException`) skipped it, so counts
+  accumulated. Fixed by a whole-function-scoped RefDec cleanup record per ref
+  param, with that param's register liveness pinned to the function end so the
+  unwind decrement reads a valid register on throw-only paths.
+- **The hand-off must be a 1:1 transfer.** Every `ref` return carries *exactly
+  one* count (a ref local hands off its create-inc; a ref param or a fresh ref —
+  field / borrowed subscript / `ref x` — increments to produce one; a call result
+  already carries one). The binder then **adopts** a call result (no inc) and
+  **increments** any other still-live source. Otherwise a returned ref-local
+  bound by the caller would double-count (a safe over-count → spurious trap).
+
 ### The free-trap
 The single choke point is **`object_free`** (`object.cpp` / `roxy_free`): before
 freeing, if `ref_count != 0`, set `vm->error` ("cannot delete: object has N
@@ -174,19 +200,38 @@ a borrow of stack data — copy it, or allocate the receiver with `uniq`"). Wher
 the analysis already knows the receiver's storage, the test folds away to an
 unconditional inc or a compile error.
 
+**Implemented for `[ref self]` capture.** `ASSERT_HEAP` already trapped stack
+receivers gracefully; what was missing was the *count*. Now a `ref` capture is
+`RefInc`'d at env construction (after the heap check, so a stack receiver still
+traps before the inc) and the env's destructor `RefDec`s it. Binding `self` into
+a first-class `ref` or returning/storing it (the other promotions) reuse the same
+gate but are not yet wired end-to-end.
+
+This required first fixing a **pre-existing closure-cleanup bug**: deleting a
+closure was an inert no-op, so envs and their captures (incl. `[move uniq]`)
+leaked. Because a closure flows through the uniform `fun()->R` type — which erases
+*which* env struct it is — the env's cleanup can't be resolved statically at the
+delete site (`var g = makeClosure()`). It is now dispatched virtual-destructor
+style: a synthesized destructor is built per env struct and looked up by the
+env's runtime `type_id` on delete (`RoxyVM::closure_env_dtors`,
+`BCDeleteDesc::Closure`).
+
 ## 7. How the findings are resolved
 
 - **Finding 1** (`var b: ref = owner; consume_and_free(owner); use(b)`): creating
   `b` increments owner's count to 1. The callee frees it → `object_free` sees
-  count 1 → **traps** at the free.
+  count 1 → **traps** at the free. *(Implemented + tested.)*
 - **Finding 2** (`return r;` borrowing a local owner): the returned `ref` carries
   its count, so the local owner's RAII drop sees count 1 → **traps** at the drop.
+  *(Implemented + tested.)*
+- **Finding 3**: a cleanup bug, fixed independently (§9). *(Implemented + tested.)*
 - **Mid-call alias-kill** (`evil(l[0], inout l); list.clear()`): `l[0]` is a
   counted borrow of the element; `clear()` tries to free it → count 1 → **traps**.
+  *(Covered today by the `ref`-param count on the borrowed argument, per Phase 1.)*
 - **Mid-call receiver kill** (`heap_obj.method()` whose body reaches and frees the
-  object): the call site counted the heap receiver for the call's duration →
-  the free sees count 1 → **traps**.
-- **Finding 3**: a cleanup bug, fixed independently (§9).
+  object): the call site counts the heap receiver for the call's duration →
+  the free sees count 1 → **traps**. *(**Deferred** — needs call-site receiver
+  counting, §13.)*
 
 ## 8. Interactions
 
@@ -194,7 +239,8 @@ unconditional inc or a compile error.
   call on a statically-heap receiver counts that receiver for the call (so an
   alias-kill of it mid-method traps); on a stack receiver it counts nothing
   (downward-safe); on an already-`ref` receiver the existing count covers it.
-  Returning or storing `self` is a promotion (§6).
+  Returning or storing `self` is a promotion (§6). *(Call-site receiver counting
+  is **deferred** — see §13.)*
 - **Closures:** captures are by copy. Capturing a first-class `ref` copies it →
   increments; the env's destructor decrements. `[ref self]` / `[weak self]` are
   promotions (§6): slab-range test at capture, trap on stack receivers.
@@ -202,12 +248,13 @@ unconditional inc or a compile error.
   state struct — so a `ref` parameter of a coroutine is a first-class counted
   borrow, incremented into the state struct at init and decremented when the
   coroutine is destroyed. Deleting the borrowed owner while a suspended coroutine
-  still holds the borrow traps.
+  still holds the borrow traps. *(**Not yet implemented** — §13.)*
 - **Containers:** `List<ref T>` / `Map<_, ref T>` hold counted borrows — push
   increments, and pop / remove / overwrite / container-destroy decrement (the
   element-cleanup machinery learns that `ref` elements are count-bearing).
   Deleting an owner while a container still borrows it traps; clear the container
-  first.
+  first. *(**Not yet implemented** — §13. Note the related, separate gap that
+  `Map.remove` / `Map.clear` don't yet destroy noncopyable values at all.)*
 - **`borrowed T`** ([memory.md](memory.md)): a subscript on a heap-pointee
   element (`List<uniq T>`) yields a counted `ref` to the pointee (realloc moves
   the buffer, not the pointee, so the borrow stays valid). A subscript on an
@@ -217,7 +264,11 @@ unconditional inc or a compile error.
 - **`out` / `inout`:** the second-class family alongside `self`. An argument
   rooted in a heap object (`bump(inout b.a)`) counts that root for the call, so a
   mid-call alias-kill traps; a stack-rooted argument counts nothing and is safe by
-  downward flow.
+  downward flow. *Implemented:* the escape rule — a noncopyable `out`/`inout`
+  cannot be moved out of its frame (bind / return / store / by-value-pass /
+  capture-by-move are rejected at compile time); copyable `out`/`inout` escapes
+  were already blocked by the type system (no value→reference conversion).
+  *Deferred:* the call-site root counting (§13).
 - **FFI / AOT:** a `ref T` passed to a native function is counted for the call's
   duration, so the object **cannot be freed during the call**, even by reentrant
   Roxy code — the native's raw pointer is guaranteed live. New runtime surface:
@@ -238,6 +289,13 @@ Not a lifetime bug, but fixed in the same effort. `gen_assign_index`
 2. **consume the right-hand temporary** (`consume_temp_noncopyable`) so its
    scope-exit delete is suppressed (today the temporary stays double-owned with
    the container → double-free).
+
+**Implemented.** The consume keys off the *container's* element/value type, not
+the index target's `borrowed` (`ref T`) type, so it fires for `List<uniq T>`.
+The old-element destroy is unconditional for a List (the index is always in
+bounds) and `contains`-guarded for a Map (an old value exists only for a present
+key — a new key destroys nothing). Both reuse existing IR ops, so the C backend
+gets the fix too.
 
 ## 10. Residual risks and sharp edges
 
@@ -299,34 +357,67 @@ direction:
 | `ref` may be stored / returned freely (unsound) | counting makes stored/returned `ref`s safe; escaping a local owner traps at its drop |
 | generations notionally shared by `ref` and `weak` | generations for `weak` only; `ref` is purely counted |
 
-## 13. Phased implementation
+## 13. Implementation status
 
-1. **Complete the count.** Make `ref` copy = inc / drop = dec; emit `RefDec` for
-   `ref` bindings on all exit paths via the cleanup machinery; hand off the count
-   on return. Move the free-trap into `object_free` so every free path checks it;
-   add `resolve_header` for interior borrows.
-2. **Second-class family + call-site root counting.** Enforce the downward-only
-   rule for `out`/`inout`/`self`; count statically-heap receiver/arg roots for the
-   call's duration; add the promotion gate (§6) replacing `ASSERT_HEAP`.
-3. **Containers & coroutines.** Count `ref` elements in `List`/`Map` cleanup;
-   count `ref` parameters into coroutine state structs. Apply the index-set fix
-   (§9).
-4. **Elision (optimization).** Remove provably-redundant inc/dec pairs (§11).
-   Pure optimization over an already-sound system.
+**Phase 1 — complete the count + universal trap. Done (VM).**
+- `ref` copy = inc / drop = dec, balanced on every exit path incl. exception
+  unwind, via the `RefBorrow` cleanup machinery; return hand-off with the 1:1
+  caller-adopts convention (§4).
+- Free-trap centralized in `object_free` (and `roxy_free`, in lockstep) so every
+  free path traps; redundant `DEL_OBJ` pre-check retired.
+- `resolve_header` for interior pointers (slab allocator).
+- The index-set cleanup fix (§9) — pulled forward into Phase 1.
 
-## 14. Files (anticipated)
+**Phase 2 — second-class family + promotion gate. Partially done (VM).**
+- *Done:* the `out`/`inout` escape rule (§8) — moving a noncopyable second-class
+  param out of its frame is rejected at compile time.
+- *Done:* `[ref self]` capture counting (§6), and as a prerequisite, the
+  closure-env cleanup fix (runtime-dispatched env destructors).
+- **Deferred — call-site heap-root counting** (the receiver / `out`-`inout` root
+  borrow, §4/§8). Parked pending class **polymorphic dispatch**: the exception-safe
+  plumbing collides with the cleanup machinery — a method receiver aliases its
+  tracked owned-local (shared SSA value), so the call-straddling borrow's
+  `Nullify` clobbers the local's own cleanup record, and a `Copy` to get a
+  distinct value is undone by copy-propagation. Exception-heavy code with `uniq`
+  receivers (the Lox interpreter) double-deletes. The model is sound; only this
+  IR plumbing is blocked, and is cleaner to revisit once polymorphic dispatch
+  reshapes how receivers flow. Binding/returning/storing `self` as a first-class
+  `ref` (the non-capture promotions) are also not yet wired.
+
+**Phase 3 — containers & coroutines. Not started.**
+- Count `ref` elements in `List`/`Map` cleanup; count `ref` parameters into
+  coroutine state structs. (Separate, related gap: `Map.remove`/`Map.clear` don't
+  yet destroy noncopyable values.)
+
+**Phase 4 — elision (optimization, §11). Not started** (always a later phase).
+
+**AOT / C backend.** The `roxy_free` trap is kept in lockstep, and fixes built
+from existing IR ops (the index-set destroy) carry over; full parity
+(`roxy::ref<T>` as a borrow handle, etc.) is a follow-on.
+
+## 14. Files
+
+Implemented (Phase 1 + the done parts of Phase 2):
 
 | File | Change |
 |------|--------|
-| `src/roxy/vm/object.cpp` | free-trap in `object_free` (every path); `ref_dec` underflow tripwire kept |
-| `src/roxy/vm/interpreter.cpp` | `RefDec` on all cleanup/unwind paths; call-site root inc/dec; promotion test |
-| `include/roxy/rt/slab_allocator.hpp` / `.cpp` | `resolve_header(ptr)` from interior pointers; sorted range index for large objects; free-trap honored in the vtable free |
-| `include/roxy/rt/roxy_rt.h` / `src/roxy/rt/roxy_rt.cpp` | free-trap in `roxy_free`; container element dec on cleanup; `roxy::ref<T>` → borrow handle (copy inc / drop dec, never frees) |
-| `src/roxy/compiler/semantic.{hpp,cpp}` | heap-only `ref` creation; second-class enforcement for `out`/`inout`/`self`; promotion sites; reject stored/returned/captured stack borrows |
-| `src/roxy/compiler/type_checker.cpp` | remove the unchecked `uniq → ref` return path (it now relies on the count) |
-| `src/roxy/compiler/ir_builder.cpp` | inc on ref create/copy/push/capture and call-site heap roots; dec via cleanup records on all paths; count hand-off on return; `gen_assign_index` cleanup fix |
-| `src/roxy/compiler/lowering.cpp` | cleanup-record emission for `ref` decs; elision (Phase 4) |
-| `tests/e2e/test_heap.cpp` (+ new suite) | regressions for the three findings; delete-while-borrowed traps; return-escape trap; mid-call alias-kill and receiver-kill traps; second-class rejection; promotion trap; interior-pointer counting |
+| `include/roxy/rt/slab_allocator.{hpp,cpp}` | `resolve_header(ptr)` from interior pointers; sorted range index for large objects |
+| `src/roxy/vm/object.cpp` | free-trap in `object_free`; `ref_dec` underflow tripwire kept |
+| `src/roxy/rt/roxy_rt.cpp` | free-trap in `roxy_free` (lockstep with the VM) |
+| `src/roxy/vm/interpreter.cpp` | `RefDec` cleanup-record kind in `execute_cleanup`; trap error propagation through `delete_value`/`DELETE`; retired `DEL_OBJ` pre-check; `BCDeleteDesc::Closure` env-dtor dispatch |
+| `include/roxy/vm/bytecode.hpp` | `BCCleanupKind`, `BCDeleteDesc::Closure`, `BCTypeInfo.dtor_func_idx` |
+| `include/roxy/compiler/ssa_ir.hpp` | `IRCleanupKind`, `IRCleanupInfo.whole_function_scope` |
+| `src/roxy/compiler/ir_builder.{hpp,cpp}` | `OwnedKind::RefBorrow`; ref-local inc/dec + reassign + return hand-off + caller-adopt convention; `[ref self]` capture RefInc + env-field RefDec; per-env synthesized destructors; call-result temp tracking; transitive-`[move]` field nullify; `gen_assign_index` cleanup fix |
+| `src/roxy/compiler/lowering.cpp` | RefDec `BCCleanupRecord` + whole-function-scope param records + liveness pin; `Closure` delete desc; `BCTypeInfo.dtor_func_idx` |
+| `src/roxy/compiler/semantic.{hpp,cpp}` | reject move-out of noncopyable `out`/`inout` (also closure move-capture); index-assign consume keyed off the container element type; env destructor for `ref` captures |
+| `include/roxy/compiler/symbol_table.hpp`, `src/roxy/compiler/symbol_table.cpp` | `is_out_inout` flag on parameter symbols |
+| `include/roxy/vm/vm.hpp`, `src/roxy/vm/vm.cpp` | `RoxyVM::closure_env_dtors` (env type_id → destructor index) |
+| `tests/e2e/test_lifetimes.cpp` (new), `tests/e2e/test_closures.cpp`, `tests/unit/test_slab_allocator.cpp` | findings 1–3; delete-while-borrowed/return-escape traps; balance across control flow; `out`/`inout` escape rejection; `[ref self]` pin/release; closure capture cleanup; `resolve_header` |
+
+Deferred (not yet touched): call-site root inc/dec in `ir_builder.cpp`
+(receiver/`out`-`inout`); `List`/`Map` ref-element counting and coroutine
+`ref`-param promotion; `roxy::ref<T>` → borrow handle in `roxy_rt`; elision in
+`lowering.cpp`.
 
 ## Related docs
 
