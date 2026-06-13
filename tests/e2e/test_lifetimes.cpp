@@ -253,4 +253,31 @@ TEST_SUITE("E2E Lifetimes") {
         TestResult result = run_and_capture(source, "main");
         CHECK(result.success == false);
     }
+
+    // Finding 3 for maps: overwriting an existing key's noncopyable value
+    // destroys the old value (guarded by a `contains` check so a *new* key
+    // destroys nothing) and consumes the moved-in value. A single key keeps the
+    // destructor output deterministic (no Robin-Hood bucket-order ambiguity).
+    TEST_CASE("map index-set overwrite destroys old value, new key does not (Finding 3)") {
+        const char* source = R"(
+        struct Res { id: i32; }
+        fun delete Res() { print(f"del {self.id}"); }
+
+        fun main(): i32 {
+            var m: Map<i32, uniq Res> = Map<i32, uniq Res>();
+            m[1] = uniq Res { id = 1 };   // new key -> no destroy
+            m[1] = uniq Res { id = 2 };   // overwrite -> destroy old (1)
+            m[1] = uniq Res { id = 3 };   // overwrite -> destroy old (2)
+            print("---");
+            return 0;
+            // teardown destroys the live value (id 3)
+        }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success == true);
+        // No "del" before the first overwrite (new key destroys nothing); each
+        // overwritten value destroyed once; the live value destroyed once at end.
+        CHECK(result.stdout_output == "del 1\ndel 2\n---\ndel 3\n");
+    }
 }

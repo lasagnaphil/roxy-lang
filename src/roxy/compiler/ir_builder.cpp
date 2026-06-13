@@ -4245,15 +4245,45 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
 
         // Destroy the overwritten element before storing, so a noncopyable old
         // element isn't leaked (mirrors emit_single_field_destroy for fields).
-        // A List index is always in bounds, so the old element always exists.
-        // Map overwrite-destroy is deferred: a Map slot has an old value only
-        // for an already-present key (a new key — the common case — leaks
-        // nothing), and the conditional destroy needs a contains-guarded branch.
         // See docs/internals/lifetimes.md §9.
         if (elem_noncopyable && is_list) {
+            // List: the index is always in bounds, so the old element always
+            // exists — destroy it unconditionally.
             ValueId old = emit_index_get(obj, index_val, kind, elem_type);
             IRInst* del = emit_inst(IROp::Delete, elem_type);
             if (del) del->unary = old;
+        } else if (elem_noncopyable) {
+            // Map: a slot has an old value only for an already-present key, so
+            // guard the destroy with a `contains` check (a new key destroys
+            // nothing). Synthesizes: if (map.contains(key)) delete map[key];
+            StringView contains_native;
+            for (const MethodInfo& method : container_type->map_info.methods) {
+                if (method.name == StringView("contains", 8)) {
+                    contains_native = method.native_name;
+                    break;
+                }
+            }
+            i32 contains_idx = contains_native.empty()
+                ? -1 : m_registry.get_index(contains_native);
+            if (contains_idx >= 0) {
+                Span<ValueId> contains_args = alloc_span<ValueId>(2);
+                contains_args[0] = obj;
+                contains_args[1] = index_val;
+                ValueId present = emit_call_native(contains_native, contains_args,
+                                                   m_types.bool_type(),
+                                                   static_cast<u8>(contains_idx));
+                IRBlock* destroy_block = create_block("map_set_destroy_old");
+                IRBlock* merge_block = create_block("map_set_store");
+                finish_block_branch(present, destroy_block->id, merge_block->id);
+
+                set_current_block(destroy_block);
+                ValueId old = emit_index_get(obj, index_val, kind, elem_type);
+                IRInst* del = emit_inst(IROp::Delete, elem_type);
+                if (del) del->unary = old;
+                finish_block_goto(merge_block->id);
+
+                set_current_block(merge_block);
+            }
         }
 
         emit_index_set(obj, index_val, value, kind);
