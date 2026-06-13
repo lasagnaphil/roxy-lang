@@ -5915,8 +5915,26 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
         mark_live(assign_expr.target->identifier.name);
     }
 
-    // Consume noncopyable source (field-move check + mark source as moved)
-    if (assign_expr.op == AssignOp::Assign && target_type && target_type->noncopyable()) {
+    // Consume noncopyable source (field-move check + mark source as moved).
+    // For a plain target this is target_type->noncopyable(). For an index target
+    // into a container the target type is the *borrowed* element (e.g. `ref T`
+    // for List<uniq T>), which isn't noncopyable — but storing a noncopyable
+    // value into the slot is still a move, so consult the container's element /
+    // value type instead. Without this the moved-in value stays double-owned
+    // (container slot + caller scope) and double-frees.
+    bool moves_noncopyable = target_type && target_type->noncopyable();
+    if (!moves_noncopyable && assign_expr.target->kind == AstKind::ExprIndex) {
+        Type* container_type = assign_expr.target->index.object->resolved_type;
+        if (container_type) container_type = container_type->base_type();
+        Type* elem_type = nullptr;
+        if (container_type && container_type->is_list()) {
+            elem_type = container_type->list_info.element_type;
+        } else if (container_type && container_type->is_map()) {
+            elem_type = container_type->map_info.value_type;
+        }
+        moves_noncopyable = elem_type && elem_type->noncopyable();
+    }
+    if (assign_expr.op == AssignOp::Assign && moves_noncopyable) {
         consume_noncopyable(assign_expr.value, assign_expr.value->loc);
     }
 

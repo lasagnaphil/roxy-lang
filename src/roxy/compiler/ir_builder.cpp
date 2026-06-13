@@ -4212,10 +4212,39 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
 
     // List/Map indexing: emit IndexSet IR op
     if (container_type && container_type->is_container()) {
+        bool is_list = container_type->is_list();
+        Type* elem_type = is_list ? container_type->list_info.element_type
+                                  : container_type->map_info.value_type;
+        bool elem_noncopyable = elem_type && elem_type->noncopyable();
+        ContainerKind kind = is_list ? ContainerKind::List : ContainerKind::Map;
+
         ValueId obj = gen_expr(index_expr.object);
         ValueId index_val = gen_expr(index_expr.index);
-        ContainerKind kind = container_type->is_list() ? ContainerKind::List : ContainerKind::Map;
+
+        // Destroy the overwritten element before storing, so a noncopyable old
+        // element isn't leaked (mirrors emit_single_field_destroy for fields).
+        // A List index is always in bounds, so the old element always exists.
+        // Map overwrite-destroy is deferred: a Map slot has an old value only
+        // for an already-present key (a new key — the common case — leaks
+        // nothing), and the conditional destroy needs a contains-guarded branch.
+        // See docs/internals/lifetimes.md §9.
+        if (elem_noncopyable && is_list) {
+            ValueId old = emit_index_get(obj, index_val, kind, elem_type);
+            IRInst* del = emit_inst(IROp::Delete, elem_type);
+            if (del) del->unary = old;
+        }
+
         emit_index_set(obj, index_val, value, kind);
+
+        // Consume the moved-in value so it isn't double-owned (container slot +
+        // caller scope). consume_temp_noncopyable handles temporaries;
+        // mark_moved_from handles a named noncopyable source.
+        if (elem_noncopyable) {
+            consume_temp_noncopyable(value);
+            if (assign_expr.value->kind == AstKind::ExprIdentifier) {
+                mark_moved_from(assign_expr.value->identifier.name);
+            }
+        }
         return value;
     }
 

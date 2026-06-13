@@ -148,4 +148,52 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.success == true);
         CHECK(result.value == 30);
     }
+
+    // Finding 3 (docs/internals/lifetimes.md §9): `container[i] = v` for a
+    // noncopyable element must destroy the overwritten element (no leak) and
+    // consume the moved-in value (no double-free). Verified via destructor
+    // side-effects: the overwritten element's destructor fires once at the
+    // assignment, and the moved-in element's fires exactly once at teardown.
+    TEST_CASE("index-set destroys old element and consumes the new (Finding 3)") {
+        const char* source = R"(
+        struct Res { id: i32; }
+        fun delete Res() { print(f"del {self.id}"); }
+
+        fun main(): i32 {
+            var list: List<uniq Res> = List<uniq Res>();
+            list.push(uniq Res { id = 1 });
+            list.push(uniq Res { id = 2 });
+            list[0] = uniq Res { id = 3 };   // destroy old (1); move new (3) in
+            print("---");
+            return 0;
+            // teardown destroys element 0 (id 3) then element 1 (id 2)
+        }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success == true);
+        // "del 1" proves the old element was destroyed (no leak); a single
+        // "del 3" at teardown proves the moved-in value wasn't double-freed.
+        CHECK(result.stdout_output == "del 1\n---\ndel 3\ndel 2\n");
+    }
+
+    // The moved-in value is move-checked: using it after the index-set is a
+    // compile error (proves the semantic consume fires for noncopyable elements
+    // despite the borrowed `ref T` target type).
+    TEST_CASE("index-set of a noncopyable value moves it (use-after-move is rejected)") {
+        const char* source = R"(
+        struct Res { id: i32; }
+
+        fun main(): i32 {
+            var list: List<uniq Res> = List<uniq Res>();
+            list.push(uniq Res { id = 1 });
+            var r: uniq Res = uniq Res { id = 2 };
+            list[0] = r;          // moves r into the list
+            return r.id;          // ERROR: use of moved value 'r'
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) == nullptr);  // use-after-move rejected
+    }
 }
