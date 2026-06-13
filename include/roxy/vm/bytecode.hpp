@@ -430,15 +430,21 @@ struct BCDeleteDesc {
     BCDeleteDesc() : cleanup(None), free_obj(false), dtor_fn_idx(0) {}
 };
 
-// Cleanup record for exception-path cleanup of owned locals.
+// Cleanup action for a BCCleanupRecord.
+//   Delete — descriptor-driven destruction of an owned value (delete_value).
+//   RefDec — decrement a `ref` borrow's count (constraint-reference model).
+enum class BCCleanupKind : u8 { Delete = 0, RefDec = 1 };
+
+// Cleanup record for exception-path cleanup of owned locals and ref borrows.
 // During exception unwinding, the VM iterates these in reverse (LIFO) to
-// delete owned variables whose scope spans the throw site but not the handler.
+// clean up variables whose scope spans the throw site but not the handler:
+// owned values are destroyed (Delete), ref borrows are decremented (RefDec).
 struct BCCleanupRecord {
     u32 scope_start_pc;       // PC where variable becomes live (inclusive)
     u32 scope_end_pc;         // PC where variable's normal cleanup occurs (exclusive)
-    u8 register_idx;          // Register holding the owned value
-    u8 _pad;
-    u16 delete_desc_idx;      // Index into BCFunction::delete_descs[]
+    u8 register_idx;          // Register holding the owned value / borrow
+    u8 kind;                  // BCCleanupKind: Delete owned value vs RefDec a borrow
+    u16 delete_desc_idx;      // Index into BCFunction::delete_descs[] (Delete kind only)
 };
 
 // Bytecode function

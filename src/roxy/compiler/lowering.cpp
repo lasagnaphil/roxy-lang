@@ -631,8 +631,30 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         // Map SSA value to register
         if (!has_register(ir_cleanup.value)) continue;
         record.register_idx = get_register(ir_cleanup.value);
-        record._pad = 0;
-        record.delete_desc_idx = build_delete_desc(ir_cleanup.type);
+
+        // RefDec records decrement a borrow rather than destroy an owned value,
+        // so they carry no delete descriptor.
+        if (ir_cleanup.kind == IRCleanupKind::RefDec) {
+            record.kind = static_cast<u8>(BCCleanupKind::RefDec);
+            record.delete_desc_idx = 0;
+            // A ref *parameter* is a borrow live for the entire function, so its
+            // RefDec record spans the whole body [0, code.size()). The
+            // block-derived scope used for owned locals is wrong here: functions
+            // whose every path returns/throws have no single "end block" at the
+            // max PC, which would truncate the range and skip throws past it.
+            // Spanning the whole body means any escaping throw decrements the
+            // borrow, while in-function handlers (handler_pc < code.size()) are
+            // left to the normal-path RefDec via the "handler in scope" skip.
+            // Ref *locals* keep the block-derived scope (+ Nullify narrowing
+            // computed above), matching their actual lifetime.
+            if (ir_cleanup.whole_function_scope) {
+                record.scope_start_pc = 0;
+                record.scope_end_pc = static_cast<u32>(m_current_func->code.size());
+            }
+        } else {
+            record.kind = static_cast<u8>(BCCleanupKind::Delete);
+            record.delete_desc_idx = build_delete_desc(ir_cleanup.type);
+        }
 
         m_current_func->cleanup_records.push_back(record);
     }
@@ -1374,16 +1396,32 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
         }
     }
 
-    // Pass 5: extend liveness of owned locals tracked by cleanup records.
+    // Pass 5: extend liveness of values tracked by cleanup records.
     // When a throw terminates a block, normal-path cleanup is skipped (the block
-    // is unreachable), so the owned local's SSA value may have no use after its
-    // last field access. But the VM's exception handler reads the register to
-    // perform cleanup, so the register must hold the value at the throw site.
-    // Extend each cleanup value's liveness to the end of its scope.
+    // is unreachable), so the value may have no use after its last access. But
+    // the VM's exception handler reads the register to perform cleanup, so the
+    // register must hold the value at the throw site. Extend each cleanup
+    // value's liveness to the end of its cleanup scope.
+    //   - Owned locals: scope ends at end_block (matches the record's scope).
+    //   - RefDec borrows (ref params): live for the WHOLE function — their
+    //     record spans [0, code.size()), so pin the register to the final point
+    //     so it holds the borrow at every possible throw site. Using end_block
+    //     here would under-extend (functions whose paths all return/throw have
+    //     no end block at the max PC), leaving the register reused past it and
+    //     the unwind RefDec reading garbage.
     for (const auto& ci : ir_func->cleanup_info) {
         if (!ci.value.is_valid() || ci.value.id >= num_values) continue;
-        if (!ci.end_block.is_valid() || ci.end_block.id >= block_points.size()) continue;
-        u32 scope_end_point = block_points[ci.end_block.id].term_point;
+        u32 scope_end_point;
+        if (ci.whole_function_scope) {
+            // Ref params: pinned to the final point so the register holds the
+            // borrow at every throw site (the record spans the whole body).
+            if (block_points.empty()) continue;
+            scope_end_point = block_points.back().term_point;
+        } else {
+            // Owned locals and ref locals: live to their block-derived scope end.
+            if (!ci.end_block.is_valid() || ci.end_block.id >= block_points.size()) continue;
+            scope_end_point = block_points[ci.end_block.id].term_point;
+        }
         auto& lr = m_live_ranges[ci.value.id];
         if (scope_end_point > lr.last_use_point) {
             lr.last_use_point = scope_end_point;

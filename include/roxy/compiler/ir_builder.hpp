@@ -321,8 +321,19 @@ private:
     // Track which parameters are pointers (for out/inout semantics)
     tsl::robin_map<StringView, bool> m_param_is_ptr;
 
-    // Track ref-typed parameters for RefInc/RefDec at function boundaries
-    Vector<ValueId> m_ref_params;
+    // Track ref-typed parameters for RefInc/RefDec at function boundaries.
+    // The type is retained so the exception-path RefDec cleanup record can be
+    // emitted in end_function_body (see m_ref_param_entry_block).
+    struct RefParamInfo {
+        ValueId value;
+        Type* type;
+    };
+    Vector<RefParamInfo> m_ref_params;
+
+    // Entry block of the current function (captured once params are inc'd), used
+    // as the start of each ref param's whole-function RefDec cleanup record so an
+    // exception unwinding out of the frame decrements the borrow.
+    BlockId m_ref_param_entry_block;
 
     // Error state
     bool m_has_error;
@@ -348,6 +359,12 @@ private:
 
     // Ownership tracking for locals that need RAII / implicit destruction
     // Covers both uniq references (heap-allocated) and value structs with destructors
+    // Whether a tracked local owns its value (destroy on cleanup) or is a `ref`
+    // borrow (decrement its count on cleanup). RefBorrow locals reuse the owned-
+    // local machinery (LIFO scope cleanup, exception records, liveness) but emit
+    // RefDec instead of Delete.
+    enum class OwnedKind : u8 { Owned, RefBorrow };
+
     struct OwnedLocalInfo {
         StringView name;
         Type* type;            // Full variable type (uniq T or struct T)
@@ -356,6 +373,7 @@ private:
         bool is_temporary;     // True for compiler-generated temporaries (__tmp*)
         BlockId start_block;   // Block where variable becomes live (for cleanup records)
         ValueId initial_value; // SSA value at declaration (for cleanup record register mapping)
+        OwnedKind kind = OwnedKind::Owned;  // Owned value vs ref borrow
     };
     Vector<OwnedLocalInfo> m_owned_locals;
 

@@ -1249,4 +1249,76 @@ TEST_SUITE("Slab Allocator") {
         vm_destroy(&vm);
     }
 
+    TEST_CASE("Unit - SlabAllocator resolve_header (slab interior pointers)") {
+        SlabAllocator allocator;
+        CHECK(allocator.init());
+
+        // Across several size classes: any address within the slot must
+        // resolve to the slot base (where the header lives).
+        const u32 sizes[] = {32, 64, 128, 256, 512, 1024, 2048, 4096};
+        for (u32 size : sizes) {
+            u64 gen;
+            void* base = allocator.alloc(size, &gen);
+            REQUIRE(base != nullptr);
+            auto* header = reinterpret_cast<roxy_object_header*>(base);
+
+            // Exact base resolves to itself.
+            CHECK(allocator.resolve_header(base) == header);
+            // Data pointer (header + sizeof(header)) resolves to the base.
+            void* data = reinterpret_cast<u8*>(base) + sizeof(roxy_object_header);
+            CHECK(allocator.resolve_header(data) == header);
+            // An interior inline-field pointer mid-slot resolves to the base.
+            void* interior = reinterpret_cast<u8*>(data) + 4;
+            CHECK(allocator.resolve_header(interior) == header);
+            // The last byte of the slot still resolves to the base.
+            void* last = reinterpret_cast<u8*>(base) + (size - 1);
+            CHECK(allocator.resolve_header(last) == header);
+
+            allocator.free(base);
+            // Tombstoned memory stays mapped — resolution still works.
+            CHECK(allocator.resolve_header(data) == header);
+        }
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Unit - SlabAllocator resolve_header (large object interior pointers)") {
+        SlabAllocator allocator;
+        CHECK(allocator.init());
+
+        u64 gen;
+        void* base = allocator.alloc(8192, &gen);  // > 4096 → large object
+        REQUIRE(base != nullptr);
+        auto* header = reinterpret_cast<roxy_object_header*>(base);
+
+        CHECK(allocator.resolve_header(base) == header);
+        // Interior pointer deep into the (multi-page) allocation resolves to base.
+        void* interior = reinterpret_cast<u8*>(base) + 5000;
+        CHECK(allocator.resolve_header(interior) == header);
+
+        allocator.free(base);
+        // Large frees keep the vaddr mapped until shutdown — still resolvable.
+        CHECK(allocator.resolve_header(interior) == header);
+
+        allocator.shutdown();
+    }
+
+    TEST_CASE("Unit - SlabAllocator resolve_header (unowned pointers)") {
+        SlabAllocator allocator;
+        CHECK(allocator.init());
+
+        CHECK(allocator.resolve_header(nullptr) == nullptr);
+        int stack_var = 0;
+        CHECK(allocator.resolve_header(&stack_var) == nullptr);
+
+        // After shutdown the range indices are empty, so nothing resolves
+        // (the empty-index fast path returns before any pointer comparison).
+        u64 gen;
+        void* base = allocator.alloc(64, &gen);
+        REQUIRE(base != nullptr);
+        allocator.free(base);
+        allocator.shutdown();
+        CHECK(allocator.resolve_header(base) == nullptr);
+    }
+
 }  // TEST_SUITE("Slab Allocator")

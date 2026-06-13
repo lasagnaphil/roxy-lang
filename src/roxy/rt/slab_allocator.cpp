@@ -129,6 +129,7 @@ void SlabAllocator::shutdown() {
         VirtualMemoryOps::release(ptr, static_cast<u64>(info.page_count) * m_page_size);
     }
     large_objects.clear();
+    sorted_large.clear();
 
     total_allocated = 0;
     total_tombstoned = 0;
@@ -259,6 +260,18 @@ void* SlabAllocator::alloc_large(u32 size, u64* out_generation) {
     info.page_count = page_count;
     info.tombstoned = 0;
     large_objects[mem] = info;
+
+    // Register the range in the sorted index so resolve_header() can map an
+    // interior pointer back to `mem`. Large vmem reservations come back at
+    // arbitrary addresses, so insert in order rather than appending.
+    LargeRange range;
+    range.base = mem;
+    range.end = reinterpret_cast<u8*>(mem) + alloc_size;
+    auto* insert_pos = std::upper_bound(
+        sorted_large.begin(), sorted_large.end(), range.base,
+        [](void* p, const LargeRange& r) { return p < r.base; });
+    sorted_large.insert(insert_pos, range);
+
     total_allocated++;
 
     // Generate random generation (must be non-zero; 0 means dead)
@@ -388,6 +401,41 @@ void SlabAllocator::free(void* ptr) {
 
     // Unknown pointer - this is a bug in the caller
     assert(false && "SlabAllocator::free called with unknown pointer");
+}
+
+roxy_object_header* SlabAllocator::resolve_header(void* interior_ptr) {
+    if (interior_ptr == nullptr) {
+        return nullptr;
+    }
+
+    // Slab-resident: round the interior pointer down to its owning slot's
+    // base, where the ObjectHeader lives. Objects are allocated at slot start
+    // (header first), so this recovers the header for any address within the
+    // slot — including an exact data pointer (header + sizeof(header)) and any
+    // interior inline-field pointer.
+    Slab* slab = find_slab_containing(interior_ptr);
+    if (slab != nullptr) {
+        u64 offset = reinterpret_cast<u8*>(interior_ptr) - reinterpret_cast<u8*>(slab->base_addr);
+        u32 slot_idx = static_cast<u32>(offset / slab->slot_size);
+        return reinterpret_cast<roxy_object_header*>(slab->slot_ptr(slot_idx));
+    }
+
+    // Large object: the header sits at the allocation base. Binary-search the
+    // sorted range index (same half-open containment logic as
+    // find_slab_containing) to map the interior pointer back to its base.
+    if (!sorted_large.empty()) {
+        auto* it = std::upper_bound(
+            sorted_large.begin(), sorted_large.end(), interior_ptr,
+            [](void* p, const LargeRange& r) { return p < r.base; });
+        if (it != sorted_large.begin()) {
+            --it;
+            if (interior_ptr < it->end) {
+                return reinterpret_cast<roxy_object_header*>(it->base);
+            }
+        }
+    }
+
+    return nullptr;
 }
 
 bool SlabAllocator::owns(void* ptr) const {

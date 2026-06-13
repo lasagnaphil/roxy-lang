@@ -276,6 +276,13 @@ static void delete_value(RoxyVM* vm, void* ptr,
                          const BCFunction* func) {
     if (!ptr) return;
 
+    // Free-trap propagation: once a nested free has been refused (a borrowed
+    // object set vm->error), abandon the rest of the descriptor walk. Every
+    // recursive entry (via delete_slot_entry) re-checks here, so the whole
+    // tree unwinds without doing further frees, and the error surfaces to the
+    // interpreter loop.
+    if (vm->error) return;
+
     // Double-delete tripwire (debug). A heap object (`free_obj`) reached here
     // must still be alive; a tombstoned slot means it was already freed — catch
     // it *before* re-running the destructor on stale data. This fires earlier
@@ -364,6 +371,10 @@ static void delete_value(RoxyVM* vm, void* ptr,
     }
     }
 
+    // If cleaning an owned resource (element/field) refused its free, don't
+    // free the enclosing object either — surface the error instead.
+    if (vm->error) return;
+
     if (desc.free_obj) {
         object_free(vm, ptr);
     }
@@ -410,9 +421,16 @@ static void execute_cleanup(RoxyVM* vm, const BCFunction* func,
             continue;  // Already cleaned up (null)
         }
 
-        // All cleanup kinds route through delete_value via descriptor
-        const BCDeleteDesc& desc = func->delete_descs[record.delete_desc_idx];
-        delete_value(vm, ptr, desc, func);
+        if (record.kind == static_cast<u8>(BCCleanupKind::RefDec)) {
+            // Ref borrow: decrement its count rather than destroy it. The owner
+            // is freed elsewhere; this just releases the borrow held by the
+            // frame being unwound.
+            ref_dec(vm, ptr);
+        } else {
+            // Owned value: descriptor-driven destruction.
+            const BCDeleteDesc& desc = func->delete_descs[record.delete_desc_idx];
+            delete_value(vm, ptr, desc, func);
+        }
 
         // Null-ify the register to prevent double-cleanup
         regs[record.register_idx] = 0;
@@ -1951,12 +1969,11 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         u8 a = decode_a(instr);
         void* ptr = reg_as_ptr(regs[a]);
         if (ptr != nullptr) {
-            ObjectHeader* header = get_header_from_data(ptr);
-            if (header->ref_count > 0) {
-                vm->error = "Cannot delete: object has active borrows";
-                return false;
-            }
+            // The free-trap (active-borrow check) lives in object_free, the
+            // single choke point for every free path — so this opcode just
+            // frees and surfaces any refusal.
             object_free(vm, ptr);
+            if (vm->error) return false;
             regs[a] = 0;
         }
         DISPATCH();
@@ -1969,6 +1986,9 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         if (ptr) {
             const BCDeleteDesc& desc = func->delete_descs[desc_idx];
             delete_value(vm, ptr, desc, func);
+            // A refused free (object still borrowed) sets vm->error — surface it
+            // rather than nulling the register and continuing.
+            if (vm->error) return false;
         }
         regs[a] = 0;
         DISPATCH();

@@ -407,12 +407,24 @@ struct IRFinallyInfo {
     BlockId finally_end_block;  // Block after finally (for normal flow)
 };
 
-// Cleanup info for owned locals (used to generate bytecode cleanup records)
+// Cleanup action for an exception-path cleanup record.
+//   Delete — run the type's descriptor-driven destruction (uniq/list/map/...).
+//   RefDec — decrement a `ref` borrow's count (constraint-reference model).
+enum class IRCleanupKind : u8 { Delete, RefDec };
+
+// Cleanup info for owned locals and ref borrows (used to generate bytecode
+// cleanup records for the exception-unwind path).
 struct IRCleanupInfo {
     ValueId value;        // The SSA value to clean up
     Type* type;           // Determines cleanup kind (uniq, struct w/ dtor, list, map)
     BlockId start_block;  // First block where variable is live
     BlockId end_block;    // Last block where variable is live (scope exit)
+    IRCleanupKind kind = IRCleanupKind::Delete;  // Delete owned value vs RefDec a borrow
+    // Ref *parameters* are borrows live for the whole function; their cleanup
+    // record spans [0, code.size()) and their register is pinned to the final
+    // point (the block-derived scope is unreliable when every path returns or
+    // throws). Ref *locals* and owned locals are block-scoped (false).
+    bool whole_function_scope = false;
 };
 
 // IR Function

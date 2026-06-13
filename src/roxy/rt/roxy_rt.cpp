@@ -171,8 +171,15 @@ void* roxy_alloc(uint32_t data_size, uint32_t type_id) {
 
 void roxy_free(void* data) {
     if (!data) return;
-    roxy_allocator* alloc = current_allocator();
     auto* header = roxy_get_header(data);
+    // Free-trap (constraint-reference model), kept in lockstep with the VM's
+    // object_free so the two runtimes never disagree on whether a borrowed
+    // object is deletable. The AOT runtime has no vm->error channel, so it
+    // refuses the free (leaks rather than UAF) and asserts loudly in debug.
+    // Full trap *reporting* parity is part of the deferred AOT pass.
+    assert(header->ref_count == 0 && "Cannot delete: object has active borrows");
+    if (header->ref_count != 0) return;
+    roxy_allocator* alloc = current_allocator();
     // Allocator's free contract: tombstone weak_generation before freeing.
     // Both the slab and malloc impls do this.
     alloc->free(alloc->userdata, header);

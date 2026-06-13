@@ -87,6 +87,18 @@ struct SlabRange {
     Slab* slab;     // owning slab pointer
 };
 
+// Entry in the sorted large-object range index used by resolve_header() to
+// map an interior pointer into a large object back to its allocation base
+// (where the ObjectHeader lives). Parallel to `large_objects`; large objects
+// have no per-slot structure, so range containment is the only way to recover
+// the base from an interior pointer. Inserted on alloc_large, cleared on
+// shutdown — never removed mid-run, because free_large keeps the vaddr mapped
+// (tombstoned) until shutdown, mirroring the `large_objects` map's lifetime.
+struct LargeRange {
+    void* base;     // allocation base (inclusive) — the header location
+    void* end;      // base + page_count * page_size (exclusive)
+};
+
 // Main slab allocator
 // Provides memory allocation with tombstoning support for weak references
 struct SlabAllocator {
@@ -109,6 +121,12 @@ struct SlabAllocator {
     // Large object tracking (> 4KB)
     // Maps pointer to page count + tombstone state for deallocation
     tsl::robin_map<void*, LargeObjectInfo> large_objects;
+
+    // Sorted (by base) index of large-object address ranges, enabling
+    // resolve_header() to recover the base from an interior pointer. See
+    // LargeRange. Kept in lockstep with large_objects: insert on alloc_large,
+    // clear on shutdown.
+    Vector<LargeRange> sorted_large;
 
     // Random generation for weak references
     RandomGen rng;
@@ -140,6 +158,14 @@ struct SlabAllocator {
 
     // Check if a pointer was allocated by this allocator
     bool owns(void* ptr) const;
+
+    // Resolve an interior pointer (any address within a live or tombstoned
+    // allocation) to the owning object's ObjectHeader. Used by the
+    // constraint-reference machinery to find the ref_count/generation behind
+    // a `borrowed`-subscript or `[ref self]` borrow that targets an inline
+    // field of a heap object. Returns nullptr for a pointer this allocator
+    // does not own. A pointer to the allocation base resolves to itself.
+    roxy_object_header* resolve_header(void* interior_ptr);
 
     // Scan all slabs and reclaim fully tombstoned ones
     // Calls remap_to_zero() on slabs where all slots are tombstoned

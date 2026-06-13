@@ -99,6 +99,18 @@ void object_free(RoxyVM* vm, void* data) {
 
     ObjectHeader* header = get_header_from_data(data);
 
+    // Free-trap (constraint-reference model): refuse to free an object that
+    // still has live `ref` borrows. This is THE choke point — every free path
+    // (explicit `delete` via DEL_OBJ, RAII drop and descriptor walk via
+    // delete_value, container-element cleanup, field-reassignment overwrite,
+    // exception unwind) routes through object_free, so the borrow check is
+    // uniform here rather than scattered per call site. The destructor and the
+    // actual free are both below this gate, so a refused free runs neither.
+    if (header->ref_count != 0) {
+        if (vm) vm->error = "Cannot delete: object has active borrows";
+        return;
+    }
+
     // Double-delete tripwire (debug): freeing a tombstoned slot means it was
     // already freed. Catch it before the destructor re-runs. Best-effort — a
     // recycled slot reads alive again (see delete_value for the full note).

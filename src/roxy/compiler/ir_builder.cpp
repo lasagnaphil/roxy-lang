@@ -1377,9 +1377,12 @@ void IRBuilder::emit_ref_dec(ValueId ptr) {
 }
 
 void IRBuilder::emit_ref_param_decrements() {
-    // Emit RefDec for all ref-typed parameters before function exit
-    for (ValueId param_val : m_ref_params) {
-        emit_ref_dec(param_val);
+    // Emit RefDec for all ref-typed parameters before function exit (normal
+    // path). The exception-unwind path is covered separately by RefDec cleanup
+    // records (end_function_body) — the two are mutually exclusive per control
+    // path, so a param is decremented exactly once.
+    for (const RefParamInfo& param : m_ref_params) {
+        emit_ref_dec(param.value);
     }
 }
 
@@ -2007,6 +2010,16 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
         if (rs.value->kind == AstKind::ExprIdentifier) {
             Type* return_type = rs.value->resolved_type;
             if (return_type && return_type->noncopyable()) {
+                mark_moved_from(rs.value->identifier.name, /*null_ssa=*/false,
+                                /*nullify_record=*/false);
+            } else if (return_type && return_type->kind == TypeKind::Ref) {
+                // Returning a ref local hands off its borrow count to the caller:
+                // mark it moved so emit_scope_cleanup skips its normal-path
+                // RefDec — the count is not released at this frame. If the owner
+                // is a local, its RAII drop below now sees the still-live borrow
+                // and traps at the delete (Finding 2). (A returned ref *param* is
+                // not in m_owned_locals, so its existing entry-inc/return-dec
+                // pair stands; that path is decoupled from the hand-off.)
                 mark_moved_from(rs.value->identifier.name, /*null_ssa=*/false,
                                 /*nullify_record=*/false);
             }
@@ -3982,6 +3995,17 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
 
     // Auto-destroy old owned value before reassignment
     Type* target_type = assign_expr.target->resolved_type;
+
+    // Ref reassignment (`r = other`): release the old borrow and acquire the new
+    // one so the count stays balanced — the variable now borrows a different
+    // object. Emitted before define_local so lookup_local still returns the old
+    // value. Applies to ref locals and ref params uniformly (the variable's
+    // current pointer is decremented, the new one incremented).
+    if (target_type && target_type->kind == TypeKind::Ref) {
+        emit_ref_dec(lookup_local(name));
+        emit_ref_inc(value);
+    }
+
     if (target_type && target_type->noncopyable()) {
         OwnedLocalInfo* owned_info = find_owned_local(name);
         if (owned_info && !owned_info->is_moved) {
@@ -4875,6 +4899,20 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         }
         // `var x = o.field`: null the moved-out field in the root.
         nullify_moved_field_source(var_decl.initializer);
+    } else if (type && type->kind == TypeKind::Ref) {
+        // Ref local: a counted borrow (constraint-reference model). Increment
+        // the borrow count on creation and track it as a RefBorrow so it is
+        // decremented on every exit path (scope exit, return, break, continue,
+        // exception unwind) via the cleanup machinery — the source (a uniq /
+        // ref / borrowed subscript) stays live, so this binding is a new borrow.
+        // A `ref` returned from a call already carries a handed-off count;
+        // binding it would then over-count (a safe conservative trap, not a
+        // UAF), to be refined when call-site borrow accounting lands (Phase 2).
+        emit_ref_inc(value);
+        u32 scope_depth = static_cast<u32>(m_local_scopes.size());
+        BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
+        m_owned_locals.push_back({var_decl.name, type, scope_depth, false, false,
+                                  current_block_id, value, OwnedKind::RefBorrow});
     }
 }
 
@@ -4943,8 +4981,10 @@ void IRBuilder::pop_scope() {
             auto& info = m_owned_locals[i];
             if (info.scope_depth < depth) continue;
             if (info.start_block.is_valid() && end_block.is_valid() && info.initial_value.is_valid()) {
+                IRCleanupKind kind = info.kind == OwnedKind::RefBorrow
+                    ? IRCleanupKind::RefDec : IRCleanupKind::Delete;
                 m_current_func->cleanup_info.push_back(
-                    {info.initial_value, info.type, info.start_block, end_block});
+                    {info.initial_value, info.type, info.start_block, end_block, kind});
             }
         }
     }
@@ -5048,6 +5088,21 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
     if (!m_current_block) return;  // Block already terminated
 
     ValueId current_value = lookup_local(info.name);
+
+    // Ref borrow: decrement its count rather than destroy the pointee. The
+    // owner is freed elsewhere; this just releases this binding's borrow.
+    if (info.kind == OwnedKind::RefBorrow) {
+        emit_ref_dec(current_value);
+        // Narrow the exception cleanup record to end at this RefDec so the
+        // unwind path doesn't double-decrement after the normal-path RefDec
+        // (mirrors the owned-local Nullify below).
+        if (info.initial_value.is_valid()) {
+            IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+            if (nullify) nullify->unary = info.initial_value;
+        }
+        info.is_moved = true;
+        return;
+    }
 
     // Emit a single typed Delete — the runtime handles null checks,
     // destructor calls, container element iteration, and freeing.
@@ -5508,9 +5563,14 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
 
     // Emit RefInc for ref-typed parameters at function entry
     // This tracks borrows in the constraint reference model
-    for (ValueId ref_param : m_ref_params) {
-        emit_ref_inc(ref_param);
+    for (const RefParamInfo& ref_param : m_ref_params) {
+        emit_ref_inc(ref_param.value);
     }
+
+    // Capture the entry block: ref params are live from here, so their
+    // exception-path RefDec cleanup records (built in end_function_body) start
+    // at this block.
+    m_ref_param_entry_block = m_current_block ? m_current_block->id : BlockId::invalid();
 }
 
 void IRBuilder::end_function_body() {
@@ -5554,10 +5614,30 @@ void IRBuilder::end_function_body() {
             auto& info = m_owned_locals[i];
             if (info.scope_depth < depth) continue;
             if (info.start_block.is_valid() && end_block.is_valid() && info.initial_value.is_valid()) {
+                IRCleanupKind kind = info.kind == OwnedKind::RefBorrow
+                    ? IRCleanupKind::RefDec : IRCleanupKind::Delete;
                 m_current_func->cleanup_info.push_back(
-                    {info.initial_value, info.type, info.start_block, end_block});
+                    {info.initial_value, info.type, info.start_block, end_block, kind});
             }
         }
+
+        // Ref parameters are counted borrows live for the whole function. Their
+        // normal-path RefDec is the explicit decrement at each return
+        // (emit_ref_param_decrements); add a RefDec cleanup record spanning the
+        // function so an exception unwinding OUT of this frame also decrements
+        // them. Without this the borrow count leaks on every unwind path (e.g.
+        // a callee throwing through a `ref`-param frame), and a later delete of
+        // the borrowed owner spuriously traps. The "handler in scope" skip in
+        // execute_cleanup leaves in-function catches to the normal-path RefDec,
+        // so the two paths are mutually exclusive.
+        if (m_ref_param_entry_block.is_valid() && end_block.is_valid()) {
+            for (const RefParamInfo& rp : m_ref_params) {
+                m_current_func->cleanup_info.push_back(
+                    {rp.value, rp.type, m_ref_param_entry_block, end_block,
+                     IRCleanupKind::RefDec, /*whole_function_scope=*/true});
+            }
+        }
+
         while (!m_owned_locals.empty() && m_owned_locals.back().scope_depth >= depth) {
             m_owned_locals.pop_back();
         }
@@ -5611,7 +5691,7 @@ void IRBuilder::setup_parameters(Span<Param> params, Type* self_type) {
 
         // Track ref-typed parameters for RefInc/RefDec at boundaries
         if (param_type && param_type->kind == TypeKind::Ref) {
-            m_ref_params.push_back(bp.value);
+            m_ref_params.push_back({bp.value, param_type});
         }
     }
 }
