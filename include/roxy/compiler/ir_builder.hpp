@@ -357,6 +357,11 @@ private:
     };
     Vector<LoopInfo> m_loop_stack;
 
+    // Synthesized closure-env struct types encountered while building lambdas.
+    // After all bodies are built, each gets a synthesized destructor so a
+    // closure cleans its captures on delete (dispatched at runtime by type_id).
+    Vector<Type*> m_env_struct_types;
+
     // Ownership tracking for locals that need RAII / implicit destruction
     // Covers both uniq references (heap-allocated) and value structs with destructors
     // Whether a tracked local owns its value (destroy on cleanup) or is a `ref`

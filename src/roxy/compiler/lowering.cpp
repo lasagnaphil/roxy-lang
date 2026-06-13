@@ -2263,7 +2263,15 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             } else {
                 u32 size_bytes = env_type->struct_info.slot_count * sizeof(u32);
                 type_idx = static_cast<u16>(m_module->types.size());
-                m_module->types.push_back({env_name, size_bytes, env_type->struct_info.slot_count});
+                BCTypeInfo env_info{env_name, size_bytes, env_type->struct_info.slot_count};
+                // Record the env's synthesized destructor (built in the IR pass)
+                // so the closure delete can dispatch it by type_id. 0 from
+                // lookup means "no destructor"; map it to the 0xFFFFFFFF sentinel.
+                if (struct_has_default_destructor(env_type)) {
+                    u16 dtor_idx = lookup_destructor_index(env_type);
+                    if (dtor_idx != 0) env_info.dtor_func_idx = dtor_idx;
+                }
+                m_module->types.push_back(env_info);
                 m_type_indices[env_name] = type_idx;
             }
 
@@ -3070,6 +3078,12 @@ u16 BytecodeBuilder::build_delete_desc(Type* type) {
             (value_type && value_type->noncopyable()) ? build_delete_desc(value_type) : 0xFFFF;
         desc.container.key_desc_idx =
             (key_type && key_type->noncopyable()) ? build_delete_desc(key_type) : 0xFFFF;
+    } else if (type->is_function()) {
+        // A closure value is a uniq pointer to a heap env struct. The `fun()->R`
+        // type erases which env struct it is, so cleanup dispatches the env's
+        // synthesized destructor at runtime by the env's type_id, then frees it.
+        desc.cleanup = BCDeleteDesc::Closure;
+        desc.free_obj = true;
     } else if (type->is_coroutine()) {
         // Coro<T>: heap-allocated state struct, always freed.
         Type* coro_struct = type->coro_info.generated_struct_type;

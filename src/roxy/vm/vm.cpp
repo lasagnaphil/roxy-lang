@@ -177,9 +177,16 @@ bool vm_load_module(RoxyVM* vm, BCModule* module) {
     // Register types from module for heap allocation
     // Store the global type IDs so NEW_OBJ can find them
     module->type_ids.clear();
+    vm->closure_env_dtors.clear();
     for (const BCTypeInfo& type_info : module->types) {
         u32 type_id = register_object_type(type_info.name.data(), type_info.size_bytes, nullptr);
         module->type_ids.push_back(type_id);
+        // Map env-struct type_ids to their destructor index so deleting a
+        // closure can dispatch the right env cleanup (the closure's static type
+        // doesn't carry which env it is).
+        if (type_info.dtor_func_idx != 0xFFFFFFFF) {
+            vm->closure_env_dtors[type_id] = type_info.dtor_func_idx;
+        }
     }
 
     // Build flat function pointer cache

@@ -369,6 +369,18 @@ static void delete_value(RoxyVM* vm, void* ptr,
         }
         break;
     }
+
+    case BCDeleteDesc::Closure: {
+        // Closure value: `ptr` is the heap env. The static `fun()->R` type can't
+        // say which env struct this is, so dispatch the env's synthesized
+        // destructor by its runtime type_id (then free_obj frees the env below).
+        ObjectHeader* header = get_header_from_data(ptr);
+        auto it = vm->closure_env_dtors.find(header->type_id);
+        if (it != vm->closure_env_dtors.end()) {
+            call_cleanup_destructor(vm, static_cast<u16>(it->second), ptr);
+        }
+        break;
+    }
     }
 
     // If cleaning an owned resource (element/field) refused its free, don't

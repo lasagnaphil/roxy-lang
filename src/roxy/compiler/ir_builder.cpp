@@ -296,6 +296,21 @@ void IRBuilder::build_synthesized_default_dtors(Program* program) {
             }
         }
     }
+
+    // Synthesized closure-env structs aren't in program->declarations, so build
+    // their destructors here. An env gets one only when it has cleanup-needing
+    // captures (a noncopyable/ref capture made backfill_lambda_env attach a
+    // synthetic default destructor). The closure delete dispatches it by type_id.
+    for (Type* env_type : m_env_struct_types) {
+        if (!env_type || !env_type->is_struct()) continue;
+        for (const auto& dtor : env_type->struct_info.destructors) {
+            if (dtor.name.empty() && dtor.decl == nullptr) {
+                IRFunction* func = build_synthesized_default_destructor(env_type);
+                m_module->functions.push_back(func);
+                break;
+            }
+        }
+    }
 }
 
 void IRBuilder::build_coroutine_cleanup_wrappers() {
@@ -2742,6 +2757,17 @@ ValueId IRBuilder::gen_expr(Expr* expr) {
 ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
     LambdaExpr& le = expr->lambda;
 
+    // Record the env struct so a synthesized destructor is built for it (after
+    // all bodies). A closure value is a uniq env pointer; on delete we dispatch
+    // this destructor by the env's runtime type_id to clean its captures.
+    if (le.env_struct_type && le.env_struct_type->is_struct()) {
+        bool seen = false;
+        for (Type* t : m_env_struct_types) {
+            if (t == le.env_struct_type) { seen = true; break; }
+        }
+        if (!seen) m_env_struct_types.push_back(le.env_struct_type);
+    }
+
     // The lambda expression's resolved type is `Function<sig>`. Lowering treats it
     // as a `uniq` pointer to the synthesized env struct.
     //
@@ -2775,11 +2801,15 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
         capture_values.push_back(v);
 
         if (cap.mode == CaptureMode::Move) {
-            // The capture transfers ownership of the outer local into the env.
-            // Mirror the move-on-arg-pass machinery so scope-exit cleanup of the
-            // outer local is suppressed. (Move sources are pre-validated to be
-            // direct ExprIdentifier — no nested-source handling needed here.)
+            // The capture transfers ownership of the outer value into the env.
+            // Suppress scope-exit cleanup of the source so it isn't freed twice.
+            // A direct capture sources a local (mark it moved); a *transitive*
+            // move sources an enclosing env field (__env.c) — null that field so
+            // the enclosing env's destructor doesn't re-delete the moved-out
+            // value. (Closure-env cleanup now runs, so this double-free, formerly
+            // masked by the inert closure delete, must be prevented.)
             mark_moved_from(cap.name);
+            nullify_moved_field_source(cap.source_expr);
         }
     }
 

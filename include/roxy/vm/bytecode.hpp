@@ -360,6 +360,8 @@ struct BCTypeInfo {
     StringView name;      // Struct name
     u32 size_bytes;       // Size for object_alloc
     u32 slot_count;       // For field access
+    u32 dtor_func_idx = 0xFFFFFFFF;  // Synthesized destructor fn index, or 0xFFFFFFFF.
+                                     // Used to dispatch closure-env cleanup by type_id.
 };
 
 // Exception handler entry in bytecode
@@ -411,6 +413,9 @@ struct BCDeleteDesc {
         WalkFields,  // walk owned fields directly via struct_field_deletes
         List,        // iterate elements + recurse, free element buffer
         Map,         // iterate occupied buckets + recurse, free bucket buffers
+        Closure,     // closure value: dispatch the env's destructor by the env's
+                     // runtime type_id (the `fun()->R` type erases which env it
+                     // is), then free the env. See RoxyVM::closure_env_dtors.
     };
 
     Cleanup cleanup;

@@ -70,6 +70,12 @@ struct RoxyVM {
     // type's destructor in `register_map_type`.
     tsl::robin_map<void*, MapDispatchInfo> map_dispatch;
 
+    // Closure-env destructor dispatch: maps a synthesized env struct's runtime
+    // type_id to its destructor function index. A closure value's `fun()->R`
+    // type erases which env it is, so deleting a closure looks up the env's
+    // cleanup here by the env's type_id (built at vm_load_module).
+    tsl::robin_map<u32, u32> closure_env_dtors;
+
     UniquePtr<CallFrame[]> call_stack;  // Pre-allocated call stack
     u32 call_stack_size;                // Current call stack depth
     u32 call_stack_capacity;            // Maximum call stack depth

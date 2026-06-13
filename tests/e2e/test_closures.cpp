@@ -209,6 +209,29 @@ TEST_SUITE("E2E Closures") {
             CHECK(result.stdout_output == "42\n");
         }
 
+        SUBCASE("Closure frees its moved-in capture when it drops") {
+            // The closure env owns the moved-in Counter; when the closure drops,
+            // its synthesized env destructor (dispatched by the env's type_id)
+            // must destroy it exactly once. `r` is moved into `f`, so main does
+            // not also free it.
+            const char* source = R"(
+            struct Counter { value: i32 = 0; }
+            fun delete Counter() { print(f"del {self.value}"); }
+            fun main(): i32 {
+                var r: uniq Counter = uniq Counter { value = 7 };
+                {
+                    var f = fun[move r](): i32 => r.value;
+                    print(f"{f()}");
+                }
+                print("after");
+                return 0;
+            }
+        )";
+            TestResult result = run_and_capture(source, "main");
+            CHECK(result.success);
+            CHECK(result.stdout_output == "7\ndel 7\nafter\n");
+        }
+
         SUBCASE("Move consumes outer (use-after-move)") {
             const char* source = R"(
             struct Counter {
