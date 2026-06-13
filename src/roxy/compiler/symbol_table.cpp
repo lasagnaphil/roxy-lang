@@ -89,9 +89,11 @@ Symbol* SymbolTable::define(SymbolKind kind, StringView name, Type* type, Source
     return sym;
 }
 
-Symbol* SymbolTable::define_parameter(StringView name, Type* type, SourceLocation loc, u32 index) {
+Symbol* SymbolTable::define_parameter(StringView name, Type* type, SourceLocation loc, u32 index,
+                                     bool is_out_inout) {
     Symbol* sym = define(SymbolKind::Parameter, name, type, loc, nullptr);
     sym->param.index = index;
+    sym->is_out_inout = is_out_inout;
     return sym;
 }
 

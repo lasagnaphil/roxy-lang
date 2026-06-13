@@ -37,6 +37,7 @@ struct Symbol {
     SourceLocation loc;
     Decl* decl;           // AST node that declared this symbol (may be null for built-ins)
     bool is_pub;          // Public visibility
+    bool is_out_inout;    // For Parameter symbols: declared `out` or `inout` (second-class)
     Scope* defining_scope;  // Scope where this symbol was defined; used for capture detection
 
     Symbol()
@@ -46,6 +47,7 @@ struct Symbol {
         , loc{0, 0, 0}
         , decl(nullptr)
         , is_pub(false)
+        , is_out_inout(false)
         , defining_scope(nullptr)
     {
         // Zero-initialize the union
@@ -122,7 +124,8 @@ public:
 
     // Symbol definition
     Symbol* define(SymbolKind kind, StringView name, Type* type, SourceLocation loc, Decl* decl = nullptr);
-    Symbol* define_parameter(StringView name, Type* type, SourceLocation loc, u32 index);
+    Symbol* define_parameter(StringView name, Type* type, SourceLocation loc, u32 index,
+                             bool is_out_inout = false);
     Symbol* define_field(StringView name, Type* type, SourceLocation loc, u32 index, bool is_pub);
     Symbol* define_enum_variant(StringView name, Type* type, SourceLocation loc, i64 value);
     Symbol* define_module(StringView name, void* module_info, SourceLocation loc);

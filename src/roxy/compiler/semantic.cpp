@@ -1784,6 +1784,12 @@ bool SemanticAnalyzer::check_not_field_move(Expr* expr, SourceLocation loc) {
     return false;
 }
 
+bool SemanticAnalyzer::is_out_inout_param(Expr* expr) {
+    if (!expr || expr->kind != AstKind::ExprIdentifier) return false;
+    Symbol* sym = m_symbols.lookup(expr->identifier.name);
+    return sym && sym->kind == SymbolKind::Parameter && sym->is_out_inout;
+}
+
 void SemanticAnalyzer::consume_noncopyable(Expr* expr, SourceLocation loc) {
     if (!expr) return;
     Type* type = expr->resolved_type;
@@ -1797,6 +1803,22 @@ void SemanticAnalyzer::consume_noncopyable(Expr* expr, SourceLocation loc) {
     while (expr->kind == AstKind::ExprGrouping) {
         expr = expr->grouping.expr;
         if (!expr) return;
+    }
+
+    // Second-class family (lifetimes.md §3): an `out`/`inout` parameter borrows
+    // the caller's value and the caller retains ownership, so a noncopyable
+    // out/inout cannot be moved out of this frame (binding it, returning it,
+    // passing it by value, storing it, capturing it by move) — that would
+    // transfer and then free the caller's value, leaving it dangling. It may
+    // still be used in place or passed onward as another out/inout argument
+    // (the downward path, which does not consume). Copyable out/inout aren't
+    // affected: a copy escapes nothing, and the type system already blocks
+    // converting a value to `ref`/`weak`.
+    if (is_out_inout_param(expr)) {
+        error(loc, "cannot move an 'out'/'inout' parameter out of its frame; it "
+                   "borrows the caller's value (use it in place, or pass it "
+                   "onward as an 'out'/'inout' argument)");
+        return;
     }
 
     // Moving a noncopyable value out of an index expression can be unsound. `[]`
@@ -1929,7 +1951,8 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
         if (m_symbols.lookup_local(p.name)) {
             error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
         } else {
-            m_symbols.define_parameter(p.name, ptype, p.loc, i);
+            m_symbols.define_parameter(p.name, ptype, p.loc, i,
+                                       p.modifier != ParamModifier::None);
         }
 
         // Track owned parameters as Live (uniq refs and value structs with destructors)
@@ -2233,7 +2256,8 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
         if (m_symbols.lookup_local(p.name)) {
             error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
         } else {
-            m_symbols.define_parameter(p.name, ptype, p.loc, i);
+            m_symbols.define_parameter(p.name, ptype, p.loc, i,
+                                       p.modifier != ParamModifier::None);
         }
 
         // Track owned parameters as Live (uniq refs and value structs with destructors)
@@ -2629,7 +2653,8 @@ void SemanticAnalyzer::analyze_generic_template_body(Decl* decl) {
         Param& param = fun_decl.params[i];
         Type* param_type = resolve_type_expr(param.type);
         if (!param_type) param_type = m_types.error_type();
-        m_symbols.define_parameter(param.name, param_type, decl->loc, i);
+        m_symbols.define_parameter(param.name, param_type, decl->loc, i,
+                                   param.modifier != ParamModifier::None);
     }
 
     // Analyze the body
@@ -4108,6 +4133,18 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
     // references in the surrounding scope correctly fail with use-after-move.
     for (const CaptureInfo& cap : context.captures) {
         if (cap.mode == CaptureMode::Move) {
+            // Moving an out/inout parameter into a closure env transfers the
+            // caller's value to the env (which frees it on drop) — a second-class
+            // escape (lifetimes.md §3), even when the closure itself does not
+            // escape. Reject it (this move site bypasses consume_noncopyable).
+            Symbol* cap_sym = m_symbols.lookup(cap.name);
+            if (cap_sym && cap_sym->kind == SymbolKind::Parameter && cap_sym->is_out_inout) {
+                error_fmt(expr->loc,
+                          "cannot move an 'out'/'inout' parameter ('{}') into a "
+                          "closure; it borrows the caller's value",
+                          cap.name);
+                continue;
+            }
             mark_moved(cap.name);
         }
     }
@@ -4449,7 +4486,8 @@ Decl* SemanticAnalyzer::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
             if (m_symbols.lookup_local(p.name)) {
                 error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
             } else {
-                m_symbols.define_parameter(p.name, ptype, p.loc, i);
+                m_symbols.define_parameter(p.name, ptype, p.loc, i,
+                                       p.modifier != ParamModifier::None);
             }
             if (ptype && ptype->noncopyable()) {
                 Symbol* psym = m_symbols.lookup(p.name);

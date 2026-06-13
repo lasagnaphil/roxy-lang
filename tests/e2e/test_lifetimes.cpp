@@ -280,4 +280,62 @@ TEST_SUITE("E2E Lifetimes") {
         // overwritten value destroyed once; the live value destroyed once at end.
         CHECK(result.stdout_output == "del 1\ndel 2\n---\ndel 3\n");
     }
+
+    // === Phase 2: second-class family (out/inout) ===
+
+    // An `out`/`inout` parameter borrows the caller's value; moving a noncopyable
+    // one out of the frame (binding it) would transfer and then free the caller's
+    // value -> dangling. Rejected at compile time (lifetimes.md §3).
+    TEST_CASE("moving a noncopyable inout out of its frame is rejected") {
+        const char* source = R"(
+        struct Box { v: i32; }
+        fun leak(l: inout List<uniq Box>): i32 {
+            var stolen: List<uniq Box> = l;   // moves the caller's list out
+            return stolen.len();
+        }
+        fun main(): i32 { return 0; }
+    )";
+
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) == nullptr);
+    }
+
+    // Moving an inout into a closure env (which frees it on drop) is the same
+    // escape via a different move site — also rejected.
+    TEST_CASE("moving a noncopyable inout into a closure is rejected") {
+        const char* source = R"(
+        struct Box { v: i32; }
+        fun capture(l: inout List<uniq Box>): i32 {
+            var f = fun[move l](): i32 => l.len();
+            return f();
+        }
+        fun main(): i32 { return 0; }
+    )";
+
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) == nullptr);
+    }
+
+    // Legitimate second-class use stays allowed: mutating an inout in place and
+    // passing it onward as another inout argument (the downward path).
+    TEST_CASE("inout used in place and passed onward downward is allowed") {
+        const char* source = R"(
+        struct Box { v: i32; }
+        fun fill(l: inout List<uniq Box>): i32 {
+            l.push(uniq Box { v = 1 });   // mutate in place
+            return l.len();
+        }
+        fun forward(l: inout List<uniq Box>): i32 {
+            return fill(inout l);          // pass onward as inout
+        }
+        fun main(): i32 {
+            var xs: List<uniq Box> = List<uniq Box>();
+            return forward(inout xs);
+        }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success == true);
+        CHECK(result.value == 1);
+    }
 }

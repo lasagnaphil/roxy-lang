@@ -510,6 +510,13 @@ private:
     // assignment, struct literal fields).
     void consume_noncopyable(Expr* expr, SourceLocation loc);
 
+    // True if `expr` is a reference to an `out`/`inout` parameter — a member of
+    // the second-class family that must flow downward only (lifetimes.md §3).
+    // Used to reject escapes (bind-to-ref, store, return, capture). `self` is
+    // NOT covered here: it is typed ref<T> and its retention goes through the
+    // runtime promotion gate, not a compile error.
+    bool is_out_inout_param(Expr* expr);
+
     // Mark a uniq variable as moved
     void mark_moved(StringView name);
 
