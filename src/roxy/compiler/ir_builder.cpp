@@ -2728,8 +2728,16 @@ ValueId IRBuilder::gen_expr(Expr* expr) {
             return gen_binary_expr(expr);
         case AstKind::ExprTernary:
             return gen_ternary_expr(expr);
-        case AstKind::ExprCall:
-            return gen_call_expr(expr);
+        case AstKind::ExprCall: {
+            ValueId result = gen_call_expr(expr);
+            // A call returning a noncopyable value (a closure, uniq, list, map…)
+            // produces an owned temporary. Track it so it's cleaned at scope exit
+            // when used inline and not bound/consumed (e.g. `f()()`,
+            // `make_list().len()`). Constructor/struct-literal paths already
+            // self-track, so skip if already a tracked temp.
+            track_noncopyable_call_temp(result, expr->resolved_type);
+            return result;
+        }
         case AstKind::ExprIndex:
             return gen_index_expr(expr);
         case AstKind::ExprGet:
@@ -2796,6 +2804,14 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
         if (cap.needs_heap_check) {
             IRInst* assert_inst = emit_inst(IROp::AssertHeap, m_types.void_type());
             if (assert_inst) assert_inst->unary = v;
+        }
+
+        // A `ref` capture (a [ref self] promotion or a captured ref local) is a
+        // counted borrow the env now holds — increment it (after the heap check
+        // has proven a copyable receiver heap-resident, so a stack receiver traps
+        // before the inc). The env destructor decrements it (emit_field_cleanup).
+        if (cap.type && cap.type->kind == TypeKind::Ref) {
+            emit_ref_inc(v);
         }
 
         capture_values.push_back(v);
@@ -5134,6 +5150,20 @@ IRBuilder::OwnedLocalInfo* IRBuilder::find_owned_local(StringView name) {
     return nullptr;
 }
 
+void IRBuilder::track_noncopyable_call_temp(ValueId val, Type* type) {
+    if (!type || !type->noncopyable() || !m_current_block || !val.is_valid()) return;
+    // Skip if already tracked as a temporary (constructor/struct-literal paths
+    // self-track their heap temps at creation).
+    for (const auto& info : m_owned_locals) {
+        if (info.is_temporary && info.initial_value.id == val.id) return;
+    }
+    StringView temp_name = intern_format("__tmp{}", m_next_temp_id++);
+    define_local(temp_name, val, type);
+    u32 scope_depth = static_cast<u32>(m_local_scopes.size());
+    m_owned_locals.push_back({temp_name, type, scope_depth, false, true,
+                              m_current_block->id, val});
+}
+
 void IRBuilder::consume_temp_noncopyable(ValueId val, bool adopted_by_variable) {
     // Find the temporary in m_owned_locals by ValueId (temporaries have __tmp names).
     // Only matches temporaries, not named variables that happen to share the same ValueId.
@@ -5264,7 +5294,14 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
         const FieldInfo& field = struct_info.fields[i];
         if (!field.type) continue;
 
-        if (field.type->kind == TypeKind::Uniq || field.type->noncopyable()) {
+        if (field.type->kind == TypeKind::Ref) {
+            // A `ref` field is a counted borrow — release it. Only synthesized
+            // closure envs hold ref fields ([ref self] / captured ref locals);
+            // ref is banned from user struct fields, so this is inert elsewhere.
+            ValueId ref_val = emit_get_field(self_ptr, field.name,
+                field.slot_offset, field.slot_count, field.type);
+            emit_ref_dec(ref_val);
+        } else if (field.type->kind == TypeKind::Uniq || field.type->noncopyable()) {
             emit_single_field_destroy(self_ptr, field.name,
                 field.slot_offset, field.slot_count, field.type);
         }

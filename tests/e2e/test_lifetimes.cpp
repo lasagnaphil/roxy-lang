@@ -338,4 +338,54 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.success == true);
         CHECK(result.value == 1);
     }
+
+    // === Phase 2: [ref self] closure-capture counting ===
+
+    // A closure capturing `self` by reference holds a counted borrow of the
+    // receiver, so deleting the receiver while the closure is live traps (the
+    // captured ref would otherwise dangle). The copyable receiver + uniq
+    // allocation also exercises the promotion gate (the heap check passes, then
+    // the count is taken).
+    TEST_CASE("ref-self closure capture pins the receiver (delete-while-captured traps)") {
+        const char* source = R"(
+        struct V { x: i32 = 0; }
+        fun V.make_getter(): fun() -> i32 {
+            return fun(): i32 => self.x;   // implicit ref-self capture
+        }
+        fun main(): i32 {
+            var u: uniq V = uniq V { x = 5 };
+            var g = u.make_getter();   // g's env holds a counted ref to u
+            delete u;                  // traps: u is still borrowed by g
+            return g();
+        }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success == false);
+    }
+
+    // The borrow is released when the closure drops, so the receiver becomes
+    // deletable again — no over-count.
+    TEST_CASE("ref-self capture releases the borrow when the closure drops") {
+        const char* source = R"(
+        struct V { x: i32 = 0; }
+        fun V.make_getter(): fun() -> i32 {
+            return fun(): i32 => self.x;
+        }
+        fun main(): i32 {
+            var u: uniq V = uniq V { x = 5 };
+            var val: i32 = 0;
+            {
+                var g = u.make_getter();
+                val = g();
+            }              // g drops -> env RefDecs u -> count 0
+            delete u;      // succeeds
+            return val;
+        }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success == true);
+        CHECK(result.value == 5);
+    }
 }

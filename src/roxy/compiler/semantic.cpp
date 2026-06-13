@@ -4534,7 +4534,12 @@ void SemanticAnalyzer::backfill_lambda_env(Type* env_type, const LambdaCaptureCo
         f.slot_offset = current_slot;
         f.slot_count = get_type_slot_count(cap.type);
         current_slot += f.slot_count;
-        if (cap.type && cap.type->noncopyable()) any_noncopyable = true;
+        // A noncopyable capture needs delete-on-drop; a `ref` capture (a counted
+        // borrow — [ref self] or a captured ref local) needs RefDec-on-drop.
+        // Both require the env to carry a destructor.
+        if (cap.type && (cap.type->noncopyable() || cap.type->kind == TypeKind::Ref)) {
+            any_noncopyable = true;
+        }
     }
 
     env_type->struct_info.fields = Span<FieldInfo>(fields, num_fields);

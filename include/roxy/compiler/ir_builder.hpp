@@ -401,6 +401,11 @@ private:
     // the variable's own cleanup record handles it.
     void consume_temp_noncopyable(ValueId val, bool adopted_by_variable = false);
 
+    // Track a noncopyable call result as an owned temporary (so it's cleaned at
+    // scope exit unless bound/consumed). No-op for copyable types or values
+    // already tracked as a temp (constructor paths self-track).
+    void track_noncopyable_call_temp(ValueId val, Type* type);
+
     // Mark the owned local `name` as moved so scope-exit / exception cleanup skip
     // it. No-op if `name` is not a live (un-moved) owned local. For `uniq` locals
     // (when null_ssa) it re-points the SSA name at null so a later scope-exit
