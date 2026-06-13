@@ -196,4 +196,61 @@ TEST_SUITE("E2E Lifetimes") {
         BumpAllocator allocator(65536);
         CHECK(compile(allocator, source) == nullptr);  // use-after-move rejected
     }
+
+    // A `ref`-returning function hands off exactly one borrow count to the
+    // caller, which the caller *adopts* (no extra increment). After the bound
+    // borrow drops, the owner's count is back to zero and it stays deletable —
+    // i.e. no over-count (which would make the owner spuriously undeletable).
+    TEST_CASE("ref-returning call hands off one count (no over-count)") {
+        const char* source = R"(
+        struct Item { v: i32; }
+        struct Box { item: uniq Item; }
+
+        fun Box.borrow_item(): ref Item {
+            var b: ref Item = self.item;   // borrow the heap item via a ref local
+            return b;                       // hand off the borrow count
+        }
+
+        fun main(): i32 {
+            var box: uniq Box = uniq Box { item = uniq Item { v = 42 } };
+            var val: i32 = 0;
+            {
+                var r: ref Item = box.borrow_item();   // adopt the handed-off count
+                val = r.v;
+            }                                          // r drops -> item count 0
+            delete box;                                // succeeds: no over-count
+            return val;
+        }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success == true);
+        CHECK(result.value == 42);
+    }
+
+    // The handed-off count is real: while the bound borrow is still live, the
+    // owner cannot be deleted (the borrow keeps it pinned). This is the
+    // counterpart to the no-over-count case — proving the count isn't merely
+    // dropped (which would be an under-count / use-after-free).
+    TEST_CASE("ref-returning call's borrow blocks delete while live") {
+        const char* source = R"(
+        struct Item { v: i32; }
+        struct Box { item: uniq Item; }
+
+        fun Box.borrow_item(): ref Item {
+            var b: ref Item = self.item;
+            return b;
+        }
+
+        fun main(): i32 {
+            var box: uniq Box = uniq Box { item = uniq Item { v = 42 } };
+            var r: ref Item = box.borrow_item();   // adopt the live borrow
+            delete box;                            // traps: item is still borrowed
+            return r.v;
+        }
+    )";
+
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success == false);
+    }
 }
