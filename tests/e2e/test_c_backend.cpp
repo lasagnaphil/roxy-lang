@@ -2838,4 +2838,42 @@ TEST_SUITE("E2E C Backend") {
         CHECK(result.exit_code == 31);
     }
 
+    // ── C++ keyword identifier escaping ──
+    // Roxy identifiers that are C++ keywords (but not Roxy keywords) are escaped
+    // with a reserved `roxy_kw_` prefix so the generated C++ compiles.
+
+    TEST_CASE("Keyword escape: functions named `double` and `double_` coexist") {
+        // `double` is a C++ keyword; `double_` is not. The prefix scheme keeps them
+        // distinct (a `_` suffix would alias them).
+        const char* source = R"(
+        fun double(x: i32): i32 { return x * 2; }
+        fun double_(x: i32): i32 { return x + 1; }
+        fun main(): i32 {
+            return double(10) + double_(10);   // 20 + 11 = 31
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 31);
+    }
+
+    TEST_CASE("Keyword escape: struct/field names that are C++ keywords") {
+        const char* source = R"(
+        struct template {
+            class: i32;
+            int: i32;
+        }
+        fun template.operator(): i32 { return self.class + self.int; }
+        fun main(): i32 {
+            var t: template = template { class = 30, int = 12 };
+            return t.operator();   // 42
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 42);
+    }
+
 }  // TEST_SUITE("E2E C Backend")

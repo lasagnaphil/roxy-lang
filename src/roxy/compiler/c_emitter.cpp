@@ -78,19 +78,58 @@ void CEmitter::emit_type(Type* type, String& out) {
 
 // --- Name mangling: $$ -> __, $ -> _ ---
 
+// A reserved C/C++ word that a (legal) Roxy identifier could shadow, breaking the
+// generated source — e.g. a function named `double` or a field named `class`.
+// Words that are also Roxy keywords can't be identifiers, but listing them is
+// harmless. Used to escape such names in emit_mangled_name.
+static bool is_cpp_keyword(StringView s) {
+    static const tsl::robin_set<StringView> keywords = {
+        // C / C++ fundamental types and qualifiers
+        "int", "char", "short", "long", "float", "double", "void", "bool",
+        "signed", "unsigned", "wchar_t", "char8_t", "char16_t", "char32_t",
+        "const", "volatile", "static", "extern", "register", "mutable", "auto",
+        "constexpr", "consteval", "constinit", "inline", "thread_local", "restrict",
+        // declarations / OOP
+        "class", "struct", "union", "enum", "typedef", "template", "typename",
+        "namespace", "using", "operator", "this", "friend", "virtual", "override",
+        "final", "explicit", "public", "private", "protected", "typeid", "decltype",
+        // control flow / statements (mostly also Roxy keywords; harmless)
+        "if", "else", "while", "for", "do", "switch", "case", "default", "break",
+        "continue", "goto", "return", "try", "catch", "throw", "new", "delete",
+        "sizeof", "alignof", "alignas", "static_assert", "static_cast",
+        "dynamic_cast", "reinterpret_cast", "const_cast", "noexcept",
+        "nullptr", "true", "false", "asm", "export", "co_await", "co_return",
+        "co_yield", "concept", "requires",
+        // alternative tokens
+        "and", "or", "not", "xor", "bitand", "bitor", "compl",
+        "and_eq", "or_eq", "xor_eq", "not_eq",
+    };
+    return keywords.find(s) != keywords.end();
+}
+
 void CEmitter::emit_mangled_name(StringView name, String& out) {
+    // Translate Roxy mangling ($$ -> __, $ -> _) into a temp, then escape any
+    // result that collides with a C/C++ keyword by prefixing a reserved marker
+    // (`double` -> `roxy_kw_double`). A prefix (vs a `_` suffix) keeps `double`
+    // and a user's `double_` distinct. Applied uniformly to type/function/field
+    // names so definitions and uses agree.
+    String mangled;
     const char* data = name.data();
     u32 len = name.size();
     for (u32 i = 0; i < len; i++) {
         if (data[i] == '$' && i + 1 < len && data[i + 1] == '$') {
-            out.append("__");
+            mangled.append("__");
             i++; // skip second $
         } else if (data[i] == '$') {
-            out.push_back('_');
+            mangled.push_back('_');
         } else {
-            out.push_back(data[i]);
+            mangled.push_back(data[i]);
         }
     }
+    if (is_cpp_keyword(StringView(mangled.data(), mangled.size()))) {
+        out.append("roxy_kw_");
+    }
+    out.append(mangled);
 }
 
 void CEmitter::emit_function_symbol(StringView name, String& out) {
@@ -136,7 +175,7 @@ void CEmitter::emit_field_access(ValueId object, StringView field_name, String& 
         out.append("*)");
         emit_value(object, out);
         out.append(".ptr)->");
-        out.append(field_name.data(), field_name.size());
+        emit_mangled_name(field_name, out);
         return;
     }
     emit_value(object, out);
@@ -145,7 +184,7 @@ void CEmitter::emit_field_access(ValueId object, StringView field_name, String& 
     } else {
         out.push_back('.');
     }
-    out.append(field_name.data(), field_name.size());
+    emit_mangled_name(field_name, out);
 }
 
 const IRFunction* CEmitter::find_function(StringView name) {
@@ -561,7 +600,7 @@ void CEmitter::emit_struct_typedefs(const IRModule* module, String& out) {
             out.append("    ");
             emit_type(field.type, out);
             out.push_back(' ');
-            out.append(field.name.data(), field.name.size());
+            emit_mangled_name(field.name, out);
             out.append(";\n");
         }
 
@@ -576,7 +615,7 @@ void CEmitter::emit_struct_typedefs(const IRModule* module, String& out) {
                 for (u32 vf = 0; vf < variant.fields.size(); vf++) {
                     emit_type(variant.fields[vf].type, out);
                     out.push_back(' ');
-                    out.append(variant.fields[vf].name.data(), variant.fields[vf].name.size());
+                    emit_mangled_name(variant.fields[vf].name, out);
                     out.append("; ");
                 }
                 out.append("}; /* ");
@@ -1490,7 +1529,7 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 out.append("*)");
                 emit_value(inst->result, out);
                 out.append(")->");
-                out.append(field.name);
+                emit_mangled_name(field.name, out);
                 out.append(" = ");
                 // Mirror SetField, plus weak-self: deref a struct rvalue
                 // (pointer); cast null into a uniq/ref field; wrap a pointer in
@@ -2302,7 +2341,7 @@ void CEmitter::emit_inline_method_wrapper(Type* struct_type, const MethodInfo& m
     }
     emit_type(method.return_type, out);
     out.push_back(' ');
-    out.append(method.name.data(), method.name.size());
+    emit_mangled_name(method.name, out);  // escape a method named like a C++ keyword
     out.push_back('(');
 
     if (method_decl) {
@@ -2514,7 +2553,7 @@ void CEmitter::emit_pub_struct_definitions(const IRModule* module, String& out) 
             out.append("    ");
             emit_type(field.type, out);
             out.push_back(' ');
-            out.append(field.name.data(), field.name.size());
+            emit_mangled_name(field.name, out);
             out.append(";\n");
         }
 
@@ -2528,8 +2567,7 @@ void CEmitter::emit_pub_struct_definitions(const IRModule* module, String& out) 
                 for (u32 vf = 0; vf < variant.fields.size(); vf++) {
                     emit_type(variant.fields[vf].type, out);
                     out.push_back(' ');
-                    out.append(variant.fields[vf].name.data(),
-                               variant.fields[vf].name.size());
+                    emit_mangled_name(variant.fields[vf].name, out);
                     out.append("; ");
                 }
                 out.append("}; /* ");

@@ -2,7 +2,7 @@
 
 > **Status:** Phases 1–4 fully implemented; Phase 5 partially implemented (function- and statement-level `#line` directives). Other Phase 5 items (DCE, Relooper, `switch` lowering, readable variable names) are deliberately not pursued — the C compiler's optimizer covers them and they don't affect debugger UX.
 >
-> **Language feature coverage:** complete — primitives, structs (inheritance, methods, ctors/dtors, copy, nesting), enums, tagged unions, generics, traits/operators, strings, lists, maps, module globals, coroutines, exceptions, and **closures** (lambdas, captures, function references, self-capture). One known naming gap: a Roxy identifier that is a C++ keyword (e.g. a function named `double`) collides in the generated source.
+> **Language feature coverage:** complete — primitives, structs (inheritance, methods, ctors/dtors, copy, nesting), enums, tagged unions, generics, traits/operators, strings, lists, maps, module globals, coroutines, exceptions, and **closures** (lambdas, captures, function references, self-capture). Roxy identifiers that are C++ keywords (e.g. a function named `double`, a field named `class`) are escaped with a reserved `roxy_kw_` prefix in `emit_mangled_name`, so they compile.
 
 The C backend (`CEmitter`) translates Roxy's SSA IR into a `.cpp` file that any C++ compiler can build. The body is C-style (structs, gotos, typed `vN` locals); native bindings and the public header use C++ to interface directly with the embedder. It operates on the same `IRModule` the bytecode lowering uses, so all frontend work (type checking, method/operator resolution, monomorphization, struct layout) is already done.
 
