@@ -319,6 +319,13 @@ struct IRInst {
     // For SetField, the value being stored
     ValueId store_value;
 
+    // Pinned `Copy`: copy propagation must NOT collapse this Copy into its
+    // source. Used by call-site receiver borrows (lifetimes.md §4/§6) to mint a
+    // distinct SSA value/register for a heap receiver, so the borrow's RefDec +
+    // Nullify cleanup can't collide with the owned-local's own Delete record
+    // (which shares the receiver's value). Only ever set on IROp::Copy.
+    bool no_copy_prop = false;
+
     IRInst() : op(IROp::ConstNull), result(ValueId::invalid()), type(nullptr), store_value(ValueId::invalid()) {
         const_data = ConstData();
     }
@@ -425,6 +432,13 @@ struct IRCleanupInfo {
     // point (the block-derived scope is unreliable when every path returns or
     // throws). Ref *locals* and owned locals are block-scoped (false).
     bool whole_function_scope = false;
+    // Call-site receiver borrow (lifetimes.md §4/§6): a heap receiver counted
+    // for one method call's duration. The borrow lives only [RefInc, RefDec)
+    // around a single call, so lowering narrows scope_start to the RefInc's PC
+    // (via m_ref_inc_pcs) in addition to the Nullify end-narrowing — the
+    // block-derived start would wrongly cover earlier-in-block argument
+    // evaluation, firing a RefDec on a not-yet-initialized register on throw.
+    bool call_borrow = false;
 };
 
 // IR Function

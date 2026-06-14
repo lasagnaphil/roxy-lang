@@ -388,4 +388,77 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.success == true);
         CHECK(result.value == 5);
     }
+
+    // ── Call-site receiver counting (lifetimes.md §4/§6) ──
+    // A method call on a `uniq` (heap) receiver counts the receiver for the
+    // call's duration, so a reentrant free of it traps; the count is balanced on
+    // both the normal and the exception-unwind path, leaving the owner deletable.
+
+    // Balance: calling methods on a uniq receiver does not leak or over-count —
+    // the object is still destroyed exactly once at scope exit.
+    TEST_CASE("method calls on a uniq receiver stay balanced") {
+        const char* source = R"(
+        struct Counter { value: i32; }
+        fun new Counter(v: i32) { self.value = v; }
+        fun delete Counter() { print("del"); }
+        fun Counter.get(): i32 { return self.value; }
+
+        fun main(): i32 {
+            var c: uniq Counter = uniq Counter(7);
+            var a: i32 = c.get();   // borrow inc/dec around the call, balanced
+            var b: i32 = c.get();   // receiver still valid
+            return a + b;           // 14
+        }
+    )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success == true);
+        CHECK(result.value == 14);
+        CHECK(result.stdout_output == "del\n");  // destroyed exactly once
+    }
+
+    // Exception path: a method on a uniq receiver throws. The unwind must
+    // release the call-site borrow BEFORE the receiver's own RAII drop, so the
+    // owner survives to the in-function catch and is destroyed exactly once.
+    // This is the case the naive attempt (sharing the receiver's SSA value)
+    // double-deleted — the pinned-copy borrow + deferred record ordering fix it.
+    TEST_CASE("uniq receiver survives a throwing method, destroyed once") {
+        const char* source = R"(
+        struct Boom { msg: string; }
+        fun Boom.message(): string for Exception { return self.msg; }
+
+        struct Counter { value: i32; }
+        fun new Counter(v: i32) { self.value = v; }
+        fun delete Counter() { print("del"); }
+        fun Counter.risky(): i32 { throw Boom { msg = "boom" }; }
+
+        fun main(): i32 {
+            var c: uniq Counter = uniq Counter(5);
+            try {
+                var unused: i32 = c.risky();  // borrow inc; throws; unwind RefDec
+            } catch (e: Boom) {
+                print("caught");
+            }
+            print(f"{c.value}");              // c still alive -> 5
+            return 0;
+            // c destroyed exactly once at scope exit
+        }
+    )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success == true);
+        CHECK(result.stdout_output == "caught\n5\ndel\n");
+    }
+
+    // On the *trap-firing* side of this feature: a method call on a `uniq`
+    // receiver makes the receiver freeable-by-no-one for the call's duration, so
+    // a reentrant free of it traps in object_free (ref_count != 0). That trap
+    // mechanism is already covered end-to-end by Findings 1 and 2 above (a live
+    // `ref` borrow blocks a delete); the two tests above confirm method calls
+    // create and release exactly such a borrow on both the normal and the
+    // exception path. A dedicated "free the receiver from inside its own method"
+    // test is intentionally omitted: it isn't cleanly constructible in safe Roxy
+    // today — a uniq *local* receiver can't be reached from inside the call, a
+    // module-global owner doesn't reliably initialize, and inout-`uniq`
+    // reassignment (`slot = nil` / `slot = uniq T(..)`) does not yet free the
+    // overwritten value (a separate pre-existing gap). So the reach-and-free
+    // path can't be expressed without depending on those unrelated holes.
 }

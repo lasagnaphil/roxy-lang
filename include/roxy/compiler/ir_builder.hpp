@@ -127,6 +127,11 @@ private:
     void emit_ref_inc(ValueId ptr);
     void emit_ref_dec(ValueId ptr);
     void emit_ref_param_decrements();  // Emit RefDec for all ref-typed parameters
+    // A `Copy` that copy propagation will not collapse, minting a distinct SSA
+    // value/register that aliases `src` at runtime. Used for call-site receiver
+    // borrows so their cleanup identity is independent of the receiver's
+    // owned-local. See IRInst::no_copy_prop and gen_call_member.
+    ValueId emit_pinned_copy(ValueId src, Type* type);
 
     // Weak reference creation
     ValueId emit_weak_create(ValueId ptr, Type* weak_type);
@@ -334,6 +339,15 @@ private:
     // as the start of each ref param's whole-function RefDec cleanup record so an
     // exception unwinding out of the frame decrements the borrow.
     BlockId m_ref_param_entry_block;
+
+    // Deferred call-site receiver-borrow cleanup records (lifetimes.md §4/§6).
+    // A borrow's exception-path RefDec must run BEFORE the receiver-owner's
+    // Delete on unwind (else Delete sees ref_count != 0 and spuriously traps).
+    // execute_cleanup runs records in reverse of cleanup_info order, and the
+    // owner's Delete record is pushed late (at scope close), so these are
+    // collected during the body and appended at end_function_body — after every
+    // owned-local record — so reverse iteration releases the borrow first.
+    Vector<IRCleanupInfo> m_call_borrow_cleanups;
 
     // Error state
     bool m_has_error;

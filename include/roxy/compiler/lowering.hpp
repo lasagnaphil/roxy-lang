@@ -144,6 +144,11 @@ private:
     // Used to narrow cleanup record scopes (Nullify is a compile-time annotation,
     // not a runtime instruction).
     tsl::robin_map<u32, u32> m_nullify_pcs;  // ValueId.id -> PC where ownership transferred
+    // ValueId.id -> PC of its RefInc. Used to narrow a call-site receiver
+    // borrow's cleanup-record scope_start to the RefInc (lifetimes.md §4/§6):
+    // the block-derived start would wrongly cover earlier-in-block argument
+    // evaluation, so a throw there would RefDec a not-yet-initialized register.
+    tsl::robin_map<u32, u32> m_ref_inc_pcs;
 
     // Patch jump offsets after all blocks are emitted
     void patch_jumps();

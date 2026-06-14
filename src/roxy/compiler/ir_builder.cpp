@@ -1391,6 +1391,14 @@ void IRBuilder::emit_ref_dec(ValueId ptr) {
     if (inst) inst->unary = ptr;
 }
 
+ValueId IRBuilder::emit_pinned_copy(ValueId src, Type* type) {
+    IRInst* inst = emit_inst(IROp::Copy, type);
+    if (!inst) return src;
+    inst->unary = src;
+    inst->no_copy_prop = true;
+    return inst->result;
+}
+
 void IRBuilder::emit_ref_param_decrements() {
     // Emit RefDec for all ref-typed parameters before function exit (normal
     // path). The exception-unwind path is covered separately by RefDec cleanup
@@ -3728,10 +3736,51 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         method_name = mangle_method(name_type->struct_info.name, get_expr.name);
     }
 
+    // Constraint-reference model (lifetimes.md §4/§6): count a *heap* receiver
+    // for the call's duration. If the receiver is a `uniq` local/param (the
+    // heap owner), increment its borrow count across the call so a reentrant
+    // free of the receiver — directly or through an alias the callee reaches —
+    // traps in object_free instead of dangling. A `ref` receiver is already
+    // covered by its own count; stack value-struct receivers are second-class
+    // (downward-safe) and uncounted. The borrow rides a *pinned* Copy so it owns
+    // a distinct SSA value/register: its RefDec + Nullify cleanup can't collide
+    // with the owned-local's own Delete record (which shares the receiver value).
+    ValueId recv_borrow = ValueId::invalid();
+    BlockId recv_borrow_block = BlockId::invalid();
+    if (struct_type && struct_type->is_struct()
+        && get_expr.object->kind == AstKind::ExprIdentifier
+        && obj_type && obj_type->kind == TypeKind::Uniq
+        && m_current_block) {
+        recv_borrow = emit_pinned_copy(obj, obj_type);
+        emit_ref_inc(recv_borrow);
+        recv_borrow_block = m_current_block->id;
+    }
+
     // [obj] + args, with a trailing output pointer when this returns a large struct
     // (output_ptr is invalid otherwise, so prepend_self appends nothing).
     Span<ValueId> method_args = prepend_self(obj, args, lowered.output_ptr);
     ValueId result = emit_call_resolved(method_name, method_args, expr->resolved_type);
+
+    // Close the receiver borrow: balanced RefDec on the normal path, plus a
+    // call-scoped exception cleanup record so a throw out of the call releases
+    // the borrow before the owner is unwound. The record is deferred (appended
+    // at end_function_body) so it sorts after the owner's Delete record and
+    // therefore runs first on the reverse-ordered unwind. The Nullify ends the
+    // record's scope at the RefDec; lowering narrows its start to the RefInc.
+    if (recv_borrow.is_valid() && m_current_block) {
+        emit_ref_dec(recv_borrow);
+        IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+        if (nullify) nullify->unary = recv_borrow;
+        IRCleanupInfo ci;
+        ci.value = recv_borrow;
+        ci.type = obj_type;
+        ci.start_block = recv_borrow_block;
+        ci.end_block = m_current_block->id;
+        ci.kind = IRCleanupKind::RefDec;
+        ci.call_borrow = true;
+        m_call_borrow_cleanups.push_back(ci);
+    }
+
     if (lowered.returns_large_struct) result = lowered.output_ptr;
     return result;
 }
@@ -5795,6 +5844,14 @@ void IRBuilder::end_function_body() {
         m_local_scopes.pop_back();
     }
 
+    // Append deferred call-site receiver-borrow records last, so they sort after
+    // every owned-local Delete record and thus run FIRST on the reverse-ordered
+    // unwind — releasing the borrow before the owner is destroyed (else the
+    // owner's Delete would see ref_count != 0 and spuriously trap).
+    for (const IRCleanupInfo& ci : m_call_borrow_cleanups) {
+        m_current_func->cleanup_info.push_back(ci);
+    }
+
     m_current_func->reorder_blocks_rpo();
 }
 
@@ -5802,6 +5859,7 @@ void IRBuilder::setup_parameters(Span<Param> params, Type* self_type) {
     // Clear parameter tracking
     m_param_is_ptr.clear();  // robin_map::clear already keeps capacity
     m_ref_params.clear_keep_capacity();
+    m_call_borrow_cleanups.clear_keep_capacity();
 
     // Add 'self' parameter if this is a method/constructor/destructor
     if (self_type) {

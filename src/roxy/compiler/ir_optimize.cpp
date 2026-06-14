@@ -137,6 +137,10 @@ bool run_copy_propagation(IRFunction* func) {
         IRInst* inst = func->values_by_id[i];
         if (!inst) continue;
         if (inst->op != IROp::Copy) continue;
+        // Pinned copies (call-site receiver borrows) must keep a distinct
+        // identity from their source — collapsing them would re-merge the
+        // borrow with the owned-local it borrows. See IRInst::no_copy_prop.
+        if (inst->no_copy_prop) continue;
         if (!inst->unary.is_valid()) continue;
         u32 src = inst->unary.id;
         if (src != i && src < N) subst[i] = src;

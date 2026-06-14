@@ -122,6 +122,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_block_offsets.clear();
     m_unfusable_cmp_pcs.clear();
     m_nullify_pcs.clear();
+    m_ref_inc_pcs.clear();
     m_const_skip_load.clear();
     m_jump_patches.clear_keep_capacity();
     m_free_regs.clear_keep_capacity();
@@ -625,6 +626,20 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             u32 nullify_pc = nullify_it->second;
             if (nullify_pc >= record.scope_start_pc && nullify_pc < record.scope_end_pc) {
                 record.scope_end_pc = nullify_pc;
+            }
+        }
+
+        // A call-site receiver borrow is live only [RefInc, RefDec) around a
+        // single call. Narrow scope_start to the RefInc — the block-derived
+        // start would wrongly cover earlier-in-block argument evaluation, where
+        // the borrow's register isn't yet initialized (lifetimes.md §4/§6).
+        if (ir_cleanup.call_borrow) {
+            auto inc_it = m_ref_inc_pcs.find(ir_cleanup.value.id);
+            if (inc_it != m_ref_inc_pcs.end()) {
+                u32 inc_pc = inc_it->second;
+                if (inc_pc > record.scope_start_pc && inc_pc < record.scope_end_pc) {
+                    record.scope_start_pc = inc_pc;
+                }
             }
         }
 
@@ -2191,6 +2206,11 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         }
 
         case IROp::RefInc: {
+            // Record this RefInc's PC so a call-site receiver borrow's cleanup
+            // record can start exactly here (m_ref_inc_pcs). Harmless for other
+            // RefIncs — only call_borrow records read it, and a borrow value has
+            // exactly one RefInc.
+            m_ref_inc_pcs[inst->unary.id] = static_cast<u32>(m_current_func->code.size());
             u8 ptr = ensure_in_register(inst->unary, 0);
             emit_abc(Opcode::REF_INC, ptr, 0, 0);
             break;

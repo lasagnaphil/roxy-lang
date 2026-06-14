@@ -3,11 +3,14 @@
 > **Status:** Largely implemented (VM). The *constraint-reference* model below
 > is live: `ref` is a fully-counted borrow, the free-trap is centralized across
 > every free path, the three audited findings are fixed, the `out`/`inout`
-> second-class rule and `[ref self]` capture counting are enforced. Still
-> **deferred**: call-site heap-root counting (§6/§8, the receiver/`out`-`inout`
-> root borrow — parked pending class polymorphic dispatch), refcount elision
-> (§11, always a later phase), and full AOT/C-backend parity beyond the
-> `roxy_free` trap. See the per-item status in [§13](#13-implementation-status).
+> second-class rule and `[ref self]` capture counting are enforced, and
+> **call-site counting of a `uniq` method receiver** is now in (§4/§6/§8 — it did
+> *not* need polymorphic dispatch after all; a copy-prop-pinned receiver borrow
+> gives the call-straddling count a distinct SSA identity). Still **deferred**:
+> the rest of call-site heap-root counting (the `out`/`inout` root borrow, and
+> receivers that root in a field / heap-returning temp), refcount elision (§11,
+> always a later phase), and full AOT/C-backend parity beyond the `roxy_free`
+> trap. See the per-item status in [§13](#13-implementation-status).
 >
 > This supersedes [memory.md](memory.md) where the two differ; memory.md states
 > the same model but describes the older, incomplete implementation.
@@ -230,8 +233,10 @@ env's runtime `type_id` on delete (`RoxyVM::closure_env_dtors`,
   *(Covered today by the `ref`-param count on the borrowed argument, per Phase 1.)*
 - **Mid-call receiver kill** (`heap_obj.method()` whose body reaches and frees the
   object): the call site counts the heap receiver for the call's duration →
-  the free sees count 1 → **traps**. *(**Deferred** — needs call-site receiver
-  counting, §13.)*
+  the free sees count 1 → **traps**. *(**Implemented** for a `uniq` *identifier*
+  receiver — §13. Not constructible in safe Roxy yet for an independent end-to-end
+  test, but the count is balanced on the normal and exception paths and the trap
+  is the same `object_free` choke point Findings 1–2 cover.)*
 
 ## 8. Interactions
 
@@ -239,8 +244,12 @@ env's runtime `type_id` on delete (`RoxyVM::closure_env_dtors`,
   call on a statically-heap receiver counts that receiver for the call (so an
   alias-kill of it mid-method traps); on a stack receiver it counts nothing
   (downward-safe); on an already-`ref` receiver the existing count covers it.
-  Returning or storing `self` is a promotion (§6). *(Call-site receiver counting
-  is **deferred** — see §13.)*
+  Returning or storing `self` is a promotion (§6). *(**Implemented** for a `uniq`
+  identifier receiver — §13. The borrow rides a copy-prop-pinned `Copy` of the
+  receiver so its RefDec + Nullify cleanup own a distinct SSA value/register and
+  can't clobber the owned-local's Delete record; the borrow's exception record is
+  appended after the owned-local records so it RefDecs *before* the owner's
+  Delete on unwind. Stack / `ref` receivers are correctly skipped.)*
 - **Closures:** captures are by copy. Capturing a first-class `ref` copies it →
   increments; the env's destructor decrements. `[ref self]` / `[weak self]` are
   promotions (§6): slab-range test at capture, trap on stack receivers.
@@ -373,16 +382,32 @@ direction:
   param out of its frame is rejected at compile time.
 - *Done:* `[ref self]` capture counting (§6), and as a prerequisite, the
   closure-env cleanup fix (runtime-dispatched env destructors).
-- **Deferred — call-site heap-root counting** (the receiver / `out`-`inout` root
-  borrow, §4/§8). Parked pending class **polymorphic dispatch**: the exception-safe
-  plumbing collides with the cleanup machinery — a method receiver aliases its
-  tracked owned-local (shared SSA value), so the call-straddling borrow's
-  `Nullify` clobbers the local's own cleanup record, and a `Copy` to get a
-  distinct value is undone by copy-propagation. Exception-heavy code with `uniq`
-  receivers (the Lox interpreter) double-deletes. The model is sound; only this
-  IR plumbing is blocked, and is cleaner to revisit once polymorphic dispatch
-  reshapes how receivers flow. Binding/returning/storing `self` as a first-class
-  `ref` (the non-capture promotions) are also not yet wired.
+- *Done:* **call-site counting of a `uniq` method receiver** (§4/§8). The
+  blocker — "a method receiver aliases its tracked owned-local (shared SSA
+  value), so the call-straddling borrow's `Nullify` clobbers the local's own
+  cleanup record, and a `Copy` to get a distinct value is undone by
+  copy-propagation" — is resolved *without* polymorphic dispatch: the borrow
+  rides an `IROp::Copy` flagged `no_copy_prop`, which copy-prop leaves intact, so
+  the borrow owns a distinct SSA value (hence a distinct register, since its live
+  range overlaps the receiver's). Around the call the IR builder emits
+  `PinnedCopy → RefInc → Call → RefDec → Nullify`; the exception-path RefDec
+  record is **deferred and appended after all owned-local records**
+  (`m_call_borrow_cleanups`, flushed in `end_function_body`) so reverse-order
+  unwind releases the borrow *before* the owner's Delete (else Delete sees
+  `ref_count != 0` and spuriously traps). Lowering narrows the record to
+  `[RefInc-pc, RefDec-pc)` via `m_ref_inc_pcs` (start) + `m_nullify_pcs` (end).
+  The earlier double-delete in exception-heavy `uniq`-receiver code (the Lox
+  interpreter) is fixed. Gated to `uniq` *identifier* receivers; `ref` receivers
+  are skipped (already counted), stack receivers skipped (second-class).
+- **Deferred — the rest of call-site heap-root counting.** The `out`/`inout`
+  root borrow (`bump(inout heap_obj.field)`), and receivers that root in a field
+  (`a.b.method()`) or a heap-returning temp (`make().method()`). The receiver
+  mechanism above generalizes to these, but each needs its own gate. Binding /
+  returning / storing `self` as a first-class `ref` (the non-capture promotions)
+  are also not yet wired. *Related pre-existing gaps found while testing this:*
+  inout-`uniq` reassignment (`slot = nil` / `slot = uniq T(..)`) doesn't free the
+  overwritten value, and a module-global `uniq` initializer doesn't run its
+  constructor — both orthogonal to this work but worth a separate fix.
 
 **Phase 3 — containers & coroutines. Not started.**
 - Count `ref` elements in `List`/`Map` cleanup; count `ref` parameters into
@@ -406,16 +431,20 @@ Implemented (Phase 1 + the done parts of Phase 2):
 | `src/roxy/rt/roxy_rt.cpp` | free-trap in `roxy_free` (lockstep with the VM) |
 | `src/roxy/vm/interpreter.cpp` | `RefDec` cleanup-record kind in `execute_cleanup`; trap error propagation through `delete_value`/`DELETE`; retired `DEL_OBJ` pre-check; `BCDeleteDesc::Closure` env-dtor dispatch |
 | `include/roxy/vm/bytecode.hpp` | `BCCleanupKind`, `BCDeleteDesc::Closure`, `BCTypeInfo.dtor_func_idx` |
-| `include/roxy/compiler/ssa_ir.hpp` | `IRCleanupKind`, `IRCleanupInfo.whole_function_scope` |
+| `include/roxy/compiler/ssa_ir.hpp` | `IRCleanupKind`, `IRCleanupInfo.whole_function_scope`; `IRInst.no_copy_prop` (pinned copy) + `IRCleanupInfo.call_borrow` (receiver-borrow start-narrowing) |
+| `src/roxy/compiler/ir_optimize.cpp` | copy propagation skips `no_copy_prop` copies |
+| `src/roxy/compiler/ir_builder.{hpp,cpp}` (receiver counting) | `emit_pinned_copy`; `gen_call_member` emits the `uniq`-receiver borrow (PinnedCopy → RefInc → Call → RefDec → Nullify); deferred `m_call_borrow_cleanups`, flushed after owned-local records in `end_function_body` |
+| `include/roxy/compiler/lowering.{hpp,cpp}` (receiver counting) | `m_ref_inc_pcs`; `call_borrow` scope_start narrowing to the RefInc PC |
 | `src/roxy/compiler/ir_builder.{hpp,cpp}` | `OwnedKind::RefBorrow`; ref-local inc/dec + reassign + return hand-off + caller-adopt convention; `[ref self]` capture RefInc + env-field RefDec; per-env synthesized destructors; call-result temp tracking; transitive-`[move]` field nullify; `gen_assign_index` cleanup fix |
 | `src/roxy/compiler/lowering.cpp` | RefDec `BCCleanupRecord` + whole-function-scope param records + liveness pin; `Closure` delete desc; `BCTypeInfo.dtor_func_idx` |
 | `src/roxy/compiler/semantic.{hpp,cpp}` | reject move-out of noncopyable `out`/`inout` (also closure move-capture); index-assign consume keyed off the container element type; env destructor for `ref` captures |
 | `include/roxy/compiler/symbol_table.hpp`, `src/roxy/compiler/symbol_table.cpp` | `is_out_inout` flag on parameter symbols |
 | `include/roxy/vm/vm.hpp`, `src/roxy/vm/vm.cpp` | `RoxyVM::closure_env_dtors` (env type_id → destructor index) |
-| `tests/e2e/test_lifetimes.cpp` (new), `tests/e2e/test_closures.cpp`, `tests/unit/test_slab_allocator.cpp` | findings 1–3; delete-while-borrowed/return-escape traps; balance across control flow; `out`/`inout` escape rejection; `[ref self]` pin/release; closure capture cleanup; `resolve_header` |
+| `tests/e2e/test_lifetimes.cpp` (new), `tests/e2e/test_closures.cpp`, `tests/unit/test_slab_allocator.cpp` | findings 1–3; delete-while-borrowed/return-escape traps; balance across control flow; `out`/`inout` escape rejection; `[ref self]` pin/release; closure capture cleanup; `resolve_header`; **`uniq`-receiver call-site borrow balance + survives-a-throwing-method** |
 
-Deferred (not yet touched): call-site root inc/dec in `ir_builder.cpp`
-(receiver/`out`-`inout`); `List`/`Map` ref-element counting and coroutine
+Deferred (not yet touched): call-site root inc/dec for the `out`/`inout` root
+borrow and field / heap-temp receivers in `ir_builder.cpp` (the `uniq`-identifier
+receiver case is done); `List`/`Map` ref-element counting and coroutine
 `ref`-param promotion; `roxy::ref<T>` → borrow handle in `roxy_rt`; elision in
 `lowering.cpp`.
 
