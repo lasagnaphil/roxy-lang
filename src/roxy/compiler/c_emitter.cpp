@@ -1,6 +1,7 @@
 #include "roxy/compiler/c_emitter.hpp"
 #include "roxy/compiler/ast.hpp"
 #include "roxy/core/format.hpp"
+#include "roxy/core/static_string.hpp"
 #include "roxy/vm/binding/registry.hpp"
 
 namespace rx {
@@ -166,6 +167,17 @@ void CEmitter::collect_value_types(const IRFunction* func) {
             const IRInst* inst = block->instructions[i];
             if (inst->result.is_valid() && inst->type) {
                 m_value_types[inst->result.id] = inst->type;
+                // A value typed `uniq Struct` / `ref Struct` is a C struct
+                // pointer (emitted as `Struct*`), so field access on it uses
+                // `->`. New/params are caught below; this also covers a `uniq`
+                // loaded from a global (LoadPtr), returned from a call, or read
+                // from a field.
+                if (inst->type->kind == TypeKind::Uniq || inst->type->kind == TypeKind::Ref) {
+                    Type* pointee = inst->type->base_type();
+                    if (pointee && pointee->is_struct()) {
+                        m_pointer_values.insert(inst->result.id);
+                    }
+                }
             }
             if (inst->op == IROp::ConstInt) {
                 m_const_int_values[inst->result.id] = inst->const_data.int_val;
@@ -175,6 +187,10 @@ void CEmitter::collect_value_types(const IRFunction* func) {
                 m_pointer_values.insert(inst->result.id);
             }
             if (inst->op == IROp::GetFieldAddr) {
+                m_pointer_values.insert(inst->result.id);
+            }
+            if (inst->op == IROp::GlobalAddr) {
+                // Address of a module global — a pointer, like GetFieldAddr.
                 m_pointer_values.insert(inst->result.id);
             }
             if (inst->op == IROp::New) {
@@ -203,6 +219,39 @@ void CEmitter::collect_value_types(const IRFunction* func) {
             }
         }
     }
+}
+
+// --- Module globals ---
+
+void CEmitter::emit_global_symbol(StringView name, String& out) {
+    // `g_` prefix keeps globals out of the vN / function / type namespaces.
+    out.append("g_");
+    emit_mangled_name(name, out);
+}
+
+const IRGlobal* CEmitter::find_global_by_offset(u32 slot_offset) {
+    if (!m_module) return nullptr;
+    for (u32 i = 0; i < m_module->globals.size(); i++) {
+        if (m_module->globals[i].slot_offset == slot_offset) {
+            return &m_module->globals[i];
+        }
+    }
+    return nullptr;
+}
+
+// One C global per Roxy global. Zero-initialized statics — `__module_init` runs
+// the real initializers (and constructors) at startup, so no C initializer here.
+void CEmitter::emit_global_definitions(const IRModule* module, String& out) {
+    if (module->globals.empty()) return;
+    for (u32 i = 0; i < module->globals.size(); i++) {
+        const IRGlobal& g = module->globals[i];
+        out.append("static ");
+        emit_type(g.type, out);
+        out.push_back(' ');
+        emit_global_symbol(g.name, out);
+        out.append(";\n");
+    }
+    out.append("\n");
 }
 
 // --- Enum typedefs ---
@@ -811,10 +860,18 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             return;
         }
         case IROp::GlobalAddr: {
-            // Module-level globals are not yet wired in the C backend (VM-only
-            // feature). Emit a #error so an AOT build of code using globals fails
-            // loudly rather than silently producing wrong code.
-            out.append("#error \"Roxy C backend: module-level globals are not yet supported\"\n");
+            // vN = &g_<name>;  (address of the C global backing this slot)
+            out.append("    ");
+            emit_value(inst->result, out);
+            out.append(" = &");
+            const IRGlobal* g = find_global_by_offset(inst->global_data.slot_offset);
+            if (g) {
+                emit_global_symbol(g->name, out);
+            } else {
+                // Should not happen — IR always pairs GlobalAddr with a global.
+                out.append("/*missing global*/0");
+            }
+            out.append(";\n");
             return;
         }
         case IROp::GetField: {
@@ -1119,12 +1176,40 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 out.append("    roxy_free(");
                 emit_value(inst->unary, out);
                 out.append(");\n");
-            } else {
-                // TODO: emit inline typed delete for C backend
-                // For now, emit raw free as a fallback
+                return;
+            }
+            Type* t = inst->type;
+            // Heap-owning kinds get a roxy_free after their cleanup; an inline
+            // value struct (deleted via its address) does not.
+            bool is_heap = t->kind == TypeKind::Uniq || t->is_list()
+                || t->is_map() || t->is_coroutine();
+            // Concrete struct pointee, for the destructor lookup.
+            Type* pointee = nullptr;
+            if (t->is_struct()) pointee = t;
+            else if (t->kind == TypeKind::Uniq || t->kind == TypeKind::Ref) pointee = t->base_type();
+            // Run the type's destructor (user or synthesized) if one was emitted.
+            // Child$$delete chains to its parent and walks owned fields, so a
+            // single call performs the full recursive cleanup; the roxy_free
+            // below frees the object itself exactly once.
+            if (pointee && pointee->is_struct()) {
+                StaticString<256> dtor_name;
+                format_to(dtor_name, "{}$$delete", pointee->struct_info.name);
+                StringView dtor_view(dtor_name.data(), dtor_name.size());
+                if (find_function(dtor_view)) {
+                    out.append("    ");
+                    emit_function_symbol(dtor_view, out);
+                    out.append("(");
+                    emit_value(inst->unary, out);
+                    out.append(");\n");
+                }
+            }
+            if (is_heap) {
+                // Note: List/Map element cleanup and recursive container
+                // teardown are not yet emitted here (pre-existing C-backend gap);
+                // this frees the object/header.
                 out.append("    roxy_free(");
                 emit_value(inst->unary, out);
-                out.append("); /* TODO: typed delete */\n");
+                out.append(");\n");
             }
             return;
         }
@@ -1420,6 +1505,16 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
 
             if (inst->op == IROp::GetFieldAddr) {
                 // GetFieldAddr returns a pointer to the field
+                out.append("    ");
+                emit_type(inst->type, out);
+                out.append("* ");
+                emit_value(inst->result, out);
+                out.append(";\n");
+                continue;
+            }
+
+            if (inst->op == IROp::GlobalAddr) {
+                // GlobalAddr returns a pointer to the global's storage.
                 out.append("    ");
                 emit_type(inst->type, out);
                 out.append("* ");
@@ -2407,6 +2502,9 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
     // Struct typedefs (in dependency order)
     emit_struct_typedefs(module, output);
 
+    // Module-level global variable definitions.
+    emit_global_definitions(module, output);
+
     // Pre-scan IR for `CallNative` ops that resolve through the embedder's
     // `NativeRegistry` and emit `extern` declarations. This makes the
     // generated source link against either an inline-defined header (via
@@ -2441,6 +2539,12 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
         if (user_main) {
             bool main_returns_void = !user_main->return_type
                 || user_main->return_type->kind == TypeKind::Void;
+            // Module globals: run the synthesized initializer after the ctx is
+            // active (so allocations/constructors work) but before user code,
+            // and the teardown after user code, before the ctx is destroyed (so
+            // global destructors still have the heap). Skip when absent.
+            bool has_init = find_function(StringView("__module_init", 13)) != nullptr;
+            bool has_shutdown = find_function(StringView("__module_shutdown", 17)) != nullptr;
             // `roxy_rt_init` brings up the process-wide slab allocator so
             // `roxy_ctx_init` can pick it up as the default. Pairs with
             // `roxy_rt_shutdown` after the user's `main_entry()` returns.
@@ -2450,8 +2554,10 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
             output.append("    roxy_ctx ctx;\n");
             output.append("    roxy_ctx_init(&ctx);\n");
             output.append("    roxy_set_ctx(&ctx);\n");
+            if (has_init) output.append("    __module_init();\n");
             if (main_returns_void) {
                 output.append("    main_entry();\n");
+                if (has_shutdown) output.append("    __module_shutdown();\n");
                 output.append("    roxy_ctx_destroy(&ctx);\n");
                 output.append("    roxy_set_ctx(NULL);\n");
                 output.append("    roxy_rt_shutdown();\n");
@@ -2460,6 +2566,7 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
                 output.append("    ");
                 emit_type(user_main->return_type, output);
                 output.append(" result = main_entry();\n");
+                if (has_shutdown) output.append("    __module_shutdown();\n");
                 output.append("    roxy_ctx_destroy(&ctx);\n");
                 output.append("    roxy_set_ctx(NULL);\n");
                 output.append("    roxy_rt_shutdown();\n");

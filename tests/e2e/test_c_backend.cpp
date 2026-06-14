@@ -1730,4 +1730,108 @@ TEST_SUITE("E2E C Backend") {
         CHECK(header_compiles(source));
     }
 
+    // ── Module-level globals ──
+    // Globals become C global variables; the synthesized __module_init runs
+    // their initializers/constructors (driven from the generated main, after the
+    // ctx is up), and __module_shutdown runs destructors before teardown.
+
+    TEST_CASE("Global: primitive init and read") {
+        const char* source = R"(
+            var n: i32 = 42;
+            fun main(): i32 { return n; }
+        )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 42);
+    }
+
+    TEST_CASE("Global: mutation persists across calls") {
+        const char* source = R"(
+            var counter: i32 = 0;
+            fun bump() { counter = counter + 1; }
+            fun main(): i32 { bump(); bump(); bump(); return counter; }
+        )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 3);
+    }
+
+    TEST_CASE("Global: initializer reads an earlier global") {
+        const char* source = R"(
+            var base: i32 = 100;
+            var derived: i32 = base + 5;
+            fun main(): i32 { return derived; }
+        )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 105);
+    }
+
+    TEST_CASE("Global: struct field access") {
+        const char* source = R"(
+            struct Point { x: i32; y: i32; }
+            var origin: Point = Point { x = 3, y = 4 };
+            fun main(): i32 {
+                origin.x = origin.x + 10;
+                return origin.x + origin.y;   // 17
+            }
+        )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 17);
+    }
+
+    TEST_CASE("Global: uniq runs constructor at init") {
+        const char* source = R"(
+            struct Counter { value: i32; }
+            fun new Counter(v: i32) { self.value = v; }
+            fun delete Counter() {}
+            var g: uniq Counter = uniq Counter(7);
+            fun main(): i32 { return g.value; }
+        )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 7);
+    }
+
+    TEST_CASE("Global: uniq destructor runs at shutdown") {
+        // Unlike the VM test harness (which restores stdout before teardown),
+        // the C binary runs __module_shutdown inside main(), so the destructor's
+        // output is observable.
+        const char* source = R"(
+            struct Resource { id: i32; }
+            fun new Resource(id: i32) { self.id = id; }
+            fun delete Resource() { print("freed"); }
+            var res: uniq Resource = uniq Resource(1);
+            fun main(): i32 { return res.id; }
+        )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 1);
+        CHECK(result.stdout_output == "freed\n");
+    }
+
+    TEST_CASE("Global: uniq reassignment frees the old value") {
+        const char* source = R"(
+            struct Box { v: i32; }
+            fun new Box(v: i32) { self.v = v; }
+            fun delete Box() {}
+            var b: uniq Box = uniq Box(1);
+            fun main(): i32 {
+                b = uniq Box(2);
+                return b.v;   // 2
+            }
+        )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 2);
+    }
+
 }  // TEST_SUITE("E2E C Backend")

@@ -54,6 +54,13 @@ private:
     void emit_struct_forward_declarations(const IRModule* module, String& out);
     void emit_struct_typedefs(const IRModule* module, String& out);
 
+    // Module-level globals: emit one C global variable per Roxy global (zero-init
+    // statics; `__module_init` runs the real initializers at startup). GlobalAddr
+    // lowers to `&<global_symbol>`; the symbol is `g_<name>`.
+    void emit_global_definitions(const IRModule* module, String& out);
+    void emit_global_symbol(StringView name, String& out);
+    const IRGlobal* find_global_by_offset(u32 slot_offset);
+
     // Function emission
     void emit_function_prototype(const IRFunction* func, String& out);
     void emit_function(const IRFunction* func, String& out);

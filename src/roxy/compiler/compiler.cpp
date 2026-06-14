@@ -341,14 +341,39 @@ BCModule* Compiler::link_modules() {
     IRModule merged_ir;
     merged_ir.name = "linked";
 
-    // Collect all functions. Function names are assumed unique across modules
-    // (non-pub names are already module-prefixed by mangle_module_local).
+    // Collect all functions and module globals. Each module's globals occupy a
+    // distinct slot range in the merged global space, so re-base every global's
+    // offset — and the matching GlobalAddr ops in that module's functions — by
+    // the running base before merging. Function names are assumed unique across
+    // modules (non-pub names are module-prefixed by mangle_module_local).
+    // (Multiple modules each declaring globals also collide on the synthesized
+    // `__module_init`/`__module_shutdown` names — only one runs; cross-module
+    // globals are a documented limitation. Single-module globals are exact.)
+    u32 global_base = 0;
     for (u32 idx : m_compile_order) {
         IRModule* ir_mod = m_module_states[idx].ir_module;
+        if (global_base > 0 && ir_mod->global_slot_count > 0) {
+            for (IRFunction* func : ir_mod->functions) {
+                for (IRBlock* block : func->blocks) {
+                    for (IRInst* inst : block->instructions) {
+                        if (inst->op == IROp::GlobalAddr) {
+                            inst->global_data.slot_offset += global_base;
+                        }
+                    }
+                }
+            }
+        }
         for (IRFunction* func : ir_mod->functions) {
             merged_ir.functions.push_back(func);
         }
+        for (const IRGlobal& g : ir_mod->globals) {
+            IRGlobal merged_g = g;
+            merged_g.slot_offset += global_base;
+            merged_ir.globals.push_back(merged_g);
+        }
+        global_base += ir_mod->global_slot_count;
     }
+    merged_ir.global_slot_count = global_base;
 
     // Coroutine lowering pass: transform coroutine functions into init/resume/done
     coroutine_lower(&merged_ir, m_allocator, m_type_env);
