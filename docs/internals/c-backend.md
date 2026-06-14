@@ -2,7 +2,7 @@
 
 > **Status:** Phases 1–4 fully implemented; Phase 5 partially implemented (function- and statement-level `#line` directives). Other Phase 5 items (DCE, Relooper, `switch` lowering, readable variable names) are deliberately not pursued — the C compiler's optimizer covers them and they don't affect debugger UX.
 >
-> **Language feature coverage:** primitives, structs (inheritance, methods, ctors/dtors, copy, nesting), enums, tagged unions, generics, traits/operators, strings, lists, maps, module globals, **coroutines**, and **exceptions** are supported. Still unimplemented: **closures** (`IROp::Closure` / `CallIndirect` / `AssertHeap`) — the emitter `abort()`s on those ops.
+> **Language feature coverage:** complete — primitives, structs (inheritance, methods, ctors/dtors, copy, nesting), enums, tagged unions, generics, traits/operators, strings, lists, maps, module globals, coroutines, exceptions, and **closures** (lambdas, captures, function references, self-capture). One known naming gap: a Roxy identifier that is a C++ keyword (e.g. a function named `double`) collides in the generated source.
 
 The C backend (`CEmitter`) translates Roxy's SSA IR into a `.cpp` file that any C++ compiler can build. The body is C-style (structs, gotos, typed `vN` locals); native bindings and the public header use C++ to interface directly with the embedder. It operates on the same `IRModule` the bytecode lowering uses, so all frontend work (type checking, method/operator resolution, monomorphization, struct layout) is already done.
 
@@ -232,6 +232,39 @@ it uses a **checked-return** model instead (no setjmp/longjmp, no C++ EH):
   owned by the callee and skipped by the caller's unwinding cleanup.
 
 User-`native` functions are assumed not to throw (no post-`CallNative` check).
+
+### Closures
+
+The frontend lifts each lambda to a top-level `__lambda_<id>_call(__env: ref env, …)`
+function and an env struct (`[__call_idx: u32][captures…]`); a function value is a
+type-erased `uniq` pointer to that env (`TypeKind::Function` → `void*`). Env structs
+are appended to `IRModule::struct_types` (in the IR builder's post-build loop) so
+they get typedefs + `TYPEID_`s.
+
+The VM dispatches `CALL_INDIRECT` through a function-table index in `__call_idx`;
+AOT has no such table, so the emitter builds its own per-module
+`g_closure_fns[]` (a `roxy_closure_fn` array) indexed the same way:
+
+- **`Closure`** allocates the concrete env, stores the call function's index in
+  `__call_idx`, then the captures by field name (struct captures dereference; a
+  `[weak self]` capture wraps the pointer in `roxy_weak_create`).
+- **`CallIndirect`** reads `*(uint32_t*)env`, indexes `g_closure_fns`, casts to
+  `Ret(*)(void*, params…)` from the callee's `Function` signature, and prepends the
+  env. A `ref fun` callee is the same pointer; a `weak fun` callee uses `.ptr`.
+- **`AssertHeap`** (ref/weak `self` capture on a possibly-stack receiver) →
+  `if (!roxy_heap_owns(p)) abort();`, reproducing the VM's `owns` trap.
+- **Delete** of a `Function` is type-erased, so `emit_typed_delete` routes to a
+  generated `__closure_delete(env)` that dispatches the env destructor
+  (`__lambda_<id>_env$$delete`, synthesized for envs with noncopyable/ref captures)
+  by `__call_idx`, then frees. `List<fun>` / `Map<_, fun>` element cleanup loads the
+  env pointer from the slot first (closures are pointer-shaped elements).
+
+Two supporting fixes the closure work required: a method returning a closure has an
+unset IR `return_type`, so the prototype/return use an **effective return type**
+derived from the actual `Return` value; and field access on a `weak`-typed object
+derefs `((Inner*)w.ptr)->field`. Move-`Nullify` of a `[move]`-captured value is
+deferred until after the `Closure` op reads it (the same peephole used for
+move-into-call).
 
 ## Thread-Local Runtime Context
 

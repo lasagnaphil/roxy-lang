@@ -75,6 +75,12 @@ private:
     void emit_delete_slot(Type* elem_type, StringView slot_expr, String& out);
     u32 m_delete_tmp = 0;  // unique-temp counter for emit_typed_delete
 
+    // The C return type for a function. Normally `func->return_type`, but a
+    // method returning a closure has its IR return_type left unset (the VM
+    // returns by register regardless); fall back to the type of the actual
+    // `Return` value so the prototype and call sites agree.
+    Type* effective_return_type(const IRFunction* func);
+
     // Function emission
     void emit_function_prototype(const IRFunction* func, String& out);
     void emit_function(const IRFunction* func, String& out);
@@ -202,6 +208,22 @@ private:
     void emit_exception_labels(const IRFunction* func, String& out);
     // Emit the `return …;` an unwinding function uses (value ignored by callers).
     void emit_unwind_return(const IRFunction* func, String& out);
+
+    // --- Closures ---
+    //
+    // The VM dispatches `CALL_INDIRECT` through a function-table index stored in
+    // the env's first `__call_idx` slot. AOT has no such table, so we build our
+    // own: each distinct lifted call function gets an index; `g_closure_fns[idx]`
+    // holds its pointer and `Closure` stores `idx` into the env's `__call_idx`.
+    tsl::robin_map<StringView, u32> m_closure_fn_index;  // call_function_name -> index
+    Vector<StringView> m_closure_fns;                    // index -> call_function_name
+    Vector<StringView> m_closure_env_names;              // index -> env_struct_name (parallel)
+
+    void collect_closure_dispatch(const IRModule* module);
+    // Emit `g_closure_fns[]` and the type-erased `__closure_delete` dispatcher.
+    void emit_closure_dispatch(String& out);
+    // Find a struct type (e.g. a closure env) by name in module->struct_types.
+    Type* find_struct_type(StringView name);
 };
 
 } // namespace rx

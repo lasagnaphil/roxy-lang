@@ -319,6 +319,11 @@ void IRBuilder::build_synthesized_default_dtors(Program* program) {
     // synthetic default destructor). The closure delete dispatches it by type_id.
     for (Type* env_type : m_env_struct_types) {
         if (!env_type || !env_type->is_struct()) continue;
+        // Make the synthesized env struct visible to the C backend (typedef +
+        // dependency sort + TYPEID). collect_backend_types ran before lambdas
+        // were processed, so these aren't in struct_types yet; the VM ignores
+        // struct_types, so this is safe for both pipelines.
+        m_module->struct_types.push_back(env_type);
         for (const auto& dtor : env_type->struct_info.destructors) {
             if (dtor.name.empty() && dtor.decl == nullptr) {
                 IRFunction* func = build_synthesized_default_destructor(env_type);
@@ -3046,6 +3051,8 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, const FunctionRefTarget& target)
         env_type->struct_info.parent = nullptr;
         env_type->struct_info.module_name = StringView(nullptr, 0);
         m_type_env.register_named_type(env_struct_name, env_type);
+        // Track for the C backend (typedef + TYPEID), like lambda env structs.
+        m_env_struct_types.push_back(env_type);
 
         // Synthesize the trampoline IRFunction. Following the convention in
         // build_function (line 365-374), non-pub functions get

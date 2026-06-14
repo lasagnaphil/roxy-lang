@@ -75,6 +75,13 @@ void* roxy_exception_message(void* exc) {
     return roxy_string_from_literal("exception", 9);
 }
 
+int roxy_heap_owns(void* ptr) {
+    if (!ptr) return 0;
+    roxy_ctx* ctx = roxy_get_ctx();
+    if (!ctx || !ctx->allocator || !ctx->allocator->owns) return 0;
+    return ctx->allocator->owns(ctx->allocator->userdata, ptr) ? 1 : 0;
+}
+
 // ===== Random generation for weak references =====
 
 static uint64_t roxy_random_generation() {

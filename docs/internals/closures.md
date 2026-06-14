@@ -108,6 +108,15 @@ A bare function name used as a value lowers to a per-target **trampoline** closu
 
 Trampolines are cached per target name. Generic templates are monomorphized at the reference site — either explicit (`identity<i32>`, via the parser's trial parse) or inferred from the expected function type at the assignment site. Cross-module instantiation resolves in the template's defining module.
 
+### C backend
+
+Closures also work through the AOT C backend. Lifted call functions and env
+structs emit like ordinary functions/structs; `CallIndirect` dispatches through a
+per-module `g_closure_fns[]` table indexed by `__call_idx` (the AOT analogue of the
+VM's function table), and a type-erased `__closure_delete` runs env destructors.
+`AssertHeap` maps to a `roxy_heap_owns` trap. See `docs/internals/c-backend.md`
+("Closures").
+
 ### Nested closures
 
 Captures flow through every enclosing lambda boundary: an inner lambda capturing an outer-scope variable records a capture in each lambda in between (the outermost reads the variable directly; inner ones read from the enclosing env). `[move x]` propagates the same way — you write `[move x]` only on the level that consumes it.

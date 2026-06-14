@@ -63,6 +63,10 @@ void CEmitter::emit_type(Type* type, String& out) {
             // Opaque catch-all handle — a pointer to the heap exception object.
             out.append("void*");
             break;
+        case TypeKind::Function:
+            // A function value is a type-erased pointer to its heap env struct.
+            out.append("void*");
+            break;
         case TypeKind::Nil:
             out.append("void*");
             break;
@@ -123,6 +127,18 @@ bool CEmitter::is_pointer_value(ValueId id) {
 }
 
 void CEmitter::emit_field_access(ValueId object, StringView field_name, String& out) {
+    // A weak-typed object (e.g. a `[weak self]` capture) is a roxy_weak value;
+    // field access derefs its pointer: `((Inner*)w.ptr)->field`.
+    Type* ot = get_value_type(object);
+    if (ot && ot->kind == TypeKind::Weak) {
+        out.append("((");
+        emit_type(ot->ref_info.inner_type, out);
+        out.append("*)");
+        emit_value(object, out);
+        out.append(".ptr)->");
+        out.append(field_name.data(), field_name.size());
+        return;
+    }
     emit_value(object, out);
     if (is_pointer_value(object)) {
         out.append("->");
@@ -279,9 +295,10 @@ static inline void ap(String& out, const String& s) {
 void CEmitter::emit_delete_slot(Type* elem, StringView slot_expr, String& out) {
     if (!elem || !elem->noncopyable()) return;  // copyable element: nothing to clean
     bool ptr_shaped = elem->kind == TypeKind::Uniq || elem->is_list()
-        || elem->is_map() || elem->is_coroutine();
+        || elem->is_map() || elem->is_coroutine() || elem->is_function();
     if (ptr_shaped) {
-        // The slot holds an owning pointer (uniq/List/Map/Coro): load and recurse.
+        // The slot holds an owning pointer (uniq/List/Map/Coro/closure env): load
+        // and recurse.
         String ev = format("_de{}", m_delete_tmp++);
         out.append("    void* "); ap(out, ev); out.append(" = *(void**)(");
         out.append(slot_expr); out.append(");\n");
@@ -300,6 +317,15 @@ void CEmitter::emit_delete_slot(Type* elem, StringView slot_expr, String& out) {
 
 void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj, String& out) {
     if (!type) return;
+
+    // --- Function (closure): type-erased — dispatch the env destructor by
+    // __call_idx and free, via the generated __closure_delete. ---
+    if (type->is_function()) {
+        out.append("    __closure_delete(");
+        out.append(ptr_expr);
+        out.append(");\n");
+        return;
+    }
 
     // --- List<T>: iterate noncopyable elements, free buffer, free header. ---
     if (type->is_list()) {
@@ -1419,14 +1445,132 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             return;
         }
 
-        // --- Still unsupported (Phase 4+) ---
-        case IROp::Closure:
-        case IROp::CallIndirect:
+        case IROp::Closure: {
+            // Allocate the concrete env struct, store the dispatch index in its
+            // first slot (__call_idx), then the captures. The result is a
+            // type-erased Function value (void*).
+            StringView env_name = inst->closure.env_struct_name;
+            String env_c;  // mangled C type name for the env struct
+            emit_mangled_name(env_name, env_c);
+            StringView env_cv(env_c.data(), env_c.size());
+
+            out.append("    ");
+            emit_value(inst->result, out);
+            out.append(" = roxy_alloc(sizeof(");
+            out.append(env_cv);
+            out.append("), TYPEID_");
+            out.append(env_cv);
+            out.append(");\n");
+            out.append("    memset(");
+            emit_value(inst->result, out);
+            out.append(", 0, sizeof(");
+            out.append(env_cv);
+            out.append("));\n");
+
+            // __call_idx = dispatch index for the call function.
+            u32 idx = 0;
+            auto it = m_closure_fn_index.find(inst->closure.call_function_name);
+            if (it != m_closure_fn_index.end()) idx = it->second;
+            out.append("    ((");
+            out.append(env_cv);
+            out.append("*)");
+            emit_value(inst->result, out);
+            char idx_buf[32];
+            format_to(idx_buf, sizeof(idx_buf), ")->__call_idx = {};\n", idx);
+            out.append(idx_buf);
+
+            // Captures -> env fields [1..] (field 0 is __call_idx), by name.
+            Type* env_type = find_struct_type(env_name);
+            for (u32 c = 0; c < inst->closure.captures.size(); c++) {
+                if (!env_type || c + 1 >= env_type->struct_info.fields.size()) break;
+                const FieldInfo& field = env_type->struct_info.fields[c + 1];
+                ValueId cap = inst->closure.captures[c];
+                out.append("    ((");
+                out.append(env_cv);
+                out.append("*)");
+                emit_value(inst->result, out);
+                out.append(")->");
+                out.append(field.name);
+                out.append(" = ");
+                // Mirror SetField, plus weak-self: deref a struct rvalue
+                // (pointer); cast null into a uniq/ref field; wrap a pointer in
+                // roxy_weak_create for a `[weak self]` (weak-typed) field.
+                Type* ft = field.type;
+                Type* vt = get_value_type(cap);
+                if (ft && ft->kind == TypeKind::Weak && vt && vt->kind != TypeKind::Weak) {
+                    out.append("roxy_weak_create(");
+                    emit_value(cap, out);
+                    out.append(")");
+                } else if (ft && ft->is_struct() && is_pointer_value(cap)) {
+                    out.append("*");
+                    emit_value(cap, out);
+                } else if (ft && (ft->kind == TypeKind::Uniq || ft->kind == TypeKind::Ref)
+                           && vt && vt->kind == TypeKind::Nil) {
+                    out.append("(");
+                    emit_type(ft, out);
+                    out.append(")");
+                    emit_value(cap, out);
+                } else {
+                    emit_value(cap, out);
+                }
+                out.append(";\n");
+            }
+            return;
+        }
+
+        case IROp::CallIndirect: {
+            // Dispatch through the env: read __call_idx, index g_closure_fns, cast
+            // to the signature from the callee's Function type, prepend the env.
+            ValueId callee = inst->call_indirect.callee;
+            Type* ct = get_value_type(callee);
+            bool callee_weak = ct && ct->kind == TypeKind::Weak;
+            Type* ft = ct;
+            if (ft && ft->is_reference()) ft = ft->ref_info.inner_type;
+
+            String env_expr;
+            emit_value(callee, env_expr);
+            if (callee_weak) env_expr.append(".ptr");
+            StringView env_sv(env_expr.data(), env_expr.size());
+
+            out.append("    ");
+            bool assign = inst->result.is_valid() && inst->type
+                && inst->type->kind != TypeKind::Void;
+            if (assign) {
+                emit_value(inst->result, out);
+                out.append(" = ");
+            }
+            // Function-pointer cast: Ret(*)(void*, params...).
+            out.append("((");
+            Type* ret = (ft && ft->is_function()) ? ft->func_info.return_type : inst->type;
+            emit_type(ret, out);
+            out.append("(*)(void*");
+            if (ft && ft->is_function()) {
+                for (u32 p = 0; p < ft->func_info.param_types.size(); p++) {
+                    out.append(", ");
+                    emit_type(ft->func_info.param_types[p], out);
+                }
+            }
+            out.append("))g_closure_fns[*(uint32_t*)");
+            out.append(env_sv);
+            out.append("])(");
+            out.append(env_sv);
+            for (u32 a = 0; a < inst->call_indirect.args.size(); a++) {
+                out.append(", ");
+                emit_value(inst->call_indirect.args[a], out);
+            }
+            out.append(");\n");
+            return;
+        }
+
         case IROp::AssertHeap: {
-            out.append("    /* TODO: unsupported op: ");
-            out.append(ir_op_to_string(inst->op));
-            out.append(" */\n");
-            out.append("    abort();\n");
+            // Trap if the captured ref/weak `self` is not heap-owned (the receiver
+            // was stack-allocated). Mirrors the VM's ASSERT_HEAP owns() check.
+            out.append("    if (!roxy_heap_owns(");
+            emit_value(inst->unary, out);
+            out.append(")) { fprintf(stderr, \"closure capture: cannot capture 'self' "
+                       "as a reference when the receiver is stack-allocated; use "
+                       "'fun[copy self](...)' to snapshot the value, or call this method "
+                       "on a 'uniq' receiver.\\n\"); abort(); }\n");
             return;
         }
 
@@ -1483,18 +1627,17 @@ void CEmitter::emit_terminator(const IRBlock* block, const IRFunction* func, Str
             return;
         }
         case TerminatorKind::Return: {
-            // A void-returning function always emits `return;`, even if the IR
-            // carries a (void-typed) return value — e.g. coroutine $$delete
-            // destructors return a void ConstInt sentinel.
-            if (func->return_type && func->return_type->kind == TypeKind::Void) {
-                out.append("    return;\n");
-                return;
-            }
-            if (term.return_value.is_valid()) {
-                // If returning a struct from a StackAlloc pointer, dereference it
+            // Key off the return *value*, not the declared return type: a
+            // large-struct return writes through __ret_ptr (no value here); a
+            // void-typed value (e.g. the coroutine $$delete sentinel) yields a
+            // bare `return;`; otherwise return the value (a method returning a
+            // closure has a void declared type but a real Function value).
+            Type* vt = term.return_value.is_valid()
+                ? get_value_type(term.return_value) : nullptr;
+            if (!func->returns_large_struct() && term.return_value.is_valid()
+                && vt && vt->kind != TypeKind::Void) {
                 Type* ret_type = func->return_type;
-                if (ret_type && ret_type->is_struct() && !func->returns_large_struct() &&
-                    is_stack_alloc_value(term.return_value)) {
+                if (ret_type && ret_type->is_struct() && is_stack_alloc_value(term.return_value)) {
                     out.append("    return *");
                     emit_value(term.return_value, out);
                     out.append(";\n");
@@ -1552,6 +1695,11 @@ void CEmitter::emit_block(const IRBlock* block, const IRFunction* func, String& 
         } else if (in->op == IROp::CallExternal) {
             for (u32 a = 0; a < in->call_external.args.size(); a++)
                 if (in->call_external.args[a].id == vid) return true;
+        } else if (in->op == IROp::Closure) {
+            // A [move]-captured value is consumed by the Closure op (its env
+            // takes ownership); the nullify must run after the capture.
+            for (u32 a = 0; a < in->closure.captures.size(); a++)
+                if (in->closure.captures[a].id == vid) return true;
         }
         return false;
     };
@@ -1602,12 +1750,35 @@ void CEmitter::emit_block(const IRBlock* block, const IRFunction* func, String& 
 
 // --- Function prototype ---
 
+Type* CEmitter::effective_return_type(const IRFunction* func) {
+    Type* rt = func->return_type;
+    if (rt && rt->kind != TypeKind::Void) return rt;
+    // Declared void/null but the function actually returns a value (e.g. a method
+    // returning a closure — its IR return_type is left unset). Use the Return
+    // value's type so the prototype matches the call sites.
+    for (u32 b = 0; b < func->blocks.size(); b++) {
+        const Terminator& t = func->blocks[b]->terminator;
+        if (t.kind != TerminatorKind::Return || !t.return_value.is_valid()) continue;
+        ValueId v = t.return_value;
+        if (v.id < func->values_by_id.size() && func->values_by_id[v.id]) {
+            Type* vt = func->values_by_id[v.id]->type;
+            if (vt && vt->kind != TypeKind::Void) return vt;
+        }
+        for (u32 bb = 0; bb < func->blocks.size(); bb++) {
+            for (const auto& p : func->blocks[bb]->params) {
+                if (p.value.id == v.id && p.type && p.type->kind != TypeKind::Void) return p.type;
+            }
+        }
+    }
+    return rt;
+}
+
 void CEmitter::emit_function_prototype(const IRFunction* func, String& out) {
     if (func->returns_large_struct()) {
         // Large struct returns use hidden output pointer — return void
         out.append("void");
     } else {
-        emit_type(func->return_type, out);
+        emit_type(effective_return_type(func), out);
     }
     out.push_back(' ');
     emit_function_symbol(func->name, out);
@@ -1844,6 +2015,74 @@ void CEmitter::emit_exception_labels(const IRFunction* func, String& out) {
         emit_cleanup_records(func, -1, out);  // whole-frame exit: all records
         emit_unwind_return(func, out);
     }
+}
+
+// --- Closure dispatch ---
+
+Type* CEmitter::find_struct_type(StringView name) {
+    if (!m_module) return nullptr;
+    for (u32 i = 0; i < m_module->struct_types.size(); i++) {
+        Type* t = m_module->struct_types[i];
+        if (t && t->is_struct() && t->struct_info.name == name) return t;
+    }
+    return nullptr;
+}
+
+void CEmitter::collect_closure_dispatch(const IRModule* module) {
+    m_closure_fn_index.clear();
+    m_closure_fns.clear();
+    m_closure_env_names.clear();
+    for (u32 f = 0; f < module->functions.size(); f++) {
+        const IRFunction* func = module->functions[f];
+        for (u32 b = 0; b < func->blocks.size(); b++) {
+            const IRBlock* block = func->blocks[b];
+            for (u32 i = 0; i < block->instructions.size(); i++) {
+                const IRInst* inst = block->instructions[i];
+                if (inst->op != IROp::Closure) continue;
+                StringView fn = inst->closure.call_function_name;
+                if (m_closure_fn_index.find(fn) != m_closure_fn_index.end()) continue;
+                m_closure_fn_index[fn] = static_cast<u32>(m_closure_fns.size());
+                m_closure_fns.push_back(fn);
+                m_closure_env_names.push_back(inst->closure.env_struct_name);
+            }
+        }
+    }
+}
+
+void CEmitter::emit_closure_dispatch(String& out) {
+    if (m_closure_fns.empty()) return;
+
+    // Call-function pointer table — the AOT analogue of the VM's function_ptrs.
+    out.append("typedef void (*roxy_closure_fn)(void);\n");
+    out.append("static roxy_closure_fn g_closure_fns[] = {\n");
+    for (u32 i = 0; i < m_closure_fns.size(); i++) {
+        out.append("    (roxy_closure_fn)&");
+        emit_function_symbol(m_closure_fns[i], out);
+        out.append(",\n");
+    }
+    out.append("};\n");
+
+    // Type-erased closure delete: run the env destructor (if any) by __call_idx,
+    // then free the env. Reached via emit_typed_delete(Function).
+    out.append("static void __closure_delete(void* env) {\n");
+    out.append("    if (!env) return;\n");
+    out.append("    switch (*(uint32_t*)env) {\n");
+    for (u32 i = 0; i < m_closure_env_names.size(); i++) {
+        StringView env_name = m_closure_env_names[i];
+        String dtor = format("{}$$delete", env_name);
+        if (!find_function(StringView(dtor.data(), dtor.size()))) continue;  // no dtor
+        char cb[32];
+        format_to(cb, sizeof(cb), "    case {}: ", i);
+        out.append(cb);
+        emit_function_symbol(StringView(dtor.data(), dtor.size()), out);
+        out.append("((");
+        emit_mangled_name(env_name, out);
+        out.append("*)env); break;\n");
+    }
+    out.append("    default: break;\n");
+    out.append("    }\n");
+    out.append("    roxy_free(env);\n");
+    out.append("}\n\n");
 }
 
 // --- Function emission ---
@@ -2914,6 +3153,7 @@ void CEmitter::emit_extern_native_decls(String& out) {
 void CEmitter::emit_source(const IRModule* module, String& output) {
     m_module = module;
     m_module_uses_exceptions = module_uses_exceptions(module);
+    collect_closure_dispatch(module);
 
     // Includes
     output.append("#include <stdint.h>\n");
@@ -2964,6 +3204,11 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
         output.append(";\n");
     }
     output.append("\n");
+
+    // Closure dispatch table + type-erased delete (after prototypes so the call
+    // functions and env destructors are declared; before bodies so delete ops
+    // can reference __closure_delete).
+    emit_closure_dispatch(output);
 
     // Emit all function bodies
     for (u32 i = 0; i < module->functions.size(); i++) {

@@ -2587,4 +2587,255 @@ TEST_SUITE("E2E C Backend") {
         CHECK(result.exit_code == 42);
     }
 
+    // ── Closures ──
+    // Lambdas lift to top-level call functions + env structs; the C backend
+    // dispatches CallIndirect through a per-module function-pointer table
+    // (g_closure_fns) indexed by the env's __call_idx. Mirrors test_closures.cpp.
+
+    TEST_CASE("Closure: lambda expression body + immediate call") {
+        const char* source = R"(
+        fun main() {
+            var f = fun(x: i32): i32 => x + 1;
+            print(f"{f(5)}");
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.stdout_output == "6\n");
+    }
+
+    TEST_CASE("Closure: lambda block body and void lambda") {
+        const char* source = R"(
+        fun main() {
+            var g = fun(): i32 { return 42; };
+            print(f"{g()}");
+            var greet = fun(name: string) { print(f"hello {name}"); };
+            greet("world");
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.stdout_output == "42\nhello world\n");
+    }
+
+    TEST_CASE("Closure: higher-order function (closure as parameter)") {
+        const char* source = R"(
+        fun apply_twice(f: fun(i32) -> i32, x: i32): i32 { return f(f(x)); }
+        fun main(): i32 {
+            return apply_twice(fun(x: i32): i32 => x * 2, 3);   // 12
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 12);
+    }
+
+    TEST_CASE("Closure: returned from function, captures parameter") {
+        const char* source = R"(
+        fun make_adder(n: i32): fun(i32) -> i32 {
+            return fun(x: i32): i32 => x + n;
+        }
+        fun main(): i32 {
+            var add5 = make_adder(5);
+            return add5(10);   // 15
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 15);
+    }
+
+    TEST_CASE("Closure: implicit copy capture is by value") {
+        const char* source = R"(
+        fun main() {
+            var n: i32 = 10;
+            var f = fun(): i32 => n;
+            n = 99;
+            print(f"{f()}");   // 10 (snapshot)
+            print(f"{n}");     // 99
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.stdout_output == "10\n99\n");
+    }
+
+    TEST_CASE("Closure: capture multiple variables") {
+        const char* source = R"(
+        fun main(): i32 {
+            var x: i32 = 100;
+            var y: i32 = 50;
+            var add = fun(a: i32): i32 => a + x + y;
+            return add(7);   // 157
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 157);
+    }
+
+    TEST_CASE("Closure: explicit [move] capture of uniq") {
+        const char* source = R"(
+        struct Counter { value: i32 = 0; }
+        fun delete Counter() { print("~Counter"); }
+        fun main(): i32 {
+            var c: uniq Counter = uniq Counter { value = 42 };
+            var f = fun[move c](): i32 => c.value;
+            var v: i32 = f();
+            return v;   // 42; env $$delete frees the moved Counter at scope exit
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 42);
+        CHECK(result.stdout_output == "~Counter\n");
+    }
+
+    TEST_CASE("Closure: function reference (trampoline)") {
+        // Note: avoid `double` as a Roxy function name — it collides with the C++
+        // keyword in the generated source (a pre-existing C-backend naming gap).
+        const char* source = R"(
+        fun dbl(x: i32): i32 { return x * 2; }
+        fun triple(x: i32): i32 { return x * 3; }
+        fun apply(f: fun(i32) -> i32, x: i32): i32 { return f(x); }
+        fun main(): i32 {
+            var f: fun(i32) -> i32 = dbl;
+            return f(21) + apply(triple, 10);   // 42 + 30 = 72
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 72);
+    }
+
+    TEST_CASE("Closure: void-returning function reference") {
+        const char* source = R"(
+        fun greet(name: string) { print(f"hi {name}"); }
+        fun main() {
+            var g = greet;
+            g("world");
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.stdout_output == "hi world\n");
+    }
+
+    TEST_CASE("Closure: nested closures (transitive capture)") {
+        const char* source = R"(
+        fun main(): i32 {
+            var n: i32 = 100;
+            var f = fun(): fun(i32) -> fun(i32) -> i32 {
+                return fun(a: i32): fun(i32) -> i32 {
+                    return fun(b: i32): i32 => n + a + b;
+                };
+            };
+            return f()(1)(2);   // 103
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 103);
+    }
+
+    TEST_CASE("Closure: implicit ref-self on noncopyable receiver") {
+        const char* source = R"(
+        struct Counter { value: i32 = 0; }
+        fun delete Counter() {}
+        fun Counter.make_getter(): fun() -> i32 {
+            return fun(): i32 => self.value;
+        }
+        fun main(): i32 {
+            var c: uniq Counter = uniq Counter { value = 42 };
+            var g = c.make_getter();
+            return g();   // 42
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 42);
+    }
+
+    TEST_CASE("Closure: [copy self] snapshot semantics") {
+        const char* source = R"(
+        struct Vec2 { x: i32 = 0; y: i32 = 0; }
+        fun Vec2.snapshot(): fun() -> i32 {
+            return fun[copy self](): i32 => self.x + self.y;
+        }
+        fun main(): i32 {
+            var v: Vec2 = Vec2 { x = 3, y = 4 };
+            var f = v.snapshot();
+            v.x = 999;
+            v.y = 999;
+            return f();   // 7 (snapshot taken at capture)
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 7);
+    }
+
+    TEST_CASE("Closure: [weak self] on uniq receiver passes heap check") {
+        const char* source = R"(
+        struct V { x: i32 = 0; }
+        fun V.make(): fun() -> i32 {
+            return fun[weak self](): i32 => self.x;
+        }
+        fun main(): i32 {
+            var u: uniq V = uniq V { x = 21 };
+            var f = u.make();
+            return f();   // 21
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 21);
+    }
+
+    TEST_CASE("Closure: ref-self on stack receiver traps (AssertHeap)") {
+        const char* source = R"(
+        struct V { x: i32 = 0; }
+        fun V.make(): fun() -> i32 {
+            return fun(): i32 => self.x;
+        }
+        fun main(): i32 {
+            var v: V = V { x = 7 };
+            var f = v.make();   // captures ref self of a stack receiver -> trap
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.exit_code != 0);   // runtime trap (abort)
+    }
+
+    TEST_CASE("Closure: borrowed function value out of a List is callable") {
+        const char* source = R"(
+        fun main(): i32 {
+            var fs: List<fun(i32) -> i32> = List<fun(i32) -> i32>();
+            fs.push(fun(x: i32): i32 => x + 1);
+            fs.push(fun(x: i32): i32 => x * 2);
+            var g: ref fun(i32) -> i32 = fs[1];   // borrow, not move
+            return fs[0](10) + g(10);             // 11 + 20 = 31
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 31);
+    }
+
 }  // TEST_SUITE("E2E C Backend")

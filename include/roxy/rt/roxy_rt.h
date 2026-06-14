@@ -160,6 +160,11 @@ void* roxy_exception_take(void);
 // generic string; matches the VM's current stub.
 void* roxy_exception_message(void* exc);
 
+// Non-zero if `ptr` is a non-null pointer owned by the active allocator. Used by
+// the C backend's `AssertHeap` (closure ref/weak `self` capture) to trap a
+// stack-allocated receiver. Returns 0 when there is no active ctx/allocator.
+int roxy_heap_owns(void* ptr);
+
 // ===== Weak References =====
 
 typedef struct {
