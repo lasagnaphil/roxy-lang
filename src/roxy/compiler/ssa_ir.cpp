@@ -72,6 +72,7 @@ const char* ir_op_to_string(IROp op) {
         case IROp::B_TO_I:   return "b_to_i";
 
         case IROp::StackAlloc: return "stack_alloc";
+        case IROp::GlobalAddr: return "global_addr";
         case IROp::GetField: return "get_field";
         case IROp::GetFieldAddr: return "get_field_addr";
         case IROp::SetField: return "set_field";
@@ -256,6 +257,13 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         case IROp::StackAlloc: {
             StaticString<32> tmp;
             format_to(tmp, " {}", inst->stack_alloc.slot_count);
+            for (char c : tmp) out.push_back(c);
+            break;
+        }
+
+        case IROp::GlobalAddr: {
+            StaticString<32> tmp;
+            format_to(tmp, " @{}", inst->global_data.slot_offset);
             for (char c : tmp) out.push_back(c);
             break;
         }

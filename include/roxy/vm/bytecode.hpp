@@ -170,6 +170,7 @@ enum class Opcode : u8 {
     STRUCT_COPY_2     = 0xBB, // dst[0..2] = src[0..2]
     STRUCT_COPY_3     = 0xBC, // dst[0..3] = src[0..3]
     STRUCT_COPY_4     = 0xBD, // dst[0..4] = src[0..4]
+    GLOBAL_ADDR       = 0xBE, // dst = &global_slots[imm16] (ABI format)
 
     // 0xC0-0xDA: RK (register-or-constant) variants. Same ABC encoding as the
     // base opcode, but `c` is a constant pool index (u8) instead of a register.
@@ -489,6 +490,7 @@ struct BCModule {
     Vector<BCNativeFunction> native_functions; // Native functions
     Vector<BCTypeInfo> types;               // Type table for heap allocation
     Vector<u32> type_ids;                   // Global type IDs after registration
+    u32 global_slot_count = 0;              // Module-global storage size (u32 slots)
 
     BCModule() = default;
     ~BCModule() = default;

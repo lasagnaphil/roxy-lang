@@ -70,6 +70,19 @@ private:
     void build_coroutine_cleanup_wrappers();
     void collect_backend_types(Program* program);
 
+    // Module-level globals (lifetimes/globals support). collect_globals assigns
+    // each top-level `var` a slot offset in the module's global array (run first
+    // so function bodies can reference globals); build_module_init synthesizes
+    // `__module_init` (runs initializers / constructors before main);
+    // build_module_shutdown synthesizes `__module_shutdown` (RAII teardown of
+    // noncopyable globals at VM destroy). emit_global_addr yields a global's
+    // address (GlobalAddr op); gen_global_read loads/derefs a global by name.
+    void collect_globals(Program* program);
+    IRFunction* build_module_init(Program* program);
+    IRFunction* build_module_shutdown();
+    ValueId emit_global_addr(u32 slot_offset, Type* type);
+    ValueId gen_global_read(u32 global_index, Type* result_type);
+
     // Block management
     IRBlock* create_block(StringView name = {});
     void set_current_block(IRBlock* block);
@@ -339,6 +352,11 @@ private:
     // as the start of each ref param's whole-function RefDec cleanup record so an
     // exception unwinding out of the frame decrements the borrow.
     BlockId m_ref_param_entry_block;
+
+    // Module-level globals: name -> index into m_module->globals. Populated by
+    // collect_globals before any function is built, so global reads/writes in
+    // function bodies resolve to the right slot offset.
+    tsl::robin_map<StringView, u32> m_global_indices;
 
     // Deferred call-site receiver-borrow cleanup records (lifetimes.md §4/§6).
     // A borrow's exception-path RefDec must run BEFORE the receiver-owner's

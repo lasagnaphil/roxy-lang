@@ -410,9 +410,12 @@ direction:
   `uniq`/`List`/`Map`/`Coro` pointer now loads and Deletes the old value before
   the store, and consumes the RHS temp — previously it leaked the old object and
   double-owned the new one (the same class as the index-set fix, §9). This is
-  also what makes the mid-call receiver kill testable (§8). *Still open, also
-  found while testing and left for a separate fix:* a module-global `uniq`
-  initializer doesn't run its constructor.
+  also what makes the mid-call receiver kill testable (§8).
+- *Done (separate feature):* **module-level globals** now compile end-to-end —
+  including running a `uniq` global's constructor at init and its destructor at
+  shutdown (RAII). Globals were previously unimplemented (no storage / no init),
+  which is why a global `uniq` appeared to "skip its constructor." See
+  [globals.md](globals.md).
 
 **Phase 3 — containers & coroutines. Not started.**
 - Count `ref` elements in `List`/`Map` cleanup; count `ref` parameters into

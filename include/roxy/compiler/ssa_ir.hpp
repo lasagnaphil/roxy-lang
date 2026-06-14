@@ -17,6 +17,7 @@ struct IRInst;
 struct IRBlock;
 struct IRFunction;
 struct IRModule;
+struct Expr;   // AST node (compiler/ast.hpp); IRGlobal holds a global's initializer
 
 // Value ID - uniquely identifies an SSA value within a function
 struct ValueId {
@@ -117,6 +118,7 @@ enum class IROp : u8 {
 
     // Memory operations
     StackAlloc,     // allocate slots on local stack, returns pointer
+    GlobalAddr,     // &globals[slot_offset] (address of a module-global slot)
     GetField,       // obj.field (load value)
     GetFieldAddr,   // &obj.field (compute address, for nested struct access)
     SetField,       // obj.field = value
@@ -242,6 +244,11 @@ struct StackAllocData {
     u32 slot_count;     // Number of u32 slots to allocate
 };
 
+// Global address data (for GlobalAddr)
+struct GlobalData {
+    u32 slot_offset;    // Offset into the module's global slot array
+};
+
 // Struct copy data
 struct StructCopyData {
     ValueId dest_ptr;
@@ -308,6 +315,7 @@ struct IRInst {
         FieldData field;                // For GetField/SetField
         NewData new_data;               // For New
         StackAllocData stack_alloc;     // For StackAlloc
+        GlobalData global_data;         // For GlobalAddr
         StructCopyData struct_copy;     // For StructCopy
         LoadPtrData load_ptr;           // For LoadPtr
         StorePtrData store_ptr;         // For StorePtr
@@ -506,10 +514,25 @@ struct IRFunction {
     void reorder_blocks_rpo();
 };
 
+// A module-level global variable: persistent storage in the VM's global slot
+// array, initialized by `__module_init` before `main` and (for noncopyable
+// types) torn down by `__module_shutdown` at VM destroy.
+struct IRGlobal {
+    StringView name;
+    Type* type;
+    u32 slot_offset;     // Offset into the module's global slot array
+    u32 slot_count;      // Slots this global occupies
+    Expr* initializer;   // Initializer expression (may be null)
+};
+
 // IR Module - collection of functions
 struct IRModule {
     Vector<IRFunction*> functions;
     StringView name;
+
+    // Module-level globals + total slot count for the VM's global array.
+    Vector<IRGlobal> globals;
+    u32 global_slot_count = 0;
 
     // Type lists for C backend code generation
     Vector<Type*> struct_types;  // All struct types (incl. monomorphized generics)

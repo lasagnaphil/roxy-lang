@@ -38,6 +38,7 @@ BCModule* BytecodeBuilder::build(IRModule* ir_module) {
     auto module = make_unique<BCModule>();
     m_module = module.get();
     m_module->name = ir_module->name;
+    m_module->global_slot_count = ir_module->global_slot_count;
 
     // Build function name index map
     m_func_indices.clear();
@@ -1067,7 +1068,7 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
                 // Const ops have no operands; results are what we're testing.
                 case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
                 case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
-                case IROp::StackAlloc: case IROp::BlockArg:
+                case IROp::StackAlloc: case IROp::GlobalAddr: case IROp::BlockArg:
                 case IROp::Yield:
                     break;
             }
@@ -1266,7 +1267,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                 // No operands
                 case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
                 case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
-                case IROp::StackAlloc: case IROp::BlockArg:
+                case IROp::StackAlloc: case IROp::GlobalAddr: case IROp::BlockArg:
                     break;
             }
             point++;
@@ -2389,6 +2390,13 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
 
             // Emit STACK_ADDR to get a pointer to the allocated space
             emit_abi(Opcode::STACK_ADDR, dst, static_cast<u16>(slot_offset));
+            spill_if_needed(inst->result, dst);
+            break;
+        }
+
+        case IROp::GlobalAddr: {
+            // Pointer into the module's persistent global slot array.
+            emit_abi(Opcode::GLOBAL_ADDR, dst, static_cast<u16>(inst->global_data.slot_offset));
             spill_if_needed(inst->result, dst);
             break;
         }

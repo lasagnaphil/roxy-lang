@@ -222,6 +222,7 @@ inline void for_each_operand(IRInst* inst, Fn&& fn) {
         case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
         case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
         case IROp::StackAlloc:
+        case IROp::GlobalAddr:
         case IROp::BlockArg:
             break;
     }

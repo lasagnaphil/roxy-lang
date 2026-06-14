@@ -373,6 +373,9 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Module System** - Multi-file compilation with `import`/`from` syntax, topological sorting, static linking.
 **Details:** `docs/internals/modules.md` | **Files:** `compiler/module_registry.hpp`, `compiler/compiler.hpp`
 
+**Module Globals** - Top-level `var` declarations with persistent per-VM storage, a synthesized `__module_init` running initializers/constructors before `main`, and `__module_shutdown` running destructors for noncopyable globals at VM teardown (RAII). Accessed via the `GLOBAL_ADDR` opcode. VM-only (C backend deferred).
+**Details:** `docs/internals/globals.md` | **Files:** `compiler/ir_builder.cpp` (`collect_globals`/`build_module_init`/`build_module_shutdown`), `vm/vm.cpp`
+
 ### Control Flow
 **When Statement** - Pattern matching on enum values with phi node support for variable modifications.
 **Tests:** `tests/e2e/test_when.cpp`
@@ -463,6 +466,7 @@ On Windows, use `.exe` extension.
   - `interop.md` - Native functions, automatic C++ binding
   - `frontend.md` - Lexer, parser, semantic analysis
   - `modules.md` - Module system, imports, multi-file compilation
+  - `globals.md` - Module-level globals: storage, `__module_init`/`__module_shutdown`, GLOBAL_ADDR, RAII teardown
   - `constructors.md` - Named constructors/destructors, `self` keyword
   - `methods.md` - Struct methods, `self` parameter, name mangling
   - `inheritance.md` - Struct inheritance, subtyping, `super` keyword

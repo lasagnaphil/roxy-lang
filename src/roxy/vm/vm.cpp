@@ -76,6 +76,10 @@ bool vm_init(RoxyVM* vm, const VMConfig& config) {
     }
     vm->local_stack_top = 0;
 
+    // Global storage is sized per-module at vm_load_module.
+    vm->global_slots = nullptr;
+    vm->global_slots_size = 0;
+
     // Initialize slab allocator for heap objects
     vm->allocator = UniquePtr<SlabAllocator>(new (std::nothrow) SlabAllocator());
     if (!vm->allocator) {
@@ -136,6 +140,15 @@ void vm_destroy(RoxyVM* vm) {
 #if ROXY_PROFILE_BYTECODE
     bc_profile_dump(stderr);
 #endif
+
+    // Tear down noncopyable globals while the heap/allocator is still alive and
+    // the execution machinery (register file, local stack) is intact.
+    if (vm->module && vm->global_slots && !vm->error
+        && vm->module->find_function(StringView("__module_shutdown", 17)) >= 0) {
+        vm_call(vm, StringView("__module_shutdown", 17), {});
+    }
+    vm->global_slots.reset();
+    vm->global_slots_size = 0;
 
     vm->register_file.reset();
     vm->register_file_size = 0;
@@ -213,6 +226,25 @@ bool vm_load_module(RoxyVM* vm, BCModule* module) {
             if (c.type == BCConstant::String && c.as_string.obj == nullptr) {
                 c.as_string.obj = string_alloc(vm, c.as_string.data, c.as_string.length);
             }
+        }
+    }
+
+    // Allocate module-global storage (zero-initialized so uninitialized globals
+    // and pre-init slots read as null/0), then run the synthesized initializer
+    // (constructors included) once, before any user call.
+    vm->global_slots.reset();
+    vm->global_slots_size = module->global_slot_count;
+    if (vm->global_slots_size > 0) {
+        vm->global_slots = UniquePtr<u32[]>(new (std::nothrow) u32[vm->global_slots_size]);
+        if (!vm->global_slots) {
+            vm->global_slots_size = 0;
+            return false;
+        }
+        memset(vm->global_slots.get(), 0, vm->global_slots_size * sizeof(u32));
+    }
+    if (module->find_function(StringView("__module_init", 13)) >= 0) {
+        if (!vm_call(vm, StringView("__module_init", 13), {})) {
+            return false;  // global initializer failed (vm->error set)
         }
     }
 

@@ -59,6 +59,13 @@ struct RoxyVM {
     u32 local_stack_size;           // Total local stack capacity in slots
     u32 local_stack_top;            // Current top of local stack allocation
 
+    // Module-level global storage (4-byte slots). Sized to the loaded module's
+    // global_slot_count, zero-initialized, persistent for the VM's lifetime.
+    // Initialized by `__module_init` at load and torn down by `__module_shutdown`
+    // at destroy. Accessed via the GLOBAL_ADDR opcode.
+    UniquePtr<u32[]> global_slots;
+    u32 global_slots_size;
+
     UniquePtr<SlabAllocator> allocator;  // Slab allocator for heap objects
     roxy_allocator slab_vtable;          // Vtable view of `allocator` plugged into ctx
     UniquePtr<StringInternTable> string_intern;  // Content-keyed dedup of heap strings

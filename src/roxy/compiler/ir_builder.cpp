@@ -47,6 +47,11 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
     // struct-member phases; read by the synthesized-default-ctor phase.
     tsl::robin_map<StringView, bool> has_default_ctor;
 
+    // Assign module-global slot offsets first, so any function body can resolve
+    // a global reference to its slot while being built.
+    m_global_indices.clear();
+    collect_globals(program);
+
     // Each phase appends to m_module and records failures via m_has_error; bail out
     // between phases so a later phase never runs on a half-built module.
     build_user_decls(program, has_default_ctor);
@@ -71,6 +76,17 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
     if (m_has_error) return nullptr;
 
     build_coroutine_cleanup_wrappers();
+    if (m_has_error) return nullptr;
+
+    // Synthesize the module init/teardown functions for globals. Built after
+    // user decls so the constructors/destructors they invoke already exist.
+    if (IRFunction* init_fn = build_module_init(program)) {
+        m_module->functions.push_back(init_fn);
+    }
+    if (m_has_error) return nullptr;
+    if (IRFunction* shutdown_fn = build_module_shutdown()) {
+        m_module->functions.push_back(shutdown_fn);
+    }
     if (m_has_error) return nullptr;
 
     collect_backend_types(program);
@@ -353,6 +369,134 @@ void IRBuilder::build_coroutine_cleanup_wrappers() {
     for (auto* wrapper : wrappers) {
         m_module->functions.push_back(wrapper);
     }
+}
+
+void IRBuilder::collect_globals(Program* program) {
+    u32 offset = 0;
+    for (auto* decl : program->declarations) {
+        if (!decl || decl->kind != AstKind::DeclVar) continue;
+        VarDecl& var_decl = decl->var_decl;
+        Type* type = var_decl.resolved_type;
+        if (!type) continue;
+        u32 slot_count = get_type_slot_count(type);
+        if (slot_count == 0) slot_count = 1;
+        IRGlobal g;
+        g.name = var_decl.name;
+        g.type = type;
+        g.slot_offset = offset;
+        g.slot_count = slot_count;
+        g.initializer = var_decl.initializer;
+        m_global_indices[var_decl.name] = static_cast<u32>(m_module->globals.size());
+        m_module->globals.push_back(g);
+        offset += slot_count;
+    }
+    m_module->global_slot_count = offset;
+}
+
+ValueId IRBuilder::emit_global_addr(u32 slot_offset, Type* type) {
+    IRInst* inst = emit_inst(IROp::GlobalAddr, type);
+    if (!inst) return ValueId::invalid();
+    inst->global_data.slot_offset = slot_offset;
+    return inst->result;
+}
+
+ValueId IRBuilder::gen_global_read(u32 global_index, Type* /*result_type*/) {
+    const IRGlobal& g = m_module->globals[global_index];
+    Type* type = g.type;
+    u32 slot_count = g.slot_count;
+    ValueId addr = emit_global_addr(g.slot_offset, type);
+    // For struct globals the address IS the value (field ops want a pointer);
+    // for everything else, load the stored value out of the slot.
+    if (type && type->is_struct()) return addr;
+    return emit_load_ptr(addr, slot_count, type);
+}
+
+// Synthesize `__module_init`: run each global's initializer (incl. constructors)
+// and store the result into its slot. Returns null if there is nothing to init.
+IRFunction* IRBuilder::build_module_init(Program* /*program*/) {
+    bool any_init = false;
+    for (const IRGlobal& g : m_module->globals) {
+        if (g.initializer) { any_init = true; break; }
+    }
+    if (!any_init) return nullptr;
+
+    m_current_func = m_allocator.emplace<IRFunction>();
+    m_current_func->name = StringView("__module_init", 13);
+    m_current_func->return_type = m_types.void_type();
+    m_current_source_line = 0;
+    setup_parameters(Span<Param>(), nullptr);
+    begin_function_body(false);
+
+    for (u32 i = 0; i < m_module->globals.size(); i++) {
+        // Copy fields out before gen_expr (which may push functions/temps).
+        Type* type = m_module->globals[i].type;
+        u32 slot_offset = m_module->globals[i].slot_offset;
+        u32 slot_count = m_module->globals[i].slot_count;
+        Expr* initializer = m_module->globals[i].initializer;
+        if (!initializer) continue;
+
+        ValueId addr = emit_global_addr(slot_offset, type);
+        ValueId val = gen_expr(initializer);
+        val = maybe_wrap_weak(val, initializer->resolved_type, type);
+        if (type && type->is_struct()) {
+            emit_struct_copy(addr, val, slot_count);
+        } else {
+            emit_store_ptr(addr, val, slot_count, type);
+        }
+        // The initializer temporary's ownership transfers into the global slot.
+        if (type && type->noncopyable()) {
+            consume_temp_noncopyable(val);
+        }
+    }
+
+    end_function_body();
+    IRFunction* result = m_current_func;
+    m_current_func = nullptr;
+    m_current_block = nullptr;
+    return result;
+}
+
+// Synthesize `__module_shutdown`: destroy noncopyable globals (uniq/List/Map,
+// or value structs with destructors) in reverse declaration order. Returns null
+// if no global needs teardown.
+IRFunction* IRBuilder::build_module_shutdown() {
+    bool any = false;
+    for (const IRGlobal& g : m_module->globals) {
+        if (g.type && g.type->noncopyable()) { any = true; break; }
+    }
+    if (!any) return nullptr;
+
+    m_current_func = m_allocator.emplace<IRFunction>();
+    m_current_func->name = StringView("__module_shutdown", 17);
+    m_current_func->return_type = m_types.void_type();
+    m_current_source_line = 0;
+    setup_parameters(Span<Param>(), nullptr);
+    begin_function_body(false);
+
+    for (i32 i = static_cast<i32>(m_module->globals.size()) - 1; i >= 0; i--) {
+        Type* type = m_module->globals[i].type;
+        u32 slot_offset = m_module->globals[i].slot_offset;
+        u32 slot_count = m_module->globals[i].slot_count;
+        if (!type || !type->noncopyable()) continue;
+
+        ValueId addr = emit_global_addr(slot_offset, type);
+        if (type->is_struct()) {
+            // Value struct with a destructor: destroy in place via its address.
+            IRInst* del = emit_inst(IROp::Delete, type);
+            if (del) del->unary = addr;
+        } else {
+            // uniq / List / Map: the slot holds the owning pointer.
+            ValueId val = emit_load_ptr(addr, slot_count, type);
+            IRInst* del = emit_inst(IROp::Delete, type);
+            if (del) del->unary = val;
+        }
+    }
+
+    end_function_body();
+    IRFunction* result = m_current_func;
+    m_current_func = nullptr;
+    m_current_block = nullptr;
+    return result;
 }
 
 void IRBuilder::collect_backend_types(Program* program) {
@@ -3100,6 +3244,14 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
             }
             return gen_function_ref(expr, target);
         }
+
+        // Module-level global read: not a local, not a function — load from the
+        // global slot (a local of the same name would have set `lv` and skipped
+        // this whole block, so a local correctly shadows a global).
+        auto git = m_global_indices.find(id.name);
+        if (git != m_global_indices.end()) {
+            return gen_global_read(git->second, expr->resolved_type);
+        }
     }
 
     ValueId val = lookup_local(id.name);
@@ -4134,6 +4286,48 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
             }
         }
         return result;
+    }
+
+    // Module-level global write: store through the global's address, with the
+    // same old-value destroy + temp-consume as field/inout assignment. A local
+    // of the same name shadows the global (find_local would resolve it), so only
+    // reach here for a true global.
+    if (!find_local(name)) {
+        auto git = m_global_indices.find(name);
+        if (git != m_global_indices.end()) {
+            Type* gtype = m_module->globals[git->second].type;
+            u32 gslots = m_module->globals[git->second].slot_count;
+            u32 goffset = m_module->globals[git->second].slot_offset;
+            ValueId addr = emit_global_addr(goffset, gtype);
+            // Destroy the overwritten value (mirrors gen_assign_field).
+            if (gtype && gtype->is_struct() && gtype->noncopyable()) {
+                IRInst* del = emit_inst(IROp::Delete, gtype);
+                if (del) del->unary = addr;
+            } else if (gtype && (gtype->kind == TypeKind::Uniq || gtype->is_list()
+                                 || gtype->is_map() || gtype->is_coroutine())) {
+                ValueId old = emit_load_ptr(addr, gslots, gtype);
+                IRInst* del = emit_inst(IROp::Delete, gtype);
+                if (del) del->unary = old;
+            }
+            value = maybe_wrap_weak(value, assign_expr.value->resolved_type, gtype);
+            ValueId result;
+            if (gtype && gtype->is_struct()) {
+                emit_struct_copy(addr, value, gslots);
+                result = value;
+            } else {
+                result = emit_store_ptr(addr, value, gslots, gtype);
+            }
+            if (gtype && gtype->noncopyable()) {
+                consume_temp_noncopyable(value);
+                if (assign_expr.value->kind == AstKind::ExprIdentifier) {
+                    Type* value_type = assign_expr.value->resolved_type;
+                    if (value_type && value_type->noncopyable()) {
+                        mark_moved_from(assign_expr.value->identifier.name);
+                    }
+                }
+            }
+            return result;
+        }
     }
 
     // Auto-destroy old owned value before reassignment

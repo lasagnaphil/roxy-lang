@@ -685,7 +685,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         [0xBB] = &&op_STRUCT_COPY_2,
         [0xBC] = &&op_STRUCT_COPY_3,
         [0xBD] = &&op_STRUCT_COPY_4,
-        [0xBE] = &&op_DEFAULT, [0xBF] = &&op_DEFAULT,
+        [0xBE] = &&op_GLOBAL_ADDR, [0xBF] = &&op_DEFAULT,
 
         // 0xC0-0xCF: RK (register-or-constant) variants — arithmetic + int cmp
         [0xC0] = &&op_ADD_I_RK,
@@ -1733,6 +1733,13 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
     OP(STACK_ADDR) {
         u16 slot_offset = decode_imm16(instr);
         u32* addr = vm->local_stack.get() + frame->local_stack_base + slot_offset;
+        regs[decode_a(instr)] = reg_from_ptr(addr);
+        DISPATCH();
+    }
+
+    OP(GLOBAL_ADDR) {
+        u16 slot_offset = decode_imm16(instr);
+        u32* addr = vm->global_slots.get() + slot_offset;
         regs[decode_a(instr)] = reg_from_ptr(addr);
         DISPATCH();
     }

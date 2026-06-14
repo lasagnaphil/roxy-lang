@@ -810,6 +810,13 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             out.append("_struct;\n");
             return;
         }
+        case IROp::GlobalAddr: {
+            // Module-level globals are not yet wired in the C backend (VM-only
+            // feature). Emit a #error so an AOT build of code using globals fails
+            // loudly rather than silently producing wrong code.
+            out.append("#error \"Roxy C backend: module-level globals are not yet supported\"\n");
+            return;
+        }
         case IROp::GetField: {
             out.append("    ");
             emit_value(inst->result, out);
