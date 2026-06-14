@@ -52,6 +52,13 @@ void CEmitter::emit_type(Type* type, String& out) {
         case TypeKind::Weak:
             out.append("roxy_weak");
             break;
+        case TypeKind::Coroutine:
+            // Coro<T> is a pointer to its synthesized state struct (__coro_<func>).
+            // Matches `uniq __coro_<func>` (New result) and `ref __coro_<func>`
+            // (resume/done/$$delete self param), which both emit as the same ptr.
+            emit_type(type->coro_info.generated_struct_type, out);
+            out.append("*");
+            break;
         case TypeKind::Nil:
             out.append("void*");
             break;
@@ -355,9 +362,13 @@ void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj,
     }
 
     // --- struct (value, or the pointee of a uniq/ref): run its destructor. ---
+    // A Coro<T> is a pointer to its state struct __coro_<func>; deleting it runs
+    // the generated __coro_<func>$$delete (== {struct_name}$$delete) destructor,
+    // which cleans up promoted uniq/noncopyable fields, then frees the struct.
     Type* pointee = nullptr;
     if (type->is_struct()) pointee = type;
     else if (type->kind == TypeKind::Uniq || type->kind == TypeKind::Ref) pointee = type->base_type();
+    else if (type->is_coroutine()) pointee = type->coro_info.generated_struct_type;
     if (pointee && pointee->is_struct()) {
         String dtor = format("{}$$delete", pointee->struct_info.name);
         if (find_function(StringView(dtor.data(), dtor.size()))) {
@@ -602,6 +613,10 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             return;
         }
         case IROp::ConstInt: {
+            // A void-typed constant is a return-sentinel (e.g. the coroutine
+            // $$delete destructor's `return default`); it is never declared as a
+            // local, so emit nothing — the void Return terminator becomes `return;`.
+            if (inst->type && inst->type->kind == TypeKind::Void) return;
             out.append("    ");
             emit_value(inst->result, out);
             if (inst->type && inst->type->is_enum()) {
@@ -1046,7 +1061,30 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 emit_field_access(inst->field.object, inst->field.field_name, out);
             }
             out.append(" = ");
-            emit_value(inst->store_value, out);
+            // Coroutine promotion stores promoted locals into state-struct fields
+            // with raw SetField, which can mismatch C++'s strict typing where the
+            // regular path uses StructCopy / Nullify:
+            //   - a struct-value field assigned a struct rvalue (a pointer in the
+            //     C backend) must dereference the pointer;
+            //   - a uniq/ref pointer field assigned a null (void*-typed) needs an
+            //     explicit cast — e.g. cleanup nulling a promoted uniq field.
+            {
+                Type* field_type = inst->type;
+                Type* val_type = get_value_type(inst->store_value);
+                bool field_is_ptr = field_type &&
+                    (field_type->kind == TypeKind::Uniq || field_type->kind == TypeKind::Ref);
+                if (field_type && field_type->is_struct() && is_pointer_value(inst->store_value)) {
+                    out.append("*");
+                    emit_value(inst->store_value, out);
+                } else if (field_is_ptr && val_type && val_type->kind == TypeKind::Nil) {
+                    out.append("(");
+                    emit_type(field_type, out);
+                    out.append(")");
+                    emit_value(inst->store_value, out);
+                } else {
+                    emit_value(inst->store_value, out);
+                }
+            }
             out.append(";\n");
             return;
         }
@@ -1346,9 +1384,14 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             return;
         }
 
+        case IROp::Yield:
+            // Eliminated by coroutine_lower() before the C backend runs (each
+            // Yield becomes SetField/Return in the generated resume function);
+            // the IR validator rejects any survivor. So this is never reached.
+            return;
+
         // --- Still unsupported (Phase 4+) ---
         case IROp::Throw:
-        case IROp::Yield:
         case IROp::Closure:
         case IROp::CallIndirect:
         case IROp::AssertHeap: {
@@ -1412,6 +1455,13 @@ void CEmitter::emit_terminator(const IRBlock* block, const IRFunction* func, Str
             return;
         }
         case TerminatorKind::Return: {
+            // A void-returning function always emits `return;`, even if the IR
+            // carries a (void-typed) return value — e.g. coroutine $$delete
+            // destructors return a void ConstInt sentinel.
+            if (func->return_type && func->return_type->kind == TypeKind::Void) {
+                out.append("    return;\n");
+                return;
+            }
             if (term.return_value.is_valid()) {
                 // If returning a struct from a StackAlloc pointer, dereference it
                 Type* ret_type = func->return_type;

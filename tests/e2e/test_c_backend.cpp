@@ -1834,4 +1834,284 @@ TEST_SUITE("E2E C Backend") {
         CHECK(result.exit_code == 2);
     }
 
+    // ── Container element teardown ──
+    // A noncopyable List/Map's Delete now iterates its elements (recursively),
+    // runs their destructors, and frees the backing buffers — the C analogue of
+    // the VM's descriptor-driven delete_value.
+
+    TEST_CASE("List<uniq T> runs element destructors at scope exit") {
+        const char* source = R"(
+            struct Counter { value: i32; }
+            fun new Counter(v: i32) { self.value = v; }
+            fun delete Counter() { print("del"); }
+            fun main(): i32 {
+                var lst: List<uniq Counter> = List<uniq Counter>();
+                lst.push(uniq Counter(1));
+                lst.push(uniq Counter(2));
+                lst.push(uniq Counter(3));
+                return lst.len();   // 3; 3 element destructors run at scope exit
+            }
+        )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 3);
+        CHECK(result.stdout_output == "del\ndel\ndel\n");
+    }
+
+    TEST_CASE("List<ValueStruct with dtor> runs in-place element destructors") {
+        const char* source = R"(
+            struct Tag { id: i32; }
+            fun delete Tag() { print("t"); }
+            fun main(): i32 {
+                var lst: List<Tag> = List<Tag>();
+                lst.push(Tag { id = 1 });
+                lst.push(Tag { id = 2 });
+                return lst.len();   // 2; 2 in-place destructors at scope exit
+            }
+        )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 2);
+        CHECK(result.stdout_output == "t\nt\n");
+    }
+
+    TEST_CASE("Map<i32, uniq T> runs value destructors at scope exit") {
+        const char* source = R"(
+            struct Counter { value: i32; }
+            fun new Counter(v: i32) { self.value = v; }
+            fun delete Counter() { print("v"); }
+            fun main(): i32 {
+                var m: Map<i32, uniq Counter> = Map<i32, uniq Counter>();
+                m.insert(1, uniq Counter(10));
+                m.insert(2, uniq Counter(20));
+                return m.len();   // 2; both values destroyed at scope exit
+            }
+        )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 2);
+        // Bucket order is unspecified, but both values print the same token.
+        CHECK(result.stdout_output == "v\nv\n");
+    }
+
+    TEST_CASE("List<List<uniq T>> recursively tears down nested elements") {
+        const char* source = R"(
+            struct Counter { value: i32; }
+            fun new Counter(v: i32) { self.value = v; }
+            fun delete Counter() { print("x"); }
+            fun main(): i32 {
+                var outer: List<List<uniq Counter>> = List<List<uniq Counter>>();
+                var a: List<uniq Counter> = List<uniq Counter>();
+                a.push(uniq Counter(1));
+                a.push(uniq Counter(2));
+                outer.push(a);
+                var b: List<uniq Counter> = List<uniq Counter>();
+                b.push(uniq Counter(3));
+                outer.push(b);
+                return outer.len();   // 2 inner lists, 3 Counters total
+            }
+        )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 2);
+        CHECK(result.stdout_output == "x\nx\nx\n");  // all 3 nested Counters freed
+    }
+
+    // ── Coroutines ──
+    // coroutine_lower() rewrites each Coro<T> function into init/resume/done/
+    // $$delete built from ops the C backend already supports; these verify the
+    // Coro<T> type emits as its state-struct pointer and the lifecycle works.
+
+    TEST_CASE("Coroutine single yield") {
+        const char* source = R"(
+        fun single(): Coro<i32> {
+            yield 42;
+        }
+        fun main(): i32 {
+            var g = single();
+            return g.resume();
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 42);
+    }
+
+    TEST_CASE("Coroutine multiple yields") {
+        const char* source = R"(
+        fun triple(): Coro<i32> {
+            yield 10;
+            yield 20;
+            yield 30;
+        }
+        fun main(): i32 {
+            var g = triple();
+            var a: i32 = g.resume();
+            var b: i32 = g.resume();
+            var c: i32 = g.resume();
+            return a + b + c;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 60);
+    }
+
+    TEST_CASE("Coroutine done check") {
+        const char* source = R"(
+        fun one_val(): Coro<i32> {
+            yield 99;
+        }
+        fun to_int(b: bool): i32 {
+            if (b) { return 1; }
+            return 0;
+        }
+        fun main(): i32 {
+            var g = one_val();
+            var before: i32 = to_int(g.done());
+            g.resume();
+            var after_one: i32 = to_int(g.done());
+            g.resume();
+            var after_two: i32 = to_int(g.done());
+            return before * 100 + after_one * 10 + after_two;
+        }
+    )";
+        // before=0 (not done), after_one=0 (not done), after_two=1 (done)
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 1);
+    }
+
+    TEST_CASE("Coroutine yield in while loop") {
+        const char* source = R"(
+        fun counter(): Coro<i32> {
+            var i: i32 = 0;
+            while (i < 3) {
+                yield i;
+                i = i + 1;
+            }
+        }
+        fun main(): i32 {
+            var g = counter();
+            var a: i32 = g.resume();
+            var b: i32 = g.resume();
+            var c: i32 = g.resume();
+            return a * 100 + b * 10 + c;   // 0,1,2 -> 12
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 12);
+    }
+
+    TEST_CASE("Coroutine with parameters") {
+        const char* source = R"(
+        fun add_offset(base: i32, offset: i32): Coro<i32> {
+            yield base + offset;
+            yield base + offset + 1;
+        }
+        fun main(): i32 {
+            var g = add_offset(10, 5);
+            var a: i32 = g.resume();
+            var b: i32 = g.resume();
+            return a + b;   // 15 + 16 = 31
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 31);
+    }
+
+    TEST_CASE("Coroutine struct promoted local across yield") {
+        // A value-struct local that survives a yield becomes a struct-typed field
+        // on the state struct __coro_gen, exercising dependency-sorted typedefs.
+        const char* source = R"(
+        struct Vec2 { x: i32; y: i32; }
+        fun gen(): Coro<i32> {
+            var v: Vec2 = Vec2 { x = 3, y = 4 };
+            yield v.x;
+            yield v.y;
+        }
+        fun main(): i32 {
+            var g = gen();
+            var a: i32 = g.resume();
+            var b: i32 = g.resume();
+            return a * 10 + b;   // 34
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 34);
+    }
+
+    TEST_CASE("Coroutine uniq promoted, run to completion") {
+        // Promoted uniq freed by inline cleanup on the done path; the generated
+        // __coro_gen$$delete destructor sees null and skips it (no double free).
+        const char* source = R"(
+        struct Resource { value: i32; }
+        fun delete Resource() {
+            print("dtor");
+        }
+        fun gen(): Coro<i32> {
+            var r: uniq Resource = uniq Resource();
+            r.value = 42;
+            yield r.value;
+            yield r.value + 1;
+        }
+        fun main(): i32 {
+            var g = gen();
+            var a: i32 = g.resume();
+            g.resume();
+            g.resume();   // reach done -> inline cleanup of r
+            return a;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 42);
+        CHECK(result.stdout_output == "dtor\n");   // freed exactly once
+    }
+
+    TEST_CASE("Coroutine uniq promoted, early drop runs $$delete") {
+        // Drop the Coro before it reaches done: __coro_gen$$delete must free the
+        // still-live promoted uniq field.
+        const char* source = R"(
+        struct Resource { value: i32; }
+        fun delete Resource() {
+            print("freed");
+        }
+        fun gen(): Coro<i32> {
+            var r: uniq Resource = uniq Resource();
+            r.value = 99;
+            yield r.value;
+            yield r.value + 1;
+        }
+        fun main(): i32 {
+            var result: i32 = 0;
+            {
+                var g = gen();
+                result = g.resume();
+                // g leaves scope here without reaching done
+            }
+            return result;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 99);
+        CHECK(result.stdout_output == "freed\n");
+    }
+
 }  // TEST_SUITE("E2E C Backend")

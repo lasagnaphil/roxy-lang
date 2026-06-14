@@ -948,6 +948,13 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     type_env.register_named_type(struct_name, struct_type);
     coro_type->coro_info.generated_struct_type = struct_type;
 
+    // Make the synthesized state struct visible to the C backend, which drives
+    // typedefs / forward decls / dependency sorting / TYPEID defines off
+    // module->struct_types. collect_backend_types ran during IR building (before
+    // coroutine lowering), so this struct isn't in that list yet. The VM /
+    // bytecode path ignores struct_types, so this is safe for both pipelines.
+    module->struct_types.push_back(struct_type);
+
     Type* uniq_struct_type = types.uniq_type(struct_type);
     Type* ref_struct_type = types.ref_type(struct_type);
 

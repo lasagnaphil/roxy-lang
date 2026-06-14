@@ -80,6 +80,8 @@ It first finds every `Yield` (each block ends in a `Goto` to its resume block) a
 
 **Bytecode.** No new opcodes. All `Yield` instructions are lowered to field stores and returns before bytecode lowering; a `Yield` reaching lowering is an assertion failure. The generated functions use only standard opcodes (`New`, `GetField`, `SetField`, `EqI`, `Branch`, `Goto`, `Return`, …).
 
+**C backend.** Because lowering happens before either backend, coroutines also work through the AOT C backend with no dedicated emitter logic: `Coro<T>` emits as a pointer to the synthesized state struct, the four generated functions emit like any other, and deleting a `Coro<T>` runs the generated `__coro_<func>$$delete` destructor. See `docs/internals/c-backend.md` ("Coroutines").
+
 ## Design Decisions
 
 | Decision | Choice | Rationale |

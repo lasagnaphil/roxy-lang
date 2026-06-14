@@ -1,6 +1,8 @@
 # C Backend (AOT Compilation)
 
 > **Status:** Phases 1–4 fully implemented; Phase 5 partially implemented (function- and statement-level `#line` directives). Other Phase 5 items (DCE, Relooper, `switch` lowering, readable variable names) are deliberately not pursued — the C compiler's optimizer covers them and they don't affect debugger UX.
+>
+> **Language feature coverage:** primitives, structs (inheritance, methods, ctors/dtors, copy, nesting), enums, tagged unions, generics, traits/operators, strings, lists, maps, module globals, and **coroutines** are supported. Still unimplemented: **exceptions** (`IROp::Throw` + handler tables/unwinding) and **closures** (`IROp::Closure` / `CallIndirect` / `AssertHeap`) — the emitter `abort()`s on those ops.
 
 The C backend (`CEmitter`) translates Roxy's SSA IR into a `.cpp` file that any C++ compiler can build. The body is C-style (structs, gotos, typed `vN` locals); native bindings and the public header use C++ to interface directly with the embedder. It operates on the same `IRModule` the bytecode lowering uses, so all frontend work (type checking, method/operator resolution, monomorphization, struct layout) is already done.
 
@@ -160,6 +162,38 @@ struct Skill {
     };
 };
 ```
+
+### Coroutines
+
+Coroutines need no dedicated emitter support beyond type mapping. `coroutine_lower()`
+runs *before* the C backend and rewrites every `Coro<T>` function into ordinary
+functions — `init` (the original name, returns the coro), `__coro_<func>$$resume`,
+`__coro_<func>$$done`, and `__coro_<func>$$delete` — built entirely from ops the
+backend already handles (`New`, `GetField`, `SetField`, `EqI`, `Branch`, `Return`).
+`IROp::Yield` never reaches the emitter (the IR validator rejects any survivor).
+
+Two things make this work:
+
+- **`Coro<T>` is a pointer to its state struct.** `TypeKind::Coroutine` emits as
+  `__coro_<func>*` (`coro_info.generated_struct_type` + `*`), matching the
+  `uniq __coro_<func>` the init function allocates and the `ref __coro_<func>`
+  the resume/done/delete functions take. The synthesized state struct is appended
+  to `IRModule::struct_types` *in the lowering pass* (it's created after
+  `collect_backend_types` runs), so it gets a typedef, a dependency-sorted
+  definition, and a `TYPEID_` define like any other struct.
+- **Deleting a `Coro<T>` runs `__coro_<func>$$delete`.** `emit_typed_delete`
+  treats the coroutine's state struct as the destructor pointee, so promoted
+  `uniq`/noncopyable fields are cleaned up before `roxy_free` (the C analogue of
+  the VM's descriptor-driven coro cleanup).
+
+The lowering promotes locals that survive a yield into state-struct fields and
+stores into them with raw `SetField`, where the regular path would use
+`StructCopy` / `Nullify`. C++'s strict typing exposes two cases the emitter
+handles in `SetField`: a struct-value field assigned a struct rvalue (a pointer
+in the C backend) is dereferenced, and a `uniq`/`ref` pointer field assigned a
+null (`void*`) is cast to the field type. The generated `$$delete` destructor
+also returns a void-typed `ConstInt` sentinel, so a void-returning function emits
+`return;` and void constants emit nothing.
 
 ## Thread-Local Runtime Context
 
