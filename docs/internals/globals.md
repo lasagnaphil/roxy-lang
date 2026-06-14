@@ -18,8 +18,7 @@ fun bump() { counter = counter + 1; }       // read/write from any function
 > `__module_init` / `__module_shutdown` names, so only one module's globals are
 > initialized/torn down (slot offsets are re-based at link time, so there is no
 > memory corruption — just incomplete init); and `pub` global *sharing* across
-> modules is not implemented. The C backend's container teardown is also still
-> partial (see below).
+> modules is not implemented.
 
 ## Why this is a feature, not a field
 
@@ -95,9 +94,13 @@ The VM drives them around the module lifecycle:
   emits a **typed delete** — `Type__delete(p)` (the user/synthesized destructor,
   which chains to parents and walks owned fields) followed by `roxy_free(p)` for
   heap kinds — so `uniq` destructors run in AOT (globals *and* locals), closing a
-  pre-existing gap where C-backend `Delete` only `roxy_free`'d. *Still partial:*
-  `List`/`Map` element/recursive teardown in the C backend frees the header but
-  not noncopyable elements (a separate, broader C-backend gap).
+  pre-existing gap where C-backend `Delete` only `roxy_free`'d. Typed delete is
+  **recursive** (`emit_typed_delete` / `emit_delete_slot`): a noncopyable
+  `List`/`Map` iterates its elements/keys/values, recurses into each (uniq
+  pointers are loaded; inline value structs are cleaned in place), then frees the
+  buffers via `roxy_list_delete` / `roxy_map_delete` and the header via
+  `roxy_free` — the C analogue of the VM's descriptor-driven `delete_value`,
+  handling nesting (`List<List<uniq T>>`, `Map<_, uniq T>`, …).
 - **Linking:** `Compiler::link_modules` merges each module's globals into the
   merged module, re-basing slot offsets (and the matching `GlobalAddr` ops) so
   module ranges don't overlap; `global_slot_count` is the sum. (Single-module is
@@ -115,5 +118,5 @@ The VM drives them around the module lifecycle:
 | `include/roxy/vm/bytecode.hpp` | `GLOBAL_ADDR` (0xBE), `BCModule::global_slot_count` |
 | `src/roxy/vm/interpreter.cpp` | `GLOBAL_ADDR` handler + dispatch entry |
 | `include/roxy/vm/vm.hpp`, `src/roxy/vm/vm.cpp` | `RoxyVM::global_slots`; alloc + `__module_init` at load; `__module_shutdown` + free at destroy |
-| `include/roxy/compiler/c_emitter.{hpp,cpp}` | `emit_global_definitions` / `emit_global_symbol` / `find_global_by_offset`; `GlobalAddr` → `&g_<name>`; `uniq`/`ref`-of-struct pointer tracking; typed `Delete` (destructor + `roxy_free`); `main()` drives init/shutdown |
+| `include/roxy/compiler/c_emitter.{hpp,cpp}` | `emit_global_definitions` / `emit_global_symbol` / `find_global_by_offset`; `GlobalAddr` → `&g_<name>`; `uniq`/`ref`-of-struct pointer tracking; recursive typed `Delete` (`emit_typed_delete` / `emit_delete_slot`: destructors + container element/key/value teardown + buffer free); `main()` drives init/shutdown |
 | `tests/e2e/test_globals.cpp`, `tests/e2e/test_c_backend.cpp` | VM + C-backend E2E tests |

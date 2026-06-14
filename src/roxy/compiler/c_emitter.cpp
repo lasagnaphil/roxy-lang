@@ -254,6 +254,125 @@ void CEmitter::emit_global_definitions(const IRModule* module, String& out) {
     out.append("\n");
 }
 
+// Append an rx::String to the output buffer.
+static inline void ap(String& out, const String& s) {
+    out.append(StringView(s.data(), s.size()));
+}
+
+void CEmitter::emit_delete_slot(Type* elem, StringView slot_expr, String& out) {
+    if (!elem || !elem->noncopyable()) return;  // copyable element: nothing to clean
+    bool ptr_shaped = elem->kind == TypeKind::Uniq || elem->is_list()
+        || elem->is_map() || elem->is_coroutine();
+    if (ptr_shaped) {
+        // The slot holds an owning pointer (uniq/List/Map/Coro): load and recurse.
+        String ev = format("_de{}", m_delete_tmp++);
+        out.append("    void* "); ap(out, ev); out.append(" = *(void**)(");
+        out.append(slot_expr); out.append(");\n");
+        emit_typed_delete(elem, StringView(ev.data(), ev.size()), /*free_obj=*/true, out);
+    } else {
+        // Inline value struct: its data lives at the slot; recurse in place.
+        String cast;
+        cast.append("(");
+        emit_type(elem, cast);
+        cast.append("*)(");
+        cast.append(slot_expr);
+        cast.append(")");
+        emit_typed_delete(elem, StringView(cast.data(), cast.size()), /*free_obj=*/false, out);
+    }
+}
+
+void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj, String& out) {
+    if (!type) return;
+
+    // --- List<T>: iterate noncopyable elements, free buffer, free header. ---
+    if (type->is_list()) {
+        if (!type->noncopyable()) return;  // copyable list: never reached via Delete
+        Type* elem = type->list_info.element_type;
+        u32 n = m_delete_tmp++;
+        String h = format("_dl{}", n);
+        out.append("    { roxy_list_header* "); ap(out, h);
+        out.append(" = (roxy_list_header*)("); out.append(ptr_expr); out.append(");\n");
+        out.append("    if ("); ap(out, h); out.append(") {\n");
+        if (elem && elem->noncopyable()) {
+            String iv = format("_di{}", n);
+            String sv = format("_ds{}", n);
+            out.append("    for (uint32_t "); ap(out, iv); out.append(" = 0; ");
+            ap(out, iv); out.append(" < "); ap(out, h); out.append("->length; ");
+            ap(out, iv); out.append("++) {\n");
+            out.append("    uint32_t* "); ap(out, sv); out.append(" = "); ap(out, h);
+            out.append("->elements + (size_t)"); ap(out, iv); out.append(" * ");
+            ap(out, h); out.append("->element_slot_count;\n");
+            emit_delete_slot(elem, StringView(sv.data(), sv.size()), out);
+            out.append("    }\n");
+        }
+        out.append("    roxy_list_delete("); ap(out, h); out.append(");\n");
+        if (free_obj) { out.append("    roxy_free("); ap(out, h); out.append(");\n"); }
+        out.append("    } }\n");
+        return;
+    }
+
+    // --- Map<K, V>: iterate occupied buckets, free buffers, free header. ---
+    if (type->is_map()) {
+        if (!type->noncopyable()) return;
+        Type* kt = type->map_info.key_type;
+        Type* vt = type->map_info.value_type;
+        bool kc = kt && kt->noncopyable();
+        bool vc = vt && vt->noncopyable();
+        u32 n = m_delete_tmp++;
+        String h = format("_dm{}", n);
+        out.append("    { roxy_map_header* "); ap(out, h);
+        out.append(" = (roxy_map_header*)("); out.append(ptr_expr); out.append(");\n");
+        out.append("    if ("); ap(out, h); out.append(") {\n");
+        if (kc || vc) {
+            String iv = format("_di{}", n);
+            out.append("    if ("); ap(out, h); out.append("->capacity > 0 && ");
+            ap(out, h); out.append("->distances) {\n");
+            out.append("    for (uint32_t "); ap(out, iv); out.append(" = 0; ");
+            ap(out, iv); out.append(" < "); ap(out, h); out.append("->capacity; ");
+            ap(out, iv); out.append("++) {\n");
+            out.append("    if ("); ap(out, h); out.append("->distances["); ap(out, iv);
+            out.append("] == 0) continue;\n");
+            if (kc) {
+                String ks = format("_dk{}", n);
+                out.append("    uint32_t* "); ap(out, ks); out.append(" = "); ap(out, h);
+                out.append("->keys + (size_t)"); ap(out, iv); out.append(" * ");
+                ap(out, h); out.append("->key_slot_count;\n");
+                emit_delete_slot(kt, StringView(ks.data(), ks.size()), out);
+            }
+            if (vc) {
+                String vs = format("_dv{}", n);
+                out.append("    uint32_t* "); ap(out, vs); out.append(" = "); ap(out, h);
+                out.append("->values + (size_t)"); ap(out, iv); out.append(" * ");
+                ap(out, h); out.append("->value_slot_count;\n");
+                emit_delete_slot(vt, StringView(vs.data(), vs.size()), out);
+            }
+            out.append("    } }\n");  // close for + if(capacity)
+        }
+        out.append("    roxy_map_delete("); ap(out, h); out.append(");\n");
+        if (free_obj) { out.append("    roxy_free("); ap(out, h); out.append(");\n"); }
+        out.append("    } }\n");
+        return;
+    }
+
+    // --- struct (value, or the pointee of a uniq/ref): run its destructor. ---
+    Type* pointee = nullptr;
+    if (type->is_struct()) pointee = type;
+    else if (type->kind == TypeKind::Uniq || type->kind == TypeKind::Ref) pointee = type->base_type();
+    if (pointee && pointee->is_struct()) {
+        String dtor = format("{}$$delete", pointee->struct_info.name);
+        if (find_function(StringView(dtor.data(), dtor.size()))) {
+            out.append("    ");
+            emit_function_symbol(StringView(dtor.data(), dtor.size()), out);
+            out.append("((");
+            emit_type(pointee, out);
+            out.append("*)("); out.append(ptr_expr); out.append("));\n");
+        }
+    }
+    if (free_obj) {
+        out.append("    roxy_free("); out.append(ptr_expr); out.append(");\n");
+    }
+}
+
 // --- Enum typedefs ---
 
 void CEmitter::emit_enum_typedefs(const IRModule* module, String& out) {
@@ -1180,37 +1299,15 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             }
             Type* t = inst->type;
             // Heap-owning kinds get a roxy_free after their cleanup; an inline
-            // value struct (deleted via its address) does not.
+            // value struct (deleted via its address) does not. emit_typed_delete
+            // handles structs (run the destructor) and containers (iterate +
+            // recurse + free buffers) recursively — the C analogue of the VM's
+            // descriptor-driven delete_value.
             bool is_heap = t->kind == TypeKind::Uniq || t->is_list()
                 || t->is_map() || t->is_coroutine();
-            // Concrete struct pointee, for the destructor lookup.
-            Type* pointee = nullptr;
-            if (t->is_struct()) pointee = t;
-            else if (t->kind == TypeKind::Uniq || t->kind == TypeKind::Ref) pointee = t->base_type();
-            // Run the type's destructor (user or synthesized) if one was emitted.
-            // Child$$delete chains to its parent and walks owned fields, so a
-            // single call performs the full recursive cleanup; the roxy_free
-            // below frees the object itself exactly once.
-            if (pointee && pointee->is_struct()) {
-                StaticString<256> dtor_name;
-                format_to(dtor_name, "{}$$delete", pointee->struct_info.name);
-                StringView dtor_view(dtor_name.data(), dtor_name.size());
-                if (find_function(dtor_view)) {
-                    out.append("    ");
-                    emit_function_symbol(dtor_view, out);
-                    out.append("(");
-                    emit_value(inst->unary, out);
-                    out.append(");\n");
-                }
-            }
-            if (is_heap) {
-                // Note: List/Map element cleanup and recursive container
-                // teardown are not yet emitted here (pre-existing C-backend gap);
-                // this frees the object/header.
-                out.append("    roxy_free(");
-                emit_value(inst->unary, out);
-                out.append(");\n");
-            }
+            String ve;
+            emit_value(inst->unary, ve);
+            emit_typed_delete(t, StringView(ve.data(), ve.size()), is_heap, out);
             return;
         }
 

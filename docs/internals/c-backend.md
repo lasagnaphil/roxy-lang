@@ -142,6 +142,8 @@ v1 = load_ptr v0          →  int32_t v1 = *v0;
 nullify v0                →  memset(&v0_struct, 0, sizeof(v0_struct));   // or v0 = 0 for scalars
 ```
 
+`delete` is **recursive typed delete** (`emit_typed_delete` / `emit_delete_slot`), the C analogue of the VM's descriptor-driven `delete_value`: a struct runs its `Type__delete` (which chains to its parent and walks owned fields); a noncopyable `List`/`Map` iterates its elements/keys/values, recurses into each (uniq pointers are loaded from the slot; inline value structs are cleaned in place), then frees the backing buffers via `roxy_list_delete` / `roxy_map_delete` before `roxy_free`. Nested containers (`List<List<uniq T>>`, `Map<_, uniq T>`) are handled.
+
 Address-of (for out/inout) is handled by `StackAlloc` (`&v0_struct`) and `GetFieldAddr` — there is no dedicated `var_addr` op.
 
 ### Tagged Unions

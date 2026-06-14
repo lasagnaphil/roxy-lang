@@ -61,6 +61,20 @@ private:
     void emit_global_symbol(StringView name, String& out);
     const IRGlobal* find_global_by_offset(u32 slot_offset);
 
+    // Recursive typed delete (the C analogue of the VM's descriptor-driven
+    // delete_value). `ptr_expr` is a C expression for the object/struct pointer;
+    // `free_obj` controls the trailing roxy_free (true for heap kinds: uniq /
+    // List / Map / Coro; false for an inline value struct). Containers iterate
+    // their noncopyable elements/keys/values, recurse, then free their buffers
+    // (roxy_list_delete / roxy_map_delete) and finally the header.
+    void emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj, String& out);
+    // Clean up one container slot: `slot_expr` is a `uint32_t*` to the element /
+    // key / value at bucket i. Pointer-shaped elements (uniq/List/Map/Coro) load
+    // the pointer and recurse with free_obj=true; inline value structs recurse
+    // in place with free_obj=false.
+    void emit_delete_slot(Type* elem_type, StringView slot_expr, String& out);
+    u32 m_delete_tmp = 0;  // unique-temp counter for emit_typed_delete
+
     // Function emission
     void emit_function_prototype(const IRFunction* func, String& out);
     void emit_function(const IRFunction* func, String& out);
