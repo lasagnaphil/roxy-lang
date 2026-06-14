@@ -31,7 +31,9 @@
 - Generator-style stackless coroutines (`Coro<T>` with `yield`, `.resume()`, `.done()`)
 - Recursive types: self-referential and mutually recursive structs via `uniq` indirection (linked lists, trees, ASTs), with compile-time value-cycle detection and descriptor-driven recursive destruction
 - LSP server for IDE support (error-recovering parser, diagnostics, go-to-definition, completions, hover, find references, rename)
-- AOT compilation to C (SSA IR → C/C++ transpilation with a unified runtime; Phases 1–4 + Phase 5 partial)
+- Exception handling (`try`/`catch`/`throw`/`finally`, built-in `Exception` trait, handler tables)
+- First-class functions and closures (`fun(...) -> R` types, lambdas, copy/`[move]`/`self` captures, function references)
+- AOT compilation to C — **complete**: SSA IR → C/C++ transpilation with a unified runtime, covering **all** language features (incl. coroutines, exceptions, and closures). The interpreter is for development; the C backend compiles to native for shipping.
 
 **Planned:**
 - Full LSP semantic analysis (TypeCache/TypeEnv integration) and polish (signature help, code actions, workspace symbols)
@@ -380,5 +382,5 @@ fun main(args: List<string>) {
     - Aiming for faster performance than reference Lua but slower than Java / C#
     - In most cases, binding layer performance should be much more important than raw performance
 
-- In the future, there might be a "transpile to C" option for people who really need the "close-to-metal" performance
+- A "transpile to C" AOT backend is implemented for people who really need "close-to-metal" performance — it covers all language features and compiles to native code via any C++ compiler (see the C backend in [CLAUDE.md](../CLAUDE.md) and [internals/c-backend.md](internals/c-backend.md))
     - JITs are nice but they are too complex...

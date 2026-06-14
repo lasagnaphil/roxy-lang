@@ -417,7 +417,7 @@ Supported in both backends: the C backend dispatches `CallIndirect` through a pe
 
 ## Planned Components (Not Yet Implemented)
 
-- C backend Phase 5 — function-level + statement-level `#line` directives landed. Other Phase 5 items (DCE, Relooper, `switch` lowering, readable variable names) deliberately not pursued — the C compiler's optimizer covers them and they don't affect debugger UX. See `docs/internals/c-backend.md`.
+- C backend — **feature-complete** (every language feature compiles to C, incl. coroutines, exceptions, closures; keyword-collision escaping). The only unimplemented Phase 5 items are codegen-quality optimizations (DCE, Relooper, `switch` lowering, readable variable names), **deliberately not pursued** — the C compiler's optimizer covers them and they don't affect debugger UX; function- and statement-level `#line` directives are done. See `docs/internals/c-backend.md`.
 - LSP Phase 8: Full semantic analysis (TypeCache/TypeEnv integration)
 - LSP Phase 9: Polish (signature help, code actions, workspace symbols, semantic tokens)
 - Optimization future phases: global CSE / GVN, loop-invariant code motion, function inlining, tail-call optimization, escape analysis (see `docs/internals/optimization.md`)
