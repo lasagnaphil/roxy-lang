@@ -448,17 +448,105 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.stdout_output == "caught\n5\ndel\n");
     }
 
-    // On the *trap-firing* side of this feature: a method call on a `uniq`
-    // receiver makes the receiver freeable-by-no-one for the call's duration, so
-    // a reentrant free of it traps in object_free (ref_count != 0). That trap
-    // mechanism is already covered end-to-end by Findings 1 and 2 above (a live
-    // `ref` borrow blocks a delete); the two tests above confirm method calls
-    // create and release exactly such a borrow on both the normal and the
-    // exception path. A dedicated "free the receiver from inside its own method"
-    // test is intentionally omitted: it isn't cleanly constructible in safe Roxy
-    // today — a uniq *local* receiver can't be reached from inside the call, a
-    // module-global owner doesn't reliably initialize, and inout-`uniq`
-    // reassignment (`slot = nil` / `slot = uniq T(..)`) does not yet free the
-    // overwritten value (a separate pre-existing gap). So the reach-and-free
-    // path can't be expressed without depending on those unrelated holes.
+    // Mid-call receiver kill: the receiver `c` is also passed `inout` to the
+    // same method, which reassigns it (`slot = nil`) — freeing the object `self`
+    // points at. The call-site borrow holds a count on that object, so the free
+    // traps instead of leaving `self` dangling. (This is constructible only
+    // because inout-`uniq` reassignment now frees the overwritten value; see the
+    // dedicated reassignment tests below.) The control omits the reassignment,
+    // isolating it as the sole cause of the trap.
+    TEST_CASE("freeing a uniq receiver mid-method traps") {
+        const char* trap_src = R"(
+        struct Counter { value: i32; }
+        fun new Counter(v: i32) { self.value = v; }
+        fun delete Counter() {}
+
+        fun Counter.kill(slot: inout uniq Counter): i32 {
+            slot = nil;     // frees the old object (= the receiver) mid-call
+            return 0;
+        }
+
+        fun main(): i32 {
+            var c: uniq Counter = uniq Counter(5);
+            return c.kill(inout c);
+        }
+    )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, trap_src) != nullptr);  // compiles → false is a runtime trap
+        TestResult trap = run_and_capture(trap_src, "main");
+        CHECK(trap.success == false);  // delete traps: receiver has an active borrow
+
+        // Control: identical except `kill` does not reassign — succeeds, so the
+        // trap above comes from the mid-call free, not the call machinery.
+        const char* control_src = R"(
+        struct Counter { value: i32; }
+        fun new Counter(v: i32) { self.value = v; }
+        fun delete Counter() {}
+
+        fun Counter.kill(slot: inout uniq Counter): i32 {
+            return 0;
+        }
+
+        fun main(): i32 {
+            var c: uniq Counter = uniq Counter(5);
+            return c.kill(inout c);
+        }
+    )";
+        TestResult control = run_and_capture(control_src, "main");
+        CHECK(control.success == true);
+    }
+
+    // ── inout-`uniq` reassignment frees the overwritten value ──
+    // Reassigning an owning out/inout pointer must destroy the value it currently
+    // points at, or the overwritten object leaks (and the new RHS temp must be
+    // consumed, or it's double-owned). This mirrors `uniq`-field assignment.
+
+    // `slot = uniq T(..)`: the old object is freed, the new one stored, and the
+    // caller's variable owns exactly the new object (destroyed once at exit).
+    TEST_CASE("inout uniq reassignment frees the old value, no double-free") {
+        const char* source = R"(
+        struct Counter { value: i32; }
+        fun new Counter(v: i32) { self.value = v; }
+        fun delete Counter() { print("del"); }
+
+        fun replace(slot: inout uniq Counter) {
+            slot = uniq Counter(99);   // frees the old Counter(5), stores Counter(99)
+        }
+
+        fun main(): i32 {
+            var c: uniq Counter = uniq Counter(5);
+            replace(inout c);
+            return c.value;            // 99 — caller sees the new object
+            // c (Counter 99) destroyed once at scope exit
+        }
+    )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success == true);
+        CHECK(result.value == 99);
+        CHECK(result.stdout_output == "del\ndel\n");  // old freed on replace, new freed at exit
+    }
+
+    // `slot = nil`: the old object is freed and the slot nulled, so the caller's
+    // scope-exit delete is a no-op (no leak, no double-free).
+    TEST_CASE("inout uniq reassignment to nil frees the old value") {
+        const char* source = R"(
+        struct Counter { value: i32; }
+        fun new Counter(v: i32) { self.value = v; }
+        fun delete Counter() { print("del"); }
+
+        fun clear(slot: inout uniq Counter) {
+            slot = nil;     // frees the old Counter(5), stores null
+        }
+
+        fun main(): i32 {
+            var c: uniq Counter = uniq Counter(5);
+            clear(inout c);
+            return 0;
+            // c is nil now; scope-exit delete is a no-op
+        }
+    )";
+        TestResult result = run_and_capture(source, "main");
+        CHECK(result.success == true);
+        CHECK(result.stdout_output == "del\n");  // freed exactly once, by clear()
+    }
 }

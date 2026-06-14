@@ -233,10 +233,10 @@ env's runtime `type_id` on delete (`RoxyVM::closure_env_dtors`,
   *(Covered today by the `ref`-param count on the borrowed argument, per Phase 1.)*
 - **Mid-call receiver kill** (`heap_obj.method()` whose body reaches and frees the
   object): the call site counts the heap receiver for the call's duration →
-  the free sees count 1 → **traps**. *(**Implemented** for a `uniq` *identifier*
-  receiver — §13. Not constructible in safe Roxy yet for an independent end-to-end
-  test, but the count is balanced on the normal and exception paths and the trap
-  is the same `object_free` choke point Findings 1–2 cover.)*
+  the free sees count 1 → **traps**. *(**Implemented + tested** for a `uniq`
+  *identifier* receiver — §13. Exercised end-to-end by passing the receiver
+  `inout` to its own method and reassigning it (`slot = nil`): the now-correct
+  inout free of the borrowed object traps.)*
 
 ## 8. Interactions
 
@@ -404,10 +404,15 @@ direction:
   (`a.b.method()`) or a heap-returning temp (`make().method()`). The receiver
   mechanism above generalizes to these, but each needs its own gate. Binding /
   returning / storing `self` as a first-class `ref` (the non-capture promotions)
-  are also not yet wired. *Related pre-existing gaps found while testing this:*
-  inout-`uniq` reassignment (`slot = nil` / `slot = uniq T(..)`) doesn't free the
-  overwritten value, and a module-global `uniq` initializer doesn't run its
-  constructor — both orthogonal to this work but worth a separate fix.
+  are also not yet wired.
+- *Done (separate fix):* **inout/out owning-pointer reassignment frees the
+  overwritten value.** `slot = uniq T(..)` / `slot = nil` through an `inout`/`out`
+  `uniq`/`List`/`Map`/`Coro` pointer now loads and Deletes the old value before
+  the store, and consumes the RHS temp — previously it leaked the old object and
+  double-owned the new one (the same class as the index-set fix, §9). This is
+  also what makes the mid-call receiver kill testable (§8). *Still open, also
+  found while testing and left for a separate fix:* a module-global `uniq`
+  initializer doesn't run its constructor.
 
 **Phase 3 — containers & coroutines. Not started.**
 - Count `ref` elements in `List`/`Map` cleanup; count `ref` parameters into
@@ -434,6 +439,7 @@ Implemented (Phase 1 + the done parts of Phase 2):
 | `include/roxy/compiler/ssa_ir.hpp` | `IRCleanupKind`, `IRCleanupInfo.whole_function_scope`; `IRInst.no_copy_prop` (pinned copy) + `IRCleanupInfo.call_borrow` (receiver-borrow start-narrowing) |
 | `src/roxy/compiler/ir_optimize.cpp` | copy propagation skips `no_copy_prop` copies |
 | `src/roxy/compiler/ir_builder.{hpp,cpp}` (receiver counting) | `emit_pinned_copy`; `gen_call_member` emits the `uniq`-receiver borrow (PinnedCopy → RefInc → Call → RefDec → Nullify); deferred `m_call_borrow_cleanups`, flushed after owned-local records in `end_function_body` |
+| `src/roxy/compiler/ir_builder.cpp` (inout reassign) | `gen_assign_local` pointer-param branch destroys the old value + consumes the RHS temp before storing through an `inout`/`out` owning pointer |
 | `include/roxy/compiler/lowering.{hpp,cpp}` (receiver counting) | `m_ref_inc_pcs`; `call_borrow` scope_start narrowing to the RefInc PC |
 | `src/roxy/compiler/ir_builder.{hpp,cpp}` | `OwnedKind::RefBorrow`; ref-local inc/dec + reassign + return hand-off + caller-adopt convention; `[ref self]` capture RefInc + env-field RefDec; per-env synthesized destructors; call-result temp tracking; transitive-`[move]` field nullify; `gen_assign_index` cleanup fix |
 | `src/roxy/compiler/lowering.cpp` | RefDec `BCCleanupRecord` + whole-function-scope param records + liveness pin; `Closure` delete desc; `BCTypeInfo.dtor_func_idx` |

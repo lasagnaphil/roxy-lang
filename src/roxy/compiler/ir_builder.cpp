@@ -4104,7 +4104,36 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
         // their slots when stored through an out/inout pointer.
         u32 slot_count = get_type_slot_count(type);
         if (slot_count == 0) slot_count = 1;
-        return emit_store_ptr(ptr, value, slot_count, type);
+
+        // Reassigning an owning out/inout pointer must free the value it
+        // currently points at, or the overwritten object leaks — the same
+        // old-value destroy gen_assign_field does for `uniq` fields. Pointer-
+        // valued owners (uniq/list/map/coro) hold the owned pointer in the
+        // slot, so load it and emit a typed Delete; DEL_OBJ on null is a safe
+        // no-op, so a zero-initialized (uninitialized `out`) slot is harmless.
+        // Value-struct inout reassignment is a separate, rarer path, left as-is.
+        if (type && (type->kind == TypeKind::Uniq || type->is_list()
+                     || type->is_map() || type->is_coroutine())) {
+            ValueId old = emit_load_ptr(ptr, slot_count, type);
+            IRInst* del = emit_inst(IROp::Delete, type);
+            if (del) del->unary = old;
+        }
+
+        ValueId result = emit_store_ptr(ptr, value, slot_count, type);
+
+        // Consume the RHS temporary so it isn't double-owned (stored through the
+        // pointer AND deleted at scope exit), and move-from an identifier RHS.
+        // Mirrors gen_assign_field.
+        if (type && type->noncopyable()) {
+            consume_temp_noncopyable(value);
+            if (assign_expr.value->kind == AstKind::ExprIdentifier) {
+                Type* value_type = assign_expr.value->resolved_type;
+                if (value_type && value_type->noncopyable()) {
+                    mark_moved_from(assign_expr.value->identifier.name);
+                }
+            }
+        }
+        return result;
     }
 
     // Auto-destroy old owned value before reassignment
