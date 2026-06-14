@@ -2,7 +2,7 @@
 
 > **Status:** Phases 1–4 fully implemented; Phase 5 partially implemented (function- and statement-level `#line` directives). Other Phase 5 items (DCE, Relooper, `switch` lowering, readable variable names) are deliberately not pursued — the C compiler's optimizer covers them and they don't affect debugger UX.
 >
-> **Language feature coverage:** primitives, structs (inheritance, methods, ctors/dtors, copy, nesting), enums, tagged unions, generics, traits/operators, strings, lists, maps, module globals, and **coroutines** are supported. Still unimplemented: **exceptions** (`IROp::Throw` + handler tables/unwinding) and **closures** (`IROp::Closure` / `CallIndirect` / `AssertHeap`) — the emitter `abort()`s on those ops.
+> **Language feature coverage:** primitives, structs (inheritance, methods, ctors/dtors, copy, nesting), enums, tagged unions, generics, traits/operators, strings, lists, maps, module globals, **coroutines**, and **exceptions** are supported. Still unimplemented: **closures** (`IROp::Closure` / `CallIndirect` / `AssertHeap`) — the emitter `abort()`s on those ops.
 
 The C backend (`CEmitter`) translates Roxy's SSA IR into a `.cpp` file that any C++ compiler can build. The body is C-style (structs, gotos, typed `vN` locals); native bindings and the public header use C++ to interface directly with the embedder. It operates on the same `IRModule` the bytecode lowering uses, so all frontend work (type checking, method/operator resolution, monomorphization, struct layout) is already done.
 
@@ -194,6 +194,44 @@ in the C backend) is dereferenced, and a `uniq`/`ref` pointer field assigned a
 null (`void*`) is cast to the field type. The generated `$$delete` destructor
 also returns a void-typed `ConstInt` sentinel, so a void-returning function emits
 `return;` and void constants emit nothing.
+
+### Exceptions
+
+The VM resolves exceptions with a runtime handler table + an unwinding loop that
+runs PC-range-keyed cleanup. The C backend has labels + gotos, not PC ranges, so
+it uses a **checked-return** model instead (no setjmp/longjmp, no C++ EH):
+
+- **Pending state.** A thread-local in-flight exception lives in `roxy_rt`
+  (`roxy_set_pending` / `roxy_exception_pending` / `roxy_exception_type_id` /
+  `roxy_exception_take`). `throw` stores the heap exception object and jumps to a
+  routing label; after every `Call` / `CallExternal` the emitter writes
+  `if (roxy_exception_pending()) goto …`. `ExceptionRef` (catch-all) emits as
+  `void*`; `roxy_exception_message` is a stub (matches the VM, untested).
+- **Routing.** Each `IRExceptionHandler` set sharing a try entry becomes one
+  `__dispatch_<id>` label. A throw / pending-after-call in block *B* routes to the
+  innermost try whose `try_body_blocks` contains *B*, else to `__unwind`. The
+  dispatch runs the try-body cleanup, then a `roxy_exception_type_id()` if/else
+  chain: a match assigns the caught object to the catch block's exception param
+  (`(T*)roxy_exception_take()`) and `goto`s it; the catch-all / `finally.catch`
+  matches unconditionally (last); no match falls to the next-outer dispatch or
+  `__unwind`. `finally` needs no special logic — the IR already duplicates it into
+  the normal and catch exits, and the `finally.catch` block runs it then
+  re-throws. Unhandled exceptions out of `main_entry` print and exit nonzero.
+- **Cleanup.** Per-frame cleanup reuses `emit_typed_delete`, null-guarded
+  (`if (v) { … v = 0; }`) and LIFO. A dispatch cleans owned locals created inside
+  its try body; `__unwind` cleans the whole frame. Correctness rests on every
+  cleanup-tracked owned-local pointer being **zero-initialized** at declaration,
+  **nulled after** a normal scope-exit `Delete`, and nulled on move — so the guard
+  skips not-yet-created, already-freed, and moved values (matching the VM's
+  register-nulling + scope-narrowing at block granularity). Cross-frame unwinding
+  falls out naturally: a callee's `__unwind` cleans its frame and returns, then
+  the caller's post-call check propagates.
+- **Move-into-call ordering.** A `nullify V` consumed by a later call is emitted
+  *after* that call reads `V` (the VM treats `nullify` as a scope marker, not a
+  runtime zero) but *before* the post-call exception check, so a moved argument is
+  owned by the callee and skipped by the caller's unwinding cleanup.
+
+User-`native` functions are assumed not to throw (no post-`CallNative` check).
 
 ## Thread-Local Runtime Context
 

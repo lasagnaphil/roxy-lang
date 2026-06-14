@@ -43,6 +43,38 @@ roxy_ctx* roxy_get_ctx(void) {
     return tls_current_ctx;
 }
 
+// ===== Exceptions (AOT checked-return model) =====
+//
+// Thread-local in-flight exception for AOT-generated code. Transient: set by
+// `throw`, cleared when a handler takes it. VM mode does not use these.
+static thread_local void* tls_pending_exc = nullptr;
+static thread_local uint32_t tls_pending_type_id = 0;
+
+void roxy_set_pending(void* exc) {
+    tls_pending_exc = exc;
+    tls_pending_type_id = exc ? roxy_get_header(exc)->type_id : 0;
+}
+
+int roxy_exception_pending(void) {
+    return tls_pending_exc != nullptr;
+}
+
+uint32_t roxy_exception_type_id(void) {
+    return tls_pending_type_id;
+}
+
+void* roxy_exception_take(void) {
+    void* e = tls_pending_exc;
+    tls_pending_exc = nullptr;
+    tls_pending_type_id = 0;
+    return e;
+}
+
+void* roxy_exception_message(void* exc) {
+    (void)exc;
+    return roxy_string_from_literal("exception", 9);
+}
+
 // ===== Random generation for weak references =====
 
 static uint64_t roxy_random_generation() {

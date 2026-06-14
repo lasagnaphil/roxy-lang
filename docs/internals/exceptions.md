@@ -90,6 +90,13 @@ Handler/finally metadata is recorded on `IRFunction` as `IRExceptionHandler` (tr
 4. If not: clean up the current frame (ref-dec parameters), pop it, and continue unwinding in the caller.
 5. If the call stack empties: set `vm->error = "Unhandled exception: ..."` and return false.
 
+**C backend.** The AOT path can't use the VM's runtime PC-range handler table, so
+it lowers the same IR (handlers, `finally` duplication, `cleanup_info`) with a
+**checked-return** model: a thread-local in-flight exception, per-try
+`__dispatch_<id>` labels reached by `throw` / a pending-after-call check, and
+null-guarded per-frame cleanup reusing `emit_typed_delete`. See
+`docs/internals/c-backend.md` ("Exceptions").
+
 ## RPO Block Reordering
 
 Catch (handler) blocks are not reachable through normal control flow — they're entered only via exception dispatch. The RPO reordering pass therefore seeds its DFS with the handler block IDs in addition to the entry block, so handler blocks are preserved and correctly ordered; the handler block IDs in the metadata are remapped after reordering.

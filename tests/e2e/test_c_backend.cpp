@@ -2114,4 +2114,477 @@ TEST_SUITE("E2E C Backend") {
         CHECK(result.stdout_output == "freed\n");
     }
 
+    // ── Exceptions ──
+    // throw/catch/finally lower to a thread-local in-flight exception + checked-
+    // return dispatch; per-frame cleanup runs as null-guarded Delete on the
+    // unwind path. These mirror the runtime-behavior cases in test_exceptions.cpp.
+
+    TEST_CASE("Exception basic throw/catch") {
+        const char* source = R"(
+        struct MyError { code: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+        fun risky(): i32 { throw MyError { code = 42 }; return 0; }
+        fun main(): i32 {
+            try { risky(); } catch (e: MyError) { return e.code; }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 42);
+    }
+
+    TEST_CASE("Exception catch-all") {
+        const char* source = R"(
+        struct SomeError { val: i32; }
+        fun SomeError.message(): string for Exception { return "some error"; }
+        fun risky(): i32 { throw SomeError { val = 99 }; return 0; }
+        fun main(): i32 {
+            try { risky(); } catch (e) { return 1; }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 1);
+    }
+
+    TEST_CASE("Exception multiple catch clauses") {
+        const char* source = R"(
+        struct ErrorA { code: i32; }
+        fun ErrorA.message(): string for Exception { return "a"; }
+        struct ErrorB { code: i32; }
+        fun ErrorB.message(): string for Exception { return "b"; }
+        fun throw_b(): i32 { throw ErrorB { code = 20 }; return 0; }
+        fun main(): i32 {
+            try { throw_b(); }
+            catch (e: ErrorA) { return e.code; }
+            catch (e: ErrorB) { return e.code; }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 20);
+    }
+
+    TEST_CASE("Exception typed catch mismatch falls through to catch-all") {
+        const char* source = R"(
+        struct ErrorA { x: i32; }
+        fun ErrorA.message(): string for Exception { return "a"; }
+        struct ErrorB { x: i32; }
+        fun ErrorB.message(): string for Exception { return "b"; }
+        fun throw_b(): i32 { throw ErrorB { x = 5 }; return 0; }
+        fun main(): i32 {
+            try { throw_b(); }
+            catch (e: ErrorA) { return 1; }
+            catch (e) { return 99; }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 99);
+    }
+
+    TEST_CASE("Exception finally on normal exit") {
+        const char* source = R"(
+        struct MyError { x: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+        fun main(): i32 {
+            var result: i32 = 0;
+            try { result = 10; }
+            catch (e: MyError) { result = -1; }
+            finally { result = result + 1; }
+            return result;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 11);
+    }
+
+    TEST_CASE("Exception finally on exception path") {
+        const char* source = R"(
+        struct MyError { x: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+        fun thrower(): i32 { throw MyError { x = 5 }; return 0; }
+        fun main(): i32 {
+            var result: i32 = 0;
+            try { thrower(); result = 10; }
+            catch (e: MyError) { result = e.x; }
+            finally { result = result + 100; }
+            return result;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 105);
+    }
+
+    TEST_CASE("Exception try without catch (finally only)") {
+        const char* source = R"(
+        fun main(): i32 {
+            var result: i32 = 0;
+            try { result = 42; } finally { result = result + 1; }
+            return result;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 43);
+    }
+
+    TEST_CASE("Exception stack unwinding through multiple frames") {
+        const char* source = R"(
+        struct DeepError { level: i32; }
+        fun DeepError.message(): string for Exception { return "deep"; }
+        fun level3(): i32 { throw DeepError { level = 3 }; return 0; }
+        fun level2(): i32 { return level3(); }
+        fun level1(): i32 { return level2(); }
+        fun main(): i32 {
+            try { return level1(); } catch (e: DeepError) { return e.level; }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 3);
+    }
+
+    TEST_CASE("Exception nested try/catch") {
+        const char* source = R"(
+        struct InnerError { x: i32; }
+        fun InnerError.message(): string for Exception { return "inner"; }
+        struct OuterError { x: i32; }
+        fun OuterError.message(): string for Exception { return "outer"; }
+        fun throw_inner(): i32 { throw InnerError { x = 10 }; return 0; }
+        fun main(): i32 {
+            try {
+                try { throw_inner(); } catch (e: InnerError) { return e.x; }
+            } catch (e: OuterError) { return -1; }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 10);
+    }
+
+    TEST_CASE("Exception unhandled exits nonzero") {
+        const char* source = R"(
+        struct FatalError { code: i32; }
+        fun FatalError.message(): string for Exception { return "fatal"; }
+        fun main(): i32 { throw FatalError { code = 1 }; return 0; }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.exit_code != 0);
+    }
+
+    TEST_CASE("Exception fields accessible in catch") {
+        const char* source = R"(
+        struct ValueError { code: i32; extra: i32; }
+        fun ValueError.message(): string for Exception { return "value error"; }
+        fun fail(): i32 { throw ValueError { code = 7, extra = 13 }; return 0; }
+        fun main(): i32 {
+            try { fail(); } catch (e: ValueError) { return e.code + e.extra; }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 20);
+    }
+
+    TEST_CASE("Exception normal flow no exception thrown") {
+        const char* source = R"(
+        struct MyError { x: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+        fun safe(): i32 { return 42; }
+        fun main(): i32 {
+            try { var x: i32 = safe(); return x; } catch (e: MyError) { return -1; }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 42);
+    }
+
+    TEST_CASE("Exception safety: throw cleans up current scope uniq") {
+        const char* source = R"(
+        struct Resource { id: i32; }
+        fun delete Resource() { print("~Resource"); }
+        struct MyError { code: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+        fun main(): i32 {
+            try {
+                var r: uniq Resource = uniq Resource();
+                r.id = 1;
+                throw MyError { code = 42 };
+            } catch (e: MyError) {
+                print("caught");
+                return e.code;
+            }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 42);
+        CHECK(result.stdout_output == "~Resource\ncaught\n");
+    }
+
+    TEST_CASE("Exception safety: cross-frame unwinding cleanup") {
+        const char* source = R"(
+        struct Resource { id: i32; }
+        fun delete Resource() { print("~Resource"); }
+        struct MyError { code: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+        fun thrower() { throw MyError { code = 7 }; }
+        fun middle() {
+            var r: uniq Resource = uniq Resource();
+            r.id = 2;
+            thrower();
+        }
+        fun main(): i32 {
+            try { middle(); return -1; }
+            catch (e: MyError) { print("caught"); return e.code; }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 7);
+        CHECK(result.stdout_output == "~Resource\ncaught\n");
+    }
+
+    TEST_CASE("Exception safety: LIFO cleanup order") {
+        const char* source = R"(
+        struct A { val: i32; }
+        fun delete A() { print("~A"); }
+        struct B { val: i32; }
+        fun delete B() { print("~B"); }
+        struct MyError { code: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+        fun risky() { throw MyError { code = 1 }; }
+        fun main(): i32 {
+            try {
+                var a: uniq A = uniq A();
+                var b: uniq B = uniq B();
+                risky();
+                return -1;
+            } catch (e: MyError) { print("caught"); return e.code; }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 1);
+        CHECK(result.stdout_output == "~B\n~A\ncaught\n");
+    }
+
+    TEST_CASE("Exception safety: nested try/catch cleanup") {
+        const char* source = R"(
+        struct Outer { val: i32; }
+        fun delete Outer() { print("~Outer"); }
+        struct Inner { val: i32; }
+        fun delete Inner() { print("~Inner"); }
+        struct MyError { code: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+        fun risky() { throw MyError { code = 5 }; }
+        fun work() {
+            var outer: uniq Outer = uniq Outer();
+            try {
+                var inner: uniq Inner = uniq Inner();
+                risky();
+            } catch (e: MyError) { print("inner caught"); }
+        }
+        fun main(): i32 {
+            work();
+            print("done");
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 0);
+        CHECK(result.stdout_output == "~Inner\ninner caught\n~Outer\ndone\n");
+    }
+
+    TEST_CASE("Exception safety: value struct destructor during unwinding") {
+        const char* source = R"(
+        struct Guard { name: i32; }
+        fun delete Guard() { print("~Guard"); }
+        struct MyError { code: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+        fun risky() { throw MyError { code = 3 }; }
+        fun guarded() {
+            var g: Guard = Guard { name = 1 };
+            risky();
+        }
+        fun main(): i32 {
+            try { guarded(); return -1; }
+            catch (e: MyError) { print("caught"); return e.code; }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 3);
+        CHECK(result.stdout_output == "~Guard\ncaught\n");
+    }
+
+    TEST_CASE("Exception safety: already-moved uniq skipped during cleanup") {
+        const char* source = R"(
+        struct Resource { id: i32; }
+        fun delete Resource() { print("~Resource"); }
+        struct MyError { code: i32; }
+        fun MyError.message(): string for Exception { return "error"; }
+        fun consume(r: uniq Resource): i32 { return r.id; }
+        fun main(): i32 {
+            try {
+                var r: uniq Resource = uniq Resource();
+                r.id = 42;
+                var val: i32 = consume(r);
+                throw MyError { code = val };
+            } catch (e: MyError) { print("caught"); return e.code; }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 42);
+        // Resource freed once (by consume), not double-freed by exception cleanup.
+        CHECK(result.stdout_output == "~Resource\ncaught\n");
+    }
+
+    TEST_CASE("Exception cleanup: List<uniq T> elements destroyed on unwind") {
+        const char* source = R"(
+        struct Widget { id: i32; }
+        fun delete Widget() { print(f"del:{self.id}"); }
+        struct Boom { code: i32; }
+        fun Boom.message(): string for Exception { return "boom"; }
+        fun explode() { throw Boom { code = 1 }; }
+        fun main(): i32 {
+            try {
+                var items: List<uniq Widget> = List<uniq Widget>();
+                items.push(uniq Widget { id = 10 });
+                items.push(uniq Widget { id = 20 });
+                items.push(uniq Widget { id = 30 });
+                explode();
+                return -1;
+            } catch (e: Boom) { return e.code; }
+            return -2;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 1);
+        CHECK(result.stdout_output.find("del:10") != String::npos);
+        CHECK(result.stdout_output.find("del:20") != String::npos);
+        CHECK(result.stdout_output.find("del:30") != String::npos);
+    }
+
+    TEST_CASE("Exception cleanup: Map<string, uniq T> values destroyed on unwind") {
+        const char* source = R"(
+        struct Resource { value: i32; }
+        fun delete Resource() { print(f"free:{self.value}"); }
+        struct Fail { x: i32; }
+        fun Fail.message(): string for Exception { return "fail"; }
+        fun main(): i32 {
+            try {
+                var m: Map<string, uniq Resource> = Map<string, uniq Resource>();
+                m.insert("a", uniq Resource { value = 100 });
+                m.insert("b", uniq Resource { value = 200 });
+                throw Fail { x = 42 };
+                return -1;
+            } catch (e: Fail) { return e.x; }
+            return -2;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 42);
+        CHECK(result.stdout_output.find("free:100") != String::npos);
+        CHECK(result.stdout_output.find("free:200") != String::npos);
+    }
+
+    TEST_CASE("Exception cleanup: temporary uniq destroyed on unwind") {
+        const char* source = R"(
+        struct Widget { id: i32; }
+        fun delete Widget() { print(f"del:{self.id}"); }
+        struct Boom { code: i32; }
+        fun Boom.message(): string for Exception { return "boom"; }
+        fun consume(w: uniq Widget): i32 { throw Boom { code = 1 }; return 0; }
+        fun main(): i32 {
+            try { consume(uniq Widget { id = 99 }); return -1; }
+            catch (e: Boom) { return e.code; }
+            return -2;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 1);
+        CHECK(result.stdout_output.find("del:99") != String::npos);
+    }
+
+    TEST_CASE("Exception: try/catch around while loop catches inner throw") {
+        const char* source = R"(
+        struct Err { code: i32; }
+        fun Err.message(): string for Exception { return "boom"; }
+        fun deep() { throw Err { code = 1 }; }
+        fun main(): i32 {
+            try {
+                var i: i32 = 0;
+                while (i < 3) { deep(); i = i + 1; }
+            } catch (e: Err) { return 42; }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 42);
+    }
+
+    TEST_CASE("Exception: try/catch around for loop catches inner throw") {
+        const char* source = R"(
+        struct Err { code: i32; }
+        fun Err.message(): string for Exception { return "boom"; }
+        fun deep() { throw Err { code = 1 }; }
+        fun main(): i32 {
+            try {
+                for (var i: i32 = 0; i < 3; i = i + 1) { deep(); }
+            } catch (e: Err) { return 42; }
+            return 0;
+        }
+    )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 42);
+    }
+
 }  // TEST_SUITE("E2E C Backend")

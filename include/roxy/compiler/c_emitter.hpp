@@ -167,6 +167,41 @@ private:
     // `emit_instruction` writes a fresh `#line` directive whenever the
     // current instruction's `source_line` differs (and is non-zero).
     u32 m_last_emitted_source_line = 0;
+
+    // --- Exception handling (checked-return model) ---
+    //
+    // A "try group" bundles all `IRExceptionHandler`s that share a try entry
+    // (the typed catches plus the optional `finally.catch` re-throw landing pad).
+    // Each group emits one `__dispatch_<id>` label: it runs the try-body cleanup,
+    // then a type_id if/else chain routing to a matching catch block, the
+    // catch-all/`finally.catch` block, or the next-outer dispatch / `__unwind`.
+    struct TryGroup {
+        BlockId try_entry;                  // shared try entry block
+        tsl::robin_set<u32> body_blocks;    // try_body_blocks as a membership set
+        Vector<u32> handler_indices;        // indices into func->exception_handlers, in order
+        u32 outer_group = UINT32_MAX;       // innermost enclosing group, or none
+    };
+
+    bool m_module_uses_exceptions = false;  // any function throws / has handlers
+    Vector<TryGroup> m_try_groups;          // per-function try groups
+    tsl::robin_map<u32, u32> m_block_to_group;  // block id -> innermost group index
+    tsl::robin_set<u32> m_cleanup_values;   // cleanup_info value ids (zero-init + null-after-delete)
+    bool m_func_needs_unwind = false;       // emit a `__unwind` label for this function
+    u32 m_cur_block_id = 0;                 // block currently being emitted (for throw/call routing)
+
+    bool module_uses_exceptions(const IRModule* module);
+    void compute_exception_routing(const IRFunction* func);
+    // Emit the goto that routes a throw / pending-after-call in `block_id` to its
+    // innermost enclosing dispatch label, or to `__unwind`.
+    void emit_exception_route(u32 block_id, String& out);
+    // Emit null-guarded, LIFO cleanup for owned locals / borrows. `body_group >= 0`
+    // restricts to records created inside that try group's body (dispatch path);
+    // `body_group < 0` fires all records (unwind path).
+    void emit_cleanup_records(const IRFunction* func, i32 body_group, String& out);
+    // Emit the dispatch labels (one per try group) and the `__unwind` label.
+    void emit_exception_labels(const IRFunction* func, String& out);
+    // Emit the `return …;` an unwinding function uses (value ignored by callers).
+    void emit_unwind_return(const IRFunction* func, String& out);
 };
 
 } // namespace rx

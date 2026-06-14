@@ -59,6 +59,10 @@ void CEmitter::emit_type(Type* type, String& out) {
             emit_type(type->coro_info.generated_struct_type, out);
             out.append("*");
             break;
+        case TypeKind::ExceptionRef:
+            // Opaque catch-all handle — a pointer to the heap exception object.
+            out.append("void*");
+            break;
         case TypeKind::Nil:
             out.append("void*");
             break;
@@ -169,6 +173,12 @@ void CEmitter::collect_value_types(const IRFunction* func) {
         const IRBlock* block = func->blocks[b];
         for (u32 p = 0; p < block->params.size(); p++) {
             m_value_types[block->params[p].value.id] = block->params[p].type;
+            // A `ref T` / `uniq T` block param (e.g. a catch clause's exception
+            // parameter) is a C pointer, so field access on it uses `->`.
+            // Struct-typed block params stay values (declared `Struct vN;`).
+            if (block->params[p].type && block->params[p].type->is_reference()) {
+                m_pointer_values.insert(block->params[p].value.id);
+            }
         }
         for (u32 i = 0; i < block->instructions.size(); i++) {
             const IRInst* inst = block->instructions[i];
@@ -963,6 +973,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 emit_value(inst->call.args[i], out);
             }
             out.append(");\n");
+            // The post-call exception check is emitted by emit_block (after any
+            // deferred move-nullify) so unwinding skips just-moved arguments.
             return;
         }
         case IROp::CallExternal: {
@@ -980,6 +992,7 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 emit_value(inst->call_external.args[i], out);
             }
             out.append(");\n");
+            // Post-call exception check emitted by emit_block (see Call).
             return;
         }
 
@@ -1346,6 +1359,11 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             String ve;
             emit_value(inst->unary, ve);
             emit_typed_delete(t, StringView(ve.data(), ve.size()), is_heap, out);
+            // Null the local after a normal scope-exit Delete so a later throw's
+            // exception-path null-guard skips this already-freed owned local.
+            if (m_cleanup_values.count(inst->unary.id)) {
+                out.append("    "); out.append(ve); out.append(" = 0;\n");
+            }
             return;
         }
 
@@ -1390,8 +1408,18 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             // the IR validator rejects any survivor. So this is never reached.
             return;
 
+        case IROp::Throw: {
+            // Store the exception as pending, then route to the innermost
+            // enclosing try's dispatch label (or __unwind to propagate out).
+            out.append("    roxy_set_pending(");
+            emit_value(inst->unary, out);
+            out.append(");\n    ");
+            emit_exception_route(m_cur_block_id, out);
+            out.append("\n");
+            return;
+        }
+
         // --- Still unsupported (Phase 4+) ---
-        case IROp::Throw:
         case IROp::Closure:
         case IROp::CallIndirect:
         case IROp::AssertHeap: {
@@ -1494,6 +1522,10 @@ void CEmitter::emit_terminator(const IRBlock* block, const IRFunction* func, Str
 // --- Block emission ---
 
 void CEmitter::emit_block(const IRBlock* block, const IRFunction* func, String& out) {
+    // Track the current block so Throw / post-call exception checks can route to
+    // the innermost enclosing try's dispatch label (or __unwind).
+    m_cur_block_id = block->id.id;
+
     // Emit label (semicolon after label required for empty blocks or when next is a declaration)
     char label_buf[32];
     format_to(label_buf, sizeof(label_buf), "block{}:;\n", block->id.id);
@@ -1508,9 +1540,60 @@ void CEmitter::emit_block(const IRBlock* block, const IRFunction* func, String& 
         out.append(buf);
     }
 
+    // Move-into-call nullify ordering: a `nullify V` whose value is consumed by a
+    // later call must run AFTER the call reads V (the VM treats nullify as a
+    // cleanup-scope marker, not a runtime zero — emitting `V = 0` at the nullify's
+    // IR position would pass null to the consuming call). We also place it BEFORE
+    // the post-call exception check so unwinding cleanup skips the just-moved value.
+    auto uses_as_arg = [](const IRInst* in, u32 vid) -> bool {
+        if (in->op == IROp::Call || in->op == IROp::CallNative) {
+            for (u32 a = 0; a < in->call.args.size(); a++)
+                if (in->call.args[a].id == vid) return true;
+        } else if (in->op == IROp::CallExternal) {
+            for (u32 a = 0; a < in->call_external.args.size(); a++)
+                if (in->call_external.args[a].id == vid) return true;
+        }
+        return false;
+    };
+    tsl::robin_set<u32> deferred_nullify_idx;          // nullify insts handled after a call
+    tsl::robin_map<u32, Vector<ValueId>> flush_after;  // call inst idx -> values to null
+    for (u32 i = 0; i < block->instructions.size(); i++) {
+        if (block->instructions[i]->op != IROp::Nullify) continue;
+        u32 vid = block->instructions[i]->unary.id;
+        i32 last_use = -1;
+        for (u32 j = i + 1; j < block->instructions.size(); j++) {
+            if (uses_as_arg(block->instructions[j], vid)) last_use = static_cast<i32>(j);
+        }
+        if (last_use >= 0) {
+            deferred_nullify_idx.insert(i);
+            flush_after[static_cast<u32>(last_use)].push_back(block->instructions[i]->unary);
+        }
+    }
+
     // Emit instructions
     for (u32 i = 0; i < block->instructions.size(); i++) {
-        emit_instruction(block->instructions[i], out);
+        if (!deferred_nullify_idx.count(i)) {
+            emit_instruction(block->instructions[i], out);
+        }
+        // Deferred move-nullify: zero the moved value now that the call read it.
+        auto fa = flush_after.find(i);
+        if (fa != flush_after.end()) {
+            for (u32 k = 0; k < fa->second.size(); k++) {
+                out.append("    ");
+                emit_value(fa->second[k], out);
+                out.append(" = 0;\n");
+            }
+        }
+        // Post-call exception check: a user-function call may throw — route a
+        // pending exception to the enclosing try's dispatch or to __unwind.
+        if (m_module_uses_exceptions) {
+            IROp op = block->instructions[i]->op;
+            if (op == IROp::Call || op == IROp::CallExternal) {
+                out.append("    if (roxy_exception_pending()) ");
+                emit_exception_route(m_cur_block_id, out);
+                out.append("\n");
+            }
+        }
     }
 
     // Emit terminator
@@ -1556,10 +1639,218 @@ void CEmitter::emit_function_prototype(const IRFunction* func, String& out) {
     out.push_back(')');
 }
 
+// --- Exception routing ---
+
+bool CEmitter::module_uses_exceptions(const IRModule* module) {
+    for (u32 f = 0; f < module->functions.size(); f++) {
+        const IRFunction* func = module->functions[f];
+        if (!func->exception_handlers.empty()) return true;
+        for (u32 b = 0; b < func->blocks.size(); b++) {
+            const IRBlock* block = func->blocks[b];
+            for (u32 i = 0; i < block->instructions.size(); i++) {
+                if (block->instructions[i]->op == IROp::Throw) return true;
+            }
+        }
+    }
+    return false;
+}
+
+void CEmitter::compute_exception_routing(const IRFunction* func) {
+    m_try_groups.clear();
+    m_block_to_group.clear();
+    m_cleanup_values.clear();
+    m_func_needs_unwind = false;
+
+    // Owned locals / borrows tracked for cleanup — zero-init their pointers and
+    // null them after a normal Delete so the exception-path null-guard skips
+    // not-yet-created / moved / already-freed values.
+    for (u32 i = 0; i < func->cleanup_info.size(); i++) {
+        m_cleanup_values.insert(func->cleanup_info[i].value.id);
+    }
+
+    if (!m_module_uses_exceptions) return;
+
+    // Group handlers sharing a try entry.
+    for (u32 hi = 0; hi < func->exception_handlers.size(); hi++) {
+        const IRExceptionHandler& h = func->exception_handlers[hi];
+        u32 gi = UINT32_MAX;
+        for (u32 g = 0; g < m_try_groups.size(); g++) {
+            if (m_try_groups[g].try_entry.id == h.try_entry.id) { gi = g; break; }
+        }
+        if (gi == UINT32_MAX) {
+            TryGroup grp;
+            grp.try_entry = h.try_entry;
+            for (u32 b = 0; b < h.try_body_blocks.size(); b++) {
+                grp.body_blocks.insert(h.try_body_blocks[b].id);
+            }
+            m_try_groups.push_back(std::move(grp));
+            gi = static_cast<u32>(m_try_groups.size()) - 1;
+        }
+        m_try_groups[gi].handler_indices.push_back(hi);
+    }
+
+    // Map each block to the innermost (smallest body) group containing it.
+    for (u32 b = 0; b < func->blocks.size(); b++) {
+        u32 bid = func->blocks[b]->id.id;
+        u32 best = UINT32_MAX, best_size = UINT32_MAX;
+        for (u32 g = 0; g < m_try_groups.size(); g++) {
+            if (m_try_groups[g].body_blocks.count(bid)) {
+                u32 sz = static_cast<u32>(m_try_groups[g].body_blocks.size());
+                if (sz < best_size) { best_size = sz; best = g; }
+            }
+        }
+        if (best != UINT32_MAX) m_block_to_group[bid] = best;
+    }
+
+    // For each group, the innermost OTHER group containing its try entry.
+    for (u32 g = 0; g < m_try_groups.size(); g++) {
+        u32 entry = m_try_groups[g].try_entry.id;
+        u32 best = UINT32_MAX, best_size = UINT32_MAX;
+        for (u32 o = 0; o < m_try_groups.size(); o++) {
+            if (o == g) continue;
+            if (m_try_groups[o].body_blocks.count(entry)) {
+                u32 sz = static_cast<u32>(m_try_groups[o].body_blocks.size());
+                if (sz < best_size) { best_size = sz; best = o; }
+            }
+        }
+        m_try_groups[g].outer_group = best;
+    }
+
+    auto group_has_catch_all = [&](u32 g) -> bool {
+        for (u32 idx = 0; idx < m_try_groups[g].handler_indices.size(); idx++) {
+            if (func->exception_handlers[m_try_groups[g].handler_indices[idx]].type_name.empty())
+                return true;
+        }
+        return false;
+    };
+
+    // A `__unwind` label is needed if any throw / call in an uncovered block
+    // propagates, or any group's no-match path falls out of the function.
+    for (u32 b = 0; b < func->blocks.size() && !m_func_needs_unwind; b++) {
+        const IRBlock* block = func->blocks[b];
+        if (m_block_to_group.count(block->id.id)) continue;  // covered by a group
+        for (u32 i = 0; i < block->instructions.size(); i++) {
+            IROp op = block->instructions[i]->op;
+            if (op == IROp::Throw || op == IROp::Call || op == IROp::CallExternal) {
+                m_func_needs_unwind = true;
+                break;
+            }
+        }
+    }
+    for (u32 g = 0; g < m_try_groups.size() && !m_func_needs_unwind; g++) {
+        if (!group_has_catch_all(g) && m_try_groups[g].outer_group == UINT32_MAX) {
+            m_func_needs_unwind = true;
+        }
+    }
+}
+
+void CEmitter::emit_exception_route(u32 block_id, String& out) {
+    auto it = m_block_to_group.find(block_id);
+    if (it != m_block_to_group.end()) {
+        char buf[48];
+        format_to(buf, sizeof(buf), "goto __dispatch_{};", it->second);
+        out.append(buf);
+    } else {
+        out.append("goto __unwind;");
+    }
+}
+
+void CEmitter::emit_cleanup_records(const IRFunction* func, i32 body_group, String& out) {
+    // LIFO: reverse creation order, matching the VM's reverse cleanup-record scan.
+    for (i32 i = static_cast<i32>(func->cleanup_info.size()) - 1; i >= 0; i--) {
+        const IRCleanupInfo& ci = func->cleanup_info[i];
+        if (body_group >= 0 &&
+            !m_try_groups[body_group].body_blocks.count(ci.start_block.id)) {
+            continue;  // dispatch path: only locals created inside this try body
+        }
+        String ve;
+        emit_value(ci.value, ve);
+        out.append("    if ("); out.append(ve); out.append(") {\n");
+        if (ci.kind == IRCleanupKind::RefDec) {
+            out.append("    roxy_ref_dec("); out.append(ve); out.append(");\n");
+        } else {
+            bool is_heap = ci.type && (ci.type->kind == TypeKind::Uniq || ci.type->is_list()
+                || ci.type->is_map() || ci.type->is_coroutine());
+            emit_typed_delete(ci.type, StringView(ve.data(), ve.size()), is_heap, out);
+        }
+        out.append("    "); out.append(ve); out.append(" = 0;\n");
+        out.append("    }\n");
+    }
+}
+
+void CEmitter::emit_unwind_return(const IRFunction* func, String& out) {
+    Type* rt = func->return_type;
+    if (!rt || rt->kind == TypeKind::Void || func->returns_large_struct()) {
+        out.append("    return;\n");
+    } else if (rt->is_struct()) {
+        out.append("    { ");
+        emit_type(rt, out);
+        out.append(" __z; memset(&__z, 0, sizeof(__z)); return __z; }\n");
+    } else if (rt->is_enum()) {
+        out.append("    return (");
+        emit_type(rt, out);
+        out.append(")0;\n");
+    } else {
+        out.append("    return 0;\n");  // int / float / bool / pointer
+    }
+}
+
+void CEmitter::emit_exception_labels(const IRFunction* func, String& out) {
+    if (!m_module_uses_exceptions) return;
+
+    for (u32 g = 0; g < m_try_groups.size(); g++) {
+        const TryGroup& grp = m_try_groups[g];
+        char lbl[48];
+        format_to(lbl, sizeof(lbl), "__dispatch_{}:;\n", g);
+        out.append(lbl);
+        // Clean up owned locals created inside this try body before dispatching.
+        emit_cleanup_records(func, static_cast<i32>(g), out);
+        // type_id if/else chain over the group's handlers (typed first, catch-all last).
+        bool has_catch_all = false;
+        for (u32 idx = 0; idx < grp.handler_indices.size(); idx++) {
+            const IRExceptionHandler& h = func->exception_handlers[grp.handler_indices[idx]];
+            char hb[32];
+            format_to(hb, sizeof(hb), "block{}", h.handler_block.id);
+            if (h.type_name.empty()) {
+                // catch-all / finally.catch: matches unconditionally (last handler).
+                out.append("    "); out.append(hb);
+                out.append("_arg0 = roxy_exception_take();\n");
+                out.append("    goto "); out.append(hb); out.append(";\n");
+                has_catch_all = true;
+                break;
+            }
+            out.append("    if (roxy_exception_type_id() == TYPEID_");
+            emit_mangled_name(h.type_name, out);
+            out.append(") { "); out.append(hb); out.append("_arg0 = (");
+            emit_mangled_name(h.type_name, out);
+            out.append("*)roxy_exception_take(); goto "); out.append(hb);
+            out.append("; }\n");
+        }
+        if (!has_catch_all) {
+            // No matching handler: propagate to the next-outer try or out of the frame.
+            out.append("    ");
+            if (grp.outer_group != UINT32_MAX) {
+                char buf[48];
+                format_to(buf, sizeof(buf), "goto __dispatch_{};\n", grp.outer_group);
+                out.append(buf);
+            } else {
+                out.append("goto __unwind;\n");
+            }
+        }
+    }
+
+    if (m_func_needs_unwind) {
+        out.append("__unwind:;\n");
+        emit_cleanup_records(func, -1, out);  // whole-frame exit: all records
+        emit_unwind_return(func, out);
+    }
+}
+
 // --- Function emission ---
 
 void CEmitter::emit_function(const IRFunction* func, String& out) {
     collect_value_types(func);
+    compute_exception_routing(func);
 
     emit_function_prototype(func, out);
     out.append(" {\n");
@@ -1614,12 +1905,13 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
                     out.append("_struct, 0, sizeof(");
                     emit_value(inst->result, out);
                     out.append("_struct));\n");
-                    // Pointer: StructType* v5;
+                    // Pointer: StructType* v5;  (zero-init if cleanup-tracked, so
+                    // the exception-path null-guard skips it before construction)
                     out.append("    ");
                     emit_type(alloc_type, out);
                     out.append("* ");
                     emit_value(inst->result, out);
-                    out.append(";\n");
+                    out.append(m_cleanup_values.count(inst->result.id) ? " = 0;\n" : ";\n");
                 } else if (alloc_type && !alloc_type->is_void()) {
                     // Scalar stack alloc (for out/inout parameters on scalars)
                     out.append("    ");
@@ -1680,7 +1972,9 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
                 out.push_back(' ');
             }
             emit_value(inst->result, out);
-            out.append(";\n");
+            // Zero-init owned-local pointers tracked for exception cleanup so the
+            // null-guard skips not-yet-created values.
+            out.append(m_cleanup_values.count(inst->result.id) ? " = 0;\n" : ";\n");
         }
     }
 
@@ -1703,6 +1997,9 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
     for (u32 b = 0; b < func->blocks.size(); b++) {
         emit_block(func->blocks[b], func, out);
     }
+
+    // Exception dispatch + unwind landing pads (reached only via goto).
+    emit_exception_labels(func, out);
 
     out.append("}\n");
 }
@@ -2616,6 +2913,7 @@ void CEmitter::emit_extern_native_decls(String& out) {
 
 void CEmitter::emit_source(const IRModule* module, String& output) {
     m_module = module;
+    m_module_uses_exceptions = module_uses_exceptions(module);
 
     // Includes
     output.append("#include <stdint.h>\n");
@@ -2702,8 +3000,14 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
             output.append("    roxy_ctx_init(&ctx);\n");
             output.append("    roxy_set_ctx(&ctx);\n");
             if (has_init) output.append("    __module_init();\n");
+            // An exception that propagates out of main_entry is unhandled: report
+            // it and exit nonzero (matches the VM's "Unhandled exception" path).
+            const char* unhandled_check = m_module_uses_exceptions
+                ? "    if (roxy_exception_pending()) { fprintf(stderr, \"Unhandled exception\\n\"); return 1; }\n"
+                : "";
             if (main_returns_void) {
                 output.append("    main_entry();\n");
+                output.append(unhandled_check);
                 if (has_shutdown) output.append("    __module_shutdown();\n");
                 output.append("    roxy_ctx_destroy(&ctx);\n");
                 output.append("    roxy_set_ctx(NULL);\n");
@@ -2713,6 +3017,7 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
                 output.append("    ");
                 emit_type(user_main->return_type, output);
                 output.append(" result = main_entry();\n");
+                output.append(unhandled_check);
                 if (has_shutdown) output.append("    __module_shutdown();\n");
                 output.append("    roxy_ctx_destroy(&ctx);\n");
                 output.append("    roxy_set_ctx(NULL);\n");

@@ -134,6 +134,32 @@ roxy_object_header* roxy_get_header(void* data);
 void roxy_ref_inc(void* data);
 void roxy_ref_dec(void* data);
 
+// ===== Exceptions (AOT checked-return model) =====
+//
+// The C backend lowers exceptions with a checked-return model: `throw` stores
+// the in-flight exception in thread-local state and the generated code jumps to
+// a per-try dispatch label or the function's unwind-exit; after every
+// potentially-throwing call it checks `roxy_exception_pending()` and routes the
+// same way. (VM mode uses its own in-VM exception state, not these helpers.)
+
+// Store `exc` (a heap exception object) as the pending exception; reads its
+// type_id from the object header.
+void roxy_set_pending(void* exc);
+
+// Non-zero if an exception is currently propagating.
+int roxy_exception_pending(void);
+
+// The pending exception's type_id (0 if none). Does not clear the pending state.
+uint32_t roxy_exception_type_id(void);
+
+// Return the pending exception object and clear the pending state (called when a
+// handler catches it, or by the finally re-throw landing pad before re-arming).
+void* roxy_exception_take(void);
+
+// Best-effort `message()` for the opaque catch-all `ExceptionRef`. Returns a
+// generic string; matches the VM's current stub.
+void* roxy_exception_message(void* exc);
+
 // ===== Weak References =====
 
 typedef struct {
