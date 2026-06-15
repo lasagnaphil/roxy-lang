@@ -826,7 +826,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.stdout_output == "~Leaf(77)\n");
     }
 
-    TEST_CASE("deeply nested value-type fields with destructors") {  // VM-only: C backend: struct-by-value copy semantics gap  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE("deeply nested value-type fields with destructors") {  // VM-only: C backend: struct-by-value copy semantics gap
         // Three levels of nesting: C embeds B embeds A, where A has a uniq field.
         // All three should get synthetic destructors via the fixpoint loop.
         const char* source = R"CODE(
@@ -1263,7 +1263,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("passing uniq field as ref parameter works") {  // VM-only: C backend: ref/inout uniq ownership gap  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE("passing uniq field as ref parameter works") {  // VM-only: C backend: ref/inout uniq ownership gap
         const char* source = R"CODE(
         struct Item {
             value: i32;
@@ -2370,7 +2370,7 @@ TEST_SUITE("E2E RAII") {
     // paths) doesn't see the consumed-and-nullified locals from the dead branch.
     // ============================================================================
 
-    TEST_CASE("terminating then-branch struct-literal move keeps local live for after-if struct literal") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE("terminating then-branch struct-literal move keeps local live for after-if struct literal") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
         // Pre-fix: the then-branch struct literal nullify-replaced `cond` to nil;
         // the after-if path then embedded nil into its own struct literal and
         // segfaulted on the field dereference at main.
@@ -2407,7 +2407,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 1);
     }
 
-    TEST_CASE("terminating else-branch struct-literal move keeps local live for after-if struct literal") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE("terminating else-branch struct-literal move keeps local live for after-if struct literal") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
         // Symmetric to the above: when the else-branch terminates, the merge block
         // is reachable only via the then-branch (which here also moves the local).
         // The IR builder must restore the post-then snapshot rather than carrying
@@ -2447,7 +2447,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 2);
     }
 
-    TEST_CASE("terminating then-branch with else preserves else's post-state at merge") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE("terminating then-branch with else preserves else's post-state at merge") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
         // then-branch terminates; the merge block is reachable only via the
         // else-branch. The IR builder should keep the else's post-state at merge
         // (not roll back to pre-if), so the after-if code sees the right values.
@@ -2486,7 +2486,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 3);
     }
 
-    TEST_CASE("terminating when-case struct-literal move keeps local live for after-when struct literal") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE("terminating when-case struct-literal move keeps local live for after-when struct literal") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
         // Same shape as the if-stmt termination tests, but for when. Pre-fix the
         // last case body's nullify-replace of `cond` to nil leaked into the
         // merge block, segfaulting on dereference of the after-when struct
@@ -2528,7 +2528,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 7);
     }
 
-    TEST_CASE("terminating else-if-chain branch struct-literal move keeps local live after chain") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE("terminating else-if-chain branch struct-literal move keeps local live after chain") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
         // Same shape but for an else-if cascade (gen_if_else_chain). The last
         // chain branch's nullify-replace of `cond` would otherwise leak into the
         // merge block.
@@ -2935,7 +2935,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(module == nullptr);  // Should fail to compile
     }
 
-    TEST_CASE("reassign-before-move in loop body is legal") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE("reassign-before-move in loop body is legal") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
         // p is Live before the loop, reassigned at the TOP of every iteration,
         // and only then moved. Each iteration refreshes p before any use, so
         // there is no cross-iteration use-after-move. The cross-iteration check
@@ -3155,7 +3155,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 50);
     }
 
-    TEST_CASE("move out of a user-defined index result is allowed") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE("move out of a user-defined index result is allowed") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
         // The rejection keys off the `index` method being *native*. A user `index`
         // (here via the builtin `Index<Idx, Output>` trait) has a move-checked
         // body, so its noncopyable return is a genuine ownership transfer (a fresh
@@ -3207,7 +3207,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 5);
     }
 
-    TEST_CASE("moving a pointer field out destroys it exactly once") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE("moving a pointer field out destroys it exactly once") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
         // Moving a noncopyable pointer field (`o.a`) out of a value struct nulls
         // that field in the root, so the root's destructor no-ops it (frees only
         // the *sibling* `o.b`) instead of re-destroying the moved-out value. Each

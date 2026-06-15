@@ -840,7 +840,7 @@ TEST_SUITE("E2E Coroutines") {
     // List/Map Cleanup in Coroutine Destructors
     // ============================================================================
 
-    TEST_CASE("Coroutine List<uniq T> cleanup on completion") {  // VM-only: C backend: coroutine uniq-field (List/Map) cleanup gap  // VM-only: C backend: coroutine uniq-field cleanup / yield-in-control-flow gap
+    TEST_CASE("Coroutine List<uniq T> cleanup on completion") {  // VM-only: C backend: coroutine uniq-field (List/Map) cleanup gap
         const char* source = R"CODE(
         struct Resource {
             id: i32;
@@ -881,7 +881,7 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "~Resource(1)\n~Resource(2)\n~Resource(3)\n");
     }
 
-    TEST_CASE("Coroutine List<uniq T> cleanup on early drop") {  // VM-only: C backend: coroutine uniq-field (List/Map) cleanup gap  // VM-only: C backend: coroutine uniq-field cleanup / yield-in-control-flow gap
+    TEST_CASE("Coroutine List<uniq T> cleanup on early drop") {  // VM-only: C backend: coroutine uniq-field (List/Map) cleanup gap
         const char* source = R"CODE(
         struct Resource {
             id: i32;
@@ -921,7 +921,7 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "~Resource(10)\n~Resource(20)\n");
     }
 
-    TEST_CASE("Coroutine Map<string, uniq T> cleanup on completion") {  // VM-only: C backend: coroutine uniq-field (List/Map) cleanup gap  // VM-only: C backend: coroutine uniq-field cleanup / yield-in-control-flow gap
+    TEST_CASE("Coroutine Map<string, uniq T> cleanup on completion") {  // VM-only: C backend: coroutine uniq-field (List/Map) cleanup gap
         const char* source = R"CODE(
         struct Resource {
             id: i32;
@@ -964,7 +964,7 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output.find("~Resource(300)") != std::string::npos);
     }
 
-    TEST_CASE("Coroutine Map<string, uniq T> cleanup on early drop") {  // VM-only: C backend: coroutine uniq-field (List/Map) cleanup gap  // VM-only: C backend: coroutine uniq-field cleanup / yield-in-control-flow gap
+    TEST_CASE("Coroutine Map<string, uniq T> cleanup on early drop") {  // VM-only: C backend: coroutine uniq-field (List/Map) cleanup gap
         const char* source = R"CODE(
         struct Resource {
             id: i32;

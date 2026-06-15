@@ -1023,6 +1023,49 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             // Look up called function for type info
             const IRFunction* callee = find_function(inst->call.func_name);
 
+            // A copyable struct passed to a by-value parameter must be COPIED at
+            // the call site: the C ABI passes structs by pointer, so without a
+            // copy the callee would mutate the caller's value (the VM instead
+            // copies the struct into the callee's register window). Noncopyable
+            // value structs are moves (no copy); ref/uniq/inout params are
+            // pointers (no copy). Returns the param type to copy into, else null.
+            auto value_copy_type = [&](u32 i) -> Type* {
+                if (!callee || i >= callee->params.size()) return nullptr;
+                // The hidden large-struct-return output pointer (last param) and
+                // out/inout params are pointer-semantics, not by-value — never copy.
+                if (callee->returns_large_struct() && i + 1 == callee->params.size())
+                    return nullptr;
+                if (i < callee->param_is_ptr.size() && callee->param_is_ptr[i])
+                    return nullptr;
+                Type* pt = callee->params[i].type;
+                if (!pt || !pt->is_struct() || pt->noncopyable()) return nullptr;
+                Type* at = get_value_type(inst->call.args[i]);
+                Type* ai = (at && at->is_reference()) ? at->ref_info.inner_type : at;
+                if (ai != pt) return nullptr;  // same-type only (skip slicing)
+                return pt;
+            };
+            u32 tmp_base = m_delete_tmp;
+            m_delete_tmp += inst->call.args.size();
+            for (u32 i = 0; i < inst->call.args.size(); i++) {
+                Type* ct = value_copy_type(i);
+                if (!ct) continue;
+                String tn = format("_vc{}", tmp_base + i);
+                // Declare without an initializer, then assign. The C backend's
+                // goto-based control flow can jump past this point, and C++
+                // forbids a goto crossing a variable *with an initializer*; a bare
+                // trivial-struct declaration is legal to cross.
+                out.append("    ");
+                emit_type(ct, out);
+                out.push_back(' ');
+                ap(out, tn);
+                out.append(";\n    ");
+                ap(out, tn);
+                out.append(" = ");
+                if (is_pointer_value(inst->call.args[i])) out.append("*");
+                emit_value(inst->call.args[i], out);
+                out.append(";\n");
+            }
+
             out.append("    ");
             // Skip assignment if callee returns void (e.g., large struct return via hidden ptr)
             bool assign_result = inst->result.is_valid() && inst->type &&
@@ -1038,6 +1081,15 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             out.push_back('(');
             for (u32 i = 0; i < inst->call.args.size(); i++) {
                 if (i > 0) out.append(", ");
+
+                // By-value struct copy: pass the address of the call-site copy.
+                if (Type* ct = value_copy_type(i)) {
+                    (void)ct;
+                    out.append("&");
+                    String tn = format("_vc{}", tmp_base + i);
+                    ap(out, tn);
+                    continue;
+                }
 
                 // Check if we need an explicit cast for struct pointer arguments
                 // (e.g., Dog* to Animal* for inheritance)
@@ -1163,14 +1215,34 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 out.append(buf);
                 return;
             }
-            out.append("    ");
+            // Build the destination field-access expression.
+            String lhs;
             if (is_scalar_stack_alloc(inst->field.object)) {
                 // Scalar StackAlloc (out/inout): store through pointer
-                out.append("*");
-                emit_value(inst->field.object, out);
+                lhs.append("*", 1);
+                emit_value(inst->field.object, lhs);
             } else {
-                emit_field_access(inst->field.object, inst->field.field_name, out);
+                emit_field_access(inst->field.object, inst->field.field_name, lhs);
             }
+
+            Type* field_type = inst->type;
+            Type* val_type = get_value_type(inst->store_value);
+
+            // A value-struct field assigned a null/nil — the default-init of a
+            // nested value-struct field (the VM zeroes the slots). C++ can't
+            // assign void* to a struct, so memset the field instead.
+            if (field_type && field_type->is_struct() && val_type &&
+                val_type->kind == TypeKind::Nil) {
+                out.append("    memset(&");
+                ap(out, lhs);
+                out.append(", 0, sizeof(");
+                ap(out, lhs);
+                out.append("));\n");
+                return;
+            }
+
+            out.append("    ");
+            ap(out, lhs);
             out.append(" = ");
             // Coroutine promotion stores promoted locals into state-struct fields
             // with raw SetField, which can mismatch C++'s strict typing where the
@@ -1180,8 +1252,6 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             //   - a uniq/ref pointer field assigned a null (void*-typed) needs an
             //     explicit cast — e.g. cleanup nulling a promoted uniq field.
             {
-                Type* field_type = inst->type;
-                Type* val_type = get_value_type(inst->store_value);
                 bool field_is_ptr = field_type &&
                     (field_type->kind == TypeKind::Uniq || field_type->kind == TypeKind::Ref);
                 if (field_type && field_type->is_struct() && is_pointer_value(inst->store_value)) {

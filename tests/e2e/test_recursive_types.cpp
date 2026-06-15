@@ -55,7 +55,7 @@ TEST_SUITE("E2E Recursive Types") {
         CHECK(result.value == 10);
     }
 
-    TEST_CASE("access uniq field via ref param") {  // VM-only: C backend: ref/inout uniq ownership gap  // VM-only: C backend: recursive uniq-field destruction semantics gap
+    TEST_CASE("access uniq field via ref param") {  // VM-only: C backend: ref/inout uniq ownership gap
         const char* source = R"CODE(
         struct Node {
             value: i32;

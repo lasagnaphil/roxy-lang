@@ -76,7 +76,7 @@ TEST_SUITE("E2E Lifetimes") {
     // so the owner's count returns to zero and it stays deletable. This is the
     // positive control proving no decrement is missed (a missed dec would make
     // the explicit `delete owner` trap, or underflow the count).
-    TEST_CASE("ref local counting is balanced across control flow") {  // VM-only: C backend: ref/inout uniq ownership gap  // VM-only: C backend: ref/uniq ownership + borrow-count semantics gap
+    TEST_CASE("ref local counting is balanced across control flow") {  // VM-only: C backend: ref/inout uniq ownership gap
         const char* source = R"(
         struct Point { x: i32; y: i32; }
 
@@ -504,7 +504,7 @@ TEST_SUITE("E2E Lifetimes") {
 
     // `slot = uniq T(..)`: the old object is freed, the new one stored, and the
     // caller's variable owns exactly the new object (destroyed once at exit).
-    TEST_CASE("inout uniq reassignment frees the old value, no double-free") {  // VM-only: C backend: ref/inout uniq ownership gap  // VM-only: C backend: ref/uniq ownership + borrow-count semantics gap
+    TEST_CASE("inout uniq reassignment frees the old value, no double-free") {  // VM-only: C backend: ref/inout uniq ownership gap
         const char* source = R"(
         struct Counter { value: i32; }
         fun new Counter(v: i32) { self.value = v; }
@@ -529,7 +529,7 @@ TEST_SUITE("E2E Lifetimes") {
 
     // `slot = nil`: the old object is freed and the slot nulled, so the caller's
     // scope-exit delete is a no-op (no leak, no double-free).
-    TEST_CASE("inout uniq reassignment to nil frees the old value") {  // VM-only: C backend: ref/inout uniq ownership gap  // VM-only: C backend: ref/uniq ownership + borrow-count semantics gap
+    TEST_CASE("inout uniq reassignment to nil frees the old value") {  // VM-only: C backend: ref/inout uniq ownership gap
         const char* source = R"(
         struct Counter { value: i32; }
         fun new Counter(v: i32) { self.value = v; }

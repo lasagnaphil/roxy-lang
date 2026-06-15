@@ -4,7 +4,7 @@
 >
 > **Language feature coverage:** every feature has a codegen path — primitives, structs (inheritance, methods, ctors/dtors, copy, nesting), enums, tagged unions, generics, traits/operators, strings, lists, maps, module globals, coroutines, exceptions, and **closures** (lambdas, captures, function references, self-capture). Roxy identifiers that are C++ keywords (e.g. a function named `double`, a field named `class`) are escaped with a reserved `roxy_kw_` prefix in `emit_mangled_name`, so they compile.
 >
-> **Correctness is *not* complete.** Running the full `tests/e2e/` suite through the C backend (see Testing below) surfaced real divergences from the VM that the prior hand-written tests never exercised. The core uniq/RAII destruction bugs (null-guarded delete, owned struct-value locals) are now fixed; remaining gaps include struct-by-value copy semantics, operator dispatch on structs, uniq move-state across control flow, weak fields, and closures. See **Known C-backend gaps** under Testing for the current list.
+> **Correctness is *not* complete.** Running the full `tests/e2e/` suite through the C backend (see Testing below) surfaced real divergences from the VM that the prior hand-written tests never exercised. The core uniq/RAII destruction bugs and struct-by-value parameter/return semantics are now fixed; remaining gaps include operator dispatch on structs, uniq move-state across control flow, copyable container value params, weak fields, and closures. See **Known C-backend gaps** under Testing for the current list.
 
 The C backend (`CEmitter`) translates Roxy's SSA IR into a `.cpp` file that any C++ compiler can build. The body is C-style (structs, gotos, typed `vN` locals); native bindings and the public header use C++ to interface directly with the embedder. It operates on the same `IRModule` the bytecode lowering uses, so all frontend work (type checking, method/operator resolution, monomorphization, struct layout) is already done.
 
@@ -422,7 +422,7 @@ pending fixes:
 | **uniq move-state across control flow** | a `uniq`/struct-literal moved in a terminating branch (then/else/when-case that returns), and move-out of fields / user-defined index results |
 | **ref/inout uniq ownership** | `ref`/`inout` to a `uniq` field, `inout uniq` reassignment, and `ref`-local count balancing across control flow |
 | **weak fields** | reading/writing a `weak` struct field |
-| **struct-by-value copy semantics** | struct params/returns are passed by pointer with no copy-on-call, so a callee mutating a by-value struct param aliases the caller's value |
+| **copyable container value params** | passing a `List`/`Map` by value should deep-copy it (the bytecode lowering inserts the copy callee-side; the C backend, which branches off the IR before lowering, does not) |
 | **nested tagged-union value assignment / recursive cleanup** | assigning a tagged-union value into a variant field, and recursive destruction of tagged-union trees |
 | **coroutine uniq-field cleanup** | `Coro<T>` promoting `uniq`/`List<uniq>`/`Map<_,uniq>` state |
 | **trait/operator dispatch on structs** | arithmetic/bitwise/unary operator overloads and generic default-method injection |
@@ -435,7 +435,7 @@ Not bugs, also VM-only: tests asserting a result > 255 (8-bit exit code — many
 are recoverable by asserting printed stdout instead) and runtime-trap/overflow
 tests where the C binary aborts rather than trapping cleanly.
 
-**Fixed.** Three emitter bugs surfaced by the parametric suite are resolved:
+**Fixed.** Emitter bugs surfaced by the parametric suite that are now resolved:
 - f32 whole-number literal (`0.0f32` → ill-formed `0f`; now `0.0f`) — `IROp::ConstF`.
 - `Delete` of a null heap pointer crashed (the VM treats delete-on-null as a
   no-op); the struct-delete path in `emit_typed_delete` is now null-guarded, so
@@ -443,9 +443,16 @@ tests where the C binary aborts rather than trapping cleanly.
 - An owned struct **value** local (e.g. bound to a by-value call result) was
   declared/deleted/nulled as a pointer (`Owner v0 = 0;`, `Owner__delete((Owner*)v0)`);
   it is now `memset`-initialized and deleted through its address.
+- **struct-by-value parameters** were passed by pointer with no copy, so a callee
+  mutating a by-value struct param aliased the caller's value. `IROp::Call` now
+  copies each copyable same-type value-struct argument into a call-site temp and
+  passes its address (moves and ref/uniq/inout/large-struct-return-pointer params
+  are excluded). This also fixes struct-by-value returns/nesting.
+- A nested value-struct field default-initialized to null emitted `field = nullptr`
+  (ill-formed for a struct); `SetField` now `memset`s a value-struct field assigned nil.
 
-Together these recovered the bulk of the `uniq`/RAII destruction cluster on the
-C backend.
+Together these recovered the `uniq`/RAII destruction cluster and struct-by-value
+parameter/return semantics on the C backend.
 
 ## Files
 
