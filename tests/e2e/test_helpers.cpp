@@ -323,6 +323,79 @@ static const char* get_project_root() {
 #endif
 }
 
+// The C-backend runtime (roxy_rt.cpp + slab_allocator.cpp + string_intern.cpp +
+// platform vmem) is identical for every generated test program. Compiling those
+// four translation units once per test process and linking the resulting object
+// files — instead of recompiling them for every test case — is the dominant
+// speedup for the C-backend suite (the per-test cost drops to one small
+// generated TU plus a link).
+struct RuntimeObjects {
+    static constexpr int kCount = 4;
+    char obj_paths[kCount][256];
+    bool ok = false;
+    String link_args;  // " <obj0> <obj1> ..." appended to the link command
+
+    RuntimeObjects() {
+        for (int i = 0; i < kCount; i++) obj_paths[i][0] = '\0';
+
+        const char* project_root = get_project_root();
+        if (!project_root) return;
+        const char* tmpdir = getenv("TMPDIR");
+        if (!tmpdir) tmpdir = "/tmp";
+
+        char rt_include_dir[512], rt_include_dir_root[512];
+        snprintf(rt_include_dir, sizeof(rt_include_dir), "%s/include/roxy/rt", project_root);
+        snprintf(rt_include_dir_root, sizeof(rt_include_dir_root), "%s/include", project_root);
+
+        char srcs[kCount][512];
+        snprintf(srcs[0], sizeof(srcs[0]), "%s/src/roxy/rt/roxy_rt.cpp", project_root);
+        snprintf(srcs[1], sizeof(srcs[1]), "%s/src/roxy/rt/slab_allocator.cpp", project_root);
+        snprintf(srcs[2], sizeof(srcs[2]), "%s/src/roxy/rt/string_intern.cpp", project_root);
+#ifdef _WIN32
+        snprintf(srcs[3], sizeof(srcs[3]), "%s/src/roxy/rt/vmem_win32.cpp", project_root);
+#else
+        snprintf(srcs[3], sizeof(srcs[3]), "%s/src/roxy/rt/vmem_unix.cpp", project_root);
+#endif
+
+        for (int i = 0; i < kCount; i++) {
+            snprintf(obj_paths[i], sizeof(obj_paths[i]), "%s/roxy_rt_obj_XXXXXX.o", tmpdir);
+            int fd = mkstemps(obj_paths[i], 2);  // .o suffix
+            if (fd < 0) { obj_paths[i][0] = '\0'; return; }
+            close(fd);
+
+            char cmd[2048];
+            snprintf(cmd, sizeof(cmd),
+                     "c++ -std=c++17 -I%s -I%s -c -o %s %s 2>&1",
+                     rt_include_dir, rt_include_dir_root, obj_paths[i], srcs[i]);
+            FILE* pipe = popen(cmd, "r");
+            if (!pipe) return;
+            String errs;
+            char buf[1024];
+            while (fgets(buf, sizeof(buf), pipe)) errs.append(buf, static_cast<u32>(strlen(buf)));
+            if (pclose(pipe) != 0) {
+                fprintf(stderr, "[C Backend] runtime precompile failed (%s):\n%s\n",
+                        srcs[i], errs.c_str());
+                return;
+            }
+            link_args.append(" ", 1);
+            link_args.append(obj_paths[i], static_cast<u32>(strlen(obj_paths[i])));
+        }
+        ok = true;
+    }
+
+    ~RuntimeObjects() {
+        for (int i = 0; i < kCount; i++)
+            if (obj_paths[i][0] != '\0') remove(obj_paths[i]);
+    }
+};
+
+// Lazily compiled on first use; reused by every C-backend compile in the process.
+// doctest runs cases sequentially, so no synchronization is needed.
+static const RuntimeObjects& runtime_objects() {
+    static RuntimeObjects ro;
+    return ro;
+}
+
 CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     CBackendResult result;
     result.exit_code = -1;
@@ -342,23 +415,19 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
         return result;
     }
 
-    // Build paths to runtime files
+    // Runtime include paths (generated code does #include "roxy_rt.h").
     char rt_include_dir[512];       // For generated code: #include "roxy_rt.h"
-    char rt_include_dir_root[512];  // For roxy_rt.cpp: #include "roxy/rt/roxy_rt.h"
-    char rt_src_path[512];
-    char slab_src_path[512];
-    char intern_src_path[512];
-    char vmem_src_path[512];
+    char rt_include_dir_root[512];  // For roxy_rt.h: #include "roxy/rt/..."
     snprintf(rt_include_dir, sizeof(rt_include_dir), "%s/include/roxy/rt", project_root);
     snprintf(rt_include_dir_root, sizeof(rt_include_dir_root), "%s/include", project_root);
-    snprintf(rt_src_path, sizeof(rt_src_path), "%s/src/roxy/rt/roxy_rt.cpp", project_root);
-    snprintf(slab_src_path, sizeof(slab_src_path), "%s/src/roxy/rt/slab_allocator.cpp", project_root);
-    snprintf(intern_src_path, sizeof(intern_src_path), "%s/src/roxy/rt/string_intern.cpp", project_root);
-#ifdef _WIN32
-    snprintf(vmem_src_path, sizeof(vmem_src_path), "%s/src/roxy/rt/vmem_win32.cpp", project_root);
-#else
-    snprintf(vmem_src_path, sizeof(vmem_src_path), "%s/src/roxy/rt/vmem_unix.cpp", project_root);
-#endif
+
+    // Link the runtime objects compiled once per process, rather than
+    // recompiling the runtime sources for every test.
+    const RuntimeObjects& rt = runtime_objects();
+    if (!rt.ok) {
+        fprintf(stderr, "[C Backend] runtime objects unavailable\n");
+        return result;
+    }
 
     // Write C++ source to temp file
     const char* tmpdir = getenv("TMPDIR");
@@ -387,13 +456,12 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     }
     close(bin_fd);
 
-    // Compile with c++ — include runtime header and compile runtime sources
-    // (roxy_rt.cpp + slab_allocator.cpp + string_intern.cpp + platform vmem).
+    // Compile the generated source and link the prebuilt runtime objects.
     char compile_cmd[2048];
     snprintf(compile_cmd, sizeof(compile_cmd),
-             "c++ -std=c++17 -I%s -I%s -o %s %s %s %s %s %s 2>&1",
+             "c++ -std=c++17 -I%s -I%s -o %s %s%s 2>&1",
              rt_include_dir, rt_include_dir_root, bin_path, src_path,
-             rt_src_path, slab_src_path, intern_src_path, vmem_src_path);
+             rt.link_args.c_str());
 
     if (debug) {
         printf("Compile command: %s\n", compile_cmd);
@@ -544,20 +612,16 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
 
     char rt_include_dir[512];
     char rt_include_dir_root[512];
-    char rt_src_path[512];
-    char slab_src_path[512];
-    char intern_src_path[512];
-    char vmem_src_path[512];
     snprintf(rt_include_dir, sizeof(rt_include_dir), "%s/include/roxy/rt", project_root);
     snprintf(rt_include_dir_root, sizeof(rt_include_dir_root), "%s/include", project_root);
-    snprintf(rt_src_path, sizeof(rt_src_path), "%s/src/roxy/rt/roxy_rt.cpp", project_root);
-    snprintf(slab_src_path, sizeof(slab_src_path), "%s/src/roxy/rt/slab_allocator.cpp", project_root);
-    snprintf(intern_src_path, sizeof(intern_src_path), "%s/src/roxy/rt/string_intern.cpp", project_root);
-#ifdef _WIN32
-    snprintf(vmem_src_path, sizeof(vmem_src_path), "%s/src/roxy/rt/vmem_win32.cpp", project_root);
-#else
-    snprintf(vmem_src_path, sizeof(vmem_src_path), "%s/src/roxy/rt/vmem_unix.cpp", project_root);
-#endif
+
+    const RuntimeObjects& rt = runtime_objects();
+    if (!rt.ok) {
+        fprintf(stderr, "[C Backend+Registry] runtime objects unavailable\n");
+        if (header_path[0] != '\0') remove(header_path);
+        if (extra_cpp_path[0] != '\0') remove(extra_cpp_path);
+        return result;
+    }
 
     char src_path[256];
     char bin_path[256];
@@ -582,9 +646,9 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
 
     char compile_cmd[2560];
     snprintf(compile_cmd, sizeof(compile_cmd),
-             "c++ -std=c++17 -I%s -I%s -o %s %s %s %s %s %s %s 2>&1",
+             "c++ -std=c++17 -I%s -I%s -o %s %s%s %s 2>&1",
              rt_include_dir, rt_include_dir_root, bin_path, src_path,
-             rt_src_path, slab_src_path, intern_src_path, vmem_src_path,
+             rt.link_args.c_str(),
              extra_cpp_path[0] != '\0' ? extra_cpp_path : "");
 
     if (debug) printf("Compile command: %s\n", compile_cmd);
