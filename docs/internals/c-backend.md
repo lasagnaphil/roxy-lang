@@ -2,7 +2,9 @@
 
 > **Status:** Phases 1–4 fully implemented; Phase 5 partially implemented (function- and statement-level `#line` directives). Other Phase 5 items (DCE, Relooper, `switch` lowering, readable variable names) are deliberately not pursued — the C compiler's optimizer covers them and they don't affect debugger UX.
 >
-> **Language feature coverage:** complete — primitives, structs (inheritance, methods, ctors/dtors, copy, nesting), enums, tagged unions, generics, traits/operators, strings, lists, maps, module globals, coroutines, exceptions, and **closures** (lambdas, captures, function references, self-capture). Roxy identifiers that are C++ keywords (e.g. a function named `double`, a field named `class`) are escaped with a reserved `roxy_kw_` prefix in `emit_mangled_name`, so they compile.
+> **Language feature coverage:** every feature has a codegen path — primitives, structs (inheritance, methods, ctors/dtors, copy, nesting), enums, tagged unions, generics, traits/operators, strings, lists, maps, module globals, coroutines, exceptions, and **closures** (lambdas, captures, function references, self-capture). Roxy identifiers that are C++ keywords (e.g. a function named `double`, a field named `class`) are escaped with a reserved `roxy_kw_` prefix in `emit_mangled_name`, so they compile.
+>
+> **Correctness is *not* complete.** Running the full `tests/e2e/` suite through the C backend (see Testing below) surfaced real divergences from the VM that the prior hand-written tests never exercised — most notably uniq/RAII destructor emission, struct-by-value copy semantics, and operator dispatch on structs. See **Known C-backend gaps** under Testing for the current list.
 
 The C backend (`CEmitter`) translates Roxy's SSA IR into a `.cpp` file that any C++ compiler can build. The body is C-style (structs, gotos, typed `vN` locals); native bindings and the public header use C++ to interface directly with the embedder. It operates on the same `IRModule` the bytecode lowering uses, so all frontend work (type checking, method/operator resolution, monomorphization, struct layout) is already done.
 
@@ -383,6 +385,55 @@ The two paths complement each other: interpreter for development, C backend for 
 ## Testing
 
 `compile_and_run_cpp(source)` runs the full pipeline (Roxy → IR → CEmitter → temp `.cpp` → `c++ -std=c++17` → run → check exit code + stdout). `compile_to_cpp` returns the C++ string; `compile_and_run_cpp_with_registry` links an inline native header for AOT NativeRegistry tests; pass `debug=true` to dump IR and generated source. Because these invoke the system compiler, the suite must run outside the sandbox.
+
+### Parametric E2E coverage (`<VM>` / `<C>`)
+
+Most `tests/e2e/` suites are **backend-parametric**: a single test body runs on
+both the bytecode VM and the C backend via doctest's `TEST_CASE_TEMPLATE`, driven
+by `tests/e2e/test_e2e_backend.hpp`. The backend is a type parameter
+(`VMBackend` / `CBackend`), each exposing `static E2EResult run(source)` over a
+unified `{success, value, stdout_output}` result (`value` is the VM return value
+or the C process exit code). doctest registers each instantiation as a separate
+case named `<TestName><VM>` / `<TestName><C>`, so a failure is attributed to the
+backend, and the type tag drives selection:
+
+```bash
+./roxy_tests --test-case="*<VM>*"          # VM only (sandbox-safe, fast)
+./roxy_tests --test-case="*<C>*"           # C only  (needs the system compiler)
+./roxy_tests --test-case-exclude="*<C>*" \
+             --test-suite-exclude="E2E C Backend"   # everything compiler-free (in-sandbox)
+```
+
+Cases the C backend cannot run are demoted to plain `TEST_CASE` (VM-only) with a
+`// VM-only: <reason>` annotation, in three categories: results outside the
+0..255 exit-code range, runtime-trap/abort tests whose behavior differs on C, and
+the known C-backend gaps below. `test_c_backend.cpp` retains only C-specific
+tests (generated-header emission, AOT NativeRegistry dispatch, `#line`
+directives) — feature coverage proper lives in the shared parametric suites.
+
+### Known C-backend gaps (surfaced by the parametric suite)
+
+Converting the e2e suites to run on C exposed pre-existing gaps that the prior
+hand-written `test_c_backend.cpp` never exercised. These cases are VM-only
+pending fixes:
+
+| Area | Symptom |
+|------|---------|
+| **uniq/RAII destructor emission** | scope-exit destructor calls and uniq-field cleanup order diverge from the VM (the largest cluster: `test_raii`, `test_recursive_types`, `test_lifetimes`) |
+| **struct-by-value copy semantics** | struct params/returns are passed by pointer with no copy-on-call, so a callee mutating a by-value struct param aliases the caller's value |
+| **nested tagged-union value assignment / recursive cleanup** | assigning a tagged-union value into a variant field, and recursive destruction of tagged-union trees |
+| **coroutine uniq-field cleanup** | `Coro<T>` promoting `uniq`/`List<uniq>`/`Map<_,uniq>` state |
+| **trait/operator dispatch on structs** | arithmetic/bitwise/unary operator overloads and generic default-method injection |
+| **closures** | `self` capture and function-to-`ref fun` borrow conversion |
+| **weak field read**, **try-local rebinding**, **struct-valued map persistence** | smaller divergences |
+| **string runtime-library natives** | `str_char_at` / `str_substr` / `str_to_f64` / `str_from_code` / `clock` / `read_file` are not implemented in `roxy_rt` |
+| **rvalue `Printable.to_string`** | a `to_string()` returning an f-string from a struct rvalue emits a `void*` return type |
+
+Not bugs, also VM-only: tests asserting a result > 255 (8-bit exit code — many
+are recoverable by asserting printed stdout instead) and runtime-trap/overflow
+tests where the C binary aborts rather than trapping cleanly. The f32
+whole-number literal bug (`0.0f32` → `0f`, ill-formed) **is fixed**
+(`emit_constant`, `IROp::ConstF`).
 
 ## Files
 

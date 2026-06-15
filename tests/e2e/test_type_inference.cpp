@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 using namespace rx;
 
@@ -9,7 +10,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Type Inference") {
 
-    TEST_CASE("Default integer type is i32") {
+    TEST_CASE_TEMPLATE("Default integer type is i32", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var a = 42;       // i32
@@ -17,12 +18,12 @@ TEST_SUITE("E2E Type Inference") {
             return 0;
         }
     )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n");
     }
 
-    TEST_CASE("Integer suffixes") {
+    TEST_CASE_TEMPLATE("Integer suffixes", Backend, RX_E2E_BACKENDS) {
         SUBCASE("L suffix for i64") {
             const char* source = R"(
             fun main(): i32 {
@@ -32,7 +33,7 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -46,7 +47,7 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -60,13 +61,13 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
     }
 
-    TEST_CASE("Float suffixes") {
+    TEST_CASE_TEMPLATE("Float suffixes", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Default float is f64") {
             const char* source = R"(
             fun main(): i32 {
@@ -76,7 +77,7 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
         }
 
@@ -89,12 +90,12 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
         }
     }
 
-    TEST_CASE("Arithmetic with inferred types") {
+    TEST_CASE_TEMPLATE("Arithmetic with inferred types", Backend, RX_E2E_BACKENDS) {
         SUBCASE("i32 arithmetic") {
             const char* source = R"(
             fun main(): i32 {
@@ -105,7 +106,7 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "30\n");
         }
@@ -120,13 +121,13 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "30\n");
         }
     }
 
-    TEST_CASE("For loop with inferred index") {
+    TEST_CASE_TEMPLATE("For loop with inferred index", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var sum = 0;
@@ -138,12 +139,12 @@ TEST_SUITE("E2E Type Inference") {
         }
     )";
         // Sum of 0..9 = 45
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "45\n");
     }
 
-    TEST_CASE("Type mismatch errors") {
+    TEST_CASE_TEMPLATE("Type mismatch errors", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Unsuffixed integer literal coerces to i64") {
             const char* source = R"(
             fun main(): i32 {
@@ -151,7 +152,7 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
         }
 
@@ -162,7 +163,7 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(!result.success);
         }
 
@@ -173,7 +174,7 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(!result.success);
         }
 
@@ -184,12 +185,12 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(!result.success);
         }
     }
 
-    TEST_CASE("Binary operator type mismatch") {
+    TEST_CASE_TEMPLATE("Binary operator type mismatch", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Unsuffixed literal coerces in add with i64") {
             const char* source = R"(
             fun main(): i32 {
@@ -197,7 +198,7 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
         }
 
@@ -208,7 +209,7 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
         }
 
@@ -219,12 +220,12 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(!result.success);
         }
     }
 
-    TEST_CASE("Correct type matching works") {
+    TEST_CASE_TEMPLATE("Correct type matching works", Backend, RX_E2E_BACKENDS) {
         SUBCASE("i32 with i32") {
             const char* source = R"(
             fun main(): i32 {
@@ -233,7 +234,7 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -246,13 +247,13 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
     }
 
-    TEST_CASE("Function parameter type checking") {
+    TEST_CASE_TEMPLATE("Function parameter type checking", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Passing i32 to i32 parameter") {
             const char* source = R"(
             fun add_one(x: i32): i32 {
@@ -265,7 +266,7 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -281,7 +282,7 @@ TEST_SUITE("E2E Type Inference") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(!result.success);
         }
     }

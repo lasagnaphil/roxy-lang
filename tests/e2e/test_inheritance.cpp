@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 using namespace rx;
 
@@ -9,7 +10,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Inheritance") {
 
-    TEST_CASE("Inherit field access") {
+    TEST_CASE_TEMPLATE("Inherit field access", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Animal {
             hp: i32;
@@ -27,12 +28,12 @@ TEST_SUITE("E2E Inheritance") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "100\n5\n");
     }
 
-    TEST_CASE("Inherit method from parent") {
+    TEST_CASE_TEMPLATE("Inherit method from parent", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Animal {
             hp: i32;
@@ -53,12 +54,12 @@ TEST_SUITE("E2E Inheritance") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "100\n");
     }
 
-    TEST_CASE("Method override in child") {
+    TEST_CASE_TEMPLATE("Method override in child", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Animal {
             hp: i32;
@@ -85,12 +86,12 @@ TEST_SUITE("E2E Inheritance") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n");
     }
 
-    TEST_CASE("Super method call") {
+    TEST_CASE_TEMPLATE("Super method call", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Animal {
             hp: i32;
@@ -115,12 +116,12 @@ TEST_SUITE("E2E Inheritance") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "11\n");
     }
 
-    TEST_CASE("Constructor chaining implicit") {
+    TEST_CASE_TEMPLATE("Constructor chaining implicit", Backend, RX_E2E_BACKENDS) {
         // Test implicit super() call to parent's default constructor
         // Note: implicit super() only works when parent has a default (parameterless) constructor
         const char* source = R"(
@@ -151,13 +152,13 @@ TEST_SUITE("E2E Inheritance") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         // Parent default constructor called first (implicit super()), then child body
         CHECK(result.stdout_output == "1\n2\n50\n5\n");
     }
 
-    TEST_CASE("Constructor chaining explicit super") {
+    TEST_CASE_TEMPLATE("Constructor chaining explicit super", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Animal {
             hp: i32;
@@ -186,12 +187,12 @@ TEST_SUITE("E2E Inheritance") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n100\n5\n");
     }
 
-    TEST_CASE("Destructor chaining") {
+    TEST_CASE_TEMPLATE("Destructor chaining", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Animal {
             hp: i32;
@@ -216,13 +217,13 @@ TEST_SUITE("E2E Inheritance") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         // Child destructor runs first, then parent destructor
         CHECK(result.stdout_output == "2\n1\n");
     }
 
-    TEST_CASE("Value slicing on assignment") {
+    TEST_CASE_TEMPLATE("Value slicing on assignment", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Animal {
             hp: i32;
@@ -245,12 +246,12 @@ TEST_SUITE("E2E Inheritance") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "100\n100\n");
     }
 
-    TEST_CASE("Reference subtyping uniq to ref") {
+    TEST_CASE_TEMPLATE("Reference subtyping uniq to ref", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Animal {
             hp: i32;
@@ -272,12 +273,12 @@ TEST_SUITE("E2E Inheritance") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "100\n");
     }
 
-    TEST_CASE("Multi-level inheritance") {
+    TEST_CASE_TEMPLATE("Multi-level inheritance", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Animal {
             hp: i32;
@@ -313,12 +314,12 @@ TEST_SUITE("E2E Inheritance") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "100\n5\n3\n12\n");
     }
 
-    TEST_CASE("Synthesized constructor with inheritance") {
+    TEST_CASE_TEMPLATE("Synthesized constructor with inheritance", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Animal {
             hp: i32 = 50;
@@ -336,12 +337,12 @@ TEST_SUITE("E2E Inheritance") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "50\n1\n");
     }
 
-    TEST_CASE("Child accessing parent field in method") {
+    TEST_CASE_TEMPLATE("Child accessing parent field in method", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Animal {
             hp: i32;
@@ -362,7 +363,7 @@ TEST_SUITE("E2E Inheritance") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "105\n");
     }

@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
@@ -12,7 +13,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Algorithms") {
 
-    TEST_CASE("Float arithmetic") {
+    TEST_CASE_TEMPLATE("Float arithmetic", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun calc(): f64 {
             var a: f64 = 3.5;
@@ -25,11 +26,11 @@ TEST_SUITE("E2E Algorithms") {
         }
     )";
 
-        Value result = compile_and_run(source, "main");
-        CHECK(result.as_int == 6);
+        auto result = Backend::run(source);
+        CHECK(result.value == 6);
     }
 
-    TEST_CASE("Float comparison") {
+    TEST_CASE_TEMPLATE("Float comparison", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun max_float(a: f64, b: f64): f64 {
             if (a > b) {
@@ -48,8 +49,8 @@ TEST_SUITE("E2E Algorithms") {
         }
     )";
 
-        Value result = compile_and_run(source, "main");
-        CHECK(result.as_int == 3);  // both branches matched
+        auto result = Backend::run(source);
+        CHECK(result.value == 3);  // both branches matched
     }
 
     // ============================================================================
@@ -96,7 +97,7 @@ TEST_SUITE("E2E Algorithms") {
         delete module;
     }
 
-    TEST_CASE("Collatz conjecture steps") {
+    TEST_CASE_TEMPLATE("Collatz conjecture steps", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun collatz_steps(n: i32): i32 {
             var steps: i32 = 0;
@@ -119,13 +120,13 @@ TEST_SUITE("E2E Algorithms") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         // collatz_steps(1)=0, collatz_steps(6)=8, collatz_steps(27)=111
         CHECK(result.stdout_output == "0\n8\n111\n");
     }
 
-    TEST_CASE("Prime checking") {
+    TEST_CASE_TEMPLATE("Prime checking", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun is_prime(n: i32): i32 {
             if (n <= 1) {
@@ -166,7 +167,7 @@ TEST_SUITE("E2E Algorithms") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         // primes return 1, non-primes return 0
         CHECK(result.stdout_output == "1\n1\n1\n1\n1\n1\n0\n0\n0\n0\n0\n0\n");
@@ -176,7 +177,7 @@ TEST_SUITE("E2E Algorithms") {
     // Print Tests
     // ============================================================================
 
-    TEST_CASE("Print function") {
+    TEST_CASE_TEMPLATE("Print function", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             print(f"{42}");
@@ -186,7 +187,7 @@ TEST_SUITE("E2E Algorithms") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n123\n0\n");
     }

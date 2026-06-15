@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 using namespace rx;
 
@@ -9,7 +10,7 @@ using namespace rx;
 
 TEST_SUITE("E2E When") {
 
-    TEST_CASE("When basic") {
+    TEST_CASE_TEMPLATE("When basic", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Color { Red, Green, Blue }
 
@@ -33,12 +34,12 @@ TEST_SUITE("E2E When") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n3\n");
     }
 
-    TEST_CASE("When with else") {
+    TEST_CASE_TEMPLATE("When with else", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Status { Pending, Active, Done, Cancelled }
 
@@ -62,12 +63,12 @@ TEST_SUITE("E2E When") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "100\n200\n999\n999\n");
     }
 
-    TEST_CASE("When with multiple case names") {
+    TEST_CASE_TEMPLATE("When with multiple case names", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Day { Mon, Tue, Wed, Thu, Fri, Sat, Sun }
 
@@ -89,12 +90,12 @@ TEST_SUITE("E2E When") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "0\n0\n1\n1\n");
     }
 
-    TEST_CASE("When with enum explicit values") {
+    TEST_CASE_TEMPLATE("When with enum explicit values", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Priority { Low = 10, Medium = 50, High = 100 }
 
@@ -118,12 +119,12 @@ TEST_SUITE("E2E When") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n3\n");
     }
 
-    TEST_CASE("When with local variables in case") {
+    TEST_CASE_TEMPLATE("When with local variables in case", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Op { Add, Sub, Mul }
 
@@ -150,12 +151,12 @@ TEST_SUITE("E2E When") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "13\n7\n30\n");
     }
 
-    TEST_CASE("When with multiple statements per case") {
+    TEST_CASE_TEMPLATE("When with multiple statements per case", Backend, RX_E2E_BACKENDS) {
         // This test verifies that variable modifications inside case bodies
         // persist after the when statement (phi node support)
         const char* source = R"(
@@ -188,12 +189,12 @@ TEST_SUITE("E2E When") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n3\n10\n20\n30\n");
     }
 
-    TEST_CASE("When exhaustive without else") {
+    TEST_CASE_TEMPLATE("When exhaustive without else", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Bool2 { True2, False2 }
 
@@ -214,12 +215,12 @@ TEST_SUITE("E2E When") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n0\n");
     }
 
-    TEST_CASE("When with variable discriminant") {
+    TEST_CASE_TEMPLATE("When with variable discriminant", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Mode { Read, Write, ReadWrite }
 
@@ -244,12 +245,12 @@ TEST_SUITE("E2E When") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n3\n");
     }
 
-    TEST_CASE("When phi without else") {
+    TEST_CASE_TEMPLATE("When phi without else", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Op { Add, Sub }
 
@@ -271,12 +272,12 @@ TEST_SUITE("E2E When") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "15\n5\n");
     }
 
-    TEST_CASE("When phi with else") {
+    TEST_CASE_TEMPLATE("When phi with else", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Status { Ok, Warning, Error, Unknown }
 
@@ -304,12 +305,12 @@ TEST_SUITE("E2E When") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "0\n1\n2\n99\n");
     }
 
-    TEST_CASE("When phi multiple variables") {
+    TEST_CASE_TEMPLATE("When phi multiple variables", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Action { Move, Jump, Attack }
 
@@ -338,12 +339,12 @@ TEST_SUITE("E2E When") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "15\n20\n5\n");
     }
 
-    TEST_CASE("When phi partial coverage") {
+    TEST_CASE_TEMPLATE("When phi partial coverage", Backend, RX_E2E_BACKENDS) {
         // Some cases modify the variable, some don't - should use original value
         const char* source = R"(
         enum Priority { Low, Medium, High }
@@ -367,7 +368,7 @@ TEST_SUITE("E2E When") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         // Low falls through to merge with original value (10)
         CHECK(result.stdout_output == "10\n20\n30\n");
@@ -439,7 +440,7 @@ TEST_SUITE("E2E When") {
         CHECK(module == nullptr);  // Should fail: use of possibly moved value
     }
 
-    TEST_CASE("When arm bool reused after for-loop (compare/branch fusion)") {
+    TEST_CASE_TEMPLATE("When arm bool reused after for-loop (compare/branch fusion)", Backend, RX_E2E_BACKENDS) {
         // Regression: a bool local whose defining comparison is fused with the
         // immediately-following JMP_IF used to leave the SSA value's register
         // uninitialized for a later read on the other side of a `for` loop. With
@@ -480,9 +481,9 @@ TEST_SUITE("E2E When") {
         }
     )";
 
-        Value result = compile_and_run(source, "main");
+        auto result = Backend::run(source);
         // flag=true → 1 (first if) + 20 (two loop iters) + 100 (second if) = 121
-        CHECK(result.as_int == 121);
+        CHECK(result.value == 121);
     }
 
     TEST_CASE("When no move in any branch") {

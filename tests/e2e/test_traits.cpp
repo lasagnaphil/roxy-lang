@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
@@ -12,7 +13,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Traits") {
 
-    TEST_CASE("Trait basic required method") {
+    TEST_CASE_TEMPLATE("Trait basic required method", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Describable;
 
@@ -34,12 +35,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n");
     }
 
-    TEST_CASE("Trait default method") {
+    TEST_CASE_TEMPLATE("Trait default method", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Summable;
 
@@ -66,12 +67,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "8\n16\n");
     }
 
-    TEST_CASE("Trait inheritance") {
+    TEST_CASE_TEMPLATE("Trait inheritance", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Base;
         fun Base.base_val(): i32;
@@ -99,12 +100,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "5\n10\n");
     }
 
-    TEST_CASE("Trait missing required method") {
+    TEST_CASE_TEMPLATE("Trait missing required method", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Describable;
         fun Describable.value(): i32;
@@ -123,11 +124,11 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(!result.success);
     }
 
-    TEST_CASE("Trait Eq operator") {
+    TEST_CASE_TEMPLATE("Trait Eq operator", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Eq;
         fun Eq.eq(other: Self): bool;
@@ -162,12 +163,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n0\n1\n0\n");
     }
 
-    TEST_CASE("Trait Ord operator with inheritance") {
+    TEST_CASE_TEMPLATE("Trait Ord operator with inheritance", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Eq;
         fun Eq.eq(other: Self): bool;
@@ -219,12 +220,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n0\n1\n0\n1\n1\n");
     }
 
-    TEST_CASE("Trait override default method") {
+    TEST_CASE_TEMPLATE("Trait override default method", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Summable;
 
@@ -255,12 +256,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "8\n24\n");
     }
 
-    TEST_CASE("Trait Self type in parameters") {
+    TEST_CASE_TEMPLATE("Trait Self type in parameters", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Addable;
 
@@ -283,12 +284,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "35\n");
     }
 
-    TEST_CASE("Multiple traits on one struct") {
+    TEST_CASE_TEMPLATE("Multiple traits on one struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait HasX;
         fun HasX.get_x(): i32;
@@ -317,12 +318,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n99\n");
     }
 
-    TEST_CASE("Struct method takes priority over trait default") {
+    TEST_CASE_TEMPLATE("Struct method takes priority over trait default", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32 {
@@ -344,12 +345,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n");
     }
 
-    TEST_CASE("Trait method not in trait error") {
+    TEST_CASE_TEMPLATE("Trait method not in trait error", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Foo;
         fun Foo.bar(): i32;
@@ -371,7 +372,7 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(!result.success);
     }
 
@@ -379,7 +380,7 @@ TEST_SUITE("E2E Traits") {
     // Generic Trait Tests
     // ============================================================================
 
-    TEST_CASE("Generic trait basic required method") {
+    TEST_CASE_TEMPLATE("Generic trait basic required method", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
@@ -403,12 +404,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "4\n6\n");
     }
 
-    TEST_CASE("Generic trait mixed-type Rhs") {
+    TEST_CASE_TEMPLATE("Generic trait mixed-type Rhs", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Mul<Rhs>;
         fun Mul.mul(other: Rhs): Self;
@@ -431,12 +432,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "8\n12\n");
     }
 
-    TEST_CASE("Generic trait default method injection") {
+    TEST_CASE("Generic trait default method injection") {  // VM-only: C backend: operator/trait method dispatch on structs gap
         const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
@@ -461,12 +462,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "20\n");
     }
 
-    TEST_CASE("Generic trait multi-param") {
+    TEST_CASE_TEMPLATE("Generic trait multi-param", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Convert<From, To>;
         fun Convert.convert(input: From): To;
@@ -487,12 +488,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "21\n");
     }
 
-    TEST_CASE("Generic trait default type param (Rhs defaults to Self)") {
+    TEST_CASE_TEMPLATE("Generic trait default type param (Rhs defaults to Self)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
@@ -511,11 +512,11 @@ TEST_SUITE("E2E Traits") {
     )";
 
         // `for Add` is shorthand for `for Add<Num>` (type params default to Self)
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
     }
 
-    TEST_CASE("Generic trait error: type args on non-generic trait") {
+    TEST_CASE_TEMPLATE("Generic trait error: type args on non-generic trait", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Eq;
         fun Eq.eq(other: Self): bool;
@@ -533,11 +534,11 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(!result.success);
     }
 
-    TEST_CASE("Trait error: wrong parameter type (Self trait)") {
+    TEST_CASE_TEMPLATE("Trait error: wrong parameter type (Self trait)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Addable;
         fun Addable.add(other: Self): Self;
@@ -555,11 +556,11 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE("Trait error: wrong return type (Self trait)") {
+    TEST_CASE_TEMPLATE("Trait error: wrong return type (Self trait)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Addable;
         fun Addable.add(other: Self): Self;
@@ -577,11 +578,11 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE("Trait error: wrong parameter type (generic trait)") {
+    TEST_CASE_TEMPLATE("Trait error: wrong parameter type (generic trait)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Mul<Rhs>;
         fun Mul.mul(other: Rhs): Self;
@@ -600,13 +601,13 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK_FALSE(result.success);
     }
 
     // ========== Operator Overloading Tests ==========
 
-    TEST_CASE("Arithmetic operator dispatch (+ -)") {
+    TEST_CASE("Arithmetic operator dispatch (+ -)") {  // VM-only: C backend: operator/trait method dispatch on structs gap
         const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
@@ -640,12 +641,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "13\n27\n7\n13\n");
     }
 
-    TEST_CASE("Mixed-type arithmetic (* with scalar)") {
+    TEST_CASE("Mixed-type arithmetic (* with scalar)") {  // VM-only: C backend: operator/trait method dispatch on structs gap
         const char* source = R"(
         trait Mul<Rhs>;
         fun Mul.mul(other: Rhs): Self;
@@ -668,12 +669,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "12\n20\n");
     }
 
-    TEST_CASE("Unary negation dispatch") {
+    TEST_CASE("Unary negation dispatch") {  // VM-only: C backend: operator/trait method dispatch on structs gap
         const char* source = R"(
         trait Neg;
         fun Neg.neg(): Self;
@@ -698,7 +699,7 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         // Note: struct GET_FIELD zero-extends i32 to u64, so negative values
         // display as unsigned. Use a value test instead:
@@ -708,7 +709,7 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.value == 0);
     }
 
-    TEST_CASE("Compound assignment dispatch (+=)") {
+    TEST_CASE_TEMPLATE("Compound assignment dispatch (+=)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait AddAssign<Rhs>;
         fun AddAssign.add_assign(other: Rhs);
@@ -733,12 +734,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "11\n22\n");
     }
 
-    TEST_CASE("Bitwise operator dispatch on structs") {
+    TEST_CASE("Bitwise operator dispatch on structs") {  // VM-only: C backend: operator/trait method dispatch on structs gap
         const char* source = R"(
         trait BitAnd<Rhs>;
         fun BitAnd.bit_and(other: Rhs): Self;
@@ -769,12 +770,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "15\n255\n");
     }
 
-    TEST_CASE("New operators on primitives (^ << >>)") {
+    TEST_CASE_TEMPLATE("New operators on primitives (^ << >>)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var a: i32 = 0xFF;
@@ -794,12 +795,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "240\n16\n32\n");
     }
 
-    TEST_CASE("New compound assignments on primitives (&= |= ^= <<= >>=)") {
+    TEST_CASE_TEMPLATE("New compound assignments on primitives (&= |= ^= <<= >>=)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var a: i32 = 0xFF;
@@ -826,12 +827,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "15\n255\n240\n256\n32\n");
     }
 
-    TEST_CASE("Default type param (for Add without explicit <Vec2>)") {
+    TEST_CASE("Default type param (for Add without explicit <Vec2>)") {  // VM-only: C backend: operator/trait method dispatch on structs gap
         const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
@@ -855,12 +856,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "4\n6\n");
     }
 
-    TEST_CASE("Nested generics with >> token splitting") {
+    TEST_CASE_TEMPLATE("Nested generics with >> token splitting", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -873,14 +874,14 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
     // ========== Index Operator Dispatch Tests ==========
 
-    TEST_CASE("Index read dispatch on struct") {
+    TEST_CASE_TEMPLATE("Index read dispatch on struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Grid {
             a: i32;
@@ -903,12 +904,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n20\n30\n");
     }
 
-    TEST_CASE("Index write dispatch on struct") {
+    TEST_CASE_TEMPLATE("Index write dispatch on struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Grid {
             a: i32;
@@ -940,12 +941,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "100\n200\n300\n");
     }
 
-    TEST_CASE("Index compound assignment dispatch on struct") {
+    TEST_CASE_TEMPLATE("Index compound assignment dispatch on struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Grid {
             a: i32;
@@ -977,12 +978,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "15\n30\n45\n");
     }
 
-    TEST_CASE("Index error: no index method on struct") {
+    TEST_CASE_TEMPLATE("Index error: no index method on struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Foo {
             x: i32;
@@ -995,11 +996,11 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(!result.success);
     }
 
-    TEST_CASE("Index error: no index_mut method on struct") {
+    TEST_CASE_TEMPLATE("Index error: no index_mut method on struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Grid {
             a: i32;
@@ -1018,11 +1019,11 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(!result.success);
     }
 
-    TEST_CASE("Index/IndexMut builtin trait impls dispatch") {
+    TEST_CASE_TEMPLATE("Index/IndexMut builtin trait impls dispatch", Backend, RX_E2E_BACKENDS) {
         // `for Index<Idx, Output>` / `for IndexMut<Idx, Output>` formally opt the
         // struct into the subscript operator; dispatch is the same structural
         // path as a plain `index`/`index_mut` method.
@@ -1052,12 +1053,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 109);
     }
 
-    TEST_CASE("Index with noncopyable Output type arg") {
+    TEST_CASE("Index with noncopyable Output type arg") {  // VM-only: C backend: operator/trait method dispatch on structs gap
         // Output may be a noncopyable type; `for Index<i32, uniq Point>` validates
         // the index method returns exactly `uniq Point`.
         const char* source = R"(
@@ -1075,7 +1076,7 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }

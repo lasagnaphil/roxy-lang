@@ -447,7 +447,28 @@ cd build
 
 On Windows, use `.exe` extension.
 
-**Note for Claude Code:** C backend tests (`--test-suite="E2E C Backend"`) invoke the system C++ compiler to compile and run generated code, so they require running outside the sandbox (`dangerouslyDisableSandbox: true`). All other tests run fine inside the sandbox. (ASAN is currently disabled — see the AddressSanitizer note above; when re-enabled, ASAN builds also need to run outside the sandbox for the symbolizer.)
+**Backend-parametric E2E tests (`<VM>` / `<C>`):** most `tests/e2e/` suites run
+each test on *both* the bytecode VM and the AOT C backend via doctest's
+`TEST_CASE_TEMPLATE` (harness: `tests/e2e/test_e2e_backend.hpp`). doctest names
+each instantiation `<TestName><VM>` / `<TestName><C>`, so the backend is
+selectable by name filter:
+
+```bash
+./roxy_tests --test-case="*<VM>*"                                  # VM only (fast, sandbox-safe)
+./roxy_tests --test-case="*<C>*"                                   # C backend only (needs system compiler)
+./roxy_tests --test-case-exclude="*<C>*" --test-suite-exclude="E2E C Backend"  # everything compiler-free
+```
+
+Cases the C backend can't run are plain `TEST_CASE` (VM-only) with a
+`// VM-only: <reason>` annotation; see `docs/internals/c-backend.md` → "Known
+C-backend gaps" for the current list.
+
+**Note for Claude Code:** anything that exercises the C backend — the `*<C>*`
+cases above and the `E2E C Backend` suite — invokes the system C++ compiler, so
+those require running outside the sandbox (`dangerouslyDisableSandbox: true`).
+Everything else (including `--test-case-exclude="*<C>*"`) runs fine inside the
+sandbox. (ASAN is currently disabled — see the AddressSanitizer note above; when
+re-enabled, ASAN builds also need to run outside the sandbox for the symbolizer.)
 
 ## Documentation
 

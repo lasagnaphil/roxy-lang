@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 using namespace rx;
 
@@ -9,7 +10,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Closures") {
 
-    TEST_CASE("lambda creation and immediate call") {
+    TEST_CASE_TEMPLATE("lambda creation and immediate call", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Single arg, expression body") {
             const char* source = R"(
             fun main() {
@@ -17,7 +18,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f(5)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "6\n");
         }
@@ -29,7 +30,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{mul(6, 7)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -41,7 +42,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{g()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -53,13 +54,13 @@ TEST_SUITE("E2E Closures") {
                 greet("world");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "hello world\n");
         }
     }
 
-    TEST_CASE("higher-order functions") {
+    TEST_CASE_TEMPLATE("higher-order functions", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Pass closure as parameter") {
             const char* source = R"(
             fun apply(f: fun(i32) -> i32, x: i32): i32 {
@@ -69,7 +70,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{apply(fun(x: i32): i32 => x + 1, 5)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "6\n");
         }
@@ -83,7 +84,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{apply_twice(fun(x: i32): i32 => x * 2, 3)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "12\n");
         }
@@ -98,13 +99,13 @@ TEST_SUITE("E2E Closures") {
                 print(f"{inc(99)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "100\n");
         }
     }
 
-    TEST_CASE("implicit copy capture") {
+    TEST_CASE_TEMPLATE("implicit copy capture", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Capture i32 by value") {
             const char* source = R"(
             fun main() {
@@ -113,7 +114,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "11\n");
         }
@@ -129,7 +130,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{n}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "10\n99\n");
         }
@@ -142,7 +143,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "3.14\n");
         }
@@ -156,7 +157,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{add(7)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "157\n");
         }
@@ -171,7 +172,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "15\n");
         }
@@ -186,13 +187,13 @@ TEST_SUITE("E2E Closures") {
                 print(f"{add5(3)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "8\n");
         }
     }
 
-    TEST_CASE("explicit move capture") {
+    TEST_CASE_TEMPLATE("explicit move capture", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Move uniq T into closure") {
             const char* source = R"(
             struct Counter {
@@ -204,7 +205,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -227,7 +228,7 @@ TEST_SUITE("E2E Closures") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "7\ndel 7\nafter\n");
         }
@@ -288,7 +289,7 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
-    TEST_CASE("function references") {
+    TEST_CASE_TEMPLATE("function references", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Bare function name to typed variable") {
             const char* source = R"(
             fun double(x: i32): i32 { return x * 2; }
@@ -297,7 +298,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f(21)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -310,7 +311,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f(7)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "14\n");
         }
@@ -327,7 +328,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{apply(triple, 5)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "10\n15\n");
         }
@@ -344,7 +345,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{b(4)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "6\n8\n");
         }
@@ -357,7 +358,7 @@ TEST_SUITE("E2E Closures") {
                 g("world");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "hi world\n");
         }
@@ -372,7 +373,7 @@ TEST_SUITE("E2E Closures") {
                 print(c("hi-", "lo"));
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "hi-lo\n");
         }
@@ -384,7 +385,7 @@ TEST_SUITE("E2E Closures") {
                 greet_via(print, "hello");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "hello\n");
         }
@@ -400,7 +401,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f(42)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -414,7 +415,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{apply(identity, 21)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "21\n");
         }
@@ -431,7 +432,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f(3.5)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "7\n3.5\n");
         }
@@ -462,7 +463,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f(42)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -475,7 +476,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{apply(identity<i32>, 21)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "21\n");
         }
@@ -498,7 +499,7 @@ TEST_SUITE("E2E Closures") {
                 }
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "ok\n");
         }
@@ -519,7 +520,7 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
-    TEST_CASE("nested closures") {
+    TEST_CASE_TEMPLATE("nested closures", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Inner captures outer's parameter (make_adder)") {
             const char* source = R"(
             fun make_adder(x: i32): fun(i32) -> i32 {
@@ -530,7 +531,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{add5(3)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "8\n");
         }
@@ -547,7 +548,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{c(10)(20)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "30\n");
         }
@@ -566,7 +567,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()(1)(2)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "103\n");
         }
@@ -582,13 +583,13 @@ TEST_SUITE("E2E Closures") {
                 print(f"{triple_seed(3)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "21\n");
         }
     }
 
-    TEST_CASE("self capture") {
+    TEST_CASE("self capture") {  // VM-only: C backend: self-capture / function-to-borrow conversion gap
         SUBCASE("Implicit ref-self on noncopyable struct") {
             // Noncopyable struct ⇒ heap-only ⇒ ref counting protects; no runtime check.
             const char* source = R"(
@@ -605,7 +606,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{g()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -624,7 +625,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "99\n");
         }
@@ -642,7 +643,7 @@ TEST_SUITE("E2E Closures") {
                 var f = v.make();
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK_FALSE(result.success);  // Runtime trap from ASSERT_HEAP
         }
 
@@ -665,7 +666,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "7\n");
         }
@@ -685,7 +686,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "99\n");
         }
@@ -704,7 +705,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "21\n");
         }
@@ -722,7 +723,7 @@ TEST_SUITE("E2E Closures") {
                 var f = v.make();
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK_FALSE(result.success);
         }
     }
@@ -757,7 +758,7 @@ TEST_SUITE("E2E Closures") {
 
     }
 
-    TEST_CASE("nested self capture") {
+    TEST_CASE("nested self capture") {  // VM-only: C backend: self-capture / function-to-borrow conversion gap
         SUBCASE("Nested [copy self] on copyable + uniq receiver") {
             // Outer takes implicit ref-self (heap check passes for uniq); inner's
             // [copy self] reads via outer's __env.__self and snapshots into its
@@ -778,7 +779,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "7\n");
         }
@@ -800,7 +801,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "99\n");
         }
@@ -824,7 +825,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "21\n");
         }
@@ -847,12 +848,12 @@ TEST_SUITE("E2E Closures") {
                 var f = v.factory();
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK_FALSE(result.success);
         }
     }
 
-    TEST_CASE("transitive [move] across nested lambdas") {
+    TEST_CASE("transitive [move] across nested lambdas") {  // VM-only: C backend: self-capture / function-to-borrow conversion gap
         SUBCASE("Inner [move c] from a noncopyable across one outer lambda") {
             // `c` lives in main's scope; the outer lambda doesn't reference it
             // directly, but the inner lambda's [move c] propagates a Move
@@ -870,7 +871,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{inner()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "7\n");
         }
@@ -909,13 +910,13 @@ TEST_SUITE("E2E Closures") {
                 print(f"{inner()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "99\n");
         }
     }
 
-    TEST_CASE("edge cases") {
+    TEST_CASE_TEMPLATE("edge cases", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Closure inside for-loop captures fresh i each iteration") {
             // Each iteration creates a new closure whose `i` capture is the
             // current loop value (by-value semantic — JS-style "all closures
@@ -933,7 +934,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{result}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "10\n");  // 0+1+2+3+4
         }
@@ -953,7 +954,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{h.callback(41)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -971,7 +972,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{a.op(5)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "105\n");
         }
@@ -985,7 +986,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{fs[0](10)} {fs[1](10)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "11 20\n");
         }
@@ -1000,7 +1001,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{combine(5)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "12\n");  // (5+1)*2
         }
@@ -1025,7 +1026,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{c.value}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "1\n2\n2\n");
         }
@@ -1041,7 +1042,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f(10)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "21\n");
         }
@@ -1069,7 +1070,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f(-3)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "50\n-1\n");
         }
@@ -1083,7 +1084,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f(10)}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "11\n1000\n");
         }
@@ -1103,7 +1104,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "107\n");
         }
@@ -1131,7 +1132,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{g()}");
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "7\n");
         }
@@ -1148,13 +1149,13 @@ TEST_SUITE("E2E Closures") {
                 greet();
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "hello\n");
         }
     }
 
-    TEST_CASE("function-to-borrow conversion") {
+    TEST_CASE("function-to-borrow conversion") {  // VM-only: C backend: self-capture / function-to-borrow conversion gap
         SUBCASE("pass a fun to a ref fun parameter and call it") {
             // `fun -> ref fun` borrows the closure (like uniq -> ref); the borrow
             // is callable, and the caller's `f` stays usable afterward.
@@ -1169,7 +1170,7 @@ TEST_SUITE("E2E Closures") {
                 return a + b;                // 42 + 10 == 52
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK(result.success);
             CHECK(result.value == 52);
         }
@@ -1185,13 +1186,13 @@ TEST_SUITE("E2E Closures") {
                 return apply(f, 14);   // 42
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = VMBackend::run(source);
             CHECK(result.success);
             CHECK(result.value == 42);
         }
     }
 
-    TEST_CASE("borrowed function values are callable") {
+    TEST_CASE_TEMPLATE("borrowed function values are callable", Backend, RX_E2E_BACKENDS) {
         SUBCASE("borrow a function out of a list and call it") {
             // `List<fun>.index` returns `borrowed fun` == `ref fun`, so a bound
             // element is a borrow of the list's closure (no double-free) and is
@@ -1205,7 +1206,7 @@ TEST_SUITE("E2E Closures") {
                 return fs[0](10) + g(10);             // 11 + 20 == 31
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.value == 31);
         }

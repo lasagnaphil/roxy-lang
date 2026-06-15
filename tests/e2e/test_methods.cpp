@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
@@ -12,7 +13,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Methods") {
 
-    TEST_CASE("Basic method call") {
+    TEST_CASE_TEMPLATE("Basic method call", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -30,12 +31,12 @@ TEST_SUITE("E2E Methods") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "30\n");
     }
 
-    TEST_CASE("Method with parameters") {
+    TEST_CASE_TEMPLATE("Method with parameters", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -53,12 +54,12 @@ TEST_SUITE("E2E Methods") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "50\n");
     }
 
-    TEST_CASE("Method modifying self") {
+    TEST_CASE_TEMPLATE("Method modifying self", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Counter {
             value: i32;
@@ -82,12 +83,12 @@ TEST_SUITE("E2E Methods") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n11\n");
     }
 
-    TEST_CASE("Method returning struct") {
+    TEST_CASE_TEMPLATE("Method returning struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -107,12 +108,12 @@ TEST_SUITE("E2E Methods") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "6\n8\n");
     }
 
-    TEST_CASE("Multiple methods on same struct") {
+    TEST_CASE_TEMPLATE("Multiple methods on same struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Rect {
             width: i32;
@@ -135,12 +136,12 @@ TEST_SUITE("E2E Methods") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "15\n16\n");
     }
 
-    TEST_CASE("Method on heap-allocated struct") {
+    TEST_CASE_TEMPLATE("Method on heap-allocated struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -159,12 +160,12 @@ TEST_SUITE("E2E Methods") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "300\n");
     }
 
-    TEST_CASE("Chained method calls") {
+    TEST_CASE_TEMPLATE("Chained method calls", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Counter {
             value: i32;
@@ -184,12 +185,12 @@ TEST_SUITE("E2E Methods") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "5\n10\n15\n");
     }
 
-    TEST_CASE("Method with struct parameter") {
+    TEST_CASE_TEMPLATE("Method with struct parameter", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -210,7 +211,7 @@ TEST_SUITE("E2E Methods") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "25\n");
     }

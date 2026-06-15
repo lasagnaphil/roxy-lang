@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
@@ -12,7 +13,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Structs") {
 
-    TEST_CASE("Basic struct field access") {
+    TEST_CASE_TEMPLATE("Basic struct field access", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -29,12 +30,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n20\n");
     }
 
-    TEST_CASE("Struct with 64-bit field") {
+    TEST_CASE_TEMPLATE("Struct with 64-bit field", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Data {
             a: i32;
@@ -51,12 +52,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n100000000000\n");
     }
 
-    TEST_CASE("Multiple struct variables") {
+    TEST_CASE_TEMPLATE("Multiple struct variables", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -78,12 +79,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n3\n4\n");
     }
 
-    TEST_CASE("Struct field assignment from expression") {
+    TEST_CASE_TEMPLATE("Struct field assignment from expression", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -100,12 +101,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "12\n17\n");
     }
 
-    TEST_CASE("Struct with float fields") {
+    TEST_CASE("Struct with float fields") {  // VM-only: f64 return inspected via raw Value bits (no exit-code equivalent)
         const char* source = R"(
         struct Vec2 {
             x: f64;
@@ -125,7 +126,7 @@ TEST_SUITE("E2E Structs") {
         CHECK(float_result.as_float == doctest::Approx(4.0));  // 1.5 + 2.5
     }
 
-    TEST_CASE("Struct in conditional") {
+    TEST_CASE_TEMPLATE("Struct in conditional", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -145,12 +146,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n");
     }
 
-    TEST_CASE("Struct in loop") {
+    TEST_CASE_TEMPLATE("Struct in loop", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Counter {
             value: i32;
@@ -167,12 +168,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "0\n1\n3\n6\n10\n");  // cumulative: 0, 0+1, 1+2, 3+3, 6+4
     }
 
-    TEST_CASE("Nested structs") {
+    TEST_CASE_TEMPLATE("Nested structs", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -198,12 +199,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n20\n100\n200\n");
     }
 
-    TEST_CASE("Deeply nested structs (3 levels)") {
+    TEST_CASE("Deeply nested structs (3 levels)") {  // VM-only: C backend: struct-by-value copy semantics gap
         const char* source = R"(
         struct Inner {
             value: i32;
@@ -231,12 +232,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n10\n100\n");
     }
 
-    TEST_CASE("Multiple nested struct variables") {
+    TEST_CASE_TEMPLATE("Multiple nested struct variables", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -268,7 +269,7 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n5\n");
     }
@@ -277,7 +278,7 @@ TEST_SUITE("E2E Structs") {
     // Struct Literal Tests
     // ============================================================================
 
-    TEST_CASE("Struct literal") {
+    TEST_CASE_TEMPLATE("Struct literal", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -292,12 +293,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n20\n");
     }
 
-    TEST_CASE("Struct literal with default values") {
+    TEST_CASE_TEMPLATE("Struct literal with default values", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Config {
             width: i32 = 800;
@@ -314,12 +315,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1920\n600\n0\n");
     }
 
-    TEST_CASE("Struct literal field order") {
+    TEST_CASE_TEMPLATE("Struct literal field order", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -334,12 +335,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n20\n");
     }
 
-    TEST_CASE("Empty struct literal (all defaults)") {
+    TEST_CASE_TEMPLATE("Empty struct literal (all defaults)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Defaults {
             a: i32 = 1;
@@ -356,12 +357,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n3\n");
     }
 
-    TEST_CASE("Struct literal with expressions") {
+    TEST_CASE_TEMPLATE("Struct literal with expressions", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -377,12 +378,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n15\n");  // 5*2=10, 5+10=15
     }
 
-    TEST_CASE("Struct literal with 64-bit field") {
+    TEST_CASE_TEMPLATE("Struct literal with 64-bit field", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Data {
             a: i32;
@@ -397,7 +398,7 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n100000000000\n");
     }
@@ -406,7 +407,7 @@ TEST_SUITE("E2E Structs") {
     // Struct Parameter Tests
     // ============================================================================
 
-    TEST_CASE("Small struct parameter") {
+    TEST_CASE_TEMPLATE("Small struct parameter", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -424,12 +425,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "25\n");  // 3^2 + 4^2 = 9 + 16
     }
 
-    TEST_CASE("Struct parameter value semantics") {
+    TEST_CASE("Struct parameter value semantics") {  // VM-only: C backend: struct-by-value copy semantics gap
         const char* source = R"(
         struct Point {
             x: i32;
@@ -449,12 +450,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "100\n5\n");  // modify returns 100, but pt.x is still 5 (value semantics)
     }
 
-    TEST_CASE("Multiple struct parameters") {
+    TEST_CASE_TEMPLATE("Multiple struct parameters", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -477,12 +478,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n10\n20\n");
     }
 
-    TEST_CASE("Mixed struct and primitive parameters") {
+    TEST_CASE_TEMPLATE("Mixed struct and primitive parameters", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -503,7 +504,7 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "3\n7\n5\n50\n");  // p.x, p.y, factor, result
     }
@@ -512,7 +513,7 @@ TEST_SUITE("E2E Structs") {
     // Struct Return Tests
     // ============================================================================
 
-    TEST_CASE("Return small struct") {
+    TEST_CASE_TEMPLATE("Return small struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -532,12 +533,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n20\n");
     }
 
-    TEST_CASE("Return struct with modification") {
+    TEST_CASE_TEMPLATE("Return struct with modification", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -558,12 +559,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n20\n");  // 5*2, 10*2
     }
 
-    TEST_CASE("Chain struct returns") {
+    TEST_CASE("Chain struct returns") {  // VM-only: C backend: struct-by-value copy semantics gap
         const char* source = R"(
         struct Point {
             x: i32;
@@ -586,12 +587,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "5\n10\n");
     }
 
-    TEST_CASE("Struct return used in expression") {
+    TEST_CASE_TEMPLATE("Struct return used in expression", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -609,7 +610,7 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "7\n4\n");
     }
@@ -618,7 +619,7 @@ TEST_SUITE("E2E Structs") {
     // Large Struct Return Tests (>16 bytes / >4 slots)
     // ============================================================================
 
-    TEST_CASE("Large struct return (>16 bytes)") {
+    TEST_CASE_TEMPLATE("Large struct return (>16 bytes)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct BigData {
             a: i32;
@@ -643,12 +644,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n11\n12\n13\n14\n");
     }
 
-    TEST_CASE("Large struct return value semantics") {
+    TEST_CASE("Large struct return value semantics") {  // VM-only: C backend: struct-by-value copy semantics gap
         const char* source = R"(
         struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
 
@@ -669,12 +670,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "999\n1\n");  // modify_big returns 999, but data.a is still 1
     }
 
-    TEST_CASE("Large struct chained returns") {
+    TEST_CASE_TEMPLATE("Large struct chained returns", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
 
@@ -692,12 +693,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "25\n");  // 5 * 5
     }
 
-    TEST_CASE("Large struct return with 64-bit field") {
+    TEST_CASE_TEMPLATE("Large struct return with 64-bit field", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct BigData {
             a: i32;
@@ -720,12 +721,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n100000000000\n4\n");
     }
 
-    TEST_CASE("Large struct return used in expression") {
+    TEST_CASE_TEMPLATE("Large struct return used in expression", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
 
@@ -740,12 +741,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "6\n12\n");  // 2*3=6, 3*4=12
     }
 
-    TEST_CASE("Large struct return chained function calls") {
+    TEST_CASE_TEMPLATE("Large struct return chained function calls", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
 
@@ -774,7 +775,7 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "15\n15\n15\n15\n15\n");  // 10+5 for each field
     }
@@ -783,7 +784,7 @@ TEST_SUITE("E2E Structs") {
     // Float Struct Field Tests
     // ============================================================================
 
-    TEST_CASE("Struct with f32 fields") {
+    TEST_CASE_TEMPLATE("Struct with f32 fields", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: f32;
@@ -797,12 +798,12 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 4);  // 1.5 + 2.5 = 4.0 -> 4
     }
 
-    TEST_CASE("Struct with mixed i32 and f32 fields") {
+    TEST_CASE_TEMPLATE("Struct with mixed i32 and f32 fields", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Data {
             count: i32;
@@ -816,7 +817,7 @@ TEST_SUITE("E2E Structs") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 25);  // 10 * 2.5 = 25.0 -> 25
     }

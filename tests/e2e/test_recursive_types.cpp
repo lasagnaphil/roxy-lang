@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 using namespace rx;
 
@@ -29,7 +30,7 @@ TEST_SUITE("E2E Recursive Types") {
         CHECK(module != nullptr);
     }
 
-    TEST_CASE("two-node list") {
+    TEST_CASE("two-node list") {  // VM-only: C backend: recursive uniq-field destruction semantics gap
         const char* source = R"CODE(
         struct Node {
             value: i32;
@@ -49,12 +50,12 @@ TEST_SUITE("E2E Recursive Types") {
         }
     )CODE";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.value == 10);
     }
 
-    TEST_CASE("access uniq field via ref param") {
+    TEST_CASE("access uniq field via ref param") {  // VM-only: C backend: recursive uniq-field destruction semantics gap
         const char* source = R"CODE(
         struct Node {
             value: i32;
@@ -78,12 +79,12 @@ TEST_SUITE("E2E Recursive Types") {
         }
     )CODE";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.value == 20);
     }
 
-    TEST_CASE("explicit ref expression") {
+    TEST_CASE("explicit ref expression") {  // VM-only: C backend: recursive uniq-field destruction semantics gap
         const char* source = R"CODE(
         struct Node {
             value: i32;
@@ -104,12 +105,12 @@ TEST_SUITE("E2E Recursive Types") {
         }
     )CODE";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.value == 10);
     }
 
-    TEST_CASE("ref of uniq field") {
+    TEST_CASE("ref of uniq field") {  // VM-only: C backend: recursive uniq-field destruction semantics gap
         const char* source = R"CODE(
         struct Node {
             value: i32;
@@ -130,12 +131,12 @@ TEST_SUITE("E2E Recursive Types") {
         }
     )CODE";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.value == 20);
     }
 
-    TEST_CASE("linked list traversal with ref") {
+    TEST_CASE("linked list traversal with ref") {  // VM-only: C backend: recursive uniq-field destruction semantics gap
         const char* source = R"CODE(
         struct Node {
             value: i32;
@@ -168,12 +169,12 @@ TEST_SUITE("E2E Recursive Types") {
         }
     )CODE";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.value == 60);
     }
 
-    TEST_CASE("binary tree sum") {
+    TEST_CASE("binary tree sum") {  // VM-only: C backend: recursive uniq-field destruction semantics gap
         const char* source = R"CODE(
         struct TreeNode {
             value: i32;
@@ -212,12 +213,12 @@ TEST_SUITE("E2E Recursive Types") {
         }
     )CODE";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.value == 6);
     }
 
-    TEST_CASE("implicit destruction") {
+    TEST_CASE("implicit destruction") {  // VM-only: C backend: recursive uniq-field destruction semantics gap
         const char* source = R"CODE(
         struct Node {
             value: i32;
@@ -245,12 +246,12 @@ TEST_SUITE("E2E Recursive Types") {
         }
     )CODE";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.value == 1);
     }
 
-    TEST_CASE("nil assignment cleans up subtree") {
+    TEST_CASE("nil assignment cleans up subtree") {  // VM-only: C backend: recursive uniq-field destruction semantics gap
         const char* source = R"CODE(
         struct Node {
             value: i32;
@@ -272,12 +273,12 @@ TEST_SUITE("E2E Recursive Types") {
         }
     )CODE";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.value == 1);
     }
 
-    TEST_CASE("reassignment cleans up old subtree") {
+    TEST_CASE("reassignment cleans up old subtree") {  // VM-only: C backend: recursive uniq-field destruction semantics gap
         const char* source = R"CODE(
         struct Node {
             value: i32;
@@ -303,7 +304,7 @@ TEST_SUITE("E2E Recursive Types") {
         }
     )CODE";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
@@ -347,7 +348,7 @@ TEST_SUITE("E2E Recursive Types") {
         CHECK(module == nullptr);
     }
 
-    TEST_CASE("list traversal with while loop") {
+    TEST_CASE("list traversal with while loop") {  // VM-only: C backend: recursive uniq-field destruction semantics gap
         const char* source = R"CODE(
         struct Node {
             value: i32;
@@ -389,12 +390,12 @@ TEST_SUITE("E2E Recursive Types") {
         }
     )CODE";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.value == 15);
     }
 
-    TEST_CASE("tagged union AST eval") {
+    TEST_CASE("tagged union AST eval") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
         const char* source = R"CODE(
         enum ExprKind { Literal, Negate, Add }
 
@@ -430,12 +431,12 @@ TEST_SUITE("E2E Recursive Types") {
         }
     )CODE";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.value == -2);
     }
 
-    TEST_CASE("mutual recursion via List<uniq T>") {
+    TEST_CASE_TEMPLATE("mutual recursion via List<uniq T>", Backend, RX_E2E_BACKENDS) {
         const char* source = R"CODE(
         struct Forest {
             trees: List<uniq Tree>;
@@ -470,12 +471,12 @@ TEST_SUITE("E2E Recursive Types") {
         }
     )CODE";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 6);
     }
 
-    TEST_CASE("deep linked list construction and destruction") {
+    TEST_CASE("deep linked list construction and destruction") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
         const char* source = R"CODE(
         struct Node {
             value: i32;
@@ -499,7 +500,7 @@ TEST_SUITE("E2E Recursive Types") {
         }
     )CODE";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.value == 499);
     }

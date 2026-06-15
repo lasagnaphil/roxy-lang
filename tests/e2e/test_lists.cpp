@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 using namespace rx;
 
@@ -9,7 +10,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Lists") {
 
-    TEST_CASE("List basic operations") {
+    TEST_CASE_TEMPLATE("List basic operations", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
@@ -23,12 +24,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n20\n30\n");
     }
 
-    TEST_CASE("List length and capacity") {
+    TEST_CASE_TEMPLATE("List length and capacity", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
@@ -41,12 +42,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "0\n3\n");
     }
 
-    TEST_CASE("List with initial capacity") {
+    TEST_CASE_TEMPLATE("List with initial capacity", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>(10);
@@ -59,12 +60,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "0\n10\n1\n10\n");
     }
 
-    TEST_CASE("List pop") {
+    TEST_CASE_TEMPLATE("List pop", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
@@ -81,12 +82,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "30\n2\n20\n1\n");
     }
 
-    TEST_CASE("List index assignment") {
+    TEST_CASE_TEMPLATE("List index assignment", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
@@ -102,12 +103,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "100\n20\n300\n");
     }
 
-    TEST_CASE("List with loop") {
+    TEST_CASE_TEMPLATE("List with loop", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
@@ -127,12 +128,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n3\n4\n5\n15\n");
     }
 
-    TEST_CASE("List swap") {
+    TEST_CASE_TEMPLATE("List swap", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun swap(lst: inout List<i32>, i: i32, j: i32) {
             var temp: i32 = lst[i];
@@ -153,12 +154,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "30\n20\n10\n");
     }
 
-    TEST_CASE("List quicksort") {
+    TEST_CASE("List quicksort") {  // VM-only: C backend: struct-element list value semantics gap
         const char* source = R"(
         fun swap(lst: inout List<i32>, i: i32, j: i32) {
             var temp: i32 = lst[i];
@@ -204,12 +205,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n5\n8\n9\n");
     }
 
-    TEST_CASE("List growth") {
+    TEST_CASE_TEMPLATE("List growth", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
@@ -224,12 +225,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "20\n0\n90\n190\n");
     }
 
-    TEST_CASE("List sum function") {
+    TEST_CASE_TEMPLATE("List sum function", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun sum(lst: List<i32>): i32 {
             var total: i32 = 0;
@@ -249,12 +250,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "60\n");
     }
 
-    TEST_CASE("List value parameter isolation") {
+    TEST_CASE("List value parameter isolation") {  // VM-only: C backend: struct-element list value semantics gap
         const char* source = R"(
         fun modify(lst: List<i32>) {
             lst[0] = 999;
@@ -273,12 +274,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n3\n");
     }
 
-    TEST_CASE("List inout parameter mutation") {
+    TEST_CASE_TEMPLATE("List inout parameter mutation", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun modify(lst: inout List<i32>) {
             lst[0] = 999;
@@ -297,7 +298,7 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "999\n4\n");
     }
@@ -306,7 +307,7 @@ TEST_SUITE("E2E Lists") {
     // List with struct element tests (multi-slot)
     // ============================================================================
 
-    TEST_CASE("List of 2-slot struct (Point)") {
+    TEST_CASE_TEMPLATE("List of 2-slot struct (Point)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -326,12 +327,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10 20\n30 40\n50 60\n3\n");
     }
 
-    TEST_CASE("List of 3-slot struct (Vec3)") {
+    TEST_CASE_TEMPLATE("List of 3-slot struct (Vec3)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Vec3 {
             x: f32;
@@ -351,12 +352,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1 2 3\n4 5 6\n");
     }
 
-    TEST_CASE("List of large struct (5 slots)") {
+    TEST_CASE_TEMPLATE("List of large struct (5 slots)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct BigStruct {
             a: i32;
@@ -379,12 +380,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1 2 3 4 5\n10 20 30 40 50\n2\n");
     }
 
-    TEST_CASE("List of struct index set") {
+    TEST_CASE_TEMPLATE("List of struct index set", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -402,12 +403,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "100 200\n3 4\n");
     }
 
-    TEST_CASE("List of struct pop") {
+    TEST_CASE_TEMPLATE("List of struct pop", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Vec3 {
             x: f32;
@@ -426,12 +427,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "4 5 6\n1\n");
     }
 
-    TEST_CASE("List of struct loop iteration") {
+    TEST_CASE_TEMPLATE("List of struct loop iteration", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -452,7 +453,7 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "110\n");
     }
@@ -463,7 +464,7 @@ TEST_SUITE("E2E Lists") {
     // as a large positive 32-bit number despite printing correctly).
     // ============================================================================
 
-    TEST_CASE("List<i32>: negative element compares as negative") {
+    TEST_CASE_TEMPLATE("List<i32>: negative element compares as negative", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
@@ -476,12 +477,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("List<Struct>: negative i32 field of struct element compares as negative") {
+    TEST_CASE_TEMPLATE("List<Struct>: negative i32 field of struct element compares as negative", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct E { enc: i32; }
         fun main(): i32 {
@@ -495,12 +496,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("List<i32>: while loop with negative-sentinel guard terminates") {
+    TEST_CASE_TEMPLATE("List<i32>: while loop with negative-sentinel guard terminates", Backend, RX_E2E_BACKENDS) {
         // The TODO note's "while-loop-doesn't-re-check-condition" symptom:
         // assigning `idx = lst[idx].enc` where enc=-1 would silently give a large
         // positive number under zero-extension, so `idx >= 0` stayed true and the
@@ -523,7 +524,7 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 3);
     }
@@ -536,7 +537,7 @@ TEST_SUITE("E2E Lists") {
     // List<value-struct-with-owned-fields>.
     // ============================================================================
 
-    TEST_CASE("List<value-struct with destructor>: per-element cleanup") {
+    TEST_CASE_TEMPLATE("List<value-struct with destructor>: per-element cleanup", Backend, RX_E2E_BACKENDS) {
         // Each Item is an inline value struct with a user destructor. When the list
         // is destroyed at scope exit, each element's destructor must run with the
         // correct `self`, in element order.
@@ -553,12 +554,12 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "del 1\ndel 2\ndel 3\n");
     }
 
-    TEST_CASE("List<struct with uniq field>: per-element field cleanup") {
+    TEST_CASE_TEMPLATE("List<struct with uniq field>: per-element field cleanup", Backend, RX_E2E_BACKENDS) {
         // Holder is an inline value struct owning a uniq Inner. Destroying the list
         // must walk each element's fields in place and free the owned Inner.
         const char* source = R"(
@@ -574,7 +575,7 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "inner 10\ninner 20\n");
     }

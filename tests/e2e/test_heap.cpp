@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
@@ -12,7 +13,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Heap") {
 
-    TEST_CASE("Heap allocation basic") {
+    TEST_CASE_TEMPLATE("Heap allocation basic", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -29,12 +30,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 30);
     }
 
-    TEST_CASE("Heap allocation with print") {
+    TEST_CASE_TEMPLATE("Heap allocation with print", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -52,12 +53,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n58\n");
     }
 
-    TEST_CASE("Multiple heap allocations") {
+    TEST_CASE_TEMPLATE("Multiple heap allocations", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -79,12 +80,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n10\n");
     }
 
-    TEST_CASE("Heap allocation larger struct") {
+    TEST_CASE_TEMPLATE("Heap allocation larger struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Data {
             a: i32;
@@ -108,12 +109,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n3\n100000000000\n");
     }
 
-    TEST_CASE("Heap allocation with computation") {
+    TEST_CASE_TEMPLATE("Heap allocation with computation", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -133,12 +134,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "12\n35\n");
     }
 
-    TEST_CASE("Heap allocation in loop") {
+    TEST_CASE_TEMPLATE("Heap allocation in loop", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Counter {
             value: i32;
@@ -157,7 +158,7 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "30\n");  // 0 + 10 + 20
     }
@@ -166,7 +167,7 @@ TEST_SUITE("E2E Heap") {
     // Heap Allocation Tests - Constraint Reference Model
     // ============================================================================
 
-    TEST_CASE("Uniq passed to function (move semantics)") {
+    TEST_CASE_TEMPLATE("Uniq passed to function (move semantics)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -189,12 +190,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "30\n");
     }
 
-    TEST_CASE("Heap allocation nested struct") {
+    TEST_CASE_TEMPLATE("Heap allocation nested struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -219,7 +220,7 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "0\n10\n");
     }
@@ -228,7 +229,7 @@ TEST_SUITE("E2E Heap") {
     // Borrow Checking Tests (Constraint Reference Model)
     // ============================================================================
 
-    TEST_CASE("Constraint reference borrow check success") {
+    TEST_CASE_TEMPLATE("Constraint reference borrow check success", Backend, RX_E2E_BACKENDS) {
         // Test that passing uniq to uniq param moves ownership; callee cleans up
         const char* source = R"(
         struct Point {
@@ -252,12 +253,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "50\n");
     }
 
-    TEST_CASE("Ref parameter borrow tracking") {
+    TEST_CASE_TEMPLATE("Ref parameter borrow tracking", Backend, RX_E2E_BACKENDS) {
         // Test that ref parameters properly track borrows via RefInc/RefDec
         // The ref parameter increments ref_count at entry, decrements at exit
         const char* source = R"(
@@ -284,12 +285,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "35\n");
     }
 
-    TEST_CASE("Multiple ref borrows in sequence") {
+    TEST_CASE_TEMPLATE("Multiple ref borrows in sequence", Backend, RX_E2E_BACKENDS) {
         // Test multiple sequential borrows
         const char* source = R"(
         struct Point {
@@ -318,12 +319,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "100\n200\n");
     }
 
-    TEST_CASE("Ref parameter with multiple returns") {
+    TEST_CASE_TEMPLATE("Ref parameter with multiple returns", Backend, RX_E2E_BACKENDS) {
         // Test that RefDec is emitted on all return paths
         const char* source = R"(
         struct Point {
@@ -349,12 +350,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "50\n");
     }
 
-    TEST_CASE("Delete null pointer is safe") {
+    TEST_CASE_TEMPLATE("Delete null pointer is safe", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -369,7 +370,7 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n");
     }
@@ -401,7 +402,7 @@ TEST_SUITE("E2E Heap") {
         CHECK(module == nullptr);  // Should fail to compile
     }
 
-    TEST_CASE("Runtime error: delete with active borrow") {
+    TEST_CASE("Runtime error: delete with active borrow") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
         // Delete should fail at runtime when ref_count > 0
         // Pass same object as both ref (creates borrow) and uniq (for delete)
         const char* source = R"(
@@ -426,7 +427,7 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success == false);  // Should fail - can't delete with active borrow
     }
 
@@ -504,7 +505,7 @@ TEST_SUITE("E2E Heap") {
         CHECK(module == nullptr);  // Should fail to compile
     }
 
-    TEST_CASE("Valid: uniq to ref conversion") {
+    TEST_CASE_TEMPLATE("Valid: uniq to ref conversion", Backend, RX_E2E_BACKENDS) {
         // uniq -> ref is allowed (borrowing from owner)
         const char* source = R"(
         struct Point { x: i32; y: i32; }
@@ -524,12 +525,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "30\n");
     }
 
-    TEST_CASE("Valid: nil to uniq assignment") {
+    TEST_CASE_TEMPLATE("Valid: nil to uniq assignment", Backend, RX_E2E_BACKENDS) {
         // nil -> uniq is allowed
         const char* source = R"(
         struct Point { x: i32; y: i32; }
@@ -542,7 +543,7 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n");
     }
@@ -551,7 +552,7 @@ TEST_SUITE("E2E Heap") {
     // Weak Reference Tests
     // ============================================================================
 
-    TEST_CASE("Weak field assignment and read") {
+    TEST_CASE("Weak field assignment and read") {  // VM-only: C backend: weak-field / heap ownership semantics gap
         const char* source = R"(
         struct Node {
             value: i32;
@@ -575,12 +576,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n");
     }
 
-    TEST_CASE("Weak local variable from uniq") {
+    TEST_CASE_TEMPLATE("Weak local variable from uniq", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -599,12 +600,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 30);
     }
 
-    TEST_CASE("Weak nil assignment") {
+    TEST_CASE_TEMPLATE("Weak nil assignment", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -618,12 +619,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n");
     }
 
-    TEST_CASE("Weak field in struct with other fields") {
+    TEST_CASE("Weak field in struct with other fields") {  // VM-only: C backend: weak-field / heap ownership semantics gap
         const char* source = R"(
         struct Node {
             value: i32;
@@ -648,12 +649,12 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n99\n");
     }
 
-    TEST_CASE("Weak parameter passing") {
+    TEST_CASE_TEMPLATE("Weak parameter passing", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Node {
             value: i32;
@@ -673,7 +674,7 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 1);
     }

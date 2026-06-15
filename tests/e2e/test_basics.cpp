@@ -1,4 +1,5 @@
 #include "roxy/core/doctest/doctest.h"
+#include "test_e2e_backend.hpp"
 #include "test_helpers.hpp"
 
 #include <string>
@@ -6,24 +7,29 @@
 using namespace rx;
 
 // ============================================================================
-// Basic Tests
+// Basic Tests — run on BOTH backends (VM + C) via TEST_CASE_TEMPLATE.
+//
+// Tests assert on `stdout_output` wherever the result exceeds the 0..255
+// exit-code range so they remain valid on the C backend. Genuinely
+// VM-specific cases (register-spill limits, branch-offset encoding) stay as
+// plain TEST_CASE at the bottom of the file.
 // ============================================================================
 
 TEST_SUITE("E2E Basics") {
 
-    TEST_CASE("Return constant") {
+    TEST_CASE_TEMPLATE("Return constant", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             return 42;
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Arithmetic expressions") {
+    TEST_CASE_TEMPLATE("Arithmetic expressions", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Addition") {
             const char* source = R"(
             fun main(): i32 {
@@ -31,7 +37,7 @@ TEST_SUITE("E2E Basics") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -44,7 +50,7 @@ TEST_SUITE("E2E Basics") {
             }
         )";
             // 1 + 6 + 20 = 27
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "27\n");
         }
@@ -57,7 +63,7 @@ TEST_SUITE("E2E Basics") {
             }
         )";
             // 3 * 7 = 21
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "21\n");
         }
@@ -70,7 +76,7 @@ TEST_SUITE("E2E Basics") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "33\n1\n");
         }
@@ -83,13 +89,13 @@ TEST_SUITE("E2E Basics") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "-42\n42\n");
         }
     }
 
-    TEST_CASE("Local variables") {
+    TEST_CASE_TEMPLATE("Local variables", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var a: i32 = 10;
@@ -102,12 +108,12 @@ TEST_SUITE("E2E Basics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n20\n30\n");
     }
 
-    TEST_CASE("Function calls") {
+    TEST_CASE_TEMPLATE("Function calls", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun add(a: i32, b: i32): i32 {
             return a + b;
@@ -120,7 +126,7 @@ TEST_SUITE("E2E Basics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n300\n");
     }
@@ -129,7 +135,7 @@ TEST_SUITE("E2E Basics") {
     // Control Flow Tests
     // ============================================================================
 
-    TEST_CASE("If statement") {
+    TEST_CASE_TEMPLATE("If statement", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun abs(x: i32): i32 {
             if (x < 0) {
@@ -146,12 +152,12 @@ TEST_SUITE("E2E Basics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n42\n0\n");
     }
 
-    TEST_CASE("If-else statement") {
+    TEST_CASE_TEMPLATE("If-else statement", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun max(a: i32, b: i32): i32 {
             if (a > b) {
@@ -169,12 +175,12 @@ TEST_SUITE("E2E Basics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n7\n5\n");
     }
 
-    TEST_CASE("While loop") {
+    TEST_CASE_TEMPLATE("While loop", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun sum_to_n(n: i32): i32 {
             var sum: i32 = 0;
@@ -193,12 +199,12 @@ TEST_SUITE("E2E Basics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "55\n5050\n");
     }
 
-    TEST_CASE("For loop") {
+    TEST_CASE_TEMPLATE("For loop", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var sum: i32 = 0;
@@ -211,12 +217,12 @@ TEST_SUITE("E2E Basics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n55\n");
     }
 
-    TEST_CASE("Nested loops") {
+    TEST_CASE_TEMPLATE("Nested loops", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             for (var i: i32 = 1; i <= 3; i = i + 1) {
@@ -228,12 +234,12 @@ TEST_SUITE("E2E Basics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "11\n12\n13\n21\n22\n23\n31\n32\n33\n");
     }
 
-    TEST_CASE("Boolean expressions") {
+    TEST_CASE_TEMPLATE("Boolean expressions", Backend, RX_E2E_BACKENDS) {
         // Test AND operator with comparison expressions
         // NOTE: OR operator has a known bug with short-circuit evaluation
         const char* source = R"(
@@ -251,13 +257,13 @@ TEST_SUITE("E2E Basics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         // AND: (5>3)&&(3>0)=1, (5>3)&&(3<0)=0, (5<3)&&(3>0)=0, (5<3)&&(3<0)=0
         CHECK(result.stdout_output == "1\n0\n0\n0\n");
     }
 
-    TEST_CASE("Comparison operators") {
+    TEST_CASE_TEMPLATE("Comparison operators", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun bool_to_int(b: bool): i32 {
             if (b) { return 1; }
@@ -279,14 +285,17 @@ TEST_SUITE("E2E Basics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         // ==: 1,0; !=: 1,0; <: 1,0; <=: 1; >: 0,1; >=: 1
         CHECK(result.stdout_output == "1\n0\n1\n0\n1\n0\n1\n0\n1\n1\n");
     }
 
     // ============================================================================
-    // Register Limit Tests
+    // Register Limit Tests — VM-specific (exercise the bytecode register
+    // allocator's 255-register limit and spilling). Kept VM-only: the result
+    // sums exceed the 0..255 exit-code range and the behavior under test is a
+    // property of bytecode lowering, not language semantics.
     // ============================================================================
 
     // Helper: generate a Roxy function with N local i32 variables, sum them, and return the sum.

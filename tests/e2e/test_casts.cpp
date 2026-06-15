@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 using namespace rx;
 
@@ -9,7 +10,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Casts") {
 
-    TEST_CASE("Cast integer truncation") {
+    TEST_CASE_TEMPLATE("Cast integer truncation", Backend, RX_E2E_BACKENDS) {
         SUBCASE("i64 to i32") {
             const char* source = R"(
             fun main(): i32 {
@@ -19,7 +20,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "1000\n");
         }
@@ -33,7 +34,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             // 70000 = 0x11170, truncated to 16 bits = 0x1170 = 4464
             CHECK(result.stdout_output == "4464\n");
@@ -48,7 +49,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             // 300 = 0x12C, truncated to 8 bits = 0x2C = 44
             CHECK(result.stdout_output == "44\n");
@@ -63,13 +64,13 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "-100\n");
         }
     }
 
-    TEST_CASE("Cast integer widening") {
+    TEST_CASE_TEMPLATE("Cast integer widening", Backend, RX_E2E_BACKENDS) {
         SUBCASE("i32 to i64") {
             const char* source = R"(
             fun main(): i32 {
@@ -79,7 +80,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "12345\n");
         }
@@ -94,7 +95,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "-50\n");
         }
@@ -109,13 +110,13 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "200\n");
         }
     }
 
-    TEST_CASE("Cast float conversions") {
+    TEST_CASE_TEMPLATE("Cast float conversions", Backend, RX_E2E_BACKENDS) {
         SUBCASE("f32 to f64 to i32") {
             const char* source = R"(
             fun main(): i32 {
@@ -127,7 +128,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             // f32 precision means 3.14 -> 3.14000010... -> 314
             CHECK(result.stdout_output == "314\n");
@@ -143,14 +144,14 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             // f32 has less precision: 2.718 -> 2.71799993... -> 2717
             CHECK(result.stdout_output == "2717\n");
         }
     }
 
-    TEST_CASE("Cast integer to float") {
+    TEST_CASE_TEMPLATE("Cast integer to float", Backend, RX_E2E_BACKENDS) {
         SUBCASE("i32 to f64") {
             const char* source = R"(
             fun main(): i32 {
@@ -161,7 +162,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -176,13 +177,13 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "100\n");
         }
     }
 
-    TEST_CASE("Cast float to integer") {
+    TEST_CASE_TEMPLATE("Cast float to integer", Backend, RX_E2E_BACKENDS) {
         SUBCASE("f64 to i32 (truncation toward zero)") {
             const char* source = R"(
             fun main(): i32 {
@@ -195,7 +196,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "3\n-3\n");
         }
@@ -210,13 +211,13 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "99\n");
         }
     }
 
-    TEST_CASE("Cast bool conversions") {
+    TEST_CASE_TEMPLATE("Cast bool conversions", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Integer to bool") {
             const char* source = R"(
             fun main(): i32 {
@@ -229,7 +230,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "1\n0\n");
         }
@@ -246,7 +247,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "1\n0\n");
         }
@@ -261,7 +262,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "0\n1\n");
         }
@@ -278,13 +279,13 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "1\n0\n");
         }
     }
 
-    TEST_CASE("Cast no-op (same type)") {
+    TEST_CASE_TEMPLATE("Cast no-op (same type)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var x: i32 = 42;
@@ -293,12 +294,12 @@ TEST_SUITE("E2E Casts") {
             return 0;
         }
     )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n");
     }
 
-    TEST_CASE("Cast in expressions") {
+    TEST_CASE_TEMPLATE("Cast in expressions", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Mixed type arithmetic with casts") {
             const char* source = R"(
             fun main(): i32 {
@@ -309,7 +310,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "30\n");
         }
@@ -323,7 +324,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "100\n");
         }
@@ -341,13 +342,13 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "12\n");
         }
     }
 
-    TEST_CASE("Cast unsigned types") {
+    TEST_CASE_TEMPLATE("Cast unsigned types", Backend, RX_E2E_BACKENDS) {
         SUBCASE("u32 to i32") {
             const char* source = R"(
             fun main(): i32 {
@@ -357,7 +358,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "100\n");
         }
@@ -371,7 +372,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "50\n");
         }
@@ -385,7 +386,7 @@ TEST_SUITE("E2E Casts") {
                 return 0;
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             // 4294967296 = 0x100000000, truncated to 32 bits = 0
             CHECK(result.stdout_output == "0\n");

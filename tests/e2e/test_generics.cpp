@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 using namespace rx;
 
@@ -9,7 +10,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Generics") {
 
-    TEST_CASE("Generic function identity i32") {
+    TEST_CASE_TEMPLATE("Generic function identity i32", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
@@ -20,12 +21,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic function identity f64") {
+    TEST_CASE_TEMPLATE("Generic function identity f64", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
@@ -37,12 +38,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 3);
     }
 
-    TEST_CASE("Generic function identity bool") {
+    TEST_CASE_TEMPLATE("Generic function identity bool", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
@@ -55,12 +56,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 1);
     }
 
-    TEST_CASE("Generic function multiple instantiations") {
+    TEST_CASE_TEMPLATE("Generic function multiple instantiations", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
@@ -74,12 +75,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 31);
     }
 
-    TEST_CASE("Generic function two type params") {
+    TEST_CASE_TEMPLATE("Generic function two type params", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun first<T, U>(a: T, b: U): T {
             return a;
@@ -90,12 +91,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic function second of two params") {
+    TEST_CASE_TEMPLATE("Generic function second of two params", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun second<T, U>(a: T, b: U): U {
             return b;
@@ -107,12 +108,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 2);
     }
 
-    TEST_CASE("Generic function with computation") {
+    TEST_CASE_TEMPLATE("Generic function with computation", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun double_val<T>(value: T): T {
             return value + value;
@@ -123,12 +124,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic function with struct type arg") {
+    TEST_CASE_TEMPLATE("Generic function with struct type arg", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -145,7 +146,7 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 99);
     }
@@ -154,7 +155,7 @@ TEST_SUITE("E2E Generics") {
     // Generic Struct Tests
     // ============================================================================
 
-    TEST_CASE("Generic struct literal i32") {
+    TEST_CASE_TEMPLATE("Generic struct literal i32", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -166,12 +167,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic struct literal f64") {
+    TEST_CASE_TEMPLATE("Generic struct literal f64", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -183,12 +184,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 3);
     }
 
-    TEST_CASE("Generic struct two type params") {
+    TEST_CASE_TEMPLATE("Generic struct two type params", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Pair<T, U> {
             first: T;
@@ -201,12 +202,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 12);
     }
 
-    TEST_CASE("Generic struct different instantiations") {
+    TEST_CASE_TEMPLATE("Generic struct different instantiations", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -219,12 +220,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 15);
     }
 
-    TEST_CASE("Generic struct as function parameter") {
+    TEST_CASE_TEMPLATE("Generic struct as function parameter", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -240,12 +241,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic struct as function return type") {
+    TEST_CASE_TEMPLATE("Generic struct as function return type", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -261,12 +262,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic function with generic struct") {
+    TEST_CASE_TEMPLATE("Generic function with generic struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -282,7 +283,7 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
@@ -291,7 +292,7 @@ TEST_SUITE("E2E Generics") {
     // Generic Type Argument Inference Tests
     // ============================================================================
 
-    TEST_CASE("Generic inference: identity i32") {
+    TEST_CASE_TEMPLATE("Generic inference: identity i32", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
@@ -302,12 +303,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic inference: identity f64") {
+    TEST_CASE_TEMPLATE("Generic inference: identity f64", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
@@ -319,12 +320,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 3);
     }
 
-    TEST_CASE("Generic inference: two type params") {
+    TEST_CASE_TEMPLATE("Generic inference: two type params", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun first<T, U>(a: T, b: U): T {
             return a;
@@ -335,12 +336,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic inference: function with struct arg") {
+    TEST_CASE_TEMPLATE("Generic inference: function with struct arg", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -357,12 +358,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 99);
     }
 
-    TEST_CASE("Generic inference: computation") {
+    TEST_CASE_TEMPLATE("Generic inference: computation", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun double_val<T>(value: T): T {
             return value + value;
@@ -373,12 +374,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic inference: struct literal") {
+    TEST_CASE_TEMPLATE("Generic inference: struct literal", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -390,12 +391,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic inference: struct literal multiple params") {
+    TEST_CASE_TEMPLATE("Generic inference: struct literal multiple params", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Pair<T, U> {
             first: T;
@@ -408,12 +409,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 12);
     }
 
-    TEST_CASE("Generic inference: function returning generic struct") {
+    TEST_CASE_TEMPLATE("Generic inference: function returning generic struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -429,12 +430,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic inference: backward compat explicit args") {
+    TEST_CASE_TEMPLATE("Generic inference: backward compat explicit args", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
@@ -445,7 +446,7 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
@@ -454,7 +455,7 @@ TEST_SUITE("E2E Generics") {
     // Variable Type Inference with Generic RHS
     // ============================================================================
 
-    TEST_CASE("Generic var inference: struct literal inferred") {
+    TEST_CASE_TEMPLATE("Generic var inference: struct literal inferred", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -466,12 +467,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic var inference: function call inferred") {
+    TEST_CASE_TEMPLATE("Generic var inference: function call inferred", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
@@ -483,12 +484,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic var inference: function returning generic struct") {
+    TEST_CASE_TEMPLATE("Generic var inference: function returning generic struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -504,12 +505,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic var inference: multiple type params") {
+    TEST_CASE_TEMPLATE("Generic var inference: multiple type params", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Pair<T, U> {
             first: T;
@@ -522,12 +523,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 12);
     }
 
-    TEST_CASE("Generic var inference: explicit type args no LHS annotation") {
+    TEST_CASE_TEMPLATE("Generic var inference: explicit type args no LHS annotation", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -539,12 +540,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic var inference: chained field access") {
+    TEST_CASE_TEMPLATE("Generic var inference: chained field access", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -557,7 +558,7 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
@@ -566,7 +567,7 @@ TEST_SUITE("E2E Generics") {
     // Generic Compound Type Argument Tests (name mangling)
     // ============================================================================
 
-    TEST_CASE("Generic function with List type argument") {
+    TEST_CASE_TEMPLATE("Generic function with List type argument", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun get_len<T>(lst: T): i32 {
             return 0;
@@ -581,12 +582,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 1);
     }
 
-    TEST_CASE("Generic struct with List type argument") {
+    TEST_CASE_TEMPLATE("Generic struct with List type argument", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Wrapper<T> {
             value: T;
@@ -600,12 +601,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 1);
     }
 
-    TEST_CASE("Generic inference: error uninferrable param") {
+    TEST_CASE_TEMPLATE("Generic inference: error uninferrable param", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun make_default<T>(): T {
             var x: T;
@@ -617,7 +618,7 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK_FALSE(result.success);
     }
 
@@ -626,7 +627,7 @@ TEST_SUITE("E2E Generics") {
     // Phase A: checks bounds at instantiation sites only (not in generic bodies)
     // ============================================================================
 
-    TEST_CASE("Generic bound: single bound Printable") {
+    TEST_CASE_TEMPLATE("Generic bound: single bound Printable", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity_printable<T: Printable>(value: T): T {
             return value;
@@ -637,12 +638,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic bound: Hash bound") {
+    TEST_CASE_TEMPLATE("Generic bound: Hash bound", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity_hash<T: Hash>(value: T): T {
             return value;
@@ -653,12 +654,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic bound: multiple bounds Printable + Hash") {
+    TEST_CASE_TEMPLATE("Generic bound: multiple bounds Printable + Hash", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity_both<T: Printable + Hash>(value: T): T {
             return value;
@@ -669,12 +670,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic bound: bound on generic struct") {
+    TEST_CASE_TEMPLATE("Generic bound: bound on generic struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct HashBox<T: Hash> {
             value: T;
@@ -686,12 +687,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic bound: inferred type args with bound") {
+    TEST_CASE_TEMPLATE("Generic bound: inferred type args with bound", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity_printable<T: Printable>(value: T): T {
             return value;
@@ -702,12 +703,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic bound: inferred struct literal with bound") {
+    TEST_CASE_TEMPLATE("Generic bound: inferred struct literal with bound", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct HashBox<T: Hash> {
             value: T;
@@ -719,12 +720,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic bound: bound not satisfied (negative)") {
+    TEST_CASE_TEMPLATE("Generic bound: bound not satisfied (negative)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Flyable;
 
@@ -737,11 +738,11 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE("Generic bound: generic trait bound with type args") {
+    TEST_CASE_TEMPLATE("Generic bound: generic trait bound with type args", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Scalable<T>;
 
@@ -766,12 +767,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 1);
     }
 
-    TEST_CASE("Generic bound: generic trait bound mismatch (negative)") {
+    TEST_CASE_TEMPLATE("Generic bound: generic trait bound mismatch (negative)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Scalable<T>;
 
@@ -796,11 +797,11 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE("Generic bound: one of multiple bounds not satisfied (negative)") {
+    TEST_CASE_TEMPLATE("Generic bound: one of multiple bounds not satisfied (negative)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Flyable;
 
@@ -813,11 +814,11 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE("Generic bound: bound not satisfied on struct (negative)") {
+    TEST_CASE_TEMPLATE("Generic bound: bound not satisfied on struct (negative)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Flyable;
 
@@ -831,11 +832,11 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE("Generic bound: inferred type args violate bound (negative)") {
+    TEST_CASE_TEMPLATE("Generic bound: inferred type args violate bound (negative)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Flyable;
 
@@ -848,7 +849,7 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK_FALSE(result.success);
     }
 
@@ -857,7 +858,7 @@ TEST_SUITE("E2E Generics") {
     // Validates that generic template bodies are checked against declared bounds
     // ============================================================================
 
-    TEST_CASE("Generic Phase B: call trait method on bounded param") {
+    TEST_CASE_TEMPLATE("Generic Phase B: call trait method on bounded param", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32;
@@ -873,12 +874,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic Phase B: call methods from multiple bounds") {
+    TEST_CASE_TEMPLATE("Generic Phase B: call methods from multiple bounds", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait HasX;
         fun HasX.get_x(): i32;
@@ -898,12 +899,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic Phase B: return type Self resolves to T") {
+    TEST_CASE_TEMPLATE("Generic Phase B: return type Self resolves to T", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Addable;
         fun Addable.add(other: Self): Self;
@@ -923,12 +924,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic Phase B: generic trait bound with type args") {
+    TEST_CASE_TEMPLATE("Generic Phase B: generic trait bound with type args", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Scalable<T>;
         fun Scalable.scale(factor: T): Self;
@@ -950,12 +951,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic Phase B: bounded template with passthrough return") {
+    TEST_CASE_TEMPLATE("Generic Phase B: bounded template with passthrough return", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity_bounded<T: Printable>(value: T): T {
             return value;
@@ -966,7 +967,7 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
@@ -975,7 +976,7 @@ TEST_SUITE("E2E Generics") {
     // Phase B Negative Tests: definition-site errors
     // ============================================================================
 
-    TEST_CASE("Generic Phase B: call method not in any bound (negative)") {
+    TEST_CASE_TEMPLATE("Generic Phase B: call method not in any bound (negative)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32;
@@ -985,11 +986,11 @@ TEST_SUITE("E2E Generics") {
         fun main(): i32 { return 0; }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE("Generic Phase B: call method from wrong trait (negative)") {
+    TEST_CASE_TEMPLATE("Generic Phase B: call method from wrong trait (negative)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32;
@@ -999,11 +1000,11 @@ TEST_SUITE("E2E Generics") {
         fun main(): i32 { return 0; }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE("Generic Phase B: access field on type param (negative)") {
+    TEST_CASE_TEMPLATE("Generic Phase B: access field on type param (negative)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32;
@@ -1013,11 +1014,11 @@ TEST_SUITE("E2E Generics") {
         fun main(): i32 { return 0; }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE("Generic Phase B: unbounded template body not checked") {
+    TEST_CASE_TEMPLATE("Generic Phase B: unbounded template body not checked", Backend, RX_E2E_BACKENDS) {
         // Unbounded generic templates are NOT checked at definition site
         // (only checked at instantiation). This should compile fine as long
         // as main doesn't instantiate bad_func.
@@ -1031,7 +1032,7 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
@@ -1040,7 +1041,7 @@ TEST_SUITE("E2E Generics") {
     // Generic Struct Methods Tests
     // ============================================================================
 
-    TEST_CASE("Generic struct method: basic external getter") {
+    TEST_CASE_TEMPLATE("Generic struct method: basic external getter", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -1056,12 +1057,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic struct method: setter and getter") {
+    TEST_CASE_TEMPLATE("Generic struct method: setter and getter", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -1082,12 +1083,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic struct method: multiple instantiations") {
+    TEST_CASE_TEMPLATE("Generic struct method: multiple instantiations", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Wrapper<T> {
             val: T;
@@ -1104,12 +1105,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 15);
     }
 
-    TEST_CASE("Generic struct method: cross-method calls") {
+    TEST_CASE_TEMPLATE("Generic struct method: cross-method calls", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Counter<T> {
             value: T;
@@ -1133,12 +1134,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic struct method: return struct type") {
+    TEST_CASE_TEMPLATE("Generic struct method: return struct type", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Pair<T> {
             first: T;
@@ -1156,12 +1157,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic struct method: with additional parameters") {
+    TEST_CASE_TEMPLATE("Generic struct method: with additional parameters", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -1177,7 +1178,7 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
@@ -1186,7 +1187,7 @@ TEST_SUITE("E2E Generics") {
     // Generic Struct Constructor/Destructor Tests
     // ============================================================================
 
-    TEST_CASE("Generic struct: user-defined default constructor") {
+    TEST_CASE_TEMPLATE("Generic struct: user-defined default constructor", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -1202,12 +1203,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic struct: named constructor") {
+    TEST_CASE_TEMPLATE("Generic struct: named constructor", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Pair<T> {
             first: T;
@@ -1225,12 +1226,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic struct: constructor with method") {
+    TEST_CASE_TEMPLATE("Generic struct: constructor with method", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -1250,12 +1251,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic struct: constructor multiple instantiations") {
+    TEST_CASE_TEMPLATE("Generic struct: constructor multiple instantiations", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -1272,12 +1273,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic struct: destructor with uniq") {
+    TEST_CASE_TEMPLATE("Generic struct: destructor with uniq", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -1298,12 +1299,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "99\n");
     }
 
-    TEST_CASE("Generic struct: constructor suppresses synthesized default") {
+    TEST_CASE_TEMPLATE("Generic struct: constructor suppresses synthesized default", Backend, RX_E2E_BACKENDS) {
         // User-defined default constructor should be used instead of synthesized one
         const char* source = R"(
         struct Box<T> {
@@ -1320,12 +1321,12 @@ TEST_SUITE("E2E Generics") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Generic higher-order with closure") {
+    TEST_CASE_TEMPLATE("Generic higher-order with closure", Backend, RX_E2E_BACKENDS) {
         // Generic function taking a fun(T) -> T parameter, called with a closure
         // that's stored in a local variable. Exercises three issues that all had to
         // line up: (1) substitute_type_expr must recurse into Function-kind
@@ -1344,7 +1345,7 @@ TEST_SUITE("E2E Generics") {
                 return apply<i32>(double, 21);
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.value == 42);
         }
@@ -1359,7 +1360,7 @@ TEST_SUITE("E2E Generics") {
                 return apply(double, 21);
             }
         )";
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.value == 42);
         }

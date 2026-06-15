@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 using namespace rx;
 
@@ -9,7 +10,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Strings") {
 
-    TEST_CASE("String literal") {
+    TEST_CASE_TEMPLATE("String literal", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var s: string = "hello";
@@ -18,12 +19,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "hello\n");
     }
 
-    TEST_CASE("Empty string") {
+    TEST_CASE_TEMPLATE("Empty string", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var s: string = "";
@@ -33,12 +34,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "\ndone\n");
     }
 
-    TEST_CASE("String length") {
+    TEST_CASE_TEMPLATE("String length", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             print(f"{str_len("hello")}");
@@ -48,12 +49,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "5\n0\n11\n");
     }
 
-    TEST_CASE("String concatenation with str_concat") {
+    TEST_CASE_TEMPLATE("String concatenation with str_concat", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var s: string = str_concat("hello", " world");
@@ -62,12 +63,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "hello world\n");
     }
 
-    TEST_CASE("String concatenation with + operator") {
+    TEST_CASE_TEMPLATE("String concatenation with + operator", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var s: string = "hello" + " world";
@@ -76,12 +77,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "hello world\n");
     }
 
-    TEST_CASE("Multiple string concatenations") {
+    TEST_CASE_TEMPLATE("Multiple string concatenations", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var s: string = "a" + "b" + "c" + "d";
@@ -90,12 +91,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "abcd\n");
     }
 
-    TEST_CASE("String equality") {
+    TEST_CASE_TEMPLATE("String equality", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun bool_to_str(b: bool): string {
             if (b) { return "true"; }
@@ -115,12 +116,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "true\nfalse\ntrue\n");
     }
 
-    TEST_CASE("String inequality") {
+    TEST_CASE_TEMPLATE("String inequality", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun bool_to_str(b: bool): string {
             if (b) { return "true"; }
@@ -136,12 +137,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "true\nfalse\n");
     }
 
-    TEST_CASE("String as function parameter") {
+    TEST_CASE_TEMPLATE("String as function parameter", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun print_greeting(name: string) {
             print("Hello, ");
@@ -154,12 +155,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "Hello, \nWorld\n");
     }
 
-    TEST_CASE("String as return value") {
+    TEST_CASE_TEMPLATE("String as return value", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun make_greeting(): string {
             return "hello";
@@ -171,12 +172,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "hello\n");
     }
 
-    TEST_CASE("String concatenation in function") {
+    TEST_CASE_TEMPLATE("String concatenation in function", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun greet(name: string): string {
             return "Hello, " + name + "!";
@@ -189,12 +190,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "Hello, World!\nHello, Roxy!\n");
     }
 
-    TEST_CASE("String comparison in if statement") {
+    TEST_CASE_TEMPLATE("String comparison in if statement", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun check(s: string): string {
             if (s == "yes") {
@@ -212,12 +213,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "accepted\nrejected\nrejected\n");
     }
 
-    TEST_CASE("String variable reassignment") {
+    TEST_CASE_TEMPLATE("String variable reassignment", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var s: string = "short";
@@ -228,12 +229,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "short\nmuch longer string\n");
     }
 
-    TEST_CASE("String equality after concatenation") {
+    TEST_CASE_TEMPLATE("String equality after concatenation", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun bool_to_str(b: bool): string {
             if (b) { return "true"; }
@@ -250,12 +251,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "true\nhello\nhello\n");
     }
 
-    TEST_CASE("String with special characters") {
+    TEST_CASE_TEMPLATE("String with special characters", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var s: string = "hello\nworld";
@@ -264,12 +265,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "hello\nworld\n");
     }
 
-    TEST_CASE("String in loop") {
+    TEST_CASE_TEMPLATE("String in loop", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             for (var i: i32 = 0; i < 3; i = i + 1) {
@@ -280,7 +281,7 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "iteration\n0\niteration\n1\niteration\n2\n");
     }
@@ -289,7 +290,7 @@ TEST_SUITE("E2E Strings") {
     // F-String Interpolation Tests
     // ============================================================================
 
-    TEST_CASE("F-string basic interpolation") {
+    TEST_CASE_TEMPLATE("F-string basic interpolation", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var name: string = "World";
@@ -298,12 +299,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "Hello, World!\n");
     }
 
-    TEST_CASE("F-string integer interpolation") {
+    TEST_CASE_TEMPLATE("F-string integer interpolation", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var x: i32 = 42;
@@ -312,12 +313,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "x = 42\n");
     }
 
-    TEST_CASE("F-string expression in braces") {
+    TEST_CASE_TEMPLATE("F-string expression in braces", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var a: i32 = 3;
@@ -327,12 +328,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "3 + 4 = 7\n");
     }
 
-    TEST_CASE("F-string function call in braces") {
+    TEST_CASE_TEMPLATE("F-string function call in braces", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun double_it(x: i32): i32 {
             return x * 2;
@@ -344,12 +345,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "double: 10\n");
     }
 
-    TEST_CASE("F-string bool interpolation") {
+    TEST_CASE_TEMPLATE("F-string bool interpolation", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             print(f"val: {true}");
@@ -358,12 +359,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "val: true\nval: false\n");
     }
 
-    TEST_CASE("F-string float interpolation") {
+    TEST_CASE_TEMPLATE("F-string float interpolation", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var pi: f64 = 3.14;
@@ -372,12 +373,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "pi: 3.14\n");
     }
 
-    TEST_CASE("F-string no interpolation") {
+    TEST_CASE_TEMPLATE("F-string no interpolation", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             print(f"plain text");
@@ -385,12 +386,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "plain text\n");
     }
 
-    TEST_CASE("F-string empty parts") {
+    TEST_CASE_TEMPLATE("F-string empty parts", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var x: i32 = 42;
@@ -399,12 +400,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n");
     }
 
-    TEST_CASE("F-string escaped braces") {
+    TEST_CASE_TEMPLATE("F-string escaped braces", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             print(f"use \{ and \}");
@@ -412,12 +413,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "use { and }\n");
     }
 
-    TEST_CASE("F-string multiple types") {
+    TEST_CASE_TEMPLATE("F-string multiple types", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var name: string = "app";
@@ -428,12 +429,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "app v2: 9.5\n");
     }
 
-    TEST_CASE("F-string concatenation with +") {
+    TEST_CASE_TEMPLATE("F-string concatenation with +", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var name: string = "World";
@@ -442,12 +443,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "hello World\n");
     }
 
-    TEST_CASE("F-string in variable") {
+    TEST_CASE_TEMPLATE("F-string in variable", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var x: i32 = 10;
@@ -457,12 +458,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "value is 10\n");
     }
 
-    TEST_CASE("F-string i64 interpolation") {
+    TEST_CASE_TEMPLATE("F-string i64 interpolation", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var big: i64 = 1000000l;
@@ -471,12 +472,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "big = 1000000\n");
     }
 
-    TEST_CASE("F-string string expression") {
+    TEST_CASE_TEMPLATE("F-string string expression", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var a: string = "hello";
@@ -487,12 +488,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "hello world\n");
     }
 
-    TEST_CASE("F-string empty") {
+    TEST_CASE_TEMPLATE("F-string empty", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             print(f"");
@@ -500,7 +501,7 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "\n");
     }
@@ -509,7 +510,7 @@ TEST_SUITE("E2E Strings") {
     // New String Native Functions
     // ============================================================================
 
-    TEST_CASE("str_char_at basic") {
+    TEST_CASE("str_char_at basic") {  // VM-only: str_char_at native not in C runtime
         const char* source = R"(
         fun main(): i32 {
             var s: string = "hello";
@@ -521,13 +522,13 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         // 'h' = 104, 'o' = 111
         CHECK(result.stdout_output == "104\n111\n");
     }
 
-    TEST_CASE("str_substr basic") {
+    TEST_CASE("str_substr basic") {  // VM-only: str_substr native not in C runtime
         const char* source = R"(
         fun main(): i32 {
             var s: string = "hello world";
@@ -539,12 +540,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "world\nhello\n");
     }
 
-    TEST_CASE("str_substr at end boundary returns empty") {
+    TEST_CASE("str_substr at end boundary returns empty") {  // VM-only: str_substr native not in C runtime
         const char* source = R"(
         fun main(): i32 {
             var s: string = "hello";
@@ -554,12 +555,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "[]\n");
     }
 
-    TEST_CASE("str_substr out-of-bounds with overflow-prone lengths is rejected") {
+    TEST_CASE_TEMPLATE("str_substr out-of-bounds with overflow-prone lengths is rejected", Backend, RX_E2E_BACKENDS) {
         // start + sub_len overflows i32 if added naively; the bounds check must
         // reject this cleanly rather than relying on signed-overflow UB.
         const char* source = R"(
@@ -570,11 +571,11 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE("str_to_f64 basic") {
+    TEST_CASE("str_to_f64 basic") {  // VM-only: str_to_f64 native not in C runtime
         const char* source = R"(
         fun main(): i32 {
             var v: f64 = str_to_f64("3.14");
@@ -585,12 +586,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "3.14\n42\n");
     }
 
-    TEST_CASE("str_from_code basic") {
+    TEST_CASE("str_from_code basic") {  // VM-only: str_from_code native not in C runtime
         const char* source = R"(
         fun main(): i32 {
             var s: string = str_from_code(65);
@@ -601,13 +602,13 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         // 65 = 'A', 122 = 'z'
         CHECK(result.stdout_output == "A\nz\n");
     }
 
-    TEST_CASE("clock returns positive value") {
+    TEST_CASE("clock returns positive value") {  // VM-only: clock native not in C runtime
         const char* source = R"(
         fun main(): i32 {
             var t: f64 = clock();
@@ -618,12 +619,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "ok\n");
     }
 
-    TEST_CASE("read_file basic") {
+    TEST_CASE("read_file basic") {  // VM-only: read_file native not in C runtime
         const char* source = R"(
         fun main(): i32 {
             var content: string = read_file("/dev/null");
@@ -632,7 +633,7 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "0\n");
     }
@@ -641,7 +642,7 @@ TEST_SUITE("E2E Strings") {
     // F-string interpolation of user-defined Printable struct rvalues
     // ============================================================================
 
-    TEST_CASE("F-string interp: Printable struct from function call") {
+    TEST_CASE("F-string interp: Printable struct from function call") {  // VM-only: C backend emits void* for rvalue Printable to_string (known gap)
         // Pre-fix: f"{make_pt()}" failed at IR gen with
         // "Internal error: expression is not a valid lvalue".
         const char* source = R"ROXY(
@@ -664,12 +665,12 @@ TEST_SUITE("E2E Strings") {
         }
     )ROXY";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "(3,4)\n");
     }
 
-    TEST_CASE("F-string interp: Printable struct from list index") {
+    TEST_CASE_TEMPLATE("F-string interp: Printable struct from list index", Backend, RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         struct Pt {
             x: i32;
@@ -690,12 +691,12 @@ TEST_SUITE("E2E Strings") {
         }
     )ROXY";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "(1,2)\n(5,6)\n");
     }
 
-    TEST_CASE("F-string interp: Printable struct from method call") {
+    TEST_CASE("F-string interp: Printable struct from method call") {  // VM-only: C backend emits void* for rvalue Printable to_string (known gap)
         const char* source = R"ROXY(
         struct Pt {
             x: i32;
@@ -721,12 +722,12 @@ TEST_SUITE("E2E Strings") {
         }
     )ROXY";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "(10,11)\n");
     }
 
-    TEST_CASE("F-string interp: Printable struct from local var still works") {
+    TEST_CASE_TEMPLATE("F-string interp: Printable struct from local var still works", Backend, RX_E2E_BACKENDS) {
         // Regression check for the workaround path (lvalue identifier).
         const char* source = R"ROXY(
         struct Pt {
@@ -745,7 +746,7 @@ TEST_SUITE("E2E Strings") {
         }
     )ROXY";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "(7,8)\n");
     }

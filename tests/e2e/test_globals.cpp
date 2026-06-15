@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 using namespace rx;
 
@@ -10,18 +11,18 @@ using namespace rx;
 TEST_SUITE("E2E Globals") {
 
     // A primitive global compiles, initializes, and is readable from main.
-    TEST_CASE("primitive global initializes and reads") {
+    TEST_CASE_TEMPLATE("primitive global initializes and reads", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
             var n: i32 = 42;
             fun main(): i32 { return n; }
         )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 42);
     }
 
     // Globals are mutable and persist across function calls.
-    TEST_CASE("global mutation persists across calls") {
+    TEST_CASE_TEMPLATE("global mutation persists across calls", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
             var counter: i32 = 0;
             fun bump() { counter = counter + 1; }
@@ -32,13 +33,13 @@ TEST_SUITE("E2E Globals") {
                 return counter;   // 3
             }
         )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 3);
     }
 
     // Multiple globals get distinct slots (no aliasing).
-    TEST_CASE("multiple globals are independent") {
+    TEST_CASE_TEMPLATE("multiple globals are independent", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
             var a: i32 = 10;
             var b: i64 = 20l;     // 2 slots — exercises offset accounting
@@ -48,26 +49,26 @@ TEST_SUITE("E2E Globals") {
                 return a + i32(b);         // 60
             }
         )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 60);
     }
 
     // A later global's initializer can read an earlier global (init runs in
     // declaration order).
-    TEST_CASE("global initializer reads an earlier global") {
+    TEST_CASE_TEMPLATE("global initializer reads an earlier global", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
             var base: i32 = 100;
             var derived: i32 = base + 5;
             fun main(): i32 { return derived; }   // 105
         )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 105);
     }
 
     // A function-local of the same name shadows the global.
-    TEST_CASE("local shadows global") {
+    TEST_CASE_TEMPLATE("local shadows global", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
             var x: i32 = 1;
             fun main(): i32 {
@@ -75,25 +76,25 @@ TEST_SUITE("E2E Globals") {
                 return x;          // 99, not 1
             }
         )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 99);
     }
 
     // A global is readable from any function, not just main.
-    TEST_CASE("global readable from a helper function") {
+    TEST_CASE_TEMPLATE("global readable from a helper function", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
             var scale: i32 = 7;
             fun scaled(v: i32): i32 { return v * scale; }
             fun main(): i32 { return scaled(6); }   // 42
         )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 42);
     }
 
     // Struct-typed global: fields are read/written through the global's address.
-    TEST_CASE("struct global field access") {
+    TEST_CASE_TEMPLATE("struct global field access", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
             struct Point { x: i32; y: i32; }
             var origin: Point = Point { x = 3, y = 4 };
@@ -102,7 +103,7 @@ TEST_SUITE("E2E Globals") {
                 return origin.x + origin.y;   // 13 + 4 = 17
             }
         )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 17);
     }
@@ -111,7 +112,7 @@ TEST_SUITE("E2E Globals") {
     // set by the constructor is visible, and the program tears down cleanly at
     // shutdown (no double-free; the debug double-delete tripwire would fire
     // otherwise).
-    TEST_CASE("uniq global runs its constructor and reads back") {
+    TEST_CASE_TEMPLATE("uniq global runs its constructor and reads back", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
             struct Counter { value: i32; }
             fun new Counter(v: i32) { self.value = v; }
@@ -119,7 +120,7 @@ TEST_SUITE("E2E Globals") {
             var g: uniq Counter = uniq Counter(7);
             fun main(): i32 { return g.value; }   // 7 (constructor ran)
         )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 7);
     }
@@ -128,7 +129,7 @@ TEST_SUITE("E2E Globals") {
     // lands on real stdout *after* run_and_capture restores it (global teardown
     // is at vm_destroy, past the captured window), so this asserts the program
     // runs and tears down without error rather than checking the text.
-    TEST_CASE("uniq global with destructor tears down cleanly") {
+    TEST_CASE_TEMPLATE("uniq global with destructor tears down cleanly", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
             struct Resource { id: i32; }
             fun new Resource(id: i32) { self.id = id; }
@@ -136,7 +137,7 @@ TEST_SUITE("E2E Globals") {
             var res: uniq Resource = uniq Resource(1);
             fun main(): i32 { return res.id; }
         )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 1);
     }
@@ -144,7 +145,7 @@ TEST_SUITE("E2E Globals") {
     // Reassigning a `uniq` global frees the overwritten object (mirrors the
     // inout/field old-value destroy), so init + reassign + shutdown is a single
     // clean chain with no leak and no double-free.
-    TEST_CASE("uniq global reassignment frees the old value") {
+    TEST_CASE_TEMPLATE("uniq global reassignment frees the old value", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
             struct Box { v: i32; }
             fun new Box(v: i32) { self.v = v; }
@@ -155,7 +156,7 @@ TEST_SUITE("E2E Globals") {
                 return b.v;        // 2
             }
         )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 2);
     }

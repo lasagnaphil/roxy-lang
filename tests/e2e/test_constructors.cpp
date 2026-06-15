@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
@@ -12,7 +13,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Constructors") {
 
-    TEST_CASE("stack-allocated default constructor") {
+    TEST_CASE_TEMPLATE("stack-allocated default constructor", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -32,12 +33,12 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n20\n");
     }
 
-    TEST_CASE("stack-allocated with params") {
+    TEST_CASE_TEMPLATE("stack-allocated with params", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -57,12 +58,12 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "5\n15\n");
     }
 
-    TEST_CASE("stack-allocated named constructor") {
+    TEST_CASE_TEMPLATE("stack-allocated named constructor", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -82,7 +83,7 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "7\n14\n");
     }
@@ -91,7 +92,7 @@ TEST_SUITE("E2E Constructors") {
     // Heap-Allocated Constructor Tests (uniq Type())
     // ============================================================================
 
-    TEST_CASE("heap-allocated default constructor") {
+    TEST_CASE_TEMPLATE("heap-allocated default constructor", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -112,12 +113,12 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n20\n");
     }
 
-    TEST_CASE("heap-allocated with params") {
+    TEST_CASE_TEMPLATE("heap-allocated with params", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -138,12 +139,12 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "5\n15\n");
     }
 
-    TEST_CASE("heap-allocated named constructor") {
+    TEST_CASE_TEMPLATE("heap-allocated named constructor", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -164,12 +165,12 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "7\n14\n");
     }
 
-    TEST_CASE("multiple constructors") {
+    TEST_CASE_TEMPLATE("multiple constructors", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -210,7 +211,7 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "0\n0\n3\n6\n9\n9\n");
     }
@@ -219,7 +220,7 @@ TEST_SUITE("E2E Constructors") {
     // Destructor Tests
     // ============================================================================
 
-    TEST_CASE("Destructor: default destructor") {
+    TEST_CASE_TEMPLATE("Destructor: default destructor", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Counter {
             value: i32;
@@ -241,12 +242,12 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n100\n");
     }
 
-    TEST_CASE("Destructor: named destructor with args") {
+    TEST_CASE_TEMPLATE("Destructor: named destructor with args", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Data {
             value: i32;
@@ -267,12 +268,12 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "50\n");  // 10 * 5
     }
 
-    TEST_CASE("Destructor: multiple destructors") {
+    TEST_CASE_TEMPLATE("Destructor: multiple destructors", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Resource {
             id: i32;
@@ -301,7 +302,7 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "999\n2\n1\n");
     }
@@ -310,7 +311,7 @@ TEST_SUITE("E2E Constructors") {
     // Constructor and Destructor Together
     // ============================================================================
 
-    TEST_CASE("Constructor + Destructor lifecycle") {
+    TEST_CASE_TEMPLATE("Constructor + Destructor lifecycle", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Object {
             id: i32;
@@ -335,7 +336,7 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "0\n1\n42\n2\n3\n");
     }
@@ -344,7 +345,7 @@ TEST_SUITE("E2E Constructors") {
     // No Constructor Tests (regression)
     // ============================================================================
 
-    TEST_CASE("no constructor defined (zero-init heap)") {
+    TEST_CASE_TEMPLATE("no constructor defined (zero-init heap)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Simple {
             value: i32;
@@ -358,12 +359,12 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "0\n");  // zero-initialized
     }
 
-    TEST_CASE("no constructor defined (zero-init stack)") {
+    TEST_CASE_TEMPLATE("no constructor defined (zero-init stack)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Simple {
             value: i32;
@@ -376,7 +377,7 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "0\n");  // zero-initialized
     }
@@ -385,7 +386,7 @@ TEST_SUITE("E2E Constructors") {
     // Public/Private Constructors
     // ============================================================================
 
-    TEST_CASE("pub constructor") {
+    TEST_CASE_TEMPLATE("pub constructor", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Widget {
             id: i32;
@@ -403,7 +404,7 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "123\n");
     }
@@ -412,7 +413,7 @@ TEST_SUITE("E2E Constructors") {
     // Struct literal syntax
     // ============================================================================
 
-    TEST_CASE("Struct literal (stack)") {
+    TEST_CASE_TEMPLATE("Struct literal (stack)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -427,12 +428,12 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n99\n");
     }
 
-    TEST_CASE("Struct literal (heap)") {
+    TEST_CASE_TEMPLATE("Struct literal (heap)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {
             x: i32;
@@ -448,7 +449,7 @@ TEST_SUITE("E2E Constructors") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n99\n");
     }

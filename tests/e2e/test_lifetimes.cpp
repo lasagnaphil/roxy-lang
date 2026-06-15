@@ -1,5 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 using namespace rx;
 
@@ -14,7 +15,7 @@ TEST_SUITE("E2E Lifetimes") {
     // the borrow is live traps — even when the free happens on a non-`delete`
     // path (here, a callee deletes the moved-in owner). Before the fix, ref
     // locals emitted no inc/dec at all, so this was a silent use-after-free.
-    TEST_CASE("ref local borrow blocks delete of owner (Finding 1)") {
+    TEST_CASE("ref local borrow blocks delete of owner (Finding 1)") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
         const char* source = R"(
         struct Point { x: i32; y: i32; }
 
@@ -36,7 +37,7 @@ TEST_SUITE("E2E Lifetimes") {
         BumpAllocator allocator(65536);
         CHECK(compile(allocator, source) != nullptr);
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success == false);  // delete traps: object has an active borrow
     }
 
@@ -44,7 +45,7 @@ TEST_SUITE("E2E Lifetimes") {
     // count off to the caller, so the local owner's RAII drop at function exit
     // sees the still-live borrow and traps at the drop (rather than silently
     // returning a dangling reference).
-    TEST_CASE("returning a ref to a local owner traps at the owner's drop (Finding 2)") {
+    TEST_CASE("returning a ref to a local owner traps at the owner's drop (Finding 2)") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
         const char* source = R"(
         struct Point { x: i32; y: i32; }
 
@@ -66,7 +67,7 @@ TEST_SUITE("E2E Lifetimes") {
         BumpAllocator allocator(65536);
         CHECK(compile(allocator, source) != nullptr);
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success == false);  // owner's RAII drop traps on the live borrow
     }
 
@@ -75,7 +76,7 @@ TEST_SUITE("E2E Lifetimes") {
     // so the owner's count returns to zero and it stays deletable. This is the
     // positive control proving no decrement is missed (a missed dec would make
     // the explicit `delete owner` trap, or underflow the count).
-    TEST_CASE("ref local counting is balanced across control flow") {
+    TEST_CASE("ref local counting is balanced across control flow") {  // VM-only: C backend: ref/uniq ownership + borrow-count semantics gap
         const char* source = R"(
         struct Point { x: i32; y: i32; }
 
@@ -111,7 +112,7 @@ TEST_SUITE("E2E Lifetimes") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 35);  // 7 (block) + 7*3 (loop i=0,1,3) + 7 (b3)
     }
@@ -119,7 +120,7 @@ TEST_SUITE("E2E Lifetimes") {
     // Reassigning a ref local through a chain (linked-list walk) keeps the count
     // balanced: each reassignment releases the old borrow and acquires the new,
     // so after the walk every node is deletable.
-    TEST_CASE("ref local reassignment keeps the count balanced") {
+    TEST_CASE("ref local reassignment keeps the count balanced") {  // VM-only: C backend: ref/uniq ownership + borrow-count semantics gap
         const char* source = R"(
         struct Node {
             value: i32;
@@ -144,7 +145,7 @@ TEST_SUITE("E2E Lifetimes") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 30);
     }
@@ -154,7 +155,7 @@ TEST_SUITE("E2E Lifetimes") {
     // consume the moved-in value (no double-free). Verified via destructor
     // side-effects: the overwritten element's destructor fires once at the
     // assignment, and the moved-in element's fires exactly once at teardown.
-    TEST_CASE("index-set destroys old element and consumes the new (Finding 3)") {
+    TEST_CASE_TEMPLATE("index-set destroys old element and consumes the new (Finding 3)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Res { id: i32; }
         fun delete Res() { print(f"del {self.id}"); }
@@ -170,7 +171,7 @@ TEST_SUITE("E2E Lifetimes") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         // "del 1" proves the old element was destroyed (no leak); a single
         // "del 3" at teardown proves the moved-in value wasn't double-freed.
@@ -201,7 +202,7 @@ TEST_SUITE("E2E Lifetimes") {
     // caller, which the caller *adopts* (no extra increment). After the bound
     // borrow drops, the owner's count is back to zero and it stays deletable —
     // i.e. no over-count (which would make the owner spuriously undeletable).
-    TEST_CASE("ref-returning call hands off one count (no over-count)") {
+    TEST_CASE_TEMPLATE("ref-returning call hands off one count (no over-count)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Item { v: i32; }
         struct Box { item: uniq Item; }
@@ -223,7 +224,7 @@ TEST_SUITE("E2E Lifetimes") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 42);
     }
@@ -232,7 +233,7 @@ TEST_SUITE("E2E Lifetimes") {
     // owner cannot be deleted (the borrow keeps it pinned). This is the
     // counterpart to the no-over-count case — proving the count isn't merely
     // dropped (which would be an under-count / use-after-free).
-    TEST_CASE("ref-returning call's borrow blocks delete while live") {
+    TEST_CASE("ref-returning call's borrow blocks delete while live") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
         const char* source = R"(
         struct Item { v: i32; }
         struct Box { item: uniq Item; }
@@ -250,7 +251,7 @@ TEST_SUITE("E2E Lifetimes") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success == false);
     }
 
@@ -258,7 +259,7 @@ TEST_SUITE("E2E Lifetimes") {
     // destroys the old value (guarded by a `contains` check so a *new* key
     // destroys nothing) and consumes the moved-in value. A single key keeps the
     // destructor output deterministic (no Robin-Hood bucket-order ambiguity).
-    TEST_CASE("map index-set overwrite destroys old value, new key does not (Finding 3)") {
+    TEST_CASE_TEMPLATE("map index-set overwrite destroys old value, new key does not (Finding 3)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Res { id: i32; }
         fun delete Res() { print(f"del {self.id}"); }
@@ -274,7 +275,7 @@ TEST_SUITE("E2E Lifetimes") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         // No "del" before the first overwrite (new key destroys nothing); each
         // overwritten value destroyed once; the live value destroyed once at end.
@@ -318,7 +319,7 @@ TEST_SUITE("E2E Lifetimes") {
 
     // Legitimate second-class use stays allowed: mutating an inout in place and
     // passing it onward as another inout argument (the downward path).
-    TEST_CASE("inout used in place and passed onward downward is allowed") {
+    TEST_CASE_TEMPLATE("inout used in place and passed onward downward is allowed", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box { v: i32; }
         fun fill(l: inout List<uniq Box>): i32 {
@@ -334,7 +335,7 @@ TEST_SUITE("E2E Lifetimes") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 1);
     }
@@ -346,7 +347,7 @@ TEST_SUITE("E2E Lifetimes") {
     // captured ref would otherwise dangle). The copyable receiver + uniq
     // allocation also exercises the promotion gate (the heap check passes, then
     // the count is taken).
-    TEST_CASE("ref-self closure capture pins the receiver (delete-while-captured traps)") {
+    TEST_CASE("ref-self closure capture pins the receiver (delete-while-captured traps)") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
         const char* source = R"(
         struct V { x: i32 = 0; }
         fun V.make_getter(): fun() -> i32 {
@@ -360,13 +361,13 @@ TEST_SUITE("E2E Lifetimes") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success == false);
     }
 
     // The borrow is released when the closure drops, so the receiver becomes
     // deletable again — no over-count.
-    TEST_CASE("ref-self capture releases the borrow when the closure drops") {
+    TEST_CASE_TEMPLATE("ref-self capture releases the borrow when the closure drops", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct V { x: i32 = 0; }
         fun V.make_getter(): fun() -> i32 {
@@ -384,7 +385,7 @@ TEST_SUITE("E2E Lifetimes") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 5);
     }
@@ -396,7 +397,7 @@ TEST_SUITE("E2E Lifetimes") {
 
     // Balance: calling methods on a uniq receiver does not leak or over-count —
     // the object is still destroyed exactly once at scope exit.
-    TEST_CASE("method calls on a uniq receiver stay balanced") {
+    TEST_CASE_TEMPLATE("method calls on a uniq receiver stay balanced", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Counter { value: i32; }
         fun new Counter(v: i32) { self.value = v; }
@@ -410,7 +411,7 @@ TEST_SUITE("E2E Lifetimes") {
             return a + b;           // 14
         }
     )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 14);
         CHECK(result.stdout_output == "del\n");  // destroyed exactly once
@@ -421,7 +422,7 @@ TEST_SUITE("E2E Lifetimes") {
     // owner survives to the in-function catch and is destroyed exactly once.
     // This is the case the naive attempt (sharing the receiver's SSA value)
     // double-deleted — the pinned-copy borrow + deferred record ordering fix it.
-    TEST_CASE("uniq receiver survives a throwing method, destroyed once") {
+    TEST_CASE_TEMPLATE("uniq receiver survives a throwing method, destroyed once", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Boom { msg: string; }
         fun Boom.message(): string for Exception { return self.msg; }
@@ -443,7 +444,7 @@ TEST_SUITE("E2E Lifetimes") {
             // c destroyed exactly once at scope exit
         }
     )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.stdout_output == "caught\n5\ndel\n");
     }
@@ -455,7 +456,7 @@ TEST_SUITE("E2E Lifetimes") {
     // because inout-`uniq` reassignment now frees the overwritten value; see the
     // dedicated reassignment tests below.) The control omits the reassignment,
     // isolating it as the sole cause of the trap.
-    TEST_CASE("freeing a uniq receiver mid-method traps") {
+    TEST_CASE("freeing a uniq receiver mid-method traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
         const char* trap_src = R"(
         struct Counter { value: i32; }
         fun new Counter(v: i32) { self.value = v; }
@@ -473,7 +474,7 @@ TEST_SUITE("E2E Lifetimes") {
     )";
         BumpAllocator allocator(65536);
         CHECK(compile(allocator, trap_src) != nullptr);  // compiles → false is a runtime trap
-        TestResult trap = run_and_capture(trap_src, "main");
+        auto trap = VMBackend::run(trap_src);
         CHECK(trap.success == false);  // delete traps: receiver has an active borrow
 
         // Control: identical except `kill` does not reassign — succeeds, so the
@@ -492,7 +493,7 @@ TEST_SUITE("E2E Lifetimes") {
             return c.kill(inout c);
         }
     )";
-        TestResult control = run_and_capture(control_src, "main");
+        auto control = VMBackend::run(control_src);
         CHECK(control.success == true);
     }
 
@@ -503,7 +504,7 @@ TEST_SUITE("E2E Lifetimes") {
 
     // `slot = uniq T(..)`: the old object is freed, the new one stored, and the
     // caller's variable owns exactly the new object (destroyed once at exit).
-    TEST_CASE("inout uniq reassignment frees the old value, no double-free") {
+    TEST_CASE("inout uniq reassignment frees the old value, no double-free") {  // VM-only: C backend: ref/uniq ownership + borrow-count semantics gap
         const char* source = R"(
         struct Counter { value: i32; }
         fun new Counter(v: i32) { self.value = v; }
@@ -520,7 +521,7 @@ TEST_SUITE("E2E Lifetimes") {
             // c (Counter 99) destroyed once at scope exit
         }
     )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 99);
         CHECK(result.stdout_output == "del\ndel\n");  // old freed on replace, new freed at exit
@@ -528,7 +529,7 @@ TEST_SUITE("E2E Lifetimes") {
 
     // `slot = nil`: the old object is freed and the slot nulled, so the caller's
     // scope-exit delete is a no-op (no leak, no double-free).
-    TEST_CASE("inout uniq reassignment to nil frees the old value") {
+    TEST_CASE("inout uniq reassignment to nil frees the old value") {  // VM-only: C backend: ref/uniq ownership + borrow-count semantics gap
         const char* source = R"(
         struct Counter { value: i32; }
         fun new Counter(v: i32) { self.value = v; }
@@ -545,7 +546,7 @@ TEST_SUITE("E2E Lifetimes") {
             // c is nil now; scope-exit delete is a no-op
         }
     )";
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success == true);
         CHECK(result.stdout_output == "del\n");  // freed exactly once, by clear()
     }

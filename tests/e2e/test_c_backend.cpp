@@ -1,3 +1,17 @@
+// C-backend test suite.
+//
+// Broad language-feature coverage on the C backend now lives in the
+// backend-parametric `tests/e2e/` suites (run via `--test-case="*<C>*"`; see
+// `test_e2e_backend.hpp`). This file is intentionally NOT deduplicated against
+// them: its cases are a hand-curated baseline of patterns known to *pass* on the
+// C backend (e.g. "Struct as parameter", "Large struct return", "Map<Struct,i32>
+// basic insert + get") plus C-specific tests that have no parametric analogue:
+//   - generated-header emission (`header_compiles` / `compile_to_hpp`)
+//   - AOT NativeRegistry dispatch (`compile_and_run_cpp_with_registry`)
+//   - generated-C structure / `#line` directives (`compile_to_cpp`)
+// These deliberately test *different aspects* than the parametric cases (which
+// often probe value-semantics edges the C backend currently gets wrong and are
+// therefore VM-only), so deleting them would drop real passing-on-C coverage.
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
 

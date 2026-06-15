@@ -716,8 +716,20 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         case IROp::ConstF: {
             out.append("    ");
             emit_value(inst->result, out);
-            char buf[48];
-            snprintf(buf, sizeof(buf), " = %.9gf;\n", static_cast<double>(inst->const_data.f32_val));
+            char numbuf[48];
+            snprintf(numbuf, sizeof(numbuf), "%.9g", static_cast<double>(inst->const_data.f32_val));
+            // A whole-number f32 formats as a bare integer ("0", "42"); the 'f'
+            // suffix is ill-formed on an integer literal ("0f"/"42f" don't
+            // compile), so inject ".0" when the text is digits/sign only.
+            bool integer_form = numbuf[0] != '\0';
+            for (const char* p = numbuf; *p; ++p) {
+                if (!((*p >= '0' && *p <= '9') || *p == '-' || *p == '+')) {
+                    integer_form = false;
+                    break;
+                }
+            }
+            char buf[56];
+            snprintf(buf, sizeof(buf), integer_form ? " = %s.0f;\n" : " = %sf;\n", numbuf);
             out.append(buf);
             return;
         }

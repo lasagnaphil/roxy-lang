@@ -1,4 +1,5 @@
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 #include <roxy/core/doctest/doctest.h>
 
@@ -6,7 +7,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Tagged Unions") {
 
-    TEST_CASE("basic definition") {
+    TEST_CASE_TEMPLATE("basic definition", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Kind { A, B }
 
@@ -24,12 +25,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 0);
     }
 
-    TEST_CASE("struct literal with variant A") {
+    TEST_CASE_TEMPLATE("struct literal with variant A", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Kind { A, B }
 
@@ -49,12 +50,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n");
     }
 
-    TEST_CASE("struct literal with variant B") {
+    TEST_CASE_TEMPLATE("struct literal with variant B", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Kind { A, B }
 
@@ -74,12 +75,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "99\n");
     }
 
-    TEST_CASE("with regular fields") {
+    TEST_CASE_TEMPLATE("with regular fields", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum SkillType { Attack, Defend }
 
@@ -105,12 +106,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n100\n");
     }
 
-    TEST_CASE("multiple fields per variant") {
+    TEST_CASE_TEMPLATE("multiple fields per variant", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Kind { Point2D, Point3D }
 
@@ -134,12 +135,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n20\n");
     }
 
-    TEST_CASE("variant field assignment") {
+    TEST_CASE_TEMPLATE("variant field assignment", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Kind { A, B }
 
@@ -160,12 +161,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "20\n");
     }
 
-    TEST_CASE("method access") {
+    TEST_CASE_TEMPLATE("method access", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Kind { A, B }
 
@@ -189,12 +190,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n");
     }
 
-    TEST_CASE("use with when statement") {
+    TEST_CASE_TEMPLATE("use with when statement", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Kind { A, B }
 
@@ -227,7 +228,7 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n20\n");
     }
@@ -236,7 +237,7 @@ TEST_SUITE("E2E Tagged Unions") {
     // Tagged unions with uniq fields
     // ============================================================================
 
-    TEST_CASE("with uniq field: basic create and access") {
+    TEST_CASE_TEMPLATE("with uniq field: basic create and access", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Leaf {
             value: i32;
@@ -263,12 +264,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("with uniq field: RAII cleanup") {
+    TEST_CASE_TEMPLATE("with uniq field: RAII cleanup", Backend, RX_E2E_BACKENDS) {
         // The uniq field inside a tagged union variant must be cleaned up
         // when the struct goes out of scope
         const char* source = R"(
@@ -301,12 +302,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "before scope exit\ndelete Leaf 99\n");
     }
 
-    TEST_CASE("with uniq field: empty variant no crash") {
+    TEST_CASE_TEMPLATE("with uniq field: empty variant no crash", Backend, RX_E2E_BACKENDS) {
         // When the active variant has no uniq field, cleanup should be safe
         const char* source = R"(
         struct Leaf {
@@ -336,12 +337,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "empty variant\n");
     }
 
-    TEST_CASE("with uniq field: when statement access") {
+    TEST_CASE_TEMPLATE("with uniq field: when statement access", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Payload {
             data: i32;
@@ -376,12 +377,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "123\n");
     }
 
-    TEST_CASE("recursive: uniq self-reference") {
+    TEST_CASE("recursive: uniq self-reference") {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
         // This is the core AST pattern: Expr contains uniq Expr children
         const char* source = R"(
         enum ExprKind { Literal, Binary }
@@ -426,12 +427,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "30\n");
     }
 
-    TEST_CASE("recursive: deep tree cleanup") {
+    TEST_CASE("recursive: deep tree cleanup") {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
         // Verify RAII cleanup for a recursive tree structure
         const char* source = R"(
         enum ExprKind { Literal, Binary }
@@ -484,12 +485,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n");
     }
 
-    TEST_CASE("recursive: destructor chaining") {
+    TEST_CASE("recursive: destructor chaining") {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
         // Verify that destroying a uniq tagged union recursively cleans up
         // uniq children in variants. Without a synthetic destructor on Expr,
         // only the root would be freed — children would leak.
@@ -534,14 +535,14 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         // All three Expr objects must be destroyed:
         // root (Binary), then its variant fields in LIFO order (right, left)
         CHECK(result.stdout_output == "before cleanup\ndelete Binary\ndelete Literal 2\ndelete Literal 1\n");
     }
 
-    TEST_CASE("with List<uniq T> field") {
+    TEST_CASE_TEMPLATE("with List<uniq T> field", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Item {
             value: i32;
@@ -585,7 +586,7 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "60\n");
     }
@@ -595,7 +596,7 @@ TEST_SUITE("E2E Tagged Unions") {
     // instead of struct contents, corrupting nested when-discriminants)
     // ============================================================================
 
-    TEST_CASE("Field assignment: struct value into a regular struct field") {
+    TEST_CASE_TEMPLATE("Field assignment: struct value into a regular struct field", Backend, RX_E2E_BACKENDS) {
         // Pre-fix: emit_set_field stored the source struct's pointer bits into the
         // destination slots, so o.inner.x/y/z came back as garbage.
         const char* source = R"ROXY(
@@ -613,12 +614,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )ROXY";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n3\n");
     }
 
-    TEST_CASE("Field assignment: tagged-union struct into a variant field") {
+    TEST_CASE("Field assignment: tagged-union struct into a variant field") {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
         // Pre-fix: assigning v (kind=IA) into o.inner clobbered the inner
         // discriminant; `when o.inner.kind` matched neither IA nor IB.
         const char* source = R"ROXY(
@@ -654,12 +655,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )ROXY";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "IA=42\n");
     }
 
-    TEST_CASE("Field assignment: struct value via 'self' inside a method") {
+    TEST_CASE("Field assignment: struct value via 'self' inside a method") {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
         // Mirrors the original lox repro: assignment happens through `self.field`
         // (a ref to the enclosing struct) rather than through a local variable.
         const char* source = R"ROXY(
@@ -697,7 +698,7 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )ROXY";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = VMBackend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "IA=13\n");
     }

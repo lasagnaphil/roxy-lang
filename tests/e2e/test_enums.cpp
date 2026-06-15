@@ -1,4 +1,5 @@
 #include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
 
 #include <roxy/core/doctest/doctest.h>
 
@@ -6,7 +7,7 @@ using namespace rx;
 
 TEST_SUITE("E2E Enums") {
 
-    TEST_CASE("Enum basic definition") {
+    TEST_CASE_TEMPLATE("Enum basic definition", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Color { Red, Green, Blue }
 
@@ -15,12 +16,12 @@ TEST_SUITE("E2E Enums") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 0);
     }
 
-    TEST_CASE("Enum variant access") {
+    TEST_CASE_TEMPLATE("Enum variant access", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Color { Red, Green, Blue }
 
@@ -30,12 +31,12 @@ TEST_SUITE("E2E Enums") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 0);
     }
 
-    TEST_CASE("Enum comparison") {
+    TEST_CASE_TEMPLATE("Enum comparison", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Different variants compare not equal") {
             const char* source = R"(
             enum Color { Red, Green, Blue }
@@ -52,7 +53,7 @@ TEST_SUITE("E2E Enums") {
         )";
 
             // Green != Red, so should print 0
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "0\n");
         }
@@ -73,13 +74,13 @@ TEST_SUITE("E2E Enums") {
         )";
 
             // Green == Green, so should print 1
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "1\n");
         }
     }
 
-    TEST_CASE("Enum explicit values") {
+    TEST_CASE_TEMPLATE("Enum explicit values", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Explicit value assignment") {
             const char* source = R"(
             enum Status { Pending = 0, Active = 10, Done = 20 }
@@ -95,7 +96,7 @@ TEST_SUITE("E2E Enums") {
             }
         )";
 
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "1\n");
         }
@@ -112,13 +113,13 @@ TEST_SUITE("E2E Enums") {
             }
         )";
 
-            TestResult result = run_and_capture(source, "main");
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "1\n1\n1\n");
         }
     }
 
-    TEST_CASE("Enum in struct field") {
+    TEST_CASE_TEMPLATE("Enum in struct field", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Direction { North, East, South, West }
 
@@ -139,12 +140,12 @@ TEST_SUITE("E2E Enums") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n");
     }
 
-    TEST_CASE("Enum as function parameter") {
+    TEST_CASE_TEMPLATE("Enum as function parameter", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Op { Add, Sub, Mul }
 
@@ -166,7 +167,7 @@ TEST_SUITE("E2E Enums") {
         }
     )";
 
-        TestResult result = run_and_capture(source, "main");
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "13\n7\n30\n");
     }
