@@ -204,7 +204,7 @@ TEST_SUITE("E2E Structs") {
         CHECK(result.stdout_output == "10\n20\n100\n200\n");
     }
 
-    TEST_CASE("Deeply nested structs (3 levels)") {  // VM-only: C backend: struct-by-value copy semantics gap
+    TEST_CASE("Deeply nested structs (3 levels)") {  // VM-only: C backend: struct-by-value copy semantics gap  // VM-only: C backend: struct-by-value copy semantics gap
         const char* source = R"(
         struct Inner {
             value: i32;
@@ -430,7 +430,7 @@ TEST_SUITE("E2E Structs") {
         CHECK(result.stdout_output == "25\n");  // 3^2 + 4^2 = 9 + 16
     }
 
-    TEST_CASE("Struct parameter value semantics") {  // VM-only: C backend: struct-by-value copy semantics gap
+    TEST_CASE("Struct parameter value semantics") {  // VM-only: C backend: struct-by-value copy semantics gap  // VM-only: C backend: struct-by-value copy semantics gap
         const char* source = R"(
         struct Point {
             x: i32;
@@ -564,7 +564,7 @@ TEST_SUITE("E2E Structs") {
         CHECK(result.stdout_output == "10\n20\n");  // 5*2, 10*2
     }
 
-    TEST_CASE("Chain struct returns") {  // VM-only: C backend: struct-by-value copy semantics gap
+    TEST_CASE("Chain struct returns") {  // VM-only: C backend: struct-by-value copy semantics gap  // VM-only: C backend: struct-by-value copy semantics gap
         const char* source = R"(
         struct Point {
             x: i32;
@@ -649,7 +649,7 @@ TEST_SUITE("E2E Structs") {
         CHECK(result.stdout_output == "10\n11\n12\n13\n14\n");
     }
 
-    TEST_CASE("Large struct return value semantics") {  // VM-only: C backend: struct-by-value copy semantics gap
+    TEST_CASE("Large struct return value semantics") {  // VM-only: C backend: struct-by-value copy semantics gap  // VM-only: C backend: struct-by-value copy semantics gap
         const char* source = R"(
         struct BigData { a: i32; b: i32; c: i32; d: i32; e: i32; }
 

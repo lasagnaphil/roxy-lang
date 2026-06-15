@@ -382,7 +382,7 @@ TEST_SUITE("E2E Tagged Unions") {
         CHECK(result.stdout_output == "123\n");
     }
 
-    TEST_CASE("recursive: uniq self-reference") {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
+    TEST_CASE_TEMPLATE("recursive: uniq self-reference", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
         // This is the core AST pattern: Expr contains uniq Expr children
         const char* source = R"(
         enum ExprKind { Literal, Binary }
@@ -427,12 +427,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "30\n");
     }
 
-    TEST_CASE("recursive: deep tree cleanup") {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
+    TEST_CASE_TEMPLATE("recursive: deep tree cleanup", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
         // Verify RAII cleanup for a recursive tree structure
         const char* source = R"(
         enum ExprKind { Literal, Binary }
@@ -485,12 +485,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n");
     }
 
-    TEST_CASE("recursive: destructor chaining") {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
+    TEST_CASE_TEMPLATE("recursive: destructor chaining", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
         // Verify that destroying a uniq tagged union recursively cleans up
         // uniq children in variants. Without a synthetic destructor on Expr,
         // only the root would be freed — children would leak.
@@ -535,7 +535,7 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         // All three Expr objects must be destroyed:
         // root (Binary), then its variant fields in LIFO order (right, left)
@@ -619,7 +619,7 @@ TEST_SUITE("E2E Tagged Unions") {
         CHECK(result.stdout_output == "1\n2\n3\n");
     }
 
-    TEST_CASE("Field assignment: tagged-union struct into a variant field") {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
+    TEST_CASE("Field assignment: tagged-union struct into a variant field") {  // VM-only: C backend: tagged-union value-field assignment gap  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
         // Pre-fix: assigning v (kind=IA) into o.inner clobbered the inner
         // discriminant; `when o.inner.kind` matched neither IA nor IB.
         const char* source = R"ROXY(
@@ -660,7 +660,7 @@ TEST_SUITE("E2E Tagged Unions") {
         CHECK(result.stdout_output == "IA=42\n");
     }
 
-    TEST_CASE("Field assignment: struct value via 'self' inside a method") {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
+    TEST_CASE("Field assignment: struct value via 'self' inside a method") {  // VM-only: C backend: tagged-union value-field assignment gap  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
         // Mirrors the original lox repro: assignment happens through `self.field`
         // (a ref to the enclosing struct) rather than through a local variable.
         const char* source = R"ROXY(

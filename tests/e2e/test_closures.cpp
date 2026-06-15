@@ -589,7 +589,7 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
-    TEST_CASE("self capture") {  // VM-only: C backend: self-capture / function-to-borrow conversion gap
+    TEST_CASE("self capture") {  // VM-only: C backend: closure self-capture / borrow-conversion gap  // VM-only: C backend: self-capture / function-to-borrow conversion gap
         SUBCASE("Implicit ref-self on noncopyable struct") {
             // Noncopyable struct ⇒ heap-only ⇒ ref counting protects; no runtime check.
             const char* source = R"(
@@ -758,7 +758,7 @@ TEST_SUITE("E2E Closures") {
 
     }
 
-    TEST_CASE("nested self capture") {  // VM-only: C backend: self-capture / function-to-borrow conversion gap
+    TEST_CASE("nested self capture") {  // VM-only: C backend: closure self-capture / borrow-conversion gap  // VM-only: C backend: self-capture / function-to-borrow conversion gap
         SUBCASE("Nested [copy self] on copyable + uniq receiver") {
             // Outer takes implicit ref-self (heap check passes for uniq); inner's
             // [copy self] reads via outer's __env.__self and snapshots into its
@@ -853,7 +853,7 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
-    TEST_CASE("transitive [move] across nested lambdas") {  // VM-only: C backend: self-capture / function-to-borrow conversion gap
+    TEST_CASE("transitive [move] across nested lambdas") {  // VM-only: C backend: closure self-capture / borrow-conversion gap  // VM-only: C backend: self-capture / function-to-borrow conversion gap
         SUBCASE("Inner [move c] from a noncopyable across one outer lambda") {
             // `c` lives in main's scope; the outer lambda doesn't reference it
             // directly, but the inner lambda's [move c] propagates a Move
@@ -1155,7 +1155,7 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
-    TEST_CASE("function-to-borrow conversion") {  // VM-only: C backend: self-capture / function-to-borrow conversion gap
+    TEST_CASE("function-to-borrow conversion") {  // VM-only: C backend: closure self-capture / borrow-conversion gap  // VM-only: C backend: self-capture / function-to-borrow conversion gap
         SUBCASE("pass a fun to a ref fun parameter and call it") {
             // `fun -> ref fun` borrows the closure (like uniq -> ref); the borrow
             // is callable, and the caller's `f` stays usable afterward.

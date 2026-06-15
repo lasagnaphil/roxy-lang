@@ -1226,7 +1226,7 @@ TEST_SUITE("E2E Exceptions") {
     // dereferences an uninitialized SSA value (segfault for struct returns,
     // silently-wrong value for primitives).
 
-    TEST_CASE("Try/catch: throwing call to pre-declared struct local preserves prior value") {  // VM-only: C backend: try-local rebinding across throwing call gap
+    TEST_CASE("Try/catch: throwing call to pre-declared struct local preserves prior value") {  // VM-only: C backend: try-local rebinding across call gap  // VM-only: C backend: try-local rebinding across throwing call gap
         const char* source = R"ROXY(
         struct Pt { x: i32; y: i32; z: i32; }
         struct E { c: i32; }
@@ -1277,7 +1277,7 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.value == 7);
     }
 
-    TEST_CASE("Try/catch: non-throwing call still rebinds the pre-declared local") {  // VM-only: C backend: try-local rebinding across throwing call gap
+    TEST_CASE("Try/catch: non-throwing call still rebinds the pre-declared local") {  // VM-only: C backend: try-local rebinding across call gap  // VM-only: C backend: try-local rebinding across throwing call gap
         // Sanity check that the IR-builder rollback doesn't break the happy path:
         // when the call succeeds, the assignment must take effect.
         const char* source = R"ROXY(

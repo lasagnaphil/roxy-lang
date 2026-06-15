@@ -437,7 +437,7 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.stdout_output == "8\n12\n");
     }
 
-    TEST_CASE("Generic trait default method injection") {  // VM-only: C backend: operator/trait method dispatch on structs gap
+    TEST_CASE("Generic trait default method injection") {  // VM-only: C backend: operator/trait method dispatch on structs gap  // VM-only: C backend: operator/trait method dispatch on structs gap
         const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
@@ -607,7 +607,7 @@ TEST_SUITE("E2E Traits") {
 
     // ========== Operator Overloading Tests ==========
 
-    TEST_CASE("Arithmetic operator dispatch (+ -)") {  // VM-only: C backend: operator/trait method dispatch on structs gap
+    TEST_CASE("Arithmetic operator dispatch (+ -)") {  // VM-only: C backend: operator/trait method dispatch on structs gap  // VM-only: C backend: operator/trait method dispatch on structs gap
         const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
@@ -646,7 +646,7 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.stdout_output == "13\n27\n7\n13\n");
     }
 
-    TEST_CASE("Mixed-type arithmetic (* with scalar)") {  // VM-only: C backend: operator/trait method dispatch on structs gap
+    TEST_CASE("Mixed-type arithmetic (* with scalar)") {  // VM-only: C backend: operator/trait method dispatch on structs gap  // VM-only: C backend: operator/trait method dispatch on structs gap
         const char* source = R"(
         trait Mul<Rhs>;
         fun Mul.mul(other: Rhs): Self;
@@ -674,7 +674,7 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.stdout_output == "12\n20\n");
     }
 
-    TEST_CASE("Unary negation dispatch") {  // VM-only: C backend: operator/trait method dispatch on structs gap
+    TEST_CASE("Unary negation dispatch") {  // VM-only: C backend: operator/trait method dispatch on structs gap  // VM-only: C backend: operator/trait method dispatch on structs gap
         const char* source = R"(
         trait Neg;
         fun Neg.neg(): Self;
@@ -739,7 +739,7 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.stdout_output == "11\n22\n");
     }
 
-    TEST_CASE("Bitwise operator dispatch on structs") {  // VM-only: C backend: operator/trait method dispatch on structs gap
+    TEST_CASE("Bitwise operator dispatch on structs") {  // VM-only: C backend: operator/trait method dispatch on structs gap  // VM-only: C backend: operator/trait method dispatch on structs gap
         const char* source = R"(
         trait BitAnd<Rhs>;
         fun BitAnd.bit_and(other: Rhs): Self;
@@ -832,7 +832,7 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.stdout_output == "15\n255\n240\n256\n32\n");
     }
 
-    TEST_CASE("Default type param (for Add without explicit <Vec2>)") {  // VM-only: C backend: operator/trait method dispatch on structs gap
+    TEST_CASE("Default type param (for Add without explicit <Vec2>)") {  // VM-only: C backend: operator/trait method dispatch on structs gap  // VM-only: C backend: operator/trait method dispatch on structs gap
         const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
@@ -1058,7 +1058,7 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.value == 109);
     }
 
-    TEST_CASE("Index with noncopyable Output type arg") {  // VM-only: C backend: operator/trait method dispatch on structs gap
+    TEST_CASE("Index with noncopyable Output type arg") {  // VM-only: C backend: operator/trait method dispatch on structs gap  // VM-only: C backend: operator/trait method dispatch on structs gap
         // Output may be a noncopyable type; `for Index<i32, uniq Point>` validates
         // the index method returns exactly `uniq Point`.
         const char* source = R"(

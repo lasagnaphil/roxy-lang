@@ -444,18 +444,39 @@ void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj,
     if (type->is_struct()) pointee = type;
     else if (type->kind == TypeKind::Uniq || type->kind == TypeKind::Ref) pointee = type->base_type();
     else if (type->is_coroutine()) pointee = type->coro_info.generated_struct_type;
+
+    String dtor;
+    bool have_dtor = false;
     if (pointee && pointee->is_struct()) {
-        String dtor = format("{}$$delete", pointee->struct_info.name);
-        if (find_function(StringView(dtor.data(), dtor.size()))) {
-            out.append("    ");
-            emit_function_symbol(StringView(dtor.data(), dtor.size()), out);
-            out.append("((");
-            emit_type(pointee, out);
-            out.append("*)("); out.append(ptr_expr); out.append("));\n");
-        }
+        dtor = format("{}$$delete", pointee->struct_info.name);
+        have_dtor = find_function(StringView(dtor.data(), dtor.size())) != nullptr;
     }
+
+    auto emit_dtor_call = [&](StringView target) {
+        if (!have_dtor) return;
+        out.append("    ");
+        emit_function_symbol(StringView(dtor.data(), dtor.size()), out);
+        out.append("((");
+        emit_type(pointee, out);
+        out.append("*)("); out.append(target); out.append("));\n");
+    };
+
     if (free_obj) {
-        out.append("    roxy_free("); out.append(ptr_expr); out.append(");\n");
+        // Heap pointer (uniq/ref/coro): may be null — e.g. reassigning a uniq
+        // field that was never set, or a moved-out owning slot. The VM treats
+        // delete-on-null as a no-op, so guard and bind the pointer once (also
+        // avoids re-evaluating a non-trivial ptr_expr).
+        u32 n = m_delete_tmp++;
+        String pv = format("_dp{}", n);
+        out.append("    { void* "); ap(out, pv); out.append(" = (void*)(");
+        out.append(ptr_expr); out.append(");\n");
+        out.append("    if ("); ap(out, pv); out.append(") {\n");
+        emit_dtor_call(StringView(pv.data(), pv.size()));
+        out.append("    roxy_free("); ap(out, pv); out.append(");\n");
+        out.append("    } }\n");
+    } else {
+        // Inline value struct deleted via its address — never null, never freed.
+        emit_dtor_call(ptr_expr);
     }
 }
 
@@ -1435,11 +1456,28 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 || t->is_map() || t->is_coroutine();
             String ve;
             emit_value(inst->unary, ve);
-            emit_typed_delete(t, StringView(ve.data(), ve.size()), is_heap, out);
-            // Null the local after a normal scope-exit Delete so a later throw's
-            // exception-path null-guard skips this already-freed owned local.
+            // A struct *value* local (e.g. one bound to a by-value call result) is
+            // deleted through its address; a pointer-shaped operand (StackAlloc,
+            // uniq/ref) is already an address.
+            bool value_struct = t->is_struct() && !is_pointer_value(inst->unary);
+            if (value_struct) {
+                String addr;
+                addr.append("&", 1);
+                addr.append(StringView(ve.data(), ve.size()));
+                emit_typed_delete(t, StringView(addr.data(), addr.size()), is_heap, out);
+            } else {
+                emit_typed_delete(t, StringView(ve.data(), ve.size()), is_heap, out);
+            }
+            // Mark the local dead after a normal scope-exit Delete so a later
+            // throw's exception-path guard skips this already-freed owned local.
+            // Pointers null to 0; a value struct is zeroed in place.
             if (m_cleanup_values.count(inst->unary.id)) {
-                out.append("    "); out.append(ve); out.append(" = 0;\n");
+                if (value_struct) {
+                    out.append("    memset(&"); out.append(ve); out.append(", 0, sizeof(");
+                    out.append(ve); out.append("));\n");
+                } else {
+                    out.append("    "); out.append(ve); out.append(" = 0;\n");
+                }
             }
             return;
         }
@@ -2256,15 +2294,29 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
             emit_type(inst->type, out);
             // Struct-typed results that are pointer-tracked (IndexGet of a
             // struct, getter natives) are stored as `StructType* vN;`.
-            if (is_pointer_value(inst->result) && inst->type && inst->type->is_struct()) {
+            bool ptr_struct = is_pointer_value(inst->result) && inst->type && inst->type->is_struct();
+            if (ptr_struct) {
                 out.append("* ");
             } else {
                 out.push_back(' ');
             }
             emit_value(inst->result, out);
-            // Zero-init owned-local pointers tracked for exception cleanup so the
-            // null-guard skips not-yet-created values.
-            out.append(m_cleanup_values.count(inst->result.id) ? " = 0;\n" : ";\n");
+            // Zero-init owned locals tracked for exception cleanup so the null-guard
+            // skips not-yet-created values. Pointers use `= 0`; an owned struct
+            // *value* can't (`= 0` is ill-formed on a struct) so it is memset.
+            if (m_cleanup_values.count(inst->result.id)) {
+                if (!ptr_struct && inst->type && inst->type->is_struct()) {
+                    out.append("; memset(&");
+                    emit_value(inst->result, out);
+                    out.append(", 0, sizeof(");
+                    emit_value(inst->result, out);
+                    out.append("));\n");
+                } else {
+                    out.append(" = 0;\n");
+                }
+            } else {
+                out.append(";\n");
+            }
         }
     }
 

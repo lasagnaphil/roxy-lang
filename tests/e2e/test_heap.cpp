@@ -552,7 +552,7 @@ TEST_SUITE("E2E Heap") {
     // Weak Reference Tests
     // ============================================================================
 
-    TEST_CASE("Weak field assignment and read") {  // VM-only: C backend: weak-field / heap ownership semantics gap
+    TEST_CASE("Weak field assignment and read") {  // VM-only: C backend: weak-field read/write gap  // VM-only: C backend: weak-field / heap ownership semantics gap
         const char* source = R"(
         struct Node {
             value: i32;
@@ -624,7 +624,7 @@ TEST_SUITE("E2E Heap") {
         CHECK(result.stdout_output == "42\n");
     }
 
-    TEST_CASE("Weak field in struct with other fields") {  // VM-only: C backend: weak-field / heap ownership semantics gap
+    TEST_CASE("Weak field in struct with other fields") {  // VM-only: C backend: weak-field read/write gap  // VM-only: C backend: weak-field / heap ownership semantics gap
         const char* source = R"(
         struct Node {
             value: i32;

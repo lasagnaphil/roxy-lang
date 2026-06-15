@@ -159,7 +159,7 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.stdout_output == "30\n20\n10\n");
     }
 
-    TEST_CASE("List quicksort") {  // VM-only: C backend: struct-element list value semantics gap
+    TEST_CASE("List quicksort") {  // VM-only: C backend: struct-by-value copy semantics gap  // VM-only: C backend: struct-element list value semantics gap
         const char* source = R"(
         fun swap(lst: inout List<i32>, i: i32, j: i32) {
             var temp: i32 = lst[i];
@@ -255,7 +255,7 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.stdout_output == "60\n");
     }
 
-    TEST_CASE("List value parameter isolation") {  // VM-only: C backend: struct-element list value semantics gap
+    TEST_CASE("List value parameter isolation") {  // VM-only: C backend: struct-by-value copy semantics gap  // VM-only: C backend: struct-element list value semantics gap
         const char* source = R"(
         fun modify(lst: List<i32>) {
             lst[0] = 999;
