@@ -1119,6 +1119,17 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                     out.append("(");
                     emit_type(param_type, out);
                     out.append("*)");
+                } else if (Type* at = get_value_type(inst->call.args[i]);
+                           at && at->is_struct() &&
+                           !is_pointer_value(inst->call.args[i])) {
+                    // A by-value struct rvalue (e.g. the result of a Call
+                    // returning a small struct by value, as produced by chained
+                    // operator/method dispatch like `self.add(o).add(o)`) is a
+                    // value local, but struct params are passed by pointer —
+                    // take its address. The copyable-by-value-param case is
+                    // already handled above (it copies into _vcN and passes
+                    // &_vcN); this covers self/ref/uniq/inout pointer params.
+                    out.push_back('&');
                 }
                 emit_value(inst->call.args[i], out);
             }
@@ -1279,11 +1290,21 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             return;
         }
         case IROp::StructCopy: {
-            // memcpy(dest, src, slot_count * 4);
+            // memcpy(dest, src, slot_count * 4). Both operands are normally
+            // pointers (StackAlloc / GetFieldAddr / struct param). A by-value
+            // struct *rvalue* — e.g. the result of a Call returning a small
+            // struct by value, which is a plain value local, not a pointer
+            // (operator dispatch lowers `a + b` to `call T$$add` + struct_copy
+            // of the result) — needs its address taken so memcpy receives a
+            // pointer rather than the struct itself.
+            auto emit_ptr_operand = [&](ValueId id) {
+                if (!is_pointer_value(id)) out.push_back('&');
+                emit_value(id, out);
+            };
             out.append("    memcpy(");
-            emit_value(inst->struct_copy.dest_ptr, out);
+            emit_ptr_operand(inst->struct_copy.dest_ptr);
             out.append(", ");
-            emit_value(inst->struct_copy.source_ptr, out);
+            emit_ptr_operand(inst->struct_copy.source_ptr);
             char buf[32];
             format_to(buf, sizeof(buf), ", {});\n", inst->struct_copy.slot_count * 4);
             out.append(buf);
@@ -1867,6 +1888,18 @@ void CEmitter::emit_block(const IRBlock* block, const IRFunction* func, String& 
     for (u32 i = 0; i < block->instructions.size(); i++) {
         if (block->instructions[i]->op != IROp::Nullify) continue;
         u32 vid = block->instructions[i]->unary.id;
+        // A move-nullify of the value the block RETURNS must not zero it before
+        // the terminator reads it (`nullify v; return v` would otherwise emit
+        // `v = 0; return v;` → returns null). The value is moved out to the
+        // caller here, and any emit after the `return` is unreachable, so the
+        // nullify is simply dropped — matching the VM, where `return` captures
+        // the register value before the nullify marks the slot moved.
+        if (block->terminator.kind == TerminatorKind::Return &&
+            block->terminator.return_value.is_valid() &&
+            block->terminator.return_value.id == vid) {
+            deferred_nullify_idx.insert(i);
+            continue;
+        }
         i32 last_use = -1;
         for (u32 j = i + 1; j < block->instructions.size(); j++) {
             if (uses_as_arg(block->instructions[j], vid)) last_use = static_cast<i32>(j);

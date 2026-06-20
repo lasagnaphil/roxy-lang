@@ -437,7 +437,7 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.stdout_output == "8\n12\n");
     }
 
-    TEST_CASE("Generic trait default method injection") {  // VM-only: C backend: operator/trait method dispatch on structs gap
+    TEST_CASE_TEMPLATE("Generic trait default method injection", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
@@ -462,7 +462,7 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "20\n");
     }
@@ -607,7 +607,7 @@ TEST_SUITE("E2E Traits") {
 
     // ========== Operator Overloading Tests ==========
 
-    TEST_CASE("Arithmetic operator dispatch (+ -)") {  // VM-only: C backend: operator/trait method dispatch on structs gap
+    TEST_CASE_TEMPLATE("Arithmetic operator dispatch (+ -)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
@@ -641,12 +641,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "13\n27\n7\n13\n");
     }
 
-    TEST_CASE("Mixed-type arithmetic (* with scalar)") {  // VM-only: C backend: operator/trait method dispatch on structs gap
+    TEST_CASE_TEMPLATE("Mixed-type arithmetic (* with scalar)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Mul<Rhs>;
         fun Mul.mul(other: Rhs): Self;
@@ -669,12 +669,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "12\n20\n");
     }
 
-    TEST_CASE("Unary negation dispatch") {  // VM-only: C backend: operator/trait method dispatch on structs gap
+    TEST_CASE_TEMPLATE("Unary negation dispatch", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Neg;
         fun Neg.neg(): Self;
@@ -699,13 +699,12 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
-        // Note: struct GET_FIELD zero-extends i32 to u64, so negative values
-        // display as unsigned. Use a value test instead:
-        // The neg method computes 0 - 5 = -5. When stored as u32 and loaded as u64,
-        // it becomes 4294967291. This is a known limitation with i32 struct fields.
-        // Test that the operator dispatch itself works (compiles and runs without crash)
+        // The neg method computes 0 - 5 = -5. The VM's struct GET_FIELD
+        // zero-extends i32 to u64 so the printed value differs from C's real
+        // int32_t, so only the exit code (return 0) is asserted — the point is
+        // that unary-operator dispatch compiles and runs without crashing.
         CHECK(result.value == 0);
     }
 
@@ -739,7 +738,7 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.stdout_output == "11\n22\n");
     }
 
-    TEST_CASE("Bitwise operator dispatch on structs") {  // VM-only: C backend: operator/trait method dispatch on structs gap
+    TEST_CASE_TEMPLATE("Bitwise operator dispatch on structs", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait BitAnd<Rhs>;
         fun BitAnd.bit_and(other: Rhs): Self;
@@ -770,7 +769,7 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "15\n255\n");
     }
@@ -832,7 +831,7 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.stdout_output == "15\n255\n240\n256\n32\n");
     }
 
-    TEST_CASE("Default type param (for Add without explicit <Vec2>)") {  // VM-only: C backend: operator/trait method dispatch on structs gap
+    TEST_CASE_TEMPLATE("Default type param (for Add without explicit <Vec2>)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
@@ -856,7 +855,7 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "4\n6\n");
     }
@@ -1058,7 +1057,7 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.value == 109);
     }
 
-    TEST_CASE("Index with noncopyable Output type arg") {  // VM-only: C backend: operator/trait method dispatch on structs gap
+    TEST_CASE_TEMPLATE("Index with noncopyable Output type arg", Backend, RX_E2E_BACKENDS) {
         // Output may be a noncopyable type; `for Index<i32, uniq Point>` validates
         // the index method returns exactly `uniq Point`.
         const char* source = R"(
@@ -1076,7 +1075,7 @@ TEST_SUITE("E2E Traits") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }

@@ -4,7 +4,7 @@
 >
 > **Language feature coverage:** every feature has a codegen path — primitives, structs (inheritance, methods, ctors/dtors, copy, nesting), enums, tagged unions, generics, traits/operators, strings, lists, maps, module globals, coroutines, exceptions, and **closures** (lambdas, captures, function references, self-capture). Roxy identifiers that are C++ keywords (e.g. a function named `double`, a field named `class`) are escaped with a reserved `roxy_kw_` prefix in `emit_mangled_name`, so they compile.
 >
-> **Correctness is *not* complete.** Running the full `tests/e2e/` suite through the C backend (see Testing below) surfaced real divergences from the VM that the prior hand-written tests never exercised. The core uniq/RAII destruction bugs and struct-by-value parameter/return semantics are now fixed; remaining gaps include operator dispatch on structs, uniq move-state across control flow, copyable container value params, weak fields, and closures. See **Known C-backend gaps** under Testing for the current list.
+> **Correctness is *not* complete.** Running the full `tests/e2e/` suite through the C backend (see Testing below) surfaced real divergences from the VM that the prior hand-written tests never exercised. The core uniq/RAII destruction bugs, struct-by-value parameter/return semantics, and operator/trait dispatch on structs are now fixed; remaining gaps include uniq move-state across control flow, copyable container value params, weak fields, and closures. See **Known C-backend gaps** under Testing for the current list.
 
 The C backend (`CEmitter`) translates Roxy's SSA IR into a `.cpp` file that any C++ compiler can build. The body is C-style (structs, gotos, typed `vN` locals); native bindings and the public header use C++ to interface directly with the embedder. It operates on the same `IRModule` the bytecode lowering uses, so all frontend work (type checking, method/operator resolution, monomorphization, struct layout) is already done.
 
@@ -425,7 +425,6 @@ pending fixes:
 | **copyable container value params** | passing a `List`/`Map` by value should deep-copy it (the bytecode lowering inserts the copy callee-side; the C backend, which branches off the IR before lowering, does not) |
 | **nested tagged-union value assignment / recursive cleanup** | assigning a tagged-union value into a variant field, and recursive destruction of tagged-union trees |
 | **coroutine uniq-field cleanup** | `Coro<T>` promoting `uniq`/`List<uniq>`/`Map<_,uniq>` state |
-| **trait/operator dispatch on structs** | arithmetic/bitwise/unary operator overloads and generic default-method injection |
 | **closures** | `self` capture and function-to-`ref fun` borrow conversion |
 | **weak field read**, **try-local rebinding**, **struct-valued map persistence** | smaller divergences |
 | **rvalue `Printable.to_string`** | a `to_string()` returning an f-string from a struct rvalue emits a `void*` return type |
@@ -449,6 +448,18 @@ tests where the C binary aborts rather than trapping cleanly.
   are excluded). This also fixes struct-by-value returns/nesting.
 - A nested value-struct field default-initialized to null emitted `field = nullptr`
   (ill-formed for a struct); `SetField` now `memset`s a value-struct field assigned nil.
+- **Operator/trait dispatch on structs** (`a + b`, `v * 4`, `-n`, `a & b`,
+  chained default methods like `self.add(o).add(o)`, user `index` returning
+  `uniq`). These lower to a `call T$$op` whose result, for a small struct
+  returned by value, is a *value* local (not a pointer). Three emitter sites
+  wrongly assumed such operands were pointers: (1) `StructCopy` `memcpy`'d its
+  source directly — now takes the address of a by-value struct operand; (2) a
+  `Call` passing that value to a pointer-semantics param (`self`/`ref`) emitted
+  the value where a `T*` was expected — now `&`-prefixes a by-value struct arg;
+  (3) the move-`Nullify` peephole deferred a moved value past a consuming
+  *Call/Closure* but not past the block *terminator*, so `nullify v; return v`
+  emitted `v = 0; return v;` (returned null) — a nullify of the returned value
+  is now dropped (it's moved out of the frame; any emit after `return` is dead).
 - **String/utility runtime natives** `str_char_at` / `str_substr` / `str_to_f64` /
   `str_from_code` / `clock` / `read_file` are now implemented in `roxy_rt`
   (`roxy_string_char_at` / `roxy_string_substr` / `roxy_string_to_f64` /
@@ -462,8 +473,9 @@ tests where the C binary aborts rather than trapping cleanly.
   exec-replaces the binary so a runtime trap reaches `pclose` as `WIFSIGNALED`,
   and a signal-terminated run is now reported `run_success = false`.
 
-Together these recovered the `uniq`/RAII destruction cluster and struct-by-value
-parameter/return semantics on the C backend, plus the string/utility natives.
+Together these recovered the `uniq`/RAII destruction cluster, struct-by-value
+parameter/return semantics, and operator/trait dispatch on structs on the C
+backend, plus the string/utility natives.
 
 ## Files
 
