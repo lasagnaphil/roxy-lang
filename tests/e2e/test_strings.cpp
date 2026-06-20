@@ -510,7 +510,7 @@ TEST_SUITE("E2E Strings") {
     // New String Native Functions
     // ============================================================================
 
-    TEST_CASE("str_char_at basic") {  // VM-only: str_char_at native not in C runtime
+    TEST_CASE_TEMPLATE("str_char_at basic", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var s: string = "hello";
@@ -522,13 +522,13 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         // 'h' = 104, 'o' = 111
         CHECK(result.stdout_output == "104\n111\n");
     }
 
-    TEST_CASE("str_substr basic") {  // VM-only: str_substr native not in C runtime
+    TEST_CASE_TEMPLATE("str_substr basic", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var s: string = "hello world";
@@ -540,12 +540,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "world\nhello\n");
     }
 
-    TEST_CASE("str_substr at end boundary returns empty") {  // VM-only: str_substr native not in C runtime
+    TEST_CASE_TEMPLATE("str_substr at end boundary returns empty", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var s: string = "hello";
@@ -555,7 +555,7 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "[]\n");
     }
@@ -575,7 +575,7 @@ TEST_SUITE("E2E Strings") {
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE("str_to_f64 basic") {  // VM-only: str_to_f64 native not in C runtime
+    TEST_CASE_TEMPLATE("str_to_f64 basic", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var v: f64 = str_to_f64("3.14");
@@ -586,12 +586,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "3.14\n42\n");
     }
 
-    TEST_CASE("str_from_code basic") {  // VM-only: str_from_code native not in C runtime
+    TEST_CASE_TEMPLATE("str_from_code basic", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var s: string = str_from_code(65);
@@ -602,13 +602,13 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         // 65 = 'A', 122 = 'z'
         CHECK(result.stdout_output == "A\nz\n");
     }
 
-    TEST_CASE("clock returns positive value") {  // VM-only: clock native not in C runtime
+    TEST_CASE_TEMPLATE("clock returns positive value", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var t: f64 = clock();
@@ -619,12 +619,12 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "ok\n");
     }
 
-    TEST_CASE("read_file basic") {  // VM-only: read_file native not in C runtime
+    TEST_CASE_TEMPLATE("read_file basic", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var content: string = read_file("/dev/null");
@@ -633,7 +633,7 @@ TEST_SUITE("E2E Strings") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "0\n");
     }

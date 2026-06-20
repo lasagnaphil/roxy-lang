@@ -493,9 +493,13 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
 
     result.compile_success = true;
 
-    // Run the binary
+    // Run the binary. Capture stdout only (Roxy `print` writes to stdout):
+    // leaving stderr attached lets the shell exec-replace the binary, so a
+    // runtime trap (SIGABRT from an out-of-bounds assert, SIGSEGV, …) reaches
+    // pclose as WIFSIGNALED instead of being masked into a 128+signo *exit
+    // code* by an intermediate shell that forks to set up the redirection.
     char run_cmd[512];
-    snprintf(run_cmd, sizeof(run_cmd), "%s 2>&1", bin_path);
+    snprintf(run_cmd, sizeof(run_cmd), "%s", bin_path);
 
     FILE* run_pipe = popen(run_cmd, "r");
     if (!run_pipe) {
@@ -510,19 +514,23 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     }
     int run_status = pclose(run_pipe);
 
-    // pclose returns the exit status in the format of waitpid
-    // WEXITSTATUS extracts the actual exit code
+    // pclose returns the exit status in the format of waitpid.
+    // A clean exit (normal or nonzero — the exit code carries the Roxy return
+    // value) is a successful run; a signal-terminated process (a runtime trap
+    // such as an out-of-bounds assert → SIGABRT, or a segfault) is a failed
+    // run, mirroring the VM's `success == false` on a runtime error.
 #ifdef _WIN32
     result.exit_code = run_status;
+    result.run_success = true;
 #else
     if (WIFEXITED(run_status)) {
         result.exit_code = WEXITSTATUS(run_status);
+        result.run_success = true;
     } else {
         result.exit_code = -1;
+        result.run_success = false;
     }
 #endif
-
-    result.run_success = true;
 
     // Cleanup temp files
     remove(src_path);

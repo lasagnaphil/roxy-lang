@@ -211,6 +211,21 @@ void* roxy_string_concat(void* a, void* b);
 bool roxy_string_eq(void* a, void* b);
 bool roxy_string_ne(void* a, void* b);
 
+// ASCII code of the character at `index`. Aborts on a null string or an
+// out-of-bounds index (the AOT analogue of the VM's `vm->error`).
+int32_t roxy_string_char_at(void* s, int32_t index);
+
+// Substring of `len` chars starting at `start`. Aborts on a null string or an
+// out-of-range (start, len) — the bounds check is overflow-safe (matches the
+// VM: require start <= length, then len <= length - start).
+void* roxy_string_substr(void* s, int32_t start, int32_t len);
+
+// Parse a string as a double (via strtod; trailing junk is ignored).
+double roxy_string_to_f64(void* s);
+
+// Single-character string from an ASCII code.
+void* roxy_string_from_code(int32_t code);
+
 // Intern-table operations exposed for the runtime's own string-allocating
 // helpers. The `table` argument is a `rx::StringInternTable*` cast to `void*`
 // (same type as `roxy_ctx.string_intern`). Callers should not hold the
@@ -226,6 +241,15 @@ void* roxy_i64_to_string(int64_t val);
 void* roxy_f32_to_string(float val);
 void* roxy_f64_to_string(double val);
 void* roxy_string_to_string(void* val);
+
+// ===== Utility natives =====
+
+// Seconds since an arbitrary epoch (high-resolution monotonic-ish clock).
+double roxy_clock(void);
+
+// Read an entire file as a string. Aborts if the file can't be opened or its
+// size can't be determined (the AOT analogue of the VM's `vm->error`).
+void* roxy_read_file(void* path);
 
 // ===== List Header =====
 

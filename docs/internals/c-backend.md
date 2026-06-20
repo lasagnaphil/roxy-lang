@@ -306,7 +306,7 @@ int32_t v1 = (int32_t)roxy_list_get(v0, 0);
 
 ## Runtime Library (`roxy_rt.h`)
 
-The runtime provides C implementations of everything needing allocation or complex logic — allocation, ref-counting, weak refs, strings, lists, maps (incl. struct keys with custom hash/eq), `to_string` conversions, and `print`. Allocating functions read `roxy_get_ctx()` internally, so the public API is context-free. See `rt/roxy_rt.h` for the full function list.
+The runtime provides C implementations of everything needing allocation or complex logic — allocation, ref-counting, weak refs, strings (concat/eq/len plus `char_at`/`substr`/`to_f64`/`from_code`), lists, maps (incl. struct keys with custom hash/eq), `to_string` conversions, `print`, and the utility natives `clock` / `read_file`. Allocating functions read `roxy_get_ctx()` internally, so the public API is context-free. See `rt/roxy_rt.h` for the full function list.
 
 ### Memory Management
 
@@ -428,7 +428,6 @@ pending fixes:
 | **trait/operator dispatch on structs** | arithmetic/bitwise/unary operator overloads and generic default-method injection |
 | **closures** | `self` capture and function-to-`ref fun` borrow conversion |
 | **weak field read**, **try-local rebinding**, **struct-valued map persistence** | smaller divergences |
-| **string runtime-library natives** | `str_char_at` / `str_substr` / `str_to_f64` / `str_from_code` / `clock` / `read_file` are not implemented in `roxy_rt` |
 | **rvalue `Printable.to_string`** | a `to_string()` returning an f-string from a struct rvalue emits a `void*` return type |
 
 Not bugs, also VM-only: tests asserting a result > 255 (8-bit exit code — many
@@ -450,9 +449,21 @@ tests where the C binary aborts rather than trapping cleanly.
   are excluded). This also fixes struct-by-value returns/nesting.
 - A nested value-struct field default-initialized to null emitted `field = nullptr`
   (ill-formed for a struct); `SetField` now `memset`s a value-struct field assigned nil.
+- **String/utility runtime natives** `str_char_at` / `str_substr` / `str_to_f64` /
+  `str_from_code` / `clock` / `read_file` are now implemented in `roxy_rt`
+  (`roxy_string_char_at` / `roxy_string_substr` / `roxy_string_to_f64` /
+  `roxy_string_from_code` / `roxy_clock` / `roxy_read_file`) and mapped in
+  `lookup_static_native_mapping`. Out-of-bounds `str_char_at` / `str_substr` (with
+  the same overflow-safe bounds check as the VM) `assert`-trap, so the parametric
+  "out-of-bounds is rejected" test now fails the run on C as it does on the VM.
+  This required a test-harness fix: `compile_and_run_cpp` no longer runs the
+  binary with `2>&1` (an intermediate shell forked to set up the redirection,
+  masking a child SIGABRT into a 128+signo *exit code*); without it the shell
+  exec-replaces the binary so a runtime trap reaches `pclose` as `WIFSIGNALED`,
+  and a signal-terminated run is now reported `run_success = false`.
 
 Together these recovered the `uniq`/RAII destruction cluster and struct-by-value
-parameter/return semantics on the C backend.
+parameter/return semantics on the C backend, plus the string/utility natives.
 
 ## Files
 

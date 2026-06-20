@@ -2929,6 +2929,13 @@ static const char* lookup_static_native_mapping(StringView name) {
         {"str_eq", "roxy_string_eq"},
         {"str_ne", "roxy_string_ne"},
         {"str_len", "roxy_string_len"},
+        {"str_char_at", "roxy_string_char_at"},
+        {"str_substr", "roxy_string_substr"},
+        {"str_to_f64", "roxy_string_to_f64"},
+        {"str_from_code", "roxy_string_from_code"},
+        // Utility functions
+        {"clock", "roxy_clock"},
+        {"read_file", "roxy_read_file"},
         // to_string
         {"bool$$to_string", "roxy_bool_to_string"},
         {"i32$$to_string", "roxy_i32_to_string"},

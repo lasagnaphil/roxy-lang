@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cassert>
+#include <chrono>
 #include <new>
 
 #define XXH_INLINE_ALL
@@ -365,6 +366,63 @@ bool roxy_string_eq(void* a, void* b) {
 
 bool roxy_string_ne(void* a, void* b) {
     return !roxy_string_eq(a, b);
+}
+
+int32_t roxy_string_char_at(void* s, int32_t index) {
+    assert(s && "str_char_at: null string");
+    uint32_t len = static_cast<uint32_t>(roxy_string_len(s));
+    assert(index >= 0 && static_cast<uint32_t>(index) < len &&
+           "str_char_at: index out of bounds");
+    const char* chars = roxy_string_chars(s);
+    return static_cast<int32_t>(static_cast<uint8_t>(chars[index]));
+}
+
+void* roxy_string_substr(void* s, int32_t start, int32_t len) {
+    assert(s && "str_substr: null string");
+    uint32_t str_len = static_cast<uint32_t>(roxy_string_len(s));
+    // Overflow-safe bounds check (matches vm/natives.cpp): require start <=
+    // str_len, then len <= str_len - start (computed in u32 — safe to subtract
+    // because the preceding clause short-circuits when start is past the end).
+    assert(start >= 0 && len >= 0 &&
+           static_cast<uint32_t>(start) <= str_len &&
+           static_cast<uint32_t>(len) <= str_len - static_cast<uint32_t>(start) &&
+           "str_substr: index out of bounds");
+    const char* chars = roxy_string_chars(s);
+    return roxy_string_from_literal(chars + start, static_cast<uint32_t>(len));
+}
+
+double roxy_string_to_f64(void* s) {
+    assert(s && "str_to_f64: null string");
+    return strtod(roxy_string_chars(s), nullptr);
+}
+
+void* roxy_string_from_code(int32_t code) {
+    char ch = static_cast<char>(code);
+    return roxy_string_from_literal(&ch, 1);
+}
+
+double roxy_clock(void) {
+    auto now = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration<double>(now.time_since_epoch()).count();
+}
+
+void* roxy_read_file(void* path) {
+    assert(path && "read_file: null path");
+    FILE* file = fopen(roxy_string_chars(path), "rb");
+    assert(file && "read_file: could not open file");
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    assert(size >= 0 && "read_file: could not determine file size");
+    // size + 1 so the buffer is non-null even for a 0-byte file (malloc(0) is
+    // allowed to return null); roxy_string_from_literal copies `bytes_read`.
+    char* buffer = static_cast<char*>(malloc(static_cast<size_t>(size) + 1));
+    assert(buffer && "read_file: allocation failed");
+    size_t bytes_read = fread(buffer, 1, static_cast<size_t>(size), file);
+    fclose(file);
+    void* result = roxy_string_from_literal(buffer, static_cast<uint32_t>(bytes_read));
+    free(buffer);
+    return result;
 }
 
 // ===== to_string conversions =====
