@@ -481,6 +481,7 @@ re-enabled, ASAN builds also need to run outside the sandbox for the symbolizer.
   - `bytecode.md` - Instruction encoding, opcode reference
   - `ssa-ir.md` - Block arguments, lowering to bytecode
   - `memory.md` - Reference types, object header, slab allocator
+  - `lifecycle-traits.md` - **Design (not implemented):** unified trait-based value lifecycle (Drop/Clone/Copy) resolved via monomorphization + glue elimination, replacing the `BCDeleteDesc` runtime descriptor / container `value_is_ref` special cases — no runtime vtables
   - `structs.md` - Stack-allocated structs, slot-based layout, struct parameters/returns
   - `list.md` - Dynamic lists (`List<T>`), bounds checking
   - `maps.md` - Hash tables (`Map<K, V>`), Robin Hood open addressing
