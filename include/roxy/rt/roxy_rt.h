@@ -361,7 +361,9 @@ typedef struct {
     uint8_t  key_is_inline;     // 1 = primitive (value packed into slots); 0 = struct (caller passes ptr)
     uint8_t  value_slot_count;  // u32 slots per value
     uint8_t  value_is_inline;   // 1 = primitive value; 0 = struct (caller provides ptr)
-    uint8_t  _pad[1];
+    uint8_t  value_is_ref;      // 1 = value is a counted borrow (`ref V`): insert RefIncs,
+                                // remove/clear/destroy RefDec. Set by roxy_map_mark_ref_values
+                                // after construction. See lifetimes.md §8 / §13.
     uint16_t borrow_count;      // outstanding value borrows (inout/out map[k]); 0 = unpinned.
                                 // While > 0, structural mutators (insert/remove/clear) refuse +
                                 // raise a runtime error. See roxy_map_pin / lifetimes.md §15.
@@ -393,6 +395,11 @@ void  roxy_map_clear(void* self);
 void* roxy_map_keys(void* self);
 void* roxy_map_values(void* self);
 void* roxy_map_copy(void* src);
+
+// Mark a map's values as counted borrows (`ref V`). Emitted by the compiler
+// right after a `Map<_, ref V>` is constructed, so insert RefIncs the borrow and
+// remove/clear/destroy RefDec it (lifetimes.md §8).
+void  roxy_map_mark_ref_values(void* self);
 
 // Map index operators — same as get/insert under a different native name.
 void* roxy_map_index(void* self, const void* key_src);

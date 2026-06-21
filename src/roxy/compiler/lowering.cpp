@@ -3141,8 +3141,12 @@ u16 BytecodeBuilder::build_delete_desc(Type* type) {
         Type* value_type = type->map_info.value_type;
         desc.cleanup = BCDeleteDesc::Map;
         desc.free_obj = true;
+        // A `ref V` value is count-bearing: destroy RefDec's it (build_delete_desc
+        // emits a RefDec descriptor for the Ref case). Keys can't be `ref`.
+        bool value_counts = value_type &&
+            (value_type->noncopyable() || value_type->kind == TypeKind::Ref);
         desc.container.elem_desc_idx =
-            (value_type && value_type->noncopyable()) ? build_delete_desc(value_type) : 0xFFFF;
+            value_counts ? build_delete_desc(value_type) : 0xFFFF;
         desc.container.key_desc_idx =
             (key_type && key_type->noncopyable()) ? build_delete_desc(key_type) : 0xFFFF;
     } else if (type->is_function()) {

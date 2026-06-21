@@ -3756,6 +3756,19 @@ ValueId IRBuilder::gen_map_constructor(Expr* expr) {
     }
     emit_call_native(ctor_name, ctor_args, m_types.void_type(), static_cast<u8>(ctor_idx));
 
+    // If values are counted borrows (`ref V`), tag the map so insert RefIncs and
+    // remove/clear/destroy RefDec each value (lifetimes.md §8 / §13).
+    if (value_type && value_type->kind == TypeKind::Ref) {
+        StringView mark_name("__map_mark_ref_values", 21);
+        i32 mark_idx = m_registry.get_index(mark_name);
+        if (mark_idx >= 0) {
+            Span<ValueId> mark_args = alloc_span<ValueId>(1);
+            mark_args[0] = map_ptr;
+            emit_call_native(mark_name, mark_args, m_types.void_type(),
+                             static_cast<u8>(mark_idx));
+        }
+    }
+
     return map_ptr;
 }
 

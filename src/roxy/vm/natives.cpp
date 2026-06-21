@@ -808,6 +808,12 @@ static void native_map_index_mut(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 
 // ===== Internal map bucket iteration (for cleanup of noncopyable elements) =====
 
+static void native_map_mark_ref_values(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack_back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (map_ptr) roxy_map_mark_ref_values(map_ptr);
+}
+
 static void native_map_iter_capacity(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
@@ -1078,6 +1084,7 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_method(native_map_copy,      "fun Map<K, V>.copy(): Map<K, V>");
 
     // Internal map bucket iteration functions (used by emit_map_cleanup for noncopyable elements)
+    registry.bind_native("__map_mark_ref_values",    native_map_mark_ref_values,    "fun __map_mark_ref_values(map: i64)");
     registry.bind_native("__map_iter_capacity",       native_map_iter_capacity,       "fun __map_iter_capacity(map: i64): i32");
     registry.bind_native("__map_iter_next_occupied", native_map_iter_next_occupied, "fun __map_iter_next_occupied(map: i64, idx: i32): i32");
     registry.bind_native("__map_iter_key_at",        native_map_iter_key_at,        "fun __map_iter_key_at(map: i64, idx: i32): i64");

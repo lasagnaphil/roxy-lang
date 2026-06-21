@@ -845,6 +845,12 @@ static inline uint32_t* map_value_ptr(const roxy_map_header* hdr, uint32_t pos) 
     return hdr->values + static_cast<size_t>(pos) * hdr->value_slot_count;
 }
 
+// A `ref V` value occupies 2 inline u32 slots packing a borrow pointer.
+static inline void* map_ref_value(const uint32_t* value_slot) {
+    return reinterpret_cast<void*>(
+        static_cast<uint64_t>(value_slot[0]) | (static_cast<uint64_t>(value_slot[1]) << 32));
+}
+
 static void map_alloc_buckets(roxy_map_header* hdr, uint32_t capacity) {
     assert(capacity > 0 && (capacity & (capacity - 1)) == 0);
     hdr->capacity = capacity;
@@ -1075,6 +1081,11 @@ void roxy_map_insert(void* self, const void* key_src, const void* value_src) {
             if (hdr->distances[pos] < dist) break;
             if (hdr->distances[pos] == dist &&
                 map_keys_equal(map_key_ptr(hdr, pos), k, hdr)) {
+                // Replace: release the old borrow, acquire the new one.
+                if (hdr->value_is_ref) {
+                    roxy_ref_dec(map_ref_value(map_value_ptr(hdr, pos)));
+                    roxy_ref_inc(map_ref_value(v));
+                }
                 memcpy(map_value_ptr(hdr, pos), v, sizeof(uint32_t) * vsc);
                 return;
             }
@@ -1088,6 +1099,7 @@ void roxy_map_insert(void* self, const void* key_src, const void* value_src) {
         map_grow(hdr);
     }
 
+    if (hdr->value_is_ref) roxy_ref_inc(map_ref_value(v));  // acquire the borrow
     map_insert_internal(hdr, k, v);
     hdr->length++;
 }
@@ -1116,6 +1128,10 @@ bool roxy_map_remove(void* self, const void* key_src) {
         dist++;
     }
 
+    // Release the removed value's borrow. The backward-shift below only *moves*
+    // surviving entries down, so their counts are unaffected.
+    if (hdr->value_is_ref) roxy_ref_dec(map_ref_value(map_value_ptr(hdr, pos)));
+
     // Backward-shift deletion
     hdr->length--;
     while (true) {
@@ -1138,6 +1154,11 @@ bool roxy_map_remove(void* self, const void* key_src) {
 void roxy_map_clear(void* self) {
     auto* hdr = map_hdr(self);
     if (map_mutation_blocked(hdr)) return;
+    if (hdr->value_is_ref && hdr->capacity > 0) {
+        for (uint32_t i = 0; i < hdr->capacity; i++) {
+            if (hdr->distances[i] != 0) roxy_ref_dec(map_ref_value(map_value_ptr(hdr, i)));
+        }
+    }
     hdr->length = 0;
     if (hdr->capacity > 0) {
         memset(hdr->distances, 0, sizeof(uint8_t) * hdr->capacity);
@@ -1193,6 +1214,7 @@ void* roxy_map_copy(void* src) {
 
     auto* dst_hdr = map_hdr(dst);
     dst_hdr->key_kind = src_hdr->key_kind;
+    dst_hdr->value_is_ref = src_hdr->value_is_ref;
     if (src_hdr->capacity > 0) {
         map_alloc_buckets(dst_hdr, src_hdr->capacity);
         dst_hdr->length = src_hdr->length;
@@ -1201,8 +1223,18 @@ void* roxy_map_copy(void* src) {
                sizeof(uint32_t) * static_cast<size_t>(src_hdr->capacity) * src_hdr->key_slot_count);
         memcpy(dst_hdr->values, src_hdr->values,
                sizeof(uint32_t) * static_cast<size_t>(src_hdr->capacity) * src_hdr->value_slot_count);
+        // The copy now holds its own borrow on each value pointee.
+        if (dst_hdr->value_is_ref) {
+            for (uint32_t i = 0; i < dst_hdr->capacity; i++) {
+                if (dst_hdr->distances[i] != 0) roxy_ref_inc(map_ref_value(map_value_ptr(dst_hdr, i)));
+            }
+        }
     }
     return dst;
+}
+
+void roxy_map_mark_ref_values(void* self) {
+    if (self) map_hdr(self)->value_is_ref = 1;
 }
 
 void* roxy_map_index(void* self, const void* key_src) {

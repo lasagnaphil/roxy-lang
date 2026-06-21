@@ -295,15 +295,21 @@ env's runtime `type_id` on delete (`RoxyVM::closure_env_dtors`,
   destroyed, so their buffers leaked). The callee-side value-param deep-copy
   (`lowering.cpp`) is skipped for noncopyable containers, so a value param is a
   true move, not a move-then-copy.
-- **`List<ref T>` holds counted borrows:** push `RefInc`s, and
-  pop / overwrite / container-destroy `RefDec` (the element-cleanup machinery
-  learns `ref` elements are count-bearing via a `BCDeleteDesc::RefDec` element
+- **`List<ref T>` / `Map<_, ref V>` hold counted borrows:** acquiring a borrow
+  `RefInc`s the pointee and every release path `RefDec`s it. For `List`: push
+  acquires, pop hands the count to the caller, overwrite releases-old/acquires-new.
+  For `Map`: insert acquires (and on a replacing insert, releases the old value
+  first), remove releases the removed value, clear releases all. **Destroy** (both
+  containers) `RefDec`s each `ref` element via a `BCDeleteDesc::RefDec` element
   descriptor — `delete_slot_entry` reads the borrowed pointer and `ref_dec`s it;
-  the C-emitter's `emit_delete_slot` emits `roxy_ref_dec`). Deleting an owner
-  while a `List<ref T>` still borrows it traps. *(`Map<_, ref T>` ref-counting is
-  a follow-on — it needs insert-`RefInc` with replace handling and `Map.remove` /
-  `Map.clear` to run per-value cleanup, the related gap that they don't yet
-  destroy noncopyable values at all.)*
+  the C-emitter's `emit_delete_slot` emits `roxy_ref_dec`. The Map mutator path is
+  runtime-side: a `value_is_ref` flag on the map header (set by
+  `roxy_map_mark_ref_values`, emitted by the compiler right after a `Map<_, ref V>`
+  is constructed) gates the `RefInc`/`RefDec` in `roxy_map_insert/remove/clear`,
+  and `roxy_map_copy` re-`RefInc`s each copied borrow. Deleting an owner while a
+  container still borrows it traps. *(Remaining gap, unchanged: `Map.remove` /
+  `Map.clear` do not destroy **noncopyable** (`uniq`) values — only `ref` values
+  are handled here; a general per-value destructor callback is a separate item.)*
 - **`borrowed T`** ([memory.md](memory.md)): a subscript on a heap-pointee
   element (`List<uniq T>`) yields a counted `ref` to the pointee (realloc moves
   the buffer, not the pointee, so the borrow stays valid). A subscript on an
@@ -504,7 +510,7 @@ direction:
   which is why a global `uniq` appeared to "skip its constructor." See
   [globals.md](globals.md).
 
-**Phase 3 — containers & coroutines. Containers move-only + `List` ref-counting done; `Map` ref-counting + coroutines remain.**
+**Phase 3 — containers & coroutines. Containers move-only + `List`/`Map` ref-counting done; coroutine ref-params + Map uniq-value remove/clear cleanup remain.**
 - *Done:* **containers are move-only.** `Type::noncopyable` returns true for every
   `List`/`Map` (a container owns a heap buffer, so it's move-only like `uniq`),
   with an explicit `.copy()` method (`native_list_copy`/`native_map_copy` bound as
@@ -523,10 +529,19 @@ direction:
   (`build_delete_desc(ref)` → `delete_slot_entry` reads the borrowed pointer and
   `ref_dec`s it; the C-emitter's `emit_delete_slot` emits `roxy_ref_dec`).
   Deleting an owner still borrowed by the list traps. Both backends.
-- *Remaining:* **`Map<_, ref T>` ref-counting** — needs insert-`RefInc` (with
-  replace handling), and `Map.remove`/`Map.clear` to run per-value cleanup (the
-  related gap that they don't destroy noncopyable values at all — likely a
-  value-destructor callback on the map header). Map stays copyable until then.
+- *Done:* **`Map<_, ref V>` ref-value counting.** A `value_is_ref` flag on the map
+  header (set by the internal `__map_mark_ref_values` native the compiler emits
+  right after a `Map<_, ref V>` is built) gates `RefInc`/`RefDec` in
+  `roxy_map_insert` (acquire new + release old on a replacing insert), `roxy_map_remove`
+  (release the removed value), and `roxy_map_clear` (release all); `roxy_map_copy`
+  re-`RefInc`s each copied borrow; destroy `RefDec`s via the same
+  `BCDeleteDesc::RefDec` value descriptor as `List` (lowering + C-emitter
+  `emit_delete_slot`). Deleting an owner still borrowed by a map traps. Both backends.
+- *Remaining:* **`Map.remove`/`Map.clear` per-value cleanup for noncopyable (`uniq`)
+  values** — only `ref` values are released today; `uniq` values still leak on
+  remove/clear (destroy already handles them via the descriptor). Needs a general
+  per-value destructor callback (VM trampoline + AOT generated dtor), the
+  type-erased analogue of the map's `hash_fn`/`eq_fn`.
 - *Remaining:* count `ref` parameters into coroutine state structs.
 
 **Phase 4 — elision (optimization, §11). Not started** (always a later phase).

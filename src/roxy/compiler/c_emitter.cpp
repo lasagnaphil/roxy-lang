@@ -413,7 +413,9 @@ void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj,
         Type* kt = type->map_info.key_type;
         Type* vt = type->map_info.value_type;
         bool kc = kt && kt->noncopyable();
-        bool vc = vt && vt->noncopyable();
+        // A `ref V` value is count-bearing: destroy RefDec's it (emit_delete_slot
+        // emits roxy_ref_dec for the Ref case). Keys can't be `ref`.
+        bool vc = vt && (vt->noncopyable() || vt->kind == TypeKind::Ref);
         u32 n = m_delete_tmp++;
         String h = format("_dm{}", n);
         out.append("    { roxy_map_header* "); ap(out, h);
@@ -3203,6 +3205,7 @@ static const char* lookup_static_native_mapping(StringView name) {
         {"list_copy", "roxy_list_copy"},
         {"map_alloc", "roxy_map_alloc"},
         {"map_copy", "roxy_map_copy"},
+        {"__map_mark_ref_values", "roxy_map_mark_ref_values"},
         // Internal map iteration
         {"__map_iter_capacity", "roxy_map_iter_capacity"},
         {"__map_iter_next_occupied", "roxy_map_iter_next_occupied"},
