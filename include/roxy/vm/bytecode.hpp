@@ -205,6 +205,17 @@ enum class Opcode : u8 {
     WEAK_CHECK  = 0xE2,     // dst = weak_valid(src1)
     WEAK_CREATE = 0xE3,     // dst,dst+1 = weak_create(src) — extracts generation
 
+    // Element-address lvalues for out/inout container args (lifetimes.md §15).
+    // ABC: a=dst (raw element pointer), b=obj, c=index/key. Bounds-/key-checked.
+    INDEX_ADDR_LIST = 0xE4, // dst = &list[index]
+    INDEX_ADDR_MAP  = 0xE5, // dst = &map[key]   (traps if key absent)
+
+    // Container element-borrow pin/unpin around a call (lifetimes.md §15 Phase 3).
+    // ABC: a=container pointer. Bumps/decrements the header borrow_count so a
+    // mid-call realloc/free of the container traps instead of dangling the borrow.
+    CONTAINER_PIN   = 0xE6, // pin(regs[a])
+    CONTAINER_UNPIN = 0xE7, // unpin(regs[a])
+
     // 0xD2-0xD4: Exception Handling and Typed Delete
     THROW       = 0xD2,     // throw regs[a] (exception object pointer)
     CALL_EXC_MSG = 0xD3,    // dst = exception_message(regs[src]) - call stored message fn ptr
@@ -439,7 +450,7 @@ struct BCDeleteDesc {
 // Cleanup action for a BCCleanupRecord.
 //   Delete — descriptor-driven destruction of an owned value (delete_value).
 //   RefDec — decrement a `ref` borrow's count (constraint-reference model).
-enum class BCCleanupKind : u8 { Delete = 0, RefDec = 1 };
+enum class BCCleanupKind : u8 { Delete = 0, RefDec = 1, Unpin = 2 };
 
 // Cleanup record for exception-path cleanup of owned locals and ref borrows.
 // During exception unwinding, the VM iterates these in reverse (LIFO) to

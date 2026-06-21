@@ -152,6 +152,9 @@ enum class IROp : u8 {
     // Container indexing (List/Map)
     IndexGet,       // container[index] — for List/Map
     IndexSet,       // container[index] = value — for List/Map
+    IndexAddr,      // &container[index] — element lvalue address (out/inout args; lifetimes.md §15)
+    ContainerPin,   // pin a container for a call (borrow_count++) — blocks realloc/free while an element is borrowed
+    ContainerUnpin, // unpin a container after a call (borrow_count--)
 
     // Block argument (phi-like)
     BlockArg,       // Block parameter - receives value from predecessor
@@ -425,7 +428,8 @@ struct IRFinallyInfo {
 // Cleanup action for an exception-path cleanup record.
 //   Delete — run the type's descriptor-driven destruction (uniq/list/map/...).
 //   RefDec — decrement a `ref` borrow's count (constraint-reference model).
-enum class IRCleanupKind : u8 { Delete, RefDec };
+//   Unpin  — decrement a container's element-borrow pin (lifetimes.md §15).
+enum class IRCleanupKind : u8 { Delete, RefDec, Unpin };
 
 // Cleanup info for owned locals and ref borrows (used to generate bytecode
 // cleanup records for the exception-unwind path).

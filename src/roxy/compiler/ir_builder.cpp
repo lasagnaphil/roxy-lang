@@ -1443,6 +1443,18 @@ void IRBuilder::emit_index_set(ValueId container, ValueId index, ValueId value, 
     }
 }
 
+ValueId IRBuilder::emit_index_addr(ValueId container, ValueId index, ContainerKind kind, Type* result_type) {
+    IRInst* inst = emit_inst(IROp::IndexAddr, result_type);
+    if (inst) {
+        inst->index_data.container = container;
+        inst->index_data.index = index;
+        inst->index_data.value = ValueId::invalid();
+        inst->index_data.kind = kind;
+        return inst->result;
+    }
+    return ValueId::invalid();
+}
+
 ValueId IRBuilder::emit_new(StringView type_name, Span<ValueId> args, Type* result_type) {
     IRInst* inst = emit_inst(IROp::New, result_type);
     if (inst) {
@@ -1538,6 +1550,16 @@ void IRBuilder::emit_ref_inc(ValueId ptr) {
 void IRBuilder::emit_ref_dec(ValueId ptr) {
     IRInst* inst = emit_inst(IROp::RefDec, m_types.void_type());
     if (inst) inst->unary = ptr;
+}
+
+void IRBuilder::emit_container_pin(ValueId container) {
+    IRInst* inst = emit_inst(IROp::ContainerPin, m_types.void_type());
+    if (inst) inst->unary = container;
+}
+
+void IRBuilder::emit_container_unpin(ValueId container) {
+    IRInst* inst = emit_inst(IROp::ContainerUnpin, m_types.void_type());
+    if (inst) inst->unary = container;
 }
 
 ValueId IRBuilder::emit_pinned_copy(ValueId src, Type* type) {
@@ -2173,6 +2195,49 @@ static bool is_ref_handoff_source(Expr* init) {
     return init && init->kind == AstKind::ExprCall;
 }
 
+// True if `e` is a bare `self` reference (possibly parenthesized). Inside a
+// method body `self` is `ExprThis`; inside a lambda body it has already been
+// rewritten to `__env.__self` (an `ExprGet` sourced from a heap-checked env), so
+// only `ExprThis` is the un-promoted second-class receiver borrow.
+static bool is_bare_self(Expr* e) {
+    while (e && e->kind == AstKind::ExprGrouping) e = e->grouping.expr;
+    return e && e->kind == AstKind::ExprThis;
+}
+
+// For a call argument, the index into the callee's `func_info.param_types` is
+// `arg_index + offset`. Returns that offset, or -1 to signal "don't gate" for
+// callee shapes whose param layout isn't certain (module-qualified calls,
+// container/coroutine methods, field-stored closures). Genuine user-struct
+// methods carry `self` at param_types[0] (offset 1); free/native functions and
+// closure locals (identifier callees) do not (offset 0). Mirrors the dispatch
+// in gen_call_member, used here only to heap-gate a bare-`self` argument bound
+// to a `ref` parameter (lifetimes.md §6).
+static i32 self_pass_param_offset(CallExpr& call_expr) {
+    Expr* callee = call_expr.callee;
+    if (callee->kind == AstKind::ExprIdentifier) return 0;
+    if (callee->kind == AstKind::ExprGet) {
+        Expr* obj = callee->get.object;
+        if (!obj || obj->resolved_type == nullptr) return -1;  // module-qualified
+        Type* obj_struct = obj->resolved_type->base_type();
+        if (!obj_struct || !obj_struct->is_struct()) return -1;  // container/coro
+        const FieldInfo* fn_field = obj_struct->struct_info.find_field(callee->get.name);
+        if (fn_field && fn_field->type && fn_field->type->base_type()->is_function())
+            return -1;  // field-stored closure: no implicit self
+        return 1;  // genuine user-struct method
+    }
+    return -1;  // indirect / other: skip
+}
+
+void IRBuilder::emit_ref_borrow_inc(ValueId val, Expr* source) {
+    if (is_bare_self(source)) {
+        // Self-promotion gate: trap if the receiver is stack-allocated, before
+        // the inc writes into a bogus (stack-relative) object header.
+        IRInst* assert_inst = emit_inst(IROp::AssertHeap, m_types.void_type());
+        if (assert_inst) assert_inst->unary = val;
+    }
+    emit_ref_inc(val);
+}
+
 void IRBuilder::gen_return_stmt(Stmt* stmt) {
     ReturnStmt& rs = stmt->return_stmt;
 
@@ -2212,7 +2277,8 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
                 // increment to produce the one handed-off count. (A ref param's
                 // entry-inc is offset by its return-time RefDec, so this inc is
                 // what survives.) A call result already carries one — untouched.
-                emit_ref_inc(val);
+                // `return self` is a promotion: the inc is heap-gated.
+                emit_ref_borrow_inc(val, rs.value);
             }
         }
         // `return o.field`: null the moved-out field before scope cleanup destroys
@@ -3751,6 +3817,24 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
                 Type* param_type = callee_func_type->func_info.param_types[i];
                 args[i] = maybe_wrap_weak(args[i], arg.expr->resolved_type, param_type);
             }
+
+            // Passing a bare `self` to a `ref` parameter is a promotion: the
+            // callee RefIncs the param at entry, so heap-gate it here (before the
+            // call) — a stack receiver traps rather than corrupting a bogus header
+            // (lifetimes.md §6). The param index accounts for an implicit `self`
+            // on method callees; uncertain callee shapes return -1 and are skipped.
+            if (is_bare_self(arg.expr) && callee_func_type && callee_func_type->is_function()) {
+                i32 off = self_pass_param_offset(call_expr);
+                Span<Type*> ptypes = callee_func_type->func_info.param_types;
+                if (off >= 0) {
+                    u32 pidx = i + static_cast<u32>(off);
+                    if (pidx < ptypes.size() && ptypes[pidx] &&
+                        ptypes[pidx]->kind == TypeKind::Ref) {
+                        IRInst* ah = emit_inst(IROp::AssertHeap, m_types.void_type());
+                        if (ah) ah->unary = args[i];
+                    }
+                }
+            }
         }
     }
     lowered.args = args;
@@ -3895,19 +3979,25 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         method_name = mangle_method(name_type->struct_info.name, get_expr.name);
     }
 
-    // Constraint-reference model (lifetimes.md §4/§6): count a *heap* receiver
-    // for the call's duration. If the receiver is a `uniq` local/param (the
-    // heap owner), increment its borrow count across the call so a reentrant
-    // free of the receiver — directly or through an alias the callee reaches —
-    // traps in object_free instead of dangling. A `ref` receiver is already
-    // covered by its own count; stack value-struct receivers are second-class
-    // (downward-safe) and uncounted. The borrow rides a *pinned* Copy so it owns
-    // a distinct SSA value/register: its RefDec + Nullify cleanup can't collide
-    // with the owned-local's own Delete record (which shares the receiver value).
+    // Constraint-reference model (lifetimes.md §4/§8): count a *heap* receiver
+    // for the call's duration. Whenever the receiver is statically heap (its type
+    // is `uniq`), increment its borrow count across the call so a reentrant free
+    // of the receiver — directly or through an alias the callee reaches — traps in
+    // object_free instead of dangling. `obj` is already the receiver object's heap
+    // data pointer, so this covers every receiver shape uniformly: a bare `uniq`
+    // local/param (`c.method()`), a `uniq` field root (`o.inner.method()` — `obj`
+    // is the field's stored pointer, so the borrow lands on the receiver Inner
+    // object itself, which a `delete o` would also try to free → it traps), and a
+    // heap-returning temp (`make().method()` — counted distinctly from the temp's
+    // own scope-exit Delete via the pinned copy). A `ref` receiver is already
+    // covered by its own count; a container subscript yields `borrowed`→`ref`, so
+    // it too falls out here; stack value-struct receivers are second-class
+    // (downward-safe) and uncounted. The borrow rides a *pinned* Copy so it owns a
+    // distinct SSA value/register: its RefDec + Nullify cleanup can't collide with
+    // an owned-local's / temp's own Delete record (which shares the receiver value).
     ValueId recv_borrow = ValueId::invalid();
     BlockId recv_borrow_block = BlockId::invalid();
     if (struct_type && struct_type->is_struct()
-        && get_expr.object->kind == AstKind::ExprIdentifier
         && obj_type && obj_type->kind == TypeKind::Uniq
         && m_current_block) {
         recv_borrow = emit_pinned_copy(obj, obj_type);
@@ -3942,6 +4032,52 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
 
     if (lowered.returns_large_struct) result = lowered.output_ptr;
     return result;
+}
+
+// True if expr is composed only of identifiers and field accesses, so
+// re-evaluating it via gen_expr is side-effect-free and idempotent (no calls or
+// index operations whose re-execution could change observable state).
+static bool is_pure_field_path(Expr* expr) {
+    while (expr) {
+        if (expr->kind == AstKind::ExprIdentifier) return true;
+        if (expr->kind == AstKind::ExprGet) { expr = expr->get.object; continue; }
+        return false;
+    }
+    return false;
+}
+
+ValueId IRBuilder::heap_root_of_lvalue(Expr* lvalue, Type** out_type) {
+    // Only field-access chains point *into* another object's storage. A bare
+    // identifier names a slot on the caller's own frame (the slot outlives the
+    // call); an index/call base isn't a pure lvalue we can recount. So the only
+    // shape with a heap root to count is `object.field`.
+    if (!lvalue || lvalue->kind != AstKind::ExprGet) return ValueId::invalid();
+    Expr* object = lvalue->get.object;
+    if (!object) return ValueId::invalid();
+    Type* obj_type = object->resolved_type;
+
+    if (obj_type && obj_type->kind == TypeKind::Uniq) {
+        // We dereference `object` (a heap owner) to reach the field, so the field
+        // lives in object's pointee — that pointee is the heap root. Re-evaluate
+        // it (idempotent for a pure path) to get a countable data pointer.
+        if (!is_pure_field_path(object)) return ValueId::invalid();
+        if (out_type) *out_type = obj_type;
+        return gen_expr(object);
+    }
+    if (obj_type && (obj_type->kind == TypeKind::Ref || obj_type->kind == TypeKind::Weak)) {
+        // A `ref` already holds a count on its pointee for its own lifetime, so
+        // the pointee can't be freed mid-call anyway; `weak` field-lvalues don't
+        // occur (a weak must be checked before use). Nothing to add.
+        return ValueId::invalid();
+    }
+    // `object` holds the field inline in its own storage (a value struct, on the
+    // stack or inline within a heap object). Whatever object itself roots in is
+    // the heap root; recurse. A stack identifier root bottoms out at invalid.
+    Type* obj_base = obj_type ? obj_type->base_type() : nullptr;
+    if (obj_base && obj_base->is_struct()) {
+        return heap_root_of_lvalue(object, out_type);
+    }
+    return ValueId::invalid();
 }
 
 void IRBuilder::reload_inout_args(const CallLowering& lowered) {
@@ -4026,6 +4162,61 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     // wrapping, temp consumption), then dispatch on the callee's shape.
     CallLowering lowered = lower_call_args(expr);
 
+    // Call-site heap-root counting for out/inout arguments (lifetimes.md §4/§8):
+    // an out/inout arg pointing *into* a heap object's storage (`f(inout
+    // heap_obj.field)`) borrows that heap root for the call's duration, so a
+    // mid-call free of the root — through an alias the callee reaches — traps in
+    // object_free instead of dangling the pointer. The borrow rides a pinned copy
+    // (distinct SSA identity, like the receiver borrow) and is RefDec'd after the
+    // call; its exception record is deferred so it releases before any owner Delete
+    // on unwind. Method-receiver borrows are handled separately in gen_call_member.
+    // Two flavours, both riding a pinned copy + a deferred call-scoped exception
+    // record so they release before any owner Delete on unwind:
+    //   - field-rooted lvalue (`f(inout heap_obj.field)`): RefInc the heap root
+    //     (free-block), released by RefDec.
+    //   - container-index lvalue (`f(inout list[i])`, lifetimes.md §15): pin the
+    //     container (borrow_count), so a mid-call realloc/free of it traps before
+    //     the element address can dangle; released by unpin.
+    Vector<IRCleanupInfo> call_borrows;
+    for (u32 i = 0; i < call_expr.arguments.size() && m_current_block; i++) {
+        CallArg& arg = call_expr.arguments[i];
+        if (arg.modifier != ParamModifier::Inout && arg.modifier != ParamModifier::Out) continue;
+
+        Type* root_type = nullptr;
+        ValueId root = heap_root_of_lvalue(arg.expr, &root_type);
+        if (root.is_valid()) {
+            ValueId borrow = emit_pinned_copy(root, root_type);
+            emit_ref_inc(borrow);
+            IRCleanupInfo ci;
+            ci.value = borrow;
+            ci.type = root_type;
+            ci.start_block = m_current_block->id;
+            ci.kind = IRCleanupKind::RefDec;
+            ci.call_borrow = true;
+            call_borrows.push_back(ci);
+            continue;
+        }
+
+        // Container-index lvalue → pin the container for the call.
+        if (arg.expr->kind == AstKind::ExprIndex) {
+            Expr* obj = arg.expr->index.object;
+            Type* obj_type = obj ? obj->resolved_type : nullptr;
+            Type* base_type = obj_type ? obj_type->base_type() : nullptr;
+            if (base_type && base_type->is_container()) {
+                ValueId container = gen_expr(obj);
+                ValueId pin = emit_pinned_copy(container, obj_type);
+                emit_container_pin(pin);
+                IRCleanupInfo ci;
+                ci.value = pin;
+                ci.type = obj_type;
+                ci.start_block = m_current_block->id;
+                ci.kind = IRCleanupKind::Unpin;
+                ci.call_borrow = true;
+                call_borrows.push_back(ci);
+            }
+        }
+    }
+
     ValueId result;
     if (call_expr.callee->kind == AstKind::ExprIdentifier) {
         result = gen_call_direct(expr, lowered);
@@ -4048,6 +4239,18 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     // If a dispatch helper bailed because the block was terminated, stop here to
     // match the original early-return (no inout reload / move-marking on a dead block).
     if (!m_current_block) return result;
+
+    // Close the call-site borrows: balanced release on the normal path (RefDec or
+    // unpin) plus a deferred call-scoped exception record. Lowering narrows each to
+    // [open, Nullify) so it covers exactly the call window.
+    for (IRCleanupInfo& ci : call_borrows) {
+        if (ci.kind == IRCleanupKind::Unpin) emit_container_unpin(ci.value);
+        else emit_ref_dec(ci.value);
+        IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+        if (nullify) nullify->unary = ci.value;
+        ci.end_block = m_current_block->id;
+        m_call_borrow_cleanups.push_back(ci);
+    }
 
     reload_inout_args(lowered);
     mark_call_args_moved(expr);
@@ -4349,7 +4552,8 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
     if (target_type && target_type->kind == TypeKind::Ref) {
         emit_ref_dec(lookup_local(name));
         if (!is_ref_handoff_source(assign_expr.value)) {
-            emit_ref_inc(value);
+            // `r = self` is a promotion: the inc is heap-gated.
+            emit_ref_borrow_inc(value, assign_expr.value);
         }
     }
 
@@ -5198,6 +5402,24 @@ ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {
 
             return emit_get_field_addr(obj, get_expr.name, slot_offset, expr->resolved_type);
         }
+        case AstKind::ExprIndex: {
+            // Address of a List/Map element (out/inout argument). The runtime
+            // returns a pointer into the backing buffer, valid for the borrow
+            // because the call site pins the container (lifetimes.md §15). The
+            // element type is the subscript's resolved (borrowed) type.
+            IndexExpr& index_expr = expr->index;
+            Type* obj_type = index_expr.object->resolved_type;
+            Type* base_type = obj_type ? obj_type->base_type() : nullptr;
+            if (base_type && base_type->is_container()) {
+                ValueId obj = gen_expr(index_expr.object);
+                ValueId idx = gen_expr(index_expr.index);
+                ContainerKind kind = base_type->is_list() ? ContainerKind::List
+                                                          : ContainerKind::Map;
+                return emit_index_addr(obj, idx, kind, expr->resolved_type);
+            }
+            report_error("Internal error: cannot take the address of this index expression");
+            return ValueId::invalid();
+        }
         case AstKind::ExprGrouping:
             return gen_lvalue_addr(expr->grouping.expr);
         default:
@@ -5316,7 +5538,8 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         // other source (a uniq / ref identifier, a borrowed subscript, `ref x`)
         // is a fresh borrow alongside the still-live source, so it increments.
         if (!is_ref_handoff_source(var_decl.initializer)) {
-            emit_ref_inc(value);
+            // `var r: ref T = self` is a promotion: the inc is heap-gated.
+            emit_ref_borrow_inc(value, var_decl.initializer);
         }
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();

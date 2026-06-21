@@ -22,6 +22,9 @@ bool has_side_effect(IROp op) {
         case IROp::Delete:
         case IROp::Closure:  // Allocates and stores fields; same side-effect class as New
         case IROp::AssertHeap:  // Side-effecting trap
+        // Container element-borrow pin/unpin (mutate borrow_count; gate mutators)
+        case IROp::ContainerPin:
+        case IROp::ContainerUnpin:
         // Calls — opaque, may do anything
         case IROp::Call:
         case IROp::CallNative:

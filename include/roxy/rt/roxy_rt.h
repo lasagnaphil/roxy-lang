@@ -165,6 +165,40 @@ void* roxy_exception_message(void* exc);
 // stack-allocated receiver. Returns 0 when there is no active ctx/allocator.
 int roxy_heap_owns(void* ptr);
 
+// ===== Runtime lifetime-violation trap =====
+//
+// A *fatal*, non-catchable runtime error (distinct from the catchable user
+// exceptions above). Raised when a structural mutation is attempted on a
+// container that has an outstanding element borrow (see roxy_*_pin): the mutator
+// refuses the operation — leaving the backing buffer in place so the borrowed
+// element pointer stays valid — and records the error here. The embedding
+// backend surfaces it: the VM turns a pending error into a recoverable
+// `vm->error`; AOT code checks it after a potentially-mutating call and aborts.
+// `_set` keeps the first message (idempotent) so the earliest violation wins.
+void        roxy_runtime_error_set(const char* msg);
+int         roxy_runtime_error_pending(void);
+const char* roxy_runtime_error_message(void);
+void        roxy_runtime_error_clear(void);
+
+// ===== Container element-borrow pin =====
+//
+// An element borrow (`f(inout list[i])` / `f(inout map[k])`) pins its container
+// for the borrow's duration: pin before the call, unpin after (and on unwind).
+// While pinned, structural mutators trap (above), so the element address held by
+// the callee cannot be invalidated by a realloc/rehash/shift. `self` is the
+// container data pointer (the header), as passed to the other list/map ops.
+void roxy_list_pin(void* self);
+void roxy_list_unpin(void* self);
+void roxy_map_pin(void* self);
+void roxy_map_unpin(void* self);
+
+// Type-dispatched pin/unpin used by generated code: `container` is a List or Map
+// data pointer; the runtime reads its object-header type_id and bumps the right
+// header's borrow_count. Null and non-container pointers are ignored. Lets the
+// call site pin a container without statically tracking which kind it is.
+void roxy_container_pin(void* container);
+void roxy_container_unpin(void* container);
+
 // ===== Weak References =====
 
 typedef struct {
@@ -262,7 +296,11 @@ typedef struct {
     uint32_t capacity;
     uint32_t element_slot_count;  // u32 slots per element (1, 2, or N for structs)
     uint8_t  element_is_inline;   // 1 = primitive packed in slots; 0 = struct (caller provides ptr)
-    uint8_t  _pad[3];
+    uint8_t  _pad[1];
+    uint16_t borrow_count;        // outstanding element borrows (inout/out list[i]); 0 = unpinned.
+                                  // While > 0, structural mutators (push) refuse + raise a runtime
+                                  // error so the borrowed element pointer can't dangle. See
+                                  // roxy_list_pin / docs/internals/lifetimes.md §15.
     uint32_t* elements;
 } roxy_list_header;
 
@@ -323,7 +361,10 @@ typedef struct {
     uint8_t  key_is_inline;     // 1 = primitive (value packed into slots); 0 = struct (caller passes ptr)
     uint8_t  value_slot_count;  // u32 slots per value
     uint8_t  value_is_inline;   // 1 = primitive value; 0 = struct (caller provides ptr)
-    uint8_t  _pad[3];
+    uint8_t  _pad[1];
+    uint16_t borrow_count;      // outstanding value borrows (inout/out map[k]); 0 = unpinned.
+                                // While > 0, structural mutators (insert/remove/clear) refuse +
+                                // raise a runtime error. See roxy_map_pin / lifetimes.md §15.
     roxy_map_hash_fn hash_fn;   // nullptr = bytewise hash (Struct key kind only)
     roxy_map_eq_fn   eq_fn;     // nullptr = bytewise eq (Struct key kind only)
     uint8_t*  distances;        // Per-bucket Robin Hood distance+1 (0 = empty)

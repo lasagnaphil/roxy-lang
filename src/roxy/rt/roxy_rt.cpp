@@ -83,6 +83,41 @@ int roxy_heap_owns(void* ptr) {
     return ctx->allocator->owns(ctx->allocator->userdata, ptr) ? 1 : 0;
 }
 
+// ===== Runtime lifetime-violation trap =====
+
+static thread_local const char* tls_runtime_error = nullptr;
+
+void roxy_runtime_error_set(const char* msg) {
+    // Keep the first error so the earliest violation wins (later refused
+    // mutations don't clobber it before the backend gets to surface it).
+    if (!tls_runtime_error) tls_runtime_error = msg;
+}
+int roxy_runtime_error_pending(void) { return tls_runtime_error != nullptr; }
+const char* roxy_runtime_error_message(void) { return tls_runtime_error; }
+void roxy_runtime_error_clear(void) { tls_runtime_error = nullptr; }
+
+// Type-dispatched element-borrow pin (see roxy_list_pin / roxy_map_pin). The
+// generated call-site code uses this so it needn't track the container kind.
+void roxy_container_pin(void* container) {
+    if (!container) return;
+    uint32_t tid = roxy_get_header(container)->type_id;
+    if (tid == ROXY_TYPEID_LIST) static_cast<roxy_list_header*>(container)->borrow_count++;
+    else if (tid == ROXY_TYPEID_MAP) static_cast<roxy_map_header*>(container)->borrow_count++;
+}
+void roxy_container_unpin(void* container) {
+    if (!container) return;
+    uint32_t tid = roxy_get_header(container)->type_id;
+    if (tid == ROXY_TYPEID_LIST) {
+        auto* h = static_cast<roxy_list_header*>(container);
+        assert(h->borrow_count > 0 && "roxy_container_unpin: list borrow_count underflow");
+        if (h->borrow_count > 0) h->borrow_count--;
+    } else if (tid == ROXY_TYPEID_MAP) {
+        auto* h = static_cast<roxy_map_header*>(container);
+        assert(h->borrow_count > 0 && "roxy_container_unpin: map borrow_count underflow");
+        if (h->borrow_count > 0) h->borrow_count--;
+    }
+}
+
 // ===== Random generation for weak references =====
 
 static uint64_t roxy_random_generation() {
@@ -465,6 +500,28 @@ static inline uint32_t* list_element_ptr(roxy_list_header* hdr, uint32_t index) 
     return hdr->elements + static_cast<size_t>(index) * hdr->element_slot_count;
 }
 
+// Element-borrow pin (see lifetimes.md §15). A structural mutation on a pinned
+// list is refused so the borrowed element pointer can't dangle.
+void roxy_list_pin(void* self) {
+    static_cast<roxy_list_header*>(self)->borrow_count++;
+}
+void roxy_list_unpin(void* self) {
+    auto* hdr = static_cast<roxy_list_header*>(self);
+    assert(hdr->borrow_count > 0 && "roxy_list_unpin: borrow_count underflow");
+    if (hdr->borrow_count > 0) hdr->borrow_count--;
+}
+
+// Returns true (and raises the runtime trap) when `hdr` has an outstanding
+// element borrow, meaning the attempted structural mutation must be refused.
+static inline bool list_mutation_blocked(const roxy_list_header* hdr) {
+    if (hdr->borrow_count != 0) {
+        roxy_runtime_error_set(
+            "cannot structurally mutate a List while an element of it is borrowed (inout/out)");
+        return true;
+    }
+    return false;
+}
+
 void* roxy_list_alloc(int32_t element_slot_count, int32_t element_is_inline) {
     void* data = roxy_alloc(sizeof(roxy_list_header), ROXY_TYPEID_LIST);
     if (!data) return nullptr;
@@ -495,6 +552,13 @@ void roxy_list_init(void* self, int32_t capacity) {
 
 void roxy_list_delete(void* self) {
     auto* hdr = static_cast<roxy_list_header*>(self);
+    // Freeing the container frees the element buffer (which a borrowed element
+    // pointer points into) — refuse it while pinned, keeping the buffer alive.
+    if (hdr->borrow_count != 0) {
+        roxy_runtime_error_set(
+            "cannot delete a List while an element of it is borrowed (inout/out)");
+        return;
+    }
     free(hdr->elements);
     hdr->elements = nullptr;
     hdr->length = 0;
@@ -511,6 +575,9 @@ int32_t roxy_list_cap(void* self) {
 
 void roxy_list_push(void* self, const void* value_src) {
     auto* hdr = static_cast<roxy_list_header*>(self);
+    // push may realloc the backing buffer (grow), invalidating any borrowed
+    // element pointer — refuse it while the list is pinned.
+    if (list_mutation_blocked(hdr)) return;
     uint32_t esc = hdr->element_slot_count;
     if (hdr->length >= hdr->capacity) {
         uint32_t new_cap = hdr->capacity == 0 ? 8 : hdr->capacity * 2;
@@ -658,6 +725,29 @@ uint64_t roxy_string_hash(void* val) {
 
 static roxy_map_header* map_hdr(void* self) {
     return static_cast<roxy_map_header*>(self);
+}
+
+// Element-borrow pin (see lifetimes.md §15), mirroring the list pin.
+void roxy_map_pin(void* self) {
+    map_hdr(self)->borrow_count++;
+}
+void roxy_map_unpin(void* self) {
+    auto* hdr = map_hdr(self);
+    assert(hdr->borrow_count > 0 && "roxy_map_unpin: borrow_count underflow");
+    if (hdr->borrow_count > 0) hdr->borrow_count--;
+}
+
+// True (and raises the runtime trap) when `hdr` has an outstanding value borrow,
+// so the attempted structural mutation (insert/remove/clear) must be refused.
+// insert/index_mut may rehash, remove backward-shifts, clear resets — all move
+// or drop value slots, dangling a borrowed value pointer.
+static inline bool map_mutation_blocked(const roxy_map_header* hdr) {
+    if (hdr->borrow_count != 0) {
+        roxy_runtime_error_set(
+            "cannot structurally mutate a Map while a value of it is borrowed (inout/out)");
+        return true;
+    }
+    return false;
 }
 
 // Read a u64 worth of bytes from a key slot array (works for primitive
@@ -896,6 +986,11 @@ void roxy_map_init(void* self, int32_t key_kind, int32_t capacity) {
 
 void roxy_map_delete(void* self) {
     auto* hdr = map_hdr(self);
+    if (hdr->borrow_count != 0) {
+        roxy_runtime_error_set(
+            "cannot delete a Map while a value of it is borrowed (inout/out)");
+        return;
+    }
     map_free_buckets(hdr);
     hdr->length = 0;
 }
@@ -962,6 +1057,7 @@ void* roxy_map_get(void* self, const void* key_src) {
 
 void roxy_map_insert(void* self, const void* key_src, const void* value_src) {
     auto* hdr = map_hdr(self);
+    if (map_mutation_blocked(hdr)) return;  // covers map[k]=v (roxy_map_index_mut)
     uint8_t ksc = hdr->key_slot_count;
     uint8_t vsc = hdr->value_slot_count;
     auto* k = static_cast<const uint32_t*>(key_src);
@@ -998,6 +1094,7 @@ void roxy_map_insert(void* self, const void* key_src, const void* value_src) {
 
 bool roxy_map_remove(void* self, const void* key_src) {
     auto* hdr = map_hdr(self);
+    if (map_mutation_blocked(hdr)) return false;
     if (hdr->capacity == 0 || hdr->length == 0) return false;
 
     uint8_t ksc = hdr->key_slot_count;
@@ -1040,6 +1137,7 @@ bool roxy_map_remove(void* self, const void* key_src) {
 
 void roxy_map_clear(void* self) {
     auto* hdr = map_hdr(self);
+    if (map_mutation_blocked(hdr)) return;
     hdr->length = 0;
     if (hdr->capacity > 0) {
         memset(hdr->distances, 0, sizeof(uint8_t) * hdr->capacity);

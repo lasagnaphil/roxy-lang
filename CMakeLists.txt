@@ -169,6 +169,7 @@ add_executable(roxy_tests
     tests/unit/test_lsp_references.cpp
     tests/unit/test_lsp_analysis_context.cpp
     tests/unit/test_runtime_ctx.cpp
+    tests/unit/test_container_pin.cpp
 
     # E2E tests
     tests/e2e/test_helpers.cpp

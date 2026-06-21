@@ -551,4 +551,712 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.stdout_output == "del\n");  // freed exactly once, by clear()
     }
 
+    // ── Call-site heap-root counting: non-identifier method receivers ──
+    // (lifetimes.md §4/§8, §13 "the rest of call-site heap-root counting").
+    // The receiver borrow now fires for any statically-heap (`uniq`) receiver,
+    // not just a bare identifier: a field-rooted receiver (`a.b.method()`) and a
+    // heap-returning temp receiver (`make().method()`).
+
+    // Field-rooted receiver: `o.inner.get()` borrows the heap Inner object for
+    // the call. The count is balanced (RefInc before, RefDec after), so the
+    // owner and its field destroy exactly once.
+    TEST_CASE_TEMPLATE("method call on a field-rooted uniq receiver stays balanced", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Inner { value: i32; }
+        fun new Inner(v: i32) { self.value = v; }
+        fun delete Inner() { print("del inner"); }
+        fun Inner.get(): i32 { return self.value; }
+
+        struct Outer { inner: uniq Inner; }
+        fun new Outer() { self.inner = uniq Inner(7); }
+
+        fun main(): i32 {
+            var o: uniq Outer = uniq Outer();
+            var a: i32 = o.inner.get();   // borrow inc/dec around the call
+            var b: i32 = o.inner.get();   // receiver still valid
+            return a + b;                 // 14
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 14);
+        CHECK(result.stdout_output == "del inner\n");  // destroyed exactly once
+    }
+
+    // Heap-temp receiver: `make_inner().get()` borrows the freshly-returned heap
+    // temp for the call. The borrow rides a pinned copy, distinct from the temp's
+    // own scope-exit Delete, so the temp is destroyed exactly once (no double-free,
+    // no spurious trap from a leftover count).
+    TEST_CASE_TEMPLATE("method call on a heap-temp uniq receiver stays balanced", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Inner { value: i32; }
+        fun new Inner(v: i32) { self.value = v; }
+        fun delete Inner() { print("del"); }
+        fun Inner.get(): i32 { return self.value; }
+
+        fun make_inner(): uniq Inner { return uniq Inner(9); }
+
+        fun main(): i32 {
+            var a: i32 = make_inner().get();   // borrow inc/dec; temp freed after
+            return a;                          // 9
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 9);
+        CHECK(result.stdout_output == "del\n");  // temp destroyed exactly once
+    }
+
+    // Exception path for a heap-temp receiver: a method on a freshly-returned
+    // temp throws. The temp carries BOTH its own scope-exit Delete record and the
+    // call-site borrow's RefDec; the borrow record is deferred so unwind releases
+    // the count BEFORE the temp's Delete, which therefore frees it exactly once
+    // (rather than the Delete seeing a leftover borrow and trapping). The temp is
+    // scoped to the try body, so unwinding destroys it ("del") before the catch
+    // handler runs ("caught"). This is the heap-temp analogue of "uniq receiver
+    // survives a throwing method".
+    TEST_CASE_TEMPLATE("heap-temp receiver throwing a method is destroyed once", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Boom { msg: string; }
+        fun Boom.message(): string for Exception { return self.msg; }
+
+        struct Thing { value: i32; }
+        fun new Thing(v: i32) { self.value = v; }
+        fun delete Thing() { print("del"); }
+        fun Thing.risky(): i32 { throw Boom { msg = "boom" }; }
+
+        fun make_thing(): uniq Thing { return uniq Thing(1); }
+
+        fun main(): i32 {
+            try {
+                var u: i32 = make_thing().risky();  // temp made, borrowed, throws
+            } catch (e: Boom) {
+                print("caught");
+            }
+            return 0;
+            // temp destroyed exactly once on unwind
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.stdout_output == "del\ncaught\n");  // temp freed during unwind, then handler
+    }
+
+    // Mid-call free of a field-rooted receiver: `o.inner` is both the receiver and
+    // is reassigned (`slot = nil`) via an `inout` alias inside the method, freeing
+    // the object `self` points at. The call-site borrow on that heap object makes
+    // the free trap instead of leaving `self` dangling — the field-rooted analogue
+    // of "freeing a uniq receiver mid-method traps".
+    TEST_CASE("freeing a field-rooted uniq receiver mid-method traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* trap_src = R"(
+        struct Inner { value: i32; }
+        fun new Inner(v: i32) { self.value = v; }
+        fun delete Inner() {}
+        fun Inner.kill(slot: inout uniq Inner): i32 {
+            slot = nil;     // frees the old object (= the receiver) mid-call
+            return 0;
+        }
+
+        struct Outer { inner: uniq Inner; }
+        fun new Outer() { self.inner = uniq Inner(5); }
+        fun delete Outer() {}
+
+        fun main(): i32 {
+            var o: uniq Outer = uniq Outer();
+            return o.inner.kill(inout o.inner);
+        }
+    )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, trap_src) != nullptr);  // compiles → false is a runtime trap
+        auto trap = VMBackend::run(trap_src);
+        CHECK(trap.success == false);  // free traps: receiver has an active borrow
+
+        // Control: identical except `kill` does not reassign — succeeds, isolating
+        // the mid-call free as the sole cause of the trap above.
+        const char* control_src = R"(
+        struct Inner { value: i32; }
+        fun new Inner(v: i32) { self.value = v; }
+        fun delete Inner() {}
+        fun Inner.kill(slot: inout uniq Inner): i32 {
+            return 0;
+        }
+
+        struct Outer { inner: uniq Inner; }
+        fun new Outer() { self.inner = uniq Inner(5); }
+        fun delete Outer() {}
+
+        fun main(): i32 {
+            var o: uniq Outer = uniq Outer();
+            return o.inner.kill(inout o.inner);
+        }
+    )";
+        auto control = VMBackend::run(control_src);
+        CHECK(control.success == true);
+    }
+
+    // ── Call-site heap-root counting: out/inout arguments ──
+    // (lifetimes.md §4/§8, §13 "the rest of call-site heap-root counting").
+    // An out/inout argument that points *into* a heap object's storage
+    // (`f(inout heap_obj.field)`) counts that heap root for the call, so a
+    // mid-call free of the root — through an alias the callee reaches — traps
+    // instead of leaving the out/inout pointer dangling.
+
+    // Functional/balance: incrementing through an `inout` into a heap object's
+    // field works, and the count is balanced so the owner deletes once afterward.
+    TEST_CASE_TEMPLATE("inout into a heap-object field is counted but stays balanced", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Box { value: i32; }
+        fun new Box(v: i32) { self.value = v; }
+        fun delete Box() { print("del"); }
+
+        fun bump(slot: inout i32) {
+            slot = slot + 1;
+        }
+
+        fun main(): i32 {
+            var b: uniq Box = uniq Box(41);
+            bump(inout b.value);     // root `b` counted for the call, then released
+            return b.value;          // 42
+            // b deleted exactly once at scope exit
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 42);
+        CHECK(result.stdout_output == "del\n");  // owner destroyed exactly once
+    }
+
+    // Mid-call free of an out/inout heap root: arg 1 (`inout b.value`) points into
+    // the heap `Box`, and arg 2 (`inout b`) lets the callee free that same Box
+    // mid-call (`owner = nil`). The call-site borrow on the root makes the free
+    // trap instead of leaving arg 1 dangling (the subsequent `slot = ...` would
+    // otherwise write into freed storage).
+    TEST_CASE("freeing an out/inout heap root mid-call traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* trap_src = R"(
+        struct Box { value: i32; }
+        fun new Box(v: i32) { self.value = v; }
+        fun delete Box() {}
+
+        fun evil(slot: inout i32, owner: inout uniq Box): i32 {
+            owner = nil;     // frees the Box that `slot` points into → mid-call free
+            slot = 5;        // would write into freed storage
+            return 0;
+        }
+
+        fun main(): i32 {
+            var b: uniq Box = uniq Box(1);
+            return evil(inout b.value, inout b);   // root of arg 1 is `b`, killed via arg 2
+        }
+    )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, trap_src) != nullptr);  // compiles → false is a runtime trap
+        auto trap = VMBackend::run(trap_src);
+        CHECK(trap.success == false);  // free traps: the heap root has an active borrow
+
+        // Control: identical except `evil` does not free the root — succeeds,
+        // isolating the mid-call free as the sole cause of the trap above.
+        const char* control_src = R"(
+        struct Box { value: i32; }
+        fun new Box(v: i32) { self.value = v; }
+        fun delete Box() {}
+
+        fun evil(slot: inout i32, owner: inout uniq Box): i32 {
+            slot = 5;
+            return 0;
+        }
+
+        fun main(): i32 {
+            var b: uniq Box = uniq Box(1);
+            return evil(inout b.value, inout b);
+        }
+    )";
+        auto control = VMBackend::run(control_src);
+        CHECK(control.success == true);
+    }
+
+    // ── Non-capture `self` promotions ──
+    // (lifetimes.md §6, §13). Binding / returning / storing `self` as a
+    // first-class `ref` promotes the second-class receiver borrow to a counted
+    // one — sound only on a heap receiver. Since a method can be called on a
+    // stack or heap receiver, the promotion's RefInc is guarded by a runtime
+    // AssertHeap that traps a stack receiver before the (header-writing) inc.
+
+    // Bind, heap receiver: `var r: ref P = self` on a `uniq` receiver passes the
+    // heap gate, counts the borrow, and stays balanced (receiver destroyed once).
+    TEST_CASE_TEMPLATE("binding self to a ref on a uniq receiver is counted and balanced", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct P { x: i32; }
+        fun new P(v: i32) { self.x = v; }
+        fun delete P() { print("del"); }
+        fun P.bind_ref(): i32 {
+            var r: ref P = self;   // promotion: heap gate passes, borrow counted
+            return r.x;            // r's RefDec at method exit keeps it balanced
+        }
+
+        fun main(): i32 {
+            var p: uniq P = uniq P(42);
+            return p.bind_ref();   // 42
+            // p destroyed exactly once at scope exit
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 42);
+        CHECK(result.stdout_output == "del\n");
+    }
+
+    // Bind, stack receiver: the same method on a stack value receiver traps at the
+    // promotion's heap gate (the would-be borrow inc would write into a bogus,
+    // stack-relative object header). Covered for both a copyable receiver and a
+    // NONCOPYABLE one — the latter is the case the capture path's copyable-only
+    // gate would miss, so the always-on promotion gate is strictly sounder.
+    TEST_CASE("binding self to a ref on a stack receiver traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* copyable_src = R"(
+        struct P { x: i32; }
+        fun P.bind_ref(): i32 {
+            var r: ref P = self;
+            return r.x;
+        }
+        fun main(): i32 {
+            var p: P = P { x = 5 };   // stack (copyable) receiver
+            return p.bind_ref();      // traps: self is stack-allocated
+        }
+    )";
+        BumpAllocator a1(65536);
+        CHECK(compile(a1, copyable_src) != nullptr);
+        CHECK(VMBackend::run(copyable_src).success == false);
+
+        const char* noncopyable_src = R"(
+        struct Q { x: i32; }
+        fun new Q(v: i32) { self.x = v; }
+        fun delete Q() {}
+        fun Q.bind_ref(): i32 {
+            var r: ref Q = self;
+            return r.x;
+        }
+        fun main(): i32 {
+            var q: Q = Q(5);          // stack NONCOPYABLE value-struct receiver
+            return q.bind_ref();      // traps: self is stack-allocated
+        }
+    )";
+        BumpAllocator a2(65536);
+        CHECK(compile(a2, noncopyable_src) != nullptr);
+        CHECK(VMBackend::run(noncopyable_src).success == false);
+    }
+
+    // Return, heap receiver: `return self` from a `ref`-returning method hands off
+    // the borrow count to the caller (passes the heap gate first).
+    TEST_CASE_TEMPLATE("returning self as a ref hands off the borrow (uniq receiver)", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct P { x: i32; }
+        fun new P(v: i32) { self.x = v; }
+        fun delete P() { print("del"); }
+        fun P.as_ref(): ref P { return self; }
+
+        fun main(): i32 {
+            var p: uniq P = uniq P(42);
+            var r: ref P = p.as_ref();   // adopts the handed-off count
+            return r.x;                  // 42
+            // r's RefDec then p's delete at scope exit — balanced
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 42);
+        CHECK(result.stdout_output == "del\n");
+    }
+
+    // Return, stack receiver: `return self` traps at the heap gate.
+    TEST_CASE("returning self as a ref from a stack receiver traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* source = R"(
+        struct P { x: i32; }
+        fun P.as_ref(): ref P { return self; }
+        fun main(): i32 {
+            var p: P = P { x = 5 };       // stack receiver
+            var r: ref P = p.as_ref();    // traps: self is stack-allocated
+            return r.x;
+        }
+    )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) != nullptr);
+        CHECK(VMBackend::run(source).success == false);
+    }
+
+    // Store, stack receiver: `r = self` (reassigning a ref local) is also a
+    // promotion. Bound first to a heap backup so only the `r = self` store can
+    // trap, isolating the store path's gate.
+    TEST_CASE("storing self into a ref local traps on a stack receiver") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* source = R"(
+        struct P { x: i32; }
+        fun new P(v: i32) { self.x = v; }
+        fun delete P() {}
+        fun P.rebind(backup: ref P): i32 {
+            var r: ref P = backup;   // bind to a heap source (no self gate)
+            r = self;                // STORE promotion: traps if self is stack
+            return r.x;
+        }
+
+        fun main(): i32 {
+            var heap: uniq P = uniq P(1);
+            var p: P = P(5);             // stack receiver
+            return p.rebind(heap);       // traps at `r = self`
+        }
+    )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) != nullptr);
+        CHECK(VMBackend::run(source).success == false);
+    }
+
+    // Pass to a ref param, heap receiver: `take_ref(self)` lets the callee count
+    // `self` (its ref param's entry inc). On a `uniq` receiver the call-site heap
+    // gate passes and the count is balanced (callee dec on exit).
+    TEST_CASE_TEMPLATE("passing self to a ref param on a uniq receiver is balanced", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct P { x: i32; }
+        fun new P(v: i32) { self.x = v; }
+        fun delete P() { print("del"); }
+        fun take_ref(r: ref P): i32 { return r.x; }
+        fun P.pass(): i32 { return take_ref(self); }
+
+        fun main(): i32 {
+            var p: uniq P = uniq P(7);
+            return p.pass();   // 7; heap gate passes, borrow balanced
+            // p destroyed exactly once at scope exit
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 7);
+        CHECK(result.stdout_output == "del\n");
+    }
+
+    // Pass to a ref param, stack receiver: the call-site heap gate traps before the
+    // callee's entry inc would corrupt a bogus header. Covers a free-function
+    // callee (param offset 0) and a method callee (offset 1, past the receiver).
+    TEST_CASE("passing self to a ref param on a stack receiver traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* free_src = R"(
+        struct P { x: i32; }
+        fun take_ref(r: ref P): i32 { return r.x; }
+        fun P.pass(): i32 { return take_ref(self); }
+        fun main(): i32 {
+            var p: P = P { x = 5 };   // stack receiver
+            return p.pass();          // take_ref(self): self stack → traps
+        }
+    )";
+        BumpAllocator a1(65536);
+        CHECK(compile(a1, free_src) != nullptr);
+        CHECK(VMBackend::run(free_src).success == false);
+
+        const char* method_src = R"(
+        struct P { x: i32; }
+        fun new P(v: i32) { self.x = v; }
+        fun delete P() {}
+        fun P.helper(r: ref P): i32 { return r.x; }
+        fun P.pass(other: ref P): i32 { return other.helper(self); }
+        fun main(): i32 {
+            var o: uniq P = uniq P(1);
+            var p: P = P(5);          // stack receiver
+            return p.pass(o);         // other.helper(self): self stack → traps (offset 1)
+        }
+    )";
+        BumpAllocator a2(65536);
+        CHECK(compile(a2, method_src) != nullptr);
+        CHECK(VMBackend::run(method_src).success == false);
+    }
+
+    // ── Container element lvalues: `inout`/`out list[i]` (lifetimes.md §15) ──
+    // Phase 2: the `INDEX_ADDR` op makes `list[i]` a true lvalue, so a callee
+    // mutates the element in place through its buffer address. These exercise the
+    // *functional* single-argument case — the callee only receives the element
+    // pointer, so it can't realloc/free the container, making it sound without the
+    // pin (the pin + adversarial traps land in Phase 3). Both backends.
+
+    TEST_CASE_TEMPLATE("inout of a List<i32> element mutates it in place", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun bump(slot: inout i32) { slot = slot + 1; }
+
+        fun main(): i32 {
+            var xs: List<i32> = List<i32>();
+            xs.push(10);
+            xs.push(20);
+            bump(inout xs[0]);
+            bump(inout xs[1]);
+            bump(inout xs[1]);
+            return xs[0] + xs[1];   // 11 + 22 = 33
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 33);
+    }
+
+    TEST_CASE_TEMPLATE("out of a List<i32> element writes through the address", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun set42(slot: out i32) { slot = 42; }
+
+        fun main(): i32 {
+            var xs: List<i32> = List<i32>();
+            xs.push(0);
+            set42(out xs[0]);
+            return xs[0];   // 42
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 42);
+    }
+
+    TEST_CASE_TEMPLATE("inout of a wide (2-slot) List<i64> element", Backend, RX_E2E_BACKENDS) {
+        // The value needs all 8 bytes; the result is reduced to a small code so it
+        // survives the C backend's 8-bit exit-code capture while still proving the
+        // full i64 round-tripped through the element address.
+        const char* source = R"(
+        fun add(slot: inout i64, d: i64) { slot = slot + d; }
+
+        fun main(): i64 {
+            var xs: List<i64> = List<i64>();
+            xs.push(1000000000000l);
+            add(inout xs[0], 1l);
+            if (xs[0] == 1000000000001l) { return 7l; }
+            return 0l;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 7);
+    }
+
+    TEST_CASE_TEMPLATE("inout of a struct List element mutates it in place", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Vec2 { x: i32; y: i32; }
+        fun move_right(v: inout Vec2, d: i32) { v.x = v.x + d; }
+
+        fun main(): i32 {
+            var pts: List<Vec2> = List<Vec2>();
+            pts.push(Vec2 { x = 1, y = 2 });
+            move_right(inout pts[0], 10);
+            return pts[0].x + pts[0].y;   // 11 + 2 = 13
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 13);
+    }
+
+    TEST_CASE_TEMPLATE("inout of a Map value mutates it in place", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun bump(slot: inout i64) { slot = slot + 1; }
+
+        fun main(): i64 {
+            var m: Map<i64, i64> = Map<i64, i64>();
+            m.insert(7l, 100l);
+            bump(inout m[7l]);
+            bump(inout m[7l]);
+            return m[7l];   // 102
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 102);
+    }
+
+    // ── Phase 3: the container element-borrow pin (adversarial cases) ──
+    // The call site pins the container while an `inout`/`out` element is borrowed,
+    // so a mid-call realloc (push) or free (reassign) of that same container —
+    // reached via a second argument — traps instead of dangling the element
+    // pointer. (VM-only, like the other runtime-trap tests; the C backend refuses
+    // the mutation too — memory-safe — but its clean trap reporting is deferred.)
+
+    TEST_CASE("mid-call push of a borrowed List traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* trap_src = R"(
+        fun evil(slot: inout i32, lst: inout List<i32>): i32 {
+            lst.push(99);   // reallocs the buffer that `slot` points into → traps
+            slot = 5;
+            return 0;
+        }
+        fun main(): i32 {
+            var xs: List<i32> = List<i32>();
+            xs.push(10);
+            return evil(inout xs[0], inout xs);
+        }
+    )";
+        BumpAllocator a1(65536);
+        CHECK(compile(a1, trap_src) != nullptr);
+        CHECK(VMBackend::run(trap_src).success == false);
+
+        // Control: same shape without the mutation — succeeds.
+        const char* control_src = R"(
+        fun ok(slot: inout i32, lst: inout List<i32>): i32 {
+            slot = 5;
+            return 0;
+        }
+        fun main(): i32 {
+            var xs: List<i32> = List<i32>();
+            xs.push(10);
+            return ok(inout xs[0], inout xs);
+        }
+    )";
+        CHECK(VMBackend::run(control_src).success == true);
+    }
+
+    // (A mid-call *free* of the container is a non-threat for a copyable container
+    // like List<i32>: reassigning it doesn't free the backing buffer, so the
+    // element pointer can't dangle that way. The realloc threat above is the live
+    // one. The delete-guards in roxy_rt / delete_value are correct defensive code
+    // for when owning-element containers — `List<uniq T>` element `inout`, whose
+    // delete does free the buffer — are supported; that's the deferred next step.)
+
+    TEST_CASE_TEMPLATE("nested element borrows of one container stay balanced", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun add_both(a: inout i32, b: inout i32) { a = a + 10; b = b + 20; }
+
+        fun main(): i32 {
+            var xs: List<i32> = List<i32>();
+            xs.push(1);
+            xs.push(2);
+            add_both(inout xs[0], inout xs[1]);   // two pins on xs (count 2)
+            xs.push(3);                           // count back to 0 → push works again
+            return xs[0] + xs[1] + xs[2];         // 11 + 22 + 3 = 36 (fits the C exit code)
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 36);
+    }
+
+    TEST_CASE_TEMPLATE("in-place set of a borrowed container is allowed", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun edit(slot: inout i32, lst: inout List<i32>): i32 {
+            lst[1] = 99;   // in-place set (no realloc) — allowed while pinned
+            slot = 5;
+            return 0;
+        }
+        fun main(): i32 {
+            var xs: List<i32> = List<i32>();
+            xs.push(10);
+            xs.push(20);
+            var r: i32 = edit(inout xs[0], inout xs);
+            return xs[0] + xs[1];   // 5 + 99 = 104
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 104);
+    }
+
+    // An exception thrown through an `inout list[i]` call must unpin the container
+    // on unwind (the deferred Unpin cleanup record), or the container would be left
+    // permanently frozen — the later push would then spuriously trap.
+    TEST_CASE_TEMPLATE("exception through an index-inout call unpins the container", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Boom { msg: string; }
+        fun Boom.message(): string for Exception { return self.msg; }
+
+        fun risky(slot: inout i32): i32 { throw Boom { msg = "x" }; }
+
+        fun main(): i32 {
+            var xs: List<i32> = List<i32>();
+            xs.push(1);
+            try {
+                var u: i32 = risky(inout xs[0]);   // pins xs; throws before unpin
+            } catch (e: Boom) {
+                xs.push(2);   // xs must be unpinned by the unwind → push works
+            }
+            return xs[0] + xs[1] + xs.len();   // 1 + 2 + 2 = 5
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 5);
+    }
+
+    // ── Owning-element containers: `inout`/`out` of a `uniq` element ──
+    // (lifetimes.md §15.) `inout list[i]` on a `List<uniq T>` re-types to the raw
+    // element type `uniq T` (not the `borrowed` read view `ref T`), so the callee
+    // gets reassignable access to the owning slot. Reassigning frees the old
+    // pointee in place; the container still owns the new one, destroyed once at
+    // scope exit.
+
+    TEST_CASE_TEMPLATE("inout of a List<uniq T> element reassigns it in place", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct P { x: i32; }
+        fun new P(v: i32) { self.x = v; }
+        fun delete P() { print("del"); }
+        fun replace(slot: inout uniq P) { slot = uniq P(99); }
+
+        fun main(): i32 {
+            var xs: List<uniq P> = List<uniq P>();
+            xs.push(uniq P(1));
+            replace(inout xs[0]);   // frees P(1) in place, stores P(99)
+            return xs[0].x;         // 99 (xs still owns the new element)
+            // xs deleted at scope exit → frees P(99)
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 99);
+        CHECK(result.stdout_output == "del\ndel\n");  // old freed on replace, new at exit
+    }
+
+    TEST_CASE_TEMPLATE("inout of a Map<K, uniq V> value reassigns it in place", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct P { x: i32; }
+        fun new P(v: i32) { self.x = v; }
+        fun delete P() {}
+        fun replace(slot: inout uniq P) { slot = uniq P(42); }
+
+        fun main(): i32 {
+            var m: Map<i64, uniq P> = Map<i64, uniq P>();
+            m.insert(7l, uniq P(1));
+            replace(inout m[7l]);
+            return m[7l].x;   // 42
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 42);
+    }
+
+    // For a *noncopyable* container the delete genuinely frees the buffer, so the
+    // free-guards (Phase 3) are now live: freeing the borrowed List mid-call traps.
+    TEST_CASE("mid-call free of a borrowed List<uniq T> traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* trap_src = R"(
+        struct P { x: i32; }
+        fun new P(v: i32) { self.x = v; }
+        fun delete P() {}
+        fun evil(slot: inout uniq P, lst: inout List<uniq P>): i32 {
+            lst = List<uniq P>();   // frees the old (borrowed) list → traps
+            return 0;
+        }
+        fun main(): i32 {
+            var xs: List<uniq P> = List<uniq P>();
+            xs.push(uniq P(1));
+            return evil(inout xs[0], inout xs);
+        }
+    )";
+        BumpAllocator a1(65536);
+        CHECK(compile(a1, trap_src) != nullptr);
+        CHECK(VMBackend::run(trap_src).success == false);
+    }
+
+    TEST_CASE("mid-call push of a borrowed List<uniq T> traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* trap_src = R"(
+        struct P { x: i32; }
+        fun new P(v: i32) { self.x = v; }
+        fun delete P() {}
+        fun evil(slot: inout uniq P, lst: inout List<uniq P>): i32 {
+            lst.push(uniq P(2));   // reallocs the borrowed buffer → traps
+            return 0;
+        }
+        fun main(): i32 {
+            var xs: List<uniq P> = List<uniq P>();
+            xs.push(uniq P(1));
+            return evil(inout xs[0], inout xs);
+        }
+    )";
+        BumpAllocator a1(65536);
+        CHECK(compile(a1, trap_src) != nullptr);
+        CHECK(VMBackend::run(trap_src).success == false);
+    }
+
 }

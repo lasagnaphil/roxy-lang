@@ -3,14 +3,20 @@
 > **Status:** Largely implemented (VM). The *constraint-reference* model below
 > is live: `ref` is a fully-counted borrow, the free-trap is centralized across
 > every free path, the three audited findings are fixed, the `out`/`inout`
-> second-class rule and `[ref self]` capture counting are enforced, and
-> **call-site counting of a `uniq` method receiver** is now in (§4/§6/§8 — it did
-> *not* need polymorphic dispatch after all; a copy-prop-pinned receiver borrow
-> gives the call-straddling count a distinct SSA identity). Still **deferred**:
-> the rest of call-site heap-root counting (the `out`/`inout` root borrow, and
-> receivers that root in a field / heap-returning temp), refcount elision (§11,
-> always a later phase), and full AOT/C-backend parity beyond the `roxy_free`
-> trap. See the per-item status in [§13](#13-implementation-status).
+> second-class rule and `[ref self]` capture counting are enforced,
+> **call-site heap-root counting is complete** (§4/§8): the `uniq` method
+> receiver (any shape — a bare identifier, a `uniq` field root `a.b.method()`, or
+> a heap-returning temp `make().method()`) *and* an `out`/`inout` argument that
+> points into a heap object's storage (`f(inout heap_obj.field)`) are each counted
+> for the call's duration via a copy-prop-pinned borrow that gives the
+> call-straddling count a distinct SSA identity (no polymorphic dispatch needed),
+> and the **non-capture `self` promotions are wired** (§6): binding (`var r: ref T
+> = self`), returning (`return self`), storing (`r = self`), and passing `self` to
+> a `ref` parameter (`f(self)`) all heap-gate the promotion with an `AssertHeap`
+> that traps a stack receiver before the borrow inc. Still **deferred**:
+> `List`/`Map` ref-element and coroutine ref-param counting (Phase 3); refcount
+> elision (§11, always a later phase); and full AOT/C-backend parity beyond the
+> `roxy_free` trap. See the per-item status in [§13](#13-implementation-status).
 >
 > This supersedes [memory.md](memory.md) where the two differ; memory.md states
 > the same model but describes the older, incomplete implementation.
@@ -206,9 +212,24 @@ unconditional inc or a compile error.
 **Implemented for `[ref self]` capture.** `ASSERT_HEAP` already trapped stack
 receivers gracefully; what was missing was the *count*. Now a `ref` capture is
 `RefInc`'d at env construction (after the heap check, so a stack receiver still
-traps before the inc) and the env's destructor `RefDec`s it. Binding `self` into
-a first-class `ref` or returning/storing it (the other promotions) reuse the same
-gate but are not yet wired end-to-end.
+traps before the inc) and the env's destructor `RefDec`s it.
+
+**Implemented for the non-capture promotions, too.** Binding (`var r: ref T =
+self`), returning (`return self` from a `ref`-returning method), storing (`r =
+self` reassigning a ref local), and passing `self` to a `ref` parameter
+(`f(self)`) now each emit the `AssertHeap` gate before the borrow inc. The first
+three share one IR-builder helper (`emit_ref_borrow_inc`) that inserts the gate
+when the ref-source is a bare `self`; the fourth is gated at the *call site*
+(`lower_call_args`), because the unsound inc is the callee's ref-param entry inc —
+so a stack receiver must trap *before* the call. Unlike the capture path's
+copyable-only gate, the promotion gate is emitted for *every* bare-`self` source
+(a method's receiver storage is never known at its compile site), so it correctly
+traps a **noncopyable** stack value-struct receiver as well. Inside a lambda body
+`self` is already rewritten to `__env.__self` (sourced from a heap-checked env),
+so only the bare `ExprThis` of a direct method body reaches the gate. The
+remaining non-capture promotions named in §6 are now all wired; only the runtime
+*storage-known* folding (unconditional inc / compile error) is left as a later
+optimization.
 
 This required first fixing a **pre-existing closure-cleanup bug**: deleting a
 closure was an inert no-op, so envs and their captures (incl. `[move uniq]`)
@@ -244,12 +265,17 @@ env's runtime `type_id` on delete (`RoxyVM::closure_env_dtors`,
   call on a statically-heap receiver counts that receiver for the call (so an
   alias-kill of it mid-method traps); on a stack receiver it counts nothing
   (downward-safe); on an already-`ref` receiver the existing count covers it.
-  Returning or storing `self` is a promotion (§6). *(**Implemented** for a `uniq`
-  identifier receiver — §13. The borrow rides a copy-prop-pinned `Copy` of the
-  receiver so its RefDec + Nullify cleanup own a distinct SSA value/register and
-  can't clobber the owned-local's Delete record; the borrow's exception record is
-  appended after the owned-local records so it RefDecs *before* the owner's
-  Delete on unwind. Stack / `ref` receivers are correctly skipped.)*
+  Binding / returning / storing `self`, or passing it to a `ref` param, is a
+  promotion (§6) — now wired, each heap-gated by an `AssertHeap`. *(**Implemented**
+  for every `uniq` receiver shape — a bare identifier (`c.method()`), a `uniq` field root
+  (`o.inner.method()`, where the borrow lands on the receiver object itself,
+  which a `delete o` would also try to free → it traps), and a heap-returning
+  temp (`make().method()`, counted distinctly from the temp's own scope-exit
+  Delete) — §13. The borrow rides a copy-prop-pinned `Copy` of the receiver so its
+  RefDec + Nullify cleanup own a distinct SSA value/register and can't clobber the
+  owned-local's / temp's Delete record; the borrow's exception record is appended
+  after the owned-local records so it RefDecs *before* the owner's Delete on
+  unwind. Stack / `ref` receivers are correctly skipped.)*
 - **Closures:** captures are by copy. Capturing a first-class `ref` copies it →
   increments; the env's destructor decrements. `[ref self]` / `[weak self]` are
   promotions (§6): slab-range test at capture, trap on stack receivers.
@@ -276,8 +302,17 @@ env's runtime `type_id` on delete (`RoxyVM::closure_env_dtors`,
   downward flow. *Implemented:* the escape rule — a noncopyable `out`/`inout`
   cannot be moved out of its frame (bind / return / store / by-value-pass /
   capture-by-move are rejected at compile time); copyable `out`/`inout` escapes
-  were already blocked by the type system (no value→reference conversion).
-  *Deferred:* the call-site root counting (§13).
+  were already blocked by the type system (no value→reference conversion). *Also
+  implemented:* the call-site root counting — a field-rooted `out`/`inout` lvalue
+  (`f(inout heap_obj.field)`, `f(inout a.b.c)`) borrows the innermost heap object
+  it points into for the call's duration (same pinned-copy + deferred-record
+  mechanism as the receiver borrow), so freeing that root mid-call via an alias
+  the callee reaches traps. A `ref`-rooted lvalue is already covered by the
+  `ref`'s own count; a bare-identifier lvalue roots in the caller's frame (no heap
+  root to count). Index-rooted lvalues (`f(inout list[i])`) need more than a
+  count — their element buffer lives outside the slab, so realloc, not just free,
+  can dangle the pointer; see the pin-based design in
+  [§15](#15-container-element-lvalues-inoutout-listi).
 - **FFI / AOT:** a `ref T` passed to a native function is counted for the call's
   duration, so the object **cannot be freed during the call**, even by reentrant
   Roxy code — the native's raw pointer is guaranteed live. New runtime surface:
@@ -397,14 +432,52 @@ direction:
   `ref_count != 0` and spuriously traps). Lowering narrows the record to
   `[RefInc-pc, RefDec-pc)` via `m_ref_inc_pcs` (start) + `m_nullify_pcs` (end).
   The earlier double-delete in exception-heavy `uniq`-receiver code (the Lox
-  interpreter) is fixed. Gated to `uniq` *identifier* receivers; `ref` receivers
-  are skipped (already counted), stack receivers skipped (second-class).
-- **Deferred — the rest of call-site heap-root counting.** The `out`/`inout`
-  root borrow (`bump(inout heap_obj.field)`), and receivers that root in a field
-  (`a.b.method()`) or a heap-returning temp (`make().method()`). The receiver
-  mechanism above generalizes to these, but each needs its own gate. Binding /
-  returning / storing `self` as a first-class `ref` (the non-capture promotions)
-  are also not yet wired.
+  interpreter) is fixed. Fires for any `uniq` receiver (see next bullet); `ref`
+  receivers are skipped (already counted), stack receivers skipped (second-class).
+- *Done:* **generalized the receiver borrow to every `uniq` receiver shape, and
+  added the `out`/`inout` heap-root borrow** — the rest of call-site heap-root
+  counting (§4/§8). The receiver-borrow gate in `gen_call_member` dropped its
+  identifier-only restriction: it now fires whenever the receiver's type is
+  `uniq`, so `obj` (already the receiver object's heap data pointer) is counted
+  uniformly for a bare identifier, a `uniq` field root (`o.inner.method()` — the
+  borrow lands on the receiver object, which `delete o` would also free → traps),
+  and a heap-returning temp (`make().method()` — distinct from the temp's own
+  Delete via the pinned copy). For `out`/`inout` arguments, `gen_call_expr`
+  computes the heap root of each field-rooted lvalue (`heap_root_of_lvalue` walks
+  the chain to the innermost heap object dereferenced; pure paths only, so the
+  re-load is side-effect-free) and brackets the call with the same
+  `PinnedCopy → RefInc → … → RefDec → Nullify` + deferred exception record. So
+  `f(inout heap_obj.field)` traps if the callee frees `heap_obj` mid-call.
+- *Done:* **the non-capture `self` promotions** (§6). Binding (`var r: ref T =
+  self`), returning (`return self`), and storing (`r = self`) a bare `self` as a
+  first-class `ref` route their borrow inc through `emit_ref_borrow_inc`, which
+  emits an `AssertHeap(self)` before the inc when the source is a bare `ExprThis`
+  (so a stack receiver traps before the header-writing inc). Passing `self` to a
+  `ref` parameter (`f(self)`) is gated at the call site in `lower_call_args`
+  (the unsound inc is the callee's ref-param entry inc, so the gate must precede
+  the call); the param index uses an offset that is certain only for free/closure
+  identifier callees (0) and genuine user-struct method callees (1), skipping
+  uncertain shapes (module-qualified / container / field-closure) to avoid a
+  spurious trap. Unlike the capture path's copyable-only gate, this fires for
+  *every* bare-`self` source, so it also traps a noncopyable stack value-struct
+  receiver. The shared `ASSERT_HEAP` trap message was generalized (no longer
+  capture-specific) in both backends.
+- **Index-rooted `out`/`inout` lvalues** (`f(inout list[i])`): a *true* element
+  address, kept valid for the borrow by pinning the container against free and
+  structural mutation. Full design in
+  [§15](#15-container-element-lvalues-inoutout-listi). **Implemented
+  (Phases 1–3) for copyable-element containers**: the runtime `borrow_count` pin +
+  mutator guards (C-API-tested), the `INDEX_ADDR` op + `gen_lvalue_addr`
+  `ExprIndex` case, and the call-site `ContainerPin`/`Unpin` wiring. `f(inout
+  list[i])` / `f(inout map[k])` work on both backends — for primitive, struct,
+  *and* `uniq` elements (an owning element re-types to `uniq T` for `inout`, and
+  is reassignable in place). A mid-call realloc or (for a noncopyable container)
+  free of the borrowed container traps (VM). **Deferred:** C-backend trap
+  *reporting* (the mutation is refused memory-safely; the clean abort/report is
+  the general AOT-trap-reporting follow-on).
+- **Deferred (optimization)** — folding the promotion's runtime `AssertHeap` away
+  to an unconditional inc / compile error where the receiver's storage is
+  statically known (§6).
 - *Done (separate fix):* **inout/out owning-pointer reassignment frees the
   overwritten value.** `slot = uniq T(..)` / `slot = nil` through an `inout`/`out`
   `uniq`/`List`/`Map`/`Coro` pointer now loads and Deletes the old value before
@@ -437,25 +510,210 @@ Implemented (Phase 1 + the done parts of Phase 2):
 | `include/roxy/rt/slab_allocator.{hpp,cpp}` | `resolve_header(ptr)` from interior pointers; sorted range index for large objects |
 | `src/roxy/vm/object.cpp` | free-trap in `object_free`; `ref_dec` underflow tripwire kept |
 | `src/roxy/rt/roxy_rt.cpp` | free-trap in `roxy_free` (lockstep with the VM) |
+| `include/roxy/rt/roxy_rt.{h}`, `src/roxy/rt/roxy_rt.cpp` (§15 Phase 1) | `borrow_count` in the list/map headers; `roxy_list_pin`/`unpin` + `roxy_map_pin`/`unpin`; structural-mutator guards (`push` / `insert` / `remove` / `clear`); the non-catchable `roxy_runtime_error_*` channel |
+| `tests/unit/test_container_pin.cpp` (new, §15 Phase 1) | C-API tests: pin refuses push/insert/remove/clear and raises the trap; unpin restores; nested pins count; in-place set/reads stay allowed; a copy is born unpinned |
+| `ssa_ir.{hpp,cpp}`, `ir_optimize.hpp`, `ir_builder.{hpp,cpp}`, `lowering.cpp`, `vm/bytecode.hpp`, `vm/interpreter.cpp`, `c_emitter.cpp` (§15 Phase 2) | `IROp::IndexAddr` + `emit_index_addr` + `gen_lvalue_addr` `ExprIndex`; lowering to `INDEX_ADDR_LIST`/`INDEX_ADDR_MAP` (0xE4/0xE5) + interpreter handlers; C-emitter element-pointer codegen + pointer-tracking |
+| `tests/e2e/test_lifetimes.cpp` (§15 Phase 2) | functional `inout`/`out list[i]` (i32, wide i64, struct elements) and `inout map[k]`, both backends |
+| `rt/roxy_rt.{h,cpp}` (§15 Phase 3) | `roxy_container_pin`/`unpin` (type-dispatched); `borrow_count` free-guards in `roxy_list_delete`/`roxy_map_delete` |
+| `ssa_ir.{hpp,cpp}`, `ir_optimize.{hpp,cpp}`, `ir_validator.cpp`, `ir_builder.{hpp,cpp}`, `lowering.cpp`, `vm/bytecode.hpp`, `vm/interpreter.cpp`, `c_emitter.cpp` (§15 Phase 3) | `IROp::ContainerPin`/`ContainerUnpin` + `IRCleanupKind::Unpin`; `gen_call_expr` pins container-index `inout`/`out` args (pinned copy + deferred Unpin record); `CONTAINER_PIN`/`UNPIN` opcodes (0xE6/0xE7) + handlers + `execute_cleanup` Unpin; VM trap surfacing (runtime-error flag after `CALL_NATIVE`; `borrow_count` check in `delete_value`); C-emitter pin/unpin codegen + Unpin cleanup |
+| `tests/e2e/test_lifetimes.cpp` (§15 Phase 3) | adversarial: mid-call `push` of a borrowed List traps (VM); nested element borrows balanced + in-place set allowed + exception-unwind unpin (both backends) |
+| `src/roxy/compiler/semantic.cpp` (§15 owning elements) | `check_call_args` re-types an `out`/`inout` container subscript to the raw element/value type (so `inout uniq T` matches), bypassing the `index` method's `borrowed` read view |
+| `tests/e2e/test_lifetimes.cpp` (§15 owning elements) | `inout` of a `List<uniq T>` / `Map<K, uniq V>` element reassigns in place (both backends); mid-call free + push of a borrowed `List<uniq T>` trap (VM) |
 | `src/roxy/vm/interpreter.cpp` | `RefDec` cleanup-record kind in `execute_cleanup`; trap error propagation through `delete_value`/`DELETE`; retired `DEL_OBJ` pre-check; `BCDeleteDesc::Closure` env-dtor dispatch |
 | `include/roxy/vm/bytecode.hpp` | `BCCleanupKind`, `BCDeleteDesc::Closure`, `BCTypeInfo.dtor_func_idx` |
 | `include/roxy/compiler/ssa_ir.hpp` | `IRCleanupKind`, `IRCleanupInfo.whole_function_scope`; `IRInst.no_copy_prop` (pinned copy) + `IRCleanupInfo.call_borrow` (receiver-borrow start-narrowing) |
 | `src/roxy/compiler/ir_optimize.cpp` | copy propagation skips `no_copy_prop` copies |
-| `src/roxy/compiler/ir_builder.{hpp,cpp}` (receiver counting) | `emit_pinned_copy`; `gen_call_member` emits the `uniq`-receiver borrow (PinnedCopy → RefInc → Call → RefDec → Nullify); deferred `m_call_borrow_cleanups`, flushed after owned-local records in `end_function_body` |
+| `src/roxy/compiler/ir_builder.{hpp,cpp}` (receiver counting) | `emit_pinned_copy`; `gen_call_member` emits the `uniq`-receiver borrow (PinnedCopy → RefInc → Call → RefDec → Nullify) for *any* `uniq` receiver shape (identifier / field root / heap temp); deferred `m_call_borrow_cleanups`, flushed after owned-local records in `end_function_body` |
+| `src/roxy/compiler/ir_builder.{hpp,cpp}` (out/inout root counting) | `heap_root_of_lvalue` (+ `is_pure_field_path`) finds the heap root of a field-rooted `out`/`inout` lvalue; `gen_call_expr` brackets the call with a pinned-copy borrow of each root (same RefInc/RefDec/Nullify + deferred record as the receiver borrow) |
+| `src/roxy/compiler/ir_builder.{hpp,cpp}` (self promotions) | `emit_ref_borrow_inc` (+ `is_bare_self`) heap-gates bind/return/store of a bare `self` to a `ref` (`AssertHeap` before the inc); `self_pass_param_offset` + a `lower_call_args` gate cover passing `self` to a `ref` parameter |
+| `src/roxy/vm/interpreter.cpp`, `src/roxy/compiler/c_emitter.cpp` (self promotions) | generalized the `ASSERT_HEAP` trap message (capture *and* bind/return/store/pass promotions) |
 | `src/roxy/compiler/ir_builder.cpp` (inout reassign) | `gen_assign_local` pointer-param branch destroys the old value + consumes the RHS temp before storing through an `inout`/`out` owning pointer |
-| `include/roxy/compiler/lowering.{hpp,cpp}` (receiver counting) | `m_ref_inc_pcs`; `call_borrow` scope_start narrowing to the RefInc PC |
+| `include/roxy/compiler/lowering.{hpp,cpp}` (receiver / root counting) | `m_ref_inc_pcs`; `call_borrow` scope_start narrowing to the RefInc PC (shared by the receiver and `out`/`inout`-root borrows) |
 | `src/roxy/compiler/ir_builder.{hpp,cpp}` | `OwnedKind::RefBorrow`; ref-local inc/dec + reassign + return hand-off + caller-adopt convention; `[ref self]` capture RefInc + env-field RefDec; per-env synthesized destructors; call-result temp tracking; transitive-`[move]` field nullify; `gen_assign_index` cleanup fix |
 | `src/roxy/compiler/lowering.cpp` | RefDec `BCCleanupRecord` + whole-function-scope param records + liveness pin; `Closure` delete desc; `BCTypeInfo.dtor_func_idx` |
 | `src/roxy/compiler/semantic.{hpp,cpp}` | reject move-out of noncopyable `out`/`inout` (also closure move-capture); index-assign consume keyed off the container element type; env destructor for `ref` captures |
 | `include/roxy/compiler/symbol_table.hpp`, `src/roxy/compiler/symbol_table.cpp` | `is_out_inout` flag on parameter symbols |
 | `include/roxy/vm/vm.hpp`, `src/roxy/vm/vm.cpp` | `RoxyVM::closure_env_dtors` (env type_id → destructor index) |
-| `tests/e2e/test_lifetimes.cpp` (new), `tests/e2e/test_closures.cpp`, `tests/unit/test_slab_allocator.cpp` | findings 1–3; delete-while-borrowed/return-escape traps; balance across control flow; `out`/`inout` escape rejection; `[ref self]` pin/release; closure capture cleanup; `resolve_header`; **`uniq`-receiver call-site borrow balance + survives-a-throwing-method** |
+| `tests/e2e/test_lifetimes.cpp` (new), `tests/e2e/test_closures.cpp`, `tests/unit/test_slab_allocator.cpp` | findings 1–3; delete-while-borrowed/return-escape traps; balance across control flow; `out`/`inout` escape rejection; `[ref self]` pin/release; closure capture cleanup; `resolve_header`; **`uniq`-receiver call-site borrow balance + survives-a-throwing-method**; **field-rooted & heap-temp receiver balance + mid-call-free traps + throwing-heap-temp destroyed-once**; **`out`/`inout` heap-root balance + mid-call-free trap**; **self-promotion bind/return/store/pass: heap-receiver balance (incl. C backend) + stack-receiver traps (copyable & noncopyable; free-fn & method)** |
 
-Deferred (not yet touched): call-site root inc/dec for the `out`/`inout` root
-borrow and field / heap-temp receivers in `ir_builder.cpp` (the `uniq`-identifier
-receiver case is done); `List`/`Map` ref-element counting and coroutine
-`ref`-param promotion; `roxy::ref<T>` → borrow handle in `roxy_rt`; elision in
-`lowering.cpp`.
+Index-rooted `out`/`inout` lvalues (`f(inout list[i])`) — **implemented for
+copyable *and* owning (`uniq`) elements, [§15](#15-container-element-lvalues-inoutout-listi)**;
+only C-backend trap *reporting* remains. Other deferred: `List`/`Map` ref-element
+counting and coroutine `ref`-param promotion; `roxy::ref<T>` → borrow handle in
+`roxy_rt`; elision in `lowering.cpp`; folding the self-promotion `AssertHeap` away
+where storage is known.
+
+## 15. Container element lvalues (`inout`/`out list[i]`)
+
+> **Status:** **Implemented** for both copyable *and* owning/noncopyable
+> elements. `f(inout list[i])` / `f(inout map[k])` compile and run on both
+> backends, for primitive, struct, *and* `uniq` elements (an `inout uniq T`
+> element is reassignable in place — the reassign frees the old pointee, the
+> container keeps the new one). The call site pins the container for the borrow,
+> so the adversarial case — the same container reached mid-call via a second
+> argument (`evil(inout xs[i], inout xs)`) and reallocated (push / insert) or, for
+> a noncopyable container, freed (reassign) — **traps** (VM) instead of dangling
+> the element pointer. The C backend refuses the mutation too (memory-safe), but
+> its clean trap *reporting* is deferred, like the rest of AOT trap reporting.
+> This section specifies the full design.
+
+### Goal
+
+`f(inout list[i])` passes the **actual address** of the element in the backing
+buffer, so the callee mutates it in place — no copy, true aliasing. (Copy-in /
+copy-out — read the element to a stack slot, pass that, write it back — was
+considered and rejected: it is sound but is not a real lvalue, and a concurrent
+read during the call sees the stale value.)
+
+### The hazard
+
+`list[i]`'s address points into the container's separately-`malloc`'d element
+buffer, which lives **outside** the slab, so the generational/`ref_count`
+machinery on the object header does not protect it. Three operations invalidate
+the address, and any can happen mid-call if the callee reaches the container
+through another channel (a second argument, a global):
+
+| Mid-call operation | Effect on `&list[i]` |
+|---|---|
+| `delete list` | buffer freed → dangling |
+| `list.push(x)` (grow) | buffer realloc'd / moved → dangling |
+| `pop` / `remove` / `clear` | element gone / buffer freed → dangling |
+| `list[j] = v` (in-place set) | **safe** — same slot, no move |
+
+Counting the container header (the originally-noted plan) blocks only the *free*;
+it does nothing about realloc. So a count alone is not sufficient here.
+
+### Core mechanism: an element borrow **pins** the container
+
+While `&list[i]` is outstanding, freeze the container against exactly the
+operations that move or free the buffer:
+
+- **Free** is blocked by the existing constraint-reference free-trap: the element
+  borrow also takes an ordinary **`ref_count`** on the container object — this is
+  the `heap_root_of_lvalue` + call-site-borrow machinery (§4/§8) extended to
+  index lvalues. `delete`-while-borrowed → traps.
+- **Structural mutation** (realloc / shrink) is blocked by a **new `borrow_count`**
+  in the container header. Structural mutators trap while `borrow_count > 0`.
+
+Net: while the element is borrowed the buffer can neither move nor be freed, so
+the address stays valid. It is the Rust rule — "no structural mutation while
+borrowed" — enforced at runtime, which suits single-threaded Roxy where borrows
+flow into opaque callees.
+
+**Why a separate `borrow_count` rather than reusing `ref_count` for the mutation
+trap?** Because `fill(r: ref List<i32>) { r.push(1) }` is legitimate — but `r`
+is a `ref` parameter, so its entry `RefInc` makes `ref_count > 0`, and a
+`ref_count`-based push-trap would wrongly reject it. Mutation-blocking must be
+scoped to *element* borrows only; free-blocking can safely reuse `ref_count`.
+
+### Pieces
+
+1. **`uint32_t borrow_count`** added to `roxy_list_header` / `roxy_map_header`
+   (shared runtime header; the existing `_pad[3]` absorbs it).
+2. **Mutation guards in the shared runtime** (`roxy_rt.cpp`): `roxy_list_push` /
+   `roxy_list_pop`, `roxy_map_insert` / `roxy_map_remove` / `roxy_map_clear` trap
+   when `borrow_count > 0`. The VM routes `list.push` → `native_list_push` →
+   `roxy_list_push`, so **one guard per op covers both the VM and the C backend**.
+   In-place `set` and all reads stay allowed.
+3. **`INDEX_ADDR_LIST` / `INDEX_ADDR_MAP`** — a new IR op for the bounds-/key-checked
+   element address. The runtime primitive already exists (`roxy_list_get` /
+   `roxy_map_get` return the slot pointer); for the VM it is a small new opcode
+   mirroring `INDEX_GET` but storing the *pointer* rather than the loaded value;
+   the C backend lowers it to `roxy_list_get` with an explicit bounds trap.
+4. **Pin/unpin around the call** — reuse the deferred-cleanup call-site borrow
+   machinery (`PinnedCopy → inc → call → dec → Nullify`, exception-safe):
+   `borrow_count++` before the call, `--` after and on unwind; plus the ordinary
+   container `ref_count` borrow (free-trap) via `heap_root_of_lvalue`.
+5. **`gen_lvalue_addr` `ExprIndex` case** → emit `INDEX_ADDR`. **No reload** —
+   writes go straight into the buffer (the address *is* the storage); this also
+   removes today's IR-build crash.
+6. **`heap_root_of_lvalue` extension** for `ExprIndex` → returns the container
+   (the free-trap `ref_count` root).
+7. **Semantic** — allow `inout` / `out list[i]` (it already type-checks; just
+   match the element type to the `inout` parameter and drop the crash path).
+
+### Soundness summary
+
+| Mid-call event | Outcome |
+|---|---|
+| `delete` the container | `ref_count` free-trap |
+| `push` / `insert` (realloc) | `borrow_count` mutation-trap |
+| `pop` / `remove` / `clear` | `borrow_count` mutation-trap |
+| in-place `list[j] = v` | allowed (valid slot) |
+| free + slot recycled into a new container | impossible — the free is trapped first |
+
+A fully sound true lvalue.
+
+### Scope
+
+- **List and Map**, primitive, struct, *and* owning (`uniq`) elements.
+- **Owning elements** (`List<uniq T>` / `Map<K, uniq V>`): an `inout`/`out`
+  subscript re-types to the raw element type (`uniq T`), not the `borrowed` read
+  view (`ref T`), so the callee gets reassignable access to the owning slot. The
+  in-place reassign frees the old pointee (the existing inout/out owning-pointer
+  reassignment path), and the inout escape rule already forbids moving the element
+  out of the frame, so the container still owns exactly one value per slot at
+  delete time (no double-free, no leak). For a noncopyable container the delete
+  frees the buffer, so the pin's free-guards (`delete_value` / `roxy_*_delete`)
+  are live: freeing the borrowed container mid-call traps.
+- Non-`inout` element lvalues (binding a `ref` to an element) stay out of scope —
+  `borrowed` already covers reads.
+
+### New rule to surface (cf. §8, §10)
+
+"You cannot structurally mutate a container while an element of it is borrowed
+(`inout` / `out`)." The pin is per-container (coarse — borrowing one element
+freezes the whole container's structure), which is simple and sufficient.
+
+### Phased plan (each independently testable)
+
+1. **Runtime — DONE.** `borrow_count` (a `uint16_t` absorbed into the existing
+   `_pad` in both headers, no size change) + `roxy_list_pin`/`unpin`,
+   `roxy_map_pin`/`unpin` + structural-mutator guards: `roxy_list_push` and
+   `roxy_map_insert` (covers `index_mut`) / `roxy_map_remove` / `roxy_map_clear`
+   refuse the op while pinned. A refusal raises a *fatal, non-catchable* runtime
+   trap via a new thread-local channel (`roxy_runtime_error_set` /
+   `_pending` / `_message` / `_clear`), distinct from catchable user exceptions —
+   the buffer is left untouched so the borrowed pointer can't dangle. `pop` /
+   in-place `set` / reads stay allowed (they don't move or free the buffer); a
+   copy is born unpinned. Unit-tested at the C-API level
+   (`tests/unit/test_container_pin.cpp`). The single guard per op lives in shared
+   `roxy_rt`, so the VM (which routes `list.push` → `roxy_list_push`) and AOT both
+   get it; surfacing the trap as `vm->error` / an AOT abort is Phase 3.
+2. **`INDEX_ADDR` op — DONE.** New `IROp::IndexAddr` (mirrors `IndexGet`, carries
+   the same `IndexData`) → VM opcodes `INDEX_ADDR_LIST` / `INDEX_ADDR_MAP` (0xE4 /
+   0xE5; bounds-/key-checked, store the raw buffer pointer in the dst register) →
+   C-emitter (`(ElemType*)roxy_list_get` / `roxy_map_get`, with the primitive-key
+   temp; the result local is pointer-tracked, declared `ElemType* vN`). The
+   `gen_lvalue_addr` `ExprIndex` case emits it for List/Map containers, typed at
+   the subscript's (borrowed) element type; **no reload** is needed (the address
+   *is* the storage, unlike the stack-slot copy used for primitive-local inout).
+   Functional tests (`bump(inout xs[i])`, `out`, wide `i64`, struct elements, and
+   `inout map[k]`) pass on both backends. Sound for the single-arg case; the
+   adversarial case waits on the Phase 3 pin.
+3. **Call-site wiring — DONE.** `gen_call_expr` brackets a call that has an
+   `inout`/`out` container-index argument with `ContainerPin`/`ContainerUnpin` ops
+   on a pinned copy of the container (new IR ops → `CONTAINER_PIN`/`UNPIN` opcodes
+   0xE6/0xE7 + `roxy_container_pin`/`unpin`; a deferred `IRCleanupKind::Unpin`
+   record releases the pin on exception unwind, narrowed to the call window like
+   the receiver borrow). The mutation trap surfaces on the VM via the runtime-error
+   flag (checked after `CALL_NATIVE`) and a `borrow_count` check in `delete_value`;
+   `delete_value` / `roxy_*_delete` carry free-guards for owning-element containers
+   (defensive — see Status). E2E tests on both backends: the functional cases
+   (Phase 2) plus nested borrows `f(inout xs[i], inout xs[j])` balanced and
+   in-place set allowed while borrowed; VM-only: a mid-call `push` of the borrowed
+   container traps. The `heap_root_of_lvalue` free-count wasn't needed for index
+   lvalues — the buffer free happens *before* `object_free`, so a `ref_count` trap
+   there is too late; the pin's `borrow_count` guards the buffer free directly.
+
+### Alternatives considered
+
+- **Copy-in / copy-out** — sound but not a true lvalue (copies; a concurrent read
+  sees the stale value). Rejected in favour of real lvalue support.
+- **True address with no pin** — dangles on a mid-call realloc. Unsound.
+- **Reuse `ref_count` for the mutation guard** — breaks legitimate
+  mutate-through-`ref List` (`fill(r: ref List){ r.push() }`). Hence the dedicated
+  `borrow_count`.
 
 ## Related docs
 

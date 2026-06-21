@@ -127,6 +127,10 @@ private:
     Span<ValueId> prepend_self(ValueId self, Span<ValueId> args, ValueId output_ptr = ValueId::invalid());
     ValueId emit_index_get(ValueId container, ValueId index, ContainerKind kind, Type* result_type);
     void emit_index_set(ValueId container, ValueId index, ValueId value, ContainerKind kind);
+    // Address of a container element (out/inout argument lvalue). result_type is
+    // the element/value (pointee) type, mirroring emit_get_field_addr. The pointer
+    // is valid only while the container is pinned (lifetimes.md §15, Phase 3).
+    ValueId emit_index_addr(ValueId container, ValueId index, ContainerKind kind, Type* result_type);
     ValueId emit_new(StringView type_name, Span<ValueId> args, Type* result_type);
     ValueId emit_stack_alloc(u32 slot_count, Type* result_type);
     ValueId emit_get_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, Type* result_type);
@@ -139,6 +143,17 @@ private:
     // Reference counting for constraint reference model
     void emit_ref_inc(ValueId ptr);
     void emit_ref_dec(ValueId ptr);
+    // Increment a `ref` borrow whose source value is `source`, inserting the
+    // self-promotion heap gate when `source` is a bare `self`: promoting the
+    // second-class receiver borrow to a counted `ref` (bind / return / store) is
+    // sound only on a heap receiver, so an `AssertHeap` traps a stack receiver
+    // before the inc (lifetimes.md §6). Non-`self` sources are statically heap.
+    void emit_ref_borrow_inc(ValueId val, Expr* source);
+    // Pin/unpin a container around a call so a borrowed element can't be dangled
+    // by a mid-call realloc/free (lifetimes.md §15). `container` is a List/Map
+    // value (or a pinned copy of one).
+    void emit_container_pin(ValueId container);
+    void emit_container_unpin(ValueId container);
     void emit_ref_param_decrements();  // Emit RefDec for all ref-typed parameters
     // A `Copy` that copy propagation will not collapse, minting a distinct SSA
     // value/register that aliases `src` at runtime. Used for call-site receiver
@@ -152,6 +167,15 @@ private:
 
     // Generate address of an lvalue expression (for out/inout arguments)
     ValueId gen_lvalue_addr(Expr* expr);
+
+    // For an out/inout argument lvalue, return a heap data pointer to the heap
+    // object whose storage the argument points into (its "heap root"), or invalid
+    // if the lvalue is stack-rooted or not a pure identifier/field chain. The
+    // call site counts this root for the call's duration so a mid-call free of it
+    // traps rather than dangling the out/inout pointer (lifetimes.md §4/§8). When
+    // a root is returned, *out_type receives its (uniq) type. Only re-evaluates
+    // pure field paths, so the extra load it emits is side-effect-free.
+    ValueId heap_root_of_lvalue(Expr* lvalue, Type** out_type);
 
     // Statement generation
     void gen_stmt(Stmt* stmt);

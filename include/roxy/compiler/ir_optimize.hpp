@@ -143,6 +143,7 @@ inline void for_each_operand(IRInst* inst, Fn&& fn) {
         case IROp::Throw: case IROp::Yield:
         case IROp::Nullify:
         case IROp::AssertHeap:
+        case IROp::ContainerPin: case IROp::ContainerUnpin:
             fn(inst->unary);
             break;
 
@@ -191,6 +192,7 @@ inline void for_each_operand(IRInst* inst, Fn&& fn) {
 
         // ── Container indexing ──
         case IROp::IndexGet:
+        case IROp::IndexAddr:
             fn(inst->index_data.container);
             fn(inst->index_data.index);
             break;

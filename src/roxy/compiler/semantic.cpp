@@ -4742,6 +4742,25 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
         // Analyze argument expression
         Type* arg_type = analyze_expr(arg.expr);
 
+        // An `out`/`inout` container subscript is an lvalue on the element *slot*,
+        // not a read: re-type it to the raw element/value type (the `index`
+        // method returns the `borrowed` view — `ref T` for an owning `uniq T`
+        // element — which is right for reads but wrong here, since `inout` gives
+        // reassignable access to the owning slot). Copyable elements are
+        // unaffected (`borrowed T` == `T`). See lifetimes.md §15.
+        if ((arg.modifier == ParamModifier::Inout || arg.modifier == ParamModifier::Out)
+            && arg.expr->kind == AstKind::ExprIndex) {
+            Type* cont = arg.expr->index.object->resolved_type;
+            Type* base = cont ? cont->base_type() : nullptr;
+            Type* elem = nullptr;
+            if (base && base->is_list()) elem = base->list_info.element_type;
+            else if (base && base->is_map()) elem = base->map_info.value_type;
+            if (elem && !elem->is_error()) {
+                arg.expr->resolved_type = elem;
+                arg_type = elem;
+            }
+        }
+
         // Resolve generic-template-ref arg against param type before
         // assignability checking. Updates arg_type via resolved_type.
         if (param_types[i] && coerce_generic_template_ref(arg.expr, param_types[i])) {

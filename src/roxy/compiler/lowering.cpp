@@ -648,9 +648,15 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         if (!has_register(ir_cleanup.value)) continue;
         record.register_idx = get_register(ir_cleanup.value);
 
-        // RefDec records decrement a borrow rather than destroy an owned value,
-        // so they carry no delete descriptor.
-        if (ir_cleanup.kind == IRCleanupKind::RefDec) {
+        // RefDec / Unpin records release a borrow rather than destroy an owned
+        // value, so they carry no delete descriptor.
+        if (ir_cleanup.kind == IRCleanupKind::Unpin) {
+            // Container element-borrow pin, released on unwind. Scope is the
+            // [ContainerPin, Nullify) call window (narrowed above), like a
+            // call-site ref borrow.
+            record.kind = static_cast<u8>(BCCleanupKind::Unpin);
+            record.delete_desc_idx = 0;
+        } else if (ir_cleanup.kind == IRCleanupKind::RefDec) {
             record.kind = static_cast<u8>(BCCleanupKind::RefDec);
             record.delete_desc_idx = 0;
             // A ref *parameter* is a borrow live for the entire function, so its
@@ -994,6 +1000,8 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
                 case IROp::Throw:
                 case IROp::Nullify:
                 case IROp::AssertHeap:
+                case IROp::ContainerPin:
+                case IROp::ContainerUnpin:
                     mark_reg(inst->unary);
                     break;
 
@@ -1024,6 +1032,7 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
                     break;
 
                 case IROp::IndexGet:
+                case IROp::IndexAddr:
                     mark_reg(inst->index_data.container);
                     mark_reg(inst->index_data.index);
                     break;
@@ -1180,6 +1189,8 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                 case IROp::Throw:
                 case IROp::Nullify:
                 case IROp::AssertHeap:
+                case IROp::ContainerPin:
+                case IROp::ContainerUnpin:
                     mark_use(m_live_ranges, inst->unary, point);
                     break;
 
@@ -1215,6 +1226,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
 
                 // Container indexing
                 case IROp::IndexGet:
+                case IROp::IndexAddr:
                     mark_use(m_live_ranges, inst->index_data.container, point);
                     mark_use(m_live_ranges, inst->index_data.index, point);
                     break;
@@ -2163,6 +2175,18 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             break;
         }
 
+        case IROp::IndexAddr: {
+            // Element address (out/inout lvalue): bounds-/key-checked pointer into
+            // the container's backing buffer, stored in dst as a raw pointer.
+            u8 obj_reg = ensure_in_register(inst->index_data.container, 0);
+            u8 idx_reg = ensure_in_register(inst->index_data.index, 0);
+            Opcode op = (inst->index_data.kind == ContainerKind::List)
+                ? Opcode::INDEX_ADDR_LIST : Opcode::INDEX_ADDR_MAP;
+            emit_abc(op, dst, obj_reg, idx_reg);
+            spill_if_needed(inst->result, dst);
+            break;
+        }
+
         case IROp::IndexSet: {
             u8 obj_reg = ensure_in_register(inst->index_data.container, 0);
             u8 idx_reg = ensure_in_register(inst->index_data.index, 0);
@@ -2220,6 +2244,21 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::RefDec: {
             u8 ptr = ensure_in_register(inst->unary, 0);
             emit_abc(Opcode::REF_DEC, ptr, 0, 0);
+            break;
+        }
+
+        case IROp::ContainerPin: {
+            // Like RefInc, record the PC so the Unpin cleanup record can start
+            // exactly here (the pinned-copy value has exactly one ContainerPin).
+            m_ref_inc_pcs[inst->unary.id] = static_cast<u32>(m_current_func->code.size());
+            u8 ptr = ensure_in_register(inst->unary, 0);
+            emit_abc(Opcode::CONTAINER_PIN, ptr, 0, 0);
+            break;
+        }
+
+        case IROp::ContainerUnpin: {
+            u8 ptr = ensure_in_register(inst->unary, 0);
+            emit_abc(Opcode::CONTAINER_UNPIN, ptr, 0, 0);
             break;
         }
 

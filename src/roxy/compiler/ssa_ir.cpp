@@ -93,6 +93,9 @@ const char* ir_op_to_string(IROp op) {
 
         case IROp::IndexGet:     return "index_get";
         case IROp::IndexSet:     return "index_set";
+        case IROp::IndexAddr:    return "index_addr";
+        case IROp::ContainerPin:   return "container_pin";
+        case IROp::ContainerUnpin: return "container_unpin";
 
         case IROp::BlockArg: return "block_arg";
         case IROp::Copy:     return "copy";
@@ -250,6 +253,8 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         case IROp::Nullify:
         case IROp::Throw:
         case IROp::Yield:
+        case IROp::ContainerPin:
+        case IROp::ContainerUnpin:
             append_str(out, " ");
             append_value_id(out, inst->unary);
             break;
@@ -399,8 +404,9 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
             break;
         }
 
-        case IROp::IndexGet: {
-            append_str(out, " ");
+        case IROp::IndexGet:
+        case IROp::IndexAddr: {
+            append_str(out, inst->op == IROp::IndexAddr ? " &" : " ");
             append_value_id(out, inst->index_data.container);
             append_str(out, "[");
             append_value_id(out, inst->index_data.index);

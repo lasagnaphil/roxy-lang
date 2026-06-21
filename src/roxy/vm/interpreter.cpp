@@ -305,6 +305,12 @@ static void delete_value(RoxyVM* vm, void* ptr,
 
     case BCDeleteDesc::List: { // iterate elements, recurse, free element buffer
         ListHeader* header = get_list_header(ptr);
+        // Refuse the free while an element is borrowed (inout/out) — keep the
+        // buffer so the borrowed pointer can't dangle (lifetimes.md §15).
+        if (header->borrow_count != 0) {
+            vm->error = "cannot delete a List while an element of it is borrowed (inout/out)";
+            return;
+        }
         if (header->elements && desc.container.elem_desc_idx != 0xFFFF) {
             const BCDeleteDesc& elem_desc = func->delete_descs[desc.container.elem_desc_idx];
             for (u32 i = 0; i < header->length; i++) {
@@ -319,6 +325,10 @@ static void delete_value(RoxyVM* vm, void* ptr,
 
     case BCDeleteDesc::Map: { // iterate occupied buckets, recurse, free bucket buffers
         MapHeader* header = get_map_header(ptr);
+        if (header->borrow_count != 0) {
+            vm->error = "cannot delete a Map while a value of it is borrowed (inout/out)";
+            return;
+        }
         if (header->capacity > 0 && header->distances) {
             // Keys and values are each `capacity * *_slot_count` u32 slots; bucket
             // i's entry starts at base + i * slot_count. delete_slot_entry then
@@ -433,7 +443,12 @@ static void execute_cleanup(RoxyVM* vm, const BCFunction* func,
             continue;  // Already cleaned up (null)
         }
 
-        if (record.kind == static_cast<u8>(BCCleanupKind::RefDec)) {
+        if (record.kind == static_cast<u8>(BCCleanupKind::Unpin)) {
+            // Container element-borrow pin: release it (borrow_count--) so an
+            // exception unwinding through an `inout list[i]` call doesn't leave
+            // the container permanently frozen.
+            roxy_container_unpin(ptr);
+        } else if (record.kind == static_cast<u8>(BCCleanupKind::RefDec)) {
             // Ref borrow: decrement its count rather than destroy it. The owner
             // is freed elsewhere; this just releases the borrow held by the
             // frame being unwound.
@@ -728,8 +743,8 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         [0xE1] = &&op_REF_DEC,
         [0xE2] = &&op_WEAK_CHECK,
         [0xE3] = &&op_WEAK_CREATE,
-        [0xE4] = &&op_DEFAULT, [0xE5] = &&op_DEFAULT,
-        [0xE6] = &&op_DEFAULT, [0xE7] = &&op_DEFAULT,
+        [0xE4] = &&op_INDEX_ADDR_LIST, [0xE5] = &&op_INDEX_ADDR_MAP,
+        [0xE6] = &&op_CONTAINER_PIN, [0xE7] = &&op_CONTAINER_UNPIN,
         [0xE8] = &&op_DEFAULT, [0xE9] = &&op_DEFAULT,
         [0xEA] = &&op_DEFAULT, [0xEB] = &&op_DEFAULT,
         [0xEC] = &&op_DEFAULT, [0xED] = &&op_DEFAULT,
@@ -1510,6 +1525,14 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
 
         native.func(vm, dst, arg_count, first_arg);
 
+        // A container mutator refused because the container is pinned (an element
+        // is borrowed inout/out) records a fatal runtime trap — surface it as a
+        // recoverable VM error (lifetimes.md §15).
+        if (roxy_runtime_error_pending()) {
+            vm->error = roxy_runtime_error_message();
+            roxy_runtime_error_clear();
+            return false;
+        }
         if (vm->error != nullptr) {
             return false;
         }
@@ -1594,9 +1617,9 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         u8 a = decode_a(instr);
         void* ptr = reg_as_ptr(regs[a]);
         if (!ptr || !vm->allocator->owns(ptr)) {
-            vm->error = "closure capture: cannot capture 'self' as a reference when "
-                        "the receiver is stack-allocated; use 'fun[copy self](...)' "
-                        "to snapshot the value, or call this method on a 'uniq' receiver.";
+            vm->error = "cannot retain a reference to 'self': the receiver is "
+                        "stack-allocated. Snapshot it (a copy / '[copy self]'), or "
+                        "call this method on a 'uniq' receiver.";
             return false;
         }
         DISPATCH();
@@ -1725,6 +1748,59 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             ? reinterpret_cast<const u32*>(&regs[c])
             : reinterpret_cast<const u32*>(regs[c]);
         map_insert(vm, map_ptr, key_src, value_src);
+        DISPATCH();
+    }
+
+    // ── Element-address lvalues (out/inout container args; lifetimes.md §15) ──
+
+    OP(INDEX_ADDR_LIST) {
+        u8 a = decode_a(instr);
+        u8 b = decode_b(instr);
+        void* lst_ptr = reg_as_ptr(regs[b]);
+        if (!lst_ptr) {
+            vm->error = "list index: null list reference";
+            return false;
+        }
+        u64 idx = regs[decode_c(instr)];
+        ListHeader* header = get_list_header(lst_ptr);
+        if (idx >= header->length) {
+            vm->error = "List index out of bounds";
+            return false;
+        }
+        // Raw pointer into the backing buffer; valid for the borrow because the
+        // call site pins the container against realloc/free (Phase 3).
+        regs[a] = reinterpret_cast<u64>(list_element_ptr(header, static_cast<u32>(idx)));
+        DISPATCH();
+    }
+
+    OP(INDEX_ADDR_MAP) {
+        u8 a = decode_a(instr);
+        void* map_ptr = reg_as_ptr(regs[decode_b(instr)]);
+        if (!map_ptr) {
+            vm->error = "map index: null map reference";
+            return false;
+        }
+        MapHeader* header = get_map_header(map_ptr);
+        u8 key_reg = decode_c(instr);
+        const u32* key_src = header->key_is_inline
+            ? reinterpret_cast<const u32*>(&regs[key_reg])
+            : reinterpret_cast<const u32*>(regs[key_reg]);
+        // map_get_ptr returns the value-slot address (traps on a missing key).
+        const u32* value_ptr = map_get_ptr(vm, map_ptr, key_src, &vm->error);
+        if (!value_ptr) {
+            return false;
+        }
+        regs[a] = reinterpret_cast<u64>(const_cast<u32*>(value_ptr));
+        DISPATCH();
+    }
+
+    OP(CONTAINER_PIN) {
+        roxy_container_pin(reg_as_ptr(regs[decode_a(instr)]));
+        DISPATCH();
+    }
+
+    OP(CONTAINER_UNPIN) {
+        roxy_container_unpin(reg_as_ptr(regs[decode_a(instr)]));
         DISPATCH();
     }
 

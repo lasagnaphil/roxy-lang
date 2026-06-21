@@ -261,6 +261,11 @@ void CEmitter::collect_value_types(const IRFunction* func) {
             if (inst->op == IROp::GetFieldAddr) {
                 m_pointer_values.insert(inst->result.id);
             }
+            if (inst->op == IROp::IndexAddr) {
+                // Element address (out/inout lvalue) — a pointer into the
+                // container's backing buffer, declared `ElemType* vN;`.
+                m_pointer_values.insert(inst->result.id);
+            }
             if (inst->op == IROp::GlobalAddr) {
                 // Address of a module global — a pointer, like GetFieldAddr.
                 m_pointer_values.insert(inst->result.id);
@@ -1517,6 +1522,45 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             return;
         }
 
+        case IROp::IndexAddr: {
+            // &container[index] — the runtime get returns a void* into the
+            // backing buffer; keep it as a typed element pointer (no deref). Map
+            // keys follow the same primitive-key-temp convention as IndexGet.
+            Type* elem_type = inst->type;
+            bool is_map = inst->index_data.kind == ContainerKind::Map;
+            const char* fn = is_map ? "roxy_map_get" : "roxy_list_get";
+            Type* key_type = is_map ? get_value_type(inst->index_data.index) : nullptr;
+            bool key_is_struct = key_type && key_type->is_struct();
+            bool needs_key_temp = is_map && !key_is_struct;
+            if (needs_key_temp) {
+                out.append("    { uint64_t _ktmp = 0; { ");
+                emit_type(key_type, out);
+                out.append(" _kraw = ");
+                emit_value(inst->index_data.index, out);
+                out.append("; memcpy(&_ktmp, &_kraw, sizeof(_kraw)); } ");
+            } else {
+                out.append("    ");
+            }
+            emit_value(inst->result, out);
+            out.append(" = (");
+            emit_type(elem_type, out);
+            out.append("*)");
+            out.append(fn);
+            out.append("((void*)");
+            emit_value(inst->index_data.container, out);
+            out.append(", ");
+            if (is_map) {
+                if (key_is_struct) emit_value(inst->index_data.index, out);
+                else out.append("&_ktmp");
+            } else {
+                emit_value(inst->index_data.index, out);
+            }
+            out.append(");");
+            if (needs_key_temp) out.append(" }");
+            out.append("\n");
+            return;
+        }
+
         case IROp::IndexSet: {
             // container[index] = value — runtime takes `const void*` pointers
             // to key/value bytes. Struct args pass `vN` directly; primitive
@@ -1661,6 +1705,20 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
 
         case IROp::RefDec: {
             out.append("    roxy_ref_dec(");
+            emit_value(inst->unary, out);
+            out.append(");\n");
+            return;
+        }
+
+        case IROp::ContainerPin: {
+            out.append("    roxy_container_pin((void*)");
+            emit_value(inst->unary, out);
+            out.append(");\n");
+            return;
+        }
+
+        case IROp::ContainerUnpin: {
+            out.append("    roxy_container_unpin((void*)");
             emit_value(inst->unary, out);
             out.append(");\n");
             return;
@@ -1822,14 +1880,15 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         }
 
         case IROp::AssertHeap: {
-            // Trap if the captured ref/weak `self` is not heap-owned (the receiver
-            // was stack-allocated). Mirrors the VM's ASSERT_HEAP owns() check.
+            // Trap if a retained ref/weak to `self` is not heap-owned (the receiver
+            // was stack-allocated) — closure capture or a bind/return/store
+            // promotion. Mirrors the VM's ASSERT_HEAP owns() check.
             out.append("    if (!roxy_heap_owns(");
             emit_value(inst->unary, out);
-            out.append(")) { fprintf(stderr, \"closure capture: cannot capture 'self' "
-                       "as a reference when the receiver is stack-allocated; use "
-                       "'fun[copy self](...)' to snapshot the value, or call this method "
-                       "on a 'uniq' receiver.\\n\"); abort(); }\n");
+            out.append(")) { fprintf(stderr, \"cannot retain a reference to 'self': "
+                       "the receiver is stack-allocated. Snapshot it (a copy / "
+                       "'[copy self]'), or call this method on a 'uniq' receiver.\\n\"); "
+                       "abort(); }\n");
             return;
         }
 
@@ -2218,7 +2277,9 @@ void CEmitter::emit_cleanup_records(const IRFunction* func, i32 body_group, Stri
         String ve;
         emit_value(ci.value, ve);
         out.append("    if ("); out.append(ve); out.append(") {\n");
-        if (ci.kind == IRCleanupKind::RefDec) {
+        if (ci.kind == IRCleanupKind::Unpin) {
+            out.append("    roxy_container_unpin((void*)"); out.append(ve); out.append(");\n");
+        } else if (ci.kind == IRCleanupKind::RefDec) {
             out.append("    roxy_ref_dec("); out.append(ve); out.append(");\n");
         } else {
             bool is_heap = ci.type && (ci.type->kind == TypeKind::Uniq || ci.type->is_list()
@@ -2464,6 +2525,16 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
 
             if (inst->op == IROp::GetFieldAddr) {
                 // GetFieldAddr returns a pointer to the field
+                out.append("    ");
+                emit_type(inst->type, out);
+                out.append("* ");
+                emit_value(inst->result, out);
+                out.append(";\n");
+                continue;
+            }
+
+            if (inst->op == IROp::IndexAddr) {
+                // IndexAddr returns a pointer to the element (out/inout lvalue).
                 out.append("    ");
                 emit_type(inst->type, out);
                 out.append("* ");
