@@ -90,7 +90,10 @@ private:
 
     // Block argument helpers
     void emit_block_arg_declarations(const IRFunction* func, String& out);
-    void emit_block_arg_assignments(const JumpTarget& target, String& out);
+    void emit_block_arg_assignments(const IRFunction* func, const JumpTarget& target, String& out);
+    // Emit one block-arg RHS value, casting a null to the destination param's
+    // pointer type (`block_arg = (T*)nullptr`) since `void*` → `T*` is ill-formed.
+    void emit_block_arg_value(const IRFunction* func, const JumpTarget& target, u32 i, String& out);
 
     // Value helpers
     void emit_value(ValueId id, String& out);

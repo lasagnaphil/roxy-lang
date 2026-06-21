@@ -689,13 +689,40 @@ void CEmitter::emit_block_arg_declarations(const IRFunction* func, String& out) 
     }
 }
 
-void CEmitter::emit_block_arg_assignments(const JumpTarget& target, String& out) {
+void CEmitter::emit_block_arg_value(const IRFunction* func, const JumpTarget& target,
+                                    u32 i, String& out) {
+    // A null (`void*`) passed as a block arg whose destination param is a
+    // concrete pointer type — e.g. a moved-out `uniq` local re-passed as a loop
+    // block arg arrives as a `const_null` — needs an explicit cast; `T* =
+    // (void*)` is ill-formed in C++. (`void*`-mapped params — Function / String
+    // / List / Map — take a null fine, so no cast is needed there.)
+    Type* val_type = get_value_type(target.args[i].value);
+    if (val_type && val_type->kind == TypeKind::Nil) {
+        const IRBlock* dest = nullptr;
+        for (u32 b = 0; b < func->blocks.size(); b++) {
+            if (func->blocks[b]->id.id == target.block.id) { dest = func->blocks[b]; break; }
+        }
+        if (dest && i < dest->params.size()) {
+            Type* pt = dest->params[i].type;
+            if (pt && (pt->kind == TypeKind::Uniq || pt->kind == TypeKind::Ref ||
+                       pt->kind == TypeKind::Coroutine)) {
+                out.push_back('(');
+                emit_type(pt, out);
+                out.push_back(')');
+            }
+        }
+    }
+    emit_value(target.args[i].value, out);
+}
+
+void CEmitter::emit_block_arg_assignments(const IRFunction* func, const JumpTarget& target,
+                                          String& out) {
     for (u32 i = 0; i < target.args.size(); i++) {
         out.append("    ");
         char buf[64];
         format_to(buf, sizeof(buf), "block{}_arg{} = ", target.block.id, i);
         out.append(buf);
-        emit_value(target.args[i].value, out);
+        emit_block_arg_value(func, target, i, out);
         out.append(";\n");
     }
 }
@@ -1799,7 +1826,7 @@ void CEmitter::emit_terminator(const IRBlock* block, const IRFunction* func, Str
 
     switch (term.kind) {
         case TerminatorKind::Goto: {
-            emit_block_arg_assignments(term.goto_target, out);
+            emit_block_arg_assignments(func, term.goto_target, out);
             char buf[32];
             format_to(buf, sizeof(buf), "    goto block{};\n", term.goto_target.block.id);
             out.append(buf);
@@ -1814,7 +1841,7 @@ void CEmitter::emit_terminator(const IRBlock* block, const IRFunction* func, Str
                 char buf[64];
                 format_to(buf, sizeof(buf), "        block{}_arg{} = ", term.branch.then_target.block.id, i);
                 out.append(buf);
-                emit_value(term.branch.then_target.args[i].value, out);
+                emit_block_arg_value(func, term.branch.then_target, i, out);
                 out.append(";\n");
             }
             {
@@ -1828,7 +1855,7 @@ void CEmitter::emit_terminator(const IRBlock* block, const IRFunction* func, Str
                 char buf[64];
                 format_to(buf, sizeof(buf), "        block{}_arg{} = ", term.branch.else_target.block.id, i);
                 out.append(buf);
-                emit_value(term.branch.else_target.args[i].value, out);
+                emit_block_arg_value(func, term.branch.else_target, i, out);
                 out.append(";\n");
             }
             {

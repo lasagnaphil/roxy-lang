@@ -419,7 +419,6 @@ pending fixes:
 
 | Area | Symptom |
 |------|---------|
-| **uniq move-state across control flow** | reassign-before-move in a loop body. *(Terminating-branch struct-literal moves, user-defined-index-result moves, and move-out of a pointer field are now fixed — see below.)* |
 | **ref-local count balancing** | `ref`-local `RefInc`/`RefDec` balancing across control flow (loop continue/break, nested scopes). *(`inout uniq` reassignment to a value or nil, and `ref` to a `uniq` field, are now fixed.)* |
 | **weak fields** | reading/writing a `weak` struct field |
 | **copyable container value params** | passing a `List`/`Map` by value should deep-copy it (the bytecode lowering inserts the copy callee-side; the C backend, which branches off the IR before lowering, does not) |
@@ -465,6 +464,13 @@ tests where the C binary aborts rather than trapping cleanly.
   (then/else/when-case/else-if-chain), move-out of a user-defined index result,
   struct-valued `Map` persistence across calls, recursive tagged-union-tree
   destruction, and deeply-nested value-field destructors.
+- **Null block-argument cast.** A `const_null` passed as a block argument whose
+  destination param is a concrete pointer type (`uniq`/`ref`/`Coro<T>`) — e.g. a
+  `uniq` local reassigned-then-moved at the top of a loop body is nulled and
+  re-passed as the loop block arg — emitted `block_arg = v` with no cast
+  (`T* = void*`, ill-formed in C++). `emit_block_arg_value` now casts the null to
+  the destination param's type, looked up from the target block; used by the
+  goto and both branch edges. (`void*`-mapped params take a null fine.)
 - **`inout uniq`/`inout`-reference param indirection.** An `out`/`inout` param
   points at the caller's storage, so it needs one level of indirection on top of
   `emit_type` — `inout uniq T` is `T**`, not `T*`. The prototype emitter skipped

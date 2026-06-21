@@ -2935,7 +2935,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(module == nullptr);  // Should fail to compile
     }
 
-    TEST_CASE("reassign-before-move in loop body is legal") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
+    TEST_CASE_TEMPLATE("reassign-before-move in loop body is legal", Backend, RX_E2E_BACKENDS) {
         // p is Live before the loop, reassigned at the TOP of every iteration,
         // and only then moved. Each iteration refreshes p before any use, so
         // there is no cross-iteration use-after-move. The cross-iteration check
@@ -2966,7 +2966,7 @@ TEST_SUITE("E2E RAII") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 3);
     }
