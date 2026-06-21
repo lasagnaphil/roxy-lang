@@ -691,26 +691,43 @@ void CEmitter::emit_block_arg_declarations(const IRFunction* func, String& out) 
 
 void CEmitter::emit_block_arg_value(const IRFunction* func, const JumpTarget& target,
                                     u32 i, String& out) {
-    // A null (`void*`) passed as a block arg whose destination param is a
-    // concrete pointer type — e.g. a moved-out `uniq` local re-passed as a loop
-    // block arg arrives as a `const_null` — needs an explicit cast; `T* =
-    // (void*)` is ill-formed in C++. (`void*`-mapped params — Function / String
-    // / List / Map — take a null fine, so no cast is needed there.)
+    // Look up the destination block param's type so the arg can be normalized to
+    // the representation the param variable was declared with.
+    Type* param_type = nullptr;
+    for (u32 b = 0; b < func->blocks.size(); b++) {
+        if (func->blocks[b]->id.id == target.block.id) {
+            const IRBlock* dest = func->blocks[b];
+            if (i < dest->params.size()) param_type = dest->params[i].type;
+            break;
+        }
+    }
     Type* val_type = get_value_type(target.args[i].value);
+
+    // A null (`void*`) into a concrete pointer param needs an explicit cast —
+    // e.g. a moved-out `uniq` local re-passed as a loop block arg arrives as a
+    // `const_null`, and `T* = (void*)` is ill-formed in C++. (`void*`-mapped
+    // params — Function / String / List / Map — take a null fine.)
     if (val_type && val_type->kind == TypeKind::Nil) {
-        const IRBlock* dest = nullptr;
-        for (u32 b = 0; b < func->blocks.size(); b++) {
-            if (func->blocks[b]->id.id == target.block.id) { dest = func->blocks[b]; break; }
+        if (param_type && (param_type->kind == TypeKind::Uniq ||
+                           param_type->kind == TypeKind::Ref ||
+                           param_type->kind == TypeKind::Coroutine)) {
+            out.push_back('(');
+            emit_type(param_type, out);
+            out.push_back(')');
         }
-        if (dest && i < dest->params.size()) {
-            Type* pt = dest->params[i].type;
-            if (pt && (pt->kind == TypeKind::Uniq || pt->kind == TypeKind::Ref ||
-                       pt->kind == TypeKind::Coroutine)) {
-                out.push_back('(');
-                emit_type(pt, out);
-                out.push_back(')');
-            }
-        }
+        emit_value(target.args[i].value, out);
+        return;
+    }
+
+    // A struct-VALUE block param (declared `T`, not `T*`) fed a pointer-shaped
+    // arg: at a merge block, one predecessor may pass a struct *local* (a
+    // pointer — StackAlloc / GetFieldAddr) while another passes a by-value call
+    // result (e.g. `try { r = inner(); } catch { /* keep r */ }` merges the
+    // call result and the prior `r`). Dereference the pointer so the struct is
+    // copied into the value param, matching the VM's slot-copy block-arg model.
+    if (param_type && param_type->is_struct() &&
+        is_pointer_value(target.args[i].value)) {
+        out.push_back('*');
     }
     emit_value(target.args[i].value, out);
 }

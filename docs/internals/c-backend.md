@@ -425,7 +425,6 @@ pending fixes:
 | **copyable container value params** | passing a `List`/`Map` by value should deep-copy it (the bytecode lowering inserts the copy callee-side; the C backend, which branches off the IR before lowering, does not) |
 | **coroutine uniq-field cleanup** | `Coro<T>` promoting `uniq`/`List<uniq>`/`Map<_,uniq>` state |
 | **closures** | `self` capture and function-to-`ref fun` borrow conversion |
-| **try-local rebinding (struct)** | a pre-declared *struct* local rebound by a throwing/non-throwing call inside a `try` (the primitive variant already passes) |
 
 Not bugs, also VM-only: tests asserting a result > 255 (8-bit exit code — many
 are recoverable by asserting printed stdout instead) and runtime-trap/overflow
@@ -483,6 +482,15 @@ tests where the C binary aborts rather than trapping cleanly.
   (`T* = void*`, ill-formed in C++). `emit_block_arg_value` now casts the null to
   the destination param's type, looked up from the target block; used by the
   goto and both branch edges. (`void*`-mapped params take a null fine.)
+- **Struct-value block argument deref.** A struct-VALUE block param (declared
+  `T`, not `T*`) at a merge can be fed different representations by different
+  predecessors — one passes a struct *local* (a pointer), another a by-value
+  call result. The classic case is `try { r = inner(); } catch { /* keep r */ }`,
+  which merges `inner()`'s by-value return with the prior `r` (a StackAlloc
+  pointer); `block_arg = &r_storage` was `T = T*`. `emit_block_arg_value` now
+  dereferences a pointer-shaped arg into a struct-value param, copying the struct
+  in (the VM's slot-copy block-arg model). Fixes try-local rebinding for structs
+  (the primitive variant already passed).
 - **`inout uniq`/`inout`-reference param indirection.** An `out`/`inout` param
   points at the caller's storage, so it needs one level of indirection on top of
   `emit_type` — `inout uniq T` is `T**`, not `T*`. The prototype emitter skipped
