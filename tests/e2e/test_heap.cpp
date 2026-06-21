@@ -552,7 +552,7 @@ TEST_SUITE("E2E Heap") {
     // Weak Reference Tests
     // ============================================================================
 
-    TEST_CASE("Weak field assignment and read") {  // VM-only: C backend: weak-field read/write gap
+    TEST_CASE_TEMPLATE("Weak field assignment and read", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Node {
             value: i32;
@@ -576,7 +576,7 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "42\n");
     }
@@ -624,7 +624,7 @@ TEST_SUITE("E2E Heap") {
         CHECK(result.stdout_output == "42\n");
     }
 
-    TEST_CASE("Weak field in struct with other fields") {  // VM-only: C backend: weak-field read/write gap
+    TEST_CASE_TEMPLATE("Weak field in struct with other fields", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Node {
             value: i32;
@@ -649,7 +649,7 @@ TEST_SUITE("E2E Heap") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n99\n");
     }

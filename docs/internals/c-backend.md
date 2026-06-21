@@ -422,11 +422,10 @@ pending fixes:
 | Area | Symptom |
 |------|---------|
 | **ref-local count balancing** | `ref`-local `RefInc`/`RefDec` balancing across control flow (loop continue/break, nested scopes). *(`inout uniq` reassignment to a value or nil, and `ref` to a `uniq` field, are now fixed.)* |
-| **weak fields** | reading/writing a `weak` struct field |
 | **copyable container value params** | passing a `List`/`Map` by value should deep-copy it (the bytecode lowering inserts the copy callee-side; the C backend, which branches off the IR before lowering, does not) |
 | **coroutine uniq-field cleanup** | `Coro<T>` promoting `uniq`/`List<uniq>`/`Map<_,uniq>` state |
 | **closures** | `self` capture and function-to-`ref fun` borrow conversion |
-| **try-local rebinding** | a pre-declared struct local rebound by a (throwing or non-throwing) call inside a `try` |
+| **try-local rebinding (struct)** | a pre-declared *struct* local rebound by a throwing/non-throwing call inside a `try` (the primitive variant already passes) |
 | **rvalue `Printable.to_string`** | a `to_string()` returning an f-string from a struct rvalue emits a `void*` return type |
 
 Not bugs, also VM-only: tests asserting a result > 255 (8-bit exit code — many
@@ -466,6 +465,12 @@ tests where the C binary aborts rather than trapping cleanly.
   (then/else/when-case/else-if-chain), move-out of a user-defined index result,
   struct-valued `Map` persistence across calls, recursive tagged-union-tree
   destruction, and deeply-nested value-field destructors.
+- **Null-init of a `weak` field.** A `weak T` field is the `roxy_weak` struct
+  `{ptr, generation}`, but the synthesized default constructor (and any `field =
+  nil`) emitted `field = nullptr` (`void*` → `roxy_weak`, ill-formed in C++).
+  `SetField` now `memset`s a `weak` field assigned nil — its zeroed form is the
+  null/dead weak — joining the existing value-struct nil-memset path. (`weak`
+  *reads*, `weak_create`, and `weak`-typed locals/params already worked.)
 - **Null block-argument cast.** A `const_null` passed as a block argument whose
   destination param is a concrete pointer type (`uniq`/`ref`/`Coro<T>`) — e.g. a
   `uniq` local reassigned-then-moved at the top of a loop body is nulled and

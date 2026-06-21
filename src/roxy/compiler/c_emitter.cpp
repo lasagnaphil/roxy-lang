@@ -1287,11 +1287,13 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             Type* field_type = inst->type;
             Type* val_type = get_value_type(inst->store_value);
 
-            // A value-struct field assigned a null/nil — the default-init of a
-            // nested value-struct field (the VM zeroes the slots). C++ can't
-            // assign void* to a struct, so memset the field instead.
-            if (field_type && field_type->is_struct() && val_type &&
-                val_type->kind == TypeKind::Nil) {
+            // A value-struct *or* weak field assigned a null/nil — the
+            // default-init of a nested value-struct field or a `weak` field (the
+            // VM zeroes the slots). C++ can't assign `void*` to a struct, and a
+            // `weak` is the `roxy_weak` struct `{ptr, generation}` whose zeroed
+            // form is the null/dead weak, so memset the field instead of `= nil`.
+            if (field_type && val_type && val_type->kind == TypeKind::Nil &&
+                (field_type->is_struct() || field_type->kind == TypeKind::Weak)) {
                 out.append("    memset(&");
                 ap(out, lhs);
                 out.append(", 0, sizeof(");
