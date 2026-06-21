@@ -1650,8 +1650,9 @@ TEST_SUITE("E2E RAII") {
         CHECK(module == nullptr);  // Should fail to compile — use after move
     }
 
-    TEST_CASE_TEMPLATE("List<i32> remains copyable", Backend, RX_E2E_BACKENDS) {
-        // Regular lists with copyable element types are still copyable
+    TEST_CASE_TEMPLATE("List<i32> is move-only; .copy() to keep using it", Backend, RX_E2E_BACKENDS) {
+        // Containers are move-only (lifetimes.md §8). Passing by value moves, so
+        // to keep using the list the caller hands over an explicit `.copy()`.
         const char* source = R"CODE(
         fun use_list(items: List<i32>): i32 {
             return items.len();
@@ -1661,9 +1662,8 @@ TEST_SUITE("E2E RAII") {
             var items: List<i32> = List<i32>();
             items.push(1);
             items.push(2);
-            var len1: i32 = use_list(items);
-            // items is NOT moved — still usable
-            var len2: i32 = items.len();
+            var len1: i32 = use_list(items.copy());  // pass a copy; `items` survives
+            var len2: i32 = items.len();             // still usable
             return len1 + len2;
         }
     )CODE";

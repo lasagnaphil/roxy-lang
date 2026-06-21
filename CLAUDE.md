@@ -354,10 +354,10 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **VM** - Shared register file with windowing, call frame stack, module loading.
 **Details:** `docs/internals/vm.md` | **Files:** `vm/vm.hpp`, `vm/interpreter.hpp`
 
-**Lists** - Dynamic lists (`List<T>`) with bounds checking, push/pop/len/cap methods. Noncopyable when `T` is noncopyable (move semantics, element cleanup at scope exit).
+**Lists** - Dynamic lists (`List<T>`) with bounds checking, push/pop/len/cap methods. Always noncopyable (move-only — a container owns a heap buffer, like `uniq`); explicit `.copy()` for an independent duplicate. Element cleanup at scope exit; `List<ref T>` counts its borrowed elements (push RefInc, destroy/overwrite RefDec).
 **Details:** `docs/internals/list.md` | **Files:** `vm/list.hpp`
 
-**Maps** - Hash tables (`Map<K, V>`) with Robin Hood open addressing, backward-shift deletion, insert/get/remove/contains/clear/keys/values methods, index operator support. Builtin `Hash` trait for primitives. Noncopyable when `K` or `V` is noncopyable.
+**Maps** - Hash tables (`Map<K, V>`) with Robin Hood open addressing, backward-shift deletion, insert/get/remove/contains/clear/keys/values methods, index operator support. Builtin `Hash` trait for primitives. Always noncopyable (move-only, like `List`); explicit `.copy()` for an independent duplicate.
 **Details:** `docs/internals/maps.md` | **Files:** `vm/map.hpp`, `vm/map.cpp`
 
 **Strings** - Heap-allocated string objects. Operations via native functions (`str_concat`, `str_eq`, `str_len`). F-string interpolation (`f"hello {expr}"`) with automatic `to_string` conversion via builtin `Printable` trait.

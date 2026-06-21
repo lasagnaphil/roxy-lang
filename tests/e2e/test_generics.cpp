@@ -578,7 +578,8 @@ TEST_SUITE("E2E Generics") {
             a.push(10);
             var b: List<f32> = List<f32>();
             b.push(1.5f);
-            return get_len<List<i32>>(a) + get_len<List<f32>>(b) + a.len();
+            var n: i32 = a.len();   // containers are move-only — read len before passing a by value
+            return get_len<List<i32>>(a) + get_len<List<f32>>(b) + n;
         }
     )";
 

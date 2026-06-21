@@ -337,7 +337,16 @@ static inline void ap(String& out, const String& s) {
 }
 
 void CEmitter::emit_delete_slot(Type* elem, StringView slot_expr, String& out) {
-    if (!elem || !elem->noncopyable()) return;  // copyable element: nothing to clean
+    if (!elem) return;
+    if (elem->kind == TypeKind::Ref) {
+        // `ref` element: the slot holds the borrowed pointer — release the count
+        // (the owner frees the pointee, not the container). lifetimes.md §8.
+        out.append("    roxy_ref_dec(*(void**)(");
+        out.append(slot_expr);
+        out.append("));\n");
+        return;
+    }
+    if (!elem->noncopyable()) return;  // copyable element: nothing to clean
     bool ptr_shaped = elem->kind == TypeKind::Uniq || elem->is_list()
         || elem->is_map() || elem->is_coroutine() || elem->is_function();
     if (ptr_shaped) {
@@ -380,7 +389,7 @@ void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj,
         out.append("    { roxy_list_header* "); ap(out, h);
         out.append(" = (roxy_list_header*)("); out.append(ptr_expr); out.append(");\n");
         out.append("    if ("); ap(out, h); out.append(") {\n");
-        if (elem && elem->noncopyable()) {
+        if (elem && (elem->noncopyable() || elem->kind == TypeKind::Ref)) {
             String iv = format("_di{}", n);
             String sv = format("_ds{}", n);
             out.append("    for (uint32_t "); ap(out, iv); out.append(" = 0; ");
@@ -3214,6 +3223,7 @@ static const char* lookup_static_native_mapping(StringView name) {
         {"pop", "roxy_list_pop"},
         {"index", "roxy_list_get"},
         {"index_mut", "roxy_list_set"},
+        {"copy", "roxy_list_copy"},
     };
     static const tsl::robin_map<StringView, const char*> map_methods = {
         {"new", "roxy_map_init"},
@@ -3228,6 +3238,7 @@ static const char* lookup_static_native_mapping(StringView name) {
         {"values", "roxy_map_values"},
         {"index", "roxy_map_index"},
         {"index_mut", "roxy_map_index_mut"},
+        {"copy", "roxy_map_copy"},
     };
 
     // Exact match

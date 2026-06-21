@@ -391,6 +391,13 @@ static void delete_value(RoxyVM* vm, void* ptr,
         }
         break;
     }
+
+    case BCDeleteDesc::RefDec:
+        // Defensive: container `ref` elements are released via delete_slot_entry
+        // (which reads the borrowed pointer from the slot); reaching here means
+        // `ptr` already *is* the borrowed pointer, so just release its count.
+        ref_dec(vm, ptr);
+        break;
     }
 
     // If cleaning an owned resource (element/field) refused its free, don't
@@ -404,7 +411,12 @@ static void delete_value(RoxyVM* vm, void* ptr,
 
 static void delete_slot_entry(RoxyVM* vm, const u32* base,
                               const BCDeleteDesc& desc, const BCFunction* func) {
-    if (desc.free_obj) {
+    if (desc.cleanup == BCDeleteDesc::RefDec) {
+        // `ref` element/value: the slot holds the borrowed pointer — release the
+        // count (the owner frees the pointee, not us). lifetimes.md §8.
+        u64 ptr = static_cast<u64>(base[0]) | (static_cast<u64>(base[1]) << 32);
+        ref_dec(vm, reinterpret_cast<void*>(ptr));
+    } else if (desc.free_obj) {
         // Pointer-shaped value (uniq/list/map/coro): the slot holds a pointer.
         u64 ptr = static_cast<u64>(base[0]) | (static_cast<u64>(base[1]) << 32);
         delete_value(vm, reinterpret_cast<void*>(ptr), desc, func);

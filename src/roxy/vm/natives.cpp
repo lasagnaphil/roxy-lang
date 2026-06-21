@@ -1013,6 +1013,9 @@ void register_builtin_natives(NativeRegistry& registry) {
     // T for copyable); pop transfers ownership and stays `: T`.
     registry.bind_method(native_list_index,     "fun List<T>.index(idx: i32): borrowed T");
     registry.bind_method(native_list_index_mut, "fun List<T>.index_mut(idx: i32, val: T)");
+    // Explicit deep copy — containers are move-only, so `.copy()` is how you ask
+    // for an independent duplicate (lifetimes.md §8).
+    registry.bind_method(native_list_copy,      "fun List<T>.copy(): List<T>");
 
     // Free functions
     registry.bind_native(native_print, "fun print(s: string)");
@@ -1072,6 +1075,7 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_method(native_map_values,    "fun Map<K, V>.values(): List<V>");
     registry.bind_method(native_map_index,     "fun Map<K, V>.index(key: K): borrowed V");
     registry.bind_method(native_map_index_mut, "fun Map<K, V>.index_mut(key: K, val: V)");
+    registry.bind_method(native_map_copy,      "fun Map<K, V>.copy(): Map<K, V>");
 
     // Internal map bucket iteration functions (used by emit_map_cleanup for noncopyable elements)
     registry.bind_native("__map_iter_capacity",       native_map_iter_capacity,       "fun __map_iter_capacity(map: i64): i32");

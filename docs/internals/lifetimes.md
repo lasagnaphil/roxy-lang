@@ -13,9 +13,11 @@
 > and the **non-capture `self` promotions are wired** (§6): binding (`var r: ref T
 > = self`), returning (`return self`), storing (`r = self`), and passing `self` to
 > a `ref` parameter (`f(self)`) all heap-gate the promotion with an `AssertHeap`
-> that traps a stack receiver before the borrow inc. Still **deferred**:
-> `List`/`Map` ref-element and coroutine ref-param counting (Phase 3); refcount
-> elision (§11, always a later phase); and full AOT/C-backend parity beyond the
+> that traps a stack receiver before the borrow inc; and **`List<ref T>`
+> ref-element counting** is in (push `RefInc`s, destroy/overwrite `RefDec`,
+> pop hands off — a List of `ref` is move-only). Still **deferred**: `Map<_, ref
+> T>` ref-counting and coroutine ref-param counting (Phase 3); refcount elision
+> (§11, always a later phase); and full AOT/C-backend parity beyond the
 > `roxy_free` trap. See the per-item status in [§13](#13-implementation-status).
 >
 > This supersedes [memory.md](memory.md) where the two differ; memory.md states
@@ -284,12 +286,24 @@ env's runtime `type_id` on delete (`RoxyVM::closure_env_dtors`,
   borrow, incremented into the state struct at init and decremented when the
   coroutine is destroyed. Deleting the borrowed owner while a suspended coroutine
   still holds the borrow traps. *(**Not yet implemented** — §13.)*
-- **Containers:** `List<ref T>` / `Map<_, ref T>` hold counted borrows — push
-  increments, and pop / remove / overwrite / container-destroy decrement (the
-  element-cleanup machinery learns that `ref` elements are count-bearing).
-  Deleting an owner while a container still borrows it traps; clear the container
-  first. *(**Not yet implemented** — §13. Note the related, separate gap that
-  `Map.remove` / `Map.clear` don't yet destroy noncopyable values at all.)*
+- **Containers are move-only.** A `List<T>` / `Map<K,V>` owns a heap buffer, so —
+  like `uniq` — it is **noncopyable regardless of element type**: passing it by
+  value moves it, and the source can't be used afterward. An explicit `.copy()`
+  method deep-copies when an independent duplicate is genuinely wanted. This makes
+  "owns heap → move-only" uniform (previously containers were the odd copyable-
+  yet-leaking case: copyable containers were deep-copied on value-pass but never
+  destroyed, so their buffers leaked). The callee-side value-param deep-copy
+  (`lowering.cpp`) is skipped for noncopyable containers, so a value param is a
+  true move, not a move-then-copy.
+- **`List<ref T>` holds counted borrows:** push `RefInc`s, and
+  pop / overwrite / container-destroy `RefDec` (the element-cleanup machinery
+  learns `ref` elements are count-bearing via a `BCDeleteDesc::RefDec` element
+  descriptor — `delete_slot_entry` reads the borrowed pointer and `ref_dec`s it;
+  the C-emitter's `emit_delete_slot` emits `roxy_ref_dec`). Deleting an owner
+  while a `List<ref T>` still borrows it traps. *(`Map<_, ref T>` ref-counting is
+  a follow-on — it needs insert-`RefInc` with replace handling and `Map.remove` /
+  `Map.clear` to run per-value cleanup, the related gap that they don't yet
+  destroy noncopyable values at all.)*
 - **`borrowed T`** ([memory.md](memory.md)): a subscript on a heap-pointee
   element (`List<uniq T>`) yields a counted `ref` to the pointee (realloc moves
   the buffer, not the pointee, so the borrow stays valid). A subscript on an
@@ -490,10 +504,30 @@ direction:
   which is why a global `uniq` appeared to "skip its constructor." See
   [globals.md](globals.md).
 
-**Phase 3 — containers & coroutines. Not started.**
-- Count `ref` elements in `List`/`Map` cleanup; count `ref` parameters into
-  coroutine state structs. (Separate, related gap: `Map.remove`/`Map.clear` don't
-  yet destroy noncopyable values.)
+**Phase 3 — containers & coroutines. Containers move-only + `List` ref-counting done; `Map` ref-counting + coroutines remain.**
+- *Done:* **containers are move-only.** `Type::noncopyable` returns true for every
+  `List`/`Map` (a container owns a heap buffer, so it's move-only like `uniq`),
+  with an explicit `.copy()` method (`native_list_copy`/`native_map_copy` bound as
+  `List<T>.copy()` / `Map<K,V>.copy()`; C-emitter maps `copy` → `roxy_*_copy`).
+  This also fixes the previous copyable-container buffer leak (copyable containers
+  were never destroyed). Fix found along the way: `gen_constructor_call` was
+  missing `nullify_moved_field_source`, so `Ctor(o.field)` moved a container field
+  without nulling it → double-free (surfaced by the Lox interpreter, now fixed).
+  Migrated the copy-reliant tests (lists/generics/raii/interop) to the move idiom
+  (`.copy()`, read-before-pass, or move-in-return-out for natives).
+- *Done:* **`List<ref T>` ref-element counting.** `push` `RefInc`s the borrow
+  (`gen_call_member`), `pop` hands the count off to the caller (the
+  ref-return-adopt convention — no change needed), overwrite (`refs[i] = x`)
+  releases-old / acquires-new (`gen_assign_index`), and container-destroy
+  `RefDec`s each element via a new `BCDeleteDesc::RefDec` element descriptor
+  (`build_delete_desc(ref)` → `delete_slot_entry` reads the borrowed pointer and
+  `ref_dec`s it; the C-emitter's `emit_delete_slot` emits `roxy_ref_dec`).
+  Deleting an owner still borrowed by the list traps. Both backends.
+- *Remaining:* **`Map<_, ref T>` ref-counting** — needs insert-`RefInc` (with
+  replace handling), and `Map.remove`/`Map.clear` to run per-value cleanup (the
+  related gap that they don't destroy noncopyable values at all — likely a
+  value-destructor callback on the map header). Map stays copyable until then.
+- *Remaining:* count `ref` parameters into coroutine state structs.
 
 **Phase 4 — elision (optimization, §11). Not started** (always a later phase).
 
@@ -534,14 +568,16 @@ Implemented (Phase 1 + the done parts of Phase 2):
 | `src/roxy/compiler/semantic.{hpp,cpp}` | reject move-out of noncopyable `out`/`inout` (also closure move-capture); index-assign consume keyed off the container element type; env destructor for `ref` captures |
 | `include/roxy/compiler/symbol_table.hpp`, `src/roxy/compiler/symbol_table.cpp` | `is_out_inout` flag on parameter symbols |
 | `include/roxy/vm/vm.hpp`, `src/roxy/vm/vm.cpp` | `RoxyVM::closure_env_dtors` (env type_id → destructor index) |
+| `include/roxy/compiler/types.hpp`, `vm/bytecode.hpp`, `lowering.cpp`, `vm/interpreter.cpp`, `c_emitter.cpp`, `ir_builder.cpp` (Phase 3 — List ref-counting) | `Type::noncopyable` makes `List<ref T>` noncopyable; `BCDeleteDesc::RefDec` + `build_delete_desc(ref)`; `delete_slot_entry` / `delete_value` (VM) and `emit_delete_slot` (C) `ref_dec` ref elements on destroy; `gen_call_member` `RefInc`s a `ref` element on push; `gen_assign_index` releases-old / acquires-new on overwrite of a `ref` element |
 | `tests/e2e/test_lifetimes.cpp` (new), `tests/e2e/test_closures.cpp`, `tests/unit/test_slab_allocator.cpp` | findings 1–3; delete-while-borrowed/return-escape traps; balance across control flow; `out`/`inout` escape rejection; `[ref self]` pin/release; closure capture cleanup; `resolve_header`; **`uniq`-receiver call-site borrow balance + survives-a-throwing-method**; **field-rooted & heap-temp receiver balance + mid-call-free traps + throwing-heap-temp destroyed-once**; **`out`/`inout` heap-root balance + mid-call-free trap**; **self-promotion bind/return/store/pass: heap-receiver balance (incl. C backend) + stack-receiver traps (copyable & noncopyable; free-fn & method)** |
 
 Index-rooted `out`/`inout` lvalues (`f(inout list[i])`) — **implemented for
 copyable *and* owning (`uniq`) elements, [§15](#15-container-element-lvalues-inoutout-listi)**;
-only C-backend trap *reporting* remains. Other deferred: `List`/`Map` ref-element
-counting and coroutine `ref`-param promotion; `roxy::ref<T>` → borrow handle in
-`roxy_rt`; elision in `lowering.cpp`; folding the self-promotion `AssertHeap` away
-where storage is known.
+only C-backend trap *reporting* remains. `List<ref T>` ref-element counting is
+**done** (§13); deferred: `Map<_, ref T>` ref-counting (insert/remove/clear +
+per-value cleanup) and coroutine `ref`-param promotion; `roxy::ref<T>` → borrow
+handle in `roxy_rt`; elision in `lowering.cpp`; folding the self-promotion
+`AssertHeap` away where storage is known.
 
 ## 15. Container element lvalues (`inout`/`out list[i]`)
 

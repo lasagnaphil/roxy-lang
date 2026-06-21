@@ -3963,6 +3963,15 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
 
     // List/Map builtin native method.
     if (struct_type && struct_type->is_container()) {
+        // Pushing a `ref` element into a List makes the container hold a counted
+        // borrow — increment it. The hold is released when the element leaves
+        // (container destroy / overwrite). lifetimes.md §8.
+        if (struct_type->is_list() && get_expr.name == StringView("push", 4)
+            && struct_type->list_info.element_type
+            && struct_type->list_info.element_type->kind == TypeKind::Ref
+            && args.size() >= 1) {
+            emit_ref_inc(args[0]);
+        }
         StringView native_name = call_expr.mangled_name;
         i32 native_idx = m_registry.get_index(native_name);
         Span<ValueId> method_args = prepend_self(obj, args);
@@ -4767,15 +4776,25 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
         Type* elem_type = is_list ? container_type->list_info.element_type
                                   : container_type->map_info.value_type;
         bool elem_noncopyable = elem_type && elem_type->noncopyable();
+        bool elem_is_ref = elem_type && elem_type->kind == TypeKind::Ref;
         ContainerKind kind = is_list ? ContainerKind::List : ContainerKind::Map;
 
         ValueId obj = gen_expr(index_expr.object);
         ValueId index_val = gen_expr(index_expr.index);
 
+        // Overwriting a `ref` List element rebalances the count: release the old
+        // borrow, acquire the new (the caller keeps its own copy of the new ref).
+        // The index is always in bounds, so the old element always exists.
+        // (lifetimes.md §8. Map<_, ref> overwrite is part of the deferred Map work.)
+        if (elem_is_ref && is_list) {
+            ValueId old = emit_index_get(obj, index_val, kind, elem_type);
+            emit_ref_dec(old);
+            emit_ref_inc(value);
+        }
         // Destroy the overwritten element before storing, so a noncopyable old
         // element isn't leaked (mirrors emit_single_field_destroy for fields).
         // See docs/internals/lifetimes.md §9.
-        if (elem_noncopyable && is_list) {
+        else if (elem_noncopyable && is_list) {
             // List: the index is always in bounds, so the old element always
             // exists — destroy it unconditionally.
             ValueId old = emit_index_get(obj, index_val, kind, elem_type);
@@ -5011,6 +5030,11 @@ ValueId IRBuilder::gen_constructor_call(Expr* expr) {
             arg_val = gen_expr(arg.expr);
             if (arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
                 consume_temp_noncopyable(arg_val);
+                // `Ctor(o.field)`: null the moved-out field in the root so the
+                // root's destructor no-ops it (mirrors lower_call_args). Without
+                // this, the constructor stores the field's value and BOTH the new
+                // object's field and the root's field free it → double-free.
+                nullify_moved_field_source(arg.expr);
             }
         }
         call_args.push_back(arg_val);

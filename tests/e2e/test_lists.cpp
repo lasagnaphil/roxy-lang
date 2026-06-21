@@ -255,7 +255,9 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.stdout_output == "60\n");
     }
 
-    TEST_CASE_TEMPLATE("List value parameter isolation", Backend, RX_E2E_BACKENDS) {
+    // Containers are move-only (lifetimes.md §8): passing a List by value MOVES
+    // it. To hand a function an independent list the caller keeps, pass `.copy()`.
+    TEST_CASE_TEMPLATE("List value parameter isolation via .copy()", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun modify(lst: List<i32>) {
             lst[0] = 999;
@@ -267,7 +269,7 @@ TEST_SUITE("E2E Lists") {
             lst.push(10);
             lst.push(20);
             lst.push(30);
-            modify(lst);
+            modify(lst.copy());   // modify an independent copy; lst is unchanged
             print(f"{lst[0]}");
             print(f"{lst.len()}");
             return 0;

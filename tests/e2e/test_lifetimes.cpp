@@ -1259,4 +1259,110 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(VMBackend::run(trap_src).success == false);
     }
 
+    // ── List/Map reference counting: `List<ref T>` holds counted borrows ──
+    // (lifetimes.md §8.) A container of `ref` is noncopyable (move-only), so it is
+    // destroyed; push acquires a count on the pointee, container-destroy releases
+    // it. Deleting the owner while the container still borrows it traps.
+
+    TEST_CASE_TEMPLATE("List<ref T> push acquires a count, destroy releases it", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct P { x: i32; }
+        fun new P(v: i32) { self.x = v; }
+        fun delete P() { print("del"); }
+
+        fun main(): i32 {
+            var owner: uniq P = uniq P(7);
+            var refs: List<ref P> = List<ref P>();
+            refs.push(owner);      // borrow counted (RefInc)
+            var v: i32 = owner.x;  // 7
+            return v;
+            // scope exit (LIFO): refs destroyed first -> RefDec owner; then owner
+            // is deletable (count 0) -> destroyed exactly once.
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 7);
+        CHECK(result.stdout_output == "del\n");  // owner destroyed exactly once
+    }
+
+    TEST_CASE("deleting an owner still borrowed by a List<ref T> traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* trap_src = R"(
+        struct P { x: i32; }
+        fun new P(v: i32) { self.x = v; }
+        fun delete P() {}
+
+        fun main(): i32 {
+            var refs: List<ref P> = List<ref P>();
+            var owner: uniq P = uniq P(7);
+            refs.push(owner);   // borrow counted
+            delete owner;       // still borrowed by refs -> traps
+            return 0;
+        }
+    )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, trap_src) != nullptr);
+        CHECK(VMBackend::run(trap_src).success == false);
+
+        // Control: no push -> the owner is unborrowed -> delete succeeds.
+        const char* control_src = R"(
+        struct P { x: i32; }
+        fun new P(v: i32) { self.x = v; }
+        fun delete P() {}
+
+        fun main(): i32 {
+            var refs: List<ref P> = List<ref P>();
+            var owner: uniq P = uniq P(7);
+            delete owner;
+            return 0;
+        }
+    )";
+        CHECK(VMBackend::run(control_src).success == true);
+    }
+
+    TEST_CASE_TEMPLATE("List<ref T> pop hands the borrow off to the caller", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct P { x: i32; }
+        fun new P(v: i32) { self.x = v; }
+        fun delete P() { print("del"); }
+
+        fun main(): i32 {
+            var owner: uniq P = uniq P(7);
+            var refs: List<ref P> = List<ref P>();
+            refs.push(owner);            // count 1 (container holds)
+            var r: ref P = refs.pop();   // hand-off: count stays 1, now r's
+            var v: i32 = r.x;            // 7
+            return v;
+            // scope exit (LIFO): r -> RefDec (count 0); refs (empty); owner deleted once
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 7);
+        CHECK(result.stdout_output == "del\n");
+    }
+
+    TEST_CASE_TEMPLATE("List<ref T> overwrite releases the old borrow, acquires the new", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct P { x: i32; }
+        fun new P(v: i32) { self.x = v; }
+        fun delete P() { print("del"); }
+
+        fun main(): i32 {
+            var a: uniq P = uniq P(1);
+            var b: uniq P = uniq P(2);
+            var refs: List<ref P> = List<ref P>();
+            refs.push(a);            // a count 1
+            refs[0] = b;             // RefDec a (0), RefInc b (1)
+            var v: i32 = refs[0].x;  // 2
+            return v;
+            // scope exit: refs -> RefDec b (0); then b, a deletable (count 0) -> two dels
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 2);
+        CHECK(result.stdout_output == "del\ndel\n");
+    }
+
 }

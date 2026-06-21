@@ -428,6 +428,8 @@ struct BCDeleteDesc {
         Closure,     // closure value: dispatch the env's destructor by the env's
                      // runtime type_id (the `fun()->R` type erases which env it
                      // is), then free the env. See RoxyVM::closure_env_dtors.
+        RefDec,      // `ref` element/value: release the borrow (roxy_ref_dec the
+                     // pointer in the slot), never free the pointee (lifetimes.md §8).
     };
 
     Cleanup cleanup;

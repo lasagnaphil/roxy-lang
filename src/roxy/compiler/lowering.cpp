@@ -3151,6 +3151,12 @@ u16 BytecodeBuilder::build_delete_desc(Type* type) {
         // synthesized destructor at runtime by the env's type_id, then frees it.
         desc.cleanup = BCDeleteDesc::Closure;
         desc.free_obj = true;
+    } else if (type->kind == TypeKind::Ref) {
+        // A `ref` element/value in a container is a counted borrow: on container
+        // teardown release the count (roxy_ref_dec the borrowed pointer), never
+        // free the pointee — the owner does that (lifetimes.md §8).
+        desc.cleanup = BCDeleteDesc::RefDec;
+        desc.free_obj = false;
     } else if (type->is_coroutine()) {
         // Coro<T>: heap-allocated state struct, always freed.
         Type* coro_struct = type->coro_info.generated_struct_type;

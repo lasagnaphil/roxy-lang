@@ -827,9 +827,12 @@ TEST_SUITE("E2E Interop") {
         return total;
     }
 
-    // C++ function that modifies a list
-    void list_push_42(RoxyList<i32> list) {
+    // C++ function that modifies a list. Containers are move-only (lifetimes.md
+    // §8), so it takes the list (moved in), mutates it, and returns it (moved
+    // back out) — the move idiom for a native that transforms a container.
+    RoxyList<i32> list_push_42(RoxyList<i32> list) {
         list.push(42);
+        return list;
     }
 
     // C++ function with list + primitive params
@@ -861,8 +864,8 @@ TEST_SUITE("E2E Interop") {
         fun test(): i32 {
             var lst: List<i32> = List<i32>();
             lst.push(1);
-            list_push_42(lst);
-            return lst[0] + lst[1];
+            var lst2: List<i32> = list_push_42(lst);   // move in, modified list moved back
+            return lst2[0] + lst2[1];
         }
     )";
 
