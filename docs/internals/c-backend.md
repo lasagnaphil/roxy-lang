@@ -420,7 +420,7 @@ pending fixes:
 | Area | Symptom |
 |------|---------|
 | **uniq move-state across control flow** | reassign-before-move in a loop body. *(Terminating-branch struct-literal moves, user-defined-index-result moves, and move-out of a pointer field are now fixed — see below.)* |
-| **inout uniq ownership** | `inout uniq` reassignment (to a value or to nil) and `ref`-local count balancing across control flow. *(`ref` to a `uniq` field / passing a `uniq` field as a `ref` param is now fixed.)* |
+| **ref-local count balancing** | `ref`-local `RefInc`/`RefDec` balancing across control flow (loop continue/break, nested scopes). *(`inout uniq` reassignment to a value or nil, and `ref` to a `uniq` field, are now fixed.)* |
 | **weak fields** | reading/writing a `weak` struct field |
 | **copyable container value params** | passing a `List`/`Map` by value should deep-copy it (the bytecode lowering inserts the copy callee-side; the C backend, which branches off the IR before lowering, does not) |
 | **coroutine uniq-field cleanup** | `Coro<T>` promoting `uniq`/`List<uniq>`/`Map<_,uniq>` state |
@@ -465,6 +465,17 @@ tests where the C binary aborts rather than trapping cleanly.
   (then/else/when-case/else-if-chain), move-out of a user-defined index result,
   struct-valued `Map` persistence across calls, recursive tagged-union-tree
   destruction, and deeply-nested value-field destructors.
+- **`inout uniq`/`inout`-reference param indirection.** An `out`/`inout` param
+  points at the caller's storage, so it needs one level of indirection on top of
+  `emit_type` — `inout uniq T` is `T**`, not `T*`. The prototype emitter skipped
+  the extra `*` for any reference-typed `param_is_ptr` param, which was correct
+  for the `self` receiver (a one-level `ref` pointer, also flagged `param_is_ptr`)
+  but wrong for `inout`/`out` of a `uniq`/`ref`/`weak`. The emitter now adds the
+  `*` for every `param_is_ptr` param except the `self` receiver (a reserved
+  keyword, so the name is a reliable discriminator); struct out/inout is still
+  handled one level up by the `is_struct` branch. Paired with this, `StorePtr`
+  now casts a stored null to the slot's pointer type (`inout uniq T = nil` →
+  `*v0 = (T*)nullptr`, since `void*` → `T*` is ill-formed in C++).
 - **Struct definition order for tagged-union variant fields.** A value-struct
   embedded in another struct's tagged-union variant (e.g. `Outer { when … case
   OA: inner: Inner }` where `Inner` is itself a tagged union) is laid out by

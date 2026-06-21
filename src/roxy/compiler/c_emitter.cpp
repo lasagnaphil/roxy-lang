@@ -1347,6 +1347,18 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             out.append("    *");
             emit_value(inst->store_ptr.ptr, out);
             out.append(" = ");
+            // Storing a null (`void*`) through a pointer-to-pointer slot — e.g.
+            // `inout uniq T` set to nil (`*v0 = nullptr` with `*v0` of type `T*`)
+            // — needs an explicit cast; `void*` → `T*` is ill-formed in C++. The
+            // pointee's logical type is the slot value's type (`uniq T` → `T*`).
+            Type* val_type = get_value_type(inst->store_ptr.value);
+            Type* slot_type = get_value_type(inst->store_ptr.ptr);
+            if (val_type && val_type->kind == TypeKind::Nil &&
+                slot_type && slot_type->is_reference()) {
+                out.push_back('(');
+                emit_type(slot_type, out);
+                out.push_back(')');
+            }
             emit_value(inst->store_ptr.value, out);
             out.append(";\n");
             return;
@@ -2009,9 +2021,19 @@ void CEmitter::emit_function_prototype(const IRFunction* func, String& out) {
             if (param_type && param_type->is_struct()) {
                 out.push_back('*');
             }
-            // Add pointer for out/inout params that aren't already reference/struct types
+            // out/inout params take the address of the caller's storage → one
+            // extra level of indirection on top of emit_type. This holds for a
+            // non-reference base (`inout i32` → `int32_t*`) AND a reference base
+            // (`inout uniq T` → `T**`, `inout weak T` → `roxy_weak*`). The lone
+            // exception is the `self` receiver: it is also flagged param_is_ptr
+            // but is a plain `ref` pointer (one level, accessed via `->`), not an
+            // address-of-storage slot. `self` is a reserved keyword, so the name
+            // is a reliable discriminator. (struct out/inout is already handled
+            // by the is_struct branch above and never reaches here.)
             else if (i < func->param_is_ptr.size() && func->param_is_ptr[i]) {
-                if (!param_type || (!param_type->is_reference())) {
+                bool is_self_receiver = func->params[i].name == StringView("self", 4);
+                bool base_is_ref = param_type && param_type->is_reference();
+                if (!base_is_ref || !is_self_receiver) {
                     out.push_back('*');
                 }
             }
