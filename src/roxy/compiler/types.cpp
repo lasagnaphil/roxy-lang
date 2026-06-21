@@ -64,6 +64,87 @@ bool Type::needs_retain() const {
     return false;  // primitives, string, weak, enum, …
 }
 
+// === Unified drop derivation (docs/internals/lifecycle-traits.md §10a) ===
+
+// A struct whose drop the VM may inline as a descriptor field-walk: parentless
+// (inherited structs chain to the parent's dtor, so they stay on the call path)
+// and with a *synthetic* (compiler-generated, body-less) default destructor (a
+// user default destructor has a body that must run, so it stays CallDtor).
+static bool drop_struct_walk_eligible(Type* s) {
+    if (!s || !s->is_struct()) return false;
+    if (s->struct_info.parent != nullptr) return false;
+    bool synthetic_default = false;
+    for (const auto& dtor : s->struct_info.destructors) {
+        if (dtor.name.empty()) {
+            if (dtor.decl != nullptr) return false;  // user-defined default destructor
+            synthetic_default = true;
+        }
+    }
+    return synthetic_default;
+}
+
+static bool drop_struct_has_default_dtor(Type* s) {
+    if (!s || !s->is_struct()) return false;
+    for (const auto& dtor : s->struct_info.destructors) {
+        if (dtor.name.empty()) return true;
+    }
+    return false;
+}
+
+DropPlan compute_drop_plan(Type* type) {
+    DropPlan p;
+    if (!type) return p;
+    switch (type->kind) {
+        case TypeKind::Uniq: {
+            p.free_obj = true;  // owns a heap object
+            Type* pointee = type->ref_info.inner_type;
+            if (drop_struct_walk_eligible(pointee)) {
+                p.kind = DropKind::WalkFields; p.struct_type = pointee;
+            } else if (drop_struct_has_default_dtor(pointee)) {
+                p.kind = DropKind::CallDtor; p.struct_type = pointee;
+            }
+            // else: uniq of a primitive / dtor-less value — just free.
+            break;
+        }
+        case TypeKind::Ref:
+            p.kind = DropKind::RefDec;  // counted borrow, never frees the pointee
+            break;
+        case TypeKind::List:
+            p.kind = DropKind::List; p.free_obj = true;
+            p.elem_type = type->list_info.element_type;
+            break;
+        case TypeKind::Map:
+            p.kind = DropKind::Map; p.free_obj = true;
+            p.key_type = type->map_info.key_type;
+            p.elem_type = type->map_info.value_type;
+            break;
+        case TypeKind::Function:
+            p.kind = DropKind::Closure; p.free_obj = true;
+            break;
+        case TypeKind::Coroutine: {
+            p.free_obj = true;  // heap state struct
+            Type* coro_struct = type->coro_info.generated_struct_type;
+            if (drop_struct_has_default_dtor(coro_struct)) {
+                p.kind = DropKind::CallDtor; p.struct_type = coro_struct;
+            }
+            break;
+        }
+        case TypeKind::Struct:
+            // An embedded value struct is cleaned in place (never freed).
+            if (type->noncopyable()) {
+                if (drop_struct_walk_eligible(type)) {
+                    p.kind = DropKind::WalkFields; p.struct_type = type;
+                } else if (drop_struct_has_default_dtor(type)) {
+                    p.kind = DropKind::CallDtor; p.struct_type = type;
+                }
+            }
+            break;
+        default:
+            break;  // primitives, string, weak, enum, … — nothing to drop
+    }
+    return p;
+}
+
 // Hash function for type interning
 u64 TypeHash::operator()(const Type* t) const {
     if (!t) return 0;

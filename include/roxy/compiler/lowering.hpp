@@ -173,15 +173,10 @@ private:
     // m_current_func->delete_descs. Returns the index of the root entry.
     // Memoized per function via m_delete_desc_cache so recursive types
     // (e.g. struct Node { next: uniq Node; }) produce a finite, self-
-    // referential descriptor instead of looping forever at compile time.
+    // referential descriptor instead of looping forever at compile time. The
+    // *kind* of drop is decided by the shared compute_drop_plan (types.hpp); this
+    // lowers that plan to a BCDeleteDesc. lifecycle-traits.md §10a.
     u16 build_delete_desc(Type* type);
-
-    // True if `struct_type`'s owned-field cleanup can be expressed as a
-    // descriptor-driven STRUCT delete desc (kind 5/6) rather than a bytecode
-    // destructor. Requires a synthetic (non-user) default destructor and no
-    // parent, so the whole cleanup is pure data and avoids interpreter
-    // re-entry during destruction. Tagged-union (when-clause) structs qualify.
-    bool is_descriptor_eligible_struct(Type* struct_type) const;
 
     // Append the field-cleanup actions for an eligible struct (regular owned
     // fields + discriminant-guarded variant fields) to

@@ -13,8 +13,10 @@ predicates (`is_copy`/`needs_drop`/`needs_retain`/`is_trivial` on `Type`); step 
 functions, gated by `needs_drop()`. **VM step 2 is a no-op by design:** the native
 `delete_value`/`BCDeleteDesc` walk already *is* the VM's drop-glue executor, and
 replacing it with interpreted bytecode glue would be slower (§10 correction).
-**Remaining:** step 2a (unify the *derivation* feeding both backends — the real
-de-special-casing, §10a), steps 3–6. This formalizes machinery
+Step 2a — one shared `compute_drop_plan(Type)` deriving the drop *kind*, consumed
+by both backends (VM lowers it to `BCDeleteDesc`, C to glue/dtor calls), plus a
+shared `container_member_needs_drop` condition — is done (§10a). **Remaining:**
+steps 3–6. This formalizes machinery
 that already exists in scattered form (`fun delete T()` ≈ `Drop`, `.copy()` ≈
 `Clone`, `Type::noncopyable()` ≈ the `Copy` marker, `build_delete_desc` ≈ derived
 drop glue) into a single trait-resolved protocol, and specifies the lowering that
@@ -276,20 +278,26 @@ them is the *derivation* (one description of "what is T's drop", §10a):
 
 ## 10a. The real unification: one derivation, two executions
 
-The actual special-casing is the **dual derivation**: `build_delete_desc` (VM) and
-`emit_typed_delete` (C) each independently re-derive "what does T's drop consist
+The actual special-casing was the **dual derivation**: `build_delete_desc` (VM) and
+`emit_typed_delete` (C) each independently re-derived "what does T's drop consist
 of" from `Type`. That is exactly why the `Map<_, ref V>` cases needed parallel
-fixes in both. The unification is to extract a single backend-agnostic
-`compute_drop_plan(Type) -> DropPlan` (abstract leaves: a dtor referenced by type,
-a `ref_dec`, a container element sub-plan), consumed by both:
+fixes in both. **✅ Implemented:** a single backend-agnostic
+`compute_drop_plan(Type) -> DropPlan` (`types.{hpp,cpp}`) makes that decision once
+— `DropKind` (None/CallDtor/WalkFields/List/Map/Closure/RefDec) + `free_obj` +
+the involved types — and both backends lower it:
 
-- VM lowers the plan to `BCDeleteDesc` (resolving a dtor to its bytecode fn index)
-  and executes it natively in `delete_value`.
-- C lowers the plan to a `roxy_drop__<T>` function (resolving a dtor to its C
-  symbol).
+- VM (`build_delete_desc`) lowers the plan to `BCDeleteDesc` (resolving a dtor to
+  its bytecode fn index, recursing into element/field types) and executes it
+  natively in `delete_value`.
+- C (`emit_typed_delete`) lowers the plan to a `roxy_drop__<T>` glue call or a
+  `$$delete` call (resolving a dtor to its C symbol). For C, `WalkFields` and
+  `CallDtor` are identical — both call the struct's synthetic `$$delete`; only the
+  VM honors the distinction (inline field-walk vs function call).
 
-Both keep their efficient execution; neither re-derives. This — not eliminating
-the descriptor — is the genuine "containers/structs stop being special" step.
+The divergence-prone container-member condition is likewise shared
+(`container_member_needs_drop`). Both backends keep their efficient execution;
+neither re-derives. This — not eliminating the descriptor — is the genuine
+"containers/structs stop being special" step.
 
 ## 11. Tradeoffs
 
@@ -319,10 +327,11 @@ Incremental, each step independently testable:
    VM's drop-glue executor and stays (bytecode glue would be slower; see §10).
    *(The cross-check assert from step 1 keeps `needs_drop()` consistent with the
    descriptor.)*
-2a. **Unify the derivation (the real de-special-casing).** Extract
-   `compute_drop_plan(Type) -> DropPlan` and have both `build_delete_desc` (VM) and
-   the C glue emitter consume it, so "what is T's drop" is derived once (§10a).
-   Eliminates the dual derivation that made `Map<_, ref V>` need parallel fixes.
+2a. ✅ **Unify the derivation (the real de-special-casing).** `compute_drop_plan(Type)
+   -> DropPlan` is consumed by both `build_delete_desc` (VM) and `emit_typed_delete`
+   (C); `container_member_needs_drop` shares the element condition. "What is T's
+   drop" is derived once (§10a) — removing the dual derivation that made
+   `Map<_, ref V>` need parallel fixes. Both `WalkFields` and `CallDtor` retained.
 3. **Fold in copy/retain.** Replace the ad-hoc bind/pass retain emit with
    `copy_init` glue; replace `Type::noncopyable()` checks at those sites with the
    `Copy` marker.

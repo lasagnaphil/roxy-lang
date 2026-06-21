@@ -534,6 +534,42 @@ private:
     tsl::robin_map<u8, Vector<Type*>> m_primitive_traits;
 };
 
+// === Unified drop derivation (docs/internals/lifecycle-traits.md §10a) ===
+// `compute_drop_plan` is the single, backend-agnostic decision for *what kind* of
+// drop a type needs. Both backends consume it — the VM lowers it to a
+// `BCDeleteDesc` (executed natively by delete_value), the C backend lowers it to a
+// drop-glue / dtor call — so the dispatch is derived once instead of twice (the
+// dual derivation is what made Map<_, ref V> need parallel fixes). It is a
+// single-level decision: the recursion into element/field types stays in each
+// backend's lowering.
+enum class DropKind {
+    None,        // no cleanup (free only, if free_obj)
+    CallDtor,    // call the struct/coro `$$delete` (struct_type)
+    WalkFields,  // walk struct_type's owned fields in place (VM); C calls its dtor
+    List,        // List: clean elem_type members, free buffer + header
+    Map,         // Map: clean key_type/elem_type members, free buffers + header
+    Closure,     // type-erased closure env (dispatch by call idx)
+    RefDec,      // release a counted borrow (ref_dec the pointee; never free it)
+};
+struct DropPlan {
+    DropKind kind = DropKind::None;
+    bool free_obj = false;     // is `type` a heap pointer to free after cleanup
+    Type* struct_type = nullptr;  // CallDtor: dtor target; WalkFields: struct to walk
+    Type* elem_type = nullptr;    // List element / Map value
+    Type* key_type = nullptr;     // Map key
+};
+DropPlan compute_drop_plan(Type* type);
+
+// Shared condition for whether a *container member* (List element, Map value) is
+// count-bearing/owning and so needs per-element cleanup on container teardown.
+// Used by both backends so the decision can't diverge (keys can't be `ref`, so
+// they use noncopyable() directly). NOTE: deliberately NOT `needs_drop()` — that
+// additionally flags copyable structs holding a `ref` field, whose release must be
+// paired with an acquire (step 3); until then this stays the current condition.
+inline bool container_member_needs_drop(Type* t) {
+    return t && (t->noncopyable() || t->kind == TypeKind::Ref);
+}
+
 // String representation of types (for error messages)
 const char* type_kind_to_string(TypeKind kind);
 void type_to_string(const Type* type, String& out);

@@ -370,79 +370,79 @@ void CEmitter::emit_delete_slot(Type* elem, StringView slot_expr, String& out) {
 
 void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj, String& out) {
     if (!type) return;
-    // The predicate is the single authority for whether a drop emits any code: a
-    // trivial type releases nothing (lifecycle-traits.md). Safe w.r.t. free_obj —
-    // it is only ever true for heap kinds (uniq/List/Map/Coro), all of which
-    // needs_drop(). (Today this is a guard, not a new optimization: every type
-    // that reaches a Delete already needs_drop.)
-    if (!type->needs_drop()) return;
+    // The *kind* of drop is decided once by the shared, backend-agnostic
+    // compute_drop_plan (lifecycle-traits.md §10a); this is the C lowering of that
+    // plan. For C, WalkFields and CallDtor are identical — both call the struct's
+    // `$$delete` (the synthetic field-cleanup destructor is emitted as a C
+    // function); the VM honors the WalkFields/CallDtor distinction.
+    DropPlan plan = compute_drop_plan(type);
 
-    // --- Function (closure): type-erased — dispatch the env destructor by
-    // __call_idx and free, via the generated __closure_delete. ---
-    if (type->is_function()) {
-        out.append("    __closure_delete(");
-        out.append(ptr_expr);
-        out.append(");\n");
-        return;
-    }
+    switch (plan.kind) {
+        case DropKind::None:
+            // Nothing to clean; free the heap object if we own it (uniq of a
+            // primitive / dtor-less value). May be null — guard.
+            if (free_obj) {
+                u32 n = m_delete_tmp++;
+                String pv = format("_dp{}", n);
+                out.append("    { void* "); ap(out, pv); out.append(" = (void*)(");
+                out.append(ptr_expr); out.append(");\n");
+                out.append("    if ("); ap(out, pv); out.append(") roxy_free(");
+                ap(out, pv); out.append("); }\n");
+            }
+            return;
 
-    // --- List / Map: route through a per-type drop-glue function (the AOT
-    // analogue of a struct's `$$delete`), so the element loop + buffer free isn't
-    // re-inlined at every Delete site. A container is always a heap pointer, so
-    // free_obj is always true here — the glue always frees the header.
-    // (lifecycle-traits.md migration step 2.) ---
-    if (type->is_list() || type->is_map()) {
-        if (!type->noncopyable()) return;  // copyable container: never reached via Delete
-        String glue = request_container_drop_glue(type);
-        out.append("    ");
-        out.append(StringView(glue.data(), glue.size()));
-        out.append("(");
-        out.append(ptr_expr);
-        out.append(");\n");
-        return;
-    }
+        case DropKind::Closure:
+            // Type-erased: dispatch the env destructor by __call_idx and free.
+            out.append("    __closure_delete("); out.append(ptr_expr); out.append(");\n");
+            return;
 
-    // --- struct (value, or the pointee of a uniq/ref): run its destructor. ---
-    // A Coro<T> is a pointer to its state struct __coro_<func>; deleting it runs
-    // the generated __coro_<func>$$delete (== {struct_name}$$delete) destructor,
-    // which cleans up promoted uniq/noncopyable fields, then frees the struct.
-    Type* pointee = nullptr;
-    if (type->is_struct()) pointee = type;
-    else if (type->kind == TypeKind::Uniq || type->kind == TypeKind::Ref) pointee = type->base_type();
-    else if (type->is_coroutine()) pointee = type->coro_info.generated_struct_type;
+        case DropKind::List:
+        case DropKind::Map: {
+            // Per-type drop-glue function (the AOT analogue of a struct's
+            // `$$delete`); the glue null-guards and always frees the header.
+            String glue = request_container_drop_glue(type);
+            out.append("    "); out.append(StringView(glue.data(), glue.size()));
+            out.append("("); out.append(ptr_expr); out.append(");\n");
+            return;
+        }
 
-    String dtor;
-    bool have_dtor = false;
-    if (pointee && pointee->is_struct()) {
-        dtor = format("{}$$delete", pointee->struct_info.name);
-        have_dtor = find_function(StringView(dtor.data(), dtor.size())) != nullptr;
-    }
+        case DropKind::RefDec:
+            // A counted borrow: release the count, never free the pointee.
+            out.append("    roxy_ref_dec((void*)("); out.append(ptr_expr); out.append("));\n");
+            return;
 
-    auto emit_dtor_call = [&](StringView target) {
-        if (!have_dtor) return;
-        out.append("    ");
-        emit_function_symbol(StringView(dtor.data(), dtor.size()), out);
-        out.append("((");
-        emit_type(pointee, out);
-        out.append("*)("); out.append(target); out.append("));\n");
-    };
-
-    if (free_obj) {
-        // Heap pointer (uniq/ref/coro): may be null — e.g. reassigning a uniq
-        // field that was never set, or a moved-out owning slot. The VM treats
-        // delete-on-null as a no-op, so guard and bind the pointer once (also
-        // avoids re-evaluating a non-trivial ptr_expr).
-        u32 n = m_delete_tmp++;
-        String pv = format("_dp{}", n);
-        out.append("    { void* "); ap(out, pv); out.append(" = (void*)(");
-        out.append(ptr_expr); out.append(");\n");
-        out.append("    if ("); ap(out, pv); out.append(") {\n");
-        emit_dtor_call(StringView(pv.data(), pv.size()));
-        out.append("    roxy_free("); ap(out, pv); out.append(");\n");
-        out.append("    } }\n");
-    } else {
-        // Inline value struct deleted via its address — never null, never freed.
-        emit_dtor_call(ptr_expr);
+        case DropKind::CallDtor:
+        case DropKind::WalkFields: {
+            // Run the struct/coro destructor (a Coro<T>'s state struct dtor cleans
+            // its promoted uniq/noncopyable fields).
+            Type* st = plan.struct_type;
+            String dtor = format("{}$$delete", st->struct_info.name);
+            bool have_dtor = find_function(StringView(dtor.data(), dtor.size())) != nullptr;
+            auto emit_dtor_call = [&](StringView target) {
+                if (!have_dtor) return;
+                out.append("    ");
+                emit_function_symbol(StringView(dtor.data(), dtor.size()), out);
+                out.append("((");
+                emit_type(st, out);
+                out.append("*)("); out.append(target); out.append("));\n");
+            };
+            if (free_obj) {
+                // Heap pointer (uniq/coro): may be null (a never-set uniq field, a
+                // moved-out slot). Guard, bind once, run dtor, free.
+                u32 n = m_delete_tmp++;
+                String pv = format("_dp{}", n);
+                out.append("    { void* "); ap(out, pv); out.append(" = (void*)(");
+                out.append(ptr_expr); out.append(");\n");
+                out.append("    if ("); ap(out, pv); out.append(") {\n");
+                emit_dtor_call(StringView(pv.data(), pv.size()));
+                out.append("    roxy_free("); ap(out, pv); out.append(");\n");
+                out.append("    } }\n");
+            } else {
+                // Inline value struct deleted via its address — never null/freed.
+                emit_dtor_call(ptr_expr);
+            }
+            return;
+        }
     }
 }
 
@@ -497,7 +497,7 @@ void CEmitter::emit_container_drop_body(Type* type, StringView self_var, String&
         out.append("    roxy_list_header* "); ap(out, h);
         out.append(" = (roxy_list_header*)("); out.append(self_var); out.append(");\n");
         out.append("    if (!"); ap(out, h); out.append(") return;\n");
-        if (elem && (elem->noncopyable() || elem->kind == TypeKind::Ref)) {
+        if (container_member_needs_drop(elem)) {  // shared condition (lifecycle-traits.md §10a)
             String iv = format("_di{}", n);
             String sv = format("_ds{}", n);
             out.append("    for (uint32_t "); ap(out, iv); out.append(" = 0; ");
@@ -516,10 +516,8 @@ void CEmitter::emit_container_drop_body(Type* type, StringView self_var, String&
     // Map
     Type* kt = type->map_info.key_type;
     Type* vt = type->map_info.value_type;
-    bool kc = kt && kt->noncopyable();
-    // A `ref V` value is count-bearing (emit_delete_slot emits roxy_ref_dec for
-    // the Ref case). Keys can't be `ref`.
-    bool vc = vt && (vt->noncopyable() || vt->kind == TypeKind::Ref);
+    bool kc = kt && kt->noncopyable();          // keys can't be `ref`
+    bool vc = container_member_needs_drop(vt);   // shared condition (lifecycle-traits.md §10a)
     String h = format("_dm{}", n);
     out.append("    roxy_map_header* "); ap(out, h);
     out.append(" = (roxy_map_header*)("); out.append(self_var); out.append(");\n");

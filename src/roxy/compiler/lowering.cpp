@@ -2999,30 +2999,6 @@ void BytecodeBuilder::emit_cast_bytecode(u8 dst, u8 src, Type* source_type, Type
     }
 }
 
-bool BytecodeBuilder::is_descriptor_eligible_struct(Type* struct_type) const {
-    if (!struct_type || !struct_type->is_struct()) return false;
-    const StructTypeInfo& struct_info = struct_type->struct_info;
-
-    // Inheritance is kept on the bytecode-destructor path: a synthetic default
-    // destructor chains to its parent's, and `fields` already includes inherited
-    // fields, so descriptorizing inherited structs risks double cleanup. The
-    // recursive types we care about (linked lists, trees, ASTs) are parentless,
-    // so restrict descriptor-driven cleanup to parentless structs.
-    if (struct_info.parent != nullptr) return false;
-
-    // The default (empty-name) destructor must be synthetic (compiler-generated).
-    // A user-defined default destructor has a body that must run via the
-    // interpreter, so it stays on the bytecode path.
-    bool has_synthetic_default = false;
-    for (const auto& dtor : struct_info.destructors) {
-        if (dtor.name.empty()) {
-            if (dtor.decl != nullptr) return false;  // user-defined default destructor
-            has_synthetic_default = true;
-        }
-    }
-    return has_synthetic_default;
-}
-
 void BytecodeBuilder::build_struct_field_deletes(Type* struct_type,
                                                  u16& out_start, u16& out_count) {
     const StructTypeInfo& struct_info = struct_type->struct_info;
@@ -3104,73 +3080,47 @@ u16 BytecodeBuilder::build_delete_desc(Type* type) {
     m_current_func->delete_descs.push_back(BCDeleteDesc{});  // placeholder, filled below
     m_delete_desc_cache[type] = index;
 
-    // Default-constructed desc is an inert (None, no-free) descriptor; each
-    // branch sets the cleanup strategy, the free_obj flag, and its union payload.
-    // free_obj is true exactly when `type` is a heap pointer (uniq/list/map/coro).
+    // The *kind* of drop is decided once by the shared, backend-agnostic
+    // compute_drop_plan (lifecycle-traits.md §10a); this is the VM lowering of that
+    // plan into a BCDeleteDesc. The recursion into element/field types stays here
+    // (build_delete_desc / build_struct_field_deletes), and dtor references resolve
+    // to bytecode function indices. The C backend lowers the same plan to glue.
     BCDeleteDesc desc;
-
-    if (type->kind == TypeKind::Uniq) {
-        Type* inner_type = type->ref_info.inner_type;
-        desc.free_obj = true;
-        if (inner_type && is_descriptor_eligible_struct(inner_type)) {
+    DropPlan plan = compute_drop_plan(type);
+    desc.free_obj = plan.free_obj;
+    switch (plan.kind) {
+        case DropKind::None:
+            break;  // inert; free_obj may still be set (uniq of a primitive)
+        case DropKind::CallDtor:
+            desc.cleanup = BCDeleteDesc::CallDtor;
+            desc.dtor_fn_idx = lookup_destructor_index(plan.struct_type);
+            break;
+        case DropKind::WalkFields:
             desc.cleanup = BCDeleteDesc::WalkFields;
-            build_struct_field_deletes(inner_type, desc.fields.field_start, desc.fields.field_count);
-        } else if (inner_type && struct_has_default_destructor(inner_type)) {
-            desc.cleanup = BCDeleteDesc::CallDtor;
-            desc.dtor_fn_idx = lookup_destructor_index(inner_type);
-        } else {
-            desc.cleanup = BCDeleteDesc::None;  // uniq of a primitive / dtor-less value: just free
-        }
-    } else if (type->is_struct() && type->noncopyable()) {
-        // Embedded value struct: cleaned in place, never freed.
-        if (is_descriptor_eligible_struct(type)) {
-            desc.cleanup = BCDeleteDesc::WalkFields;
-            build_struct_field_deletes(type, desc.fields.field_start, desc.fields.field_count);
-        } else if (struct_has_default_destructor(type)) {
-            desc.cleanup = BCDeleteDesc::CallDtor;
-            desc.dtor_fn_idx = lookup_destructor_index(type);
-        }
-        // else: noncopyable struct without destructor (shouldn't happen) -> inert
-    } else if (type->is_list() && type->noncopyable()) {
-        desc.cleanup = BCDeleteDesc::List;
-        desc.free_obj = true;
-        desc.container.elem_desc_idx = build_delete_desc(type->list_info.element_type);
-        desc.container.key_desc_idx = 0xFFFF;  // unused for lists
-    } else if (type->is_map() && type->noncopyable()) {
-        Type* key_type = type->map_info.key_type;
-        Type* value_type = type->map_info.value_type;
-        desc.cleanup = BCDeleteDesc::Map;
-        desc.free_obj = true;
-        // A `ref V` value is count-bearing: destroy RefDec's it (build_delete_desc
-        // emits a RefDec descriptor for the Ref case). Keys can't be `ref`.
-        bool value_counts = value_type &&
-            (value_type->noncopyable() || value_type->kind == TypeKind::Ref);
-        desc.container.elem_desc_idx =
-            value_counts ? build_delete_desc(value_type) : 0xFFFF;
-        desc.container.key_desc_idx =
-            (key_type && key_type->noncopyable()) ? build_delete_desc(key_type) : 0xFFFF;
-    } else if (type->is_function()) {
-        // A closure value is a uniq pointer to a heap env struct. The `fun()->R`
-        // type erases which env struct it is, so cleanup dispatches the env's
-        // synthesized destructor at runtime by the env's type_id, then frees it.
-        desc.cleanup = BCDeleteDesc::Closure;
-        desc.free_obj = true;
-    } else if (type->kind == TypeKind::Ref) {
-        // A `ref` element/value in a container is a counted borrow: on container
-        // teardown release the count (roxy_ref_dec the borrowed pointer), never
-        // free the pointee — the owner does that (lifetimes.md §8).
-        desc.cleanup = BCDeleteDesc::RefDec;
-        desc.free_obj = false;
-    } else if (type->is_coroutine()) {
-        // Coro<T>: heap-allocated state struct, always freed.
-        Type* coro_struct = type->coro_info.generated_struct_type;
-        desc.free_obj = true;
-        if (coro_struct && struct_has_default_destructor(coro_struct)) {
-            desc.cleanup = BCDeleteDesc::CallDtor;
-            desc.dtor_fn_idx = lookup_destructor_index(coro_struct);
-        } else {
-            desc.cleanup = BCDeleteDesc::None;
-        }
+            build_struct_field_deletes(plan.struct_type, desc.fields.field_start, desc.fields.field_count);
+            break;
+        case DropKind::List:
+            desc.cleanup = BCDeleteDesc::List;
+            desc.container.elem_desc_idx = build_delete_desc(plan.elem_type);
+            desc.container.key_desc_idx = 0xFFFF;  // unused for lists
+            break;
+        case DropKind::Map:
+            desc.cleanup = BCDeleteDesc::Map;
+            // A `ref V` value is count-bearing (shared condition); keys can't be ref.
+            desc.container.elem_desc_idx =
+                container_member_needs_drop(plan.elem_type) ? build_delete_desc(plan.elem_type) : 0xFFFF;
+            desc.container.key_desc_idx =
+                (plan.key_type && plan.key_type->noncopyable()) ? build_delete_desc(plan.key_type) : 0xFFFF;
+            break;
+        case DropKind::Closure:
+            // Type-erased: cleanup dispatches the env's synthesized destructor at
+            // runtime by the env's type_id, then frees it.
+            desc.cleanup = BCDeleteDesc::Closure;
+            break;
+        case DropKind::RefDec:
+            // A counted borrow: release the count (ref_dec), never free the pointee.
+            desc.cleanup = BCDeleteDesc::RefDec;
+            break;
     }
 
     // Cross-check (lifecycle-traits.md migration step 1): the structural
