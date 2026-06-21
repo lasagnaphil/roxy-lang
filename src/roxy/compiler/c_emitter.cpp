@@ -2527,6 +2527,26 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
     // Declare block argument passing variables
     emit_block_arg_declarations(func, out);
 
+    // Copyable container value params are deep-copied at entry (callee-side),
+    // mirroring the bytecode lowering's prologue copy (lowering.cpp): passing a
+    // `List`/`Map` by value gives the callee its own copy so its mutations don't
+    // leak to the caller. The C path branches off the pre-lowering IR, so it must
+    // emit this itself. Skipped for noncopyable containers (they move, no copy)
+    // and for ref/inout/out containers (pointer params / Ref-wrapped types that
+    // alias by design — `is_container()` is false for a `Ref`, and inout/out are
+    // param_is_ptr). This runs before block0's label, so it executes once on
+    // entry (the entry block has no back-edges).
+    for (u32 i = 0; i < func->params.size(); i++) {
+        Type* pt = func->params[i].type;
+        bool is_ptr = i < func->param_is_ptr.size() && func->param_is_ptr[i];
+        if (!pt || is_ptr || !pt->is_container() || pt->noncopyable()) continue;
+        out.append("    ");
+        emit_value(func->params[i].value, out);
+        out.append(pt->is_list() ? " = roxy_list_copy(" : " = roxy_map_copy(");
+        emit_value(func->params[i].value, out);
+        out.append(");\n");
+    }
+
     // Emit blocks
     for (u32 b = 0; b < func->blocks.size(); b++) {
         emit_block(func->blocks[b], func, out);

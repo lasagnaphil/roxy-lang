@@ -422,7 +422,7 @@ pending fixes:
 | Area | Symptom |
 |------|---------|
 | **ref-local count balancing** | `ref`-local `RefInc`/`RefDec` balancing across control flow (loop continue/break, nested scopes). *(`inout uniq` reassignment to a value or nil, and `ref` to a `uniq` field, are now fixed.)* |
-| **copyable container value params** | passing a `List`/`Map` by value should deep-copy it (the bytecode lowering inserts the copy callee-side; the C backend, which branches off the IR before lowering, does not) |
+| **inout container through loop block args** | an `inout List`/`Map` carried through a loop becomes a block param whose type loses its `void**` pointer-ness — it's declared `void*` yet both `load_ptr`'d (`*v`) and address-taken (`&v`). (Straight-line `inout` container, and by-value container deep-copy, now work.) |
 | **coroutine uniq-field cleanup** | `Coro<T>` promoting `uniq`/`List<uniq>`/`Map<_,uniq>` state |
 | **closures** | `self` capture and function-to-`ref fun` borrow conversion |
 
@@ -482,6 +482,15 @@ tests where the C binary aborts rather than trapping cleanly.
   (`T* = void*`, ill-formed in C++). `emit_block_arg_value` now casts the null to
   the destination param's type, looked up from the target block; used by the
   goto and both branch edges. (`void*`-mapped params take a null fine.)
+- **Copyable container by-value param deep-copy.** Passing a `List`/`Map` by
+  value must give the callee its own copy so its mutations don't leak to the
+  caller. The bytecode lowering inserts this copy callee-side at the prologue
+  (`lowering.cpp`); the C path branches off the pre-lowering IR, so `emit_function`
+  now emits the same — `vN = roxy_list_copy(vN)` / `roxy_map_copy` at function
+  entry for each copyable container value param (skipping noncopyable containers,
+  which move, and ref/inout/out container params, which alias). Runs before
+  block0's label, executing once on entry. (The `inout` container case threaded
+  through a loop is a separate, still-open block-param-typing gap.)
 - **Struct-value block argument deref.** A struct-VALUE block param (declared
   `T`, not `T*`) at a merge can be fed different representations by different
   predecessors — one passes a struct *local* (a pointer), another a by-value

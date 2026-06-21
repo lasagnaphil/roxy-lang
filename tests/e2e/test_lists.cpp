@@ -159,7 +159,7 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.stdout_output == "30\n20\n10\n");
     }
 
-    TEST_CASE("List quicksort") {  // VM-only: C backend: copyable container (List/Map) value-param deep-copy not emitted (lowering inserts it for the VM path only)  // VM-only: C backend: struct-by-value copy semantics gap
+    TEST_CASE("List quicksort") {  // VM-only: C backend: inout container threaded through loop block args loses its void** pointer-ness
         const char* source = R"(
         fun swap(lst: inout List<i32>, i: i32, j: i32) {
             var temp: i32 = lst[i];
@@ -255,7 +255,7 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.stdout_output == "60\n");
     }
 
-    TEST_CASE("List value parameter isolation") {  // VM-only: C backend: copyable container (List/Map) value-param deep-copy not emitted (lowering inserts it for the VM path only)  // VM-only: C backend: struct-by-value copy semantics gap
+    TEST_CASE_TEMPLATE("List value parameter isolation", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun modify(lst: List<i32>) {
             lst[0] = 999;
@@ -274,7 +274,7 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "10\n3\n");
     }
