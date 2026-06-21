@@ -10,8 +10,11 @@ vtables.
 **Status:** migration in progress (see §12). **Done:** step 1 — the structural
 predicates (`is_copy`/`needs_drop`/`needs_retain`/`is_trivial` on `Type`); step 2
 (C backend) — container drops factored into per-type `roxy_drop__<T>` glue
-functions, gated by `needs_drop()`. **Remaining:** step 2 (VM — replace the
-`delete_value` descriptor walk with glue), steps 3–6. This formalizes machinery
+functions, gated by `needs_drop()`. **VM step 2 is a no-op by design:** the native
+`delete_value`/`BCDeleteDesc` walk already *is* the VM's drop-glue executor, and
+replacing it with interpreted bytecode glue would be slower (§10 correction).
+**Remaining:** step 2a (unify the *derivation* feeding both backends — the real
+de-special-casing, §10a), steps 3–6. This formalizes machinery
 that already exists in scattered form (`fun delete T()` ≈ `Drop`, `.copy()` ≈
 `Clone`, `Type::noncopyable()` ≈ the `Copy` marker, `build_delete_desc` ≈ derived
 drop glue) into a single trait-resolved protocol, and specifies the lowering that
@@ -249,20 +252,44 @@ can be; one fn-pointer only where the type is actually unknown.
 
 ## 10. Lowering — and backend unification
 
-The glue is generated as ordinary functions, monomorphized per type:
+Each backend keeps the *execution* mechanism that's efficient for it; what unifies
+them is the *derivation* (one description of "what is T's drop", §10a):
 
-- **VM:** emit a bytecode glue function per non-trivial type; drop/copy sites
-  `CALL` it (or the IR builder inlines small glue directly). The VM **no longer
-  interprets `BCDeleteDesc`** — `delete_value`'s descriptor walk is replaced by a
-  call to generated glue.
-- **AOT/C:** emit a C glue function per type (`T__drop`, `T__clone`); the C
-  compiler inlines and ICF-folds them. This is close to what `emit_typed_delete`
-  already produces, now driven by trait resolution rather than the descriptor.
+- **AOT/C:** emit a C glue function per type (`roxy_drop__<T>`; structs already use
+  `$$delete`); the C compiler inlines and ICF-folds them. Native code, generated
+  per monomorphic type. ✅ implemented (container glue; structs already glue).
+- **VM:** **keep** the native, data-driven `delete_value` walk over `BCDeleteDesc`
+  — that *is* the VM's drop-glue executor. Every `Delete` already routes through
+  this one native function; nothing is inlined per site, so there is nothing to
+  "factor out." Crucially, the VM cannot emit *native* glue (no C compiler), so
+  literal bytecode glue would run a drop loop through the interpreter dispatch —
+  **slower** than the native walk it replaces, plus the cost of synthesizing a
+  `BCFunction` per type and the bytecode bloat. So the VM is already at this step's
+  end state.
 
-This **unifies the two backends**: both *generate* glue (bytecode vs C) from the
-same trait resolution; neither carries a runtime descriptor interpreter. It is
-strictly faster than today's VM path (no per-drop descriptor walk) and no slower on
-AOT.
+> **Correction (found during implementation):** an earlier draft said the VM would
+> "emit a bytecode glue function per type … no longer interprets `BCDeleteDesc` …
+> strictly faster." That is wrong: interpreted bytecode glue is *slower* than the
+> native descriptor walk. The native `delete_value`/`BCDeleteDesc` executor is the
+> correct, permanent VM mechanism. `BCDeleteDesc` is therefore **not eliminated**;
+> the goal becomes making it (and the C glue) consume one shared *derivation*.
+
+## 10a. The real unification: one derivation, two executions
+
+The actual special-casing is the **dual derivation**: `build_delete_desc` (VM) and
+`emit_typed_delete` (C) each independently re-derive "what does T's drop consist
+of" from `Type`. That is exactly why the `Map<_, ref V>` cases needed parallel
+fixes in both. The unification is to extract a single backend-agnostic
+`compute_drop_plan(Type) -> DropPlan` (abstract leaves: a dtor referenced by type,
+a `ref_dec`, a container element sub-plan), consumed by both:
+
+- VM lowers the plan to `BCDeleteDesc` (resolving a dtor to its bytecode fn index)
+  and executes it natively in `delete_value`.
+- C lowers the plan to a `roxy_drop__<T>` function (resolving a dtor to its C
+  symbol).
+
+Both keep their efficient execution; neither re-derives. This — not eliminating
+the descriptor — is the genuine "containers/structs stop being special" step.
 
 ## 11. Tradeoffs
 
@@ -286,9 +313,16 @@ Incremental, each step independently testable:
 1. **Introduce the predicates.** Add `is_trivial` / `needs_drop` / `needs_retain`
    to `Type` (or a side analysis). No behavior change; assert they agree with
    `Type::noncopyable()` and the current descriptor's emptiness.
-2. **Generate drop glue, keep the descriptor.** Emit per-type drop glue and route
-   `Delete` through it on **one** backend (C first — it already generates code), with
-   the descriptor as a cross-check. Then the VM, replacing the `delete_value` walk.
+2. **Generate drop glue (C); keep the VM's native executor.** ✅ C backend: container
+   drops factored into per-type `roxy_drop__<T>` functions, `emit_typed_delete`
+   gated by `needs_drop()`. VM: **no change** — `delete_value`/`BCDeleteDesc` is the
+   VM's drop-glue executor and stays (bytecode glue would be slower; see §10).
+   *(The cross-check assert from step 1 keeps `needs_drop()` consistent with the
+   descriptor.)*
+2a. **Unify the derivation (the real de-special-casing).** Extract
+   `compute_drop_plan(Type) -> DropPlan` and have both `build_delete_desc` (VM) and
+   the C glue emitter consume it, so "what is T's drop" is derived once (§10a).
+   Eliminates the dual derivation that made `Map<_, ref V>` need parallel fixes.
 3. **Fold in copy/retain.** Replace the ad-hoc bind/pass retain emit with
    `copy_init` glue; replace `Type::noncopyable()` checks at those sites with the
    `Copy` marker.
