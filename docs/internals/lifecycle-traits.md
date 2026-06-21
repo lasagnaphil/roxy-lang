@@ -7,11 +7,15 @@ types. The goal is to replace the current per-construct special-casing (the
 move-only bit on `Type`) with one mechanism, **without** introducing runtime
 vtables.
 
-**Status:** design only — not implemented. This formalizes machinery that already
-exists in scattered form (`fun delete T()` ≈ `Drop`, `.copy()` ≈ `Clone`,
-`Type::noncopyable()` ≈ the `Copy` marker, `build_delete_desc` ≈ derived drop
-glue) into a single trait-resolved protocol, and specifies the lowering that makes
-it zero-cost. Supersedes the ad-hoc lifecycle handling described across
+**Status:** migration in progress (see §12). **Done:** step 1 — the structural
+predicates (`is_copy`/`needs_drop`/`needs_retain`/`is_trivial` on `Type`); step 2
+(C backend) — container drops factored into per-type `roxy_drop__<T>` glue
+functions, gated by `needs_drop()`. **Remaining:** step 2 (VM — replace the
+`delete_value` descriptor walk with glue), steps 3–6. This formalizes machinery
+that already exists in scattered form (`fun delete T()` ≈ `Drop`, `.copy()` ≈
+`Clone`, `Type::noncopyable()` ≈ the `Copy` marker, `build_delete_desc` ≈ derived
+drop glue) into a single trait-resolved protocol, and specifies the lowering that
+makes it zero-cost. Supersedes the ad-hoc lifecycle handling described across
 [memory.md](memory.md) and [lifetimes.md](lifetimes.md).
 
 ```

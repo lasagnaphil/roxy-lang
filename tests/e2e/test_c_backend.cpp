@@ -722,6 +722,32 @@ TEST_SUITE("E2E C Backend") {
         CHECK(cpp_source.find("return") != String::npos);
     }
 
+    // Container drops are factored into per-type `roxy_drop__<T>` glue functions
+    // (lifecycle-traits.md migration step 2) — the AOT analogue of a struct's
+    // `$$delete` — rather than re-inlining the element loop at every Delete site.
+    // Nested containers get nested glue.
+    TEST_CASE("container drops route through per-type drop-glue functions") {
+        const char* source = R"(
+        struct P { x: i32; }
+        fun delete P() {}
+        fun main(): i32 {
+            var xs: List<uniq P> = List<uniq P>();
+            xs.push(uniq P { x = 1 });
+            var g: List<List<i32>> = List<List<i32>>();
+            g.push(List<i32>());
+            return 0;
+        }
+    )";
+        String cpp = compile_to_cpp(source);
+        // A glue function is defined ...
+        CHECK(cpp.find("static void roxy_drop__List$") != String::npos);
+        // ... the nested List<List<i32>> gets its own glue (which calls the inner) ...
+        CHECK(cpp.find("roxy_drop__List$List$i32") != String::npos);
+        // ... and Delete sites call the glue rather than inlining `roxy_list_delete`
+        // directly in main_entry.
+        CHECK(cpp.find("roxy_drop__List$uniq$P(") != String::npos);
+    }
+
     // ===== Phase 3: Runtime Library =====
 
     // --- Step 1: ConstString + CallNative(print) ---

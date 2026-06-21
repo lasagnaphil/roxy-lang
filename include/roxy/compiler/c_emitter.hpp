@@ -75,6 +75,22 @@ private:
     void emit_delete_slot(Type* elem_type, StringView slot_expr, String& out);
     u32 m_delete_tmp = 0;  // unique-temp counter for emit_typed_delete
 
+    // --- Per-type container drop glue (lifecycle-traits.md, migration step 2) ---
+    // Container drops (List/Map) are factored into per-type `roxy_drop__<T>(void*)`
+    // functions — the AOT analogue of a struct's `$$delete`, so the inline element
+    // loop isn't duplicated at every Delete site. request_container_drop_glue()
+    // lazily emits a forward decl + definition (recursing for nested containers)
+    // the first time a container type is dropped, and returns the function name;
+    // emit_typed_delete routes container Deletes through the call. Gated by
+    // Type::needs_drop()/is_trivial(). The decls/defs buffers are spliced into the
+    // output before the function bodies.
+    String request_container_drop_glue(Type* container);
+    void emit_container_drop_body(Type* container, StringView self_var, String& out);
+    void append_type_mangle(Type* type, String& out);
+    String m_drop_glue_decls;             // `static void roxy_drop__T(void*);` lines
+    String m_drop_glue_defs;              // the glue function definitions
+    tsl::robin_set<Type*> m_drop_glue_seen;  // container types already emitted
+
     // The C return type for a function. Normally `func->return_type`, but a
     // method returning a closure has its IR return_type left unset (the VM
     // returns by register regardless); fall back to the type of the actual

@@ -370,6 +370,12 @@ void CEmitter::emit_delete_slot(Type* elem, StringView slot_expr, String& out) {
 
 void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj, String& out) {
     if (!type) return;
+    // The predicate is the single authority for whether a drop emits any code: a
+    // trivial type releases nothing (lifecycle-traits.md). Safe w.r.t. free_obj —
+    // it is only ever true for heap kinds (uniq/List/Map/Coro), all of which
+    // needs_drop(). (Today this is a guard, not a new optimization: every type
+    // that reaches a Delete already needs_drop.)
+    if (!type->needs_drop()) return;
 
     // --- Function (closure): type-erased — dispatch the env destructor by
     // __call_idx and free, via the generated __closure_delete. ---
@@ -380,75 +386,19 @@ void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj,
         return;
     }
 
-    // --- List<T>: iterate noncopyable elements, free buffer, free header. ---
-    if (type->is_list()) {
-        if (!type->noncopyable()) return;  // copyable list: never reached via Delete
-        Type* elem = type->list_info.element_type;
-        u32 n = m_delete_tmp++;
-        String h = format("_dl{}", n);
-        out.append("    { roxy_list_header* "); ap(out, h);
-        out.append(" = (roxy_list_header*)("); out.append(ptr_expr); out.append(");\n");
-        out.append("    if ("); ap(out, h); out.append(") {\n");
-        if (elem && (elem->noncopyable() || elem->kind == TypeKind::Ref)) {
-            String iv = format("_di{}", n);
-            String sv = format("_ds{}", n);
-            out.append("    for (uint32_t "); ap(out, iv); out.append(" = 0; ");
-            ap(out, iv); out.append(" < "); ap(out, h); out.append("->length; ");
-            ap(out, iv); out.append("++) {\n");
-            out.append("    uint32_t* "); ap(out, sv); out.append(" = "); ap(out, h);
-            out.append("->elements + (size_t)"); ap(out, iv); out.append(" * ");
-            ap(out, h); out.append("->element_slot_count;\n");
-            emit_delete_slot(elem, StringView(sv.data(), sv.size()), out);
-            out.append("    }\n");
-        }
-        out.append("    roxy_list_delete("); ap(out, h); out.append(");\n");
-        if (free_obj) { out.append("    roxy_free("); ap(out, h); out.append(");\n"); }
-        out.append("    } }\n");
-        return;
-    }
-
-    // --- Map<K, V>: iterate occupied buckets, free buffers, free header. ---
-    if (type->is_map()) {
-        if (!type->noncopyable()) return;
-        Type* kt = type->map_info.key_type;
-        Type* vt = type->map_info.value_type;
-        bool kc = kt && kt->noncopyable();
-        // A `ref V` value is count-bearing: destroy RefDec's it (emit_delete_slot
-        // emits roxy_ref_dec for the Ref case). Keys can't be `ref`.
-        bool vc = vt && (vt->noncopyable() || vt->kind == TypeKind::Ref);
-        u32 n = m_delete_tmp++;
-        String h = format("_dm{}", n);
-        out.append("    { roxy_map_header* "); ap(out, h);
-        out.append(" = (roxy_map_header*)("); out.append(ptr_expr); out.append(");\n");
-        out.append("    if ("); ap(out, h); out.append(") {\n");
-        if (kc || vc) {
-            String iv = format("_di{}", n);
-            out.append("    if ("); ap(out, h); out.append("->capacity > 0 && ");
-            ap(out, h); out.append("->distances) {\n");
-            out.append("    for (uint32_t "); ap(out, iv); out.append(" = 0; ");
-            ap(out, iv); out.append(" < "); ap(out, h); out.append("->capacity; ");
-            ap(out, iv); out.append("++) {\n");
-            out.append("    if ("); ap(out, h); out.append("->distances["); ap(out, iv);
-            out.append("] == 0) continue;\n");
-            if (kc) {
-                String ks = format("_dk{}", n);
-                out.append("    uint32_t* "); ap(out, ks); out.append(" = "); ap(out, h);
-                out.append("->keys + (size_t)"); ap(out, iv); out.append(" * ");
-                ap(out, h); out.append("->key_slot_count;\n");
-                emit_delete_slot(kt, StringView(ks.data(), ks.size()), out);
-            }
-            if (vc) {
-                String vs = format("_dv{}", n);
-                out.append("    uint32_t* "); ap(out, vs); out.append(" = "); ap(out, h);
-                out.append("->values + (size_t)"); ap(out, iv); out.append(" * ");
-                ap(out, h); out.append("->value_slot_count;\n");
-                emit_delete_slot(vt, StringView(vs.data(), vs.size()), out);
-            }
-            out.append("    } }\n");  // close for + if(capacity)
-        }
-        out.append("    roxy_map_delete("); ap(out, h); out.append(");\n");
-        if (free_obj) { out.append("    roxy_free("); ap(out, h); out.append(");\n"); }
-        out.append("    } }\n");
+    // --- List / Map: route through a per-type drop-glue function (the AOT
+    // analogue of a struct's `$$delete`), so the element loop + buffer free isn't
+    // re-inlined at every Delete site. A container is always a heap pointer, so
+    // free_obj is always true here — the glue always frees the header.
+    // (lifecycle-traits.md migration step 2.) ---
+    if (type->is_list() || type->is_map()) {
+        if (!type->noncopyable()) return;  // copyable container: never reached via Delete
+        String glue = request_container_drop_glue(type);
+        out.append("    ");
+        out.append(StringView(glue.data(), glue.size()));
+        out.append("(");
+        out.append(ptr_expr);
+        out.append(");\n");
         return;
     }
 
@@ -494,6 +444,139 @@ void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj,
         // Inline value struct deleted via its address — never null, never freed.
         emit_dtor_call(ptr_expr);
     }
+}
+
+// A unique, valid-C-identifier mangling of a (possibly nested) type, used to name
+// container drop-glue functions. Struct/enum names are already unique per generic
+// instance; closures all erase to "fun" (their drop is the type-erased
+// __closure_delete, so sharing one glue is correct). lifecycle-traits.md step 2.
+void CEmitter::append_type_mangle(Type* type, String& out) {
+    if (!type) { out.append("void"); return; }
+    switch (type->kind) {
+        case TypeKind::List:
+            out.append("List$"); append_type_mangle(type->list_info.element_type, out); break;
+        case TypeKind::Map:
+            out.append("Map$"); append_type_mangle(type->map_info.key_type, out);
+            out.append("$"); append_type_mangle(type->map_info.value_type, out); break;
+        case TypeKind::Uniq:
+            out.append("uniq$"); append_type_mangle(type->base_type(), out); break;
+        case TypeKind::Ref:
+            out.append("ref$"); append_type_mangle(type->base_type(), out); break;
+        case TypeKind::Weak:
+            out.append("weak$"); append_type_mangle(type->base_type(), out); break;
+        case TypeKind::Coroutine:
+            out.append("Coro$"); append_type_mangle(type->coro_info.yield_type, out); break;
+        case TypeKind::Struct: emit_mangled_name(type->struct_info.name, out); break;
+        case TypeKind::Enum:   emit_mangled_name(type->enum_info.name, out); break;
+        case TypeKind::Function: out.append("fun"); break;  // erased: all share __closure_delete
+        case TypeKind::Bool:   out.append("bool"); break;
+        case TypeKind::I8:     out.append("i8"); break;
+        case TypeKind::I16:    out.append("i16"); break;
+        case TypeKind::I32:    out.append("i32"); break;
+        case TypeKind::I64:    out.append("i64"); break;
+        case TypeKind::U8:     out.append("u8"); break;
+        case TypeKind::U16:    out.append("u16"); break;
+        case TypeKind::U32:    out.append("u32"); break;
+        case TypeKind::U64:    out.append("u64"); break;
+        case TypeKind::F32:    out.append("f32"); break;
+        case TypeKind::F64:    out.append("f64"); break;
+        case TypeKind::String: out.append("string"); break;
+        default:               out.append("v"); break;
+    }
+}
+
+// Emit the body of a container drop-glue function: release each count-bearing
+// element/key/value, free the backing buffers, free the header. `self_var` is a
+// `void*`. Mirrors what was previously inlined in emit_typed_delete; nested
+// containers recurse via emit_delete_slot -> emit_typed_delete -> the glue call.
+void CEmitter::emit_container_drop_body(Type* type, StringView self_var, String& out) {
+    u32 n = m_delete_tmp++;
+    if (type->is_list()) {
+        Type* elem = type->list_info.element_type;
+        String h = format("_dl{}", n);
+        out.append("    roxy_list_header* "); ap(out, h);
+        out.append(" = (roxy_list_header*)("); out.append(self_var); out.append(");\n");
+        out.append("    if (!"); ap(out, h); out.append(") return;\n");
+        if (elem && (elem->noncopyable() || elem->kind == TypeKind::Ref)) {
+            String iv = format("_di{}", n);
+            String sv = format("_ds{}", n);
+            out.append("    for (uint32_t "); ap(out, iv); out.append(" = 0; ");
+            ap(out, iv); out.append(" < "); ap(out, h); out.append("->length; ");
+            ap(out, iv); out.append("++) {\n");
+            out.append("    uint32_t* "); ap(out, sv); out.append(" = "); ap(out, h);
+            out.append("->elements + (size_t)"); ap(out, iv); out.append(" * ");
+            ap(out, h); out.append("->element_slot_count;\n");
+            emit_delete_slot(elem, StringView(sv.data(), sv.size()), out);
+            out.append("    }\n");
+        }
+        out.append("    roxy_list_delete("); ap(out, h); out.append(");\n");
+        out.append("    roxy_free("); ap(out, h); out.append(");\n");
+        return;
+    }
+    // Map
+    Type* kt = type->map_info.key_type;
+    Type* vt = type->map_info.value_type;
+    bool kc = kt && kt->noncopyable();
+    // A `ref V` value is count-bearing (emit_delete_slot emits roxy_ref_dec for
+    // the Ref case). Keys can't be `ref`.
+    bool vc = vt && (vt->noncopyable() || vt->kind == TypeKind::Ref);
+    String h = format("_dm{}", n);
+    out.append("    roxy_map_header* "); ap(out, h);
+    out.append(" = (roxy_map_header*)("); out.append(self_var); out.append(");\n");
+    out.append("    if (!"); ap(out, h); out.append(") return;\n");
+    if (kc || vc) {
+        String iv = format("_di{}", n);
+        out.append("    if ("); ap(out, h); out.append("->capacity > 0 && ");
+        ap(out, h); out.append("->distances) {\n");
+        out.append("    for (uint32_t "); ap(out, iv); out.append(" = 0; ");
+        ap(out, iv); out.append(" < "); ap(out, h); out.append("->capacity; ");
+        ap(out, iv); out.append("++) {\n");
+        out.append("    if ("); ap(out, h); out.append("->distances["); ap(out, iv);
+        out.append("] == 0) continue;\n");
+        if (kc) {
+            String ks = format("_dk{}", n);
+            out.append("    uint32_t* "); ap(out, ks); out.append(" = "); ap(out, h);
+            out.append("->keys + (size_t)"); ap(out, iv); out.append(" * ");
+            ap(out, h); out.append("->key_slot_count;\n");
+            emit_delete_slot(kt, StringView(ks.data(), ks.size()), out);
+        }
+        if (vc) {
+            String vs = format("_dv{}", n);
+            out.append("    uint32_t* "); ap(out, vs); out.append(" = "); ap(out, h);
+            out.append("->values + (size_t)"); ap(out, iv); out.append(" * ");
+            ap(out, h); out.append("->value_slot_count;\n");
+            emit_delete_slot(vt, StringView(vs.data(), vs.size()), out);
+        }
+        out.append("    } }\n");  // close for + if(capacity)
+    }
+    out.append("    roxy_map_delete("); ap(out, h); out.append(");\n");
+    out.append("    roxy_free("); ap(out, h); out.append(");\n");
+}
+
+// Lazily emit (forward decl + definition) a per-type container drop-glue function
+// the first time a container type is dropped; return its name. The definition is
+// built into a local buffer because emit_container_drop_body may recurse into
+// request_container_drop_glue for nested containers (which appends to the shared
+// defs buffer) — building locally keeps each definition contiguous.
+String CEmitter::request_container_drop_glue(Type* container) {
+    String name;
+    name.append("roxy_drop__");
+    append_type_mangle(container, name);
+    if (m_drop_glue_seen.insert(container).second) {
+        StringView nv(name.data(), name.size());
+        m_drop_glue_decls.append("static void ");
+        m_drop_glue_decls.append(nv);
+        m_drop_glue_decls.append("(void* self);\n");
+
+        String def;
+        def.append("static void ");
+        def.append(nv);
+        def.append("(void* self) {\n");
+        emit_container_drop_body(container, StringView("self", 4), def);
+        def.append("}\n\n");
+        m_drop_glue_defs.append(StringView(def.data(), def.size()));
+    }
+    return name;
 }
 
 // --- Enum typedefs ---
@@ -3634,11 +3717,22 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
     // can reference __closure_delete).
     emit_closure_dispatch(output);
 
-    // Emit all function bodies
+    // Emit all function bodies into a temp buffer first: emitting them lazily
+    // registers per-type container drop-glue functions
+    // (request_container_drop_glue), which must be declared + defined *before* the
+    // bodies that call them. After the loop, splice the glue (decls then defs)
+    // ahead of the bodies. (lifecycle-traits.md migration step 2.)
+    String body_out;
     for (u32 i = 0; i < module->functions.size(); i++) {
-        emit_function(module->functions[i], output);
-        output.append("\n");
+        emit_function(module->functions[i], body_out);
+        body_out.append("\n");
     }
+    if (m_drop_glue_decls.size() > 0) {
+        output.append(StringView(m_drop_glue_decls.data(), m_drop_glue_decls.size()));
+        output.append("\n");
+        output.append(StringView(m_drop_glue_defs.data(), m_drop_glue_defs.size()));
+    }
+    output.append(StringView(body_out.data(), body_out.size()));
 
     // Emit the standalone C `main()` wrapper that initializes the runtime
     // context and forwards to the user's renamed `main_entry()`.
