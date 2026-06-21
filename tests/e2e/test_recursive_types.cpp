@@ -55,7 +55,7 @@ TEST_SUITE("E2E Recursive Types") {
         CHECK(result.value == 10);
     }
 
-    TEST_CASE("access uniq field via ref param") {  // VM-only: C backend: ref/inout uniq ownership gap
+    TEST_CASE_TEMPLATE("access uniq field via ref param", Backend, RX_E2E_BACKENDS) {
         const char* source = R"CODE(
         struct Node {
             value: i32;
@@ -79,7 +79,7 @@ TEST_SUITE("E2E Recursive Types") {
         }
     )CODE";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 20);
     }

@@ -5502,8 +5502,11 @@ void IRBuilder::nullify_moved_field_source(Expr* consumed) {
 
     ValueId src_obj_ptr = gen_expr(src_get.object);
     ValueId null_val = emit_const_null();
+    // Tag the store with the field's real type (not void): the C backend keys
+    // off the SetField type to cast the null (`void*`) to a `uniq`/`ref` pointer
+    // field — `field = nullptr` is ill-formed otherwise in C++.
     emit_set_field(src_obj_ptr, src_field->name, src_field->slot_offset,
-                   src_field->slot_count, null_val, m_types.void_type());
+                   src_field->slot_count, null_val, field_type);
 }
 
 void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {

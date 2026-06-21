@@ -1263,7 +1263,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("passing uniq field as ref parameter works") {  // VM-only: C backend: ref/inout uniq ownership gap
+    TEST_CASE_TEMPLATE("passing uniq field as ref parameter works", Backend, RX_E2E_BACKENDS) {
         const char* source = R"CODE(
         struct Item {
             value: i32;
@@ -1285,7 +1285,7 @@ TEST_SUITE("E2E RAII") {
         }
     )CODE";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }
@@ -3207,7 +3207,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 5);
     }
 
-    TEST_CASE("moving a pointer field out destroys it exactly once") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
+    TEST_CASE_TEMPLATE("moving a pointer field out destroys it exactly once", Backend, RX_E2E_BACKENDS) {
         // Moving a noncopyable pointer field (`o.a`) out of a value struct nulls
         // that field in the root, so the root's destructor no-ops it (frees only
         // the *sibling* `o.b`) instead of re-destroying the moved-out value. Each
@@ -3229,7 +3229,7 @@ TEST_SUITE("E2E RAII") {
                 return 0;
             }
         )";
-            auto r = VMBackend::run(src.c_str());
+            auto r = Backend::run(src.c_str());
             CHECK(r.success);
             CHECK(r.stdout_output == "~Foo 1\n~Foo 2\n");
         }
@@ -3242,7 +3242,7 @@ TEST_SUITE("E2E RAII") {
                 return 0;
             }
         )";
-            auto r = VMBackend::run(src.c_str());
+            auto r = Backend::run(src.c_str());
             CHECK(r.success);
             CHECK(r.stdout_output == "~Foo 1\n~Foo 2\n");
         }
@@ -3255,7 +3255,7 @@ TEST_SUITE("E2E RAII") {
                 return 0;
             }
         )";
-            auto r = VMBackend::run(src.c_str());
+            auto r = Backend::run(src.c_str());
             CHECK(r.success);
             CHECK(r.stdout_output == "~Foo 1\n~Foo 2\n");
         }
@@ -3269,7 +3269,7 @@ TEST_SUITE("E2E RAII") {
                 return 0;
             }
         )";
-            auto r = VMBackend::run(src.c_str());
+            auto r = Backend::run(src.c_str());
             CHECK(r.success);
             CHECK(r.stdout_output == "~Foo 1\n~Foo 2\n");
         }

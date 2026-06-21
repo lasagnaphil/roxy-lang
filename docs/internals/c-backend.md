@@ -419,8 +419,8 @@ pending fixes:
 
 | Area | Symptom |
 |------|---------|
-| **uniq move-state across control flow** | reassign-before-move in a loop body, and moving a pointer field out (destroy-exactly-once). *(The terminating-branch struct-literal moves and user-defined-index-result moves are now fixed — see below.)* |
-| **ref/inout uniq ownership** | `ref`/`inout` to a `uniq` field, `inout uniq` reassignment, and `ref`-local count balancing across control flow |
+| **uniq move-state across control flow** | reassign-before-move in a loop body. *(Terminating-branch struct-literal moves, user-defined-index-result moves, and move-out of a pointer field are now fixed — see below.)* |
+| **inout uniq ownership** | `inout uniq` reassignment (to a value or to nil) and `ref`-local count balancing across control flow. *(`ref` to a `uniq` field / passing a `uniq` field as a `ref` param is now fixed.)* |
 | **weak fields** | reading/writing a `weak` struct field |
 | **copyable container value params** | passing a `List`/`Map` by value should deep-copy it (the bytecode lowering inserts the copy callee-side; the C backend, which branches off the IR before lowering, does not) |
 | **tagged-union value-field assignment** | assigning a tagged-union value into a variant field, incl. a struct value via `self` inside a method. *(Recursive destruction of tagged-union trees is now fixed.)* |
@@ -466,6 +466,15 @@ tests where the C binary aborts rather than trapping cleanly.
   (then/else/when-case/else-if-chain), move-out of a user-defined index result,
   struct-valued `Map` persistence across calls, recursive tagged-union-tree
   destruction, and deeply-nested value-field destructors.
+- **Null-on-move of a `uniq`/`ref` field** (passing a `uniq` field as a `ref`
+  param, accessing it via a `ref` param, moving a pointer field out). When a
+  noncopyable field source is consumed, the IR builder nulls it with a
+  `SetField <- const_null`; it had tagged that store with `void` instead of the
+  field's type, so the C emitter's null-cast path didn't fire and it emitted
+  `field = nullptr` (`void*` → `T*`, ill-formed in C++). The store now carries
+  the field's real type (`nullify_moved_field_source` in `ir_builder.cpp`), so
+  the existing `uniq`/`ref`-field null-cast applies. VM behavior is unchanged
+  (it ignores the SetField type).
 - **String/utility runtime natives** `str_char_at` / `str_substr` / `str_to_f64` /
   `str_from_code` / `clock` / `read_file` are now implemented in `roxy_rt`
   (`roxy_string_char_at` / `roxy_string_substr` / `roxy_string_to_f64` /
