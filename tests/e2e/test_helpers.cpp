@@ -31,6 +31,7 @@
 #define close _close
 #else
 #include <unistd.h>
+#include <sys/stat.h>
 #endif
 
 // Suppress MSVC deprecation warnings for freopen
@@ -323,6 +324,42 @@ static const char* get_project_root() {
 #endif
 }
 
+// ---- Content-addressed binary cache (C-backend) -----------------------------
+// Compiling + first-launching a uniquely-named binary per test is dominated by
+// macOS's first-launch security assessment (~350ms/binary; a warm re-run of the
+// same file is ~5ms). Keying the compiled binary on a hash of the generated
+// source + a runtime-version hash lets unchanged tests reuse the already-built,
+// already-assessed binary across runs — turning iterative re-runs into warm
+// runs. The key folds in the runtime version so a runtime change invalidates
+// every cached binary (a stale binary has the old runtime linked in). Set
+// ROXY_CBACKEND_NO_CACHE to bypass.
+
+// FNV-1a 64-bit. Chainable: pass the previous result as `seed` to continue.
+static uint64_t fnv1a64(const void* data, size_t len,
+                        uint64_t seed = 1469598103934665603ULL) {
+    const unsigned char* p = static_cast<const unsigned char*>(data);
+    uint64_t h = seed;
+    for (size_t i = 0; i < len; i++) { h ^= p[i]; h *= 1099511628211ULL; }
+    return h;
+}
+
+// Hash a file's contents (streaming). Returns 0 on failure.
+static uint64_t hash_file(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return 0;
+    uint64_t h = 1469598103934665603ULL;
+    unsigned char buf[8192];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) h = fnv1a64(buf, n, h);
+    fclose(f);
+    return h;
+}
+
+static bool file_exists(const char* path) {
+    struct stat st;
+    return stat(path, &st) == 0 && (st.st_mode & S_IFREG);
+}
+
 // The C-backend runtime (roxy_rt.cpp + slab_allocator.cpp + string_intern.cpp +
 // platform vmem) is identical for every generated test program. Compiling those
 // four translation units once per test process and linking the resulting object
@@ -334,6 +371,10 @@ struct RuntimeObjects {
     char obj_paths[kCount][256];
     bool ok = false;
     String link_args;  // " <obj0> <obj1> ..." appended to the link command
+    // Hash of the compiled runtime objects' contents — a stable fingerprint of
+    // the runtime + compiler that's folded into each binary's cache key, so a
+    // runtime change invalidates the cache. 0 means "unknown" → caching off.
+    uint64_t version_hash = 0;
 
     RuntimeObjects() {
         for (int i = 0; i < kCount; i++) obj_paths[i][0] = '\0';
@@ -380,6 +421,17 @@ struct RuntimeObjects {
             link_args.append(" ", 1);
             link_args.append(obj_paths[i], static_cast<u32>(strlen(obj_paths[i])));
         }
+        // Fingerprint the compiled runtime for the binary cache key. Object
+        // content is a deterministic function of the runtime sources + compiler
+        // + flags (the mkstemp output path doesn't affect it), so this is stable
+        // across processes and changes whenever the runtime or compiler does.
+        uint64_t vh = 1469598103934665603ULL;
+        for (int i = 0; i < kCount; i++) {
+            uint64_t fh = hash_file(obj_paths[i]);
+            if (fh == 0) { vh = 0; break; }  // read failed → disable caching
+            vh = fnv1a64(&fh, sizeof(fh), vh);
+        }
+        version_hash = vh;
         ok = true;
     }
 
@@ -429,69 +481,84 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
         return result;
     }
 
-    // Write C++ source to temp file
     const char* tmpdir = getenv("TMPDIR");
     if (!tmpdir) tmpdir = "/tmp";
 
-    char src_path[256];
-    char bin_path[256];
-    snprintf(src_path, sizeof(src_path), "%s/roxy_cbackend_XXXXXX.cpp", tmpdir);
-    snprintf(bin_path, sizeof(bin_path), "%s/roxy_cbackend_bin_XXXXXX", tmpdir);
-
-    // Create unique temp file for source
-    int src_fd = mkstemps(src_path, 4); // .cpp suffix
-    if (src_fd < 0) {
-        return result;
+    // Content-addressed binary cache: key the compiled binary on the generated
+    // source + the runtime version, so an unchanged test reuses the already-built
+    // and already-(security-)assessed binary on the next run (warm ~5ms vs the
+    // ~350ms first-launch assessment a fresh binary pays). doctest runs cases
+    // sequentially within a process, so no locking is needed.
+    bool cache_enabled = rt.version_hash != 0 &&
+                         getenv("ROXY_CBACKEND_NO_CACHE") == nullptr;
+    char cache_path[512] = {0};
+    if (cache_enabled) {
+        uint64_t key = fnv1a64(cpp_source.data(), cpp_source.size(), rt.version_hash);
+        char cache_dir[400];
+        snprintf(cache_dir, sizeof(cache_dir), "%s/roxy_ccache", tmpdir);
+        mkdir(cache_dir, 0777);  // ignore EEXIST
+        snprintf(cache_path, sizeof(cache_path), "%s/c_%016llx",
+                 cache_dir, (unsigned long long)key);
     }
 
-    // Write source
-    write(src_fd, cpp_source.data(), cpp_source.size());
-    close(src_fd);
+    char bin_path[512];
+    bool bin_is_cached = false;
 
-    // Create unique temp path for binary
-    int bin_fd = mkstemp(bin_path);
-    if (bin_fd < 0) {
-        remove(src_path);
-        return result;
-    }
-    close(bin_fd);
+    if (cache_enabled && file_exists(cache_path)) {
+        // Cache hit: reuse the prior run's binary directly (no compile, warm run).
+        snprintf(bin_path, sizeof(bin_path), "%s", cache_path);
+        bin_is_cached = true;
+        result.compile_success = true;
+    } else {
+        // Cache miss (or caching disabled): write the source, compile, link.
+        char src_path[256];
+        snprintf(src_path, sizeof(src_path), "%s/roxy_cbackend_XXXXXX.cpp", tmpdir);
+        int src_fd = mkstemps(src_path, 4);  // .cpp suffix
+        if (src_fd < 0) return result;
+        write(src_fd, cpp_source.data(), cpp_source.size());
+        close(src_fd);
 
-    // Compile the generated source and link the prebuilt runtime objects.
-    char compile_cmd[2048];
-    snprintf(compile_cmd, sizeof(compile_cmd),
-             "c++ -std=c++17 -I%s -I%s -o %s %s%s 2>&1",
-             rt_include_dir, rt_include_dir_root, bin_path, src_path,
-             rt.link_args.c_str());
+        // Compile to a unique temp path, then move it into place on success. The
+        // rename is atomic, so an interrupted/partial build never becomes a cache
+        // hit for a later run.
+        char build_path[256];
+        snprintf(build_path, sizeof(build_path), "%s/roxy_cbackend_bin_XXXXXX", tmpdir);
+        int bin_fd = mkstemp(build_path);
+        if (bin_fd < 0) { remove(src_path); return result; }
+        close(bin_fd);
 
-    if (debug) {
-        printf("Compile command: %s\n", compile_cmd);
-    }
+        char compile_cmd[2048];
+        snprintf(compile_cmd, sizeof(compile_cmd),
+                 "c++ -std=c++17 -I%s -I%s -o %s %s%s 2>&1",
+                 rt_include_dir, rt_include_dir_root, build_path, src_path,
+                 rt.link_args.c_str());
+        if (debug) printf("Compile command: %s\n", compile_cmd);
 
-    FILE* compile_pipe = popen(compile_cmd, "r");
-    if (!compile_pipe) {
-        remove(src_path);
-        remove(bin_path);
-        return result;
-    }
-
-    char compile_output[1024];
-    String compile_errors;
-    while (fgets(compile_output, sizeof(compile_output), compile_pipe)) {
-        compile_errors.append(compile_output, static_cast<u32>(strlen(compile_output)));
-    }
-    int compile_status = pclose(compile_pipe);
-
-    if (compile_status != 0) {
-        fprintf(stderr, "[C Backend] C++ compilation failed:\n%s\n", compile_errors.c_str());
-        if (debug) {
-            fprintf(stderr, "=== Generated C++ ===\n%s\n", cpp_source.c_str());
+        FILE* compile_pipe = popen(compile_cmd, "r");
+        if (!compile_pipe) { remove(src_path); remove(build_path); return result; }
+        char compile_output[1024];
+        String compile_errors;
+        while (fgets(compile_output, sizeof(compile_output), compile_pipe)) {
+            compile_errors.append(compile_output, static_cast<u32>(strlen(compile_output)));
         }
+        int compile_status = pclose(compile_pipe);
         remove(src_path);
-        remove(bin_path);
-        return result;
-    }
 
-    result.compile_success = true;
+        if (compile_status != 0) {
+            fprintf(stderr, "[C Backend] C++ compilation failed:\n%s\n", compile_errors.c_str());
+            if (debug) fprintf(stderr, "=== Generated C++ ===\n%s\n", cpp_source.c_str());
+            remove(build_path);
+            return result;
+        }
+
+        if (cache_enabled && rename(build_path, cache_path) == 0) {
+            snprintf(bin_path, sizeof(bin_path), "%s", cache_path);
+            bin_is_cached = true;
+        } else {
+            snprintf(bin_path, sizeof(bin_path), "%s", build_path);  // uncached path
+        }
+        result.compile_success = true;
+    }
 
     // Run the binary. Capture stdout only (Roxy `print` writes to stdout):
     // leaving stderr attached lets the shell exec-replace the binary, so a
@@ -503,8 +570,7 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
 
     FILE* run_pipe = popen(run_cmd, "r");
     if (!run_pipe) {
-        remove(src_path);
-        remove(bin_path);
+        if (!bin_is_cached) remove(bin_path);
         return result;
     }
 
@@ -532,9 +598,9 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     }
 #endif
 
-    // Cleanup temp files
-    remove(src_path);
-    remove(bin_path);
+    // Cleanup: keep the cached binary (it's the cache); only remove an uncached
+    // build artifact. The source was already removed after compilation.
+    if (!bin_is_cached) remove(bin_path);
 
     return result;
 }

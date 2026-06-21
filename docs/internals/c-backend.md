@@ -386,6 +386,8 @@ The two paths complement each other: interpreter for development, C backend for 
 
 `compile_and_run_cpp(source)` runs the full pipeline (Roxy → IR → CEmitter → temp `.cpp` → `c++ -std=c++17` → run → check exit code + stdout). `compile_to_cpp` returns the C++ string; `compile_and_run_cpp_with_registry` links an inline native header for AOT NativeRegistry tests; pass `debug=true` to dump IR and generated source. Because these invoke the system compiler, the suite must run outside the sandbox.
 
+**Binary cache.** Per-case wall time is dominated not by compilation (~110ms) but by **running** the freshly-built binary (~350ms) — macOS performs a synchronous first-launch security assessment (`syspolicyd`/Gatekeeper) on each never-seen executable; a warm re-run of the *same* file is ~5ms. `compile_and_run_cpp` therefore content-addresses the compiled binary under `$TMPDIR/roxy_ccache/c_<hash>`, where the key is `fnv1a64(generated_source) ⊕ runtime_version_hash`. The runtime-version hash (FNV of the compiled `roxy_rt` objects) is folded in so a runtime or compiler change invalidates every cached binary — a stale binary has the old runtime linked in. On a hit the build is skipped entirely and the already-assessed binary is re-run (warm); on a miss it compiles to a temp path and `rename`s into the cache atomically (a partial build never becomes a hit). Effect: the full `<C>` suite drops from ~minutes to **~1s on a warm cache**. Set `ROXY_CBACKEND_NO_CACHE=1` to bypass. (`compile_and_run_cpp_with_registry` is intentionally uncached — it links extra translation units not captured by the key.)
+
 ### Parametric E2E coverage (`<VM>` / `<C>`)
 
 Most `tests/e2e/` suites are **backend-parametric**: a single test body runs on
