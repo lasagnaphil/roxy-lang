@@ -419,14 +419,14 @@ pending fixes:
 
 | Area | Symptom |
 |------|---------|
-| **uniq move-state across control flow** | a `uniq`/struct-literal moved in a terminating branch (then/else/when-case that returns), and move-out of fields / user-defined index results |
+| **uniq move-state across control flow** | reassign-before-move in a loop body, and moving a pointer field out (destroy-exactly-once). *(The terminating-branch struct-literal moves and user-defined-index-result moves are now fixed — see below.)* |
 | **ref/inout uniq ownership** | `ref`/`inout` to a `uniq` field, `inout uniq` reassignment, and `ref`-local count balancing across control flow |
 | **weak fields** | reading/writing a `weak` struct field |
 | **copyable container value params** | passing a `List`/`Map` by value should deep-copy it (the bytecode lowering inserts the copy callee-side; the C backend, which branches off the IR before lowering, does not) |
-| **nested tagged-union value assignment / recursive cleanup** | assigning a tagged-union value into a variant field, and recursive destruction of tagged-union trees |
+| **tagged-union value-field assignment** | assigning a tagged-union value into a variant field, incl. a struct value via `self` inside a method. *(Recursive destruction of tagged-union trees is now fixed.)* |
 | **coroutine uniq-field cleanup** | `Coro<T>` promoting `uniq`/`List<uniq>`/`Map<_,uniq>` state |
 | **closures** | `self` capture and function-to-`ref fun` borrow conversion |
-| **weak field read**, **try-local rebinding**, **struct-valued map persistence** | smaller divergences |
+| **try-local rebinding** | a pre-declared struct local rebound by a (throwing or non-throwing) call inside a `try` |
 | **rvalue `Printable.to_string`** | a `to_string()` returning an f-string from a struct rvalue emits a `void*` return type |
 
 Not bugs, also VM-only: tests asserting a result > 255 (8-bit exit code — many
@@ -460,6 +460,12 @@ tests where the C binary aborts rather than trapping cleanly.
   *Call/Closure* but not past the block *terminator*, so `nullify v; return v`
   emitted `v = 0; return v;` (returned null) — a nullify of the returned value
   is now dropped (it's moved out of the frame; any emit after `return` is dead).
+  Fixes (2) and (3) are general move/pointer-semantics fixes, not
+  operator-specific: they also recovered 9 cases in the uniq/ownership cluster
+  that were previously VM-only — terminating-branch struct-literal moves
+  (then/else/when-case/else-if-chain), move-out of a user-defined index result,
+  struct-valued `Map` persistence across calls, recursive tagged-union-tree
+  destruction, and deeply-nested value-field destructors.
 - **String/utility runtime natives** `str_char_at` / `str_substr` / `str_to_f64` /
   `str_from_code` / `clock` / `read_file` are now implemented in `roxy_rt`
   (`roxy_string_char_at` / `roxy_string_substr` / `roxy_string_to_f64` /

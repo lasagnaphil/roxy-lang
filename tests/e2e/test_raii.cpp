@@ -591,7 +591,7 @@ TEST_SUITE("E2E RAII") {
     // Recursive Uniq Field Cleanup (Synthetic Destructors)
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("uniq field auto-cleanup at scope exit", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("uniq field auto-cleanup at scope exit", Backend, RX_E2E_BACKENDS) {
         // When a struct with a uniq field goes out of scope,
         // the uniq field should be automatically deleted
         const char* source = R"(
@@ -623,7 +623,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.stdout_output == "~Inner\n");
     }
 
-    TEST_CASE_TEMPLATE("uniq field cleanup with explicit delete", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("uniq field cleanup with explicit delete", Backend, RX_E2E_BACKENDS) {
         // Explicit delete of a struct with uniq fields should clean up the fields
         const char* source = R"CODE(
         struct Node {
@@ -652,7 +652,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.stdout_output == "~Node(99)\n");
     }
 
-    TEST_CASE_TEMPLATE("recursive uniq field cleanup (tree structure)", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("recursive uniq field cleanup (tree structure)", Backend, RX_E2E_BACKENDS) {
         // A tree with uniq children should recursively clean up all nodes
         const char* source = R"CODE(
         struct Node {
@@ -688,7 +688,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.stdout_output == "~Node(1)\n~Node(3)\n~Node(2)\n");
     }
 
-    TEST_CASE_TEMPLATE("user-defined dtor + auto field cleanup", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("user-defined dtor + auto field cleanup", Backend, RX_E2E_BACKENDS) {
         // When a struct has BOTH a user-defined destructor AND uniq fields,
         // the user destructor runs first, then fields are cleaned up
         const char* source = R"CODE(
@@ -724,7 +724,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.stdout_output == "~Parent(root)\n~Child(kid)\n");
     }
 
-    TEST_CASE_TEMPLATE("multiple uniq fields cleanup order", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("multiple uniq fields cleanup order", Backend, RX_E2E_BACKENDS) {
         // Multiple uniq fields should be cleaned up in reverse declaration order
         const char* source = R"CODE(
         struct Item {
@@ -786,7 +786,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("value-type struct field with destructor", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("value-type struct field with destructor", Backend, RX_E2E_BACKENDS) {
         // When a struct embeds a value-type struct field whose type has a
         // destructor (due to owning uniq fields), the field's destructor
         // should be called automatically.
@@ -826,7 +826,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.stdout_output == "~Leaf(77)\n");
     }
 
-    TEST_CASE("deeply nested value-type fields with destructors") {  // VM-only: C backend: struct-by-value copy semantics gap
+    TEST_CASE_TEMPLATE("deeply nested value-type fields with destructors", Backend, RX_E2E_BACKENDS) {
         // Three levels of nesting: C embeds B embeds A, where A has a uniq field.
         // All three should get synthetic destructors via the fixpoint loop.
         const char* source = R"CODE(
@@ -858,7 +858,7 @@ TEST_SUITE("E2E RAII") {
         }
     )CODE";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "~Resource(42)\n");
     }
@@ -867,7 +867,7 @@ TEST_SUITE("E2E RAII") {
     // Value-Type Struct Move Semantics
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("value struct scope-exit cleanup", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("value struct scope-exit cleanup", Backend, RX_E2E_BACKENDS) {
         // A value-type struct with a uniq field gets a synthetic destructor,
         // so it should be cleaned up at scope exit
         const char* source = R"CODE(
@@ -928,7 +928,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(module == nullptr);  // Should fail to compile
     }
 
-    TEST_CASE_TEMPLATE("value struct move on return", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("value struct move on return", Backend, RX_E2E_BACKENDS) {
         // Returning a value struct with move semantics moves it to the caller;
         // no double-destroy should occur
         const char* source = R"CODE(
@@ -965,7 +965,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.stdout_output == "77\n~Leaf(77)\n");
     }
 
-    TEST_CASE_TEMPLATE("value struct reassignment destroys old", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("value struct reassignment destroys old", Backend, RX_E2E_BACKENDS) {
         // Reassigning a move-semantic value struct should destroy the old value first
         const char* source = R"CODE(
         struct Leaf {
@@ -1317,7 +1317,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("reassigning uniq field with new value works", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("reassigning uniq field with new value works", Backend, RX_E2E_BACKENDS) {
         const char* source = R"CODE(
         struct Item {
             value: i32;
@@ -1352,7 +1352,7 @@ TEST_SUITE("E2E RAII") {
     // Field Reassignment Cleanup (Runtime)
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("field reassignment destroys old uniq value", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("field reassignment destroys old uniq value", Backend, RX_E2E_BACKENDS) {
         const char* source = R"CODE(
         struct Item {
             id: i32;
@@ -1384,7 +1384,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.stdout_output == "before reassign\n~Item(1)\nafter reassign\n~Item(2)\n");
     }
 
-    TEST_CASE_TEMPLATE("field reassignment with nil destroys old value", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("field reassignment with nil destroys old value", Backend, RX_E2E_BACKENDS) {
         const char* source = R"CODE(
         struct Item {
             id: i32;
@@ -1439,7 +1439,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(module == nullptr);  // item is moved after field assignment
     }
 
-    TEST_CASE_TEMPLATE("field assignment from uniq variable works correctly", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("field assignment from uniq variable works correctly", Backend, RX_E2E_BACKENDS) {
         const char* source = R"CODE(
         struct Item {
             value: i32;
@@ -1748,7 +1748,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("linked list building in while loop", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("linked list building in while loop", Backend, RX_E2E_BACKENDS) {
         // Move head into field, reassign head, repeat — should work
         const char* source = R"CODE(
         struct Node {
@@ -1780,7 +1780,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 3);
     }
 
-    TEST_CASE_TEMPLATE("linked list building in for loop", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("linked list building in for loop", Backend, RX_E2E_BACKENDS) {
         // Same pattern with for loop
         const char* source = R"CODE(
         struct Node {
@@ -2370,7 +2370,7 @@ TEST_SUITE("E2E RAII") {
     // paths) doesn't see the consumed-and-nullified locals from the dead branch.
     // ============================================================================
 
-    TEST_CASE("terminating then-branch struct-literal move keeps local live for after-if struct literal") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
+    TEST_CASE_TEMPLATE("terminating then-branch struct-literal move keeps local live for after-if struct literal", Backend, RX_E2E_BACKENDS) {
         // Pre-fix: the then-branch struct literal nullify-replaced `cond` to nil;
         // the after-if path then embedded nil into its own struct literal and
         // segfaulted on the field dereference at main.
@@ -2402,12 +2402,12 @@ TEST_SUITE("E2E RAII") {
         }
     )ROXY";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 1);
     }
 
-    TEST_CASE("terminating else-branch struct-literal move keeps local live for after-if struct literal") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
+    TEST_CASE_TEMPLATE("terminating else-branch struct-literal move keeps local live for after-if struct literal", Backend, RX_E2E_BACKENDS) {
         // Symmetric to the above: when the else-branch terminates, the merge block
         // is reachable only via the then-branch (which here also moves the local).
         // The IR builder must restore the post-then snapshot rather than carrying
@@ -2442,12 +2442,12 @@ TEST_SUITE("E2E RAII") {
         }
     )ROXY";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 2);
     }
 
-    TEST_CASE("terminating then-branch with else preserves else's post-state at merge") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
+    TEST_CASE_TEMPLATE("terminating then-branch with else preserves else's post-state at merge", Backend, RX_E2E_BACKENDS) {
         // then-branch terminates; the merge block is reachable only via the
         // else-branch. The IR builder should keep the else's post-state at merge
         // (not roll back to pre-if), so the after-if code sees the right values.
@@ -2481,12 +2481,12 @@ TEST_SUITE("E2E RAII") {
         }
     )ROXY";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 3);
     }
 
-    TEST_CASE("terminating when-case struct-literal move keeps local live for after-when struct literal") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
+    TEST_CASE_TEMPLATE("terminating when-case struct-literal move keeps local live for after-when struct literal", Backend, RX_E2E_BACKENDS) {
         // Same shape as the if-stmt termination tests, but for when. Pre-fix the
         // last case body's nullify-replace of `cond` to nil leaked into the
         // merge block, segfaulting on dereference of the after-when struct
@@ -2523,12 +2523,12 @@ TEST_SUITE("E2E RAII") {
         }
     )ROXY";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 7);
     }
 
-    TEST_CASE("terminating else-if-chain branch struct-literal move keeps local live after chain") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
+    TEST_CASE_TEMPLATE("terminating else-if-chain branch struct-literal move keeps local live after chain", Backend, RX_E2E_BACKENDS) {
         // Same shape but for an else-if cascade (gen_if_else_chain). The last
         // chain branch's nullify-replace of `cond` would otherwise leak into the
         // merge block.
@@ -2562,7 +2562,7 @@ TEST_SUITE("E2E RAII") {
         }
     )ROXY";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 7);
     }
@@ -2643,7 +2643,7 @@ TEST_SUITE("E2E RAII") {
     // scope exit).
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Constructor call consumes noncopyable identifier argument stored in variant field", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("Constructor call consumes noncopyable identifier argument stored in variant field", Backend, RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         enum K { A, B }
         struct Node {
@@ -2676,7 +2676,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Constructor call consumes inline uniq rvalue argument stored in variant field", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("Constructor call consumes inline uniq rvalue argument stored in variant field", Backend, RX_E2E_BACKENDS) {
         // Exercises the rvalue/temp path (not just identifiers): the inner
         // `uniq Node.b(...)` is an rvalue temporary passed to Node.a. It must be
         // consumed via the temp-nullify path, not the identifier path.
@@ -2718,7 +2718,7 @@ TEST_SUITE("E2E RAII") {
     // destroy that stale pointer and crash.
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Synthesized default ctor null-inits variant uniq fields for stack-reuse safety", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: uniq/RAII destructor + struct-value-move semantics gap
+    TEST_CASE_TEMPLATE("Synthesized default ctor null-inits variant uniq fields for stack-reuse safety", Backend, RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         enum K { A, B }
         struct Node {
@@ -3155,7 +3155,7 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 50);
     }
 
-    TEST_CASE("move out of a user-defined index result is allowed") {  // VM-only: C backend: uniq move-state across control flow / struct-literal-into-variant-field gap
+    TEST_CASE_TEMPLATE("move out of a user-defined index result is allowed", Backend, RX_E2E_BACKENDS) {
         // The rejection keys off the `index` method being *native*. A user `index`
         // (here via the builtin `Index<Idx, Output>` trait) has a move-checked
         // body, so its noncopyable return is a genuine ownership transfer (a fresh
@@ -3174,7 +3174,7 @@ TEST_SUITE("E2E RAII") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 42);
     }

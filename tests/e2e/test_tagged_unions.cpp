@@ -382,7 +382,7 @@ TEST_SUITE("E2E Tagged Unions") {
         CHECK(result.stdout_output == "123\n");
     }
 
-    TEST_CASE_TEMPLATE("recursive: uniq self-reference", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
+    TEST_CASE_TEMPLATE("recursive: uniq self-reference", Backend, RX_E2E_BACKENDS) {
         // This is the core AST pattern: Expr contains uniq Expr children
         const char* source = R"(
         enum ExprKind { Literal, Binary }
@@ -432,7 +432,7 @@ TEST_SUITE("E2E Tagged Unions") {
         CHECK(result.stdout_output == "30\n");
     }
 
-    TEST_CASE_TEMPLATE("recursive: deep tree cleanup", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
+    TEST_CASE_TEMPLATE("recursive: deep tree cleanup", Backend, RX_E2E_BACKENDS) {
         // Verify RAII cleanup for a recursive tree structure
         const char* source = R"(
         enum ExprKind { Literal, Binary }
@@ -490,7 +490,7 @@ TEST_SUITE("E2E Tagged Unions") {
         CHECK(result.stdout_output == "10\n");
     }
 
-    TEST_CASE_TEMPLATE("recursive: destructor chaining", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: nested tagged-union value-assignment / recursive cleanup gap
+    TEST_CASE_TEMPLATE("recursive: destructor chaining", Backend, RX_E2E_BACKENDS) {
         // Verify that destroying a uniq tagged union recursively cleans up
         // uniq children in variants. Without a synthetic destructor on Expr,
         // only the root would be freed — children would leak.

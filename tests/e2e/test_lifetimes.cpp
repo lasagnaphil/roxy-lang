@@ -120,7 +120,7 @@ TEST_SUITE("E2E Lifetimes") {
     // Reassigning a ref local through a chain (linked-list walk) keeps the count
     // balanced: each reassignment releases the old borrow and acquires the new,
     // so after the walk every node is deletable.
-    TEST_CASE_TEMPLATE("ref local reassignment keeps the count balanced", Backend, RX_E2E_BACKENDS) {  // VM-only: C backend: ref/uniq ownership + borrow-count semantics gap
+    TEST_CASE_TEMPLATE("ref local reassignment keeps the count balanced", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Node {
             value: i32;

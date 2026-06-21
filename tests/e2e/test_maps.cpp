@@ -274,7 +274,7 @@ TEST_SUITE("E2E Maps") {
     // bytes decoded by get() were whatever the second frame had just written.)
     // ============================================================================
 
-    TEST_CASE("Map<string, Struct>: value survives subsequent method call with local struct") {  // VM-only: C backend: struct-valued Map persistence gap
+    TEST_CASE_TEMPLATE("Map<string, Struct>: value survives subsequent method call with local struct", Backend, RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         struct Val { pub a: i32; pub b: i32; pub c: i32; }
         fun make_val(): Val { return Val { a = 43690, b = 48059, c = 52428 }; }
@@ -312,12 +312,12 @@ TEST_SUITE("E2E Maps") {
         }
     )ROXY";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 1);
     }
 
-    TEST_CASE("Map<string, Struct>: value preserved across List.push to enclosing list") {  // VM-only: C backend: struct-valued Map persistence gap
+    TEST_CASE_TEMPLATE("Map<string, Struct>: value preserved across List.push to enclosing list", Backend, RX_E2E_BACKENDS) {
         // Original TODO-report pattern: method A inserts into a nested map,
         // method B pushes to the enclosing list. Struct-valued map entries must
         // stay valid across the list push.
@@ -355,7 +355,7 @@ TEST_SUITE("E2E Maps") {
         }
     )ROXY";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 6);
     }
