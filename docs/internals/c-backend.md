@@ -423,7 +423,6 @@ pending fixes:
 | **inout uniq ownership** | `inout uniq` reassignment (to a value or to nil) and `ref`-local count balancing across control flow. *(`ref` to a `uniq` field / passing a `uniq` field as a `ref` param is now fixed.)* |
 | **weak fields** | reading/writing a `weak` struct field |
 | **copyable container value params** | passing a `List`/`Map` by value should deep-copy it (the bytecode lowering inserts the copy callee-side; the C backend, which branches off the IR before lowering, does not) |
-| **tagged-union value-field assignment** | assigning a tagged-union value into a variant field, incl. a struct value via `self` inside a method. *(Recursive destruction of tagged-union trees is now fixed.)* |
 | **coroutine uniq-field cleanup** | `Coro<T>` promoting `uniq`/`List<uniq>`/`Map<_,uniq>` state |
 | **closures** | `self` capture and function-to-`ref fun` borrow conversion |
 | **try-local rebinding** | a pre-declared struct local rebound by a (throwing or non-throwing) call inside a `try` |
@@ -466,6 +465,14 @@ tests where the C binary aborts rather than trapping cleanly.
   (then/else/when-case/else-if-chain), move-out of a user-defined index result,
   struct-valued `Map` persistence across calls, recursive tagged-union-tree
   destruction, and deeply-nested value-field destructors.
+- **Struct definition order for tagged-union variant fields.** A value-struct
+  embedded in another struct's tagged-union variant (e.g. `Outer { when … case
+  OA: inner: Inner }` where `Inner` is itself a tagged union) is laid out by
+  value, so `Outer` needs `Inner`'s full definition first. The C emitter's
+  struct dependency sort (in both `emit_struct_typedefs` and the header path)
+  only walked regular fields, missing the variant-field edge — so `Outer` could
+  be emitted before the still-incomplete `Inner` (`field has incomplete type`).
+  The sort now also walks `when`-clause variant fields.
 - **Null-on-move of a `uniq`/`ref` field** (passing a `uniq` field as a `ref`
   param, accessing it via a `ref` param, moving a pointer field out). When a
   noncopyable field source is consumed, the IR builder nulls it with a

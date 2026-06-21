@@ -566,6 +566,27 @@ void CEmitter::emit_struct_typedefs(const IRModule* module, String& out) {
                 }
             }
         }
+        // Value-struct fields nested in a tagged-union variant (the `when`
+        // clause) are embedded by value too, so they create the same
+        // completeness dependency — without this edge a struct whose only
+        // struct-typed field lives in a variant can be emitted before its
+        // (still-incomplete) field type.
+        const StructTypeInfo& si = struct_type->struct_info;
+        for (u32 w = 0; w < si.when_clauses.size(); w++) {
+            const WhenClauseInfo& clause = si.when_clauses[w];
+            for (u32 v = 0; v < clause.variants.size(); v++) {
+                for (u32 vf = 0; vf < clause.variants[v].fields.size(); vf++) {
+                    Type* vft = clause.variants[v].fields[vf].type;
+                    if (vft && vft->is_struct()) {
+                        auto it = type_to_index.find(vft);
+                        if (it != type_to_index.end()) {
+                            depends_on[i].push_back(it->second);
+                            in_degree[i]++;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Topological sort (Kahn's algorithm)
@@ -2673,6 +2694,24 @@ void CEmitter::emit_pub_struct_definitions(const IRModule* module, String& out) 
                 if (it != type_to_index.end()) {
                     depends_on[i].push_back(it->second);
                     in_degree[i]++;
+                }
+            }
+        }
+        // Same as emit_struct_typedefs: value-struct fields nested in a
+        // tagged-union variant create a completeness dependency too.
+        const StructTypeInfo& si = st->struct_info;
+        for (u32 w = 0; w < si.when_clauses.size(); w++) {
+            const WhenClauseInfo& clause = si.when_clauses[w];
+            for (u32 v = 0; v < clause.variants.size(); v++) {
+                for (u32 vf = 0; vf < clause.variants[v].fields.size(); vf++) {
+                    Type* vft = clause.variants[v].fields[vf].type;
+                    if (vft && vft->is_struct()) {
+                        auto it = type_to_index.find(vft);
+                        if (it != type_to_index.end()) {
+                            depends_on[i].push_back(it->second);
+                            in_degree[i]++;
+                        }
+                    }
                 }
             }
         }

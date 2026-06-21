@@ -619,7 +619,7 @@ TEST_SUITE("E2E Tagged Unions") {
         CHECK(result.stdout_output == "1\n2\n3\n");
     }
 
-    TEST_CASE("Field assignment: tagged-union struct into a variant field") {  // VM-only: C backend: tagged-union value-field assignment gap
+    TEST_CASE_TEMPLATE("Field assignment: tagged-union struct into a variant field", Backend, RX_E2E_BACKENDS) {
         // Pre-fix: assigning v (kind=IA) into o.inner clobbered the inner
         // discriminant; `when o.inner.kind` matched neither IA nor IB.
         const char* source = R"ROXY(
@@ -655,12 +655,12 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )ROXY";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "IA=42\n");
     }
 
-    TEST_CASE("Field assignment: struct value via 'self' inside a method") {  // VM-only: C backend: tagged-union value-field assignment gap
+    TEST_CASE_TEMPLATE("Field assignment: struct value via 'self' inside a method", Backend, RX_E2E_BACKENDS) {
         // Mirrors the original lox repro: assignment happens through `self.field`
         // (a ref to the enclosing struct) rather than through a local variable.
         const char* source = R"ROXY(
@@ -698,7 +698,7 @@ TEST_SUITE("E2E Tagged Unions") {
         }
     )ROXY";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "IA=13\n");
     }
