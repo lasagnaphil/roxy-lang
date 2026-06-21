@@ -6,6 +6,64 @@
 
 namespace rx {
 
+// === Value-lifecycle predicates (docs/internals/lifecycle-traits.md) ===
+//
+// Recursion is finite: the only recursive cases descend into *value* struct
+// fields (embedded structs), which cannot form cycles (direct value cycles are
+// rejected at compile time — see recursive-types.md). Every indirecting kind
+// (uniq / List / Map / ref / coro / function) is a leaf here — its predicate is
+// a constant that does not consult the pointee.
+
+bool Type::needs_drop() const {
+    switch (kind) {
+        case TypeKind::Uniq:        // owns a heap object → run dtor + free
+        case TypeKind::Ref:         // counted borrow → ref_dec the pointee
+        case TypeKind::List:        // owns a heap buffer (+ maybe owning elements)
+        case TypeKind::Map:
+        case TypeKind::Coroutine:   // owns a heap state struct
+        case TypeKind::Function:    // closure: owns a heap env
+            return true;
+        case TypeKind::Struct: {
+            // A struct with a (synthesized or user) destructor always drops.
+            if (noncopyable()) return true;
+            // An otherwise-copyable struct still drops iff it transitively holds a
+            // `ref` (its only count-bearing copyable member).
+            for (const auto& field : struct_info.fields) {
+                if (field.type && field.type->needs_drop()) return true;
+            }
+            for (const auto& clause : struct_info.when_clauses) {
+                for (const auto& variant : clause.variants) {
+                    for (const auto& vf : variant.fields) {
+                        if (vf.type && vf.type->needs_drop()) return true;
+                    }
+                }
+            }
+            return false;
+        }
+        default:
+            return false;  // primitives, string, weak, enum, …
+    }
+}
+
+bool Type::needs_retain() const {
+    if (kind == TypeKind::Ref) return true;       // a copy of a borrow is another borrow
+    if (!is_copy()) return false;                 // move-only: no implicit-copy path
+    if (kind == TypeKind::Struct) {
+        for (const auto& field : struct_info.fields) {
+            if (field.type && field.type->needs_retain()) return true;
+        }
+        for (const auto& clause : struct_info.when_clauses) {
+            for (const auto& variant : clause.variants) {
+                for (const auto& vf : variant.fields) {
+                    if (vf.type && vf.type->needs_retain()) return true;
+                }
+            }
+        }
+        return false;
+    }
+    return false;  // primitives, string, weak, enum, …
+}
+
 // Hash function for type interning
 u64 TypeHash::operator()(const Type* t) const {
     if (!t) return 0;

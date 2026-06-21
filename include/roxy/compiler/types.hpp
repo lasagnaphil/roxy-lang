@@ -376,6 +376,35 @@ struct Type {
         return false;
     }
 
+    // === Value-lifecycle predicates (docs/internals/lifecycle-traits.md) ===
+    // The canonical, structural definition of a type's lifecycle needs — the
+    // source of truth the future drop/copy/clone glue lowering will consume.
+    // Introduced ahead of the migration (doc step 1); no consumers yet beyond a
+    // cross-check assertion in build_delete_desc.
+
+    // Implicit copy is permitted (vs move-only) — the `Copy` marker, exactly the
+    // inverse of move-only. Note: a `Copy` type may still carry retain/drop glue
+    // (a `ref`, or a copyable struct holding one); `Copy` is not "trivially
+    // memcpy-able" — that is `is_trivial()`.
+    bool is_copy() const { return !noncopyable(); }
+
+    // The value owns or borrows a resource that must be released when its storage
+    // dies (drop glue is non-empty). Reports `true` for a `ref` (a counted
+    // borrow → ref_dec) wherever it appears, including as a struct field — which
+    // the current descriptor machinery does not yet clean. That divergence is a
+    // gap this design closes, not an error here.
+    bool needs_drop() const;
+
+    // Implicit copy (copy_init) has a side effect — i.e. the value (transitively)
+    // contains a `ref`, whose copy is another counted borrow (ref_inc). Only
+    // meaningful for `Copy` types; move-only types have no implicit-copy path and
+    // report false.
+    bool needs_retain() const;
+
+    // No glue at all: copy is a plain memcpy and drop is a no-op. The
+    // `is_trivially_destructible` analogue that lets the compiler emit nothing.
+    bool is_trivial() const { return is_copy() && !needs_drop() && !needs_retain(); }
+
     // Get the inner type for reference types
     Type* inner_type() const {
         if (is_reference()) {

@@ -149,6 +149,7 @@ add_executable(roxy_tests
     tests/unit/test_lexer.cpp
     tests/unit/test_parser.cpp
     tests/unit/test_semantic.cpp
+    tests/unit/test_lifecycle_predicates.cpp
     tests/unit/test_ssa_ir.cpp
     tests/unit/test_bytecode.cpp
     tests/unit/test_vm.cpp
