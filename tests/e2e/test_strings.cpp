@@ -642,7 +642,7 @@ TEST_SUITE("E2E Strings") {
     // F-string interpolation of user-defined Printable struct rvalues
     // ============================================================================
 
-    TEST_CASE("F-string interp: Printable struct from function call") {  // VM-only: C backend emits void* for rvalue Printable to_string (known gap)
+    TEST_CASE_TEMPLATE("F-string interp: Printable struct from function call", Backend, RX_E2E_BACKENDS) {
         // Pre-fix: f"{make_pt()}" failed at IR gen with
         // "Internal error: expression is not a valid lvalue".
         const char* source = R"ROXY(
@@ -665,7 +665,7 @@ TEST_SUITE("E2E Strings") {
         }
     )ROXY";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "(3,4)\n");
     }
@@ -696,7 +696,7 @@ TEST_SUITE("E2E Strings") {
         CHECK(result.stdout_output == "(1,2)\n(5,6)\n");
     }
 
-    TEST_CASE("F-string interp: Printable struct from method call") {  // VM-only: C backend emits void* for rvalue Printable to_string (known gap)
+    TEST_CASE_TEMPLATE("F-string interp: Printable struct from method call", Backend, RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         struct Pt {
             x: i32;
@@ -722,7 +722,7 @@ TEST_SUITE("E2E Strings") {
         }
     )ROXY";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "(10,11)\n");
     }

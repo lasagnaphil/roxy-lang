@@ -426,7 +426,6 @@ pending fixes:
 | **coroutine uniq-field cleanup** | `Coro<T>` promoting `uniq`/`List<uniq>`/`Map<_,uniq>` state |
 | **closures** | `self` capture and function-to-`ref fun` borrow conversion |
 | **try-local rebinding (struct)** | a pre-declared *struct* local rebound by a throwing/non-throwing call inside a `try` (the primitive variant already passes) |
-| **rvalue `Printable.to_string`** | a `to_string()` returning an f-string from a struct rvalue emits a `void*` return type |
 
 Not bugs, also VM-only: tests asserting a result > 255 (8-bit exit code — many
 are recoverable by asserting printed stdout instead) and runtime-trap/overflow
@@ -465,6 +464,12 @@ tests where the C binary aborts rather than trapping cleanly.
   (then/else/when-case/else-if-chain), move-out of a user-defined index result,
   struct-valued `Map` persistence across calls, recursive tagged-union-tree
   destruction, and deeply-nested value-field destructors.
+- **Rvalue `Printable.to_string` in f-strings** (`f"{make_pt()}"`, `f"{b.make()}"`)
+  no longer needs a workaround — it was recovered by the Call-arg address-of fix
+  above (calling `.to_string()` on a by-value struct rvalue now takes its
+  address). `to_string` returning a `string` correctly emits a `void*` return
+  (the C type for a string); the prior "void* return type" symptom was the
+  value-rvalue-as-pointer mismatch, not the return type itself.
 - **Null-init of a `weak` field.** A `weak T` field is the `roxy_weak` struct
   `{ptr, generation}`, but the synthesized default constructor (and any `field =
   nil`) emitted `field = nullptr` (`void*` → `roxy_weak`, ill-formed in C++).
