@@ -625,6 +625,16 @@ TEST_SUITE("E2E Strings") {
     }
 
     TEST_CASE_TEMPLATE("read_file basic", Backend, RX_E2E_BACKENDS) {
+        // The platform's empty null device: /dev/null on POSIX, NUL on Windows.
+#ifdef _WIN32
+        const char* source = R"(
+        fun main(): i32 {
+            var content: string = read_file("NUL");
+            print(f"{str_len(content)}");
+            return 0;
+        }
+    )";
+#else
         const char* source = R"(
         fun main(): i32 {
             var content: string = read_file("/dev/null");
@@ -632,6 +642,7 @@ TEST_SUITE("E2E Strings") {
             return 0;
         }
     )";
+#endif
 
         auto result = Backend::run(source);
         CHECK(result.success);

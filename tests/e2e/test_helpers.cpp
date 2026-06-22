@@ -24,11 +24,52 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include <io.h>
 #include <fcntl.h>
+#include <direct.h>
+#include <sys/stat.h>
 #include <windows.h>
+#include <cstdint>
 #define dup _dup
 #define dup2 _dup2
 #define fileno _fileno
 #define close _close
+#define write _write
+#define popen _popen
+#define pclose _pclose
+#ifndef S_IFREG
+#define S_IFREG _S_IFREG
+#endif
+// mkdir() on Windows (_mkdir) takes no mode argument.
+static int rx_win_mkdir(const char* path, int /*mode*/) { return _mkdir(path); }
+#define mkdir(path, mode) rx_win_mkdir((path), (mode))
+
+// Windows replacements for POSIX mkstemp/mkstemps: fill the trailing six 'X'
+// characters (which sit *before* any fixed suffix) with random characters and
+// exclusively create the file. _mktemp_s can't be used directly because it
+// doesn't understand a suffix after the template.
+static int rx_win_mkstemps(char* tmpl, int suffixlen) {
+    size_t len = strlen(tmpl);
+    if ((int)len < 6 + suffixlen) return -1;
+    char* x = tmpl + len - 6 - suffixlen;
+    for (int i = 0; i < 6; i++) if (x[i] != 'X') return -1;
+    static const char charset[] =
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    static uint64_t counter = 0;
+    uint64_t seed = ((uint64_t)GetCurrentProcessId() << 32) ^
+                    (uint64_t)GetTickCount64();
+    for (int attempt = 0; attempt < 256; attempt++) {
+        uint64_t s = seed + (counter++) * 2654435761ull + (uint64_t)attempt;
+        for (int i = 0; i < 6; i++) {
+            s = s * 6364136223846793005ull + 1442695040888963407ull;
+            x[i] = charset[(s >> 33) % (sizeof(charset) - 1)];
+        }
+        int fd = _open(tmpl, _O_RDWR | _O_CREAT | _O_EXCL | _O_BINARY,
+                       _S_IREAD | _S_IWRITE);
+        if (fd >= 0) return fd;
+    }
+    return -1;
+}
+#define mkstemp(tmpl) rx_win_mkstemps((tmpl), 0)
+#define mkstemps(tmpl, suffixlen) rx_win_mkstemps((tmpl), (suffixlen))
 #else
 #include <unistd.h>
 #include <sys/stat.h>
@@ -38,6 +79,46 @@
 #ifdef _MSC_VER
 #pragma warning(disable: 4996)
 #endif
+
+namespace {
+// Platform temp directory. POSIX uses $TMPDIR (default /tmp); Windows has no
+// /tmp, so fall back to %TEMP%/%TMP% (and finally the cwd).
+const char* rx_tmpdir() {
+#ifdef _WIN32
+    const char* t = getenv("TEMP");
+    if (!t) t = getenv("TMP");
+    if (!t) t = ".";
+    return t;
+#else
+    const char* t = getenv("TMPDIR");
+    if (!t) t = "/tmp";
+    return t;
+#endif
+}
+
+// C++ driver used to compile/link generated C-backend programs. Overridable via
+// $ROXY_CXX; defaults to `clang++` on Windows (there is no `c++`) and `c++`
+// elsewhere. clang++ accepts the GCC-style flags the harness passes.
+const char* rx_cxx() {
+    const char* c = getenv("ROXY_CXX");
+    if (c) return c;
+#ifdef _WIN32
+    return "clang++";
+#else
+    return "c++";
+#endif
+}
+
+// Executable suffix for compiled C-backend binaries (Windows needs `.exe` for
+// the shell to run them).
+const char* rx_exe_suffix() {
+#ifdef _WIN32
+    return ".exe";
+#else
+    return "";
+#endif
+}
+}  // namespace
 
 namespace rx {
 
@@ -381,8 +462,7 @@ struct RuntimeObjects {
 
         const char* project_root = get_project_root();
         if (!project_root) return;
-        const char* tmpdir = getenv("TMPDIR");
-        if (!tmpdir) tmpdir = "/tmp";
+        const char* tmpdir = rx_tmpdir();
 
         char rt_include_dir[512], rt_include_dir_root[512];
         snprintf(rt_include_dir, sizeof(rt_include_dir), "%s/include/roxy/rt", project_root);
@@ -406,8 +486,8 @@ struct RuntimeObjects {
 
             char cmd[2048];
             snprintf(cmd, sizeof(cmd),
-                     "c++ -std=c++17 -I%s -I%s -c -o %s %s 2>&1",
-                     rt_include_dir, rt_include_dir_root, obj_paths[i], srcs[i]);
+                     "%s -std=c++17 -I%s -I%s -c -o %s %s 2>&1",
+                     rx_cxx(), rt_include_dir, rt_include_dir_root, obj_paths[i], srcs[i]);
             FILE* pipe = popen(cmd, "r");
             if (!pipe) return;
             String errs;
@@ -481,8 +561,7 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
         return result;
     }
 
-    const char* tmpdir = getenv("TMPDIR");
-    if (!tmpdir) tmpdir = "/tmp";
+    const char* tmpdir = rx_tmpdir();
 
     // Content-addressed binary cache: key the compiled binary on the generated
     // source + the runtime version, so an unchanged test reuses the already-built
@@ -497,8 +576,8 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
         char cache_dir[400];
         snprintf(cache_dir, sizeof(cache_dir), "%s/roxy_ccache", tmpdir);
         mkdir(cache_dir, 0777);  // ignore EEXIST
-        snprintf(cache_path, sizeof(cache_path), "%s/c_%016llx",
-                 cache_dir, (unsigned long long)key);
+        snprintf(cache_path, sizeof(cache_path), "%s/c_%016llx%s",
+                 cache_dir, (unsigned long long)key, rx_exe_suffix());
     }
 
     char bin_path[512];
@@ -527,15 +606,20 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
         if (bin_fd < 0) { remove(src_path); return result; }
         close(bin_fd);
 
+        // The actual compiler output needs the platform executable suffix
+        // (Windows requires `.exe`); the mkstemp placeholder reserves the name.
+        char out_path[264];
+        snprintf(out_path, sizeof(out_path), "%s%s", build_path, rx_exe_suffix());
+
         char compile_cmd[2048];
         snprintf(compile_cmd, sizeof(compile_cmd),
-                 "c++ -std=c++17 -I%s -I%s -o %s %s%s 2>&1",
-                 rt_include_dir, rt_include_dir_root, build_path, src_path,
+                 "%s -std=c++17 -I%s -I%s -o %s %s%s 2>&1",
+                 rx_cxx(), rt_include_dir, rt_include_dir_root, out_path, src_path,
                  rt.link_args.c_str());
         if (debug) printf("Compile command: %s\n", compile_cmd);
 
         FILE* compile_pipe = popen(compile_cmd, "r");
-        if (!compile_pipe) { remove(src_path); remove(build_path); return result; }
+        if (!compile_pipe) { remove(src_path); remove(build_path); remove(out_path); return result; }
         char compile_output[1024];
         String compile_errors;
         while (fgets(compile_output, sizeof(compile_output), compile_pipe)) {
@@ -548,14 +632,18 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
             fprintf(stderr, "[C Backend] C++ compilation failed:\n%s\n", compile_errors.c_str());
             if (debug) fprintf(stderr, "=== Generated C++ ===\n%s\n", cpp_source.c_str());
             remove(build_path);
+            remove(out_path);
             return result;
         }
 
-        if (cache_enabled && rename(build_path, cache_path) == 0) {
+        // The placeholder reserved the base name; the real artifact is out_path.
+        if (strcmp(out_path, build_path) != 0) remove(build_path);
+
+        if (cache_enabled && rename(out_path, cache_path) == 0) {
             snprintf(bin_path, sizeof(bin_path), "%s", cache_path);
             bin_is_cached = true;
         } else {
-            snprintf(bin_path, sizeof(bin_path), "%s", build_path);  // uncached path
+            snprintf(bin_path, sizeof(bin_path), "%s", out_path);  // uncached path
         }
         result.compile_success = true;
     }
@@ -566,7 +654,7 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     // pclose as WIFSIGNALED instead of being masked into a 128+signo *exit
     // code* by an intermediate shell that forks to set up the redirection.
     char run_cmd[512];
-    snprintf(run_cmd, sizeof(run_cmd), "%s", bin_path);
+    snprintf(run_cmd, sizeof(run_cmd), "\"%s\"", bin_path);
 
     FILE* run_pipe = popen(run_cmd, "r");
     if (!run_pipe) {
@@ -586,8 +674,20 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     // such as an out-of-bounds assert → SIGABRT, or a segfault) is a failed
     // run, mirroring the VM's `success == false` on a runtime error.
 #ifdef _WIN32
-    result.exit_code = run_status;
-    result.run_success = true;
+    // Abnormal termination (a failed assert/abort → 0xC0000409, an access
+    // violation → 0xC0000005, …) lands in the NTSTATUS error-severity range
+    // 0xC0000000–0xCFFFFFFF, surfacing through _pclose as that code; treat it
+    // as a failed run, mirroring POSIX's WIFEXITED()==false on a signal. A
+    // clean exit carries the Roxy return value — Windows preserves the full
+    // 32-bit code, so mask to the low byte to match POSIX WEXITSTATUS (e.g. a
+    // return of 300 is checked as 44).
+    if (((unsigned)run_status & 0xF0000000u) == 0xC0000000u) {
+        result.exit_code = -1;
+        result.run_success = false;
+    } else {
+        result.exit_code = run_status & 0xFF;
+        result.run_success = true;
+    }
 #else
     if (WIFEXITED(run_status)) {
         result.exit_code = WEXITSTATUS(run_status);
@@ -628,8 +728,7 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
         return result;
     }
 
-    const char* tmpdir = getenv("TMPDIR");
-    if (!tmpdir) tmpdir = "/tmp";
+    const char* tmpdir = rx_tmpdir();
 
     // Optional inline native header — written to a temp file so the generated
     // .cpp can `#include` it via `native_include_paths`.
@@ -718,10 +817,14 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
     }
     close(bin_fd);
 
+    // Real artifact needs the platform executable suffix; bin_path reserves it.
+    char out_path[264];
+    snprintf(out_path, sizeof(out_path), "%s%s", bin_path, rx_exe_suffix());
+
     char compile_cmd[2560];
     snprintf(compile_cmd, sizeof(compile_cmd),
-             "c++ -std=c++17 -I%s -I%s -o %s %s%s %s 2>&1",
-             rt_include_dir, rt_include_dir_root, bin_path, src_path,
+             "%s -std=c++17 -I%s -I%s -o %s %s%s %s 2>&1",
+             rx_cxx(), rt_include_dir, rt_include_dir_root, out_path, src_path,
              rt.link_args.c_str(),
              extra_cpp_path[0] != '\0' ? extra_cpp_path : "");
 
@@ -752,7 +855,7 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
     if (compile_ok) {
         result.compile_success = true;
         char run_cmd[512];
-        snprintf(run_cmd, sizeof(run_cmd), "%s 2>&1", bin_path);
+        snprintf(run_cmd, sizeof(run_cmd), "\"%s\" 2>&1", out_path);
         FILE* run_pipe = popen(run_cmd, "r");
         if (run_pipe) {
             char rbuf[1024];
@@ -761,7 +864,7 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
             }
             int run_status = pclose(run_pipe);
 #ifdef _WIN32
-            result.exit_code = run_status;
+            result.exit_code = run_status & 0xFF;  // low byte, matching POSIX
 #else
             if (WIFEXITED(run_status)) result.exit_code = WEXITSTATUS(run_status);
             else result.exit_code = -1;
@@ -772,6 +875,7 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
 
     remove(src_path);
     remove(bin_path);
+    if (strcmp(out_path, bin_path) != 0) remove(out_path);
     if (header_path[0] != '\0') remove(header_path);
     if (extra_cpp_path[0] != '\0') remove(extra_cpp_path);
     return result;
@@ -795,8 +899,7 @@ bool header_compiles(const char* source, bool debug) {
     snprintf(rt_include_dir, sizeof(rt_include_dir), "%s/include/roxy/rt", project_root);
     snprintf(rt_include_dir_root, sizeof(rt_include_dir_root), "%s/include", project_root);
 
-    const char* tmpdir = getenv("TMPDIR");
-    if (!tmpdir) tmpdir = "/tmp";
+    const char* tmpdir = rx_tmpdir();
 
     char hpp_path[256];
     char drv_path[256];
@@ -831,8 +934,8 @@ bool header_compiles(const char* source, bool debug) {
 
     char compile_cmd[1536];
     snprintf(compile_cmd, sizeof(compile_cmd),
-             "c++ -std=c++17 -I%s -I%s -c -o %s %s 2>&1",
-             rt_include_dir, rt_include_dir_root, obj_path, drv_path);
+             "%s -std=c++17 -I%s -I%s -c -o %s %s 2>&1",
+             rx_cxx(), rt_include_dir, rt_include_dir_root, obj_path, drv_path);
 
     if (debug) printf("[Header] Compile command: %s\n", compile_cmd);
 
@@ -911,8 +1014,11 @@ public:
         // Save original stdout
         m_stdout_saved = dup(fileno(stdout));
 
-        // Redirect stdout to temp file
-        m_temp_file = freopen(m_temp_path, "w", stdout);
+        // Redirect stdout to temp file. Binary mode ("wb") is required on
+        // Windows: text mode translates every '\n' Roxy's `print` emits into
+        // "\r\n", so captured output would never match the "\n"-terminated
+        // expected strings. On POSIX "wb" is identical to "w".
+        m_temp_file = freopen(m_temp_path, "wb", stdout);
     }
 
     ~OutputCapture() {

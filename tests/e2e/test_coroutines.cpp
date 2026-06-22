@@ -2,6 +2,8 @@
 #include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
 
+#include <string>
+
 using namespace rx;
 
 // ============================================================================
