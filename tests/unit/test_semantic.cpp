@@ -484,14 +484,16 @@ TEST_SUITE("Semantic") {
         CHECK(t.has_error_containing("unknown parent"));
     }
 
-    TEST_CASE("Semantic Error: Ref in struct field") {
+    // A `ref` field is now allowed: the struct becomes move-only and counts the
+    // borrow (lifecycle-traits.md step 3). A self-referential `ref` is fine — it
+    // borrows another node, it doesn't own one (no ownership cycle).
+    TEST_CASE("ref field is accepted (move-only counted borrow)") {
         SemanticTestHelper t;
-        CHECK(!t.run(R"(
+        CHECK(t.run(R"(
         struct Node {
             next: ref Node;
         }
     )"));
-        CHECK(t.has_error_containing("ref"));
     }
 
     TEST_CASE("Semantic Error: Delete on non-uniq") {

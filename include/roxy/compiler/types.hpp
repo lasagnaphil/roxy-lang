@@ -560,13 +560,17 @@ struct DropPlan {
 };
 DropPlan compute_drop_plan(Type* type);
 
-// Shared condition for whether a *container member* (List element, Map value) is
-// count-bearing/owning and so needs per-element cleanup on container teardown.
-// Used by both backends so the decision can't diverge (keys can't be `ref`, so
-// they use noncopyable() directly). NOTE: deliberately NOT `needs_drop()` — that
-// additionally flags copyable structs holding a `ref` field, whose release must be
-// paired with an acquire (step 3); until then this stays the current condition.
-inline bool container_member_needs_drop(Type* t) {
+// Whether a value stored in an *opaque member slot* — a container element/value
+// or a struct field — needs a cleanup action on the container/struct's teardown.
+// This is the deliberately NON-RECURSIVE form of needs_drop(): a member needs
+// cleanup iff it is itself noncopyable (a nested value-struct that owns something
+// already carries its own synthesized destructor, propagated by the synthetic-
+// destructor fixpoint) or a bare `ref` (a counted borrow → ref_dec). Used by the
+// synthetic-destructor pass, the struct field-walk, and both backends' container
+// drops — one shared decision. NON-recursive on purpose: needs_drop() recurses
+// into value-struct fields and would not terminate on a direct value cycle (which
+// is rejected elsewhere), whereas this only inspects the member type directly.
+inline bool member_needs_drop(Type* t) {
     return t && (t->noncopyable() || t->kind == TypeKind::Ref);
 }
 

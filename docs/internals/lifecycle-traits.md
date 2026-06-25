@@ -15,8 +15,11 @@ functions, gated by `needs_drop()`. **VM step 2 is a no-op by design:** the nati
 replacing it with interpreted bytecode glue would be slower (§10 correction).
 Step 2a — one shared `compute_drop_plan(Type)` deriving the drop *kind*, consumed
 by both backends (VM lowers it to `BCDeleteDesc`, C to glue/dtor calls), plus a
-shared `container_member_needs_drop` condition — is done (§10a). **Remaining:**
-steps 3–6. This formalizes machinery
+shared `member_needs_drop` condition — is done (§10a). Step 3 — `ref` struct fields
+are now allowed as move-only counted borrows (§12 step 3), closing a real gap (the
+language previously banned them). **Remaining:** the `Copy`-marker rename + the
+forward-looking `copy_init`/retain glue (now unblocked), and steps 4–6. This
+formalizes machinery
 that already exists in scattered form (`fun delete T()` ≈ `Drop`, `.copy()` ≈
 `Clone`, `Type::noncopyable()` ≈ the `Copy` marker, `build_delete_desc` ≈ derived
 drop glue) into a single trait-resolved protocol, and specifies the lowering that
@@ -295,7 +298,7 @@ the involved types — and both backends lower it:
   VM honors the distinction (inline field-walk vs function call).
 
 The divergence-prone container-member condition is likewise shared
-(`container_member_needs_drop`). Both backends keep their efficient execution;
+(`member_needs_drop`). Both backends keep their efficient execution;
 neither re-derives. This — not eliminating the descriptor — is the genuine
 "containers/structs stop being special" step.
 
@@ -329,12 +332,23 @@ Incremental, each step independently testable:
    descriptor.)*
 2a. ✅ **Unify the derivation (the real de-special-casing).** `compute_drop_plan(Type)
    -> DropPlan` is consumed by both `build_delete_desc` (VM) and `emit_typed_delete`
-   (C); `container_member_needs_drop` shares the element condition. "What is T's
+   (C); `member_needs_drop` shares the element condition. "What is T's
    drop" is derived once (§10a) — removing the dual derivation that made
    `Map<_, ref V>` need parallel fixes. Both `WalkFields` and `CallDtor` retained.
-3. **Fold in copy/retain.** Replace the ad-hoc bind/pass retain emit with
-   `copy_init` glue; replace `Type::noncopyable()` checks at those sites with the
-   `Copy` marker.
+3. ✅ **`ref` struct fields — move-only counted borrow.** Lifted the language
+   restriction ("'ref' types cannot be used in struct fields"); a struct holding a
+   `ref` field is now move-only (like `List<ref T>`) and counts the borrow:
+   construction `ref_inc`s, drop `ref_dec`s, overwrite rebalances, a move transfers.
+   The synthetic-destructor pass (now driven by `member_needs_drop`, the
+   non-recursive member-cleanup predicate — `noncopyable() || ref`) makes such a
+   struct move-only and gives it field-walk cleanup; the struct field-walk includes
+   `ref` fields; the struct literal and field-assignment paths emit the counting.
+   Both backends. **Deviation from the original §3 plan (deliberate):** we chose
+   *move-only* over *copyable + retain glue*. Move-only reuses the proven
+   noncopyable machinery, so copy/retain vanishes — only construct/overwrite/drop
+   count, and a move just transfers. It's consistent with how `List<ref>`/`Map<_,ref>`
+   already work. The `copy_init`/retain machinery (and the `needs_retain` predicate)
+   stay forward-looking; the `Copy`-marker rename below is unblocked but not yet done.
 4. **Containers.** Replace `value_is_ref` and `List`'s IR-level `RefInc` with
    generated element glue around the raw engine ops; this is also where the
    `uniq`-value `remove`/`clear` leak closes.

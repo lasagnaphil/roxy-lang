@@ -1474,4 +1474,112 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.stdout_output == "del\ndel\n");
     }
 
+    // ── Struct holding a `ref` field (lifecycle-traits.md step 3) ──
+    // A struct with a `ref` field is move-only (like List<ref>) and counts the
+    // borrow: construction ref_incs, drop ref_decs, overwrite rebalances, and a
+    // move transfers the borrow without a count change. So a borrow stored in a
+    // struct keeps its owner alive (or traps), exactly like a List<ref> element.
+
+    TEST_CASE_TEMPLATE("ref field: construct counts, read works, drop releases", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct P { x: i32; }
+        struct H { r: ref P; }
+        fun main(): i32 {
+            var o: uniq P = uniq P();
+            o.x = 9;
+            { var h: H = H { r = o }; }   // borrow counted, released at block end
+            delete o;                      // count back to 0 → deletable
+            return o.x;                    // (o still valid: never freed)
+        }
+    )";
+        // NOTE: read o.x after delete is unsound in general, but here we only assert
+        // the success/value to prove the count balanced. Use a pre-delete read:
+        const char* safe = R"(
+        struct P { x: i32; }
+        struct H { r: ref P; }
+        fun main(): i32 {
+            var o: uniq P = uniq P();
+            o.x = 9;
+            var v: i32 = 0;
+            { var h: H = H { r = o }; v = h.r.x; }
+            delete o;
+            return v;
+        }
+    )";
+        (void)source;
+        auto result = Backend::run(safe);
+        CHECK(result.success == true);
+        CHECK(result.value == 9);
+    }
+
+    TEST_CASE("ref field: deleting the owner while a struct borrows it traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* trap_src = R"(
+        struct P { x: i32; }
+        struct H { r: ref P; }
+        fun main(): i32 {
+            var o: uniq P = uniq P();
+            var h: H = H { r = o };   // borrow counted
+            delete o;                  // still borrowed → traps
+            return 0;
+        }
+    )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, trap_src) != nullptr);
+        CHECK(VMBackend::run(trap_src).success == false);
+    }
+
+    TEST_CASE_TEMPLATE("ref field: overwrite releases the old borrow, acquires the new", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct P { x: i32; }
+        struct H { r: ref P; }
+        fun main(): i32 {
+            var a: uniq P = uniq P();
+            var b: uniq P = uniq P();
+            var h: H = H { r = a };   // a borrowed
+            h.r = b;                   // release a, acquire b
+            delete a;                  // a no longer borrowed → ok
+            var v: i32 = h.r.x;        // b still borrowed by h
+            return v;
+            // teardown: h drops (release b); then b deletable
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+    }
+
+    TEST_CASE("ref field: overwrite leaves the new borrow counted (delete new traps)") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* src = R"(
+        struct P { x: i32; }
+        struct H { r: ref P; }
+        fun main(): i32 {
+            var a: uniq P = uniq P();
+            var b: uniq P = uniq P();
+            var h: H = H { r = a };
+            h.r = b;       // b now borrowed by h
+            delete b;      // still borrowed → traps
+            return 0;
+        }
+    )";
+        CHECK(VMBackend::run(src).success == false);
+    }
+
+    TEST_CASE_TEMPLATE("ref field: passing the struct by value moves the borrow", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct P { x: i32; }
+        struct H { r: ref P; }
+        fun take(h: H): i32 { return h.r.x; }
+        fun main(): i32 {
+            var o: uniq P = uniq P();
+            o.x = 7;
+            var h: H = H { r = o };   // borrow counted
+            var v: i32 = take(h);      // move h into take; its drop releases the borrow
+            delete o;                  // count back to 0 → ok
+            return v;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 7);
+    }
+
 }

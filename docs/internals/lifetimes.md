@@ -61,9 +61,11 @@ The invariant:
 
 This is a *borrow* count, not an *ownership* count: `uniq` is the sole owner and
 does not touch `ref_count`; the count only ever *blocks* a free, never *causes*
-one. So there are no ownership cycles to leak (and `ref` remains banned from
-struct fields, with `weak` for back-references), and errors are **eager** — they
-fire at the offending `delete`, not at a later dangling use.
+one. So there are no ownership cycles to leak. A `ref` may now be stored in a
+struct field — such a struct is move-only and counts the borrow like a
+`List<ref T>` (lifecycle-traits.md step 3); `weak` remains the choice for a
+nullable back-reference that must not keep its owner alive. Errors are **eager** —
+they fire at the offending `delete`, not at a later dangling use.
 
 Because `ref` borrows only heap objects (§3), the count always has a home (the
 `ObjectHeader.ref_count`, already present) and inc/dec sites are **statically

@@ -497,7 +497,7 @@ void CEmitter::emit_container_drop_body(Type* type, StringView self_var, String&
         out.append("    roxy_list_header* "); ap(out, h);
         out.append(" = (roxy_list_header*)("); out.append(self_var); out.append(");\n");
         out.append("    if (!"); ap(out, h); out.append(") return;\n");
-        if (container_member_needs_drop(elem)) {  // shared condition (lifecycle-traits.md §10a)
+        if (member_needs_drop(elem)) {  // shared condition (lifecycle-traits.md §10a)
             String iv = format("_di{}", n);
             String sv = format("_ds{}", n);
             out.append("    for (uint32_t "); ap(out, iv); out.append(" = 0; ");
@@ -517,7 +517,7 @@ void CEmitter::emit_container_drop_body(Type* type, StringView self_var, String&
     Type* kt = type->map_info.key_type;
     Type* vt = type->map_info.value_type;
     bool kc = kt && kt->noncopyable();          // keys can't be `ref`
-    bool vc = container_member_needs_drop(vt);   // shared condition (lifecycle-traits.md §10a)
+    bool vc = member_needs_drop(vt);   // shared condition (lifecycle-traits.md §10a)
     String h = format("_dm{}", n);
     out.append("    roxy_map_header* "); ap(out, h);
     out.append(" = (roxy_map_header*)("); out.append(self_var); out.append(");\n");

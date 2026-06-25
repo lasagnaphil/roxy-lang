@@ -10,9 +10,15 @@ Roxy uses a reference-counted memory model with three reference types and no gar
 | `ref` | No | No | Assert/crash |
 | `weak` | No | Yes | Returns null or asserts |
 
-### Critical Rule: No `ref` in Fields
+### `ref` in Fields: move-only counted borrow
 
-To prevent reference cycles, `ref` is restricted to function parameters and local variables. Struct fields must use `uniq` (ownership) or `weak` (back-references).
+A struct may hold a `ref` field. Such a struct is **move-only** (like `List<ref T>`)
+and counts the borrow: construction `ref_inc`s the field, drop `ref_dec`s it,
+overwrite rebalances (release old / acquire new), and a move transfers the borrow
+without a count change. So a borrow stored in a struct keeps its owner alive (or
+traps on a premature free), exactly like a `List<ref T>` element. `weak` remains
+the choice for nullable back-references that must *not* keep the owner alive. See
+[lifecycle-traits.md](lifecycle-traits.md) step 3.
 
 ## Object Header
 

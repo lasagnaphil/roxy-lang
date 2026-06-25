@@ -3024,7 +3024,11 @@ void BytecodeBuilder::build_struct_field_deletes(Type* struct_type,
     for (i32 i = static_cast<i32>(struct_info.fields.size()) - 1; i >= 0; i--) {
         const FieldInfo& field = struct_info.fields[i];
         if (!field.type) continue;
-        if (field.type->kind == TypeKind::Uniq || field.type->noncopyable()) {
+        // member_needs_drop covers uniq/noncopyable fields and — newly — `ref`
+        // fields (a counted borrow → ref_dec on drop; lifecycle-traits.md step 3).
+        // Non-recursive (cycle-safe): nested owning value-structs already carry a
+        // synthesized destructor, so noncopyable() flags them.
+        if (member_needs_drop(field.type)) {
             append_field(field.slot_offset, field.type, 0xFFFF, 0);
         }
     }
@@ -3035,8 +3039,7 @@ void BytecodeBuilder::build_struct_field_deletes(Type* struct_type,
             for (i32 fi = static_cast<i32>(variant.fields.size()) - 1; fi >= 0; fi--) {
                 const VariantFieldInfo& variant_field = variant.fields[fi];
                 if (!variant_field.type) continue;
-                if (variant_field.type->kind == TypeKind::Uniq ||
-                    variant_field.type->noncopyable()) {
+                if (member_needs_drop(variant_field.type)) {
                     append_field(clause.union_slot_offset + variant_field.slot_offset,
                                  variant_field.type,
                                  clause.discriminant_slot_offset,
@@ -3108,7 +3111,7 @@ u16 BytecodeBuilder::build_delete_desc(Type* type) {
             desc.cleanup = BCDeleteDesc::Map;
             // A `ref V` value is count-bearing (shared condition); keys can't be ref.
             desc.container.elem_desc_idx =
-                container_member_needs_drop(plan.elem_type) ? build_delete_desc(plan.elem_type) : 0xFFFF;
+                member_needs_drop(plan.elem_type) ? build_delete_desc(plan.elem_type) : 0xFFFF;
             desc.container.key_desc_idx =
                 (plan.key_type && plan.key_type->noncopyable()) ? build_delete_desc(plan.key_type) : 0xFFFF;
             break;

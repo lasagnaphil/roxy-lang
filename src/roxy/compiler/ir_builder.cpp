@@ -4710,6 +4710,17 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
         set_current_block(pass_block);
     }
 
+    // Overwriting a `ref` field rebalances the borrow count: release the old
+    // borrow, acquire the new (lifecycle-traits.md step 3 — mirrors the List
+    // ref-element overwrite in gen_assign_index). A freshly default-constructed
+    // field holds null, and ref_dec(null) is a no-op, so this is safe even for the
+    // first assignment.
+    if (field_type && field_type->kind == TypeKind::Ref) {
+        ValueId old = emit_get_field(obj, get_expr.name, slot_offset, slot_count, field_type);
+        emit_ref_dec(old);
+        emit_ref_inc(value);
+    }
+
     // Destroy old field value before overwriting (prevents leaks for uniq/move-semantic fields)
     if (field_type && (field_type->kind == TypeKind::Uniq || field_type->noncopyable())) {
         emit_single_field_destroy(obj, get_expr.name, slot_offset, slot_count, field_type);
@@ -5211,6 +5222,13 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
             emit_struct_copy(field_addr, value, field_info.slot_count);
         } else {
             emit_set_field(struct_ptr, field_info.name, field_info.slot_offset, field_info.slot_count, value, field_info.type);
+        }
+
+        // A `ref` field is a counted borrow: storing a borrow into it acquires a
+        // count on the pointee (released on struct drop; lifecycle-traits.md
+        // step 3). The struct is move-only, so the source stays live — no move.
+        if (field_info.type && field_info.type->kind == TypeKind::Ref && value_expr) {
+            emit_ref_inc(value);
         }
 
         // Consume noncopyable temporaries moved into struct fields

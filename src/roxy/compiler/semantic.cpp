@@ -523,11 +523,12 @@ void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
             field_type = m_types.error_type();
         }
 
-        // Check: ref types cannot be used in struct fields (prevents cycles)
-        if (field_type->kind == TypeKind::Ref) {
-            error_fmt(field.loc, "'ref' types cannot be used in struct fields");
-        }
-
+        // A `ref` field is a counted borrow: the struct is move-only (noncopyable)
+        // and ref_incs the field on construction / ref_decs on drop, so a borrow
+        // stored in a struct keeps the owner alive (or traps) exactly like a
+        // `List<ref T>` element (docs/internals/lifecycle-traits.md step 3). The
+        // synthetic-destructor pass (driven by member_needs_drop) makes such a
+        // struct move-only and gives it field-walk cleanup.
         FieldInfo info;
         info.name = field.name;
         info.type = field_type;
@@ -834,7 +835,7 @@ void SemanticAnalyzer::generate_synthetic_destructors(Program* program) {
             bool needs_cleanup = false;
             for (const auto& field : struct_info.fields) {
                 if (!field.type) continue;
-                if (field.type->noncopyable()) {
+                if (member_needs_drop(field.type)) {
                     needs_cleanup = true;
                     break;
                 }
@@ -844,7 +845,7 @@ void SemanticAnalyzer::generate_synthetic_destructors(Program* program) {
                 for (const auto& clause : struct_info.when_clauses) {
                     for (const auto& variant : clause.variants) {
                         for (const auto& variant_field : variant.fields) {
-                            if (variant_field.type && variant_field.type->noncopyable()) {
+                            if (member_needs_drop(variant_field.type)) {
                                 needs_cleanup = true;
                                 break;
                             }
@@ -1086,7 +1087,7 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                 bool needs_cleanup = false;
                 for (const auto& field : concrete_info.fields) {
                     if (!field.type) continue;
-                    if (field.type->noncopyable()) {
+                    if (member_needs_drop(field.type)) {
                         needs_cleanup = true;
                         break;
                     }
@@ -1095,7 +1096,7 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                     for (const auto& clause : concrete_info.when_clauses) {
                         for (const auto& variant : clause.variants) {
                             for (const auto& variant_field : variant.fields) {
-                                if (variant_field.type && variant_field.type->noncopyable()) {
+                                if (member_needs_drop(variant_field.type)) {
                                     needs_cleanup = true;
                                     break;
                                 }
@@ -1264,7 +1265,7 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
     bool needs_cleanup = false;
     for (const auto& field : struct_type_info.fields) {
         if (!field.type) continue;
-        if (field.type->noncopyable()) {
+        if (member_needs_drop(field.type)) {
             needs_cleanup = true;
             break;
         }
@@ -1273,7 +1274,7 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         for (const auto& clause : struct_type_info.when_clauses) {
             for (const auto& variant : clause.variants) {
                 for (const auto& variant_field : variant.fields) {
-                    if (variant_field.type && variant_field.type->noncopyable()) {
+                    if (member_needs_drop(variant_field.type)) {
                         needs_cleanup = true;
                         break;
                     }
