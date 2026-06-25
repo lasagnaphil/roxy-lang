@@ -1552,6 +1552,104 @@ void IRBuilder::emit_ref_dec(ValueId ptr) {
     if (inst) inst->unary = ptr;
 }
 
+void IRBuilder::emit_map_value_delete_if_present(ValueId map_obj, Type* map_type, ValueId key_val) {
+    if (!map_type || !map_type->is_map()) return;
+    Type* value_type = map_type->map_info.value_type;
+    // Only noncopyable (uniq / container / struct-with-dtor) values need a typed
+    // delete here. A `ref` value is released by the runtime value_is_ref path
+    // (roxy_map_insert/remove); a trivial value needs no cleanup.
+    if (!value_type || !value_type->noncopyable()) return;
+
+    StringView contains_native;
+    for (const MethodInfo& method : map_type->map_info.methods) {
+        if (method.name == StringView("contains", 8)) { contains_native = method.native_name; break; }
+    }
+    i32 contains_idx = contains_native.empty() ? -1 : m_registry.get_index(contains_native);
+    if (contains_idx < 0) return;
+
+    // if (map.contains(key)) { delete map[key]; }
+    Span<ValueId> contains_args = alloc_span<ValueId>(2);
+    contains_args[0] = map_obj;
+    contains_args[1] = key_val;
+    ValueId present = emit_call_native(contains_native, contains_args, m_types.bool_type(),
+                                       static_cast<u8>(contains_idx));
+    IRBlock* destroy_block = create_block("map_destroy_old");
+    IRBlock* merge_block = create_block("map_after_destroy");
+    finish_block_branch(present, destroy_block->id, merge_block->id);
+
+    set_current_block(destroy_block);
+    ValueId old = emit_index_get(map_obj, key_val, ContainerKind::Map, value_type);
+    IRInst* del = emit_inst(IROp::Delete, value_type);
+    if (del) del->unary = old;
+    finish_block_goto(merge_block->id);
+
+    set_current_block(merge_block);
+}
+
+void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
+    if (!map_type || !map_type->is_map()) return;
+    Type* value_type = map_type->map_info.value_type;
+    if (!value_type || !value_type->noncopyable()) return;  // ref/trivial: nothing to do here
+
+    // Look up the internal iteration natives (pre-provided for exactly this:
+    // cleanup of noncopyable map values). If any is missing, skip (the values then
+    // leak on clear, as before — no worse than the prior behavior).
+    StringView cap_name("__map_iter_capacity", 19);
+    StringView next_name("__map_iter_next_occupied", 24);
+    StringView val_name("__map_iter_value_at", 19);
+    i32 cap_idx = m_registry.get_index(cap_name);
+    i32 next_idx = m_registry.get_index(next_name);
+    i32 val_idx = m_registry.get_index(val_name);
+    if (cap_idx < 0 || next_idx < 0 || val_idx < 0) return;
+
+    Type* i32_type = m_types.i32_type();
+
+    // cap = __map_iter_capacity(map)   (loop-invariant; dominates the loop)
+    Span<ValueId> cap_args = alloc_span<ValueId>(1);
+    cap_args[0] = map_obj;
+    ValueId cap = emit_call_native(cap_name, cap_args, i32_type, static_cast<u8>(cap_idx));
+
+    // Counted loop over occupied buckets:
+    //   for (idx = 0; (next = next_occupied(map, idx)) < cap; idx = next + 1)
+    //       delete value_at(map, next);
+    // `idx` is the only loop-carried value, so it is the header's one block param;
+    // `cap`/`next` are used by dominance (no extra args), matching gen_for_stmt.
+    IRBlock* header = create_block("mapclr");
+    IRBlock* body = create_block("mapclrbody");
+    IRBlock* exit_block = create_block("mapclrend");
+
+    ValueId zero = emit_const_int(0, i32_type);
+    ValueId idx_param = m_current_func->new_value();
+    header->params.push_back({idx_param, i32_type, StringView("__mapclr_idx", 12)});
+
+    Vector<BlockArgPair> init_args; init_args.push_back({zero});
+    finish_block_goto(header->id, alloc_span(init_args));
+
+    set_current_block(header);
+    Span<ValueId> next_args = alloc_span<ValueId>(2);
+    next_args[0] = map_obj;
+    next_args[1] = idx_param;
+    ValueId next = emit_call_native(next_name, next_args, i32_type, static_cast<u8>(next_idx));
+    ValueId cond = emit_binary(IROp::LtI, next, cap, m_types.bool_type());  // next < cap
+    finish_block_branch(cond, body->id, exit_block->id);
+
+    set_current_block(body);
+    Span<ValueId> val_args = alloc_span<ValueId>(2);
+    val_args[0] = map_obj;
+    val_args[1] = next;
+    // Type the result as the value type so both backends treat the returned
+    // pointer correctly (the C backend casts the u64 to the value's C type).
+    ValueId vp = emit_call_native(val_name, val_args, value_type, static_cast<u8>(val_idx));
+    IRInst* del = emit_inst(IROp::Delete, value_type);
+    if (del) del->unary = vp;
+    ValueId one = emit_const_int(1, i32_type);
+    ValueId idx_next = emit_binary(IROp::AddI, next, one, i32_type);
+    Vector<BlockArgPair> back_args; back_args.push_back({idx_next});
+    finish_block_goto(header->id, alloc_span(back_args));
+
+    set_current_block(exit_block);
+}
+
 void IRBuilder::emit_container_pin(ValueId container) {
     IRInst* inst = emit_inst(IROp::ContainerPin, m_types.void_type());
     if (inst) inst->unary = container;
@@ -3985,6 +4083,25 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
             && args.size() >= 1) {
             emit_ref_inc(args[0]);
         }
+        // Map insert/remove/clear must destroy noncopyable values that are
+        // overwritten / removed / cleared (lifecycle-traits.md step 4). The
+        // value_is_ref runtime path already handles `ref` values; this closes the
+        // `uniq` (and container / struct-with-dtor) value leak, reusing existing IR
+        // ops so both backends get it for free.
+        // NOTE: insert-replace is intentionally NOT handled here. Its value arg is
+        // consumed (nulled) by the call machinery *before* this point, and the
+        // contains-guard's branch would strand that consume in the wrong block
+        // (the insert would then store null). The semantically-identical `m[k] = v`
+        // routes through gen_assign_index, which orders the consume after the store
+        // and so cleans up correctly. remove/clear have no value arg, so they are
+        // safe to clean up here.
+        if (struct_type->is_map()) {
+            if (get_expr.name == StringView("remove", 6) && args.size() >= 1) {
+                emit_map_value_delete_if_present(obj, struct_type, args[0]);
+            } else if (get_expr.name == StringView("clear", 5)) {
+                emit_map_clear_value_cleanup(obj, struct_type);
+            }
+        }
         StringView native_name = call_expr.mangled_name;
         i32 native_idx = m_registry.get_index(native_name);
         Span<ValueId> method_args = prepend_self(obj, args);
@@ -4825,37 +4942,10 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
             IRInst* del = emit_inst(IROp::Delete, elem_type);
             if (del) del->unary = old;
         } else if (elem_noncopyable) {
-            // Map: a slot has an old value only for an already-present key, so
-            // guard the destroy with a `contains` check (a new key destroys
-            // nothing). Synthesizes: if (map.contains(key)) delete map[key];
-            StringView contains_native;
-            for (const MethodInfo& method : container_type->map_info.methods) {
-                if (method.name == StringView("contains", 8)) {
-                    contains_native = method.native_name;
-                    break;
-                }
-            }
-            i32 contains_idx = contains_native.empty()
-                ? -1 : m_registry.get_index(contains_native);
-            if (contains_idx >= 0) {
-                Span<ValueId> contains_args = alloc_span<ValueId>(2);
-                contains_args[0] = obj;
-                contains_args[1] = index_val;
-                ValueId present = emit_call_native(contains_native, contains_args,
-                                                   m_types.bool_type(),
-                                                   static_cast<u8>(contains_idx));
-                IRBlock* destroy_block = create_block("map_set_destroy_old");
-                IRBlock* merge_block = create_block("map_set_store");
-                finish_block_branch(present, destroy_block->id, merge_block->id);
-
-                set_current_block(destroy_block);
-                ValueId old = emit_index_get(obj, index_val, kind, elem_type);
-                IRInst* del = emit_inst(IROp::Delete, elem_type);
-                if (del) del->unary = old;
-                finish_block_goto(merge_block->id);
-
-                set_current_block(merge_block);
-            }
+            // Map: a slot has an old value only for an already-present key, so the
+            // helper guards the destroy with a `contains` check (a new key destroys
+            // nothing). Shared with m.insert / m.remove (lifecycle-traits.md step 4).
+            emit_map_value_delete_if_present(obj, container_type, index_val);
         }
 
         emit_index_set(obj, index_val, value, kind);

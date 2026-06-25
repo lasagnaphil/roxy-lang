@@ -539,11 +539,20 @@ direction:
   re-`RefInc`s each copied borrow; destroy `RefDec`s via the same
   `BCDeleteDesc::RefDec` value descriptor as `List` (lowering + C-emitter
   `emit_delete_slot`). Deleting an owner still borrowed by a map traps. Both backends.
-- *Remaining:* **`Map.remove`/`Map.clear` per-value cleanup for noncopyable (`uniq`)
-  values** — only `ref` values are released today; `uniq` values still leak on
-  remove/clear (destroy already handles them via the descriptor). Needs a general
-  per-value destructor callback (VM trampoline + AOT generated dtor), the
-  type-erased analogue of the map's `hash_fn`/`eq_fn`.
+- *Done:* **`Map.remove`/`Map.clear` per-value cleanup for noncopyable (`uniq`)
+  values** (lifecycle-traits.md step 4). Rather than a runtime per-value destructor
+  callback, the cleanup is emitted as ordinary IR at the call site (where the value
+  type is statically known), so both backends get it for free: `m.remove(k)` emits a
+  contains-guarded `delete m[k]` before the raw remove; `m.clear()` emits a
+  bucket-iteration loop (via the `__map_iter_*` natives) deleting each value before
+  the raw clear. `ref` values keep using the runtime `value_is_ref` path; trivial
+  values need nothing.
+- *Remaining (small):* **`m.insert(k, v)` replace** still leaks the old `uniq`
+  value — the contains-guard branch can't be added there because the call machinery
+  consumes the value arg before the method-lowering runs, so the branch would
+  strand the consume. Use `m[k] = v` (which cleans up correctly via
+  `gen_assign_index`) to replace with cleanup. Fixing `insert` needs the call-arg
+  consume deferred past the guard.
 - *Remaining:* count `ref` parameters into coroutine state structs.
 
 **Phase 4 — elision (optimization, §11). Not started** (always a later phase).

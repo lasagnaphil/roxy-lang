@@ -17,9 +17,10 @@ Step 2a — one shared `compute_drop_plan(Type)` deriving the drop *kind*, consu
 by both backends (VM lowers it to `BCDeleteDesc`, C to glue/dtor calls), plus a
 shared `member_needs_drop` condition — is done (§10a). Step 3 — `ref` struct fields
 are now allowed as move-only counted borrows (§12 step 3), closing a real gap (the
-language previously banned them). **Remaining:** the `Copy`-marker rename + the
-forward-looking `copy_init`/retain glue (now unblocked), and steps 4–6. This
-formalizes machinery
+language previously banned them). Step 4 (partial) — the `Map.remove`/`Map.clear`
+`uniq`-value leak is closed via call-site IR cleanup (§12 step 4). **Remaining:**
+`m.insert` replace cleanup, the `Copy`-marker rename + forward-looking
+`copy_init`/retain glue, and steps 5–6. This formalizes machinery
 that already exists in scattered form (`fun delete T()` ≈ `Drop`, `.copy()` ≈
 `Clone`, `Type::noncopyable()` ≈ the `Copy` marker, `build_delete_desc` ≈ derived
 drop glue) into a single trait-resolved protocol, and specifies the lowering that
@@ -349,9 +350,18 @@ Incremental, each step independently testable:
    count, and a move just transfers. It's consistent with how `List<ref>`/`Map<_,ref>`
    already work. The `copy_init`/retain machinery (and the `needs_retain` predicate)
    stay forward-looking; the `Copy`-marker rename below is unblocked but not yet done.
-4. **Containers.** Replace `value_is_ref` and `List`'s IR-level `RefInc` with
-   generated element glue around the raw engine ops; this is also where the
-   `uniq`-value `remove`/`clear` leak closes.
+4. ✅ (partial) **`Map.remove`/`Map.clear` `uniq`-value leak closed.** Instead of a
+   runtime per-value callback (a VM trampoline), the value cleanup is emitted as
+   ordinary IR at the call site, where the value type is statically known — so both
+   backends get it with no new runtime, natives, or header fields: `m.remove(k)` →
+   contains-guarded `delete m[k]` before the raw remove; `m.clear()` → a
+   bucket-iteration delete-loop (reusing the pre-existing `__map_iter_*` natives)
+   before the raw clear. `ref` values keep the `value_is_ref` runtime path.
+   *Remaining:* `m.insert(k,v)` replace still leaks (the call machinery consumes the
+   value arg before method-lowering, so the contains-guard branch would strand it;
+   `m[k]=v` is the clean replace). The broader unification (fold `value_is_ref` and
+   `List`'s IR-level `RefInc` into one generated element-glue mechanism) is still
+   future work.
 5. **Delete `BCDeleteDesc`** and the descriptor interpreter once both backends are
    on glue.
 6. **Erased fallback.** Generalize the closure-env `type_id`→dtor pointer into the

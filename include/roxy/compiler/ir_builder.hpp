@@ -143,6 +143,17 @@ private:
     // Reference counting for constraint reference model
     void emit_ref_inc(ValueId ptr);
     void emit_ref_dec(ValueId ptr);
+
+    // Emit `if (map.contains(key)) delete map[key];` — the contains-guarded destroy
+    // of a noncopyable map value, so an overwritten (`m[k]=v`, `m.insert`) or
+    // removed (`m.remove`) value isn't leaked (lifecycle-traits.md step 4). No-op
+    // unless the map's value type is noncopyable (a `ref` value is released by the
+    // runtime value_is_ref path; a trivial value needs nothing).
+    void emit_map_value_delete_if_present(ValueId map_obj, Type* map_type, ValueId key_val);
+    // Emit a bucket-iteration loop that deletes every live noncopyable value of a
+    // map (uses the __map_iter_* natives), for `m.clear()` cleanup. No-op unless
+    // the value type is noncopyable.
+    void emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type);
     // Increment a `ref` borrow whose source value is `source`, inserting the
     // self-promotion heap gate when `source` is a bare `self`: promoting the
     // second-class receiver borrow to a counted `ref` (bind / return / store) is

@@ -1582,4 +1582,70 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.value == 7);
     }
 
+    // ── Map<_, uniq V>: remove / clear destroy the values (lifecycle-traits.md
+    // step 4) ── These previously leaked: only map-destroy and `m[k]=v` ran value
+    // destructors; the remove/clear methods discarded values without destroying
+    // them. The cleanup is emitted as ordinary IR (contains-guarded delete /
+    // bucket-iteration delete-loop), so both backends get it.
+
+    TEST_CASE_TEMPLATE("Map<_, uniq V>: remove destroys the removed value", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct R { id: i32; }
+        fun delete R() { print(f"del {self.id}"); }
+        fun main(): i32 {
+            var m: Map<i32, uniq R> = Map<i32, uniq R>();
+            m.insert(1, uniq R { id = 1 });
+            m.insert(2, uniq R { id = 2 });
+            m.remove(1);          // destroys value 1 here
+            print("--");
+            return 0;
+            // teardown destroys the remaining value (2)
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        // "del 1" before "--" proves remove destroyed it (no leak); "del 2" after
+        // proves the survivor is destroyed exactly once at teardown.
+        CHECK(result.stdout_output == "del 1\n--\ndel 2\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map<_, uniq V>: clear destroys all values", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct R { id: i32; }
+        fun delete R() { print("del"); }
+        fun main(): i32 {
+            var m: Map<i32, uniq R> = Map<i32, uniq R>();
+            m.insert(1, uniq R { id = 1 });
+            m.insert(2, uniq R { id = 2 });
+            m.insert(3, uniq R { id = 3 });
+            m.clear();            // destroys all three here
+            print("--");
+            var n: i32 = m.len();
+            return n;             // 0 — map is empty and reusable
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 0);
+        // three "del" before "--" (all destroyed by clear), none after.
+        CHECK(result.stdout_output == "del\ndel\ndel\n--\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map<_, uniq V>: remove leaves the map usable", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct R { id: i32; }
+        fun delete R() {}
+        fun main(): i32 {
+            var m: Map<i32, uniq R> = Map<i32, uniq R>();
+            m.insert(1, uniq R { id = 10 });
+            m.insert(2, uniq R { id = 20 });
+            m.remove(1);
+            return m[2].id + m.len();   // 20 + 1
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 21);
+    }
+
 }
