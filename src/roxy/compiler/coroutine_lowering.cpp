@@ -167,16 +167,37 @@ static void emit_delete(BumpAllocator& allocator, IRFunction* func, IRBlock* blo
     inst->unary = value;
 }
 
+// Emit a RefInc / RefDec of a borrowed pointer (constraint-reference counting).
+// A `ref` promoted into the coroutine state struct is a counted borrow held for
+// the state's lifetime: RefInc at creation (store into state), RefDec in $$delete.
+static void emit_ref_op(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
+                        IROp op, ValueId value, Type* void_type) {
+    IRInst* inst = make_inst(allocator, func, block, op, void_type);
+    inst->unary = value;
+}
+
 // Generate the __coro_<func_name>$$delete destructor function.
 // This iterates promoted struct fields in reverse order (LIFO) and cleans up
 // any noncopyable pointer-type fields (uniq, List, Map, Coro).
 static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* struct_type,
                                              StringView func_name, TypeCache& types,
-                                             IRModule* module) {
+                                             IRModule* module,
+                                             const Vector<BlockParam>& original_params) {
     IRFunction* dtor_func = allocator.emplace<IRFunction>();
     StringView dtor_name = alloc_string_fmt(allocator, "__coro_{}$$delete", func_name);
     dtor_func->name = dtor_name;
     dtor_func->return_type = types.void_type();
+
+    // Only a `ref`-typed *parameter* state field holds a borrow acquired at
+    // creation (init_func RefInc), so only it gets a RefDec here. Other `ref`
+    // state fields (e.g. a catch param `e`, set by exception dispatch) are NOT
+    // counted and must not be decremented. Param lists are tiny — linear check.
+    auto is_ref_param_field = [&](StringView name) -> bool {
+        for (const auto& p : original_params) {
+            if (p.type && p.type->kind == TypeKind::Ref && p.name == name) return true;
+        }
+        return false;
+    };
 
     // Single parameter: self: ref<__coro_*>
     Type* ref_struct_type = types.ref_type(struct_type);
@@ -203,7 +224,12 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
             field.type->is_coroutine()) {
             is_noncopyable_pointer = true;
         }
-        if (!is_noncopyable_pointer) continue;
+        // A `ref` *parameter* field is a counted borrow acquired at coro creation
+        // (init_func RefInc); release it here (RefDec the borrowed pointer, never
+        // free the pointee). Only param ref fields are counted — other ref fields
+        // (catch params set by exception dispatch) must be left alone. (§13.)
+        bool is_ref = field.type->kind == TypeKind::Ref && is_ref_param_field(field.name);
+        if (!is_noncopyable_pointer && !is_ref) continue;
 
         // GetField → null check → call inner destructor → Delete → skip
         ValueId field_val = emit_get_field(allocator, dtor_func, entry, self_val,
@@ -225,8 +251,13 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
 
         finish_branch(entry, is_null, skip_block->id, cleanup_block->id);
 
-        // In cleanup block: call inner destructor if applicable, then Delete
-        if (field.type->kind == TypeKind::Uniq) {
+        // In cleanup block: release the resource. A `ref` field only releases its
+        // borrow count (the owner frees the pointee); owning fields run their
+        // destructor + free.
+        if (is_ref) {
+            emit_ref_op(allocator, dtor_func, cleanup_block, IROp::RefDec,
+                        field_val, types.void_type());
+        } else if (field.type->kind == TypeKind::Uniq) {
             Type* inner_type = field.type->ref_info.inner_type;
             if (inner_type && inner_type->is_struct()) {
                 bool has_dtor = false;
@@ -993,6 +1024,14 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
         emit_set_field(allocator, init_func, init_entry, obj,
                        param_field->name, param_field->slot_offset, param_field->slot_count,
                        init_func->params[i].value, param_field->type);
+        // A `ref` param stored into the state is a counted borrow held for the
+        // coroutine's lifetime: acquire it here (released in $$delete). This keeps
+        // the owner alive while the coro can still observe the borrow — deleting
+        // the owner before the coro is destroyed traps.
+        if (param_field->type && param_field->type->kind == TypeKind::Ref) {
+            emit_ref_op(allocator, init_func, init_entry, IROp::RefInc,
+                        init_func->params[i].value, types.void_type());
+        }
     }
     finish_return(init_entry, obj);
 
@@ -1021,7 +1060,8 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
 
     // ===== Generate destructor function =====
     IRFunction* dtor_func = generate_coro_destructor(allocator, struct_type,
-                                                      original->name, types, module);
+                                                      original->name, types, module,
+                                                      original->params);
 
     // ===== Transform original into resume function =====
     ValueId self_val = original->new_value();

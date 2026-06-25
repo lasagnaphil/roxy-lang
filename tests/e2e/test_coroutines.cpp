@@ -1007,4 +1007,68 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output.find("~Resource(20)") != std::string::npos);
     }
 
+    // ── `ref` parameter counting (lifetimes.md §13) ──
+    // A `ref` param promoted into the coroutine's heap state struct is a counted
+    // borrow held for the coro's lifetime: ref_inc when stored into the state at
+    // creation, ref_dec in the generated `$$delete`. So holding a borrow in a live
+    // coroutine keeps the owner alive (deleting it early traps), and the count is
+    // balanced whether the coro completes or is destroyed mid-iteration.
+
+    TEST_CASE_TEMPLATE("Coroutine ref param: balanced across resume + teardown", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct P { x: i32; }
+        fun gen(r: ref P): Coro<i32> {
+            yield r.x;
+            yield r.x + 1;
+        }
+        fun main(): i32 {
+            var o: uniq P = uniq P();
+            o.x = 5;
+            var c = gen(o);
+            var a: i32 = c.resume();   // 5
+            var b: i32 = c.resume();   // 6
+            return a + b;
+            // teardown (LIFO): coro destroyed first → ref_dec releases the borrow;
+            // then o is deletable (count 0). Balanced even though the coro never
+            // ran to completion.
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 11);
+    }
+
+    TEST_CASE("Coroutine ref param: deleting the owner while the coro is live traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        // The borrow is acquired at creation, so the owner can't be freed while the
+        // coroutine could still observe it — even before the first resume.
+        const char* before_resume = R"(
+        struct P { x: i32; }
+        fun gen(r: ref P): Coro<i32> { yield r.x; yield r.x; }
+        fun main(): i32 {
+            var o: uniq P = uniq P();
+            var c = gen(o);   // borrow counted at creation
+            delete o;         // still borrowed by the coro → traps
+            return 0;
+        }
+    )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, before_resume) != nullptr);
+        CHECK(VMBackend::run(before_resume).success == false);
+
+        // Same, after resuming once (the coro is suspended, still holding the ref).
+        const char* mid_iteration = R"(
+        struct P { x: i32; }
+        fun gen(r: ref P): Coro<i32> { yield r.x; yield r.x; }
+        fun main(): i32 {
+            var o: uniq P = uniq P();
+            o.x = 5;
+            var c = gen(o);
+            var a: i32 = c.resume();
+            delete o;         // coro suspended mid-iteration, still borrows o → traps
+            return a;
+        }
+    )";
+        CHECK(VMBackend::run(mid_iteration).success == false);
+    }
+
 }  // TEST_SUITE("E2E Coroutines")

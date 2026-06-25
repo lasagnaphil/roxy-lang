@@ -573,6 +573,15 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
         m_current_func->coro_type = m_current_func->return_type;
         m_current_func->coro_yield_type = m_current_func->return_type->coro_info.yield_type;
         m_current_func->coro_struct_type = m_current_func->return_type->coro_info.generated_struct_type;
+        // A coroutine's `ref` params are NOT counted via the normal per-frame
+        // resume-flow inc/dec: the coroutine split scatters the entry-inc and
+        // exit-dec across resume states, so the dec is missed when the coro is
+        // destroyed before completion (the owner's delete then spuriously traps —
+        // a real break). Instead the borrow is counted for the *state struct's*
+        // lifetime — ref_inc when the param is stored into the state at creation,
+        // ref_dec in `$$delete` (coroutine_lowering.cpp). So drop the per-frame
+        // ref-param tracking here. (lifecycle-traits.md / lifetimes.md §13.)
+        m_ref_params.clear_keep_capacity();
     }
 
     // Check for large struct return - add hidden output pointer as last parameter

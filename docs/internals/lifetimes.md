@@ -554,7 +554,19 @@ direction:
   deferral then moves the value-Nullify after the insert read, instead of stranding
   it before — which had stored null). `is_map_insert_noncopyable_value` gates both
   sites.
-- *Remaining:* count `ref` parameters into coroutine state structs.
+- *Done:* **`ref` parameters into coroutine state structs.** A `ref` param
+  promoted into the coro's heap state struct is a counted borrow held for the
+  *state struct's lifetime* — `ref_inc` when stored into the state at creation
+  (`init_func`), `ref_dec` in the generated `$$delete`. The per-frame resume-flow
+  inc/dec are suppressed for coroutine functions (`m_ref_params` cleared in
+  `ir_builder`), because the coroutine split scatters the entry-inc / exit-dec
+  across resume states and would miss the dec on early destroy (the owner's delete
+  then spuriously trapped — a real break, not just an uncounted borrow). So holding
+  a borrow in a live coroutine keeps the owner alive (deleting it early, even before
+  the first resume, traps), and the count balances whether the coro completes or is
+  destroyed mid-iteration. Only *parameter* ref fields are decremented in `$$delete`
+  — a catch param `e` (a `ref` field set by exception dispatch, not acquired at
+  creation) is deliberately excluded. Both backends.
 
 **Phase 4 — elision (optimization, §11). Not started** (always a later phase).
 
