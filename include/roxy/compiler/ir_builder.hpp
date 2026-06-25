@@ -154,6 +154,13 @@ private:
     // map (uses the __map_iter_* natives), for `m.clear()` cleanup. No-op unless
     // the value type is noncopyable.
     void emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type);
+    // True for `<map>.insert(k, v)` whose value type is noncopyable — the
+    // replace-cleanup case. Its value-arg consume is deferred past the insert (the
+    // contains-guard branch would otherwise strand the value-Nullify before the
+    // insert; lifecycle-traits.md step 4). lower_call_args skips the consume; the
+    // map-method dispatch in gen_call_member emits contains-guard → insert →
+    // consume so they stay in one block.
+    bool is_map_insert_noncopyable_value(CallExpr& call_expr) const;
     // Increment a `ref` borrow whose source value is `source`, inserting the
     // self-promotion heap gate when `source` is a bare `self`: promoting the
     // second-class receiver borrow to a counted `ref` (bind / return / store) is

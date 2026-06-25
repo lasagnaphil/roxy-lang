@@ -547,12 +547,13 @@ direction:
   bucket-iteration loop (via the `__map_iter_*` natives) deleting each value before
   the raw clear. `ref` values keep using the runtime `value_is_ref` path; trivial
   values need nothing.
-- *Remaining (small):* **`m.insert(k, v)` replace** still leaks the old `uniq`
-  value — the contains-guard branch can't be added there because the call machinery
-  consumes the value arg before the method-lowering runs, so the branch would
-  strand the consume. Use `m[k] = v` (which cleans up correctly via
-  `gen_assign_index`) to replace with cleanup. Fixing `insert` needs the call-arg
-  consume deferred past the guard.
+- *Done:* **`m.insert(k, v)` replace** destroys the old `uniq` value too. The
+  value-arg consume is *deferred* past the contains-guard: `lower_call_args` skips
+  consuming a `Map<_, noncopyable V>.insert` value arg, and `gen_call_member` emits
+  contains-guard → insert → consume so they stay in one block (the C nullify-
+  deferral then moves the value-Nullify after the insert read, instead of stranding
+  it before — which had stored null). `is_map_insert_noncopyable_value` gates both
+  sites.
 - *Remaining:* count `ref` parameters into coroutine state structs.
 
 **Phase 4 — elision (optimization, §11). Not started** (always a later phase).

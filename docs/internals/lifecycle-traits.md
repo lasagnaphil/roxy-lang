@@ -18,10 +18,12 @@ by both backends (VM lowers it to `BCDeleteDesc`, C to glue/dtor calls), plus a
 shared `member_needs_drop` condition — is done (§10a). Step 3 — `ref` struct fields
 are now allowed as move-only counted borrows (§12 step 3), closing a real gap (the
 language previously banned them). Step 4 (partial) — the `Map.remove`/`Map.clear`
-`uniq`-value leak is closed via call-site IR cleanup (§12 step 4). **Remaining:**
-`m.insert` replace cleanup, the forward-looking `copy_init`/retain glue, and
-steps 5–6. The `Copy`-marker spelling pass is done (`!noncopyable()` → `is_copy()`
-at the positive copyability sites). This formalizes machinery
+`uniq`-value leak is closed via call-site IR cleanup for remove / clear /
+insert-replace (§12 step 4). **Remaining:** the forward-looking `copy_init`/retain
+glue (dormant — move-only made it unreachable) and steps 5–6 (step 5, deleting
+`BCDeleteDesc`, is explicitly *not* pursued per the §10 correction). The
+`Copy`-marker spelling pass is done (`!noncopyable()` → `is_copy()` at the positive
+copyability sites). This formalizes machinery
 that already exists in scattered form (`fun delete T()` ≈ `Drop`, `.copy()` ≈
 `Clone`, `Type::noncopyable()` ≈ the `Copy` marker, `build_delete_desc` ≈ derived
 drop glue) into a single trait-resolved protocol, and specifies the lowering that
@@ -354,18 +356,20 @@ Incremental, each step independently testable:
    copyability sites that read `!noncopyable()` now use `is_copy()` (the ~74 sites
    whose intent is "needs move/cleanup handling" correctly keep `noncopyable()` —
    `!is_copy()` there would be a worse double negative).
-4. ✅ (partial) **`Map.remove`/`Map.clear` `uniq`-value leak closed.** Instead of a
-   runtime per-value callback (a VM trampoline), the value cleanup is emitted as
+4. ✅ **`Map` `uniq`-value leak closed for remove / clear / insert-replace.** Instead
+   of a runtime per-value callback (a VM trampoline), the value cleanup is emitted as
    ordinary IR at the call site, where the value type is statically known — so both
    backends get it with no new runtime, natives, or header fields: `m.remove(k)` →
    contains-guarded `delete m[k]` before the raw remove; `m.clear()` → a
    bucket-iteration delete-loop (reusing the pre-existing `__map_iter_*` natives)
-   before the raw clear. `ref` values keep the `value_is_ref` runtime path.
-   *Remaining:* `m.insert(k,v)` replace still leaks (the call machinery consumes the
-   value arg before method-lowering, so the contains-guard branch would strand it;
-   `m[k]=v` is the clean replace). The broader unification (fold `value_is_ref` and
-   `List`'s IR-level `RefInc` into one generated element-glue mechanism) is still
-   future work.
+   before the raw clear; `m.insert(k,v)` → contains-guarded `delete m[k]` before the
+   insert, with the value-arg consume *deferred* past the guard
+   (`is_map_insert_noncopyable_value` gates `lower_call_args` to skip it and
+   `gen_call_member` to do contains-guard → insert → consume in one block, so the
+   value-Nullify lands after the insert read instead of being stranded before it).
+   `ref` values keep the `value_is_ref` runtime path. The broader unification (fold
+   `value_is_ref` and `List`'s IR-level `RefInc` into one generated element-glue
+   mechanism) is still future work.
 5. **Delete `BCDeleteDesc`** and the descriptor interpreter once both backends are
    on glue.
 6. **Erased fallback.** Generalize the closure-env `type_id`→dtor pointer into the

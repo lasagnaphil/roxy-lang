@@ -1648,4 +1648,43 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.value == 21);
     }
 
+    // insert-replace: inserting a duplicate key destroys the old value. Its value
+    // arg is consumed *after* the insert (deferred past the contains-guard branch),
+    // so a fresh struct-literal value survives the insert rather than being nulled
+    // early (the prior bug). Both a temporary value and a new-key insert are
+    // covered to guard the regression in both directions.
+    TEST_CASE_TEMPLATE("Map<_, uniq V>: insert-replace destroys the old value", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct R { id: i32; }
+        fun delete R() { print(f"del {self.id}"); }
+        fun main(): i32 {
+            var m: Map<i32, uniq R> = Map<i32, uniq R>();
+            m.insert(1, uniq R { id = 1 });
+            m.insert(1, uniq R { id = 2 });   // destroys old (1) here; stores new (2)
+            print("--");
+            return m[1].id;                    // 2 — new value is intact
+            // teardown destroys the surviving value (2)
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 2);
+        CHECK(result.stdout_output == "del 1\n--\ndel 2\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map<_, uniq V>: insert with a new key keeps the value (no early-null)", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct R { id: i32; }
+        fun delete R() {}
+        fun main(): i32 {
+            var m: Map<i32, uniq R> = Map<i32, uniq R>();
+            m.insert(1, uniq R { id = 7 });   // new key: nothing destroyed, value stored
+            return m[1].id;                    // 7 — the value wasn't nulled by the cleanup path
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 7);
+    }
+
 }

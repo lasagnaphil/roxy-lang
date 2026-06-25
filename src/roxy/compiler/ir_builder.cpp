@@ -1650,6 +1650,17 @@ void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
     set_current_block(exit_block);
 }
 
+bool IRBuilder::is_map_insert_noncopyable_value(CallExpr& call_expr) const {
+    if (!call_expr.callee || call_expr.callee->kind != AstKind::ExprGet) return false;
+    GetExpr& get_expr = call_expr.callee->get;
+    if (get_expr.name != StringView("insert", 6)) return false;
+    Type* obj_type = get_expr.object ? get_expr.object->resolved_type : nullptr;
+    Type* base = obj_type ? obj_type->base_type() : nullptr;
+    if (!base || !base->is_map()) return false;
+    Type* vt = base->map_info.value_type;
+    return vt && vt->noncopyable();
+}
+
 void IRBuilder::emit_container_pin(ValueId container) {
     IRInst* inst = emit_inst(IROp::ContainerPin, m_types.void_type());
     if (inst) inst->unary = container;
@@ -3913,7 +3924,13 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
             // Consume noncopyable temporaries (ownership transfers to callee).
             // Nullify is a compile-time annotation — it ends the cleanup record
             // scope so exception cleanup skips this value after the transfer.
-            if (arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
+            // Exception: a `Map<_, noncopyable V>.insert(k, v)` defers its value-arg
+            // consume to gen_call_member (after the insert), so the contains-guard
+            // branch can't strand the value-Nullify before the insert (step 4).
+            bool defer_map_insert_value =
+                i == 1 && is_map_insert_noncopyable_value(call_expr);
+            if (!defer_map_insert_value &&
+                arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
                 consume_temp_noncopyable(args[i]);
                 // `f(o.field)`: null the moved-out field in the root (args[i]
                 // already read its value above) so the root's destructor no-ops it.
@@ -4088,13 +4105,25 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         // value_is_ref runtime path already handles `ref` values; this closes the
         // `uniq` (and container / struct-with-dtor) value leak, reusing existing IR
         // ops so both backends get it for free.
-        // NOTE: insert-replace is intentionally NOT handled here. Its value arg is
-        // consumed (nulled) by the call machinery *before* this point, and the
-        // contains-guard's branch would strand that consume in the wrong block
-        // (the insert would then store null). The semantically-identical `m[k] = v`
-        // routes through gen_assign_index, which orders the consume after the store
-        // and so cleans up correctly. remove/clear have no value arg, so they are
-        // safe to clean up here.
+        // insert-replace cleanup needs special ordering: its value-arg consume is
+        // deferred (lower_call_args skipped it) so we run contains-guard → insert →
+        // consume here, keeping them in one block (the contains-guard's branch
+        // would otherwise strand the value-Nullify before the insert, storing null;
+        // see is_map_insert_noncopyable_value). remove/clear have no value arg, so
+        // their cleanup is a plain pre-call destroy.
+        if (struct_type->is_map() && is_map_insert_noncopyable_value(call_expr)
+            && args.size() >= 2) {
+            emit_map_value_delete_if_present(obj, struct_type, args[0]);  // destroy old, if present
+            StringView native_name = call_expr.mangled_name;
+            i32 native_idx = m_registry.get_index(native_name);
+            Span<ValueId> method_args = prepend_self(obj, args);
+            ValueId result = emit_call_native(native_name, method_args, expr->resolved_type,
+                                              static_cast<u8>(native_idx));
+            // Deferred consume — now after the insert, in the merge block.
+            consume_temp_noncopyable(args[1]);
+            nullify_moved_field_source(call_expr.arguments[1].expr);
+            return result;
+        }
         if (struct_type->is_map()) {
             if (get_expr.name == StringView("remove", 6) && args.size() >= 1) {
                 emit_map_value_delete_if_present(obj, struct_type, args[0]);
