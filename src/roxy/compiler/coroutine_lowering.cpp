@@ -730,7 +730,7 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
         // but the struct fields still hold stale pointers. The destructor (called later
         // when the Coro goes out of scope) would double-free without this.
         for (const auto& pv : promoted_vars) {
-            if (!pv.type->noncopyable()) continue;
+            if (pv.type->is_copy()) continue;
             if (pv.type->kind == TypeKind::Uniq || pv.type->is_container() ||
                 pv.type->is_coroutine()) {
                 ValueId null_val = emit_const_null(allocator, func, block, types.nil_type());

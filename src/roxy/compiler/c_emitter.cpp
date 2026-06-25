@@ -346,7 +346,7 @@ void CEmitter::emit_delete_slot(Type* elem, StringView slot_expr, String& out) {
         out.append("));\n");
         return;
     }
-    if (!elem->noncopyable()) return;  // copyable element: nothing to clean
+    if (elem->is_copy()) return;  // copyable element: nothing to clean
     bool ptr_shaped = elem->kind == TypeKind::Uniq || elem->is_list()
         || elem->is_map() || elem->is_coroutine() || elem->is_function();
     if (ptr_shaped) {

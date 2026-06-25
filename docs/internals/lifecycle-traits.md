@@ -19,8 +19,9 @@ shared `member_needs_drop` condition — is done (§10a). Step 3 — `ref` struc
 are now allowed as move-only counted borrows (§12 step 3), closing a real gap (the
 language previously banned them). Step 4 (partial) — the `Map.remove`/`Map.clear`
 `uniq`-value leak is closed via call-site IR cleanup (§12 step 4). **Remaining:**
-`m.insert` replace cleanup, the `Copy`-marker rename + forward-looking
-`copy_init`/retain glue, and steps 5–6. This formalizes machinery
+`m.insert` replace cleanup, the forward-looking `copy_init`/retain glue, and
+steps 5–6. The `Copy`-marker spelling pass is done (`!noncopyable()` → `is_copy()`
+at the positive copyability sites). This formalizes machinery
 that already exists in scattered form (`fun delete T()` ≈ `Drop`, `.copy()` ≈
 `Clone`, `Type::noncopyable()` ≈ the `Copy` marker, `build_delete_desc` ≈ derived
 drop glue) into a single trait-resolved protocol, and specifies the lowering that
@@ -349,7 +350,10 @@ Incremental, each step independently testable:
    noncopyable machinery, so copy/retain vanishes — only construct/overwrite/drop
    count, and a move just transfers. It's consistent with how `List<ref>`/`Map<_,ref>`
    already work. The `copy_init`/retain machinery (and the `needs_retain` predicate)
-   stay forward-looking; the `Copy`-marker rename below is unblocked but not yet done.
+   stay forward-looking. The `Copy`-marker spelling pass is done: the positive
+   copyability sites that read `!noncopyable()` now use `is_copy()` (the ~74 sites
+   whose intent is "needs move/cleanup handling" correctly keep `noncopyable()` —
+   `!is_copy()` there would be a worse double negative).
 4. ✅ (partial) **`Map.remove`/`Map.clear` `uniq`-value leak closed.** Instead of a
    runtime per-value callback (a VM trampoline), the value cleanup is emitted as
    ordinary IR at the call site, where the value type is statically known — so both

@@ -482,7 +482,7 @@ IRFunction* IRBuilder::build_module_shutdown() {
         Type* type = m_module->globals[i].type;
         u32 slot_offset = m_module->globals[i].slot_offset;
         u32 slot_count = m_module->globals[i].slot_count;
-        if (!type || !type->noncopyable()) continue;
+        if (!type || type->is_copy()) continue;
 
         ValueId addr = emit_global_addr(slot_offset, type);
         if (type->is_struct()) {
@@ -1558,7 +1558,7 @@ void IRBuilder::emit_map_value_delete_if_present(ValueId map_obj, Type* map_type
     // Only noncopyable (uniq / container / struct-with-dtor) values need a typed
     // delete here. A `ref` value is released by the runtime value_is_ref path
     // (roxy_map_insert/remove); a trivial value needs no cleanup.
-    if (!value_type || !value_type->noncopyable()) return;
+    if (!value_type || value_type->is_copy()) return;
 
     StringView contains_native;
     for (const MethodInfo& method : map_type->map_info.methods) {
@@ -1589,7 +1589,7 @@ void IRBuilder::emit_map_value_delete_if_present(ValueId map_obj, Type* map_type
 void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
     if (!map_type || !map_type->is_map()) return;
     Type* value_type = map_type->map_info.value_type;
-    if (!value_type || !value_type->noncopyable()) return;  // ref/trivial: nothing to do here
+    if (!value_type || value_type->is_copy()) return;  // ref/trivial: nothing to do here
 
     // Look up the internal iteration natives (pre-provided for exactly this:
     // cleanup of noncopyable map values). If any is missing, skip (the values then
@@ -4719,7 +4719,7 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
     bool value_is_fresh = assign_expr.value->kind == AstKind::ExprStructLiteral ||
                           assign_expr.value->kind == AstKind::ExprCall;
     if (assign_expr.op == AssignOp::Assign && target_type && target_type->is_struct()
-        && !target_type->noncopyable() && !value_is_fresh) {
+        && target_type->is_copy() && !value_is_fresh) {
         u32 slot_count = target_type->struct_info.slot_count;
         ValueId fresh = emit_stack_alloc(slot_count, target_type);
         emit_struct_copy(fresh, value, slot_count);
@@ -5162,7 +5162,7 @@ ValueId IRBuilder::gen_constructor_call(Expr* expr) {
         if (arg.modifier != ParamModifier::None) continue;
         if (arg.expr->kind != AstKind::ExprIdentifier) continue;
         Type* arg_type = arg.expr->resolved_type;
-        if (!arg_type || !arg_type->noncopyable()) continue;
+        if (!arg_type || arg_type->is_copy()) continue;
         mark_moved_from(arg.expr->identifier.name);
     }
 
@@ -5620,7 +5620,7 @@ void IRBuilder::gen_var_decl(Decl* decl) {
             value = gen_expr(var_decl.initializer);
         } else if (var_decl.initializer) {
             ValueId src = gen_expr(var_decl.initializer);
-            if (!type->noncopyable()) {
+            if (type->is_copy()) {
                 // The rvalue is a pointer into storage owned by some other entity
                 // (another local, a struct field, a list/map element). Binding
                 // `value` directly to `src` would make this variable alias that
@@ -5798,7 +5798,7 @@ IRBuilder::OwnedLocalInfo* IRBuilder::find_owned_local(StringView name) {
 }
 
 void IRBuilder::track_noncopyable_call_temp(ValueId val, Type* type) {
-    if (!type || !type->noncopyable() || !m_current_block || !val.is_valid()) return;
+    if (!type || type->is_copy() || !m_current_block || !val.is_valid()) return;
     // Skip if already tracked as a temporary (constructor/struct-literal paths
     // self-track their heap temps at creation).
     for (const auto& info : m_owned_locals) {
@@ -5859,7 +5859,7 @@ void IRBuilder::mark_moved_from(StringView name, bool null_ssa, bool nullify_rec
 void IRBuilder::nullify_moved_field_source(Expr* consumed) {
     if (!consumed || consumed->kind != AstKind::ExprGet) return;
     Type* field_type = consumed->resolved_type;
-    if (!field_type || !field_type->noncopyable()) return;
+    if (!field_type || field_type->is_copy()) return;
 
     GetExpr& src_get = consumed->get;
     Type* src_obj_type = src_get.object->resolved_type;

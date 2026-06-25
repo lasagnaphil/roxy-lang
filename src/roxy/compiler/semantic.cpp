@@ -1730,7 +1730,7 @@ bool SemanticAnalyzer::check_not_field_move(Expr* expr, SourceLocation loc) {
     if (expr->kind != AstKind::ExprGet) return true;
 
     Type* field_type = expr->resolved_type;
-    if (!field_type || !field_type->noncopyable()) return true;
+    if (!field_type || field_type->is_copy()) return true;
 
     // A noncopyable *value-struct* field can't be moved out. The containing
     // struct is destroyed by a type-level descriptor that walks every field, so
@@ -1794,7 +1794,7 @@ bool SemanticAnalyzer::is_out_inout_param(Expr* expr) {
 void SemanticAnalyzer::consume_noncopyable(Expr* expr, SourceLocation loc) {
     if (!expr) return;
     Type* type = expr->resolved_type;
-    if (!type || !type->noncopyable()) return;
+    if (!type || type->is_copy()) return;
 
     // Look through parenthesization: `(p)` denotes the same storage as `p`
     // (is_lvalue() recurses through grouping the same way). A move whose source
@@ -4049,7 +4049,7 @@ void SemanticAnalyzer::ensure_self_captured_through(u32 target_idx, Type* struct
     }
 
     Type* ref_self = m_types.ref_type(struct_type);
-    bool copyable_struct = !struct_type->noncopyable();
+    bool copyable_struct = struct_type->is_copy();
 
     Expr* src;
     if (target_idx == 0) {
@@ -4188,7 +4188,7 @@ bool SemanticAnalyzer::validate_lambda_captures(LambdaExpr& le, LambdaCaptureCon
                 error_fmt(entry.loc, "capture list references unknown variable '{}'", entry.name);
                 return false;
             }
-            if (!outer_sym->type || !outer_sym->type->noncopyable()) {
+            if (!outer_sym->type || outer_sym->type->is_copy()) {
                 error_fmt(entry.loc,
                     "move captures only apply to noncopyable types; '{}' is copyable, capture it implicitly",
                     entry.name);
@@ -4397,7 +4397,7 @@ bool SemanticAnalyzer::validate_lambda_captures(LambdaExpr& le, LambdaCaptureCon
             // ref already), so the receiver-on-heap requirement is satisfied
             // transitively. For direct method nesting on a copyable struct we
             // still need the runtime check on the bare ExprThis.
-            bool copyable_struct = !struct_type->noncopyable();
+            bool copyable_struct = struct_type->is_copy();
             bool nested = m_lambda_contexts.size() > 0;
 
             Expr* src = build_outer_self_ref_source(entry.loc);
