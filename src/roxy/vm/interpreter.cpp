@@ -306,7 +306,7 @@ static void delete_value(RoxyVM* vm, void* ptr,
     case BCDeleteDesc::List: { // iterate elements, recurse, free element buffer
         ListHeader* header = get_list_header(ptr);
         // Refuse the free while an element is borrowed (inout/out) — keep the
-        // buffer so the borrowed pointer can't dangle (lifetimes.md §15).
+        // buffer so the borrowed pointer can't dangle (lifetimes.md "Container element lvalues").
         if (header->borrow_count != 0) {
             vm->error = "cannot delete a List while an element of it is borrowed (inout/out)";
             return;
@@ -413,7 +413,7 @@ static void delete_slot_entry(RoxyVM* vm, const u32* base,
                               const BCDeleteDesc& desc, const BCFunction* func) {
     if (desc.cleanup == BCDeleteDesc::RefDec) {
         // `ref` element/value: the slot holds the borrowed pointer — release the
-        // count (the owner frees the pointee, not us). lifetimes.md §8.
+        // count (the owner frees the pointee, not us). lifetimes.md "Applying the model".
         u64 ptr = static_cast<u64>(base[0]) | (static_cast<u64>(base[1]) << 32);
         ref_dec(vm, reinterpret_cast<void*>(ptr));
     } else if (desc.free_obj) {
@@ -1539,7 +1539,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
 
         // A container mutator refused because the container is pinned (an element
         // is borrowed inout/out) records a fatal runtime trap — surface it as a
-        // recoverable VM error (lifetimes.md §15).
+        // recoverable VM error (lifetimes.md "Container element lvalues").
         if (roxy_runtime_error_pending()) {
             vm->error = roxy_runtime_error_message();
             roxy_runtime_error_clear();
@@ -1763,7 +1763,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         DISPATCH();
     }
 
-    // ── Element-address lvalues (out/inout container args; lifetimes.md §15) ──
+    // ── Element-address lvalues (out/inout container args; lifetimes.md "Container element lvalues") ──
 
     OP(INDEX_ADDR_LIST) {
         u8 a = decode_a(instr);
@@ -1780,7 +1780,8 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             return false;
         }
         // Raw pointer into the backing buffer; valid for the borrow because the
-        // call site pins the container against realloc/free (Phase 3).
+        // call site pins the container against realloc/free (lifetimes.md
+        // "Container element lvalues").
         regs[a] = reinterpret_cast<u64>(list_element_ptr(header, static_cast<u32>(idx)));
         DISPATCH();
     }

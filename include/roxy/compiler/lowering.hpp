@@ -145,7 +145,7 @@ private:
     // not a runtime instruction).
     tsl::robin_map<u32, u32> m_nullify_pcs;  // ValueId.id -> PC where ownership transferred
     // ValueId.id -> PC of its RefInc. Used to narrow a call-site receiver
-    // borrow's cleanup-record scope_start to the RefInc (lifetimes.md §4/§6):
+    // borrow's cleanup-record scope_start to the RefInc (lifetimes.md "Counting mechanics" / "Promotion"):
     // the block-derived start would wrongly cover earlier-in-block argument
     // evaluation, so a throw there would RefDec a not-yet-initialized register.
     tsl::robin_map<u32, u32> m_ref_inc_pcs;
@@ -175,7 +175,7 @@ private:
     // (e.g. struct Node { next: uniq Node; }) produce a finite, self-
     // referential descriptor instead of looping forever at compile time. The
     // *kind* of drop is decided by the shared compute_drop_plan (types.hpp); this
-    // lowers that plan to a BCDeleteDesc. lifetimes.md §18.
+    // lowers that plan to a BCDeleteDesc. lifetimes.md "Value lifecycle".
     u16 build_delete_desc(Type* type);
 
     // Append the field-cleanup actions for an eligible struct (regular owned

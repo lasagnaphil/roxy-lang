@@ -227,7 +227,7 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
         // A `ref` *parameter* field is a counted borrow acquired at coro creation
         // (init_func RefInc); release it here (RefDec the borrowed pointer, never
         // free the pointee). Only param ref fields are counted — other ref fields
-        // (catch params set by exception dispatch) must be left alone. (§13.)
+        // (catch params set by exception dispatch) must be left alone. ("Applying the model".)
         bool is_ref = field.type->kind == TypeKind::Ref && is_ref_param_field(field.name);
         if (!is_noncopyable_pointer && !is_ref) continue;
 

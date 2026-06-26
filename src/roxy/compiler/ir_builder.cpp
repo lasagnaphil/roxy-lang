@@ -580,7 +580,7 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
         // a real break). Instead the borrow is counted for the *state struct's*
         // lifetime — ref_inc when the param is stored into the state at creation,
         // ref_dec in `$$delete` (coroutine_lowering.cpp). So drop the per-frame
-        // ref-param tracking here. (lifetimes.md §18 / lifetimes.md §13.)
+        // ref-param tracking here. (lifetimes.md "Value lifecycle".)
         m_ref_params.clear_keep_capacity();
     }
 
@@ -2329,7 +2329,7 @@ static bool is_bare_self(Expr* e) {
 // methods carry `self` at param_types[0] (offset 1); free/native functions and
 // closure locals (identifier callees) do not (offset 0). Mirrors the dispatch
 // in gen_call_member, used here only to heap-gate a bare-`self` argument bound
-// to a `ref` parameter (lifetimes.md §6).
+// to a `ref` parameter (lifetimes.md "Promotion").
 static i32 self_pass_param_offset(CallExpr& call_expr) {
     Expr* callee = call_expr.callee;
     if (callee->kind == AstKind::ExprIdentifier) return 0;
@@ -3875,7 +3875,7 @@ ValueId IRBuilder::gen_map_constructor(Expr* expr) {
     emit_call_native(ctor_name, ctor_args, m_types.void_type(), static_cast<u8>(ctor_idx));
 
     // If values are counted borrows (`ref V`), tag the map so insert RefIncs and
-    // remove/clear/destroy RefDec each value (lifetimes.md §8 / §13).
+    // remove/clear/destroy RefDec each value (lifetimes.md "Applying the model").
     if (value_type && value_type->kind == TypeKind::Ref) {
         StringView mark_name("__map_mark_ref_values", 21);
         i32 mark_idx = m_registry.get_index(mark_name);
@@ -3958,7 +3958,7 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
             // Passing a bare `self` to a `ref` parameter is a promotion: the
             // callee RefIncs the param at entry, so heap-gate it here (before the
             // call) — a stack receiver traps rather than corrupting a bogus header
-            // (lifetimes.md §6). The param index accounts for an implicit `self`
+            // (lifetimes.md "Promotion"). The param index accounts for an implicit `self`
             // on method callees; uncertain callee shapes return -1 and are skipped.
             if (is_bare_self(arg.expr) && callee_func_type && callee_func_type->is_function()) {
                 i32 off = self_pass_param_offset(call_expr);
@@ -4102,7 +4102,7 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
     if (struct_type && struct_type->is_container()) {
         // Pushing a `ref` element into a List makes the container hold a counted
         // borrow — increment it. The hold is released when the element leaves
-        // (container destroy / overwrite). lifetimes.md §8.
+        // (container destroy / overwrite). lifetimes.md "Applying the model".
         if (struct_type->is_list() && get_expr.name == StringView("push", 4)
             && struct_type->list_info.element_type
             && struct_type->list_info.element_type->kind == TypeKind::Ref
@@ -4110,7 +4110,7 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
             emit_ref_inc(args[0]);
         }
         // Map insert/remove/clear must destroy noncopyable values that are
-        // overwritten / removed / cleared (lifetimes.md §18). The
+        // overwritten / removed / cleared (lifetimes.md "Value lifecycle"). The
         // value_is_ref runtime path already handles `ref` values; this closes the
         // `uniq` (and container / struct-with-dtor) value leak, reusing existing IR
         // ops so both backends get it for free.
@@ -4156,7 +4156,7 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         method_name = mangle_method(name_type->struct_info.name, get_expr.name);
     }
 
-    // Constraint-reference model (lifetimes.md §4/§8): count a *heap* receiver
+    // Constraint-reference model (lifetimes.md "Counting mechanics"): count a *heap* receiver
     // for the call's duration. Whenever the receiver is statically heap (its type
     // is `uniq`), increment its borrow count across the call so a reentrant free
     // of the receiver — directly or through an alias the callee reaches — traps in
@@ -4339,7 +4339,7 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     // wrapping, temp consumption), then dispatch on the callee's shape.
     CallLowering lowered = lower_call_args(expr);
 
-    // Call-site heap-root counting for out/inout arguments (lifetimes.md §4/§8):
+    // Call-site heap-root counting for out/inout arguments (lifetimes.md "Counting mechanics"):
     // an out/inout arg pointing *into* a heap object's storage (`f(inout
     // heap_obj.field)`) borrows that heap root for the call's duration, so a
     // mid-call free of the root — through an alias the callee reaches — traps in
@@ -4351,7 +4351,7 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     // record so they release before any owner Delete on unwind:
     //   - field-rooted lvalue (`f(inout heap_obj.field)`): RefInc the heap root
     //     (free-block), released by RefDec.
-    //   - container-index lvalue (`f(inout list[i])`, lifetimes.md §15): pin the
+    //   - container-index lvalue (`f(inout list[i])`, lifetimes.md "Container element lvalues"): pin the
     //     container (borrow_count), so a mid-call realloc/free of it traps before
     //     the element address can dangle; released by unpin.
     Vector<IRCleanupInfo> call_borrows;
@@ -4866,7 +4866,7 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
     }
 
     // Overwriting a `ref` field rebalances the borrow count: release the old
-    // borrow, acquire the new (lifetimes.md §18 — mirrors the List
+    // borrow, acquire the new (lifetimes.md "Value lifecycle" — mirrors the List
     // ref-element overwrite in gen_assign_index). A freshly default-constructed
     // field holds null, and ref_dec(null) is a no-op, so this is safe even for the
     // first assignment.
@@ -4964,7 +4964,7 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
         // Overwriting a `ref` List element rebalances the count: release the old
         // borrow, acquire the new (the caller keeps its own copy of the new ref).
         // The index is always in bounds, so the old element always exists.
-        // (lifetimes.md §8. Map<_, ref> overwrite is part of the deferred Map work.)
+        // (lifetimes.md "Applying the model". Map<_, ref> overwrite is part of the deferred Map work.)
         if (elem_is_ref && is_list) {
             ValueId old = emit_index_get(obj, index_val, kind, elem_type);
             emit_ref_dec(old);
@@ -4972,7 +4972,7 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
         }
         // Destroy the overwritten element before storing, so a noncopyable old
         // element isn't leaked (mirrors emit_single_field_destroy for fields).
-        // See docs/internals/lifetimes.md §9.
+        // See docs/internals/lifetimes.md "Applying the model".
         else if (elem_noncopyable && is_list) {
             // List: the index is always in bounds, so the old element always
             // exists — destroy it unconditionally.
@@ -4982,7 +4982,7 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
         } else if (elem_noncopyable) {
             // Map: a slot has an old value only for an already-present key, so the
             // helper guards the destroy with a `contains` check (a new key destroys
-            // nothing). Shared with m.insert / m.remove (lifetimes.md §18).
+            // nothing). Shared with m.insert / m.remove (lifetimes.md "Value lifecycle").
             emit_map_value_delete_if_present(obj, container_type, index_val);
         }
 
@@ -5353,7 +5353,7 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         }
 
         // A `ref` field is a counted borrow: storing a borrow into it acquires a
-        // count on the pointee (released on struct drop; lifetimes.md §18
+        // count on the pointee (released on struct drop; lifetimes.md "Value lifecycle"
         // step 3). The struct is move-only, so the source stays live — no move.
         if (field_info.type && field_info.type->kind == TypeKind::Ref && value_expr) {
             emit_ref_inc(value);
@@ -5588,7 +5588,7 @@ ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {
         case AstKind::ExprIndex: {
             // Address of a List/Map element (out/inout argument). The runtime
             // returns a pointer into the backing buffer, valid for the borrow
-            // because the call site pins the container (lifetimes.md §15). The
+            // because the call site pins the container (lifetimes.md "Container element lvalues"). The
             // element type is the subscript's resolved (borrowed) type.
             IndexExpr& index_expr = expr->index;
             Type* obj_type = index_expr.object->resolved_type;

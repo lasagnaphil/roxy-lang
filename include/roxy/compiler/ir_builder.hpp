@@ -129,7 +129,7 @@ private:
     void emit_index_set(ValueId container, ValueId index, ValueId value, ContainerKind kind);
     // Address of a container element (out/inout argument lvalue). result_type is
     // the element/value (pointee) type, mirroring emit_get_field_addr. The pointer
-    // is valid only while the container is pinned (lifetimes.md §15, Phase 3).
+    // is valid only while the container is pinned (lifetimes.md "Container element lvalues").
     ValueId emit_index_addr(ValueId container, ValueId index, ContainerKind kind, Type* result_type);
     ValueId emit_new(StringView type_name, Span<ValueId> args, Type* result_type);
     ValueId emit_stack_alloc(u32 slot_count, Type* result_type);
@@ -146,7 +146,7 @@ private:
 
     // Emit `if (map.contains(key)) delete map[key];` — the contains-guarded destroy
     // of a noncopyable map value, so an overwritten (`m[k]=v`, `m.insert`) or
-    // removed (`m.remove`) value isn't leaked (lifetimes.md §18). No-op
+    // removed (`m.remove`) value isn't leaked (lifetimes.md "Value lifecycle"). No-op
     // unless the map's value type is noncopyable (a `ref` value is released by the
     // runtime value_is_ref path; a trivial value needs nothing).
     void emit_map_value_delete_if_present(ValueId map_obj, Type* map_type, ValueId key_val);
@@ -157,7 +157,7 @@ private:
     // True for `<map>.insert(k, v)` whose value type is noncopyable — the
     // replace-cleanup case. Its value-arg consume is deferred past the insert (the
     // contains-guard branch would otherwise strand the value-Nullify before the
-    // insert; lifetimes.md §18). lower_call_args skips the consume; the
+    // insert; lifetimes.md "Value lifecycle"). lower_call_args skips the consume; the
     // map-method dispatch in gen_call_member emits contains-guard → insert →
     // consume so they stay in one block.
     bool is_map_insert_noncopyable_value(CallExpr& call_expr) const;
@@ -165,10 +165,10 @@ private:
     // self-promotion heap gate when `source` is a bare `self`: promoting the
     // second-class receiver borrow to a counted `ref` (bind / return / store) is
     // sound only on a heap receiver, so an `AssertHeap` traps a stack receiver
-    // before the inc (lifetimes.md §6). Non-`self` sources are statically heap.
+    // before the inc (lifetimes.md "Promotion"). Non-`self` sources are statically heap.
     void emit_ref_borrow_inc(ValueId val, Expr* source);
     // Pin/unpin a container around a call so a borrowed element can't be dangled
-    // by a mid-call realloc/free (lifetimes.md §15). `container` is a List/Map
+    // by a mid-call realloc/free (lifetimes.md "Container element lvalues"). `container` is a List/Map
     // value (or a pinned copy of one).
     void emit_container_pin(ValueId container);
     void emit_container_unpin(ValueId container);
@@ -190,7 +190,7 @@ private:
     // object whose storage the argument points into (its "heap root"), or invalid
     // if the lvalue is stack-rooted or not a pure identifier/field chain. The
     // call site counts this root for the call's duration so a mid-call free of it
-    // traps rather than dangling the out/inout pointer (lifetimes.md §4/§8). When
+    // traps rather than dangling the out/inout pointer (lifetimes.md "Counting mechanics"). When
     // a root is returned, *out_type receives its (uniq) type. Only re-evaluates
     // pure field paths, so the extra load it emits is side-effect-free.
     ValueId heap_root_of_lvalue(Expr* lvalue, Type** out_type);
@@ -400,7 +400,7 @@ private:
     // function bodies resolve to the right slot offset.
     tsl::robin_map<StringView, u32> m_global_indices;
 
-    // Deferred call-site receiver-borrow cleanup records (lifetimes.md §4/§6).
+    // Deferred call-site receiver-borrow cleanup records (lifetimes.md "Counting mechanics" / "Promotion").
     // A borrow's exception-path RefDec must run BEFORE the receiver-owner's
     // Delete on unwind (else Delete sees ref_count != 0 and spuriously traps).
     // execute_cleanup runs records in reverse of cleanup_info order, and the

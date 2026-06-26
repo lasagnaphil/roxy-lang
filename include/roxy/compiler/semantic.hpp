@@ -511,7 +511,7 @@ private:
     void consume_noncopyable(Expr* expr, SourceLocation loc);
 
     // True if `expr` is a reference to an `out`/`inout` parameter — a member of
-    // the second-class family that must flow downward only (lifetimes.md §3).
+    // the second-class family that must flow downward only (lifetimes.md "The second-class family").
     // Used to reject escapes (bind-to-ref, store, return, capture). `self` is
     // NOT covered here: it is typed ref<T> and its retention goes through the
     // runtime promotion gate, not a compile error.

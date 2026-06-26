@@ -300,7 +300,7 @@ typedef struct {
     uint16_t borrow_count;        // outstanding element borrows (inout/out list[i]); 0 = unpinned.
                                   // While > 0, structural mutators (push) refuse + raise a runtime
                                   // error so the borrowed element pointer can't dangle. See
-                                  // roxy_list_pin / docs/internals/lifetimes.md §15.
+                                  // roxy_list_pin / docs/internals/lifetimes.md "Container element lvalues".
     uint32_t* elements;
 } roxy_list_header;
 
@@ -363,10 +363,10 @@ typedef struct {
     uint8_t  value_is_inline;   // 1 = primitive value; 0 = struct (caller provides ptr)
     uint8_t  value_is_ref;      // 1 = value is a counted borrow (`ref V`): insert RefIncs,
                                 // remove/clear/destroy RefDec. Set by roxy_map_mark_ref_values
-                                // after construction. See lifetimes.md §8 / §13.
+                                // after construction. See lifetimes.md "Applying the model".
     uint16_t borrow_count;      // outstanding value borrows (inout/out map[k]); 0 = unpinned.
                                 // While > 0, structural mutators (insert/remove/clear) refuse +
-                                // raise a runtime error. See roxy_map_pin / lifetimes.md §15.
+                                // raise a runtime error. See roxy_map_pin / lifetimes.md "Container element lvalues".
     roxy_map_hash_fn hash_fn;   // nullptr = bytewise hash (Struct key kind only)
     roxy_map_eq_fn   eq_fn;     // nullptr = bytewise eq (Struct key kind only)
     uint8_t*  distances;        // Per-bucket Robin Hood distance+1 (0 = empty)
@@ -398,7 +398,7 @@ void* roxy_map_copy(void* src);
 
 // Mark a map's values as counted borrows (`ref V`). Emitted by the compiler
 // right after a `Map<_, ref V>` is constructed, so insert RefIncs the borrow and
-// remove/clear/destroy RefDec it (lifetimes.md §8).
+// remove/clear/destroy RefDec it (lifetimes.md "Applying the model").
 void  roxy_map_mark_ref_values(void* self);
 
 // Map index operators — same as get/insert under a different native name.

@@ -152,7 +152,7 @@ enum class IROp : u8 {
     // Container indexing (List/Map)
     IndexGet,       // container[index] — for List/Map
     IndexSet,       // container[index] = value — for List/Map
-    IndexAddr,      // &container[index] — element lvalue address (out/inout args; lifetimes.md §15)
+    IndexAddr,      // &container[index] — element lvalue address (out/inout args; lifetimes.md "Container element lvalues")
     ContainerPin,   // pin a container for a call (borrow_count++) — blocks realloc/free while an element is borrowed
     ContainerUnpin, // unpin a container after a call (borrow_count--)
 
@@ -331,7 +331,7 @@ struct IRInst {
     ValueId store_value;
 
     // Pinned `Copy`: copy propagation must NOT collapse this Copy into its
-    // source. Used by call-site receiver borrows (lifetimes.md §4/§6) to mint a
+    // source. Used by call-site receiver borrows (lifetimes.md "Counting mechanics" / "Promotion") to mint a
     // distinct SSA value/register for a heap receiver, so the borrow's RefDec +
     // Nullify cleanup can't collide with the owned-local's own Delete record
     // (which shares the receiver's value). Only ever set on IROp::Copy.
@@ -428,7 +428,7 @@ struct IRFinallyInfo {
 // Cleanup action for an exception-path cleanup record.
 //   Delete — run the type's descriptor-driven destruction (uniq/list/map/...).
 //   RefDec — decrement a `ref` borrow's count (constraint-reference model).
-//   Unpin  — decrement a container's element-borrow pin (lifetimes.md §15).
+//   Unpin  — decrement a container's element-borrow pin (lifetimes.md "Container element lvalues").
 enum class IRCleanupKind : u8 { Delete, RefDec, Unpin };
 
 // Cleanup info for owned locals and ref borrows (used to generate bytecode
@@ -444,7 +444,7 @@ struct IRCleanupInfo {
     // point (the block-derived scope is unreliable when every path returns or
     // throws). Ref *locals* and owned locals are block-scoped (false).
     bool whole_function_scope = false;
-    // Call-site receiver borrow (lifetimes.md §4/§6): a heap receiver counted
+    // Call-site receiver borrow (lifetimes.md "Counting mechanics" / "Promotion"): a heap receiver counted
     // for one method call's duration. The borrow lives only [RefInc, RefDec)
     // around a single call, so lowering narrows scope_start to the RefInc's PC
     // (via m_ref_inc_pcs) in addition to the Nullify end-narrowing — the

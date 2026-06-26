@@ -500,7 +500,7 @@ static inline uint32_t* list_element_ptr(roxy_list_header* hdr, uint32_t index) 
     return hdr->elements + static_cast<size_t>(index) * hdr->element_slot_count;
 }
 
-// Element-borrow pin (see lifetimes.md §15). A structural mutation on a pinned
+// Element-borrow pin (see lifetimes.md "Container element lvalues"). A structural mutation on a pinned
 // list is refused so the borrowed element pointer can't dangle.
 void roxy_list_pin(void* self) {
     static_cast<roxy_list_header*>(self)->borrow_count++;
@@ -727,7 +727,7 @@ static roxy_map_header* map_hdr(void* self) {
     return static_cast<roxy_map_header*>(self);
 }
 
-// Element-borrow pin (see lifetimes.md §15), mirroring the list pin.
+// Element-borrow pin (see lifetimes.md "Container element lvalues"), mirroring the list pin.
 void roxy_map_pin(void* self) {
     map_hdr(self)->borrow_count++;
 }

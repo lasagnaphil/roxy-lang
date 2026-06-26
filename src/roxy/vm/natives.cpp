@@ -1020,7 +1020,7 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_method(native_list_index,     "fun List<T>.index(idx: i32): borrowed T");
     registry.bind_method(native_list_index_mut, "fun List<T>.index_mut(idx: i32, val: T)");
     // Explicit deep copy — containers are move-only, so `.copy()` is how you ask
-    // for an independent duplicate (lifetimes.md §8).
+    // for an independent duplicate (lifetimes.md "Applying the model").
     registry.bind_method(native_list_copy,      "fun List<T>.copy(): List<T>");
 
     // Free functions

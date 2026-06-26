@@ -365,18 +365,18 @@ struct Type {
         }
         // A List of `ref` is noncopyable (move-only): those elements are counted
         // borrows, so the container must be destroyed to release each element's
-        // count on teardown (lifetimes.md §8). `ref` itself is copyable; a *List
+        // count on teardown (lifetimes.md "Applying the model"). `ref` itself is copyable; a *List
         // of* refs is not. (Map<_, ref> ref-counting is a follow-on; it stays
         // copyable for now, like its other-element behavior.)
         // Containers own a heap buffer, so they are move-only (like `uniq`): a
         // List/Map is always noncopyable. An explicit `.copy()` deep-copies when
-        // a copy is genuinely wanted. (lifetimes.md §8 / overview.md.)
+        // a copy is genuinely wanted. (lifetimes.md "Applying the model" / overview.md.)
         if (kind == TypeKind::List) return true;
         if (kind == TypeKind::Map) return true;
         return false;
     }
 
-    // === Value-lifecycle predicates (docs/internals/lifetimes.md §18) ===
+    // === Value-lifecycle predicates (docs/internals/lifetimes.md "Value lifecycle") ===
     // The canonical, structural definition of a type's lifecycle needs — the
     // source of truth the future drop/copy/clone glue lowering will consume.
     // Introduced ahead of the migration (doc step 1); no consumers yet beyond a
@@ -534,7 +534,7 @@ private:
     tsl::robin_map<u8, Vector<Type*>> m_primitive_traits;
 };
 
-// === Unified drop derivation (docs/internals/lifetimes.md §18) ===
+// === Unified drop derivation (docs/internals/lifetimes.md "Value lifecycle") ===
 // `compute_drop_plan` is the single, backend-agnostic decision for *what kind* of
 // drop a type needs. Both backends consume it — the VM lowers it to a
 // `BCDeleteDesc` (executed natively by delete_value), the C backend lowers it to a

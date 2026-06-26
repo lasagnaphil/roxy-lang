@@ -526,7 +526,7 @@ void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
         // A `ref` field is a counted borrow: the struct is move-only (noncopyable)
         // and ref_incs the field on construction / ref_decs on drop, so a borrow
         // stored in a struct keeps the owner alive (or traps) exactly like a
-        // `List<ref T>` element (docs/internals/lifetimes.md §18). The
+        // `List<ref T>` element (docs/internals/lifetimes.md "Value lifecycle"). The
         // synthetic-destructor pass (driven by member_needs_drop) makes such a
         // struct move-only and gives it field-walk cleanup.
         FieldInfo info;
@@ -1806,7 +1806,7 @@ void SemanticAnalyzer::consume_noncopyable(Expr* expr, SourceLocation loc) {
         if (!expr) return;
     }
 
-    // Second-class family (lifetimes.md §3): an `out`/`inout` parameter borrows
+    // Second-class family (lifetimes.md "The second-class family"): an `out`/`inout` parameter borrows
     // the caller's value and the caller retains ownership, so a noncopyable
     // out/inout cannot be moved out of this frame (binding it, returning it,
     // passing it by value, storing it, capturing it by move) — that would
@@ -4136,7 +4136,7 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
         if (cap.mode == CaptureMode::Move) {
             // Moving an out/inout parameter into a closure env transfers the
             // caller's value to the env (which frees it on drop) — a second-class
-            // escape (lifetimes.md §3), even when the closure itself does not
+            // escape (lifetimes.md "The second-class family"), even when the closure itself does not
             // escape. Reject it (this move site bypasses consume_noncopyable).
             Symbol* cap_sym = m_symbols.lookup(cap.name);
             if (cap_sym && cap_sym->kind == SymbolKind::Parameter && cap_sym->is_out_inout) {
@@ -4748,7 +4748,7 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
         // method returns the `borrowed` view — `ref T` for an owning `uniq T`
         // element — which is right for reads but wrong here, since `inout` gives
         // reassignable access to the owning slot). Copyable elements are
-        // unaffected (`borrowed T` == `T`). See lifetimes.md §15.
+        // unaffected (`borrowed T` == `T`). See lifetimes.md "Container element lvalues".
         if ((arg.modifier == ParamModifier::Inout || arg.modifier == ParamModifier::Out)
             && arg.expr->kind == AstKind::ExprIndex) {
             Type* cont = arg.expr->index.object->resolved_type;

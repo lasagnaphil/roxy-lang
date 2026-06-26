@@ -205,12 +205,12 @@ enum class Opcode : u8 {
     WEAK_CHECK  = 0xE2,     // dst = weak_valid(src1)
     WEAK_CREATE = 0xE3,     // dst,dst+1 = weak_create(src) — extracts generation
 
-    // Element-address lvalues for out/inout container args (lifetimes.md §15).
+    // Element-address lvalues for out/inout container args (lifetimes.md "Container element lvalues").
     // ABC: a=dst (raw element pointer), b=obj, c=index/key. Bounds-/key-checked.
     INDEX_ADDR_LIST = 0xE4, // dst = &list[index]
     INDEX_ADDR_MAP  = 0xE5, // dst = &map[key]   (traps if key absent)
 
-    // Container element-borrow pin/unpin around a call (lifetimes.md §15 Phase 3).
+    // Container element-borrow pin/unpin around a call (lifetimes.md "Container element lvalues").
     // ABC: a=container pointer. Bumps/decrements the header borrow_count so a
     // mid-call realloc/free of the container traps instead of dangling the borrow.
     CONTAINER_PIN   = 0xE6, // pin(regs[a])
@@ -429,7 +429,7 @@ struct BCDeleteDesc {
                      // runtime type_id (the `fun()->R` type erases which env it
                      // is), then free the env. See RoxyVM::closure_env_dtors.
         RefDec,      // `ref` element/value: release the borrow (roxy_ref_dec the
-                     // pointer in the slot), never free the pointee (lifetimes.md §8).
+                     // pointer in the slot), never free the pointee (lifetimes.md "Applying the model").
     };
 
     Cleanup cleanup;
