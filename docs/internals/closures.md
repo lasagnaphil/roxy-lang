@@ -73,7 +73,7 @@ A function value is a `uniq` pointer to a heap-allocated **env struct** (2 slots
 
 ### Calling a borrowed function (`ref fun`)
 
-A `ref fun(...)` / `weak fun(...)` borrows a function value. Since a borrow shares the env-pointer representation, it is **callable**: the call paths (`analyze_regular_fun_call`, and the IR builder's local-var / struct-field / general indirect-call dispatch) unwrap the borrow with `base_type()` before reading `__call_idx`, then emit the same `CALL_INDIRECT`. This is what lets `List<fun>` indexing return a `borrowed fun` (= `ref fun`, see [memory.md](memory.md#the-borrowed-type-modifier)) that callers can both store and invoke without moving the closure out of the list.
+A `ref fun(...)` / `weak fun(...)` borrows a function value. Since a borrow shares the env-pointer representation, it is **callable**: the call paths (`analyze_regular_fun_call`, and the IR builder's local-var / struct-field / general indirect-call dispatch) unwrap the borrow with `base_type()` before reading `__call_idx`, then emit the same `CALL_INDIRECT`. This is what lets `List<fun>` indexing return a `borrowed fun` (= `ref fun`, see [lifetimes.md §17](lifetimes.md#the-borrowed-type-modifier)) that callers can both store and invoke without moving the closure out of the list.
 
 A bare `fun` value also **converts** to `ref fun` / `weak fun` (`can_convert_ref`, mirroring `uniq → ref` / `uniq → weak` — a closure value is a heap env pointer), so passing a function to a borrowed-function parameter works and the caller keeps ownership. `fun → weak fun` runs through `WeakCreate` (`maybe_wrap_weak`) to capture the env's generation.
 

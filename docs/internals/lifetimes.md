@@ -1,4 +1,22 @@
-# Lifetime & Borrow Soundness
+# Memory, Lifetimes & Lifecycle
+
+The single reference for Roxy's no-GC memory model: how objects are allocated and
+freed, how `uniq`/`ref`/`weak` stay sound, and how values are dropped/copied/moved.
+It absorbs and supersedes the former `memory.md` and `lifecycle-traits.md`.
+
+**Map of this document:**
+- **§1–§13** — the *borrow-soundness design*: the constraint-reference model, the
+  counting mechanics, `weak`, promotion, and the per-item implementation status.
+  These section numbers are stable (referenced from code comments).
+- **§14** — files touched by the soundness work.
+- **§15** — container element lvalues (`inout`/`out list[i]`).
+- **§16** — *runtime foundations*: the object header, the slab allocator,
+  tombstoning/reclamation, and generational references (the low-level mechanism the
+  model rests on).
+- **§17** — *user-facing reference*: implicit destruction (RAII), move semantics,
+  use-after-move, and the `borrowed` type modifier.
+- **§18** — *value lifecycle*: the unified Drop / Clone / Copy model (move-only
+  containers, drop derivation, the predicates) and its implementation.
 
 > **Status:** Largely implemented (VM). The *constraint-reference* model below
 > is live: `ref` is a fully-counted borrow, the free-trap is centralized across
@@ -13,15 +31,14 @@
 > and the **non-capture `self` promotions are wired** (§6): binding (`var r: ref T
 > = self`), returning (`return self`), storing (`r = self`), and passing `self` to
 > a `ref` parameter (`f(self)`) all heap-gate the promotion with an `AssertHeap`
-> that traps a stack receiver before the borrow inc; and **`List<ref T>`
-> ref-element counting** is in (push `RefInc`s, destroy/overwrite `RefDec`,
-> pop hands off — a List of `ref` is move-only). Still **deferred**: `Map<_, ref
-> T>` ref-counting and coroutine ref-param counting (Phase 3); refcount elision
-> (§11, always a later phase); and full AOT/C-backend parity beyond the
-> `roxy_free` trap. See the per-item status in [§13](#13-implementation-status).
->
-> This supersedes [memory.md](memory.md) where the two differ; memory.md states
-> the same model but describes the older, incomplete implementation.
+> that traps a stack receiver before the borrow inc. Containers are move-only with
+> counted `ref` elements/values (`List<ref T>` / `Map<_, ref V>` — push/insert
+> `RefInc`, pop/remove/clear/overwrite/destroy `RefDec`); `Map.remove` /
+> `clear` / insert-replace destroy `uniq` values; `ref` struct fields and coroutine
+> `ref` params are counted for their holder's lifetime; and the value-lifecycle
+> migration (§18) is largely landed on both backends. Still **deferred**: refcount
+> elision (§11, always a later phase) and the forward-looking `copy_init`/retain
+> glue (§18). See the per-item status in [§13](#13-implementation-status).
 
 **In one sentence:** `ref` is a *constraint reference* — a borrow of a **heap**
 object that increments a count in the object's header while it lives, and an
@@ -45,7 +62,7 @@ An audit found three classes of memory unsafety in ordinary safe Roxy code:
    element nor consumes the new temporary → leak plus double-free. (A
    move/cleanup bug, not a lifetime bug; fixed alongside, §9.)
 
-The model memory.md describes — "creating a `ref` increments `ref_count`,
+The original overview model — "creating a `ref` increments `ref_count`,
 destroying it decrements, `delete` fails if `ref_count > 0`" — is *correct*. It
 was simply half-built: incomplete counting and a free-trap on only one of the
 several free paths. This document specifies the complete version, **now
@@ -63,7 +80,7 @@ This is a *borrow* count, not an *ownership* count: `uniq` is the sole owner and
 does not touch `ref_count`; the count only ever *blocks* a free, never *causes*
 one. So there are no ownership cycles to leak. A `ref` may now be stored in a
 struct field — such a struct is move-only and counts the borrow like a
-`List<ref T>` (lifecycle-traits.md step 3); `weak` remains the choice for a
+`List<ref T>` (§18); `weak` remains the choice for a
 nullable back-reference that must not keep its owner alive. Errors are **eager** —
 they fire at the offending `delete`, not at a later dangling use.
 
@@ -191,7 +208,7 @@ churny allocation, value-semantic weaks copied freely, weak-observer registries)
 | **Page-protection / fault-on-use** | Page granularity is absurd for ~32-byte objects, and a fault is a crash, not the graceful null-on-test `weak` must give. |
 
 Generations cost only header bytes. The width is **kept at the random 64-bit**
-value [memory.md](memory.md) already specifies: 2⁻⁶⁴ collision-per-recycle, and
+value §16 specifies: 2⁻⁶⁴ collision-per-recycle, and
 resistance to deliberate reuse attacks from untrusted embedded scripts. A 32-bit
 generation would shrink the header (to as little as 8 bytes, at 2⁻³² per
 recycle), but weak validity is a *correctness* property, the heap-object header
@@ -258,8 +275,8 @@ env's runtime `type_id` on delete (`RoxyVM::closure_env_dtors`,
   *(Covered today by the `ref`-param count on the borrowed argument, per Phase 1.)*
 - **Mid-call receiver kill** (`heap_obj.method()` whose body reaches and frees the
   object): the call site counts the heap receiver for the call's duration →
-  the free sees count 1 → **traps**. *(**Implemented + tested** for a `uniq`
-  *identifier* receiver — §13. Exercised end-to-end by passing the receiver
+  the free sees count 1 → **traps**. *(**Implemented + tested** for every `uniq`
+  receiver shape — §13. Exercised end-to-end by passing the receiver
   `inout` to its own method and reassigning it (`slot = nil`): the now-correct
   inout free of the borrowed object traps.)*
 
@@ -287,7 +304,9 @@ env's runtime `type_id` on delete (`RoxyVM::closure_env_dtors`,
   state struct — so a `ref` parameter of a coroutine is a first-class counted
   borrow, incremented into the state struct at init and decremented when the
   coroutine is destroyed. Deleting the borrowed owner while a suspended coroutine
-  still holds the borrow traps. *(**Not yet implemented** — §13.)*
+  still holds the borrow traps — even before the first resume. *(**Implemented** for
+  `ref` params, both backends — §13; the resume-flow inc/dec are suppressed and the
+  borrow is counted for the state struct's lifetime instead.)*
 - **Containers are move-only.** A `List<T>` / `Map<K,V>` owns a heap buffer, so —
   like `uniq` — it is **noncopyable regardless of element type**: passing it by
   value moves it, and the source can't be used afterward. An explicit `.copy()`
@@ -309,10 +328,11 @@ env's runtime `type_id` on delete (`RoxyVM::closure_env_dtors`,
   `roxy_map_mark_ref_values`, emitted by the compiler right after a `Map<_, ref V>`
   is constructed) gates the `RefInc`/`RefDec` in `roxy_map_insert/remove/clear`,
   and `roxy_map_copy` re-`RefInc`s each copied borrow. Deleting an owner while a
-  container still borrows it traps. *(Remaining gap, unchanged: `Map.remove` /
-  `Map.clear` do not destroy **noncopyable** (`uniq`) values — only `ref` values
-  are handled here; a general per-value destructor callback is a separate item.)*
-- **`borrowed T`** ([memory.md](memory.md)): a subscript on a heap-pointee
+  container still borrows it traps. `Map.remove` / `Map.clear` / insert-replace also
+  destroy **noncopyable** (`uniq`) values now — emitted as call-site IR cleanup
+  (contains-guarded delete; a bucket-iteration delete-loop for `clear`), so both
+  backends get it (§13 / §18).
+- **`borrowed T`** (§17): a subscript on a heap-pointee
   element (`List<uniq T>`) yields a counted `ref` to the pointee (realloc moves
   the buffer, not the pointee, so the borrow stays valid). A subscript on an
   **inline** element (`List<Vec2>`) is a second-class borrow (the buffer has no
@@ -410,12 +430,13 @@ any elision exists. The easiest wins are call-site receiver/arg counts where the
 heap root is a local the callee can't reach (the common `local.method()` case),
 which elide to nothing.
 
-## 12. Spec changes vs. memory.md
+## 12. Spec evolution (the original overview → this design)
 
-memory.md states this model; the changes are completeness and correctness, not
-direction:
+Roxy's first memory write-up stated this same model; the changes below were
+completeness and correctness, not a change of direction (the table is kept as a
+record of what moved):
 
-| memory.md (as implemented) | this design |
+| original overview (as first implemented) | this design |
 |---|---|
 | only `ref` *parameters* counted, decremented before delete observes | every `ref` counted: create / copy inc, all-paths dec, return hand-off |
 | free-trap only in `DEL_OBJ` | free-trap in `object_free` → every free path (RAII, descriptor, container, overwrite) |
@@ -512,7 +533,7 @@ direction:
   which is why a global `uniq` appeared to "skip its constructor." See
   [globals.md](globals.md).
 
-**Phase 3 — containers & coroutines. Containers move-only + `List`/`Map` ref-counting done; coroutine ref-params + Map uniq-value remove/clear cleanup remain.**
+**Phase 3 — containers & coroutines. Done:** containers are move-only with counted `ref` elements/values (`List<ref T>` / `Map<_, ref V>`); `Map.remove` / `clear` / insert-replace destroy `uniq` values; `ref` struct fields and coroutine `ref` params are counted for their holder's lifetime. (See §18 for the unified lifecycle model these fold into.)
 - *Done:* **containers are move-only.** `Type::noncopyable` returns true for every
   `List`/`Map` (a container owns a heap buffer, so it's move-only like `uniq`),
   with an explicit `.copy()` method (`native_list_copy`/`native_map_copy` bound as
@@ -540,7 +561,7 @@ direction:
   `BCDeleteDesc::RefDec` value descriptor as `List` (lowering + C-emitter
   `emit_delete_slot`). Deleting an owner still borrowed by a map traps. Both backends.
 - *Done:* **`Map.remove`/`Map.clear` per-value cleanup for noncopyable (`uniq`)
-  values** (lifecycle-traits.md step 4). Rather than a runtime per-value destructor
+  values** (§18). Rather than a runtime per-value destructor
   callback, the cleanup is emitted as ordinary IR at the call site (where the value
   type is statically known), so both backends get it for free: `m.remove(k)` emits a
   contains-guarded `delete m[k]` before the raw remove; `m.clear()` emits a
@@ -790,10 +811,255 @@ freezes the whole container's structure), which is simple and sufficient.
   mutate-through-`ref List` (`fill(r: ref List){ r.push() }`). Hence the dedicated
   `borrow_count`.
 
+## 16. Runtime foundations: object header, slab allocator, generations
+
+The model above rests on a small set of runtime facts about how heap objects are
+laid out, allocated, and freed. (Formerly `memory.md`.)
+
+### Object header
+
+Every heap-allocated object is prefixed by a 16-byte `ObjectHeader`: a 64-bit
+random `weak_generation` (0 = dead/tombstoned), a `ref_count` of active `ref`
+borrows, and a `type_id` for runtime type info. `is_alive()` is
+`weak_generation != 0`. The unified definition lives in `roxy_rt.h` as
+`roxy_object_header`. The `ref_count` is the count the constraint-reference model
+(§2) maintains and the free-trap (§4) checks; the `weak_generation` is what `weak`
+validates against (§5).
+
+### Slab allocator
+
+Heap objects are allocated from fixed-size slabs chosen by object size:
+
+| Class | Slot size | | Class | Slot size |
+|---|---|---|---|---|
+| 0 | 32 B | | 4 | 512 B |
+| 1 | 64 B | | 5 | 1024 B |
+| 2 | 128 B | | 6 | 2048 B |
+| 3 | 256 B | | 7 | 4096 B |
+| | | | 8+ | large (multiple pages) |
+
+The allocator backs slabs with platform virtual-memory operations
+(`reserve`/`commit`/`decommit`/`release`/`remap_to_zero`/`page_size`; see
+`rt/vmem.hpp`). It lives in `roxy_rt` and is shared by both backends: VM mode plugs
+a per-VM `SlabAllocator` into `roxy_ctx.allocator` via a vtable; AOT mode uses a
+process-wide slab created by `roxy_rt_init`. Both get identical generation-based
+weak-ref soundness; a malloc fallback only applies when no ctx is active.
+
+### Tombstoning and recycling
+
+When an object is freed (the free path the trap in §4 guards):
+
+1. The whole slot (header + data) is zeroed, so `weak_generation` reads 0 and
+   `is_alive()` is false.
+2. The slot is pushed onto its slab's intrusive free list for the next allocation
+   in that size class. The next-pointer sits at `sizeof(ObjectHeader)` (past the
+   header), so `weak_generation` keeps reading zero while parked.
+3. Memory stays mapped, so weak references can keep dereferencing safely — they see
+   `is_alive() == false` until the slot is re-allocated.
+
+Stale-weak safety after recycle comes from the random generation: a reused slot
+gets a fresh random `weak_generation`, so any weak ref holding the old one
+mismatches (collision probability 2⁻⁶⁴ per recycle).
+
+### Slab reclamation
+
+Recycling solves slot-level fragmentation, but a slab whose live set has drained to
+zero still holds physical memory. `reclaim_tombstoned()` scans slabs and, for each
+drained one (`live_count == 0`), calls `remap_to_zero()` over the whole slab
+(releases physical pages, keeps the vaddr mapped as zeros), sets
+`free_head = 0xFFFFFFFF` so no further slots are handed out, and marks it
+`remapped` (idempotent across passes).
+
+### Random generational references
+
+`weak` validates against 64-bit random generations (Vale-style) rather than
+incrementing counters — random generations resist reuse attacks and avoid 32-bit
+wrap-around. The PRNG is xorshift128+ (`RandomGen`, seeded via SplitMix64).
+`weak_ref_valid(data, generation)` returns false on null; otherwise it reads the
+header (always safe — memory stays mapped whether alive or tombstoned) and returns
+`is_alive() && weak_generation == generation`. This is the *sole* user of
+generations: `ref` is purely counted (§2), `weak` is purely generational (§5).
+
+## 17. User-facing reference: RAII, moves, and `borrowed`
+
+### Implicit destruction (RAII)
+
+`uniq` variables, value-structs with destructors, and noncopyable containers are
+cleaned up automatically at scope exit (no manual `delete` in most code). At every
+exit point the compiler emits cleanup for the live noncopyable locals of that
+scope, in **LIFO** (reverse-declaration) order:
+
+| Exit point | What's cleaned up |
+|---|---|
+| End of block `{ … }` | locals declared in that block |
+| `return` | all locals in all enclosing scopes |
+| `break` / `continue` | locals in scopes inside the loop / loop body |
+| End of function | all function-scope locals |
+
+A destructor (`fun delete T()`) runs before the memory is freed; a noncopyable
+container runs a per-element cleanup loop before freeing its buffers and header
+(see [list.md](list.md), [maps.md](maps.md)). Deleting a null pointer is a safe
+no-op, so `var x: uniq T = nil;` and moved-out (null-ified) variables never
+double-free.
+
+### Move semantics
+
+Binding/passing/returning a noncopyable value of matching type **moves** ownership;
+the source becomes invalid. Applies to `uniq`, value-structs with destructors, and
+noncopyable containers.
+
+- Pass to a matching parameter → ownership transfers, source consumed.
+- Return → ownership transfers to the caller, no scope-exit delete.
+- `var copy = items` → ownership transfers (no implicit deep copy; use `.copy()`
+  for an independent duplicate — §18).
+- Explicit `delete` → consumed.
+- Reassigning → the old value is destroyed before the new one is stored.
+
+**Moving a field out.** A noncopyable *pointer* field (`uniq`/`List`/`Map`/…) may be
+moved out of a local value struct (`var x = o.field`, `f(o.field)`,
+`return o.field`, `Foo { x = o.field }`, `y = o.field`); the compiler nulls that
+field in the root at the move site, so the root's destructor no-ops it and still
+frees the surviving siblings (no double-free, no leak). For use-checking the
+*whole* root is conservatively marked moved (siblings can't be read afterward;
+per-field move state is not tracked). Moving a noncopyable *value-struct* field out
+is a compile error — borrow it with `ref`, make it `uniq`, or move the whole
+struct.
+
+### Use-after-move detection
+
+The semantic analyzer tracks a move state per noncopyable local; using a `Moved` or
+`MaybeValid` variable is a compile error:
+
+| State | Meaning |
+|---|---|
+| `Live` | owns a valid value |
+| `Moved` | ownership transferred — use is an error |
+| `MaybeValid` | conditionally moved (e.g. moved in one `if` branch only) |
+
+### The `borrowed` type modifier
+
+`borrowed T` is a **resolve-time type transform** that demotes an owning type to a
+borrow — it lets a function or method express "I return a *view*, not ownership",
+most importantly the container subscript, where returning an owning `uniq T` by
+alias would double-free.
+
+| `borrowed X` | → | rationale |
+|---|---|---|
+| `uniq T` | `ref T` | borrow the heap pointee instead of transferring it |
+| `fun(…) -> R` | `ref fun(…) -> R` | a closure is a heap env pointer; `ref fun` shares its representation and is callable |
+| copyable `T` | `T` | a copy aliases nothing |
+| `ref T` / `weak T` | unchanged | already a borrow |
+| other noncopyable (value struct, coro, `List`/`Map`) | unchanged *(prototype)* | see below |
+
+`borrowed` is a **soft keyword** (type position only; usable as an identifier
+elsewhere); it never persists as a `Type` — resolution maps it to a concrete type
+and rides on `TypeExpr` through generic substitution, so `borrowed T` resolves per
+monomorphization. The native `List`/`Map` `index` (and `Map.get`) are typed
+`borrowed T` / `borrowed V`, so `var x: uniq Point = list[i]` is a plain
+`ref → uniq` type error.
+
+**Callable borrows.** A `ref fun` / `weak fun` borrows a closure value (a heap-env
+pointer with a header) and, sharing `fun`'s representation, is callable: the call
+paths unwrap the borrow via `base_type()` before reading the call index. So
+`List<fun>` indexing yields a callable, storable `ref fun`. A bare `fun` also
+converts to `ref fun` / `weak fun` (`fun → weak fun` via `WeakCreate`).
+
+**Prototype scope.** `borrowed` demotes `uniq` and `fun` (and copies copyables);
+for the remaining noncopyable kinds (inline value structs, coroutines,
+`List`/`Map`) it is the identity, and the move-checker's native-index guard
+(`consume_noncopyable`) is the backstop that rejects only the unsound *move-out* of
+those while leaving every safe use (storage, per-element cleanup, in-place field
+reads / method calls) intact. An inline value struct *can't* be borrowed out (no
+header) but doesn't need to be; coroutines and noncopyable containers could later
+demote to `ref` once their `ref`-receiver dispatch lands.
+
+## 18. Value lifecycle: Drop / Clone / Copy
+
+A unified, trait-based account of value lifecycle — drop, copy, move, clone —
+resolved **statically via monomorphization** and eliminated for trivial types, with
+**no runtime vtables**. This replaces what used to be scattered special cases (the
+`BCDeleteDesc` runtime descriptor, the container `value_is_ref` flag, the
+move-only bit) with one model. (Formerly `lifecycle-traits.md`.)
+
+### The model
+
+Every type conceptually has `drop(self)` / `copy_init(dst,src)` /
+`move_init(dst,src)` / `clone(self)->Self`, exposed as three traits mapped onto
+machinery Roxy already has:
+
+- **`Drop`** ⟵ `fun delete T()` — user-writable; auto-derived for aggregates.
+- **`Clone`** ⟵ `.copy()` — explicit deep copy; auto-derived.
+- **`Copy`** — a marker: *implicit* copy permitted (else move-only). The exact
+  inverse of `Type::noncopyable()`; `is_copy()` is its spelling.
+
+The point is **not** runtime dispatch. Resolution runs through the existing
+monomorphized trait machinery (the `Printable`/`Hash`/`Eq` path), so each lifecycle
+event lowers to a direct call (inlinable) — or, for trivial types, to nothing.
+
+**The `Copy`+`Drop` wrinkle.** Unlike Rust, Roxy lets the two coexist, because
+`ref` is implicitly copyable *and* lifecycle-nontrivial (copy → `ref_inc`,
+drop → `ref_dec`). So `Copy` means only "implicit copy allowed", not "trivially
+memcpy-able"; trivial types are a *subset* of `Copy`. "Retain on copy" is never
+hand-written — it enters a type only by *containing a `ref`*, composed
+automatically.
+
+### Predicates (the source of truth)
+
+`Type` carries the structural decision the lowering consumes:
+
+- `is_copy()` — implicit copy allowed (vs move-only).
+- `needs_drop()` — owns/borrows a resource to release (recurses through
+  value-struct fields; every indirecting kind is a leaf, so it terminates).
+- `needs_retain()` — implicit copy has a side effect (transitively contains a
+  `ref`).
+- `is_trivial()` — `is_copy && !needs_drop && !needs_retain` → emit nothing (the
+  `is_trivially_destructible` analogue). A non-recursive `member_needs_drop`
+  (`noncopyable() || ref`) is the cycle-safe variant used by the synthetic-
+  destructor pass, the struct field-walk, and both backends' container drops.
+
+### Move-only containers
+
+A `List`/`Map` owns a heap buffer, so it is **move-only regardless of element
+type** (like `uniq`): passing by value moves; an explicit `.copy()` deep-copies.
+This made the model uniform and fixed a real leak (copyable containers were
+deep-copied on bind but never destroyed). `List<ref T>` / `Map<_, ref V>` hold
+*counted* borrows: acquiring inc's the pointee, every release path (pop/remove/
+clear/overwrite/destroy) dec's it. A `ref` *struct field* and a coroutine *`ref`
+param* are the scalar analogue — the holding struct / coro state is move-only and
+counts the borrow for its lifetime (§13).
+
+### One drop derivation, two executions
+
+The genuine de-special-casing: `compute_drop_plan(Type) -> DropPlan` (in
+`types.cpp`) decides the *kind* of drop once — `DropKind` (None / CallDtor /
+WalkFields / List / Map / Closure / RefDec) + `free_obj` + the involved types — and
+**both backends lower the same plan**:
+
+- **VM** keeps its **native** `delete_value` walk over `BCDeleteDesc` — that *is*
+  the VM's drop-glue executor; nothing is inlined per site, so there is nothing to
+  "factor out", and emitting interpreted bytecode glue would be *slower*.
+  `BCDeleteDesc` is therefore **not** eliminated.
+- **AOT/C** lowers the plan to generated `roxy_drop__<T>` glue functions (and a
+  struct's `$$delete`), which the C compiler inlines and ICF-folds.
+
+Each backend keeps the execution that's efficient for it; neither re-derives. (This
+fixed the dual derivation that previously made `Map<_, ref V>` need parallel fixes
+in both.) At a *true* erasure boundary — a closure env dropped by `type_id` — a
+single `drop_glue` function pointer in the header survives; that is one pointer for
+one operation, **not** a per-operation vtable.
+
+### Status
+
+Implemented on both backends: the predicates; move-only containers + `.copy()`;
+`List`/`Map` `ref`-element/value counting incl. `Map.remove`/`clear`/insert-replace
+destroying `uniq` values; `ref` struct fields and coroutine `ref` params; the
+shared `compute_drop_plan`; the C-backend container drop glue; the `Copy`-marker
+spelling. **Deferred / declined:** the `copy_init`/retain glue stays
+forward-looking (move-only made copyable-with-borrows unreachable); deleting
+`BCDeleteDesc` is explicitly *not* pursued (the native walk is correct).
+
 ## Related docs
 
-- [memory.md](memory.md) — reference types, slab allocator, generations, and the
-  constraint-reference model this completes.
 - [overview.md](../overview.md) — reference-type philosophy; the `out`/`inout`
   restrictions the second-class family shares.
 - [methods.md](methods.md) — `self` as the receiver (second-class here).

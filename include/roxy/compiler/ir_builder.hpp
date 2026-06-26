@@ -146,7 +146,7 @@ private:
 
     // Emit `if (map.contains(key)) delete map[key];` — the contains-guarded destroy
     // of a noncopyable map value, so an overwritten (`m[k]=v`, `m.insert`) or
-    // removed (`m.remove`) value isn't leaked (lifecycle-traits.md step 4). No-op
+    // removed (`m.remove`) value isn't leaked (lifetimes.md §18). No-op
     // unless the map's value type is noncopyable (a `ref` value is released by the
     // runtime value_is_ref path; a trivial value needs nothing).
     void emit_map_value_delete_if_present(ValueId map_obj, Type* map_type, ValueId key_val);
@@ -157,7 +157,7 @@ private:
     // True for `<map>.insert(k, v)` whose value type is noncopyable — the
     // replace-cleanup case. Its value-arg consume is deferred past the insert (the
     // contains-guard branch would otherwise strand the value-Nullify before the
-    // insert; lifecycle-traits.md step 4). lower_call_args skips the consume; the
+    // insert; lifetimes.md §18). lower_call_args skips the consume; the
     // map-method dispatch in gen_call_member emits contains-guard → insert →
     // consume so they stay in one block.
     bool is_map_insert_noncopyable_value(CallExpr& call_expr) const;

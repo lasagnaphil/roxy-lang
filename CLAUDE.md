@@ -364,7 +364,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Details:** `docs/internals/strings.md` | **Files:** `vm/string.hpp`
 
 **Slab Allocator** - Custom allocator with Vale-style random generational references, tombstoning.
-**Details:** `docs/internals/memory.md` | **Files:** `vm/slab_allocator.hpp`, `vm/vmem.hpp`
+**Details:** `docs/internals/lifetimes.md` §16 | **Files:** `rt/slab_allocator.hpp`, `rt/vmem.hpp`
 
 ### Interop and Modules
 **C++ Interop** - Type-safe function binding with automatic wrapper generation via `NativeRegistry`.
@@ -480,8 +480,7 @@ re-enabled, ASAN builds also need to run outside the sandbox for the symbolizer.
   - `vm.md` - VM state, interpreter loop, value representation
   - `bytecode.md` - Instruction encoding, opcode reference
   - `ssa-ir.md` - Block arguments, lowering to bytecode
-  - `memory.md` - Reference types, object header, slab allocator
-  - `lifecycle-traits.md` - **Design (not implemented):** unified trait-based value lifecycle (Drop/Clone/Copy) resolved via monomorphization + glue elimination, replacing the `BCDeleteDesc` runtime descriptor / container `value_is_ref` special cases — no runtime vtables
+  - `lifetimes.md` - **The single memory/lifetime/lifecycle reference.** Constraint-reference borrow soundness (`uniq`/`ref`/`weak`, counting, the free-trap, second-class `out`/`inout`/`self`, container element lvalues); runtime foundations (§16: object header, slab allocator, tombstoning, generational refs); RAII/move/`borrowed` (§17); and the unified value-lifecycle model (§18: Drop/Clone/Copy, move-only containers, the `compute_drop_plan` drop derivation — no runtime vtables). Absorbed the former `memory.md` and `lifecycle-traits.md`.
   - `structs.md` - Stack-allocated structs, slot-based layout, struct parameters/returns
   - `list.md` - Dynamic lists (`List<T>`), bounds checking
   - `maps.md` - Hash tables (`Map<K, V>`), Robin Hood open addressing

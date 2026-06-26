@@ -376,7 +376,7 @@ struct Type {
         return false;
     }
 
-    // === Value-lifecycle predicates (docs/internals/lifecycle-traits.md) ===
+    // === Value-lifecycle predicates (docs/internals/lifetimes.md §18) ===
     // The canonical, structural definition of a type's lifecycle needs — the
     // source of truth the future drop/copy/clone glue lowering will consume.
     // Introduced ahead of the migration (doc step 1); no consumers yet beyond a
@@ -534,7 +534,7 @@ private:
     tsl::robin_map<u8, Vector<Type*>> m_primitive_traits;
 };
 
-// === Unified drop derivation (docs/internals/lifecycle-traits.md §10a) ===
+// === Unified drop derivation (docs/internals/lifetimes.md §18) ===
 // `compute_drop_plan` is the single, backend-agnostic decision for *what kind* of
 // drop a type needs. Both backends consume it — the VM lowers it to a
 // `BCDeleteDesc` (executed natively by delete_value), the C backend lowers it to a

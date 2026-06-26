@@ -723,7 +723,7 @@ TEST_SUITE("E2E C Backend") {
     }
 
     // Container drops are factored into per-type `roxy_drop__<T>` glue functions
-    // (lifecycle-traits.md migration step 2) — the AOT analogue of a struct's
+    // (lifetimes.md §18) — the AOT analogue of a struct's
     // `$$delete` — rather than re-inlining the element loop at every Delete site.
     // Nested containers get nested glue.
     TEST_CASE("container drops route through per-type drop-glue functions") {

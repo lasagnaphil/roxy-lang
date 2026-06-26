@@ -1474,7 +1474,7 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.stdout_output == "del\ndel\n");
     }
 
-    // ── Struct holding a `ref` field (lifecycle-traits.md step 3) ──
+    // ── Struct holding a `ref` field (lifetimes.md §18) ──
     // A struct with a `ref` field is move-only (like List<ref>) and counts the
     // borrow: construction ref_incs, drop ref_decs, overwrite rebalances, and a
     // move transfers the borrow without a count change. So a borrow stored in a
@@ -1582,7 +1582,7 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.value == 7);
     }
 
-    // ── Map<_, uniq V>: remove / clear destroy the values (lifecycle-traits.md
+    // ── Map<_, uniq V>: remove / clear destroy the values (lifetimes.md §18
     // step 4) ── These previously leaked: only map-destroy and `m[k]=v` ran value
     // destructors; the remove/clear methods discarded values without destroying
     // them. The cleanup is emitted as ordinary IR (contains-guarded delete /

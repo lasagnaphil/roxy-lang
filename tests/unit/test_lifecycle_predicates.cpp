@@ -6,7 +6,7 @@
 using namespace rx;
 
 // Migration step 1 of the lifecycle-traits design
-// (docs/internals/lifecycle-traits.md): the structural value-lifecycle predicates
+// (docs/internals/lifetimes.md §18): the structural value-lifecycle predicates
 // is_copy / needs_drop / needs_retain / is_trivial. They have no behavioral
 // consumers yet — they are the source of truth the future drop/copy/clone glue
 // lowering will use; here we just pin their definitions. Struct behavior with

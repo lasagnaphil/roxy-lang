@@ -371,7 +371,7 @@ void CEmitter::emit_delete_slot(Type* elem, StringView slot_expr, String& out) {
 void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj, String& out) {
     if (!type) return;
     // The *kind* of drop is decided once by the shared, backend-agnostic
-    // compute_drop_plan (lifecycle-traits.md §10a); this is the C lowering of that
+    // compute_drop_plan (lifetimes.md §18); this is the C lowering of that
     // plan. For C, WalkFields and CallDtor are identical — both call the struct's
     // `$$delete` (the synthetic field-cleanup destructor is emitted as a C
     // function); the VM honors the WalkFields/CallDtor distinction.
@@ -449,7 +449,7 @@ void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj,
 // A unique, valid-C-identifier mangling of a (possibly nested) type, used to name
 // container drop-glue functions. Struct/enum names are already unique per generic
 // instance; closures all erase to "fun" (their drop is the type-erased
-// __closure_delete, so sharing one glue is correct). lifecycle-traits.md step 2.
+// __closure_delete, so sharing one glue is correct). lifetimes.md §18.
 void CEmitter::append_type_mangle(Type* type, String& out) {
     if (!type) { out.append("void"); return; }
     switch (type->kind) {
@@ -497,7 +497,7 @@ void CEmitter::emit_container_drop_body(Type* type, StringView self_var, String&
         out.append("    roxy_list_header* "); ap(out, h);
         out.append(" = (roxy_list_header*)("); out.append(self_var); out.append(");\n");
         out.append("    if (!"); ap(out, h); out.append(") return;\n");
-        if (member_needs_drop(elem)) {  // shared condition (lifecycle-traits.md §10a)
+        if (member_needs_drop(elem)) {  // shared condition (lifetimes.md §18)
             String iv = format("_di{}", n);
             String sv = format("_ds{}", n);
             out.append("    for (uint32_t "); ap(out, iv); out.append(" = 0; ");
@@ -517,7 +517,7 @@ void CEmitter::emit_container_drop_body(Type* type, StringView self_var, String&
     Type* kt = type->map_info.key_type;
     Type* vt = type->map_info.value_type;
     bool kc = kt && kt->noncopyable();          // keys can't be `ref`
-    bool vc = member_needs_drop(vt);   // shared condition (lifecycle-traits.md §10a)
+    bool vc = member_needs_drop(vt);   // shared condition (lifetimes.md §18)
     String h = format("_dm{}", n);
     out.append("    roxy_map_header* "); ap(out, h);
     out.append(" = (roxy_map_header*)("); out.append(self_var); out.append(");\n");
@@ -3719,7 +3719,7 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
     // registers per-type container drop-glue functions
     // (request_container_drop_glue), which must be declared + defined *before* the
     // bodies that call them. After the loop, splice the glue (decls then defs)
-    // ahead of the bodies. (lifecycle-traits.md migration step 2.)
+    // ahead of the bodies. (lifetimes.md §18.)
     String body_out;
     for (u32 i = 0; i < module->functions.size(); i++) {
         emit_function(module->functions[i], body_out);

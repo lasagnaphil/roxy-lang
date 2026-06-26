@@ -67,7 +67,7 @@ var v: V = m[key];      // read (runtime error if missing)
 m[key] = val;           // write (insert or update)
 ```
 
-`index` is typed `fun Map<K, V>.index(key: K): borrowed V`: the `borrowed` modifier yields a borrow of the value rather than transferring it. For a noncopyable `V` (e.g. `Map<i32, uniq Point>`) the result is `ref Point`, so `var x: uniq Point = m[k]` is a `ref → uniq` type error; for copyable `V` it is just `V` (a copy). See [memory.md](memory.md#the-borrowed-type-modifier).
+`index` is typed `fun Map<K, V>.index(key: K): borrowed V`: the `borrowed` modifier yields a borrow of the value rather than transferring it. For a noncopyable `V` (e.g. `Map<i32, uniq Point>`) the result is `ref Point`, so `var x: uniq Point = m[k]` is a `ref → uniq` type error; for copyable `V` it is just `V` (a copy). See [lifetimes.md §17](lifetimes.md#the-borrowed-type-modifier).
 
 ### C++ Interop
 

@@ -75,7 +75,7 @@ private:
     void emit_delete_slot(Type* elem_type, StringView slot_expr, String& out);
     u32 m_delete_tmp = 0;  // unique-temp counter for emit_typed_delete
 
-    // --- Per-type container drop glue (lifecycle-traits.md, migration step 2) ---
+    // --- Per-type container drop glue (lifetimes.md §18) ---
     // Container drops (List/Map) are factored into per-type `roxy_drop__<T>(void*)`
     // functions — the AOT analogue of a struct's `$$delete`, so the inline element
     // loop isn't duplicated at every Delete site. request_container_drop_glue()

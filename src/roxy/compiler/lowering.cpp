@@ -3025,7 +3025,7 @@ void BytecodeBuilder::build_struct_field_deletes(Type* struct_type,
         const FieldInfo& field = struct_info.fields[i];
         if (!field.type) continue;
         // member_needs_drop covers uniq/noncopyable fields and — newly — `ref`
-        // fields (a counted borrow → ref_dec on drop; lifecycle-traits.md step 3).
+        // fields (a counted borrow → ref_dec on drop; lifetimes.md §18).
         // Non-recursive (cycle-safe): nested owning value-structs already carry a
         // synthesized destructor, so noncopyable() flags them.
         if (member_needs_drop(field.type)) {
@@ -3084,7 +3084,7 @@ u16 BytecodeBuilder::build_delete_desc(Type* type) {
     m_delete_desc_cache[type] = index;
 
     // The *kind* of drop is decided once by the shared, backend-agnostic
-    // compute_drop_plan (lifecycle-traits.md §10a); this is the VM lowering of that
+    // compute_drop_plan (lifetimes.md §18); this is the VM lowering of that
     // plan into a BCDeleteDesc. The recursion into element/field types stays here
     // (build_delete_desc / build_struct_field_deletes), and dtor references resolve
     // to bytecode function indices. The C backend lowers the same plan to glue.
@@ -3126,7 +3126,7 @@ u16 BytecodeBuilder::build_delete_desc(Type* type) {
             break;
     }
 
-    // Cross-check (lifecycle-traits.md migration step 1): the structural
+    // Cross-check (lifetimes.md §18): the structural
     // `needs_drop()` predicate must be at least as inclusive as this descriptor —
     // anything the current machinery actually cleans, the predicate must also flag.
     // (The reverse may differ: `needs_drop()` additionally reports `ref` struct

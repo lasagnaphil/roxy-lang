@@ -526,7 +526,7 @@ void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
         // A `ref` field is a counted borrow: the struct is move-only (noncopyable)
         // and ref_incs the field on construction / ref_decs on drop, so a borrow
         // stored in a struct keeps the owner alive (or traps) exactly like a
-        // `List<ref T>` element (docs/internals/lifecycle-traits.md step 3). The
+        // `List<ref T>` element (docs/internals/lifetimes.md §18). The
         // synthetic-destructor pass (driven by member_needs_drop) makes such a
         // struct move-only and gives it field-walk cleanup.
         FieldInfo info;

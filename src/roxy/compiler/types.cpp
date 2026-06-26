@@ -6,7 +6,7 @@
 
 namespace rx {
 
-// === Value-lifecycle predicates (docs/internals/lifecycle-traits.md) ===
+// === Value-lifecycle predicates (docs/internals/lifetimes.md §18) ===
 //
 // Recursion is finite: the only recursive cases descend into *value* struct
 // fields (embedded structs), which cannot form cycles (direct value cycles are
@@ -64,7 +64,7 @@ bool Type::needs_retain() const {
     return false;  // primitives, string, weak, enum, …
 }
 
-// === Unified drop derivation (docs/internals/lifecycle-traits.md §10a) ===
+// === Unified drop derivation (docs/internals/lifetimes.md §18) ===
 
 // A struct whose drop the VM may inline as a descriptor field-walk: parentless
 // (inherited structs chain to the parent's dtor, so they stay on the call path)

@@ -485,7 +485,7 @@ TEST_SUITE("Semantic") {
     }
 
     // A `ref` field is now allowed: the struct becomes move-only and counts the
-    // borrow (lifecycle-traits.md step 3). A self-referential `ref` is fine — it
+    // borrow (lifetimes.md §18). A self-referential `ref` is fine — it
     // borrows another node, it doesn't own one (no ownership cycle).
     TEST_CASE("ref field is accepted (move-only counted borrow)") {
         SemanticTestHelper t;

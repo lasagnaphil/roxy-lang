@@ -76,7 +76,7 @@ Call compilation:
 
 ### Implicit destruction at scope exit
 
-When a `uniq` variable leaves scope without being explicitly deleted or moved, the compiler emits cleanup automatically: call the default destructor `Point$$delete(obj)` (if one exists), `emit_delete`, and mark `obj` as moved to prevent a double-delete. With no default destructor, only `emit_delete` runs. Cleanup is LIFO (last declared, first destroyed). See [memory.md](memory.md) for RAII semantics.
+When a `uniq` variable leaves scope without being explicitly deleted or moved, the compiler emits cleanup automatically: call the default destructor `Point$$delete(obj)` (if one exists), `emit_delete`, and mark `obj` as moved to prevent a double-delete. With no default destructor, only `emit_delete` runs. Cleanup is LIFO (last declared, first destroyed). See [lifetimes.md §17](lifetimes.md) for RAII semantics.
 
 ## Semantic Analysis
 

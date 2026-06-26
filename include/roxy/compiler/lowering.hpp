@@ -175,7 +175,7 @@ private:
     // (e.g. struct Node { next: uniq Node; }) produce a finite, self-
     // referential descriptor instead of looping forever at compile time. The
     // *kind* of drop is decided by the shared compute_drop_plan (types.hpp); this
-    // lowers that plan to a BCDeleteDesc. lifecycle-traits.md §10a.
+    // lowers that plan to a BCDeleteDesc. lifetimes.md §18.
     u16 build_delete_desc(Type* type);
 
     // Append the field-cleanup actions for an eligible struct (regular owned

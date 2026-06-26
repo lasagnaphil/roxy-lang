@@ -580,7 +580,7 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
         // a real break). Instead the borrow is counted for the *state struct's*
         // lifetime — ref_inc when the param is stored into the state at creation,
         // ref_dec in `$$delete` (coroutine_lowering.cpp). So drop the per-frame
-        // ref-param tracking here. (lifecycle-traits.md / lifetimes.md §13.)
+        // ref-param tracking here. (lifetimes.md §18 / lifetimes.md §13.)
         m_ref_params.clear_keep_capacity();
     }
 
@@ -4110,7 +4110,7 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
             emit_ref_inc(args[0]);
         }
         // Map insert/remove/clear must destroy noncopyable values that are
-        // overwritten / removed / cleared (lifecycle-traits.md step 4). The
+        // overwritten / removed / cleared (lifetimes.md §18). The
         // value_is_ref runtime path already handles `ref` values; this closes the
         // `uniq` (and container / struct-with-dtor) value leak, reusing existing IR
         // ops so both backends get it for free.
@@ -4866,7 +4866,7 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
     }
 
     // Overwriting a `ref` field rebalances the borrow count: release the old
-    // borrow, acquire the new (lifecycle-traits.md step 3 — mirrors the List
+    // borrow, acquire the new (lifetimes.md §18 — mirrors the List
     // ref-element overwrite in gen_assign_index). A freshly default-constructed
     // field holds null, and ref_dec(null) is a no-op, so this is safe even for the
     // first assignment.
@@ -4982,7 +4982,7 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
         } else if (elem_noncopyable) {
             // Map: a slot has an old value only for an already-present key, so the
             // helper guards the destroy with a `contains` check (a new key destroys
-            // nothing). Shared with m.insert / m.remove (lifecycle-traits.md step 4).
+            // nothing). Shared with m.insert / m.remove (lifetimes.md §18).
             emit_map_value_delete_if_present(obj, container_type, index_val);
         }
 
@@ -5353,7 +5353,7 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         }
 
         // A `ref` field is a counted borrow: storing a borrow into it acquires a
-        // count on the pointee (released on struct drop; lifecycle-traits.md
+        // count on the pointee (released on struct drop; lifetimes.md §18
         // step 3). The struct is move-only, so the source stays live — no move.
         if (field_info.type && field_info.type->kind == TypeKind::Ref && value_expr) {
             emit_ref_inc(value);
