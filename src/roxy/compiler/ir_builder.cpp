@@ -4223,6 +4223,30 @@ static bool is_pure_field_path(Expr* expr) {
     return false;
 }
 
+// If `lvalue` addresses storage that lives inside a container's element buffer —
+// the element itself (`list[i]`) or a field / subfield of an element
+// (`list[i].field`, `map[k].a.b`) — return the container object expression so the
+// call site can pin it (borrow_count) for the call's duration. A mid-call
+// structural mutation (push/pop/insert/remove/clear reallocs or frees the buffer)
+// or free of that container would otherwise dangle the interior element address.
+// Returns null for any lvalue not rooted in a container subscript (a bare
+// identifier or a field chain bottoming out at one — those are handled by
+// heap_root_of_lvalue or are stack-frame-rooted). A field chain is walked down
+// through ExprGet; the first ExprIndex on a container is the root.
+static Expr* container_index_root_of_lvalue(Expr* lvalue) {
+    for (Expr* e = lvalue; e; ) {
+        if (e->kind == AstKind::ExprIndex) {
+            Expr* obj = e->index.object;
+            Type* obj_type = obj ? obj->resolved_type : nullptr;
+            Type* base = obj_type ? obj_type->base_type() : nullptr;
+            return (base && base->is_container()) ? obj : nullptr;
+        }
+        if (e->kind == AstKind::ExprGet) { e = e->get.object; continue; }
+        return nullptr;
+    }
+    return nullptr;
+}
+
 ValueId IRBuilder::heap_root_of_lvalue(Expr* lvalue, Type** out_type) {
     // Only field-access chains point *into* another object's storage. A bare
     // identifier names a slot on the caller's own frame (the slot outlives the
@@ -4374,23 +4398,24 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
             continue;
         }
 
-        // Container-index lvalue → pin the container for the call.
-        if (arg.expr->kind == AstKind::ExprIndex) {
-            Expr* obj = arg.expr->index.object;
-            Type* obj_type = obj ? obj->resolved_type : nullptr;
-            Type* base_type = obj_type ? obj_type->base_type() : nullptr;
-            if (base_type && base_type->is_container()) {
-                ValueId container = gen_expr(obj);
-                ValueId pin = emit_pinned_copy(container, obj_type);
-                emit_container_pin(pin);
-                IRCleanupInfo ci;
-                ci.value = pin;
-                ci.type = obj_type;
-                ci.start_block = m_current_block->id;
-                ci.kind = IRCleanupKind::Unpin;
-                ci.call_borrow = true;
-                call_borrows.push_back(ci);
-            }
+        // Container-element lvalue → pin the container for the call. This covers
+        // both the element itself (`inout list[i]`) and a field of an element
+        // (`inout list[i].field`, `inout map[k].a.b`): all address storage inside
+        // the container's element buffer, so a mid-call realloc/free would dangle
+        // the interior pointer. The pin (borrow_count) makes any structural
+        // mutation or free of the container trap for the call's duration.
+        if (Expr* obj = container_index_root_of_lvalue(arg.expr)) {
+            Type* obj_type = obj->resolved_type;
+            ValueId container = gen_expr(obj);
+            ValueId pin = emit_pinned_copy(container, obj_type);
+            emit_container_pin(pin);
+            IRCleanupInfo ci;
+            ci.value = pin;
+            ci.type = obj_type;
+            ci.start_block = m_current_block->id;
+            ci.kind = IRCleanupKind::Unpin;
+            ci.call_borrow = true;
+            call_borrows.push_back(ci);
         }
     }
 

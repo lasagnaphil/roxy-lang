@@ -34,31 +34,47 @@ using namespace rx;
 
 TEST_SUITE("E2E Lifetime Regressions") {
 
-    // Finding 1 — MEMORY-UNSAFE. `f(inout list[i].field)` passes the interior
-    // address of a field of a container element. Unlike bare `inout list[i]`,
-    // this sub-lvalue gets neither the container pin nor the heap-root count, so
-    // a mid-call push that reallocs the buffer dangles the pointer and the
-    // callee's write lands in freed memory. Correct: the mutation is refused
-    // (the container is pinned while the element is borrowed), so the write
-    // reaches the live element and `l[0].x == 42`. Current: 1 (write lost to the
-    // freed buffer, no trap).
-    TEST_CASE("F1 inout of a container-element field survives a reallocating call"
-              * doctest::should_fail()) {
-        const char* src = R"(
+    // Finding 1 — FIXED. `f(inout list[i].field)` passes the interior address of
+    // a field of a container element. Unlike bare `inout list[i]`, this
+    // sub-lvalue used to get neither the container pin nor the heap-root count,
+    // so a mid-call structural mutation silently dangled the pointer (a
+    // reallocating push made the callee's write land in freed memory). The fix
+    // extends the call-site pin to any out/inout lvalue that roots in a
+    // container subscript, so mutate-while-borrowed now traps here exactly as it
+    // does for bare `inout list[i]`. (Mirrors "mid-call push of a borrowed List
+    // traps" in test_lifetimes.cpp.)
+    TEST_CASE("F1 inout of a container-element field pins the container") {
+        // Structural mutation while an element field is borrowed → trap.
+        const char* trap_src = R"(
         struct P { x: i32; }
-        fun grow_then_write(x: inout i32, l: inout List<P>) {
-            var i: i32 = 0;
-            while (i < 64) { l.push(P { x = 0 }); i = i + 1; }
+        fun grow_then_write(x: inout i32, l: inout List<P>): i32 {
+            l.push(P { x = 0 });   // reallocs the buffer `x` points into → traps
             x = 42;
+            return 0;
         }
         fun main(): i32 {
             var l: List<P> = List<P>();
             l.push(P { x = 1 });
-            grow_then_write(inout l[0].x, inout l);
+            return grow_then_write(inout l[0].x, inout l);
+        }
+        )";
+        CHECK(VMBackend::run(trap_src).success == false);
+
+        // Control: same shape, no structural mutation → the in-place write lands.
+        const char* control_src = R"(
+        struct P { x: i32; }
+        fun write_only(x: inout i32, l: inout List<P>): i32 {
+            x = 42;
+            return 0;
+        }
+        fun main(): i32 {
+            var l: List<P> = List<P>();
+            l.push(P { x = 1 });
+            write_only(inout l[0].x, inout l);
             return l[0].x;
         }
         )";
-        auto r = VMBackend::run(src);
+        auto r = VMBackend::run(control_src);
         CHECK(r.success == true);
         CHECK(r.value == 42);
     }
