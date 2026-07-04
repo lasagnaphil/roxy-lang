@@ -182,21 +182,22 @@ static void emit_ref_op(BumpAllocator& allocator, IRFunction* func, IRBlock* blo
 static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* struct_type,
                                              StringView func_name, TypeCache& types,
                                              IRModule* module,
-                                             const Vector<BlockParam>& original_params) {
+                                             const Vector<BlockParam>& original_params,
+                                             const tsl::robin_map<StringView, bool>& catch_names) {
     IRFunction* dtor_func = allocator.emplace<IRFunction>();
     StringView dtor_name = alloc_string_fmt(allocator, "__coro_{}$$delete", func_name);
     dtor_func->name = dtor_name;
     dtor_func->return_type = types.void_type();
 
-    // Only a `ref`-typed *parameter* state field holds a borrow acquired at
-    // creation (init_func RefInc), so only it gets a RefDec here. Other `ref`
-    // state fields (e.g. a catch param `e`, set by exception dispatch) are NOT
-    // counted and must not be decremented. Param lists are tiny — linear check.
-    auto is_ref_param_field = [&](StringView name) -> bool {
-        for (const auto& p : original_params) {
-            if (p.type && p.type->kind == TypeKind::Ref && p.name == name) return true;
-        }
-        return false;
+    // A `ref`-typed state field is a counted borrow (a ref *parameter* acquired
+    // at init, or a ref *local* acquired mid-body) and gets a null-guarded
+    // RefDec here: the field is non-null exactly when the borrow is still held
+    // at destroy (a ref local nulls its field when released on the resume path —
+    // see the Nullify→SetField pass in coroutine_lower). The one exception is a
+    // catch param `e`: a `ref` field set by exception *dispatch*, never counted,
+    // so it must be left alone. `catch_names` holds those names.
+    auto is_catch_param_field = [&](StringView name) -> bool {
+        return catch_names.count(name) != 0;
     };
 
     // Single parameter: self: ref<__coro_*>
@@ -224,11 +225,12 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
             field.type->is_coroutine()) {
             is_noncopyable_pointer = true;
         }
-        // A `ref` *parameter* field is a counted borrow acquired at coro creation
-        // (init_func RefInc); release it here (RefDec the borrowed pointer, never
-        // free the pointee). Only param ref fields are counted — other ref fields
-        // (catch params set by exception dispatch) must be left alone. ("Applying the model".)
-        bool is_ref = field.type->kind == TypeKind::Ref && is_ref_param_field(field.name);
+        // A `ref` field is a counted borrow (ref param acquired at init, or ref
+        // local acquired mid-body); release it here (RefDec the borrowed pointer,
+        // never free the pointee), guarded by the null check below so an
+        // already-released local is skipped. Only a catch param `e` is excluded —
+        // it's set by exception dispatch, not counted. ("Applying the model".)
+        bool is_ref = field.type->kind == TypeKind::Ref && !is_catch_param_field(field.name);
         if (!is_noncopyable_pointer && !is_ref) continue;
 
         // GetField → null check → call inner destructor → Delete → skip
@@ -1058,10 +1060,22 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
                                  done_state_val, done_sentinel, types.bool_type());
     finish_return(done_entry, is_done);
 
+    // Catch-clause variable names: a promoted `ref` catch param is a state field
+    // set by exception dispatch, not a counted borrow, so the destructor must not
+    // RefDec it (unlike ref params and ref locals). Collect the handler blocks'
+    // exception-param names.
+    tsl::robin_map<StringView, bool> catch_names;
+    for (auto& handler : original->exception_handlers) {
+        if (handler.handler_block.id < original->blocks.size()) {
+            IRBlock* hb = original->blocks[handler.handler_block.id];
+            if (!hb->params.empty()) catch_names[hb->params[0].name] = true;
+        }
+    }
+
     // ===== Generate destructor function =====
     IRFunction* dtor_func = generate_coro_destructor(allocator, struct_type,
                                                       original->name, types, module,
-                                                      original->params);
+                                                      original->params, catch_names);
 
     // ===== Transform original into resume function =====
     ValueId self_val = original->new_value();
@@ -1073,6 +1087,60 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     // Phase 2: split at yields, add dispatch
     phase2_split(original, allocator, self_val, coro_yield_type,
                  state_field, yield_field, types, promoted_vars);
+
+    // A promoted `ref` *local* is a counted borrow acquired mid-body (RefInc at
+    // `var r = src`) and released on the resume path when its scope exits — the
+    // IR builder pairs that RefDec with a Nullify. Promotion loads the local
+    // from its state field (GetField) before the RefDec, so we clear the field
+    // right after the RefDec with a SetField(null). Then the destructor's
+    // null-guarded RefDec releases the borrow only when the coro is destroyed
+    // while the local is still live (field non-null), never double-decrementing
+    // a borrow already released on the resume/completion path. Ref *params* have
+    // no mid-body RefDec (their per-frame inc/dec are suppressed), so this
+    // touches only ref locals.
+    {
+        tsl::robin_map<StringView, bool> ref_local_fields;
+        for (const auto& pv : promoted_vars) {
+            if (pv.type && pv.type->kind == TypeKind::Ref && !catch_names.count(pv.name)) {
+                ref_local_fields[pv.name] = true;
+            }
+        }
+        if (!ref_local_fields.empty()) {
+            for (auto* block : original->blocks) {
+                tsl::robin_map<u32, IRInst*> defs;
+                for (auto* inst : block->instructions) defs[inst->result.id] = inst;
+
+                Vector<IRInst*> rebuilt;
+                bool changed = false;
+                for (auto* inst : block->instructions) {
+                    rebuilt.push_back(inst);
+                    if (inst->op != IROp::RefDec) continue;
+                    auto dit = defs.find(inst->unary.id);
+                    if (dit == defs.end() || dit->second->op != IROp::GetField) continue;
+                    IRInst* def = dit->second;
+                    if (!ref_local_fields.count(def->field.field_name)) continue;
+                    // Clear the state field right after releasing the borrow.
+                    IRInst* null_c = allocator.emplace<IRInst>();
+                    null_c->op = IROp::ConstNull;
+                    null_c->type = types.nil_type();
+                    null_c->result = original->new_value();
+                    rebuilt.push_back(null_c);
+                    IRInst* clr = allocator.emplace<IRInst>();
+                    clr->op = IROp::SetField;
+                    clr->type = def->type;
+                    clr->result = original->new_value();
+                    clr->field.object = def->field.object;
+                    clr->field.field_name = def->field.field_name;
+                    clr->field.slot_offset = def->field.slot_offset;
+                    clr->field.slot_count = def->field.slot_count;
+                    clr->store_value = null_c->result;
+                    rebuilt.push_back(clr);
+                    changed = true;
+                }
+                if (changed) block->instructions = std::move(rebuilt);
+            }
+        }
+    }
 
     // Clean up stale cleanup_info for promoted variables.
     // After Phase 1, the original function's cleanup_info entries reference SSA values

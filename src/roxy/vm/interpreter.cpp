@@ -471,8 +471,17 @@ static void execute_cleanup(RoxyVM* vm, const BCFunction* func,
             delete_value(vm, ptr, desc, func);
         }
 
-        // Null-ify the register to prevent double-cleanup
-        regs[record.register_idx] = 0;
+        // Null-ify the register to prevent double-cleanup of an owned value.
+        // Skip this for RefDec (borrow) records: two distinct borrows can share
+        // one register — a `ref` local aliasing the `ref` param it borrows
+        // (`var r: ref T = param`) copy-props to the same value/register — and
+        // each holds its own count that must be released on unwind. Nulling
+        // would make the second RefDec read null and skip, leaking the borrow
+        // and leaving the owner permanently undeletable. Each record is visited
+        // exactly once, so not nulling cannot over-decrement.
+        if (record.kind != static_cast<u8>(BCCleanupKind::RefDec)) {
+            regs[record.register_idx] = 0;
+        }
 
         // If a cleanup destructor caused a fatal error, abort remaining cleanups
         if (vm->error) return;

@@ -122,15 +122,14 @@ TEST_SUITE("E2E Lifetime Regressions") {
         CHECK(crash.stdout_output.find("Owner dtor") == String::npos);
     }
 
-    // Finding 3 — a `ref` local that borrows a `ref` parameter shares its
-    // register; when an exception unwinds OUT of the frame, the unwinder nulls
-    // the register after the first RefDec, so the second (the local's) is
-    // skipped and one count leaks — the borrowed owner becomes undeletable.
-    // A ref *parameter* alone unwinds correctly (whole-function RefDec record);
-    // the ref *local* is the gap. Correct: after the catch the owner deletes
-    // cleanly. Current: `delete a` traps ("object has active borrows").
-    TEST_CASE("F3 a ref local's borrow is released when an exception unwinds out of its frame"
-              * doctest::should_fail()) {
+    // Finding 3 — FIXED. A `ref` local that borrows a `ref` parameter shares its
+    // register; when an exception unwound OUT of the frame, the VM unwinder
+    // nulled the register after the first RefDec, so the second (the local's)
+    // was skipped and one count leaked — the borrowed owner became undeletable.
+    // Fix: the unwinder no longer nulls the register for RefDec records (each
+    // aliased borrow holds its own count and must fire). Correct: after the
+    // catch the owner deletes cleanly.
+    TEST_CASE("F3 a ref local's borrow is released when an exception unwinds out of its frame") {
         const char* src = R"(
         struct Owner { val: i32; }
         struct E { code: i32; }
@@ -147,16 +146,56 @@ TEST_SUITE("E2E Lifetime Regressions") {
         auto r = VMBackend::run(src);
         CHECK(r.success == true);
         CHECK(r.stdout_output.find("owner deleted") != String::npos);
+
+        // Multiple ref locals aliasing the same borrow must each be released.
+        const char* multi = R"(
+        struct Owner { val: i32; }
+        struct E { code: i32; }
+        fun E.message(): string for Exception { return "boom"; }
+        fun trigger(o: ref Owner) {
+            var r1: ref Owner = o;
+            var r2: ref Owner = r1;
+            throw E { code = 1 };
+        }
+        fun main(): i32 {
+            var a: uniq Owner = uniq Owner { val = 1 };
+            try { trigger(a); } catch (e: E) {}
+            delete a;
+            return 0;
+        }
+        )";
+        CHECK(VMBackend::run(multi).success == true);
+
+        // A uniq owner borrowed by a ref local in the same throwing frame: the
+        // borrow must release before the owner's unwind Delete (no false trap).
+        const char* owner_and_borrow = R"(
+        struct Owner { val: i32; }
+        struct E { code: i32; }
+        fun E.message(): string for Exception { return "boom"; }
+        fun trigger() {
+            var u: uniq Owner = uniq Owner { val = 1 };
+            var r: ref Owner = u;
+            throw E { code = 1 };   // unwind: release r, then delete u — no trap
+        }
+        fun main(): i32 {
+            try { trigger(); } catch (e: E) { print("ok"); }
+            return 0;
+        }
+        )";
+        auto ob = VMBackend::run(owner_and_borrow);
+        CHECK(ob.success == true);
+        CHECK(ob.stdout_output.find("ok") != String::npos);
     }
 
-    // Finding 4 — a `ref` local live across a `yield` is promoted into the
-    // coroutine state struct, but the generated `$$delete` releases only ref
-    // *parameter* fields, not ref *local* fields. Destroying the coroutine
-    // mid-iteration leaks the borrow, so the owner can't be deleted. Correct:
-    // teardown balances and main returns 7. Current: `delete u` (implicit at
-    // scope exit, after the coro is destroyed) traps.
-    TEST_CASE("F4 a coroutine's promoted ref local is released when the coroutine is destroyed"
-              * doctest::should_fail()) {
+    // Finding 4 — FIXED. A `ref` local live across a `yield` is promoted into the
+    // coroutine state struct, but the generated `$$delete` used to release only
+    // ref *parameter* fields, not ref *local* fields — destroying the coroutine
+    // mid-iteration leaked the borrow, leaving the owner undeletable. Fix: the
+    // destructor now null-guards and RefDecs every counted ref field (params and
+    // locals, excluding catch params), and a promotion pass nulls a ref local's
+    // state field when its borrow is released on the resume path, so a completed
+    // coroutine's teardown never double-decrements.
+    TEST_CASE("F4 a coroutine's promoted ref local is released when the coroutine is destroyed") {
         const char* src = R"(
         struct Owner { val: i32; }
         fun gen(o: ref Owner): Coro<i32> {
