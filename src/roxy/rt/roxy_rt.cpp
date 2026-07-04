@@ -619,6 +619,12 @@ void roxy_list_set(void* self, int32_t index, const void* value_src) {
            sizeof(uint32_t) * hdr->element_slot_count);
 }
 
+// A `ref T` element occupies 2 inline u32 slots packing a borrow pointer.
+static inline void* list_ref_element(const uint32_t* elem_slot) {
+    return reinterpret_cast<void*>(
+        static_cast<uint64_t>(elem_slot[0]) | (static_cast<uint64_t>(elem_slot[1]) << 32));
+}
+
 void* roxy_list_copy(void* src) {
     if (!src) return nullptr;
     auto* src_hdr = static_cast<roxy_list_header*>(src);
@@ -628,6 +634,7 @@ void* roxy_list_copy(void* src) {
     if (!dst) return nullptr;
 
     auto* dst_hdr = static_cast<roxy_list_header*>(dst);
+    dst_hdr->element_is_ref = src_hdr->element_is_ref;
     if (src_hdr->capacity > 0) {
         auto* elements = static_cast<uint32_t*>(malloc(
             sizeof(uint32_t) * src_hdr->element_slot_count * src_hdr->capacity));
@@ -639,9 +646,19 @@ void* roxy_list_copy(void* src) {
             dst_hdr->elements = elements;
             dst_hdr->length = src_hdr->length;
             dst_hdr->capacity = src_hdr->capacity;
+            // The copy now holds its own borrow on each element pointee.
+            if (dst_hdr->element_is_ref) {
+                for (uint32_t i = 0; i < dst_hdr->length; i++) {
+                    roxy_ref_inc(list_ref_element(elements + static_cast<size_t>(i) * dst_hdr->element_slot_count));
+                }
+            }
         }
     }
     return dst;
+}
+
+void roxy_list_mark_ref_elements(void* self) {
+    if (self) static_cast<roxy_list_header*>(self)->element_is_ref = 1;
 }
 
 // ===== Hash Functions =====
@@ -1196,8 +1213,13 @@ void* roxy_map_values(void* self) {
     for (uint32_t i = 0; i < hdr->capacity; i++) {
         if (hdr->distances[i] != 0) {
             roxy_list_push(lst, map_value_ptr(hdr, i));
+            // For a Map<_, ref V>, the produced List<ref V> holds counted
+            // borrows: RefInc each value so the list's per-element RefDec on
+            // destruction balances. Tag the list too, so copying it re-incs.
+            if (hdr->value_is_ref) roxy_ref_inc(map_ref_value(map_value_ptr(hdr, i)));
         }
     }
+    if (hdr->value_is_ref) static_cast<roxy_list_header*>(lst)->element_is_ref = 1;
     return lst;
 }
 

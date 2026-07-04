@@ -3286,6 +3286,7 @@ static const char* lookup_static_native_mapping(StringView name) {
         {"list_copy", "roxy_list_copy"},
         {"map_alloc", "roxy_map_alloc"},
         {"map_copy", "roxy_map_copy"},
+        {"__list_mark_ref_elements", "roxy_list_mark_ref_elements"},
         {"__map_mark_ref_values", "roxy_map_mark_ref_values"},
         // Internal map iteration
         {"__map_iter_capacity", "roxy_map_iter_capacity"},

@@ -215,16 +215,13 @@ TEST_SUITE("E2E Lifetime Regressions") {
         CHECK(r.value == 7);
     }
 
-    // Finding 5 — `roxy_list_copy` is a raw memcpy of the element buffer, so
-    // `.copy()` of a `List<uniq T>` produces two lists holding the SAME element
-    // pointers → a double free (and double destructor run) at teardown. You
-    // cannot duplicate a `uniq` by memcpy. Correct: reject `.copy()` on a list
-    // whose elements are non-duplicable owners at compile time (or require a
-    // Clone and deep-copy). Current: it compiles and double-frees at runtime
-    // (a debug double-delete tripwire aborts the process — hence this asserts at
-    // the compile boundary rather than running it).
-    TEST_CASE("F5 .copy() of a List<uniq T> does not alias owned elements"
-              * doctest::should_fail()) {
+    // Finding 5 — FIXED. `roxy_list_copy` is a raw memcpy of the element buffer,
+    // so `.copy()` of a `List<uniq T>` used to produce two lists holding the SAME
+    // element pointers → a double free at teardown. You cannot duplicate a `uniq`
+    // by memcpy. Fix: reject `.copy()` at compile time when the element type (or a
+    // Map key/value type) is non-copyable. (`ref`/`weak` elements stay copyable —
+    // the copy re-increments the borrow; see F6b.)
+    TEST_CASE("F5 .copy() of a List<uniq T> does not alias owned elements") {
         const char* src = R"(
         struct Owner { val: i32; }
         fun delete Owner() { }
@@ -236,19 +233,35 @@ TEST_SUITE("E2E Lifetime Regressions") {
         }
         )";
         BumpAllocator allocator(1 << 16);
-        BCModule* module = compile(allocator, src);
-        // Correct behavior: this program is rejected (owned elements can't be
-        // duplicated by copy). It currently compiles, so `module != nullptr`.
-        CHECK(module == nullptr);
+        CHECK(compile(allocator, src) == nullptr);   // rejected: uniq can't be duplicated
+
+        // Also rejected: nested containers and Map with an owning key/value.
+        auto rejected = [](const char* s) {
+            BumpAllocator a(1 << 16); return compile(a, s) == nullptr;
+        };
+        CHECK(rejected("fun main(): i32 { var l: List<List<i32>> = List<List<i32>>();"
+                       " var l2: List<List<i32>> = l.copy(); return 0; }"));
+        CHECK(rejected("struct O { v: i32; } fun delete O() {}"
+                       " fun main(): i32 { var m: Map<i32, uniq O> = Map<i32, uniq O>();"
+                       " var m2: Map<i32, uniq O> = m.copy(); return 0; }"));
+
+        // NOT over-rejected: copyable elements (incl. ref/weak) still allow .copy().
+        auto ok = [](const char* s) {
+            BumpAllocator a(1 << 16); return compile(a, s) != nullptr;
+        };
+        CHECK(ok("fun main(): i32 { var l: List<i32> = List<i32>();"
+                 " var l2: List<i32> = l.copy(); return 0; }"));
+        CHECK(ok("struct O { v: i32; } fun main(): i32 { var u: uniq O = uniq O { v = 1 };"
+                 " var l: List<ref O> = List<ref O>(); l.push(u);"
+                 " var l2: List<ref O> = l.copy(); return 0; }"));
     }
 
-    // Finding 6a — `Map<_, ref V>.values()` memcpys the borrowed value pointers
-    // into a fresh List<ref V> with no RefInc, so destroying that list RefDecs
-    // borrows it never acquired → ref-count underflow trap. Correct: the values
-    // list holds its own counted borrows and tears down cleanly. Current: traps
-    // ("reference count already zero").
-    TEST_CASE("F6a Map<_, ref V>.values() returns properly counted borrows"
-              * doctest::should_fail()) {
+    // Finding 6a — FIXED. `Map<_, ref V>.values()` memcpy'd the borrowed value
+    // pointers into a fresh List<ref V> with no RefInc, so destroying that list
+    // RefDec'd borrows it never acquired → ref-count underflow trap. Fix:
+    // roxy_map_values RefIncs each ref value (and tags the produced list so a
+    // later copy re-incs). The list now holds its own counted borrows.
+    TEST_CASE("F6a Map<_, ref V>.values() returns properly counted borrows") {
         const char* src = R"(
         struct Owner { val: i32; }
         fun main(): i32 {
@@ -263,12 +276,12 @@ TEST_SUITE("E2E Lifetime Regressions") {
         CHECK(r.success == true);
     }
 
-    // Finding 6b — same root cause via `List<ref T>.copy()`: borrow pointers are
-    // memcpy'd without RefInc, so the copy's destruction underflows the count.
-    // Correct: the copy re-incs each borrow and tears down balanced. Current:
-    // ref-count underflow trap.
-    TEST_CASE("F6b List<ref T>.copy() re-increments each borrowed element"
-              * doctest::should_fail()) {
+    // Finding 6b — FIXED. Same root cause via `List<ref T>.copy()`: borrow
+    // pointers were memcpy'd without RefInc, so the copy's destruction underflowed
+    // the count. Fix: a `List<ref T>` is tagged (element_is_ref) at construction,
+    // and roxy_list_copy RefIncs each element when tagged. The copy tears down
+    // balanced.
+    TEST_CASE("F6b List<ref T>.copy() re-increments each borrowed element") {
         const char* src = R"(
         struct Owner { val: i32; }
         fun main(): i32 {
@@ -281,6 +294,36 @@ TEST_SUITE("E2E Lifetime Regressions") {
         )";
         auto r = VMBackend::run(src);
         CHECK(r.success == true);
+
+        // The copy holds a real second borrow: deleting the owner while either
+        // list is alive traps; after both are destroyed the owner is deletable.
+        const char* trap = R"(
+        struct Owner { val: i32; }
+        fun main(): i32 {
+            var u: uniq Owner = uniq Owner { val = 4 };
+            var l: List<ref Owner> = List<ref Owner>();
+            l.push(u);
+            var l2: List<ref Owner> = l.copy();
+            delete u;                 // 2 borrows outstanding → trap
+            return 0;
+        }
+        )";
+        CHECK(VMBackend::run(trap).success == false);
+
+        const char* ok = R"(
+        struct Owner { val: i32; }
+        fun main(): i32 {
+            var u: uniq Owner = uniq Owner { val = 4 };
+            { var l: List<ref Owner> = List<ref Owner>(); l.push(u);
+              var l2: List<ref Owner> = l.copy(); }
+            delete u;                 // both released → deletable
+            print("ok");
+            return 0;
+        }
+        )";
+        auto okr = VMBackend::run(ok);
+        CHECK(okr.success == true);
+        CHECK(okr.stdout_output.find("ok") != String::npos);
     }
 
     // Finding 7 — member access on a `weak T` emits no WeakCheck (the IR op

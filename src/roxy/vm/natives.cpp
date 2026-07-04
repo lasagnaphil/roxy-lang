@@ -814,6 +814,12 @@ static void native_map_mark_ref_values(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg
     if (map_ptr) roxy_map_mark_ref_values(map_ptr);
 }
 
+static void native_list_mark_ref_elements(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack_back().registers;
+    void* list_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (list_ptr) roxy_list_mark_ref_elements(list_ptr);
+}
+
 static void native_map_iter_capacity(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
@@ -1082,6 +1088,8 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_method(native_map_index,     "fun Map<K, V>.index(key: K): borrowed V");
     registry.bind_method(native_map_index_mut, "fun Map<K, V>.index_mut(key: K, val: V)");
     registry.bind_method(native_map_copy,      "fun Map<K, V>.copy(): Map<K, V>");
+
+    registry.bind_native("__list_mark_ref_elements", native_list_mark_ref_elements, "fun __list_mark_ref_elements(list: i64)");
 
     // Internal map bucket iteration functions (used by emit_map_cleanup for noncopyable elements)
     registry.bind_native("__map_mark_ref_values",    native_map_mark_ref_values,    "fun __map_mark_ref_values(map: i64)");

@@ -296,7 +296,7 @@ typedef struct {
     uint32_t capacity;
     uint32_t element_slot_count;  // u32 slots per element (1, 2, or N for structs)
     uint8_t  element_is_inline;   // 1 = primitive packed in slots; 0 = struct (caller provides ptr)
-    uint8_t  _pad[1];
+    uint8_t  element_is_ref;      // 1 = elements are counted `ref` borrows (List<ref T>): copy RefIncs each.
     uint16_t borrow_count;        // outstanding element borrows (inout/out list[i]); 0 = unpinned.
                                   // While > 0, structural mutators (push) refuse + raise a runtime
                                   // error so the borrowed element pointer can't dangle. See
@@ -320,6 +320,9 @@ void* roxy_list_pop(void* self);
 void* roxy_list_get(void* self, int32_t index);
 void  roxy_list_set(void* self, int32_t index, const void* value_src);
 void* roxy_list_copy(void* src);
+// Tag a List<ref T> so roxy_list_copy RefIncs each borrowed element (mirrors
+// roxy_map_mark_ref_values). Emitted right after a List<ref T> is constructed.
+void  roxy_list_mark_ref_elements(void* self);
 
 // ===== Map Key Kind =====
 

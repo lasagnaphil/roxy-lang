@@ -3785,6 +3785,20 @@ ValueId IRBuilder::gen_list_constructor(Expr* expr) {
     Span<ValueId> ctor_args = prepend_self(list_ptr, user_args);
     emit_call_native(ctor_name, ctor_args, m_types.void_type(), static_cast<u8>(ctor_idx));
 
+    // If elements are counted borrows (`ref T`), tag the list so `.copy()`
+    // RefIncs each element (mirrors the Map<_, ref V> value_is_ref tag above;
+    // push acquires and destroy RefDecs are already compiler-emitted).
+    if (elem_type && elem_type->kind == TypeKind::Ref) {
+        StringView mark_name("__list_mark_ref_elements", 24);
+        i32 mark_idx = m_registry.get_index(mark_name);
+        if (mark_idx >= 0) {
+            Span<ValueId> mark_args = alloc_span<ValueId>(1);
+            mark_args[0] = list_ptr;
+            emit_call_native(mark_name, mark_args, m_types.void_type(),
+                             static_cast<u8>(mark_idx));
+        }
+    }
+
     return list_ptr;
 }
 
