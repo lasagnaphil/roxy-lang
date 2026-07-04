@@ -109,11 +109,15 @@ Operator rewriting happens in `gen_binary_expr()`, which detects string operands
 
 ## String Interning
 
-String literals are interned. On a `LOAD_CONST` for a string constant, the interpreter calls `string_alloc()` (a thin shim over `roxy_string_from_literal`), which probes the active context's intern table: a hit returns the existing pointer; a miss allocates a new string object and inserts it. Repeated `LOAD_CONST` of the same literal therefore returns the same pointer. The intern table lives in `roxy_ctx.string_intern` — populated by VM mode at `vm_init`, optional in AOT mode.
+Only **literals** are interned. On a `LOAD_CONST` for a string constant, the code calls `roxy_string_from_literal`, which probes the active context's intern table: a hit returns the existing pointer; a miss allocates and inserts one. Repeated loads of the same literal therefore return the same pointer. **Dynamically-created strings** (concat / f-string / `substr` / `to_string` / `read_file`) are **not** interned — they are fresh, uniquely-owned objects allocated via `roxy_string_new_owned`, so freeing one never has to evict an intern entry. The intern table lives in `roxy_ctx.string_intern` — populated by VM mode at `vm_init`, optional in AOT mode.
 
 ## Memory Management
 
-Strings are managed through the unified runtime. They are allocated via `roxy_alloc()` (with `ROXY_TYPEID_STRING`), which dispatches through `roxy_ctx.allocator` — the slab in both VM and AOT modes (after `roxy_rt_init`) — and reference-counted via their `ObjectHeader`.
+Strings are **reference-counted** (lifetime audit finding 9b). The `ref_count` in the `ObjectHeader` is repurposed as an **owner count** (strings are never `ref`-borrowed, so there is no clash with the borrow free-trap): a string copy retains (`roxy_string_retain`), a drop releases (`roxy_string_release`), and the last release frees. Pooled string **literals are immortal** — the sentinel `ref_count == 0xFFFFFFFF` (`ROXY_STR_IMMORTAL`) — because `LOAD_CONST` (and the AOT `roxy_string_from_literal`) returns a persistent, interned object; retain/release are no-ops on an immortal string, so literals are never freed and the pool never dangles. Dynamic strings start at count 1 and are freed at zero.
+
+This is the copyable-`Copy` + non-trivial-`Drop` model (like `ref`): `string` is `is_copy()` yet `needs_drop()` / `needs_retain()`, with `compute_drop_plan(string) → DropKind::StrRelease`. The compiler emits `StrRetain` at every string copy site (var decl, assignment, return, struct-field / container-element store) and `StrRelease` on every drop (scope exit, overwrite, container destroy) — mirroring the `ref` machinery, on both backends (`STR_RETAIN` / `STR_RELEASE` opcodes in the VM; `roxy_string_retain` / `roxy_string_release` calls in the C backend).
+
+**Scope of reclamation.** Standalone strings and container (`List`/`Map`) string elements are reference-counted and reclaimed. A string held in a **struct field** is retained on store (so it never dangles) but *not* released on struct drop — structs stay copyable and trivial (adding a synthesized destructor for a string field would make every string-bearing struct move-only), so a string in a struct field is a bounded leak, as before. Fully reference-counting struct-embedded strings (the copyable-aggregate drop/retain glue) is a documented follow-on.
 
 ## Example
 

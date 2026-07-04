@@ -762,4 +762,53 @@ TEST_SUITE("E2E Strings") {
         CHECK(result.stdout_output == "(7,8)\n");
     }
 
+    // ─── Reference-counting soundness (lifetime audit finding 9b) ───
+    // Strings are reference-counted: a copy retains, a drop releases, the last
+    // release frees. These pin that copies, reassignment, returns, and container
+    // elements stay valid (no premature free / double-free) on both backends.
+
+    TEST_CASE_TEMPLATE("copied string stays valid after the source is reassigned", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var a: string = "x" + "y";   // dynamic (owned) string
+            var b: string = a;           // copy — retains
+            a = "zzz";                   // reassign a — releases the old "xy"
+            print(b);                    // b must still read "xy", not freed memory
+            return 0;
+        }
+        )";
+        auto r = Backend::run(source);
+        CHECK(r.success);
+        CHECK(r.stdout_output == "xy\n");
+    }
+
+    TEST_CASE_TEMPLATE("string returned from a function is valid and reclaimable", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun make(n: i32): string { return f"n={n}"; }
+        fun main(): i32 {
+            var i: i32 = 0;
+            while (i < 3) { var s: string = make(i); print(s); i = i + 1; }
+            return 0;
+        }
+        )";
+        auto r = Backend::run(source);
+        CHECK(r.success);
+        CHECK(r.stdout_output == "n=0\nn=1\nn=2\n");
+    }
+
+    TEST_CASE_TEMPLATE("List<string> keeps its elements alive, then reads them back", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var l: List<string> = List<string>();
+            var i: i32 = 0;
+            while (i < 3) { l.push(f"e{i}"); i = i + 1; }   // pushed temps stay live
+            print(l[0]); print(l[1]); print(l[2]);
+            return 0;
+        }
+        )";
+        auto r = Backend::run(source);
+        CHECK(r.success);
+        CHECK(r.stdout_output == "e0\ne1\ne2\n");
+    }
+
 }  // TEST_SUITE("E2E Strings")

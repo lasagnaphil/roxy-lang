@@ -656,6 +656,13 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             // call-site ref borrow.
             record.kind = static_cast<u8>(BCCleanupKind::Unpin);
             record.delete_desc_idx = 0;
+        } else if (ir_cleanup.kind == IRCleanupKind::StrRelease) {
+            // Owned string local: release on the exception-unwind path (frees at
+            // zero). Like RefDec it carries no delete descriptor; it keeps the
+            // block-derived scope + Nullify narrowing (a string local's lifetime,
+            // never whole-function like a ref param).
+            record.kind = static_cast<u8>(BCCleanupKind::StrRelease);
+            record.delete_desc_idx = 0;
         } else if (ir_cleanup.kind == IRCleanupKind::RefDec) {
             record.kind = static_cast<u8>(BCCleanupKind::RefDec);
             record.delete_desc_idx = 0;
@@ -995,6 +1002,7 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
                 case IROp::I_TO_B: case IROp::B_TO_I:
                 case IROp::Copy:
                 case IROp::RefInc: case IROp::RefDec:
+                case IROp::StrRetain: case IROp::StrRelease:
                 case IROp::WeakCheck: case IROp::WeakCreate:
                 case IROp::Delete:
                 case IROp::Throw:
@@ -1185,6 +1193,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                 case IROp::I_TO_F64: case IROp::F64_TO_I: case IROp::I_TO_B: case IROp::B_TO_I:
                 case IROp::Copy:
                 case IROp::RefInc: case IROp::RefDec: case IROp::WeakCheck: case IROp::WeakCreate:
+                case IROp::StrRetain: case IROp::StrRelease:
                 case IROp::Delete:
                 case IROp::Throw:
                 case IROp::Nullify:
@@ -2247,6 +2256,18 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             break;
         }
 
+        case IROp::StrRetain: {
+            u8 ptr = ensure_in_register(inst->unary, 0);
+            emit_abc(Opcode::STR_RETAIN, ptr, 0, 0);
+            break;
+        }
+
+        case IROp::StrRelease: {
+            u8 ptr = ensure_in_register(inst->unary, 0);
+            emit_abc(Opcode::STR_RELEASE, ptr, 0, 0);
+            break;
+        }
+
         case IROp::ContainerPin: {
             // Like RefInc, record the PC so the Unpin cleanup record can start
             // exactly here (the pinned-copy value has exactly one ContainerPin).
@@ -3123,6 +3144,12 @@ u16 BytecodeBuilder::build_delete_desc(Type* type) {
         case DropKind::RefDec:
             // A counted borrow: release the count (ref_dec), never free the pointee.
             desc.cleanup = BCDeleteDesc::RefDec;
+            break;
+        case DropKind::StrRelease:
+            // An owned reference-counted string: release (free at zero). free_obj
+            // stays false — release itself frees, so the descriptor walk must not
+            // also object_free the pointer (finding 9b).
+            desc.cleanup = BCDeleteDesc::StrRelease;
             break;
     }
 

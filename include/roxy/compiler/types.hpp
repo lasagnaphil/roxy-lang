@@ -550,6 +550,7 @@ enum class DropKind {
     Map,         // Map: clean key_type/elem_type members, free buffers + header
     Closure,     // type-erased closure env (dispatch by call idx)
     RefDec,      // release a counted borrow (ref_dec the pointee; never free it)
+    StrRelease,  // release an owned string (owner--; free at zero; no-op if immortal)
 };
 struct DropPlan {
     DropKind kind = DropKind::None;

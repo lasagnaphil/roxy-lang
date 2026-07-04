@@ -1,16 +1,16 @@
 # Lifetime Audit — Remaining Work (handoff)
 
-> **Status:** working handoff note for the `lifetime-regression-tests` branch.
-> Delete this file once finding 9b is fixed (9a is done) and the regression suite
-> is folded into the permanent suites. See [lifetimes.md](lifetimes.md) for the
-> model.
+> **Status:** all nine findings are fixed on the `lifetime-regression-tests`
+> branch. This file can be retired — the regression cases now live (un-decorated,
+> passing) in `E2E Lifetime Regressions`, with richer per-feature coverage folded
+> into `E2E Exceptions`, `E2E Strings`, and `E2E Globals`. See
+> [lifetimes.md](lifetimes.md) for the model.
 
 A 2026-07-04 audit of Roxy's constraint-reference / value-lifecycle model found
 **nine** soundness holes not covered by the (then all-passing) test suite. Each is
-encoded as a `doctest::should_fail()` regression case in
-`tests/e2e/test_lifetime_regressions.cpp` (suite **`E2E Lifetime Regressions`**),
-asserting the *correct* behavior so it fails until fixed. **Findings 1–8 and 9a
-are fixed** on this branch; **only 9b (string temporaries) remains.**
+encoded as a regression case in `tests/e2e/test_lifetime_regressions.cpp` (suite
+**`E2E Lifetime Regressions`**), asserting the *correct* behavior. **All nine are
+now fixed.**
 
 ## How the regression tests work
 
@@ -44,17 +44,23 @@ both sub-bugs are observable through `VMBackend::run`; see its body.)
 | 7 | `weak` deref emits no `WeakCheck` (silent dangling read) | fixed `3cc07a4` |
 | 8 | global `ref`/`weak` uncounted; global `uniq` double-delete at shutdown | fixed (this branch) |
 | 9a | caught-exception object never freed | fixed (this branch) |
-| **9b** | **string temporaries never freed** | **OPEN (design decision)** |
+| 9b | string temporaries never freed | fixed — strings reference-counted (this branch) |
 
-All fixes verified on the VM and (where the backend can run it) the C backend, with
-no regression in the full compiler-free suite (`--test-case-exclude="*<C>*"
---test-suite-exclude="E2E C Backend"` → 1256 cases, 0 failed; the remaining 1
-failed *assertion* is the F9b marker).
+All fixes verified on the VM and the C backend, with no regression: the full
+compiler-free suite (`--test-case-exclude="*<C>*" --test-suite-exclude="E2E C
+Backend"`) → 1257 cases, 0 failed; all `*<C>*` cases → 613, 0 failed; `E2E C
+Backend` → 137, 0 failed.
 
 Severity note: findings 1–2 were memory-unsafe (silent corruption / crash) and 3–8
 were loud traps or under-counts (8 added a loud double-delete tripwire on the
-shutdown path). **9 is the mildest class — memory-safe leaks.** None corrupts
+shutdown path). **9 was the mildest class — memory-safe leaks.** None corrupted
 memory.
+
+9b scope: standalone strings and container (List/Map) string elements are
+reference-counted and reclaimed; strings in *struct fields* are retained-on-store
+(never dangle) but not released on struct drop, so they remain a bounded leak
+(structs stay copyable/trivial). Fully reference-counting struct-embedded strings
+is a documented follow-on — see [strings.md](strings.md) "Memory Management".
 
 ---
 
@@ -127,50 +133,34 @@ catch-all reclamation via slab counters). C backend: the same `E2E Exceptions`
 `TEST_CASE_TEMPLATE`s. See [exceptions.md](exceptions.md) "Exception object
 lifetime".
 
-## Finding 9b — string temporaries are never reclaimed (`... / F9b ...`)
+## Finding 9b — FIXED — strings are reference-counted
 
-Dynamically created strings (`str_concat`, f-string interpolation, `substr`,
-`to_string`) allocate heap objects that are **never freed** — they accumulate
-until VM teardown. F9b measures live objects via the slab counters
-(`vm.allocator->total_allocated - total_tombstoned`) after a 200-iteration
-string-building loop; today ~600 objects are live, 0 tombstoned.
+Dynamically created strings (concat / f-string / `substr` / `to_string`) used to
+accumulate until VM teardown (F9b: ~600 live after a 200-iteration loop). **Fix
+(chose option 1 — reference-count strings):** the header `ref_count` is repurposed
+as a string OWNER count (strings are never `ref`-borrowed, so no clash with the
+borrow free-trap); a copy retains, a drop releases, the last release frees. Pooled
+literals are **immortal** (`ref_count == ROXY_STR_IMMORTAL`), because `LOAD_CONST`
+/ AOT `roxy_string_from_literal` returns a persistent interned object — retain/
+release are no-ops on them. Dynamic producers now allocate un-interned, owned
+(count 1) via `roxy_string_new_owned`. `string` gains `needs_drop`/`needs_retain`
+and `compute_drop_plan → DropKind::StrRelease`; `StrRetain`/`StrRelease` IR ops
+(→ `STR_RETAIN`/`STR_RELEASE` opcodes / `roxy_string_*` C calls) are emitted at the
+copy/drop sites, mirroring the `ref` machinery on both backends. See
+[strings.md](strings.md) "Memory Management" and [lifetimes.md](lifetimes.md)
+"Value lifecycle".
 
-### Root cause
+**Scope:** standalone strings and container (List/Map) string elements are
+reclaimed; strings in *struct fields* are retained-on-store (never dangle) but not
+released on struct drop, so they stay a bounded leak — structs remain copyable and
+trivial (a synthesized destructor for a string field would make every string-bearing
+struct move-only, breaking value semantics). Fully reference-counting struct-embedded
+strings (the copyable-aggregate drop/retain glue) is a documented follow-on.
 
-Strings are **copyable value types with no destructor**, so RAII never frees them.
-
-- The string type registers a **null destructor**: `string.cpp:12`
-  (`register_object_type("string", 0, nullptr)`).
-- `roxy_string_concat` / `_substr` / `_from_code` / `*_to_string` all allocate via
-  `roxy_string_from_literal` → `roxy_alloc` with `ref_count = 0`
-  (`roxy_rt.cpp:311`, `:367`, `:426`, ...). Interning (`roxy_string_from_literal`
-  probes the intern table) dedups identical *content* but does not bound
-  distinct-content growth (e.g. `f"{i}"` per iteration).
-
-Note: [strings.md](strings.md) calls strings "reference-counted", which is
-**misleading** — nothing reference-counts or frees them. Fixing this finding
-should also correct that doc (or the doc should be corrected if the design is
-intentionally leak-until-teardown).
-
-### Fix approach (design decision required)
-
-This is the most open-ended finding — it's a design choice, not a localized bug:
-
-1. **Reference-count strings** (make them non-trivially-copyable like `ref`):
-   copy → RefInc, scope-exit / overwrite → RefDec, free at zero. This is the
-   biggest change (strings become lifecycle-nontrivial everywhere) but matches
-   the doc's current wording and the value-lifecycle model
-   ([lifetimes.md](lifetimes.md) "Value lifecycle").
-2. **Arena / generational scratch** for short-lived string temporaries, freed at
-   well-defined points. Cheaper but coarser.
-3. **Accept and document** as a bounded leak (interning caps duplicate growth),
-   and correct [strings.md](strings.md). Then F9b becomes a design assertion to
-   drop rather than a bug to fix.
-
-Pick the direction before writing code. Option 1 composes with the existing
-`compute_drop_plan` / `is_trivial()` machinery (a string would gain
-`needs_drop`/`needs_retain`), so it's the "correct" fix if string churn matters
-for the target workloads.
+**Tests:** F9b (VM slab-counter) un-decorated + a `List<string>` reclamation
+counter; behavioral copy/reassign/return/`List<string>` soundness cases in
+`E2E Strings` on both backends; the string unit predicate in
+`tests/unit/test_lifecycle_predicates.cpp`.
 
 ---
 

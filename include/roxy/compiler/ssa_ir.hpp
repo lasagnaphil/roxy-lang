@@ -125,6 +125,8 @@ enum class IROp : u8 {
     // Reference operations
     RefInc,         // increment ref count
     RefDec,         // decrement ref count
+    StrRetain,      // retain a reference-counted string (owner++; no-op if immortal)
+    StrRelease,     // release a reference-counted string (owner--; free at zero)
     WeakCheck,      // check if weak ref is valid
     WeakCreate,     // create weak ref from pointer (extracts generation)
 
@@ -429,7 +431,7 @@ struct IRFinallyInfo {
 //   Delete — run the type's descriptor-driven destruction (uniq/list/map/...).
 //   RefDec — decrement a `ref` borrow's count (constraint-reference model).
 //   Unpin  — decrement a container's element-borrow pin (lifetimes.md "Container element lvalues").
-enum class IRCleanupKind : u8 { Delete, RefDec, Unpin };
+enum class IRCleanupKind : u8 { Delete, RefDec, Unpin, StrRelease };
 
 // Cleanup info for owned locals and ref borrows (used to generate bytecode
 // cleanup records for the exception-unwind path).

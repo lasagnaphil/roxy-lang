@@ -498,14 +498,20 @@ TEST_SUITE("E2E Lifetime Regressions") {
         CHECK(r.stdout_output.find("E dtor") != String::npos);
     }
 
-    // Finding 9b — dynamically created string temporaries (concat / f-string /
-    // to_string / substr results) are never freed; they accumulate until VM
-    // teardown. Correct: temporaries created and dropped in a bounded loop are
-    // reclaimed, so live-object count stays bounded. Current: 200 iterations
-    // leave ~600 live objects (0 tombstoned). Measured via a bespoke harness
-    // reading the slab's alloc/tombstone counters before teardown.
-    TEST_CASE("F9b string temporaries are reclaimed, not leaked until teardown"
-              * doctest::should_fail()) {
+    // Finding 9b — FIXED. Dynamically created string temporaries (concat /
+    // f-string / to_string / substr results) used to leak until VM teardown.
+    // Strings are now reference-counted (an owner count in the object header;
+    // pooled literals are immortal): a copy retains, a drop releases, and the last
+    // release frees. So temporaries created and dropped in a bounded loop are
+    // reclaimed and the live-object count stays bounded. Measured via a bespoke
+    // harness reading the slab's alloc/tombstone counters before teardown.
+    //
+    // Scope note: standalone strings and container (List/Map) string elements are
+    // reclaimed; strings held in *struct fields* are retained-on-store (so they
+    // never dangle) but not released on struct drop — structs stay copyable and
+    // trivial, so a string in a struct field is a bounded leak, as before. This
+    // loop exercises the standalone/temporary path, which is fully reclaimed.
+    TEST_CASE("F9b string temporaries are reclaimed, not leaked until teardown") {
         const char* src = R"(
         fun main(): i32 {
             var i: i32 = 0;
@@ -521,8 +527,36 @@ TEST_SUITE("E2E Lifetime Regressions") {
         vm_load_module(&vm, module);
         REQUIRE(vm_call(&vm, StringView("main", 4), {}) == true);
         u64 live = vm.allocator->total_allocated - vm.allocator->total_tombstoned;
-        // Correct: temporaries reclaimed → only a handful of live objects.
-        // Current: ~600 (nothing freed).
+        // Reclaimed → only a handful of live objects (was ~600, nothing freed).
+        CHECK(live < 50);
+        vm_destroy(&vm);
+        delete module;
+    }
+
+    // Finding 9b (container elements) — a List<string> owns its elements: push
+    // retains, and destroy releases each via the StrRelease element descriptor.
+    // Building and dropping many single-element lists in a loop reclaims both the
+    // list buffers and the string elements, so the live count stays bounded.
+    TEST_CASE("string elements of a List are reclaimed when the list drops") {
+        const char* src = R"(
+        fun main(): i32 {
+            var i: i32 = 0;
+            while (i < 200) {
+                var l: List<string> = List<string>();
+                l.push(f"item{i}");
+                i = i + 1;
+            }
+            return 0;
+        }
+        )";
+        BumpAllocator allocator(1 << 20);
+        BCModule* module = compile(allocator, src);
+        REQUIRE(module != nullptr);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
+        REQUIRE(vm_call(&vm, StringView("main", 4), {}) == true);
+        u64 live = vm.allocator->total_allocated - vm.allocator->total_tombstoned;
         CHECK(live < 50);
         vm_destroy(&vm);
         delete module;

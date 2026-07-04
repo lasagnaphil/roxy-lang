@@ -16,6 +16,7 @@ namespace rx {
 
 bool Type::needs_drop() const {
     switch (kind) {
+        case TypeKind::String:      // reference-counted → release (free at zero)
         case TypeKind::Uniq:        // owns a heap object → run dtor + free
         case TypeKind::Ref:         // counted borrow → ref_dec the pointee
         case TypeKind::List:        // owns a heap buffer (+ maybe owning elements)
@@ -47,6 +48,7 @@ bool Type::needs_drop() const {
 
 bool Type::needs_retain() const {
     if (kind == TypeKind::Ref) return true;       // a copy of a borrow is another borrow
+    if (kind == TypeKind::String) return true;    // a copy of a string retains (finding 9b)
     if (!is_copy()) return false;                 // move-only: no implicit-copy path
     if (kind == TypeKind::Struct) {
         for (const auto& field : struct_info.fields) {
@@ -108,6 +110,12 @@ DropPlan compute_drop_plan(Type* type) {
         }
         case TypeKind::Ref:
             p.kind = DropKind::RefDec;  // counted borrow, never frees the pointee
+            break;
+        case TypeKind::String:
+            // Reference-counted string: release (owner--; free at zero). The
+            // string owns its own heap object, so free_obj is left false — release
+            // itself frees when the count hits zero (finding 9b).
+            p.kind = DropKind::StrRelease;
             break;
         case TypeKind::List:
             p.kind = DropKind::List; p.free_obj = true;

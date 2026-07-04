@@ -204,6 +204,8 @@ enum class Opcode : u8 {
     REF_DEC     = 0xE1,     // ref_dec(reg)
     WEAK_CHECK  = 0xE2,     // dst = weak_valid(src1)
     WEAK_CREATE = 0xE3,     // dst,dst+1 = weak_create(src) — extracts generation
+    STR_RETAIN  = 0xE8,     // string owner++ (no-op if immortal literal)
+    STR_RELEASE = 0xE9,     // string owner-- (free at zero)
 
     // Element-address lvalues for out/inout container args (lifetimes.md "Container element lvalues").
     // ABC: a=dst (raw element pointer), b=obj, c=index/key. Bounds-/key-checked.
@@ -430,6 +432,8 @@ struct BCDeleteDesc {
                      // is), then free the env. See RoxyVM::closure_env_dtors.
         RefDec,      // `ref` element/value: release the borrow (roxy_ref_dec the
                      // pointer in the slot), never free the pointee (lifetimes.md "Applying the model").
+        StrRelease,  // `string` element/field/value: release the owned string
+                     // (roxy_string_release; frees at zero, no-op if immortal — finding 9b).
     };
 
     Cleanup cleanup;
@@ -452,7 +456,7 @@ struct BCDeleteDesc {
 // Cleanup action for a BCCleanupRecord.
 //   Delete — descriptor-driven destruction of an owned value (delete_value).
 //   RefDec — decrement a `ref` borrow's count (constraint-reference model).
-enum class BCCleanupKind : u8 { Delete = 0, RefDec = 1, Unpin = 2 };
+enum class BCCleanupKind : u8 { Delete = 0, RefDec = 1, Unpin = 2, StrRelease = 3 };
 
 // Cleanup record for exception-path cleanup of owned locals and ref borrows.
 // During exception unwinding, the VM iterates these in reverse (LIFO) to

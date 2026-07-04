@@ -702,9 +702,11 @@ event lowers to a direct call (inlinable) — or, for trivial types, to nothing.
 **The `Copy` + `Drop` wrinkle.** Unlike Rust, Roxy lets the two coexist, because
 `ref` is implicitly copyable *and* lifecycle-nontrivial (copy → `ref_inc`,
 drop → `ref_dec`). So `Copy` means only "implicit copy allowed", not "trivially
-memcpy-able"; trivial types are a *subset* of `Copy`. "Retain on copy" is never
-hand-written — it enters a type only by *containing a `ref`*, composed
-automatically.
+memcpy-able"; trivial types are a *subset* of `Copy`. The two count-bearing-copyable
+kinds are `ref` (a counted borrow) and **`string`** (reference-counted since finding
+9b — copy → `roxy_string_retain`, drop → `roxy_string_release`, free at zero, with
+pooled literals immortal); see [strings.md](strings.md). A struct's retain/drop is
+then composed automatically from *containing* one of these.
 
 ### Predicates
 
@@ -712,8 +714,10 @@ automatically.
 
 - `is_copy()` — implicit copy allowed (vs move-only).
 - `needs_drop()` — owns/borrows a resource to release (recurses through value-struct
-  fields; every indirecting kind is a leaf, so it terminates).
-- `needs_retain()` — implicit copy has a side effect (transitively contains a `ref`).
+  fields; every indirecting kind is a leaf, so it terminates). True for `ref`, `uniq`,
+  containers, coroutines, closures, and **`string`** (release-on-drop, finding 9b).
+- `needs_retain()` — implicit copy has a side effect (transitively contains a `ref`,
+  or **is / contains a `string`**).
 - `is_trivial()` — `is_copy && !needs_drop && !needs_retain` → emit nothing (the
   `is_trivially_destructible` analogue).
 - `member_needs_drop()` — a non-recursive variant (`noncopyable() || ref`) used by
@@ -734,7 +738,8 @@ lifetime. The per-feature mechanics live under
 ### One drop derivation, two executions
 
 `compute_drop_plan(Type) -> DropPlan` (in `types.cpp`) decides the *kind* of drop
-once — `DropKind` (None / CallDtor / WalkFields / List / Map / Closure / RefDec) plus
+once — `DropKind` (None / CallDtor / WalkFields / List / Map / Closure / RefDec /
+StrRelease) plus
 `free_obj` and the involved types — and **both backends lower the same plan**:
 
 - **VM** keeps its **native** `delete_value` walk over `BCDeleteDesc` — that *is* the

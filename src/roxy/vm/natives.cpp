@@ -296,7 +296,8 @@ static void native_i32_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     i32 val = static_cast<i32>(regs[first_arg]);
     char buf[32];
     int len = snprintf(buf, sizeof(buf), "%d", val);
-    void* result = string_alloc(vm, buf, static_cast<u32>(len));
+    // Dynamic string: owned (count 1), freed on release (finding 9b).
+    void* result = roxy_string_new_owned(buf, static_cast<u32>(len));
     regs[dst] = reinterpret_cast<u64>(result);
 }
 
@@ -306,7 +307,8 @@ static void native_i64_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     i64 val = static_cast<i64>(regs[first_arg]);
     char buf[32];
     int len = snprintf(buf, sizeof(buf), "%lld", (long long)val);
-    void* result = string_alloc(vm, buf, static_cast<u32>(len));
+    // Dynamic string: owned (count 1), freed on release (finding 9b).
+    void* result = roxy_string_new_owned(buf, static_cast<u32>(len));
     regs[dst] = reinterpret_cast<u64>(result);
 }
 
@@ -317,7 +319,8 @@ static void native_f32_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     memcpy(&val, &regs[first_arg], sizeof(f32));
     char buf[64];
     int len = snprintf(buf, sizeof(buf), "%g", (double)val);
-    void* result = string_alloc(vm, buf, static_cast<u32>(len));
+    // Dynamic string: owned (count 1), freed on release (finding 9b).
+    void* result = roxy_string_new_owned(buf, static_cast<u32>(len));
     regs[dst] = reinterpret_cast<u64>(result);
 }
 
@@ -328,13 +331,18 @@ static void native_f64_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     memcpy(&val, &regs[first_arg], sizeof(f64));
     char buf[64];
     int len = snprintf(buf, sizeof(buf), "%g", val);
-    void* result = string_alloc(vm, buf, static_cast<u32>(len));
+    // Dynamic string: owned (count 1), freed on release (finding 9b).
+    void* result = roxy_string_new_owned(buf, static_cast<u32>(len));
     regs[dst] = reinterpret_cast<u64>(result);
 }
 
 // Native function: string$$to_string(val: string) -> string (identity)
 static void native_string_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
+    // Identity, but hand back an independent OWNED reference (retain) so a caller
+    // that releases every f-string part doesn't decrement the argument it still
+    // holds (finding 9b). No-op on an immortal literal.
+    roxy_string_retain(reinterpret_cast<void*>(regs[first_arg]));
     regs[dst] = regs[first_arg];
 }
 
@@ -915,7 +923,8 @@ static void native_str_substr(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
     const char* chars = string_chars(str);
-    void* result = string_alloc(vm, chars + start, static_cast<u32>(sub_len));
+    // Dynamic string: owned (count 1), freed on release (finding 9b).
+    void* result = roxy_string_new_owned(chars + start, static_cast<u32>(sub_len));
     if (!result) {
         vm->error = "str_substr: failed to allocate string";
         return;
@@ -944,7 +953,8 @@ static void native_str_from_code(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
     i32 code = static_cast<i32>(regs[first_arg]);
     char ch = static_cast<char>(code);
-    void* result = string_alloc(vm, &ch, 1);
+    // Dynamic string: owned (count 1), freed on release (finding 9b).
+    void* result = roxy_string_new_owned(&ch, 1);
     if (!result) {
         vm->error = "str_from_code: failed to allocate string";
         return;
@@ -1002,7 +1012,8 @@ static void native_read_file(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     }
     size_t bytes_read = fread(buffer, 1, static_cast<size_t>(size), file);
     fclose(file);
-    void* result = string_alloc(vm, buffer, static_cast<u32>(bytes_read));
+    // Dynamic string: owned (count 1), freed on release (finding 9b).
+    void* result = roxy_string_new_owned(buffer, static_cast<u32>(bytes_read));
     free(buffer);
     if (!result) {
         vm->error = "read_file: failed to allocate string";

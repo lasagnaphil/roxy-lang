@@ -138,6 +138,7 @@ inline void for_each_operand(IRInst* inst, Fn&& fn) {
         case IROp::I_TO_B: case IROp::B_TO_I:
         case IROp::Copy:
         case IROp::RefInc: case IROp::RefDec:
+        case IROp::StrRetain: case IROp::StrRelease:
         case IROp::WeakCheck: case IROp::WeakCreate:
         case IROp::Delete:
         case IROp::Throw: case IROp::Yield:

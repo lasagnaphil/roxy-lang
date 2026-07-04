@@ -3,6 +3,7 @@
 #include "roxy/vm/list.hpp"
 #include "roxy/vm/map.hpp"
 #include "roxy/vm/string.hpp"
+#include "roxy/rt/roxy_rt.h"
 #include "roxy/rt/slab_allocator.hpp"
 #include "roxy/vm/vm.hpp"
 
@@ -407,6 +408,12 @@ static void delete_value(RoxyVM* vm, void* ptr,
         // `ptr` already *is* the borrowed pointer, so just release its count.
         ref_dec(vm, ptr);
         break;
+
+    case BCDeleteDesc::StrRelease:
+        // Defensive: string elements/fields are released via delete_slot_entry;
+        // reaching here means `ptr` already IS the string pointer (finding 9b).
+        roxy_string_release(ptr);
+        break;
     }
 
     // If cleaning an owned resource (element/field) refused its free, don't
@@ -425,6 +432,11 @@ static void delete_slot_entry(RoxyVM* vm, const u32* base,
         // count (the owner frees the pointee, not us). lifetimes.md "Applying the model".
         u64 ptr = static_cast<u64>(base[0]) | (static_cast<u64>(base[1]) << 32);
         ref_dec(vm, reinterpret_cast<void*>(ptr));
+    } else if (desc.cleanup == BCDeleteDesc::StrRelease) {
+        // `string` element/value/field: the slot holds the owned string pointer —
+        // release it (owner--; frees at zero, no-op if immortal — finding 9b).
+        u64 ptr = static_cast<u64>(base[0]) | (static_cast<u64>(base[1]) << 32);
+        roxy_string_release(reinterpret_cast<void*>(ptr));
     } else if (desc.free_obj) {
         // Pointer-shaped value (uniq/list/map/coro): the slot holds a pointer.
         u64 ptr = static_cast<u64>(base[0]) | (static_cast<u64>(base[1]) << 32);
@@ -474,6 +486,10 @@ static void execute_cleanup(RoxyVM* vm, const BCFunction* func,
             // is freed elsewhere; this just releases the borrow held by the
             // frame being unwound.
             ref_dec(vm, ptr);
+        } else if (record.kind == static_cast<u8>(BCCleanupKind::StrRelease)) {
+            // Owned string local: release on the unwind path (frees at zero;
+            // no-op if immortal — finding 9b).
+            roxy_string_release(ptr);
         } else {
             // Owned value: descriptor-driven destruction.
             const BCDeleteDesc& desc = func->delete_descs[record.delete_desc_idx];
@@ -481,14 +497,15 @@ static void execute_cleanup(RoxyVM* vm, const BCFunction* func,
         }
 
         // Null-ify the register to prevent double-cleanup of an owned value.
-        // Skip this for RefDec (borrow) records: two distinct borrows can share
-        // one register — a `ref` local aliasing the `ref` param it borrows
-        // (`var r: ref T = param`) copy-props to the same value/register — and
-        // each holds its own count that must be released on unwind. Nulling
-        // would make the second RefDec read null and skip, leaking the borrow
-        // and leaving the owner permanently undeletable. Each record is visited
-        // exactly once, so not nulling cannot over-decrement.
-        if (record.kind != static_cast<u8>(BCCleanupKind::RefDec)) {
+        // Skip this for RefDec and StrRelease records: two distinct counted
+        // references can share one register — a `ref` local aliasing the `ref`
+        // param it borrows, or two string owners aliasing (`var s2 = s1`
+        // copy-props to the same value/register) — and each holds its own count
+        // that must be released on unwind. Nulling would make the second release
+        // read null and skip, leaking the count. Each record is visited exactly
+        // once, so not nulling cannot over-decrement.
+        if (record.kind != static_cast<u8>(BCCleanupKind::RefDec) &&
+            record.kind != static_cast<u8>(BCCleanupKind::StrRelease)) {
             regs[record.register_idx] = 0;
         }
 
@@ -775,7 +792,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         [0xE3] = &&op_WEAK_CREATE,
         [0xE4] = &&op_INDEX_ADDR_LIST, [0xE5] = &&op_INDEX_ADDR_MAP,
         [0xE6] = &&op_CONTAINER_PIN, [0xE7] = &&op_CONTAINER_UNPIN,
-        [0xE8] = &&op_DEFAULT, [0xE9] = &&op_DEFAULT,
+        [0xE8] = &&op_STR_RETAIN, [0xE9] = &&op_STR_RELEASE,
         [0xEA] = &&op_DEFAULT, [0xEB] = &&op_DEFAULT,
         [0xEC] = &&op_DEFAULT, [0xED] = &&op_DEFAULT,
         [0xEE] = &&op_DEFAULT, [0xEF] = &&op_DEFAULT,
@@ -2135,6 +2152,16 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         if (ptr != nullptr) {
             if (!ref_dec(vm, ptr)) return false;
         }
+        DISPATCH();
+    }
+
+    OP(STR_RETAIN) {
+        roxy_string_retain(reg_as_ptr(regs[decode_a(instr)]));
+        DISPATCH();
+    }
+
+    OP(STR_RELEASE) {
+        roxy_string_release(reg_as_ptr(regs[decode_a(instr)]));
         DISPATCH();
     }
 

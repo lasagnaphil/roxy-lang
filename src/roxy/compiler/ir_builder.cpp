@@ -1596,6 +1596,20 @@ void IRBuilder::emit_ref_dec(ValueId ptr) {
     if (inst) inst->unary = ptr;
 }
 
+void IRBuilder::emit_str_retain(ValueId ptr) {
+    IRInst* inst = emit_inst(IROp::StrRetain, m_types.void_type());
+    if (inst) inst->unary = ptr;
+}
+
+void IRBuilder::emit_str_release(ValueId ptr) {
+    IRInst* inst = emit_inst(IROp::StrRelease, m_types.void_type());
+    if (inst) inst->unary = ptr;
+}
+
+void IRBuilder::maybe_str_retain(ValueId val, Type* type) {
+    if (type && type->kind == TypeKind::String) emit_str_retain(val);
+}
+
 void IRBuilder::emit_map_value_delete_if_present(ValueId map_obj, Type* map_type, ValueId key_val) {
     if (!map_type || !map_type->is_map()) return;
     Type* value_type = map_type->map_info.value_type;
@@ -2434,6 +2448,14 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
                 emit_ref_borrow_inc(val, rs.value);
             }
         }
+        // String return: hand off exactly one owned count to the caller (finding
+        // 9b). Adopt a fresh producer temp, or retain an existing owner — whose
+        // own count is then released by emit_scope_cleanup below, leaving the one
+        // handed-off count for the caller to adopt. Mirrors the ref-return handoff.
+        if (return_type && return_type->kind == TypeKind::String) {
+            consume_or_retain_string(val, return_type, /*adopted_by_variable=*/false);
+        }
+
         // `return o.field`: null the moved-out field before scope cleanup destroys
         // the root (val already read its value above).
         nullify_moved_field_source(rs.value);
@@ -3140,8 +3162,13 @@ ValueId IRBuilder::gen_expr(Expr* expr) {
             return gen_identifier_expr(expr);
         case AstKind::ExprUnary:
             return gen_unary_expr(expr);
-        case AstKind::ExprBinary:
-            return gen_binary_expr(expr);
+        case AstKind::ExprBinary: {
+            ValueId result = gen_binary_expr(expr);
+            // String concat (`a + b`) produces a fresh owned string; track it so
+            // it's released at scope exit unless consumed (finding 9b).
+            track_string_temp(result, expr->resolved_type);
+            return result;
+        }
         case AstKind::ExprTernary:
             return gen_ternary_expr(expr);
         case AstKind::ExprCall: {
@@ -3152,6 +3179,10 @@ ValueId IRBuilder::gen_expr(Expr* expr) {
             // `make_list().len()`). Constructor/struct-literal paths already
             // self-track, so skip if already a tracked temp.
             track_noncopyable_call_temp(result, expr->resolved_type);
+            // A string-returning call (native producer or a user function, which
+            // hands off an owned count-1 via gen_return) yields an owned string
+            // temp — track it for release (finding 9b).
+            track_string_temp(result, expr->resolved_type);
             return result;
         }
         case AstKind::ExprIndex:
@@ -3168,8 +3199,12 @@ ValueId IRBuilder::gen_expr(Expr* expr) {
             return gen_struct_literal_expr(expr);
         case AstKind::ExprStaticGet:
             return gen_static_get_expr(expr);
-        case AstKind::ExprStringInterp:
-            return gen_string_interp_expr(expr);
+        case AstKind::ExprStringInterp: {
+            ValueId result = gen_string_interp_expr(expr);
+            // An f-string builds a fresh owned string — track it (finding 9b).
+            track_string_temp(result, expr->resolved_type);
+            return result;
+        }
         case AstKind::ExprLambda:
             return gen_lambda_expr(expr);
         default:
@@ -4215,6 +4250,16 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
             && args.size() >= 1) {
             emit_ref_inc(args[0]);
         }
+        // Pushing a `string` element makes the list an owner of it — retain
+        // (the list releases each element on destroy via the StrRelease element
+        // descriptor). Retaining a fresh temp too keeps the count balanced: the
+        // temp's own scope-exit release leaves exactly the list's count (finding 9b).
+        if (struct_type->is_list() && get_expr.name == StringView("push", 4)
+            && struct_type->list_info.element_type
+            && struct_type->list_info.element_type->kind == TypeKind::String
+            && args.size() >= 1) {
+            emit_str_retain(args[0]);
+        }
         // Map insert/remove/clear must destroy noncopyable values that are
         // overwritten / removed / cleared (lifetimes.md "Value lifecycle"). The
         // value_is_ref runtime path already handles `ref` values; this closes the
@@ -4885,6 +4930,14 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
         }
     }
 
+    // String reassignment (`s = other`): release the old string (frees at zero),
+    // then adopt a fresh producer temp or retain an existing owner (finding 9b).
+    // Emitted before define_local so lookup_local still returns the old value.
+    if (target_type && target_type->kind == TypeKind::String) {
+        emit_str_release(lookup_local(name));
+        consume_or_retain_string(value, target_type, /*adopted_by_variable=*/true);
+    }
+
     if (target_type && target_type->noncopyable()) {
         OwnedLocalInfo* owned_info = find_owned_local(name);
         if (owned_info && !owned_info->is_moved) {
@@ -5050,6 +5103,13 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
     if (field_type && (field_type->kind == TypeKind::Uniq || field_type->noncopyable())) {
         emit_single_field_destroy(obj, get_expr.name, slot_offset, slot_count, field_type);
     }
+    // A `string` field: release the overwritten string before storing the new one
+    // (finding 9b). The field holds its own count (acquired below), so releasing on
+    // reassignment reclaims it rather than leaking every overwrite.
+    if (field_type && field_type->kind == TypeKind::String) {
+        ValueId old_str = emit_get_field(obj, get_expr.name, slot_offset, slot_count, field_type);
+        emit_str_release(old_str);
+    }
 
     // Wrap uniq/ref → weak conversion for field assignment
     value = maybe_wrap_weak(value, assign_expr.value->resolved_type, field_type);
@@ -5071,6 +5131,11 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
     // Consume noncopyable temporaries assigned to fields
     if (field_type && field_type->noncopyable()) {
         consume_temp_noncopyable(value);
+    }
+    // A `string` field acquires its own count: retain the stored string (or adopt
+    // a fresh temp) so it survives the source's release (finding 9b).
+    if (field_type && field_type->kind == TypeKind::String) {
+        consume_or_retain_string(value, field_type, /*adopted_by_variable=*/false);
     }
 
     // Move semantics: if value is a uniq/move-semantic identifier, mark it as moved
@@ -5139,6 +5204,13 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
             ValueId old = emit_index_get(obj, index_val, kind, elem_type);
             emit_ref_dec(old);
             emit_ref_inc(value);
+        }
+        // Overwriting a `string` List element: release the old, retain the new
+        // (the list owns each element; finding 9b). Index is always in bounds.
+        else if (elem_type && elem_type->kind == TypeKind::String && is_list) {
+            ValueId old = emit_index_get(obj, index_val, kind, elem_type);
+            emit_str_release(old);
+            emit_str_retain(value);
         }
         // Destroy the overwritten element before storing, so a noncopyable old
         // element isn't leaked (mirrors emit_single_field_destroy for fields).
@@ -5529,6 +5601,15 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
             emit_ref_inc(value);
         }
 
+        // A `string` field: retain the stored string (or adopt a fresh temp) so the
+        // field holds its own count and doesn't dangle when the source is released
+        // (finding 9b). Structs stay copyable/trivial, so the field is not released
+        // on struct drop — a string held in a struct field is a bounded leak, the
+        // same as before this change; the retain only prevents a use-after-free.
+        if (field_info.type && field_info.type->kind == TypeKind::String && value_expr) {
+            consume_or_retain_string(value, field_info.type, /*adopted_by_variable=*/false);
+        }
+
         // Consume noncopyable temporaries moved into struct fields
         if (field_info.type && field_info.type->noncopyable() && value_expr) {
             consume_temp_noncopyable(value);
@@ -5650,8 +5731,11 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
                     if (native_idx >= 0) {
                         Span<ValueId> args = alloc_span<ValueId>(1);
                         args[0] = val;
-                        string_parts.push_back(
-                            emit_call_native(name, args, string_type, static_cast<u8>(native_idx)));
+                        ValueId ts = emit_call_native(name, args, string_type, static_cast<u8>(native_idx));
+                        // The to_string result is a fresh owned string temp — track
+                        // it so it's released at scope exit (finding 9b).
+                        track_string_temp(ts, string_type);
+                        string_parts.push_back(ts);
                     }
                 } else if (etype->is_struct()) {
                     // Struct with to_string method: call the mangled method.
@@ -5666,13 +5750,12 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
                     args[0] = val;
 
                     i32 native_idx = m_registry.get_index(mangled);
-                    if (native_idx >= 0) {
-                        string_parts.push_back(
-                            emit_call_native(mangled, args, string_type, static_cast<u8>(native_idx)));
-                    } else {
-                        string_parts.push_back(
-                            emit_call(mangled, args, string_type));
-                    }
+                    ValueId ts = native_idx >= 0
+                        ? emit_call_native(mangled, args, string_type, static_cast<u8>(native_idx))
+                        : emit_call(mangled, args, string_type);
+                    // A user `to_string()` hands off an owned string — track it.
+                    track_string_temp(ts, string_type);
+                    string_parts.push_back(ts);
                 }
             }
         }
@@ -5693,6 +5776,10 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
         args[0] = result;
         args[1] = string_parts[i];
         result = emit_call_native(concat_name, args, string_type, static_cast<u8>(concat_idx));
+        // Each concat produces a fresh owned string temp; track it for release at
+        // scope exit (finding 9b). The final `result` is returned and re-tracked by
+        // gen_expr (track_string_temp skips already-tracked values).
+        track_string_temp(result, string_type);
     }
 
     return result;
@@ -5898,6 +5985,15 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
         m_owned_locals.push_back({var_decl.name, type, scope_depth, false, false,
                                   current_block_id, value, OwnedKind::RefBorrow});
+    } else if (type && type->kind == TypeKind::String) {
+        // String local: a reference-counted owned value (finding 9b). Adopt a
+        // fresh producer temp (count transfers) or retain an existing owner, then
+        // track as a StrOwn local so it's released on every exit path.
+        consume_or_retain_string(value, type, /*adopted_by_variable=*/true);
+        u32 scope_depth = static_cast<u32>(m_local_scopes.size());
+        BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
+        m_owned_locals.push_back({var_decl.name, type, scope_depth, false, false,
+                                  current_block_id, value, OwnedKind::StrOwn});
     }
 }
 
@@ -5966,8 +6062,9 @@ void IRBuilder::pop_scope() {
             auto& info = m_owned_locals[i];
             if (info.scope_depth < depth) continue;
             if (info.start_block.is_valid() && end_block.is_valid() && info.initial_value.is_valid()) {
-                IRCleanupKind kind = info.kind == OwnedKind::RefBorrow
-                    ? IRCleanupKind::RefDec : IRCleanupKind::Delete;
+                IRCleanupKind kind = info.kind == OwnedKind::RefBorrow ? IRCleanupKind::RefDec
+                                   : info.kind == OwnedKind::StrOwn    ? IRCleanupKind::StrRelease
+                                   : IRCleanupKind::Delete;
                 m_current_func->cleanup_info.push_back(
                     {info.initial_value, info.type, info.start_block, end_block, kind});
             }
@@ -6017,6 +6114,45 @@ void IRBuilder::track_noncopyable_call_temp(ValueId val, Type* type) {
     u32 scope_depth = static_cast<u32>(m_local_scopes.size());
     m_owned_locals.push_back({temp_name, type, scope_depth, false, true,
                               m_current_block->id, val});
+}
+
+void IRBuilder::track_string_temp(ValueId val, Type* type) {
+    if (!type || type->kind != TypeKind::String || !m_current_block || !val.is_valid()) return;
+    // Skip if already tracked as a temporary (avoid double-tracking).
+    for (const auto& info : m_owned_locals) {
+        if (info.is_temporary && info.initial_value.id == val.id) return;
+    }
+    StringView temp_name = intern_format("__str{}", m_next_temp_id++);
+    define_local(temp_name, val, type);
+    u32 scope_depth = static_cast<u32>(m_local_scopes.size());
+    m_owned_locals.push_back({temp_name, type, scope_depth, false, /*is_temporary=*/true,
+                              m_current_block->id, val, OwnedKind::StrOwn});
+}
+
+void IRBuilder::consume_or_retain_string(ValueId val, Type* type, bool adopted_by_variable) {
+    if (!type || type->kind != TypeKind::String || !val.is_valid()) return;
+    // A tracked owned string temp: adopt its count-1 ownership (consume the temp)
+    // rather than retaining a second reference.
+    for (i32 i = static_cast<i32>(m_owned_locals.size()) - 1; i >= 0; i--) {
+        auto& info = m_owned_locals[i];
+        if (info.kind == OwnedKind::StrOwn && info.is_temporary && !info.is_moved
+            && info.initial_value.id == val.id) {
+            info.is_moved = true;  // adopt: ownership transfers to the destination
+            if (!adopted_by_variable) {
+                // Stored into a field/container/global (not sharing a tracked
+                // local's register): end the temp's cleanup record and null its
+                // mapping so its scope-exit release is suppressed.
+                IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+                if (nullify) nullify->unary = val;
+                ValueId null_val = emit_const_null();
+                define_local(info.name, null_val, info.type);
+            }
+            return;
+        }
+    }
+    // Not a fresh temp — an existing owner (identifier, borrowed field/element
+    // read) is being copied, so retain to create the destination's own count.
+    emit_str_retain(val);
 }
 
 void IRBuilder::consume_temp_noncopyable(ValueId val, bool adopted_by_variable) {
@@ -6098,6 +6234,19 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
         // Narrow the exception cleanup record to end at this RefDec so the
         // unwind path doesn't double-decrement after the normal-path RefDec
         // (mirrors the owned-local Nullify below).
+        if (info.initial_value.is_valid()) {
+            IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+            if (nullify) nullify->unary = info.initial_value;
+        }
+        info.is_moved = true;
+        return;
+    }
+
+    // Owned string local: release (owner--; free at zero). Like a ref borrow it
+    // releases a count rather than unconditionally freeing; the Nullify narrows
+    // the exception cleanup record so unwind doesn't double-release (finding 9b).
+    if (info.kind == OwnedKind::StrOwn) {
+        emit_str_release(current_value);
         if (info.initial_value.is_valid()) {
             IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
             if (nullify) nullify->unary = info.initial_value;
@@ -6710,8 +6859,9 @@ void IRBuilder::end_function_body() {
             auto& info = m_owned_locals[i];
             if (info.scope_depth < depth) continue;
             if (info.start_block.is_valid() && end_block.is_valid() && info.initial_value.is_valid()) {
-                IRCleanupKind kind = info.kind == OwnedKind::RefBorrow
-                    ? IRCleanupKind::RefDec : IRCleanupKind::Delete;
+                IRCleanupKind kind = info.kind == OwnedKind::RefBorrow ? IRCleanupKind::RefDec
+                                   : info.kind == OwnedKind::StrOwn    ? IRCleanupKind::StrRelease
+                                   : IRCleanupKind::Delete;
                 m_current_func->cleanup_info.push_back(
                     {info.initial_value, info.type, info.start_block, end_block, kind});
             }

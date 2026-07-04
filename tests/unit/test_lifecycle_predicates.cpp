@@ -19,13 +19,25 @@ TEST_SUITE("Lifecycle Predicates") {
         BumpAllocator allocator(4096);
         TypeCache types(allocator);
         Type* prims[] = { types.i32_type(), types.i64_type(), types.bool_type(),
-                          types.f64_type(), types.string_type() };
+                          types.f64_type() };
         for (Type* t : prims) {
             CHECK(t->is_copy());
             CHECK_FALSE(t->needs_drop());
             CHECK_FALSE(t->needs_retain());
             CHECK(t->is_trivial());
         }
+    }
+
+    TEST_CASE("string is reference-counted: copyable, but drops and retains") {
+        // Finding 9b: `string` is a copyable value whose copies retain and whose
+        // drops release (freeing at zero), like `ref` — not a trivial primitive.
+        BumpAllocator allocator(4096);
+        TypeCache types(allocator);
+        Type* s = types.string_type();
+        CHECK(s->is_copy());        // freely (implicitly) copyable
+        CHECK(s->needs_drop());     // ... but each drop must release
+        CHECK(s->needs_retain());   // ... and each copy must retain
+        CHECK_FALSE(s->is_trivial());
     }
 
     TEST_CASE("ref is a counted borrow: copyable, but drops and retains") {

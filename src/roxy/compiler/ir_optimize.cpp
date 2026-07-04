@@ -16,6 +16,8 @@ bool has_side_effect(IROp op) {
         // Reference counting
         case IROp::RefInc:
         case IROp::RefDec:
+        case IROp::StrRetain:
+        case IROp::StrRelease:
         // Object lifecycle (constructors / destructors may print, throw,
         // mutate out params)
         case IROp::New:

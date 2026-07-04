@@ -411,6 +411,12 @@ void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj,
             out.append("    roxy_ref_dec((void*)("); out.append(ptr_expr); out.append("));\n");
             return;
 
+        case DropKind::StrRelease:
+            // An owned reference-counted string: release (owner--; frees at zero,
+            // no-op if immortal — finding 9b).
+            out.append("    roxy_string_release((void*)("); out.append(ptr_expr); out.append("));\n");
+            return;
+
         case DropKind::CallDtor:
         case DropKind::WalkFields: {
             // Run the struct/coro destructor (a Coro<T>'s state struct dtor cleans
@@ -1802,6 +1808,20 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             return;
         }
 
+        case IROp::StrRetain: {
+            out.append("    roxy_string_retain((void*)");
+            emit_value(inst->unary, out);
+            out.append(");\n");
+            return;
+        }
+
+        case IROp::StrRelease: {
+            out.append("    roxy_string_release((void*)");
+            emit_value(inst->unary, out);
+            out.append(");\n");
+            return;
+        }
+
         case IROp::ContainerPin: {
             out.append("    roxy_container_pin((void*)");
             emit_value(inst->unary, out);
@@ -2373,6 +2393,9 @@ void CEmitter::emit_cleanup_records(const IRFunction* func, i32 body_group, Stri
             out.append("    roxy_container_unpin((void*)"); out.append(ve); out.append(");\n");
         } else if (ci.kind == IRCleanupKind::RefDec) {
             out.append("    roxy_ref_dec("); out.append(ve); out.append(");\n");
+        } else if (ci.kind == IRCleanupKind::StrRelease) {
+            // Owned string local: release on the unwind path (finding 9b).
+            out.append("    roxy_string_release((void*)"); out.append(ve); out.append(");\n");
         } else {
             bool is_heap = ci.type && (ci.type->kind == TypeKind::Uniq || ci.type->is_list()
                 || ci.type->is_map() || ci.type->is_coroutine());

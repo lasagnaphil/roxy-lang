@@ -143,6 +143,11 @@ private:
     // Reference counting for constraint reference model
     void emit_ref_inc(ValueId ptr);
     void emit_ref_dec(ValueId ptr);
+    void emit_str_retain(ValueId ptr);
+    void emit_str_release(ValueId ptr);
+    // Retain `val` if its type is a reference-counted string (finding 9b). The
+    // no-op-for-non-string form lets copy sites call it unconditionally.
+    void maybe_str_retain(ValueId val, Type* type);
 
     // Emit `if (map.contains(key)) delete map[key];` — the contains-guarded destroy
     // of a noncopyable map value, so an overwritten (`m[k]=v`, `m.insert`) or
@@ -442,7 +447,7 @@ private:
     // borrow (decrement its count on cleanup). RefBorrow locals reuse the owned-
     // local machinery (LIFO scope cleanup, exception records, liveness) but emit
     // RefDec instead of Delete.
-    enum class OwnedKind : u8 { Owned, RefBorrow };
+    enum class OwnedKind : u8 { Owned, RefBorrow, StrOwn };
 
     struct OwnedLocalInfo {
         StringView name;
@@ -479,6 +484,15 @@ private:
     // scope exit unless bound/consumed). No-op for copyable types or values
     // already tracked as a temp (constructor paths self-track).
     void track_noncopyable_call_temp(ValueId val, Type* type);
+
+    // String reference-counting (finding 9b). A string PRODUCER (concat, f-string,
+    // substr, to_string, a user function return) yields an owned count-1 temp;
+    // track it so it's released at scope exit unless consumed. At a copy site
+    // (bind / store / push / return), consume_or_retain_string adopts a tracked
+    // owned temp (count transfers, no retain) or retains an existing owner (an
+    // identifier, a borrowed field/element read). No-op for non-string types.
+    void track_string_temp(ValueId val, Type* type);
+    void consume_or_retain_string(ValueId val, Type* type, bool adopted_by_variable);
 
     // Mark the owned local `name` as moved so scope-exit / exception cleanup skip
     // it. No-op if `name` is not a live (un-moved) owned local. For `uniq` locals
