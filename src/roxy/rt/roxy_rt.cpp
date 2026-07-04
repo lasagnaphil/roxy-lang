@@ -257,7 +257,15 @@ void roxy_free(void* data) {
     // refuses the free (leaks rather than UAF) and asserts loudly in debug.
     // Full trap *reporting* parity is part of the deferred AOT pass.
     assert(header->ref_count == 0 && "Cannot delete: object has active borrows");
-    if (header->ref_count != 0) return;
+    if (header->ref_count != 0) {
+        // Refuse the free (leak, not UAF) AND record the violation through the
+        // fatal trap channel, matching the VM's object_free report instead of
+        // failing silently in release. Surfacing this channel on the AOT path
+        // (checking it after frees) is the deferred trap-reporting work; the
+        // record is its foundation and is inert under complete balancing.
+        roxy_runtime_error_set("Cannot delete: object has active borrows");
+        return;
+    }
     roxy_allocator* alloc = current_allocator();
     // Allocator's free contract: tombstone weak_generation before freeing.
     // Both the slab and malloc impls do this.
@@ -279,9 +287,18 @@ void roxy_ref_inc(void* data) {
 void roxy_ref_dec(void* data) {
     if (!data) return;
     auto* header = roxy_get_header(data);
-    if (header->ref_count > 0) {
-        header->ref_count--;
+    if (header->ref_count == 0) {
+        // Underflow — an unbalanced dec. The VM reports this (object.cpp ref_dec:
+        // "reference count already zero"); the AOT runtime asserts loudly in debug
+        // and records the same message through the fatal trap channel in release,
+        // for parity, instead of silently swallowing it. Never fires under
+        // complete balancing; surfacing the channel per-op is the deferred
+        // AOT trap-reporting work.
+        assert(false && "roxy_ref_dec: reference count already zero");
+        roxy_runtime_error_set("ref_dec: reference count already zero");
+        return;
     }
+    header->ref_count--;
 }
 
 // ===== Weak References =====
@@ -637,6 +654,12 @@ void roxy_list_push(void* self, const void* value_src) {
 
 void* roxy_list_pop(void* self) {
     auto* hdr = static_cast<roxy_list_header*>(self);
+    // pop is a structural mutation: it drops the tail element and the next push
+    // reuses that slot, so a borrowed element (inout/out) could be the one popped
+    // or be overwritten while the borrow still points at it. Refuse it while the
+    // list is pinned, leaving the buffer untouched (lifetimes.md "Container
+    // element lvalues" soundness table; mirrors roxy_list_push).
+    if (list_mutation_blocked(hdr)) return nullptr;
     assert(hdr->length > 0);
     hdr->length--;
     // Return a pointer to the now-out-of-bounds slot; bytes remain valid until

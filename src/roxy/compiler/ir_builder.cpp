@@ -447,7 +447,7 @@ IRFunction* IRBuilder::build_module_init(Program* /*program*/) {
 
         ValueId addr = emit_global_addr(slot_offset, type);
         ValueId val = gen_expr(initializer);
-        val = maybe_wrap_weak(val, initializer->resolved_type, type);
+        val = maybe_wrap_weak(val, initializer->resolved_type, type, initializer);
         if (type && type->is_struct()) {
             emit_struct_copy(addr, val, slot_count);
         } else {
@@ -1751,13 +1751,26 @@ ValueId IRBuilder::emit_weak_create(ValueId ptr, Type* weak_type) {
     return emit_unary(IROp::WeakCreate, ptr, weak_type);
 }
 
-ValueId IRBuilder::maybe_wrap_weak(ValueId value, Type* source_type, Type* target_type) {
+static bool is_bare_self(Expr* e);  // defined below; used by the promotion gate
+
+ValueId IRBuilder::maybe_wrap_weak(ValueId value, Type* source_type, Type* target_type,
+                                   Expr* source_expr) {
     if (!source_type || !target_type) return value;
     // A function value is a heap env pointer with a header, so `fun -> weak fun`
     // is created the same way as uniq/ref -> weak.
     if (target_type->kind == TypeKind::Weak &&
         (source_type->kind == TypeKind::Uniq || source_type->kind == TypeKind::Ref ||
          source_type->kind == TypeKind::Function)) {
+        // Self-promotion gate: a bare `self` source may be a stack receiver, so
+        // trap before WeakCreate snapshots a bogus generation from stack bytes
+        // (lifetimes.md "Promotion"). Only bare `self` (ExprThis) is gated — a
+        // lambda body's `self` is already `__env.__self` (heap-checked env), and
+        // call-arg / capture sites pass source_expr = nullptr because they gate
+        // separately. Mirrors emit_ref_borrow_inc's gate on the `ref` side.
+        if (source_expr && is_bare_self(source_expr)) {
+            IRInst* ah = emit_inst(IROp::AssertHeap, m_types.void_type());
+            if (ah) ah->unary = value;
+        }
         return emit_weak_create(value, target_type);
     }
     return value;
@@ -4081,31 +4094,37 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
                 nullify_moved_field_source(arg.expr);
             }
 
-            // Wrap uniq/ref → weak conversion for call arguments
             Type* callee_func_type = call_expr.callee->resolved_type;
             if (callee_func_type) callee_func_type = callee_func_type->base_type();
-            if (callee_func_type && callee_func_type->is_function() &&
-                i < callee_func_type->func_info.param_types.size()) {
-                Type* param_type = callee_func_type->func_info.param_types[i];
-                args[i] = maybe_wrap_weak(args[i], arg.expr->resolved_type, param_type);
-            }
 
-            // Passing a bare `self` to a `ref` parameter is a promotion: the
-            // callee RefIncs the param at entry, so heap-gate it here (before the
-            // call) — a stack receiver traps rather than corrupting a bogus header
-            // (lifetimes.md "Promotion"). The param index accounts for an implicit `self`
-            // on method callees; uncertain callee shapes return -1 and are skipped.
+            // Passing a bare `self` to a `ref` OR `weak` parameter is a promotion:
+            // a `ref` param RefIncs at entry and a `weak` param snapshots the
+            // generation — both read the receiver's object header — so heap-gate
+            // the RAW self pointer here (before the call, and crucially before the
+            // maybe_wrap_weak below turns it into a WeakCreate value). A stack
+            // receiver traps rather than reading a bogus header (lifetimes.md
+            // "Promotion"). The param index accounts for an implicit `self` on
+            // method callees; uncertain callee shapes return -1 and are skipped.
             if (is_bare_self(arg.expr) && callee_func_type && callee_func_type->is_function()) {
                 i32 off = self_pass_param_offset(call_expr);
                 Span<Type*> ptypes = callee_func_type->func_info.param_types;
                 if (off >= 0) {
                     u32 pidx = i + static_cast<u32>(off);
                     if (pidx < ptypes.size() && ptypes[pidx] &&
-                        ptypes[pidx]->kind == TypeKind::Ref) {
+                        (ptypes[pidx]->kind == TypeKind::Ref ||
+                         ptypes[pidx]->kind == TypeKind::Weak)) {
                         IRInst* ah = emit_inst(IROp::AssertHeap, m_types.void_type());
                         if (ah) ah->unary = args[i];
                     }
                 }
+            }
+
+            // Wrap uniq/ref → weak conversion for call arguments (after the gate
+            // above, so the gate sees the raw pointer, not the wrapped weak).
+            if (callee_func_type && callee_func_type->is_function() &&
+                i < callee_func_type->func_info.param_types.size()) {
+                Type* param_type = callee_func_type->func_info.param_types[i];
+                args[i] = maybe_wrap_weak(args[i], arg.expr->resolved_type, param_type);
             }
         }
     }
@@ -4892,7 +4911,7 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
                 IRInst* del = emit_inst(IROp::Delete, gtype);
                 if (del) del->unary = old;
             }
-            value = maybe_wrap_weak(value, assign_expr.value->resolved_type, gtype);
+            value = maybe_wrap_weak(value, assign_expr.value->resolved_type, gtype, assign_expr.value);
             ValueId result;
             if (gtype && gtype->is_struct()) {
                 emit_struct_copy(addr, value, gslots);
@@ -4950,7 +4969,8 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
     }
 
     // Wrap uniq/ref → weak conversion for local assignment
-    value = maybe_wrap_weak(value, assign_expr.value->resolved_type, assign_expr.target->resolved_type);
+    value = maybe_wrap_weak(value, assign_expr.value->resolved_type, assign_expr.target->resolved_type,
+                            assign_expr.value);
 
     // For copyable struct rvalues that alias source storage, allocate fresh
     // storage and emit a StructCopy — mirrors the gen_var_decl fix. Struct
@@ -5112,7 +5132,7 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
     }
 
     // Wrap uniq/ref → weak conversion for field assignment
-    value = maybe_wrap_weak(value, assign_expr.value->resolved_type, field_type);
+    value = maybe_wrap_weak(value, assign_expr.value->resolved_type, field_type, assign_expr.value);
 
     // For struct-typed fields the rvalue is a struct pointer (per IR convention),
     // so we must copy slot-by-slot from the source struct. emit_set_field would
@@ -5581,7 +5601,7 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
 
         // Wrap uniq/ref → weak conversion for struct literal field
         if (value_expr) {
-            value = maybe_wrap_weak(value, value_expr->resolved_type, field_info.type);
+            value = maybe_wrap_weak(value, value_expr->resolved_type, field_info.type, value_expr);
         }
 
         // For struct-typed fields, use StructCopy since the value is a pointer
@@ -5941,7 +5961,7 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         if (var_decl.initializer) {
             value = gen_expr(var_decl.initializer);
             // Wrap uniq/ref → weak conversion
-            value = maybe_wrap_weak(value, var_decl.initializer->resolved_type, type);
+            value = maybe_wrap_weak(value, var_decl.initializer->resolved_type, type, var_decl.initializer);
         } else {
             // Default initialization
             value = emit_const_null();

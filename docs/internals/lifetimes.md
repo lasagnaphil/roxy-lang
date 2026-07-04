@@ -769,9 +769,11 @@ a per-operation vtable.
   would be a use-after-free hole. Centralizing the trap in `object_free` and the
   decrements in the shared cleanup machinery is what makes completeness auditable.
 - **Count under/overflow.** `ref_count` is `u32`. Underflow indicates an unbalanced
-  dec and is a tripwire ("ref_dec: reference count already zero"); with complete
-  balancing it never fires. Overflow is bounded by live-borrow count and not a
-  practical concern.
+  dec and is a tripwire ("ref_dec: reference count already zero") in *both*
+  runtimes — the VM sets `vm->error` (`object.cpp`), the AOT runtime asserts in
+  debug and records the same message through the fatal trap channel in release
+  (`roxy_ref_dec`); with complete balancing it never fires. Overflow is bounded by
+  live-borrow count and not a practical concern.
 - **Single-threaded.** Inc/dec are non-atomic, matching the VM's single-thread
   assumption. A threaded runtime would need atomic counts.
 - **Malloc-fallback allocator** (AOT before `roxy_rt_init`): the slab is the

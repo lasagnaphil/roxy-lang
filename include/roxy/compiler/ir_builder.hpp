@@ -186,7 +186,14 @@ private:
 
     // Weak reference creation
     ValueId emit_weak_create(ValueId ptr, Type* weak_type);
-    ValueId maybe_wrap_weak(ValueId value, Type* source_type, Type* target_type);
+    // Wraps a uniq/ref/fun value into a `weak` when target_type is weak. When
+    // `source_expr` is a bare `self` (a promotion of a possibly-stack receiver),
+    // a heap gate (AssertHeap) is emitted before the WeakCreate so a stack
+    // receiver traps instead of snapshotting a bogus generation (lifetimes.md
+    // "Promotion"). Pass source_expr = nullptr at sites that already emit their
+    // own gate (call args) or gate upstream (closure captures via needs_heap_check).
+    ValueId maybe_wrap_weak(ValueId value, Type* source_type, Type* target_type,
+                            Expr* source_expr = nullptr);
 
     // Generate address of an lvalue expression (for out/inout arguments)
     ValueId gen_lvalue_addr(Expr* expr);

@@ -1099,6 +1099,43 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(VMBackend::run(control_src).success == true);
     }
 
+    TEST_CASE("mid-call pop of a borrowed List traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        // pop is a structural mutation too — the tail slot the borrow may point at
+        // is dropped and reused by the next push — so it must trap while pinned,
+        // mirroring push (roxy_list_pop borrow_count guard).
+        const char* trap_src = R"(
+        fun evil(slot: inout i32, lst: inout List<i32>): i32 {
+            lst.pop();   // drops the slot `slot` points into → traps
+            slot = 5;
+            return 0;
+        }
+        fun main(): i32 {
+            var xs: List<i32> = List<i32>();
+            xs.push(10);
+            xs.push(20);
+            return evil(inout xs[1], inout xs);
+        }
+    )";
+        BumpAllocator a1(65536);
+        CHECK(compile(a1, trap_src) != nullptr);
+        CHECK(VMBackend::run(trap_src).success == false);
+
+        // Control: same shape without the pop — succeeds.
+        const char* control_src = R"(
+        fun ok(slot: inout i32, lst: inout List<i32>): i32 {
+            slot = 5;
+            return 0;
+        }
+        fun main(): i32 {
+            var xs: List<i32> = List<i32>();
+            xs.push(10);
+            xs.push(20);
+            return ok(inout xs[1], inout xs);
+        }
+    )";
+        CHECK(VMBackend::run(control_src).success == true);
+    }
+
     // (A mid-call *free* of the container is a non-threat for a copyable container
     // like List<i32>: reassigning it doesn't free the backing buffer, so the
     // element pointer can't dangle that way. The realloc threat above is the live

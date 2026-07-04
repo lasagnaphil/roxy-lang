@@ -164,27 +164,47 @@ counter; behavioral copy/reassign/return/`List<string>` soundness cases in
 
 ---
 
-## Related lower-severity items the audit flagged (not in the 9)
+## Related lower-severity items the audit flagged (not in the 9) — all FIXED
 
-Surfaced during the audit; not yet ticketed as regression tests. Worth folding in:
+Surfaced during the audit; all three are now fixed.
 
-- **`roxy_list_pop` is not `borrow_count`-guarded** (`roxy_rt.cpp`, `roxy_list_pop`)
-  though [lifetimes.md](lifetimes.md) and the soundness table say pop must
-  mutation-trap while an element is borrowed. Low severity (pop doesn't
-  realloc/free the buffer), but a real doc/impl divergence. Add the guard
-  (mirror `roxy_list_push`).
-- **AOT `roxy_ref_dec` swallows underflow** (`roxy_rt.cpp:275`) whereas the VM
-  reports it (`object.cpp` `ref_dec`); and **release-mode `roxy_free` silently
-  leaks** on a live borrow instead of reporting (`roxy_rt.cpp` `roxy_free`). Part
-  of the deferred "AOT trap reporting" work.
+- **`roxy_list_pop` is not `borrow_count`-guarded — FIXED.** `roxy_list_pop`
+  (`roxy_rt.cpp`) now returns `nullptr` when `list_mutation_blocked`, mirroring
+  `roxy_list_push`, so a `pop` while an element is borrowed (`inout`/`out`) traps
+  instead of dropping/reusing the borrowed slot — matching the
+  [lifetimes.md](lifetimes.md) soundness table. Test: "mid-call pop of a borrowed
+  List traps" in `E2E Lifetimes` (VM, next to the push-trap case).
+- **AOT `roxy_ref_dec` swallowed underflow / release `roxy_free` leaked
+  silently — FIXED (recording).** Both now route through the fatal trap channel
+  (`roxy_runtime_error_set`) for parity with the VM's `object.cpp` reports:
+  `roxy_ref_dec` asserts loudly in debug and records "ref_dec: reference count
+  already zero" in release; `roxy_free` records "Cannot delete: object has active
+  borrows" while still refusing the free (leak, not UAF). *Surfacing* this channel
+  on the AOT path (checking it after each dec/free) remains the deferred
+  "AOT trap reporting" work — the recording is its foundation and is inert under
+  complete balancing (verified: 0 firings across the full C-backend suite).
 - **`f(self)` to a `weak` param, and `[weak self]`/implicit `[ref self]` on a
-  *noncopyable value-struct* stack receiver, skip the `AssertHeap` promotion
-  gate.** `needs_heap_check` is set only for *copyable* structs
-  (`semantic.cpp`, self-capture analysis), on the assumption noncopyable ⇒ heap —
-  but a value-struct with a destructor is noncopyable yet can be a stack local.
-  Now that finding 7 makes `[weak self]` a real `WeakCreate` snapshot, a stack
-  receiver would snapshot a bogus "generation" from stack bytes; the promotion
-  gate should trap it. Verify against intended behavior and add a case.
+  *noncopyable value-struct* stack receiver, skipped the `AssertHeap` promotion
+  gate — FIXED.** The `needs_heap_check` computation (`semantic.cpp` self-capture
+  analysis) assumed "noncopyable ⇒ heap"; a value-struct with a `fun delete` is
+  noncopyable yet stack-capable, so the gate was skipped and a stack receiver
+  would snapshot a bogus generation / borrow a bogus header. The gate now keys off
+  *whether the source is a bare `self`* (outermost capture / non-nested), not
+  copyability: implicit `[ref self]` uses `needs_heap_check = (target_idx == 0)`
+  and `[weak self]` uses `!nested`. Separately, the `f(self)`-to-`weak`-param
+  call-site gate in `ir_builder.cpp` (which previously fired only for `ref`
+  params) now also fires for `weak` params, checking the raw `self` pointer
+  *before* the `maybe_wrap_weak` `WeakCreate`. Probing the rest of the self→weak
+  promotion family (not in the audit's example list) turned up three more ungated
+  binding sites with the identical root cause — `var w: weak T = self`, `w = self`,
+  and `Box { w = self }` all snapshot a bare `self` on a stack receiver without a
+  gate. Fixed uniformly by teaching `maybe_wrap_weak` to take the source `Expr*`
+  and emit the `AssertHeap` when it `is_bare_self` (call-arg and capture sites pass
+  `nullptr` — they gate separately); `return self`-as-weak was already gated. Tests:
+  "self promotion heap gate on noncopyable stack receivers" and "self to weak
+  binding-site heap gate on noncopyable stack receivers" in `E2E Closures` (trap
+  cases + uniq-receiver positive controls; the capture/param traps verified
+  load-bearing — they silently succeed without the fix).
 
 ---
 

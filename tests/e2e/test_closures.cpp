@@ -728,6 +728,200 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
+    // The self-promotion heap gate (AssertHeap) must fire for a *noncopyable*
+    // value-struct receiver too. A struct with a `fun delete` is noncopyable but
+    // still stack-capable, so the old "noncopyable ⇒ heap" assumption (which set
+    // needs_heap_check only for copyable structs) skipped the gate and would
+    // snapshot/borrow a bogus header from stack bytes. See lifetimes.md
+    // "Promotion" and the lifetime-audit "related items". VM-only (runtime trap).
+    TEST_CASE("self promotion heap gate on noncopyable stack receivers") {  // VM-only: C backend: closure self-capture / runtime-trap reporting gap
+        // Each trap case must first *compile* (so the failure below is the runtime
+        // heap gate, not a compile error), then fail at run time.
+        BumpAllocator allocator(65536);
+
+        SUBCASE("[weak self] on noncopyable + stack receiver triggers runtime trap") {
+            const char* source = R"(
+            struct Counter {
+                value: i32 = 0;
+            }
+            fun delete Counter() {}
+            fun Counter.make_getter(): fun() -> i32 {
+                return fun[weak self](): i32 => self.value;
+            }
+            fun main() {
+                var c: Counter = Counter { value = 5 };   // stack, noncopyable
+                var f = c.make_getter();
+            }
+        )";
+            CHECK(compile(allocator, source) != nullptr);
+            auto result = VMBackend::run(source);
+            CHECK_FALSE(result.success);
+        }
+
+        SUBCASE("implicit [ref self] on noncopyable + stack receiver triggers runtime trap") {
+            const char* source = R"(
+            struct Counter {
+                value: i32 = 0;
+            }
+            fun delete Counter() {}
+            fun Counter.make_getter(): fun() -> i32 {
+                return fun(): i32 => self.value;   // implicit ref-self capture
+            }
+            fun main() {
+                var c: Counter = Counter { value = 5 };   // stack, noncopyable
+                var f = c.make_getter();
+            }
+        )";
+            CHECK(compile(allocator, source) != nullptr);
+            auto result = VMBackend::run(source);
+            CHECK_FALSE(result.success);
+        }
+
+        SUBCASE("f(self) to a weak param on noncopyable + stack receiver triggers runtime trap") {
+            const char* source = R"(
+            struct Counter {
+                value: i32 = 0;
+            }
+            fun delete Counter() {}
+            fun observe(w: weak Counter): i32 { return 0; }
+            fun Counter.leak(): i32 { return observe(self); }
+            fun main() {
+                var c: Counter = Counter { value = 5 };   // stack, noncopyable
+                var r: i32 = c.leak();
+            }
+        )";
+            CHECK(compile(allocator, source) != nullptr);
+            auto result = VMBackend::run(source);
+            CHECK_FALSE(result.success);
+        }
+
+        // Positive controls: the same promotions on a heap (uniq) receiver pass
+        // the gate and run — proving the widened gate traps stack receivers only,
+        // never a legitimately-heap noncopyable one.
+        SUBCASE("f(self) to a weak param on noncopyable + uniq receiver passes") {
+            const char* source = R"(
+            struct Counter {
+                value: i32 = 0;
+            }
+            fun delete Counter() {}
+            fun observe(w: weak Counter): i32 { return 7; }
+            fun Counter.observe_self(): i32 { return observe(self); }
+            fun main() {
+                var c: uniq Counter = uniq Counter { value = 5 };
+                print(f"{c.observe_self()}");
+            }
+        )";
+            auto result = VMBackend::run(source);
+            CHECK(result.success);
+            CHECK(result.stdout_output == "7\n");
+        }
+
+        SUBCASE("implicit [ref self] on noncopyable + uniq receiver passes") {
+            const char* source = R"(
+            struct Counter {
+                value: i32 = 0;
+            }
+            fun delete Counter() {}
+            fun Counter.make_getter(): fun() -> i32 {
+                return fun(): i32 => self.value;
+            }
+            fun main() {
+                var c: uniq Counter = uniq Counter { value = 42 };
+                var f = c.make_getter();
+                print(f"{f()}");
+            }
+        )";
+            auto result = VMBackend::run(source);
+            CHECK(result.success);
+            CHECK(result.stdout_output == "42\n");
+        }
+    }
+
+    // The self→weak promotion gate must fire at every *binding* site, not only
+    // closure captures and call args: a bare `self` snapshotted into a `weak` via
+    // a var-decl, an assignment, or a struct-literal field is equally a promotion
+    // of a possibly-stack receiver (maybe_wrap_weak's is_bare_self gate). Without
+    // it a stack receiver snapshots a bogus generation from stack bytes. VM-only.
+    TEST_CASE("self to weak binding-site heap gate on noncopyable stack receivers") {  // VM-only: runtime-trap behavior
+        BumpAllocator allocator(65536);
+
+        SUBCASE("var-decl (weak w = self): stack traps") {
+            const char* source = R"(
+            struct Counter { value: i32 = 0; }
+            fun delete Counter() {}
+            fun Counter.m(): i32 { var w: weak Counter = self; return 0; }
+            fun main() {
+                var c: Counter = Counter { value = 5 };   // stack, noncopyable
+                var r: i32 = c.m();
+            }
+        )";
+            CHECK(compile(allocator, source) != nullptr);
+            CHECK_FALSE(VMBackend::run(source).success);
+        }
+
+        SUBCASE("assignment (w = self): stack traps") {
+            const char* source = R"(
+            struct Counter { value: i32 = 0; }
+            fun delete Counter() {}
+            fun Counter.m(): i32 { var w: weak Counter = nil; w = self; return 0; }
+            fun main() {
+                var c: Counter = Counter { value = 5 };
+                var r: i32 = c.m();
+            }
+        )";
+            CHECK(compile(allocator, source) != nullptr);
+            CHECK_FALSE(VMBackend::run(source).success);
+        }
+
+        SUBCASE("struct-literal field (Box { w = self }): stack traps") {
+            const char* source = R"(
+            struct Counter { value: i32 = 0; }
+            fun delete Counter() {}
+            struct Box { w: weak Counter; }
+            fun Counter.m(): i32 { var b: Box = Box { w = self }; return 0; }
+            fun main() {
+                var c: Counter = Counter { value = 5 };
+                var r: i32 = c.m();
+            }
+        )";
+            CHECK(compile(allocator, source) != nullptr);
+            CHECK_FALSE(VMBackend::run(source).success);
+        }
+
+        // Positive controls: the same binding on a heap (uniq) receiver passes the
+        // gate and runs — the gate traps stack receivers only, never a uniq one.
+        SUBCASE("var-decl (weak w = self): uniq passes") {
+            const char* source = R"(
+            struct Counter { value: i32 = 0; }
+            fun delete Counter() {}
+            fun Counter.m(): i32 { var w: weak Counter = self; return self.value; }
+            fun main() {
+                var c: uniq Counter = uniq Counter { value = 8 };
+                print(f"{c.m()}");
+            }
+        )";
+            auto result = VMBackend::run(source);
+            CHECK(result.success);
+            CHECK(result.stdout_output == "8\n");
+        }
+
+        SUBCASE("struct-literal field (Box { w = self }): uniq passes") {
+            const char* source = R"(
+            struct Counter { value: i32 = 0; }
+            fun delete Counter() {}
+            struct Box { w: weak Counter; }
+            fun Counter.m(): i32 { var b: Box = Box { w = self }; return self.value; }
+            fun main() {
+                var c: uniq Counter = uniq Counter { value = 8 };
+                print(f"{c.m()}");
+            }
+        )";
+            auto result = VMBackend::run(source);
+            CHECK(result.success);
+            CHECK(result.stdout_output == "8\n");
+        }
+    }
+
     TEST_CASE("self capture compile-time rejections") {
         BumpAllocator allocator(65536);
 

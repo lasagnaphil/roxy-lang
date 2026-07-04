@@ -4049,7 +4049,6 @@ void SemanticAnalyzer::ensure_self_captured_through(u32 target_idx, Type* struct
     }
 
     Type* ref_self = m_types.ref_type(struct_type);
-    bool copyable_struct = struct_type->is_copy();
 
     Expr* src;
     if (target_idx == 0) {
@@ -4077,7 +4076,14 @@ void SemanticAnalyzer::ensure_self_captured_through(u32 target_idx, Type* struct
     info.source_symbol = nullptr;
     info.loc = loc;
     info.source_expr = src;
-    info.needs_heap_check = copyable_struct;
+    // The outermost capture (target_idx == 0) sources a bare `self` (ExprThis)
+    // whose receiver may be stack-allocated, so it needs the runtime heap gate
+    // before the borrow inc. Inner captures source through the enclosing lambda's
+    // env (`__env.__self`), a known-heap pointer, so they never need it. This
+    // holds regardless of copyability: a *noncopyable* value-struct (one with a
+    // destructor) is still stack-capable, so it must be gated too — the old
+    // "noncopyable ⇒ heap" assumption was wrong (lifetimes.md "Promotion").
+    info.needs_heap_check = (target_idx == 0);
 
     ctx.self_capture_index = static_cast<u32>(ctx.captures.size());
     ctx.captures.push_back(info);
@@ -4393,11 +4399,14 @@ bool SemanticAnalyzer::validate_lambda_captures(LambdaExpr& le, LambdaCaptureCon
             context.has_self_capture = true;
         } else {  // CaptureMode::Weak
             Type* weak_self = m_types.weak_type(struct_type);
-            // For nested cases, the source comes through outer's __env (a heap
-            // ref already), so the receiver-on-heap requirement is satisfied
-            // transitively. For direct method nesting on a copyable struct we
-            // still need the runtime check on the bare ExprThis.
-            bool copyable_struct = struct_type->is_copy();
+            // For nested cases the source comes through outer's __env (a heap ref
+            // already), so the receiver-on-heap requirement is satisfied
+            // transitively. For a direct method the source is the bare ExprThis,
+            // whose receiver may be stack-allocated, so it needs the runtime heap
+            // check before WeakCreate snapshots the generation — regardless of
+            // copyability, since a noncopyable value-struct (with a destructor) is
+            // still stack-capable and would otherwise snapshot a bogus generation
+            // from stack bytes (lifetimes.md "Promotion").
             bool nested = m_lambda_contexts.size() > 0;
 
             Expr* src = build_outer_self_ref_source(entry.loc);
@@ -4409,7 +4418,7 @@ bool SemanticAnalyzer::validate_lambda_captures(LambdaExpr& le, LambdaCaptureCon
             info.source_symbol = nullptr;
             info.loc = entry.loc;
             info.source_expr = src;
-            info.needs_heap_check = copyable_struct && !nested;
+            info.needs_heap_check = !nested;
 
             context.self_capture_index = static_cast<u32>(context.captures.size());
             context.captures.push_back(info);
