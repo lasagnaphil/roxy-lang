@@ -510,6 +510,13 @@ private:
     void emit_single_field_destroy(ValueId obj_ptr, StringView field_name,
                                    u32 slot_offset, u32 slot_count, Type* field_type);
 
+    // On a tagged-union discriminant reassignment (`s.kind = NEW`), drop the
+    // outgoing variant's owned fields and clear the union storage. See the
+    // definition for the full rationale (leak + stale-pointer-free hazards).
+    void emit_discriminant_reassign_cleanup(ValueId obj,
+                                            const WhenClauseInfo& clause,
+                                            ValueId new_disc);
+
     // Emit cleanup (implicit destruction) for all live owned locals at or above min_scope_depth
     void emit_scope_cleanup(u32 min_scope_depth);
 

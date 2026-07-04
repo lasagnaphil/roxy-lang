@@ -79,29 +79,47 @@ TEST_SUITE("E2E Lifetime Regressions") {
         CHECK(r.value == 42);
     }
 
-    // Finding 2 — reassigning a tagged-union discriminant runs no cleanup of the
-    // variant it leaves. Destruction is guarded by the *current* discriminant,
-    // so an owned (`uniq`) field of the abandoned variant is never freed.
-    // (The mirror direction — switching *to* an owning variant — makes teardown
-    // free stale union bytes as a pointer and crashes; tested here in the safe
-    // leak direction.) Correct: switching away from variant A frees its uniq, so
-    // "Owner dtor" prints. Current: it does not.
-    TEST_CASE("F2 switching a tagged-union discriminant frees the old variant's owned field"
-              * doctest::should_fail()) {
-        const char* src = R"(
+    // Finding 2 — FIXED. Reassigning a tagged-union discriminant used to run no
+    // cleanup of the variant it leaves. Because the destructor's variant cleanup
+    // is guarded by the *current* discriminant, this leaked the outgoing
+    // variant's owned field (leak direction), and switching *to* an owning
+    // variant made teardown free the leftover union bytes as a pointer (crash
+    // direction). The fix drops the outgoing variant's owned fields on the
+    // discriminant write and zeroes the union so the incoming variant reads null.
+    TEST_CASE("F2 switching a tagged-union discriminant cleans up the old variant") {
+        // Leak direction: switching A→B frees A's uniq (its destructor runs).
+        const char* leak_src = R"(
         enum K { A, B }
         struct Owner { val: i32; }
         fun delete Owner() { print("Owner dtor"); }
         struct S { when kind: K { case A: o: uniq Owner; case B: n: i32; } }
         fun main(): i32 {
             var s: S = S { kind = K::A, o = uniq Owner { val = 9 } };
-            s.kind = K::B;   // leaves variant A → its uniq Owner should be freed here
+            s.kind = K::B;   // leaves variant A → its uniq Owner is freed here
             return 0;
         }
         )";
-        auto r = VMBackend::run(src);
-        CHECK(r.success == true);
-        CHECK(r.stdout_output.find("Owner dtor") != String::npos);
+        auto leak = VMBackend::run(leak_src);
+        CHECK(leak.success == true);
+        CHECK(leak.stdout_output.find("Owner dtor") != String::npos);
+
+        // Crash direction: build the non-owning variant, switch to the owning one
+        // without setting its field → teardown must NOT free stale union bytes.
+        const char* crash_src = R"(
+        enum K { A, B }
+        struct Owner { val: i32; }
+        fun delete Owner() { print("Owner dtor"); }
+        struct S { when kind: K { case A: o: uniq Owner; case B: n: i32; } }
+        fun main(): i32 {
+            var s: S = S { kind = K::B, n = 12345 };
+            s.kind = K::A;   // union holds stale 12345; A.o must read null, not free it
+            return 0;
+        }
+        )";
+        auto crash = VMBackend::run(crash_src);
+        CHECK(crash.success == true);
+        // The (unset) A.o must have been zeroed, so no spurious destructor ran.
+        CHECK(crash.stdout_output.find("Owner dtor") == String::npos);
     }
 
     // Finding 3 — a `ref` local that borrows a `ref` parameter shares its

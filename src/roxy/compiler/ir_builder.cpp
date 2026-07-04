@@ -4890,6 +4890,19 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
         set_current_block(pass_block);
     }
 
+    // Reassigning a tagged-union discriminant abandons the current variant: drop
+    // its owned fields and clear the union storage before the new discriminant is
+    // stored. Only a *regular* field can be a discriminant (a variant-field write
+    // took the branch above), so check the struct's when-clauses by name.
+    if (!is_variant_field && struct_type && struct_type->is_struct()) {
+        for (const auto& clause : struct_type->struct_info.when_clauses) {
+            if (clause.discriminant_name == get_expr.name) {
+                emit_discriminant_reassign_cleanup(obj, clause, value);
+                break;
+            }
+        }
+    }
+
     // Overwriting a `ref` field rebalances the borrow count: release the old
     // borrow, acquire the new (lifetimes.md "Value lifecycle" — mirrors the List
     // ref-element overwrite in gen_assign_index). A freshly default-constructed
@@ -6098,6 +6111,77 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
         finish_block_goto(merge_block->id);
         set_current_block(merge_block);
     }
+}
+
+void IRBuilder::emit_discriminant_reassign_cleanup(ValueId obj,
+                                                   const WhenClauseInfo& clause,
+                                                   ValueId new_disc) {
+    // Reassigning `s.kind` moves the tagged union to a different variant. Two
+    // hazards, both because the destructor's variant cleanup is guarded by the
+    // *current* discriminant (lowering.cpp build_struct_field_deletes /
+    // emit_field_cleanup): (1) the outgoing variant's owned fields would never be
+    // freed once the discriminant no longer names them → leak; (2) the incoming
+    // variant would read the outgoing variant's leftover union bytes as its own
+    // owned field, so teardown frees a garbage pointer → crash / double-free.
+    // Fix: drop the outgoing variant's owned fields, then zero the union so the
+    // incoming variant starts from null. A no-op when the variant isn't changing.
+    auto variant_has_owned = [](const VariantInfo& v) {
+        for (const auto& f : v.fields)
+            if (f.type && (f.type->kind == TypeKind::Uniq || f.type->noncopyable()))
+                return true;
+        return false;
+    };
+
+    bool any_owned = false;
+    for (const auto& v : clause.variants)
+        if (variant_has_owned(v)) { any_owned = true; break; }
+    if (!any_owned) return;   // trivial variants: re-tagging is already safe
+
+    ValueId disc_old = emit_get_field(obj, clause.discriminant_name,
+        clause.discriminant_slot_offset, 1, clause.discriminant_type);
+
+    // Skip everything when re-tagging to the same variant (a no-op that must
+    // preserve the current owned field rather than free it).
+    ValueId changed = emit_binary(IROp::NeI, disc_old, new_disc, m_types.bool_type());
+    IRBlock* cleanup_block = create_block("disc_reassign_cleanup");
+    IRBlock* done_block = create_block("disc_reassign_done");
+    finish_block_branch(changed, cleanup_block->id, done_block->id);
+    set_current_block(cleanup_block);
+
+    // Drop the currently-active variant's owned fields (guarded by the old
+    // discriminant), mirroring emit_field_cleanup's per-variant dispatch.
+    IRBlock* drop_merge = create_block("disc_reassign_drop_done");
+    for (const auto& variant : clause.variants) {
+        if (!variant_has_owned(variant)) continue;
+        ValueId variant_val = emit_const_int(
+            static_cast<i32>(variant.discriminant_value), clause.discriminant_type);
+        ValueId is_match = emit_binary(IROp::EqI, disc_old, variant_val, m_types.bool_type());
+        IRBlock* drop_block = create_block("disc_reassign_drop");
+        IRBlock* next_block = create_block("disc_reassign_next");
+        finish_block_branch(is_match, drop_block->id, next_block->id);
+
+        set_current_block(drop_block);
+        for (i32 fi = static_cast<i32>(variant.fields.size()) - 1; fi >= 0; fi--) {
+            const auto& variant_field = variant.fields[fi];
+            if (!variant_field.type) continue;
+            if (variant_field.type->kind == TypeKind::Uniq || variant_field.type->noncopyable()) {
+                emit_single_field_destroy(obj, variant_field.name,
+                    clause.union_slot_offset + variant_field.slot_offset,
+                    variant_field.slot_count, variant_field.type);
+            }
+        }
+        finish_block_goto(drop_merge->id);
+        set_current_block(next_block);
+    }
+    finish_block_goto(drop_merge->id);
+    set_current_block(drop_merge);
+
+    // Clear the whole union: the just-freed slots lose their dangling pointers,
+    // and any other variant's leftover bytes are zeroed, so the incoming
+    // variant's owned fields read null (a safe no-op at teardown until set).
+    emit_zero_slots(obj, clause.union_slot_offset, clause.union_slot_count);
+    finish_block_goto(done_block->id);
+    set_current_block(done_block);
 }
 
 // emit_element_destroy, emit_list_cleanup, and emit_map_cleanup have been
