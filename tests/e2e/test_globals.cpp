@@ -160,4 +160,41 @@ TEST_SUITE("E2E Globals") {
         CHECK(result.success == true);
         CHECK(result.value == 2);
     }
+
+    // Finding 8 (lifetime audit) — module-level globals participate in the
+    // constraint-reference model. A global `ref` is counted for the whole VM
+    // lifetime (RefInc in __module_init after the initializer is stored, RefDec
+    // in __module_shutdown), and an explicit `delete` of a `uniq` global nulls
+    // its slot so shutdown's null-guarded Delete no-ops instead of double-freeing.
+    // Both backends lower the same synthesized init/shutdown IR. The
+    // delete-while-borrowed *trap* is asserted VM-only (test_lifetime_regressions
+    // "F8*"): the C backend renders that trap as a raw abort, not a catchable
+    // error.
+    TEST_CASE_TEMPLATE("global ref is counted; deleted uniq global isn't double-freed",
+                       Backend, RX_E2E_BACKENDS) {
+        // A global ref reads through to its owner; the init RefInc and shutdown
+        // RefDec balance, so the owner tears down cleanly (a missing dec would
+        // leave the owner borrowed at its shutdown Delete).
+        const char* read_through = R"(
+            struct Owner { val: i32; }
+            var gu: uniq Owner = uniq Owner { val = 42 };
+            var gr: ref Owner = gu;
+            fun main(): i32 { return gr.val; }
+        )";
+        auto rt = Backend::run(read_through);
+        CHECK(rt.success == true);
+        CHECK(rt.value == 42);
+
+        // Deleting a uniq global in user code nulls its slot, so __module_shutdown
+        // does not free it a second time at teardown.
+        const char* delete_in_main = R"(
+            struct Owner { val: i32; }
+            fun delete Owner() {}
+            var gu: uniq Owner = uniq Owner { val = 7 };
+            fun main(): i32 { delete gu; return 0; }
+        )";
+        auto dm = Backend::run(delete_in_main);
+        CHECK(dm.success == true);
+        CHECK(dm.value == 0);
+    }
 }

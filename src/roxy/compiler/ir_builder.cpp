@@ -416,6 +416,11 @@ ValueId IRBuilder::gen_global_read(u32 global_index, Type* /*result_type*/) {
     return emit_load_ptr(addr, slot_count, type);
 }
 
+// True if a ref binding's initializer is a call (which already hands off a
+// borrow count, so the binding adopts it rather than incrementing). Defined
+// below; forward-declared here for build_module_init's global-ref counting.
+static bool is_ref_handoff_source(Expr* init);
+
 // Synthesize `__module_init`: run each global's initializer (incl. constructors)
 // and store the result into its slot. Returns null if there is nothing to init.
 IRFunction* IRBuilder::build_module_init(Program* /*program*/) {
@@ -448,6 +453,16 @@ IRFunction* IRBuilder::build_module_init(Program* /*program*/) {
         } else {
             emit_store_ptr(addr, val, slot_count, type);
         }
+        // A `ref` global is a counted borrow held for the whole VM lifetime: the
+        // create-inc goes here in __module_init and the matching dec in
+        // __module_shutdown, so `delete owner` traps while the global still
+        // borrows it (lifetimes.md "Constraint references"; finding 8a). A call
+        // initializer already hands off a count (adopt, no inc), mirroring a ref
+        // local (gen_var_decl); a `weak` global is generational and needs none;
+        // `self` promotion can't occur at module scope.
+        if (type && type->kind == TypeKind::Ref && !is_ref_handoff_source(initializer)) {
+            emit_ref_borrow_inc(val, initializer);
+        }
         // The initializer temporary's ownership transfers into the global slot.
         if (type && type->noncopyable()) {
             consume_temp_noncopyable(val);
@@ -467,7 +482,13 @@ IRFunction* IRBuilder::build_module_init(Program* /*program*/) {
 IRFunction* IRBuilder::build_module_shutdown() {
     bool any = false;
     for (const IRGlobal& g : m_module->globals) {
-        if (g.type && g.type->noncopyable()) { any = true; break; }
+        // Noncopyable globals need destruction; a `ref` global needs its
+        // create-inc (build_module_init, finding 8a) released here even though
+        // `ref` is copyable.
+        if (g.type && (g.type->noncopyable() || g.type->kind == TypeKind::Ref)) {
+            any = true;
+            break;
+        }
     }
     if (!any) return nullptr;
 
@@ -482,7 +503,21 @@ IRFunction* IRBuilder::build_module_shutdown() {
         Type* type = m_module->globals[i].type;
         u32 slot_offset = m_module->globals[i].slot_offset;
         u32 slot_count = m_module->globals[i].slot_count;
-        if (!type || type->is_copy()) continue;
+        if (!type) continue;
+
+        // A `ref` global: release the borrow acquired in __module_init (finding
+        // 8a). Reverse-declaration order runs this before the borrowed owner's
+        // Delete (a ref global is declared after the global it borrows), so the
+        // dec drops the count to 0 before the owner is freed. If user code had
+        // tried to `delete` the owner earlier it would have trapped, so the
+        // pointee is still live here.
+        if (type->kind == TypeKind::Ref) {
+            ValueId addr = emit_global_addr(slot_offset, type);
+            ValueId val = emit_load_ptr(addr, slot_count, type);
+            emit_ref_dec(val);
+            continue;
+        }
+        if (type->is_copy()) continue;
 
         ValueId addr = emit_global_addr(slot_offset, type);
         if (type->is_struct()) {
@@ -2522,7 +2557,27 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
     // was just explicitly Delete'd, so leave the SSA register alone (null_ssa=false);
     // the Nullify annotation still ends the cleanup record scope.
     if (ds.expr->kind == AstKind::ExprIdentifier) {
-        mark_moved_from(ds.expr->identifier.name, /*null_ssa=*/false);
+        StringView del_name = ds.expr->identifier.name;
+        // A deleted module-level global (not shadowed by a local of the same name)
+        // must have its slot nulled so __module_shutdown's null-guarded Delete
+        // no-ops instead of double-freeing the already-deleted object (finding 8b).
+        // Only pointer-holding globals (uniq/List/Map/Coro) carry an owning pointer
+        // in the slot; the Delete above already ran (a refused free would have
+        // halted the run before here).
+        auto git = find_local(del_name) ? m_global_indices.end()
+                                        : m_global_indices.find(del_name);
+        if (git != m_global_indices.end()) {
+            // `delete` only applies to `uniq` (a `uniq` global's slot holds the
+            // owning pointer); a null store makes shutdown's Delete a no-op.
+            const IRGlobal& g = m_module->globals[git->second];
+            if (g.type && g.type->kind == TypeKind::Uniq) {
+                ValueId gaddr = emit_global_addr(g.slot_offset, g.type);
+                ValueId null_val = emit_const_null();
+                emit_store_ptr(gaddr, null_val, g.slot_count, g.type);
+            }
+        } else {
+            mark_moved_from(del_name, /*null_ssa=*/false);
+        }
     }
 }
 

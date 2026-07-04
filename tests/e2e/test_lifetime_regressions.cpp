@@ -386,32 +386,90 @@ TEST_SUITE("E2E Lifetime Regressions") {
         CHECK(VMBackend::run(dead_method).success == false);
     }
 
-    // Finding 8 — a global `ref`/`weak` is uncounted (globals get no scope-exit
-    // RefDec and no create-time inc), so a global ref does not block deletion of
-    // its owner. Correct: `delete gu` traps while `gr` borrows it. Current: the
-    // delete succeeds. Run through a bespoke harness that does NOT call
-    // vm_destroy — the uncounted delete leaves the shutdown teardown to
-    // double-free the global and abort, which we avoid observing here.
-    TEST_CASE("F8 a global ref borrow blocks deletion of its owner"
-              * doctest::should_fail()) {
-        const char* src = R"(
+    // Finding 8 — FIXED. Module-level globals now participate in the
+    // constraint-reference model, via the synthesized __module_init /
+    // __module_shutdown (ir_builder.cpp).
+    //   8a: a global `ref` borrow is counted for the whole VM lifetime — RefInc
+    //       in __module_init after storing the initializer, RefDec in
+    //       __module_shutdown (reverse order, so before the owner's Delete). So
+    //       deleting the borrowed owner traps while the global still borrows it.
+    //   8b: an explicit `delete` of a `uniq` global nulls its slot, so
+    //       __module_shutdown's null-guarded Delete no-ops instead of
+    //       double-freeing the object already freed in user code.
+    // Both are now cleanly observable through the standard harness: the 8a trap
+    // sets vm->error, so vm_destroy skips shutdown; the 8b path leaves no error,
+    // so shutdown runs and must not double-free. (Weak globals are generational
+    // and uncounted, so they never block a delete.)
+    TEST_CASE("F8 globals participate in the constraint-reference model") {
+        // 8a — a global ref borrow blocks `delete gu` (traps → run fails).
+        const char* borrow_trap = R"(
         struct Owner { val: i32; }
         var gu: uniq Owner = uniq Owner { val = 3 };
         var gr: ref Owner = gu;
         fun main(): i32 { delete gu; return 0; }
         )";
-        BumpAllocator allocator(1 << 16);
-        BCModule* module = compile(allocator, src);
-        REQUIRE(module != nullptr);
-        RoxyVM vm;
-        vm_init(&vm);
-        vm_load_module(&vm, module);
-        bool ran = vm_call(&vm, StringView("main", 4), {});
-        // Correct: the delete traps → vm_call returns false. Current: true.
-        CHECK(ran == false);
-        // NOTE: intentionally no vm_destroy(&vm)/delete module — the uncounted
-        // delete makes shutdown double-free the global and abort. Leaking one VM
-        // per run is acceptable for a regression marker.
+        CHECK(VMBackend::run(borrow_trap).success == false);
+
+        // Control: with the borrow confined to a shorter-lived reader (no global
+        // ref outstanding), deleting the owner succeeds.
+        const char* no_borrow = R"(
+        struct Owner { val: i32; }
+        var gu: uniq Owner = uniq Owner { val = 3 };
+        fun main(): i32 { delete gu; return 0; }
+        )";
+        auto nbr = VMBackend::run(no_borrow);
+        CHECK(nbr.success == true);
+        CHECK(nbr.value == 0);
+
+        // 8b — a uniq global deleted in user code is destroyed exactly once
+        // *there* (its dtor prints within main's captured window), and is NOT
+        // deleted again at shutdown: the un-fixed double-free path re-ran the
+        // dtor on a tombstoned slot and aborted on the debug double-delete
+        // tripwire, so a clean run with a single "dtor" line is the fix.
+        const char* deleted_in_main = R"(
+        struct Owner { val: i32; }
+        fun delete Owner() { print("dtor"); }
+        var gu: uniq Owner = uniq Owner { val = 3 };
+        fun main(): i32 { delete gu; return 0; }
+        )";
+        auto dmr = VMBackend::run(deleted_in_main);
+        CHECK(dmr.success == true);
+        CHECK(dmr.stdout_output == "dtor\n");
+
+        // A uniq global left alive is still torn down at shutdown (the 8b
+        // null-on-delete must not break the normal RAII path). Its dtor runs at
+        // vm_destroy, past run_and_capture's window, so assert clean teardown
+        // rather than the text (cf. test_globals.cpp).
+        const char* alive_to_shutdown = R"(
+        struct Owner { val: i32; }
+        fun delete Owner() {}
+        var gu: uniq Owner = uniq Owner { val = 3 };
+        fun main(): i32 { return gu.val; }
+        )";
+        auto air = VMBackend::run(alive_to_shutdown);
+        CHECK(air.success == true);
+        CHECK(air.value == 3);
+
+        // Global-weak sanity: a `weak` global does NOT block deletion of its
+        // owner (weak is uncounted/generational)...
+        const char* weak_no_block = R"(
+        struct Owner { val: i32; }
+        var gu: uniq Owner = uniq Owner { val = 5 };
+        var gw: weak Owner = gu;
+        fun main(): i32 { delete gu; return 0; }
+        )";
+        CHECK(VMBackend::run(weak_no_block).success == true);
+
+        // ...but dereferencing it after the owner dies still traps via WeakCheck
+        // (finding 7), not a silent dangling read — the check is type-driven, so
+        // it fires for a global weak just as for a local one.
+        const char* weak_dangling = R"(
+        struct Owner { val: i32; }
+        var gu: uniq Owner = uniq Owner { val = 5 };
+        var gw: weak Owner = gu;
+        fun main(): i32 { delete gu; return gw.val; }
+        )";
+        CHECK(VMBackend::run(weak_dangling).success == false);
     }
 
     // Finding 9a — a caught exception object is never freed. The catch variable

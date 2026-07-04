@@ -8,8 +8,8 @@ A 2026-07-04 audit of Roxy's constraint-reference / value-lifecycle model found
 **nine** soundness holes not covered by the (then all-passing) test suite. Each is
 encoded as a `doctest::should_fail()` regression case in
 `tests/e2e/test_lifetime_regressions.cpp` (suite **`E2E Lifetime Regressions`**),
-asserting the *correct* behavior so it fails until fixed. **Findings 1–7 are
-fixed** on this branch; **8 and 9 remain.**
+asserting the *correct* behavior so it fails until fixed. **Findings 1–8 are
+fixed** on this branch; **only 9 remains.**
 
 ## How the regression tests work
 
@@ -25,9 +25,10 @@ cd build && ninja roxy_tests
 ./roxy_tests.exe --test-suite="E2E Lifetime Regressions" -s --test-case="F8*"
 ```
 
-Findings 8/9 are VM-observed; F8 and F9b use bespoke in-test harnesses (see their
-bodies) because the naive repro aborts or can't be observed through the standard
-`VMBackend::run`.
+Finding 9 is VM-observed; F9b uses a bespoke in-test harness (see its body)
+because the naive repro can't be observed through the standard `VMBackend::run`.
+(F8 no longer needs its bespoke no-teardown harness — now that the fix is in,
+both sub-bugs are observable through `VMBackend::run`; see its body.)
 
 ## Status
 
@@ -40,89 +41,59 @@ bodies) because the naive repro aborts or can't be observed through the standard
 | 5 | `List<uniq>.copy()` shallow-copies owners → double free | fixed `4e0f3d1` |
 | 6 | `List<ref>.copy()` / `Map<_,ref>.values()` under-count borrows | fixed `4e0f3d1` |
 | 7 | `weak` deref emits no `WeakCheck` (silent dangling read) | fixed `3cc07a4` |
-| **8** | **global `ref`/`weak` uncounted; global `uniq` double-delete at shutdown** | **OPEN** |
+| 8 | global `ref`/`weak` uncounted; global `uniq` double-delete at shutdown | fixed (this branch) |
 | **9** | **caught-exception object and string temporaries never freed** | **OPEN** |
 
 All fixes verified on the VM and (where the backend can run it) the C backend, with
 no regression in the full compiler-free suite (`--test-case-exclude="*<C>*"
---test-suite-exclude="E2E C Backend"` → 1249 cases, 0 failed; the remaining 3
-failed *assertions* are the F8/F9a/F9b markers).
+--test-suite-exclude="E2E C Backend"` → 1249 cases, 0 failed; the remaining 2
+failed *assertions* are the F9a/F9b markers).
 
-Severity note: findings 1–2 were memory-unsafe (silent corruption / crash) and 3–7
-were loud traps or under-counts. **8 and 9 are the mildest class — memory-safe
-leaks** (plus, for 8, one loud double-delete tripwire). Neither corrupts memory.
+Severity note: findings 1–2 were memory-unsafe (silent corruption / crash) and 3–8
+were loud traps or under-counts (8 added a loud double-delete tripwire on the
+shutdown path). **9 is the mildest class — memory-safe leaks.** None corrupts
+memory.
 
 ---
 
-## Finding 8 — global `ref`/`weak` is uncounted (`E2E Lifetime Regressions` / `F8 ...`)
+## Finding 8 — FIXED — globals now participate in the constraint-reference model
 
-Two related sub-bugs around module-level globals.
+Two related sub-bugs around module-level globals, both fixed entirely in the
+shared init/shutdown IR (`IRBuilder::build_module_init` /
+`build_module_shutdown` / `gen_delete_stmt`), so **both backends** inherit the fix
+by lowering the same synthesized `__module_init` / `__module_shutdown` functions —
+no `c_emitter.cpp` changes were needed.
 
-**8a — a global `ref`/`weak` holds no count.** A global `var gr: ref T = gu;`
-borrowing a global `uniq T` never RefIncs the pointee, so `delete gu` does *not*
-trap while `gr` still borrows it — the borrow dangles.
+**8a — a global `ref` held no count.** `var gr: ref T = gu;` never RefInc'd the
+pointee, so `delete gu` didn't trap while `gr` borrowed it. **Fix:** in
+`build_module_init`, after the initializer is stored, a `ref` global increments its
+pointee (`emit_ref_borrow_inc`, skipping the handoff-source/adopt case like a `ref`
+local); in `build_module_shutdown`, a `ref` global RefDecs it. Because init runs
+before `main` and shutdown after, the count is held for the whole VM lifetime, and
+reverse-declaration shutdown order releases the borrow *before* the owner's
+`Delete`. `weak` globals stay uncounted (generational). `build_module_shutdown` now
+also generates when the only lifecycle-relevant global is a (copyable) `ref`.
 
-```roxy
-struct Owner { val: i32; }
-var gu: uniq Owner = uniq Owner { val = 3 };
-var gr: ref Owner = gu;
-fun main(): i32 { delete gu; return 0; }   // should trap; currently succeeds
-```
+**8b — deleting a `uniq` global double-freed at shutdown.** `delete gu` in `main`
+freed the object but left the slot pointing at it, so `__module_shutdown` freed it
+again (debug double-delete tripwire; real double-free in release). **Fix:**
+`gen_delete_stmt` now nulls a deleted `uniq` global's slot (`GlobalAddr` +
+`StorePtr` of `ConstNull`), and the shutdown `Delete` is already null-guarded on
+both backends, so it no-ops.
 
-**8b — deleting a `uniq` global double-frees at shutdown.** `delete gu` inside
-`main` frees the global, but the global isn't marked moved/deleted, so
-`__module_shutdown` deletes it again → the debug double-delete tripwire aborts
-(`interpreter.cpp:294`; in release it's a real double free). F8 avoids this by
-*not* calling `vm_destroy` (so it can observe 8a cleanly) — see the test body.
+**Tests:** `F8*` in `E2E Lifetime Regressions` (VM: the 8a trap, the 8b
+delete-once, and a global-`weak` sanity pair — no-block-on-delete + WeakCheck trap
+on dangling deref) and a `TEST_CASE_TEMPLATE` in `E2E Globals`
+("global ref is counted; deleted uniq global isn't double-freed") that runs the
+non-trap paths on **both** backends. The delete-while-borrowed *trap* stays VM-only
+(the C backend renders that trap as a raw abort, per the AOT-trap-reporting gap
+below).
 
-### Root cause
-
-Globals bypass the function-local ownership machinery entirely. They are not
-entered into `m_owned_locals` / `m_move_states`, get no create-time inc and no
-scope-exit dec, and `delete gu` is not tracked as a move.
-
-- `SemanticAnalyzer::resolve_global_var` (`semantic.cpp:651`) resolves a global's
-  type and initializer but applies **no** lifetime rule — a global `ref`/`weak`
-  is accepted with no counting obligation.
-- `IRBuilder::collect_globals` / `build_module_init` / `build_module_shutdown`
-  (`ir_builder.cpp:379` / `:421` / `:467`) synthesize storage, init, and teardown.
-  `build_module_init` evaluates initializers; `build_module_shutdown` destroys
-  noncopyable globals in reverse. Neither RefIncs a `ref` global's pointee nor
-  RefDecs it, and neither guards against a global already deleted in user code.
-- The VM drives `__module_shutdown` at `vm.cpp:147` (gated on `!vm->error`).
-
-See [globals.md](globals.md) for the globals model, and the note there that
-constraint references were expected to "just work" for globals — they don't for
-borrows.
-
-### Fix approach
-
-- **8a:** treat a global `ref`/`weak` like a `ref`/`weak` *field* of a
-  persistent struct. In `build_module_init`, after storing a `ref` global's
-  initializer, RefInc the pointee; in `build_module_shutdown`, RefDec it (weak
-  globals need no counting — they're generational, so only 8a's `ref` case
-  matters for the free-trap). Because init runs before `main` and shutdown after,
-  the count is held for the whole VM lifetime, so `delete gu` traps while `gr`
-  lives. Mirror the `ref`-field inc/dec sites (`emit_ref_inc`/`emit_ref_dec`,
-  `emit_field_cleanup`).
-- **8b:** make `delete <global>` mark the global as deleted so shutdown skips it.
-  Cleanest: null the global slot on an explicit `delete` (the shutdown `Delete` is
-  already null-guarded on both backends — cf. the coroutine `$$delete` and the
-  C-backend typed delete), so a nulled global is a safe no-op at teardown. The
-  write path is `gen_assign_local`'s global branch (`gen_global_read` /
-  `GlobalAddr` machinery) and `gen_delete_stmt`.
-
-### Gotchas
-
-- Multi-module globals already share one `__module_init`/`__module_shutdown` name
-  (a documented limitation in [globals.md](globals.md)); keep the fix single-module
-  and don't regress that.
-- Weak globals: `weak` needs no counting, but a global `weak` deref must still hit
-  the finding-7 `WeakCheck` (it does — that's type-driven in `gen_get_expr`, not
-  global-specific). Add a global-weak sanity case.
-- The C backend emits real C globals (`g_<name>`); the init/shutdown bracketing in
-  the generated `main()` must gain the same inc/dec (`c_emitter.cpp`
-  `emit_global_definitions` / the `main()` driver).
+> Note: the old handoff advice to mirror inc/dec in `c_emitter.cpp`'s `main()`
+> driver was unnecessary — the C backend emits `__module_init`/`__module_shutdown`
+> from their IR, so the RefInc/RefDec/null-store ops flow through automatically.
+> The [globals.md](globals.md) note that constraint references "just work" for
+> globals is now true for borrows too.
 
 ---
 

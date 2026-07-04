@@ -84,7 +84,16 @@ The VM drives them around the module lifecycle:
 - **Constraint references (lifetimes.md):** a `uniq` global is a heap owner like
   any other; its destructor runs once at shutdown. Calling a method on a `uniq`
   global counts the receiver for the call's duration (call-site receiver
-  counting), so a reentrant free traps.
+  counting), so a reentrant free traps. A **`ref` global** is a counted borrow
+  held for the whole VM lifetime: `build_module_init` RefIncs the pointee after
+  storing the initializer and `build_module_shutdown` RefDecs it (reverse order,
+  so before the owner's `Delete`), so deleting the borrowed owner traps while the
+  global still borrows it. A **`weak` global** stays uncounted (generational) and
+  never blocks a delete, but its deref is still `WeakCheck`-guarded. An explicit
+  `delete` of a `uniq` global nulls its slot (`gen_delete_stmt`) so the
+  null-guarded shutdown `Delete` doesn't double-free it. (These closed lifetime
+  audit finding 8; the fix is in the shared init/shutdown IR, so both backends
+  inherit it.)
 - **C backend (AOT):** each global becomes a zero-initialized C global
   (`static <CType> g_<name>;`); `GlobalAddr` lowers to `&g_<name>`. The generated
   `main()` calls `__module_init()` after the ctx is active and `__module_shutdown()`
@@ -111,7 +120,7 @@ The VM drives them around the module lifecycle:
 | File | Change |
 |------|--------|
 | `include/roxy/compiler/ssa_ir.hpp` | `IROp::GlobalAddr`, `GlobalData`, `IRGlobal`, `IRModule::globals` / `global_slot_count` |
-| `src/roxy/compiler/ir_builder.{hpp,cpp}` | `collect_globals`; `emit_global_addr` / `gen_global_read`; global read in `gen_identifier_expr`, global write in `gen_assign_local`; `build_module_init` / `build_module_shutdown`; `m_global_indices` |
+| `src/roxy/compiler/ir_builder.{hpp,cpp}` | `collect_globals`; `emit_global_addr` / `gen_global_read`; global read in `gen_identifier_expr`, global write in `gen_assign_local`; `build_module_init` / `build_module_shutdown` (incl. finding-8 `ref`-global RefInc/RefDec); `gen_delete_stmt` nulls a deleted `uniq` global's slot (finding 8b); `m_global_indices` |
 | `src/roxy/compiler/lowering.cpp` | `GlobalAddr` → `GLOBAL_ADDR`; `BCModule::global_slot_count`; liveness no-operand classification |
 | `src/roxy/compiler/compiler.cpp` | `link_modules` merges globals with offset re-basing + `GlobalAddr` rewrite |
 | `src/roxy/compiler/ssa_ir.cpp`, `ir_validator.cpp`, `ir_optimize.hpp` | `GlobalAddr` in printers / validator / `for_each_operand` |
