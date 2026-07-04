@@ -326,25 +326,64 @@ TEST_SUITE("E2E Lifetime Regressions") {
         CHECK(okr.stdout_output.find("ok") != String::npos);
     }
 
-    // Finding 7 — member access on a `weak T` emits no WeakCheck (the IR op
-    // exists and lowers, but the front-end never emits it), so dereferencing a
-    // dangling weak is a silent stale read rather than the documented trap.
-    // Correct: reading a field through a dead weak traps (there is no null to
-    // return for an `i32`). Current: it silently returns stale data and the
-    // program "succeeds".
-    TEST_CASE("F7 dereferencing a dangling weak is detected, not a silent stale read"
-              * doctest::should_fail()) {
-        const char* src = R"(
+    // Finding 7 — FIXED. Member access on a `weak T` emitted no WeakCheck (the IR
+    // op existed and lowered, but the front-end never emitted it), so
+    // dereferencing a dangling weak was a silent stale read. Fix: the IR builder
+    // emits a WeakCheck-and-trap before any weak dereference (field read/write,
+    // method call). This also surfaced (and fixed) a latent bug where a
+    // `[weak self]` capture stored a bare receiver pointer with a garbage
+    // generation instead of a proper WeakCreate snapshot.
+    TEST_CASE("F7 dereferencing a dangling weak is detected, not a silent stale read") {
+        // Read through a dead weak traps (there is no null to yield for an i32).
+        const char* dead_read = R"(
         struct Owner { val: i32; }
         fun main(): i32 {
             var u: uniq Owner = uniq Owner { val = 7 };
             var w: weak Owner = u;
             delete u;
-            return w.val;   // dead weak → should trap, not read stale memory
+            return w.val;
         }
         )";
-        auto r = VMBackend::run(src);
-        CHECK(r.success == false);
+        CHECK(VMBackend::run(dead_read).success == false);
+
+        // A live weak read still works and yields the real value.
+        const char* live_read = R"(
+        struct Owner { val: i32; }
+        fun main(): i32 {
+            var u: uniq Owner = uniq Owner { val = 42 };
+            var w: weak Owner = u;
+            return w.val;
+        }
+        )";
+        auto lr = VMBackend::run(live_read);
+        CHECK(lr.success == true);
+        CHECK(lr.value == 42);
+
+        // Write through a dead weak traps too (would land in freed memory).
+        const char* dead_write = R"(
+        struct Owner { val: i32; }
+        fun main(): i32 {
+            var u: uniq Owner = uniq Owner { val = 7 };
+            var w: weak Owner = u;
+            delete u;
+            w.val = 9;
+            return 0;
+        }
+        )";
+        CHECK(VMBackend::run(dead_write).success == false);
+
+        // Method call on a dead weak receiver traps.
+        const char* dead_method = R"(
+        struct Owner { val: i32; }
+        fun Owner.get(): i32 { return self.val; }
+        fun main(): i32 {
+            var u: uniq Owner = uniq Owner { val = 7 };
+            var w: weak Owner = u;
+            delete u;
+            return w.get();
+        }
+        )";
+        CHECK(VMBackend::run(dead_method).success == false);
     }
 
     // Finding 8 — a global `ref`/`weak` is uncounted (globals get no scope-exit

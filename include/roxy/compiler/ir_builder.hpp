@@ -517,6 +517,10 @@ private:
                                             const WhenClauseInfo& clause,
                                             ValueId new_disc);
 
+    // Before dereferencing a `weak T` value (field read/write, method call),
+    // validate the referent is still alive; trap on a dangling/recycled weak.
+    void emit_weak_deref_check(ValueId weak_val);
+
     // Emit cleanup (implicit destruction) for all live owned locals at or above min_scope_depth
     void emit_scope_cleanup(u32 min_scope_depth);
 

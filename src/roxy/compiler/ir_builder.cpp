@@ -3155,6 +3155,17 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
             emit_ref_inc(v);
         }
 
+        // A `weak` capture ([weak self], or a captured weak local) must store a
+        // proper {ptr, generation} snapshot into the env, not a bare receiver
+        // pointer — otherwise a later WeakCheck on the captured `weak self` reads
+        // a garbage generation. Snapshot via WeakCreate (a no-op if the source is
+        // already a weak). The heap check above ran first, so a stack receiver has
+        // already trapped by here. (The C backend also stores a proper weak: its
+        // Closure emitter only wraps a capture whose value isn't already weak.)
+        if (cap.type && cap.type->kind == TypeKind::Weak) {
+            v = maybe_wrap_weak(v, cap.source_expr->resolved_type, cap.type);
+        }
+
         capture_values.push_back(v);
 
         if (cap.mode == CaptureMode::Move) {
@@ -4095,6 +4106,12 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
     Type* obj_type = get_expr.object->resolved_type;
     Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
 
+    // Calling a method on a `weak T` receiver dereferences it for `self`; validate
+    // liveness first (trap on dangling) so the method doesn't run on freed memory.
+    if (obj_type && obj_type->kind == TypeKind::Weak) {
+        emit_weak_deref_check(obj);
+    }
+
     // Coro method call (resume/done — lowered functions): self is the coroutine object.
     if (struct_type && struct_type->is_coroutine()) {
         Span<ValueId> method_args = prepend_self(obj, args);
@@ -4507,6 +4524,21 @@ ValueId IRBuilder::gen_index_expr(Expr* expr) {
     return ValueId::invalid();
 }
 
+void IRBuilder::emit_weak_deref_check(ValueId weak_val) {
+    // A `weak T` is a {ptr, generation} snapshot; reading through it after the
+    // referent was freed (tombstoned) or its slot recycled would be a silent
+    // stale read. WeakCheck returns false in that case; trap on it (there is no
+    // null to yield for a field value — the model is "asserts when a dangling
+    // reference is used"). Mirrors the variant-field discriminant guard.
+    ValueId valid = emit_unary(IROp::WeakCheck, weak_val, m_types.bool_type());
+    IRBlock* ok_block = create_block("weak_ok");
+    IRBlock* dead_block = create_block("weak_dead");
+    finish_block_branch(valid, ok_block->id, dead_block->id);
+    set_current_block(dead_block);
+    finish_block_unreachable();
+    set_current_block(ok_block);
+}
+
 ValueId IRBuilder::gen_get_expr(Expr* expr) {
     GetExpr& get_expr = expr->get;
 
@@ -4515,6 +4547,11 @@ ValueId IRBuilder::gen_get_expr(Expr* expr) {
     // Get the struct type from the object
     Type* obj_type = get_expr.object->resolved_type;
     Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
+
+    // Dereferencing a `weak T` must validate liveness first (trap on dangling).
+    if (obj_type && obj_type->kind == TypeKind::Weak) {
+        emit_weak_deref_check(obj);
+    }
 
     u32 slot_offset = 0;
     u32 slot_count = 1;
@@ -4848,6 +4885,12 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
     // Get the struct type from the object
     Type* obj_type = get_expr.object->resolved_type;
     Type* struct_type = obj_type ? obj_type->base_type() : nullptr;
+
+    // Writing through a `weak T` must validate liveness first (trap on dangling),
+    // else the store lands in freed/recycled memory.
+    if (obj_type && obj_type->kind == TypeKind::Weak) {
+        emit_weak_deref_check(obj);
+    }
 
     u32 slot_offset = 0;
     u32 slot_count = 1;
