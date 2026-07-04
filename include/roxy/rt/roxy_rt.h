@@ -152,6 +152,13 @@ int roxy_exception_pending(void);
 // The pending exception's type_id (0 if none). Does not clear the pending state.
 uint32_t roxy_exception_type_id(void);
 
+// The pending exception object (nullptr if none), without clearing it. Used by
+// dispatch-path cleanup to skip freeing the exception currently being unwound —
+// a re-throw (`throw e`) routes through the enclosing dispatch while `e` is
+// pending, and the eventual handler frees it exactly once (finding 9a). Mirrors
+// the VM's in-flight guard in object_free.
+void* roxy_exception_current(void);
+
 // Return the pending exception object and clear the pending state (called when a
 // handler catches it, or by the finally re-throw landing pad before re-arming).
 void* roxy_exception_take(void);

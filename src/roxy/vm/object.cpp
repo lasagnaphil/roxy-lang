@@ -97,6 +97,16 @@ void object_free(RoxyVM* vm, void* data) {
     if (data == nullptr) return;
     assert(vm != nullptr && vm->allocator != nullptr);
 
+    // In-flight guard (finding 9a): a caught exception is registered as an owned
+    // local of its catch scope so every exit frees it, but while an exception is
+    // being unwound its object belongs to the unwind machinery, not to any scope.
+    // A cleanup record firing during unwind (a re-throw `throw e`, or a nested
+    // throw while this one is in flight) must therefore NOT free it — the outer
+    // handler (or the unhandled/double-throw paths, which null in_flight before
+    // their own free) reclaims it exactly once. Skipping here is always safe: the
+    // in-flight object is never orphaned.
+    if (vm && data == vm->in_flight_exception) return;
+
     ObjectHeader* header = get_header_from_data(data);
 
     // Free-trap (constraint-reference model): refuse to free an object that

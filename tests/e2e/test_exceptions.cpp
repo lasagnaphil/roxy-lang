@@ -1,6 +1,8 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "roxy/vm/vm.hpp"
+#include "roxy/rt/slab_allocator.hpp"
 
 using namespace rx;
 
@@ -1418,6 +1420,134 @@ TEST_SUITE("E2E Exceptions") {
         auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.value == 99);
+    }
+
+    // ─── Exception object lifecycle (lifetime audit finding 9a) ───
+    // A caught exception is heap-allocated by `throw`; the catch scope owns it and
+    // must free it exactly once on every exit (fall-through, return, break,
+    // continue, re-throw, and a new throw unwinding out of the catch). These
+    // assert dtor ordering / count to pin that down on both backends.
+
+    TEST_CASE_TEMPLATE("caught exception runs its destructor exactly once", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct E { code: i32; }
+        fun E.message(): string for Exception { return "boom"; }
+        fun delete E() { print("~E"); }
+        fun risky() { throw E { code = 1 }; }
+        fun main(): i32 {
+            try { risky(); } catch (e: E) { print("caught"); }
+            print("done");
+            return 0;
+        }
+        )";
+        auto r = Backend::run(source);
+        CHECK(r.success == true);
+        CHECK(r.stdout_output == "caught\n~E\ndone\n");
+    }
+
+    TEST_CASE_TEMPLATE("re-throwing a caught exception hands it off (dtor once)", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct E { code: i32; }
+        fun E.message(): string for Exception { return "boom"; }
+        fun delete E() { print("~E"); }
+        fun risky() { throw E { code = 1 }; }
+        fun main(): i32 {
+            try {
+                try { risky(); } catch (e: E) { print("inner"); throw e; }
+            } catch (e: E) { print("outer"); }
+            print("done");
+            return 0;
+        }
+        )";
+        auto r = Backend::run(source);
+        CHECK(r.success == true);
+        // The re-thrown object belongs to the unwind; it is freed once, by the
+        // outer handler — NOT during the inner catch's cleanup.
+        CHECK(r.stdout_output == "inner\nouter\n~E\ndone\n");
+    }
+
+    TEST_CASE_TEMPLATE("throwing a new exception from a catch frees the old one", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct E { id: i32; }
+        fun E.message(): string for Exception { return "boom"; }
+        fun delete E() { print(f"~E{self.id}"); }
+        fun risky() { throw E { id = 1 }; }
+        fun main(): i32 {
+            try {
+                try { risky(); } catch (e: E) { print("inner"); throw E { id = 2 }; }
+            } catch (e: E) { print(f"outer{e.id}"); }
+            print("done");
+            return 0;
+        }
+        )";
+        auto r = Backend::run(source);
+        CHECK(r.success == true);
+        // E1 is freed as E2 unwinds past the inner catch; E2 is freed by the outer.
+        CHECK(r.stdout_output == "inner\n~E1\nouter2\n~E2\ndone\n");
+    }
+
+    TEST_CASE_TEMPLATE("returning from a catch frees the exception", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct E { code: i32; }
+        fun E.message(): string for Exception { return "boom"; }
+        fun delete E() { print("~E"); }
+        fun risky() { throw E { code = 1 }; }
+        fun helper(): i32 {
+            try { risky(); } catch (e: E) { print("caught"); return 7; }
+            return 0;
+        }
+        fun main(): i32 { print(f"x={helper()}"); return 0; }
+        )";
+        auto r = Backend::run(source);
+        CHECK(r.success == true);
+        CHECK(r.stdout_output == "caught\n~E\nx=7\n");
+    }
+
+    TEST_CASE_TEMPLATE("finally runs after the caught exception is freed", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct E { code: i32; }
+        fun E.message(): string for Exception { return "boom"; }
+        fun delete E() { print("~E"); }
+        fun risky() { throw E { code = 1 }; }
+        fun main(): i32 {
+            try { risky(); } catch (e: E) { print("caught"); } finally { print("fin"); }
+            return 0;
+        }
+        )";
+        auto r = Backend::run(source);
+        CHECK(r.success == true);
+        CHECK(r.stdout_output == "caught\n~E\nfin\n");
+    }
+
+    // A catch-all (`catch (e)`, opaque `ExceptionRef`) has no compile-time concrete
+    // type, so the exception is freed type-erased — the memory is reclaimed (the
+    // leak is gone) even though the caught type's `fun delete` does not run. Verify
+    // reclamation via the slab counters after a bounded throw/catch loop. VM-only:
+    // needs the slab allocator's alloc/tombstone counters.
+    TEST_CASE("catch-all reclaims the caught exception's memory") {
+        const char* source = R"(
+        struct E { code: i32; }
+        fun E.message(): string for Exception { return "boom"; }
+        fun risky() { throw E { code = 1 }; }
+        fun main(): i32 {
+            var i: i32 = 0;
+            while (i < 100) { try { risky(); } catch (e) { } i = i + 1; }
+            return 0;
+        }
+        )";
+        BumpAllocator allocator(1 << 20);
+        BCModule* module = compile(allocator, source);
+        REQUIRE(module != nullptr);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
+        REQUIRE(vm_call(&vm, StringView("main", 4), {}) == true);
+        // 100 exceptions thrown + caught; all reclaimed → only a handful of live
+        // objects (interned strings), not ~100 leaked exception structs.
+        u64 live = vm.allocator->total_allocated - vm.allocator->total_tombstoned;
+        CHECK(live < 30);
+        vm_destroy(&vm);
+        delete module;
     }
 
 }  // TEST_SUITE("E2E Exceptions")

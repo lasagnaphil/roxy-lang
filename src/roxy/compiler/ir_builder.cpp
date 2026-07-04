@@ -3028,6 +3028,26 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
         push_scope();
         define_local(clause.var_name, exc_param.value, exc_param.type);
 
+        // The caught exception object is heap-allocated (gen_throw_stmt) and, on
+        // the handled path, the unwinder hands its pointer to this catch without
+        // freeing it — so the catch scope owns it and must free it on every exit
+        // (finding 9a). Register it as an owned local so the ordinary scope-cleanup
+        // machinery frees it exactly once on normal fall-through, return, break,
+        // continue, and a *new* throw unwinding out of the catch. A re-throw
+        // (`throw e`, or a nested `throw` while this is in flight) is handled by the
+        // in-flight guard in object_free, which refuses to free the object the
+        // unwind machinery still owns — so no move-state bookkeeping is needed here.
+        // A typed catch frees as `uniq E` (runs E's destructor); a catch-all has no
+        // compile-time concrete type, so it frees the memory type-erased.
+        Type* owned_exc_type = clause.resolved_type
+            ? m_types.uniq_type(clause.resolved_type)
+            : m_types.exception_ref_type();
+        u32 catch_scope_depth = static_cast<u32>(m_local_scopes.size());
+        BlockId catch_owned_block = m_current_block ? m_current_block->id : BlockId::invalid();
+        m_owned_locals.push_back({clause.var_name, owned_exc_type, catch_scope_depth,
+                                  false, false, catch_owned_block, exc_param.value,
+                                  OwnedKind::Owned});
+
         gen_stmt(clause.body);
         pop_scope();
 
@@ -6078,6 +6098,22 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
         // Narrow the exception cleanup record to end at this RefDec so the
         // unwind path doesn't double-decrement after the normal-path RefDec
         // (mirrors the owned-local Nullify below).
+        if (info.initial_value.is_valid()) {
+            IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
+            if (nullify) nullify->unary = info.initial_value;
+        }
+        info.is_moved = true;
+        return;
+    }
+
+    // A caught exception bound to a catch-all (`ExceptionRef`) has no compile-time
+    // concrete type, so free it type-erased via a raw object free (void-typed
+    // Delete → DEL_OBJ). This reclaims the memory (finding 9a); the caught type's
+    // `fun delete` does not run — a type-erased free can't reach a bytecode
+    // destructor, the same limitation as the unhandled-exception path.
+    if (info.type && info.type->kind == TypeKind::ExceptionRef) {
+        IRInst* inst = emit_inst(IROp::Delete, m_types.void_type());
+        if (inst) inst->unary = current_value;
         if (info.initial_value.is_valid()) {
             IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
             if (nullify) nullify->unary = info.initial_value;

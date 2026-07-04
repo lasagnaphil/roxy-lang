@@ -1,15 +1,16 @@
 # Lifetime Audit — Remaining Work (handoff)
 
 > **Status:** working handoff note for the `lifetime-regression-tests` branch.
-> Delete this file once findings 8–9 are fixed and the regression suite is folded
-> into the permanent suites. See [lifetimes.md](lifetimes.md) for the model.
+> Delete this file once finding 9b is fixed (9a is done) and the regression suite
+> is folded into the permanent suites. See [lifetimes.md](lifetimes.md) for the
+> model.
 
 A 2026-07-04 audit of Roxy's constraint-reference / value-lifecycle model found
 **nine** soundness holes not covered by the (then all-passing) test suite. Each is
 encoded as a `doctest::should_fail()` regression case in
 `tests/e2e/test_lifetime_regressions.cpp` (suite **`E2E Lifetime Regressions`**),
-asserting the *correct* behavior so it fails until fixed. **Findings 1–8 are
-fixed** on this branch; **only 9 remains.**
+asserting the *correct* behavior so it fails until fixed. **Findings 1–8 and 9a
+are fixed** on this branch; **only 9b (string temporaries) remains.**
 
 ## How the regression tests work
 
@@ -42,12 +43,13 @@ both sub-bugs are observable through `VMBackend::run`; see its body.)
 | 6 | `List<ref>.copy()` / `Map<_,ref>.values()` under-count borrows | fixed `4e0f3d1` |
 | 7 | `weak` deref emits no `WeakCheck` (silent dangling read) | fixed `3cc07a4` |
 | 8 | global `ref`/`weak` uncounted; global `uniq` double-delete at shutdown | fixed (this branch) |
-| **9** | **caught-exception object and string temporaries never freed** | **OPEN** |
+| 9a | caught-exception object never freed | fixed (this branch) |
+| **9b** | **string temporaries never freed** | **OPEN (design decision)** |
 
 All fixes verified on the VM and (where the backend can run it) the C backend, with
 no regression in the full compiler-free suite (`--test-case-exclude="*<C>*"
---test-suite-exclude="E2E C Backend"` → 1249 cases, 0 failed; the remaining 2
-failed *assertions* are the F9a/F9b markers).
+--test-suite-exclude="E2E C Backend"` → 1256 cases, 0 failed; the remaining 1
+failed *assertion* is the F9b marker).
 
 Severity note: findings 1–2 were memory-unsafe (silent corruption / crash) and 3–8
 were loud traps or under-counts (8 added a loud double-delete tripwire on the
@@ -97,60 +99,33 @@ below).
 
 ---
 
-## Finding 9a — a caught exception object is never freed (`... / F9a ...`)
+## Finding 9a — FIXED — a caught exception object is now freed
 
-`throw` heap-allocates the exception; after a `catch` handler completes normally,
-nothing frees it → one leak per caught exception (bounded by VM teardown).
+`throw` heap-allocates the exception and the handled path handed the raw pointer to
+the catch without freeing it → one leak per caught exception. **Fix:** the caught
+exception is registered as an **owned local of the catch scope** (`gen_try_stmt`),
+so the ordinary scope-cleanup machinery frees it exactly once on every catch exit
+(fall-through, `return`, `break`, `continue`, and a *new* throw unwinding out of the
+catch). A typed `catch (e: E)` frees it as `uniq E` (runs `E`'s destructor); a
+catch-all `catch (e)` frees the memory type-erased via `emit_implicit_destroy`'s
+`ExceptionRef` path (the caught type's `fun delete` does not run — same as the
+unhandled path).
 
-```roxy
-struct E { code: i32; }
-fun E.message(): string for Exception { return "boom"; }
-fun delete E() { print("E dtor"); }              // never runs today
-fun main(): i32 {
-    try { throw E { code = 1 }; } catch (e: E) { print("caught"); }
-    return 0;                                     // E should be freed here
-}
-```
+The re-throw / finally hazards the audit flagged are handled by an **in-flight
+guard** rather than move-state bookkeeping: a re-throw (`throw e`, or a nested throw
+while one is in flight) hands the object to the unwind machinery, and the free paths
+refuse to free the in-flight object — VM: `object_free` / `delete_value` skip
+`vm->in_flight_exception`; C backend: `emit_cleanup_records`' dispatch delete skips
+`roxy_exception_current()`. So the catch scope's cleanup record firing during a
+re-throw's unwind is a no-op for the re-thrown object; the eventual handler frees it
+once. This makes `throw e`, `throw new` (frees old, unwinds new), conditional
+re-throw, `finally`, and catch-all all correct with no per-path bookkeeping.
 
-F9a asserts the exception's destructor runs (`stdout` contains `"E dtor"`);
-currently it does not.
-
-### Root cause
-
-- `throw` heap-allocates the exception struct: `IRBuilder::gen_throw_stmt`
-  (`ir_builder.cpp:2749`) does `emit_new` + struct-copy + `Throw ptr`.
-- The catch variable is bound as a **non-owning `ref`** (see `gen_try_stmt`,
-  `ir_builder.cpp:2833`, and the exception-param typing), deliberately *not*
-  counted — [lifetimes.md](lifetimes.md) "Applying the model → Coroutines" notes
-  the catch param is excluded from ref counting.
-- On the handled path, the unwinder only stores the pointer into the handler
-  register and clears the in-flight slot — no free: `interpreter.cpp:2201–2208`.
-  A free happens *only* on the unhandled path (`interpreter.cpp:2225`) and the
-  double-throw path (`:2159`). The C backend mirrors this: `roxy_exception_take`
-  (`roxy_rt.cpp` around `:67`) hands the raw pointer to the handler and never
-  frees.
-
-### Fix approach
-
-Free the caught exception object when the catch clause finishes — on **every**
-exit from the catch body (normal fall-through, `return`, `break`, `continue`, and
-a re-throw from within the catch). Treat the caught exception like a scope-owned
-value of the catch block: emit a typed `Delete` of the exception pointer at catch
-exits, using the concrete caught type (or a type-erased free for the catch-all
-`ExceptionRef`). Watch for:
-
-- **Re-throw / nested throw inside a catch:** if the catch body throws, the
-  original exception must still be freed (or its ownership handed to the new
-  unwind) exactly once — don't double-free or leak on that path.
-- **`finally`:** `finally` is realized by duplication per exit path; the free must
-  sit on the catch path, not the finally, or it duplicates.
-- **Catch-all (`ExceptionRef`):** no concrete type — use a type-erased free
-  (`emit_typed_delete`'s type-erased path / `roxy_free` after running the header's
-  `type_id`-driven destructor, as the unhandled path already does).
-- The C backend's checked-return model (per-try `__dispatch_<id>` labels) needs the
-  matching free after a caught dispatch; reuse `emit_typed_delete`.
-
-This is the trickier of the two — get the re-throw and finally paths right.
+**Verified on both backends.** VM: F9a (the marker) plus `E2E Exceptions`
+lifecycle cases (dtor-once, re-throw hand-off, new-throw, return, finally,
+catch-all reclamation via slab counters). C backend: the same `E2E Exceptions`
+`TEST_CASE_TEMPLATE`s. See [exceptions.md](exceptions.md) "Exception object
+lifetime".
 
 ## Finding 9b — string temporaries are never reclaimed (`... / F9b ...`)
 

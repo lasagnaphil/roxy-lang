@@ -2376,7 +2376,18 @@ void CEmitter::emit_cleanup_records(const IRFunction* func, i32 body_group, Stri
         } else {
             bool is_heap = ci.type && (ci.type->kind == TypeKind::Uniq || ci.type->is_list()
                 || ci.type->is_map() || ci.type->is_coroutine());
+            // In-flight guard (finding 9a): a caught exception is an owned local of
+            // its catch scope, so a re-throw (`throw e`) routes through this
+            // dispatch while `e` is still pending. Freeing it here would destroy
+            // the object the unwind still owns (double-free / dtor-twice once the
+            // outer handler frees it). Skip the delete for the pending object; the
+            // eventual handler frees it exactly once. A ref/unpin never aliases the
+            // pending exception, so only owned-value deletes need the guard. Mirrors
+            // the VM's object_free / delete_value in-flight guard.
+            out.append("    if ((void*)"); out.append(ve);
+            out.append(" != roxy_exception_current()) {\n");
             emit_typed_delete(ci.type, StringView(ve.data(), ve.size()), is_heap, out);
+            out.append("    }\n");
         }
         out.append("    "); out.append(ve); out.append(" = 0;\n");
         out.append("    }\n");

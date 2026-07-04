@@ -283,6 +283,15 @@ static void delete_value(RoxyVM* vm, void* ptr,
     // interpreter loop.
     if (vm->error) return;
 
+    // In-flight guard (finding 9a): a caught exception is registered as an owned
+    // local, so its catch scope's cleanup record fires during a re-throw's unwind.
+    // The object being unwound belongs to the unwind machinery — skip it entirely
+    // (not just its free in object_free) so its destructor doesn't run mid-flight;
+    // the eventual handler frees it once. Not triggered on the normal path, where
+    // in_flight_exception is null. Nested elements can't alias in_flight, so this
+    // only shortcuts the top-level exception object.
+    if (vm && ptr == vm->in_flight_exception) return;
+
     // Double-delete tripwire (debug). A heap object (`free_obj`) reached here
     // must still be alive; a tombstoned slot means it was already freed — catch
     // it *before* re-running the destructor on stale data. This fires earlier

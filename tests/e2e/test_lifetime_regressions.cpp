@@ -472,13 +472,17 @@ TEST_SUITE("E2E Lifetime Regressions") {
         CHECK(VMBackend::run(weak_dangling).success == false);
     }
 
-    // Finding 9a — a caught exception object is never freed. The catch variable
-    // is a non-owning `ref`, and the handled path in the unwinder places the
-    // pointer in a register without freeing it. Correct: after the handler
-    // completes, the exception is freed and its destructor runs. Current: it
-    // leaks (dtor never runs).
-    TEST_CASE("F9a a caught exception object is freed after the handler"
-              * doctest::should_fail()) {
+    // Finding 9a — FIXED. A caught exception object used to leak: the catch
+    // variable is a non-owning `ref`, and the handled path in the unwinder placed
+    // the pointer in a register without ever freeing it. Fix: the caught exception
+    // is registered as an owned local of its catch scope, so the ordinary
+    // scope-cleanup machinery frees it on every exit (fall-through, return, break,
+    // continue, and a *new* throw unwinding out of the catch); a re-throw hands it
+    // off, guarded by the in-flight check in object_free / delete_value (VM) and
+    // roxy_exception_current() (C backend), so it is freed exactly once. Richer
+    // dtor-ordering coverage — re-throw, new-throw-in-catch, return/finally,
+    // catch-all reclamation — lives in the `E2E Exceptions` suite on both backends.
+    TEST_CASE("F9a a caught exception object is freed after the handler") {
         const char* src = R"(
         struct E { code: i32; }
         fun E.message(): string for Exception { return "boom"; }

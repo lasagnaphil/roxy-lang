@@ -322,6 +322,14 @@ runs to completion or is destroyed mid-iteration. Only *parameter* `ref` fields 
 decremented in `$$delete`; a catch param `e` (a `ref` field set by exception
 dispatch, not acquired at creation) is deliberately excluded.
 
+### Caught exceptions
+
+A thrown exception is a heap object the catch does not *borrow* but *owns*: it is
+registered as an owned local of the catch scope, so scope cleanup frees it once on
+every exit, and a re-throw hands it off (guarded against the in-flight exception in
+the free path) rather than freeing it. This is ownership/RAII, not counting — see
+[exceptions.md](exceptions.md) "Exception object lifetime" for the full model.
+
 ### Containers are move-only
 
 A `List<T>` / `Map<K,V>` owns a heap buffer, so — like `uniq` — it is **noncopyable

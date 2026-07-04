@@ -97,6 +97,31 @@ it lowers the same IR (handlers, `finally` duplication, `cleanup_info`) with a
 null-guarded per-frame cleanup reusing `emit_typed_delete`. See
 `docs/internals/c-backend.md` ("Exceptions").
 
+## Exception object lifetime
+
+`throw` heap-allocates the exception (a struct literal is implicitly boxed), and
+the handled path hands the raw pointer to the catch without freeing it. To reclaim
+it, the IR builder registers the **caught exception as an owned local of the catch
+scope** (`gen_try_stmt`), so the ordinary scope-cleanup machinery frees it exactly
+once on **every** catch exit: normal fall-through, `return`, `break`, `continue`,
+and a *new* `throw` unwinding out of the catch. A typed `catch (e: E)` frees it as
+`uniq E` (running `E`'s destructor); a catch-all `catch (e)` has no compile-time
+concrete type, so it frees the memory **type-erased** — the caught type's
+`fun delete` does not run (the same limitation as the unhandled-exception path,
+which a type-erased free can't reach a bytecode destructor through).
+
+**Re-throw is a hand-off, not a free.** A `throw e` (or a nested `throw` while an
+exception is in flight) routes the object to the unwind machinery, which owns it
+until the *next* handler frees it. Rather than track this with move state, the free
+paths carry an **in-flight guard**: the VM's `object_free` / `delete_value` skip
+`vm->in_flight_exception`, and the C backend's dispatch cleanup skips
+`roxy_exception_current()`. So a catch scope's cleanup record firing during a
+re-throw's unwind is a no-op for the object being re-thrown; the eventual handler
+frees it once. This makes `throw e`, `throw new` (frees the old, unwinds the new),
+and conditional re-throw all correct without per-path bookkeeping. (Lifetime audit
+finding 9a; tests in the `E2E Exceptions` suite assert dtor ordering/count on both
+backends.)
+
 ## RPO Block Reordering
 
 Catch (handler) blocks are not reachable through normal control flow — they're entered only via exception dispatch. The RPO reordering pass therefore seeds its DFS with the handler block IDs in addition to the entry block, so handler blocks are preserved and correctly ordered; the handler block IDs in the metadata are remapped after reordering.
@@ -122,11 +147,14 @@ Catch (handler) blocks are not reachable through normal control flow — they're
 | `include/roxy/compiler/types.hpp` | `TypeKind::ExceptionRef` |
 | `src/roxy/compiler/semantic.cpp` | Exception trait registration, throw/try analysis |
 | `include/roxy/compiler/ssa_ir.hpp` | `IROp::Throw`, `IRExceptionHandler`, `IRFinallyInfo` |
-| `src/roxy/compiler/ir_builder.cpp` | `gen_throw_stmt()`, `gen_try_stmt()` |
+| `src/roxy/compiler/ir_builder.cpp` | `gen_throw_stmt()`, `gen_try_stmt()` (registers the caught exception as a catch-scope owned local — finding 9a); `emit_implicit_destroy` (catch-all `ExceptionRef` type-erased free) |
 | `src/roxy/compiler/ssa_ir.cpp` | RPO reordering with handler block seeding |
 | `include/roxy/vm/bytecode.hpp` | `THROW` opcode, `BCExceptionHandler` |
 | `src/roxy/compiler/lowering.cpp` | Throw lowering, handler table PC translation |
 | `include/roxy/vm/vm.hpp` | `in_flight_exception`, `in_flight_message_fn_idx` |
 | `src/roxy/vm/interpreter.cpp` | THROW handler, unwinding loop |
+| `src/roxy/vm/object.cpp` | `object_free` in-flight guard (skip the exception under unwind — finding 9a) |
+| `src/roxy/compiler/c_emitter.cpp` | `emit_cleanup_records` in-flight guard (`roxy_exception_current()`) |
+| `src/roxy/rt/roxy_rt.{h,cpp}` | `roxy_exception_current()` (C-backend in-flight accessor) |
 | `src/roxy/compiler/ir_validator.cpp` | Throw/handler validation |
-| `tests/e2e/test_exceptions.cpp` | E2E test suite (15 tests) |
+| `tests/e2e/test_exceptions.cpp` | E2E test suite (incl. exception-lifecycle cases: dtor once, re-throw hand-off, new-throw, return/finally, catch-all reclamation) |

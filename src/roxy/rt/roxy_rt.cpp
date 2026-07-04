@@ -64,6 +64,10 @@ uint32_t roxy_exception_type_id(void) {
     return tls_pending_type_id;
 }
 
+void* roxy_exception_current(void) {
+    return tls_pending_exc;
+}
+
 void* roxy_exception_take(void) {
     void* e = tls_pending_exc;
     tls_pending_exc = nullptr;
