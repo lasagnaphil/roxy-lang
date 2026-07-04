@@ -312,22 +312,43 @@ static roxy_string_header* string_hdr(void* s) {
     return static_cast<roxy_string_header*>(s);
 }
 
-void* roxy_string_from_literal(const char* data, uint32_t length) {
-    // Probe the active context's intern table. Hits dedup the hot cases —
-    // LOAD_CONST of the same literal across many call sites, f-string
-    // numeric conversions, slices that recur. Strings are immutable
-    // copyable values in Roxy, so sharing a pointer is safe.
+void roxy_string_retain(void* s) {
+    if (!s) return;
+    roxy_object_header* h = roxy_get_header(s);
+    if (h->ref_count != ROXY_STR_IMMORTAL) h->ref_count++;
+}
+
+void roxy_string_release(void* s) {
+    if (!s) return;
+    roxy_object_header* h = roxy_get_header(s);
+    if (h->ref_count == ROXY_STR_IMMORTAL) return;
+    // Defensive: a balanced scheme never releases at 0. Guard so a stray release
+    // can't wrap to UINT32_MAX (== IMMORTAL) and silently immortalize the object.
+    if (h->ref_count == 0) return;
+    if (--h->ref_count == 0) roxy_free(s);
+}
+
+// Shared allocation core for both string constructors. `immortal` selects the
+// literal (interned, IMMORTAL) vs dynamic (fresh, owned, count 1) policy.
+static void* roxy_string_alloc_impl(const char* data, uint32_t length, bool immortal) {
+    // Literals are interned so LOAD_CONST of the same constant across call sites
+    // shares one immortal object. Dynamic strings are NOT interned — they are
+    // uniquely owned and reference-counted, so freeing one never has to evict an
+    // intern entry (finding 9b).
     roxy_ctx* ctx = roxy_get_ctx();
-    void* intern = ctx ? ctx->string_intern : nullptr;
+    void* intern = immortal && ctx ? ctx->string_intern : nullptr;
     if (intern && data && length > 0) {
         if (void* existing = roxy_string_intern_lookup(intern, data, length)) {
-            return existing;
+            return existing;  // already immortal
         }
     }
 
     uint32_t data_size = static_cast<uint32_t>(sizeof(roxy_string_header)) + length + 1;
     void* s = roxy_alloc(data_size, ROXY_TYPEID_STRING);
     if (!s) return nullptr;
+
+    // roxy_alloc zero-inits ref_count; set the owner count / immortal sentinel.
+    roxy_get_header(s)->ref_count = immortal ? ROXY_STR_IMMORTAL : 1u;
 
     auto* hdr = string_hdr(s);
     hdr->length = length;
@@ -343,12 +364,20 @@ void* roxy_string_from_literal(const char* data, uint32_t length) {
     // Low 32 bits of XXH3_64 — matches the VM's vm/string.cpp behaviour.
     hdr->hash = static_cast<uint32_t>(XXH3_64bits(chars, length));
 
-    // Register the new string in the intern table. The key's char range
+    // Register the new literal in the intern table. The key's char range
     // is the object's own chars (stable for the object's lifetime).
     if (intern && data && length > 0) {
         roxy_string_intern_insert(intern, chars, length, s);
     }
     return s;
+}
+
+void* roxy_string_from_literal(const char* data, uint32_t length) {
+    return roxy_string_alloc_impl(data, length, /*immortal=*/true);
+}
+
+void* roxy_string_new_owned(const char* data, uint32_t length) {
+    return roxy_string_alloc_impl(data, length, /*immortal=*/false);
 }
 
 char* roxy_string_chars(void* s) {
@@ -389,7 +418,7 @@ void* roxy_string_concat(void* a, void* b) {
     memcpy(buf + len_a, roxy_string_chars(b), len_b);
     buf[total] = '\0';
 
-    void* result = roxy_string_from_literal(buf, static_cast<uint32_t>(total));
+    void* result = roxy_string_new_owned(buf, static_cast<uint32_t>(total));
 
     if (buf != stack_buf) free(buf);
     return result;
@@ -427,7 +456,7 @@ void* roxy_string_substr(void* s, int32_t start, int32_t len) {
            static_cast<uint32_t>(len) <= str_len - static_cast<uint32_t>(start) &&
            "str_substr: index out of bounds");
     const char* chars = roxy_string_chars(s);
-    return roxy_string_from_literal(chars + start, static_cast<uint32_t>(len));
+    return roxy_string_new_owned(chars + start, static_cast<uint32_t>(len));
 }
 
 double roxy_string_to_f64(void* s) {
@@ -437,7 +466,7 @@ double roxy_string_to_f64(void* s) {
 
 void* roxy_string_from_code(int32_t code) {
     char ch = static_cast<char>(code);
-    return roxy_string_from_literal(&ch, 1);
+    return roxy_string_new_owned(&ch, 1);
 }
 
 double roxy_clock(void) {
@@ -459,7 +488,7 @@ void* roxy_read_file(void* path) {
     assert(buffer && "read_file: allocation failed");
     size_t bytes_read = fread(buffer, 1, static_cast<size_t>(size), file);
     fclose(file);
-    void* result = roxy_string_from_literal(buffer, static_cast<uint32_t>(bytes_read));
+    void* result = roxy_string_new_owned(buffer, static_cast<uint32_t>(bytes_read));
     free(buffer);
     return result;
 }
@@ -473,29 +502,34 @@ void* roxy_bool_to_string(bool val) {
 void* roxy_i32_to_string(int32_t val) {
     char buf[32];
     int len = snprintf(buf, sizeof(buf), "%d", val);
-    return roxy_string_from_literal(buf, static_cast<uint32_t>(len));
+    return roxy_string_new_owned(buf, static_cast<uint32_t>(len));
 }
 
 void* roxy_i64_to_string(int64_t val) {
     char buf[32];
     int len = snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(val));
-    return roxy_string_from_literal(buf, static_cast<uint32_t>(len));
+    return roxy_string_new_owned(buf, static_cast<uint32_t>(len));
 }
 
 void* roxy_f32_to_string(float val) {
     char buf[48];
     int len = snprintf(buf, sizeof(buf), "%g", static_cast<double>(val));
-    return roxy_string_from_literal(buf, static_cast<uint32_t>(len));
+    return roxy_string_new_owned(buf, static_cast<uint32_t>(len));
 }
 
 void* roxy_f64_to_string(double val) {
     char buf[48];
     int len = snprintf(buf, sizeof(buf), "%g", val);
-    return roxy_string_from_literal(buf, static_cast<uint32_t>(len));
+    return roxy_string_new_owned(buf, static_cast<uint32_t>(len));
 }
 
 void* roxy_string_to_string(void* val) {
-    return val;  // Identity — strings are already strings
+    // Identity — but return an independent OWNED reference so a caller that
+    // treats every f-string part as an owned temp (and releases it) doesn't
+    // decrement the argument the caller still holds (finding 9b). Retain is a
+    // no-op on an immortal literal.
+    roxy_string_retain(val);
+    return val;
 }
 
 // ===== List Operations =====

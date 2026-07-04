@@ -233,8 +233,29 @@ typedef struct {
 
 // ===== String Operations =====
 
-// Allocate a new string from a C literal (copies data).
+// Strings are reference-counted (lifetime audit finding 9b). `ref_count` in the
+// object header is repurposed as an OWNER count (strings are never `ref`-borrowed,
+// so there is no clash with the borrow free-trap): a string copy retains, a drop
+// releases, and the last release frees. Pooled string LITERALS are IMMORTAL — the
+// sentinel below — because LOAD_CONST returns a persistent pool object; retain and
+// release are no-ops on immortal strings. Only literals are interned; dynamically
+// created strings (concat / substr / f-string / to_string) are fresh, un-interned,
+// and start at count 1.
+#define ROXY_STR_IMMORTAL 0xFFFFFFFFu
+
+// Retain (owner++) a string; no-op on null or an immortal literal.
+void roxy_string_retain(void* s);
+// Release (owner--) a string; frees at zero. No-op on null or an immortal literal.
+void roxy_string_release(void* s);
+
+// Allocate a new string from a C literal (copies data). Interned and IMMORTAL —
+// used for compile-time string constants (the LOAD_CONST / static-const pool).
 void* roxy_string_from_literal(const char* data, uint32_t length);
+
+// Allocate a fresh, un-interned, owned (count 1) string. Used by the dynamic
+// string producers (concat / substr / from_code / *_to_string), whose results the
+// caller owns and eventually releases.
+void* roxy_string_new_owned(const char* data, uint32_t length);
 
 // Get pointer to character data (after string header).
 char* roxy_string_chars(void* s);
