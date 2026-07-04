@@ -185,6 +185,7 @@ add_executable(roxy_tests
     tests/e2e/test_strings.cpp
     tests/e2e/test_heap.cpp
     tests/e2e/test_lifetimes.cpp
+    tests/e2e/test_lifetime_regressions.cpp
     tests/e2e/test_globals.cpp
     tests/e2e/test_raii.cpp
     tests/e2e/test_modules.cpp

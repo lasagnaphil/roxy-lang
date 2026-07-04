@@ -1,0 +1,313 @@
+#include "roxy/core/doctest/doctest.h"
+#include "test_helpers.hpp"
+#include "test_e2e_backend.hpp"
+#include "roxy/vm/vm.hpp"
+#include "roxy/rt/slab_allocator.hpp"
+
+using namespace rx;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Known-open lifetime / borrow soundness bugs (audit 2026-07-04).
+//
+// Each case here asserts the CORRECT (sound) behavior, so it FAILS today. To
+// keep the suite green while the bugs are open, every case is decorated with
+// `doctest::should_fail()`: doctest reports an expected failure as a pass. When
+// a bug is fixed, its case starts genuinely passing, and `should_fail` then
+// reports it as an UNEXPECTED PASS (a red result) — that is the signal to
+// delete the decorator (and, for the memory-model doc, update lifetimes.md).
+//
+// All VM-only (plain TEST_CASE, no C-backend template): the C backend has its
+// own separate documented gaps, and several of these drive runtime traps the C
+// backend renders as a raw abort rather than a catchable VM error.
+//
+// Findings, by severity:
+//   1  inout list[i].field  — silent use-after-free write (memory-unsafe)
+//   2  tagged-union discriminant reassignment — leaks/frees stale variant bytes
+//   3  ref local + exception unwind out of frame — leaked borrow, undeletable owner
+//   4  coroutine ref local across a yield — leaked borrow on mid-iteration destroy
+//   5  List<uniq T>.copy() — shallow copy of owned pointers → double free
+//   6  List<ref T>.copy() / Map<_,ref V>.values() — borrows copied without RefInc
+//   7  weak member access emits no WeakCheck — silent dangling read
+//   8  global ref/weak is uncounted — does not block delete of its owner
+//   9  caught-exception object and string temporaries are never freed (leaks)
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_SUITE("E2E Lifetime Regressions") {
+
+    // Finding 1 — MEMORY-UNSAFE. `f(inout list[i].field)` passes the interior
+    // address of a field of a container element. Unlike bare `inout list[i]`,
+    // this sub-lvalue gets neither the container pin nor the heap-root count, so
+    // a mid-call push that reallocs the buffer dangles the pointer and the
+    // callee's write lands in freed memory. Correct: the mutation is refused
+    // (the container is pinned while the element is borrowed), so the write
+    // reaches the live element and `l[0].x == 42`. Current: 1 (write lost to the
+    // freed buffer, no trap).
+    TEST_CASE("F1 inout of a container-element field survives a reallocating call"
+              * doctest::should_fail()) {
+        const char* src = R"(
+        struct P { x: i32; }
+        fun grow_then_write(x: inout i32, l: inout List<P>) {
+            var i: i32 = 0;
+            while (i < 64) { l.push(P { x = 0 }); i = i + 1; }
+            x = 42;
+        }
+        fun main(): i32 {
+            var l: List<P> = List<P>();
+            l.push(P { x = 1 });
+            grow_then_write(inout l[0].x, inout l);
+            return l[0].x;
+        }
+        )";
+        auto r = VMBackend::run(src);
+        CHECK(r.success == true);
+        CHECK(r.value == 42);
+    }
+
+    // Finding 2 — reassigning a tagged-union discriminant runs no cleanup of the
+    // variant it leaves. Destruction is guarded by the *current* discriminant,
+    // so an owned (`uniq`) field of the abandoned variant is never freed.
+    // (The mirror direction — switching *to* an owning variant — makes teardown
+    // free stale union bytes as a pointer and crashes; tested here in the safe
+    // leak direction.) Correct: switching away from variant A frees its uniq, so
+    // "Owner dtor" prints. Current: it does not.
+    TEST_CASE("F2 switching a tagged-union discriminant frees the old variant's owned field"
+              * doctest::should_fail()) {
+        const char* src = R"(
+        enum K { A, B }
+        struct Owner { val: i32; }
+        fun delete Owner() { print("Owner dtor"); }
+        struct S { when kind: K { case A: o: uniq Owner; case B: n: i32; } }
+        fun main(): i32 {
+            var s: S = S { kind = K::A, o = uniq Owner { val = 9 } };
+            s.kind = K::B;   // leaves variant A → its uniq Owner should be freed here
+            return 0;
+        }
+        )";
+        auto r = VMBackend::run(src);
+        CHECK(r.success == true);
+        CHECK(r.stdout_output.find("Owner dtor") != String::npos);
+    }
+
+    // Finding 3 — a `ref` local that borrows a `ref` parameter shares its
+    // register; when an exception unwinds OUT of the frame, the unwinder nulls
+    // the register after the first RefDec, so the second (the local's) is
+    // skipped and one count leaks — the borrowed owner becomes undeletable.
+    // A ref *parameter* alone unwinds correctly (whole-function RefDec record);
+    // the ref *local* is the gap. Correct: after the catch the owner deletes
+    // cleanly. Current: `delete a` traps ("object has active borrows").
+    TEST_CASE("F3 a ref local's borrow is released when an exception unwinds out of its frame"
+              * doctest::should_fail()) {
+        const char* src = R"(
+        struct Owner { val: i32; }
+        struct E { code: i32; }
+        fun E.message(): string for Exception { return "boom"; }
+        fun trigger(o: ref Owner) { var r: ref Owner = o; throw E { code = 1 }; }
+        fun main(): i32 {
+            var a: uniq Owner = uniq Owner { val = 1 };
+            try { trigger(a); } catch (e: E) { print("caught"); }
+            delete a;
+            print("owner deleted");
+            return 0;
+        }
+        )";
+        auto r = VMBackend::run(src);
+        CHECK(r.success == true);
+        CHECK(r.stdout_output.find("owner deleted") != String::npos);
+    }
+
+    // Finding 4 — a `ref` local live across a `yield` is promoted into the
+    // coroutine state struct, but the generated `$$delete` releases only ref
+    // *parameter* fields, not ref *local* fields. Destroying the coroutine
+    // mid-iteration leaks the borrow, so the owner can't be deleted. Correct:
+    // teardown balances and main returns 7. Current: `delete u` (implicit at
+    // scope exit, after the coro is destroyed) traps.
+    TEST_CASE("F4 a coroutine's promoted ref local is released when the coroutine is destroyed"
+              * doctest::should_fail()) {
+        const char* src = R"(
+        struct Owner { val: i32; }
+        fun gen(o: ref Owner): Coro<i32> {
+            var r: ref Owner = o;
+            yield r.val;
+            yield r.val + 1;
+        }
+        fun main(): i32 {
+            var u: uniq Owner = uniq Owner { val = 7 };
+            var c = gen(u);
+            var x: i32 = c.resume();
+            return x;
+        }
+        )";
+        auto r = VMBackend::run(src);
+        CHECK(r.success == true);
+        CHECK(r.value == 7);
+    }
+
+    // Finding 5 — `roxy_list_copy` is a raw memcpy of the element buffer, so
+    // `.copy()` of a `List<uniq T>` produces two lists holding the SAME element
+    // pointers → a double free (and double destructor run) at teardown. You
+    // cannot duplicate a `uniq` by memcpy. Correct: reject `.copy()` on a list
+    // whose elements are non-duplicable owners at compile time (or require a
+    // Clone and deep-copy). Current: it compiles and double-frees at runtime
+    // (a debug double-delete tripwire aborts the process — hence this asserts at
+    // the compile boundary rather than running it).
+    TEST_CASE("F5 .copy() of a List<uniq T> does not alias owned elements"
+              * doctest::should_fail()) {
+        const char* src = R"(
+        struct Owner { val: i32; }
+        fun delete Owner() { }
+        fun main(): i32 {
+            var l: List<uniq Owner> = List<uniq Owner>();
+            l.push(uniq Owner { val = 1 });
+            var l2: List<uniq Owner> = l.copy();   // shallow copy → both own the same ptr
+            return 0;
+        }
+        )";
+        BumpAllocator allocator(1 << 16);
+        BCModule* module = compile(allocator, src);
+        // Correct behavior: this program is rejected (owned elements can't be
+        // duplicated by copy). It currently compiles, so `module != nullptr`.
+        CHECK(module == nullptr);
+    }
+
+    // Finding 6a — `Map<_, ref V>.values()` memcpys the borrowed value pointers
+    // into a fresh List<ref V> with no RefInc, so destroying that list RefDecs
+    // borrows it never acquired → ref-count underflow trap. Correct: the values
+    // list holds its own counted borrows and tears down cleanly. Current: traps
+    // ("reference count already zero").
+    TEST_CASE("F6a Map<_, ref V>.values() returns properly counted borrows"
+              * doctest::should_fail()) {
+        const char* src = R"(
+        struct Owner { val: i32; }
+        fun main(): i32 {
+            var u: uniq Owner = uniq Owner { val = 5 };
+            var m: Map<i32, ref Owner> = Map<i32, ref Owner>();
+            m.insert(1, u);
+            { var vs: List<ref Owner> = m.values(); }
+            return 0;
+        }
+        )";
+        auto r = VMBackend::run(src);
+        CHECK(r.success == true);
+    }
+
+    // Finding 6b — same root cause via `List<ref T>.copy()`: borrow pointers are
+    // memcpy'd without RefInc, so the copy's destruction underflows the count.
+    // Correct: the copy re-incs each borrow and tears down balanced. Current:
+    // ref-count underflow trap.
+    TEST_CASE("F6b List<ref T>.copy() re-increments each borrowed element"
+              * doctest::should_fail()) {
+        const char* src = R"(
+        struct Owner { val: i32; }
+        fun main(): i32 {
+            var u: uniq Owner = uniq Owner { val = 4 };
+            var l: List<ref Owner> = List<ref Owner>();
+            l.push(u);
+            var l2: List<ref Owner> = l.copy();
+            return 0;
+        }
+        )";
+        auto r = VMBackend::run(src);
+        CHECK(r.success == true);
+    }
+
+    // Finding 7 — member access on a `weak T` emits no WeakCheck (the IR op
+    // exists and lowers, but the front-end never emits it), so dereferencing a
+    // dangling weak is a silent stale read rather than the documented trap.
+    // Correct: reading a field through a dead weak traps (there is no null to
+    // return for an `i32`). Current: it silently returns stale data and the
+    // program "succeeds".
+    TEST_CASE("F7 dereferencing a dangling weak is detected, not a silent stale read"
+              * doctest::should_fail()) {
+        const char* src = R"(
+        struct Owner { val: i32; }
+        fun main(): i32 {
+            var u: uniq Owner = uniq Owner { val = 7 };
+            var w: weak Owner = u;
+            delete u;
+            return w.val;   // dead weak → should trap, not read stale memory
+        }
+        )";
+        auto r = VMBackend::run(src);
+        CHECK(r.success == false);
+    }
+
+    // Finding 8 — a global `ref`/`weak` is uncounted (globals get no scope-exit
+    // RefDec and no create-time inc), so a global ref does not block deletion of
+    // its owner. Correct: `delete gu` traps while `gr` borrows it. Current: the
+    // delete succeeds. Run through a bespoke harness that does NOT call
+    // vm_destroy — the uncounted delete leaves the shutdown teardown to
+    // double-free the global and abort, which we avoid observing here.
+    TEST_CASE("F8 a global ref borrow blocks deletion of its owner"
+              * doctest::should_fail()) {
+        const char* src = R"(
+        struct Owner { val: i32; }
+        var gu: uniq Owner = uniq Owner { val = 3 };
+        var gr: ref Owner = gu;
+        fun main(): i32 { delete gu; return 0; }
+        )";
+        BumpAllocator allocator(1 << 16);
+        BCModule* module = compile(allocator, src);
+        REQUIRE(module != nullptr);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
+        bool ran = vm_call(&vm, StringView("main", 4), {});
+        // Correct: the delete traps → vm_call returns false. Current: true.
+        CHECK(ran == false);
+        // NOTE: intentionally no vm_destroy(&vm)/delete module — the uncounted
+        // delete makes shutdown double-free the global and abort. Leaking one VM
+        // per run is acceptable for a regression marker.
+    }
+
+    // Finding 9a — a caught exception object is never freed. The catch variable
+    // is a non-owning `ref`, and the handled path in the unwinder places the
+    // pointer in a register without freeing it. Correct: after the handler
+    // completes, the exception is freed and its destructor runs. Current: it
+    // leaks (dtor never runs).
+    TEST_CASE("F9a a caught exception object is freed after the handler"
+              * doctest::should_fail()) {
+        const char* src = R"(
+        struct E { code: i32; }
+        fun E.message(): string for Exception { return "boom"; }
+        fun delete E() { print("E dtor"); }
+        fun risky() { throw E { code = 1 }; }
+        fun main(): i32 {
+            try { risky(); } catch (e: E) { print("caught"); }
+            return 0;
+        }
+        )";
+        auto r = VMBackend::run(src);
+        CHECK(r.stdout_output.find("caught") != String::npos);
+        CHECK(r.stdout_output.find("E dtor") != String::npos);
+    }
+
+    // Finding 9b — dynamically created string temporaries (concat / f-string /
+    // to_string / substr results) are never freed; they accumulate until VM
+    // teardown. Correct: temporaries created and dropped in a bounded loop are
+    // reclaimed, so live-object count stays bounded. Current: 200 iterations
+    // leave ~600 live objects (0 tombstoned). Measured via a bespoke harness
+    // reading the slab's alloc/tombstone counters before teardown.
+    TEST_CASE("F9b string temporaries are reclaimed, not leaked until teardown"
+              * doctest::should_fail()) {
+        const char* src = R"(
+        fun main(): i32 {
+            var i: i32 = 0;
+            while (i < 200) { var s: string = f"x{i}y"; i = i + 1; }
+            return 0;
+        }
+        )";
+        BumpAllocator allocator(1 << 20);
+        BCModule* module = compile(allocator, src);
+        REQUIRE(module != nullptr);
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
+        REQUIRE(vm_call(&vm, StringView("main", 4), {}) == true);
+        u64 live = vm.allocator->total_allocated - vm.allocator->total_tombstoned;
+        // Correct: temporaries reclaimed → only a handful of live objects.
+        // Current: ~600 (nothing freed).
+        CHECK(live < 50);
+        vm_destroy(&vm);
+        delete module;
+    }
+}
