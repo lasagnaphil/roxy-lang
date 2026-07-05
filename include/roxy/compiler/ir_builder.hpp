@@ -260,6 +260,15 @@ private:
     ValueId gen_list_constructor(Expr* expr);  // List<T>() / List<T>(cap)
     ValueId gen_map_constructor(Expr* expr);   // Map<K,V>() / Map<K,V>(cap)
     CallLowering lower_call_args(Expr* expr);
+    // Shared argument lowering for the simple call shapes — constructor, super,
+    // and named-destructor calls (no hidden output pointer, no inout reload
+    // tracking). out/inout args pass an lvalue address; a noncopyable value arg
+    // is consumed (temp Nullify + moved-out-field null), matching
+    // lower_call_args. mark_simple_args_moved is the post-call companion:
+    // noncopyable identifier args are marked moved (ownership transferred to
+    // the callee) so scope-exit cleanup skips them.
+    Span<ValueId> lower_simple_args(Span<CallArg> arguments);
+    void mark_simple_args_moved(Span<CallArg> arguments);
     ValueId gen_call_direct(Expr* expr, const CallLowering& lowered);  // callee is an identifier
     ValueId gen_call_member(Expr* expr, const CallLowering& lowered);  // callee is obj.method / module.fn
     void reload_inout_args(const CallLowering& lowered);

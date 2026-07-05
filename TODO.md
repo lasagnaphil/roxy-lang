@@ -78,11 +78,6 @@ semantically sound and well-commented; nearly all findings are structural
 duplication — the same machinery copy-pasted across statement kinds, and the same
 emission idioms repeated dozens of times. Correctness-adjacent items first.
 
-- [ ] **`gen_super_call` arg-lowering gap**: evaluates args without the noncopyable
-  consume/move bookkeeping that `lower_call_args` / `gen_constructor_call` do, and
-  hand-rolls the self-prepend loop `prepend_self` already provides. Share the
-  `modifier ? gen_lvalue_addr : gen_expr` arg loop (repeated 4×) so the ownership
-  policy is uniform.
 - [ ] **Extract the branch/merge (phi + scope-snapshot) machinery.** `gen_if_stmt` /
   `gen_if_else_chain` / `gen_when_stmt` / `gen_try_stmt` each hand-roll
   collect-assigned-vars → phi dedupe → merge-block params → scope (+ `is_moved`)

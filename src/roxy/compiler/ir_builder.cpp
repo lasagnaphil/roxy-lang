@@ -2558,23 +2558,12 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
         }
 
         if (dtor) {
-            // Call the destructor
+            // Call the destructor: 'self' pointer + destructor arguments, with
+            // the shared move-aware lowering for noncopyable args.
             StringView dtor_name = mangle_destructor(struct_type_info.name, ds.destructor_name);
-
-            // Build arguments: 'self' pointer + destructor arguments
-            Vector<ValueId> call_args;
-            call_args.push_back(val);  // 'self' pointer
-
-            for (auto& arg : ds.arguments) {
-                if (arg.modifier != ParamModifier::None) {
-                    // Pass address of lvalue for out/inout args
-                    call_args.push_back(gen_lvalue_addr(arg.expr));
-                } else {
-                    call_args.push_back(gen_expr(arg.expr));
-                }
-            }
-
-            emit_call(dtor_name, alloc_span(call_args), m_types.void_type());
+            Span<ValueId> dtor_args = lower_simple_args(ds.arguments);
+            emit_call(dtor_name, prepend_self(val, dtor_args), m_types.void_type());
+            mark_simple_args_moved(ds.arguments);
         } else if (ds.destructor_name.empty()) {
             // Check for default destructor even if not explicitly requested
             for (const auto& d : struct_type_info.destructors) {
@@ -4045,6 +4034,38 @@ ValueId IRBuilder::gen_map_constructor(Expr* expr) {
     return map_ptr;
 }
 
+Span<ValueId> IRBuilder::lower_simple_args(Span<CallArg> arguments) {
+    Span<ValueId> args = alloc_span<ValueId>(static_cast<u32>(arguments.size()));
+    for (u32 i = 0; i < arguments.size(); i++) {
+        CallArg& arg = arguments[i];
+        if (arg.modifier != ParamModifier::None) {
+            // Pass address of lvalue for out/inout args
+            args[i] = gen_lvalue_addr(arg.expr);
+            continue;
+        }
+        args[i] = gen_expr(arg.expr);
+        if (arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
+            // Ownership transfers to the callee: consume a temp (the Nullify
+            // ends its cleanup-record scope so it isn't freed a second time)
+            // and null a moved-out source field in its root struct.
+            consume_temp_noncopyable(args[i]);
+            nullify_moved_field_source(arg.expr);
+        }
+    }
+    return args;
+}
+
+void IRBuilder::mark_simple_args_moved(Span<CallArg> arguments) {
+    for (u32 i = 0; i < arguments.size(); i++) {
+        const CallArg& arg = arguments[i];
+        if (arg.modifier != ParamModifier::None) continue;
+        if (arg.expr->kind != AstKind::ExprIdentifier) continue;
+        Type* arg_type = arg.expr->resolved_type;
+        if (!arg_type || arg_type->is_copy()) continue;
+        mark_moved_from(arg.expr->identifier.name);
+    }
+}
+
 IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
     CallExpr& call_expr = expr->call;
     CallLowering lowered;
@@ -5431,53 +5452,17 @@ ValueId IRBuilder::gen_constructor_call(Expr* expr) {
 
     // Build arguments: 'self' pointer + constructor arguments.
     //
-    // For noncopyable args, ownership transfers to the callee. gen_call_expr
-    // handles this with:
-    //   (a) `consume_temp_noncopyable` right after evaluation — nullifies the
-    //       temp's cleanup register so its caller-side Delete becomes a no-op.
-    //   (b) post-call nullify-replace for identifier args — replaces the
-    //       local's SSA binding with null and marks is_moved=true so scope
-    //       cleanup skips it.
-    //
-    // Constructor calls need the same fixup; without it `uniq T.name(arg)`
-    // where arg is a uniq-typed local (or a uniq rvalue temporary) leaves
-    // the caller still pointing at the slot the callee now owns — when the
-    // constructor stores arg into a field and the enclosing struct is
-    // destroyed, the field cleanup frees the slot AND the caller's scope-exit
-    // Delete frees it a second time (slab_allocator.cpp:286 ALIVE assert).
-    Vector<ValueId> call_args;
-    call_args.push_back(obj);  // 'self' pointer
-
-    for (auto& arg : call_expr.arguments) {
-        ValueId arg_val;
-        if (arg.modifier != ParamModifier::None) {
-            // Pass address of lvalue for out/inout args
-            arg_val = gen_lvalue_addr(arg.expr);
-        } else {
-            arg_val = gen_expr(arg.expr);
-            if (arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
-                consume_temp_noncopyable(arg_val);
-                // `Ctor(o.field)`: null the moved-out field in the root so the
-                // root's destructor no-ops it (mirrors lower_call_args). Without
-                // this, the constructor stores the field's value and BOTH the new
-                // object's field and the root's field free it → double-free.
-                nullify_moved_field_source(arg.expr);
-            }
-        }
-        call_args.push_back(arg_val);
-    }
-
-    emit_call(ctor_name, alloc_span(call_args), m_types.void_type());
-
-    // Post-call nullify-replace for noncopyable identifier arguments.
-    for (u32 i = 0; i < call_expr.arguments.size(); i++) {
-        const CallArg& arg = call_expr.arguments[i];
-        if (arg.modifier != ParamModifier::None) continue;
-        if (arg.expr->kind != AstKind::ExprIdentifier) continue;
-        Type* arg_type = arg.expr->resolved_type;
-        if (!arg_type || arg_type->is_copy()) continue;
-        mark_moved_from(arg.expr->identifier.name);
-    }
+    // For noncopyable args, ownership transfers to the callee, so the shared
+    // lowering consumes temps at evaluation and marks identifier args moved
+    // after the call. Without that fixup `uniq T.name(arg)` where arg is a
+    // uniq-typed local (or a uniq rvalue temporary) leaves the caller still
+    // pointing at the slot the callee now owns — when the constructor stores
+    // arg into a field and the enclosing struct is destroyed, the field
+    // cleanup frees the slot AND the caller's scope-exit Delete frees it a
+    // second time (slab_allocator.cpp:286 ALIVE assert).
+    Span<ValueId> user_args = lower_simple_args(call_expr.arguments);
+    emit_call(ctor_name, prepend_self(obj, user_args), m_types.void_type());
+    mark_simple_args_moved(call_expr.arguments);
 
     return obj;
 }
@@ -5518,31 +5503,18 @@ ValueId IRBuilder::gen_super_call(Expr* expr) {
         call_name = mangle_method(target_struct_type_info.name, super_expr.method_name);
     }
 
-    // Evaluate arguments
-    Span<ValueId> args = alloc_span<ValueId>(call_expr.arguments.size());
-    for (u32 i = 0; i < call_expr.arguments.size(); i++) {
-        CallArg& arg = call_expr.arguments[i];
-        if (arg.modifier != ParamModifier::None) {
-            args[i] = gen_lvalue_addr(arg.expr);
-        } else {
-            args[i] = gen_expr(arg.expr);
-        }
-    }
+    // Evaluate arguments with the shared move-aware lowering: noncopyable
+    // temps are consumed at evaluation and noncopyable identifier args are
+    // marked moved after the call — previously super() args skipped this
+    // bookkeeping entirely, so a uniq local passed to a parent constructor's
+    // owned param was freed by both the parent and the caller's scope exit.
+    Span<ValueId> args = lower_simple_args(call_expr.arguments);
+    Span<ValueId> call_args = prepend_self(self_ptr, args);
 
-    // Prepend self to arguments
-    Span<ValueId> call_args = alloc_span<ValueId>(args.size() + 1);
-    call_args[0] = self_ptr;
-    for (u32 i = 0; i < args.size(); i++) {
-        call_args[i + 1] = args[i];
-    }
-
-    // Check if the super method is a native function
-    i32 native_idx = m_registry.get_index(call_name);
-    if (native_idx >= 0) {
-        return emit_call_native(call_name, call_args, expr->resolved_type,
-                                static_cast<u32>(native_idx));
-    }
-    return emit_call(call_name, call_args, expr->resolved_type);
+    // The super target may be a native function (emit_call_resolved dispatches).
+    ValueId result = emit_call_resolved(call_name, call_args, expr->resolved_type);
+    mark_simple_args_moved(call_expr.arguments);
+    return result;
 }
 
 ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
