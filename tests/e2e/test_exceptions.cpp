@@ -1585,4 +1585,62 @@ TEST_SUITE("E2E Exceptions") {
         delete module;
     }
 
+    // A finally body runs on EVERY exit path, including a catch that moves a
+    // variable and then terminates (return/re-throw). The finally-entry move
+    // state must therefore include that catch's moves — otherwise a use in
+    // finally that would be use-after-move on the catch path slips through
+    // (a runtime double-free). Compile-only.
+    TEST_CASE("use-after-move in finally via a terminating catch is rejected") {
+        const char* source = R"(
+            struct Err { code: i32; }
+            fun Err.message(): string for Exception { return "e"; }
+            struct Res { v: i32; }
+            fun delete Res() {}
+            fun sink(r: uniq Res) {}
+            fun f(): i32 {
+                var y: uniq Res = uniq Res { v = 1 };
+                try {
+                    throw Err { code = 1 };
+                } catch (e: Err) {
+                    sink(y);      // moves y
+                    return 1;     // terminating catch — finally still runs
+                } finally {
+                    sink(y);      // y is moved on the catch path
+                }
+            }
+            fun main(): i32 { return f(); }
+        )";
+        BumpAllocator allocator(1 << 16);
+        CHECK(compile(allocator, source) == nullptr);
+    }
+
+    // The dual of the above: a move that happens only on a *terminating* catch
+    // must NOT leak into the code after the try (reached only via the normal,
+    // non-terminating path where the variable is still live). An empty finally
+    // must not change that — the reconciliation keeps the normal-path state.
+    TEST_CASE_TEMPLATE("terminating catch move does not leak past the try", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+            struct Err { code: i32; }
+            fun Err.message(): string for Exception { return "e"; }
+            struct Res { v: i32; }
+            fun delete Res() {}
+            fun sink(r: uniq Res): i32 { return r.v; }
+            fun f(): i32 {
+                var y: uniq Res = uniq Res { v = 5 };
+                try {
+                    var ok: i32 = 1;
+                } catch (e: Err) {
+                    sink(y);       // moves y, only on the (here unreached) catch path
+                    return -1;     // terminating
+                } finally {
+                }
+                return sink(y);    // y is live on the normal path
+            }
+            fun main(): i32 { return f(); }
+        )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 5);
+    }
+
 }  // TEST_SUITE("E2E Exceptions")

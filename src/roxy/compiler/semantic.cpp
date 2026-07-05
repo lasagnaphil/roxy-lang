@@ -2201,15 +2201,53 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
     bool all_terminate = m_lifetimes.merge_branch_snapshots(exit_paths, exit_terminates);
 
     // Analyze finally body if present (yield is NOT allowed here).
-    // Finally runs on every exit path, so its own terminators are the
-    // conservative upper bound for the whole try/catch/finally.
     if (ts.finally_body) {
+        // Snapshot the normal (non-terminating) continuation before repurposing
+        // the move-state map to build the finally-entry state.
+        MoveStateSnapshot normal_continuation = m_lifetimes.save_move_states();
+
+        // A finally runs on EVERY path leaving the try — the normal exit, each
+        // catch clause (even ones that return/re-throw), and the uncaught
+        // pass-through (an exception matching no catch). Analyze it against the
+        // conservative union of all those paths' move states, so a
+        // use-after-move that happens only on, say, a catch-then-return path is
+        // still caught. merge_branch_snapshots above drops terminating paths —
+        // correct for the continuation, unsound for the finally body.
+        // catch_entry covers the try-body moves and the pass-through; folding
+        // in every exit_paths snapshot adds each catch's moves (terminating or
+        // not). check_not_moved rejects both Moved and MaybeValid, so a move on
+        // any single path is enough to flag a use here.
+        m_lifetimes.restore_move_states(catch_entry);
+        for (const auto& snapshot : exit_paths) {
+            MoveStateSnapshot current = m_lifetimes.save_move_states();
+            m_lifetimes.merge_move_states(current, snapshot);
+        }
+        MoveStateSnapshot finally_entry = m_lifetimes.save_move_states();
+
         {
             ScopedValue finally_depth_guard(m_function_context.finally_depth);
             m_function_context.finally_depth++;
             m_lifetimes.set_branch_terminates(false);
             analyze_stmt(ts.finally_body);
         }
+
+        // Rebuild the continuation: the normal-path merge with finally's own
+        // effects applied. A variable finally actually changed (its state
+        // differs from finally_entry — a move or a reassignment) takes finally's
+        // result; one finally left untouched keeps its normal-path state, so a
+        // move that happened only on a terminating path does not leak past the
+        // try.
+        MoveStateSnapshot finally_post = m_lifetimes.save_move_states();
+        for (auto it = normal_continuation.begin(); it != normal_continuation.end(); ++it) {
+            auto post_it = finally_post.find(it->first);
+            auto entry_it = finally_entry.find(it->first);
+            if (post_it != finally_post.end() && entry_it != finally_entry.end()
+                && post_it->second != entry_it->second) {
+                it.value() = post_it->second;
+            }
+        }
+        m_lifetimes.restore_move_states(normal_continuation);
+
         // If finally terminates, so does the whole statement; otherwise
         // use the all_terminate result computed from try+catches.
         if (!m_lifetimes.branch_terminates()) {
