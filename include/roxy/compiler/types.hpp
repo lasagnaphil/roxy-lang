@@ -601,6 +601,14 @@ void type_to_string(const Type* type, String& out);
 // 0 for null or types with no value representation (void, never, trait, ...).
 u32 get_type_slot_count(Type* type);
 
+// Append one entry to a bump-allocated Span list on StructTypeInfo. Each call
+// rebuilds the span into fresh arena memory (O(n) copy) — fine at
+// declaration-pass rates; see TODO.md for the Vector-freeze alternative.
+// Shared by the semantic analyzer and the trait system.
+void append_method(BumpAllocator& allocator, StructTypeInfo& info, MethodInfo method);
+void append_constructor(BumpAllocator& allocator, StructTypeInfo& info, ConstructorInfo ctor);
+void append_destructor(BumpAllocator& allocator, StructTypeInfo& info, DestructorInfo dtor);
+
 // Look up a method in a struct's type hierarchy (walks inheritance chain)
 // Returns the MethodInfo and optionally sets found_in_type to where the method was defined
 const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name, Type** found_in_type = nullptr);

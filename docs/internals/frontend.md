@@ -76,6 +76,23 @@ Features:
 - NativeRegistry integration for built-in functions
 - Struct slot count computation for memory layout
 - Out/inout parameter validation
+- Lifetime analysis (use-after-move detection, definite-termination branch
+  merges, scope-exit destructor checks) via `LifetimeChecker`
+
+The analyzer shares its collaborators by reference (no back-reference to the
+analyzer itself): `ErrorReporter` (error collection/formatting), `TypeChecker`
+(pure type relations and coercions), `LifetimeChecker` (per-function move
+states and the branch-termination flag, guarded as a unit by
+`LifetimeChecker::FunctionScope` at every body-analysis entry point — including
+synthesized lambda call functions, so a `return` inside a lambda body cannot
+leak "this branch terminates" into the enclosing statement's merge logic), and
+`TraitSystem` (builtin trait registration, trait declarations, impl
+grouping/validation, default-method injection). Collaborators receive the
+shared `SemaContext` bundle (allocator, type_env, types, modules, symbols,
+reporter, checker); the one analyzer *operation* they need — full TypeExpr
+resolution — is exposed through a function-pointer thunk on the context
+(`SemaContext::resolve_type_expr`), so no collaborator holds a reference to
+the analyzer itself.
 
 ## Files
 
@@ -86,5 +103,13 @@ Features:
 - `include/roxy/compiler/ast.hpp` - AST node definitions
 - `include/roxy/compiler/semantic.hpp` - Semantic analyzer
 - `src/roxy/compiler/semantic.cpp` - Semantic analysis implementation
+- `include/roxy/compiler/sema_context.hpp` - Shared collaborator context (state bundle + resolve_type_expr thunk)
+- `include/roxy/compiler/type_checker.hpp` - Type relations and coercions
+- `src/roxy/compiler/type_checker.cpp` - Type checker implementation
+- `include/roxy/compiler/lifetime_checker.hpp` - Lifetime analysis (move states, termination, scope-exit checks)
+- `src/roxy/compiler/lifetime_checker.cpp` - Lifetime checker implementation
+- `include/roxy/compiler/trait_system.hpp` - Trait machinery (builtin traits, trait decls, impl validation, default injection)
+- `src/roxy/compiler/trait_system.cpp` - Trait system implementation
+- `include/roxy/compiler/error_reporter.hpp` - Error collection and formatting
 - `include/roxy/compiler/symbol_table.hpp` - Symbol table
 - `src/roxy/compiler/symbol_table.cpp` - Symbol table implementation

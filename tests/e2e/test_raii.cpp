@@ -343,6 +343,61 @@ TEST_SUITE("E2E RAII") {
         CHECK(module == nullptr);  // Should fail to compile
     }
 
+    TEST_CASE("conditional move is still checked when a lambda body ends in return") {
+        // A `return` inside a lambda body terminates the *lambda*, not the
+        // enclosing branch. The analyzer's definite-termination flag must not
+        // leak out of the synthesized lambda-call analysis: if it does, the
+        // then-branch below counts as terminating, its move of `p` is discarded
+        // at the if-merge, and the use after the if compiles silently (a
+        // use-after-move false negative → double-free at runtime).
+        const char* control = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            p.x = 42;
+            if (p.x > 0) {
+                var unused: i32 = consume(p);
+            }
+            return consume(p);  // Error: use of possibly moved value
+        }
+    )";
+
+        BumpAllocator a1(65536);
+        CHECK(compile(a1, control) == nullptr);  // sanity: rejected without a lambda
+
+        const char* with_lambda = R"(
+        struct Point {
+            x: i32;
+            y: i32;
+        }
+
+        fun consume(p: uniq Point): i32 {
+            return p.x;
+        }
+
+        fun main(): i32 {
+            var p: uniq Point = uniq Point();
+            p.x = 42;
+            if (p.x > 0) {
+                var unused: i32 = consume(p);
+                var f = fun(): i32 { return 1; };
+            }
+            return consume(p);  // Error: use of possibly moved value
+        }
+    )";
+
+        BumpAllocator a2(65536);
+        CHECK(compile(a2, with_lambda) == nullptr);  // must be rejected identically
+    }
+
     TEST_CASE("self-assignment of noncopyable compile error") {
         // `x = x` on a uniq variable would delete the old value and then move the
         // now-dangling pointer back into x — a guaranteed use-after-free. The

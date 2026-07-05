@@ -631,8 +631,9 @@ error — borrow it with `ref`, make it `uniq`, or move the whole struct.
 
 ### Use-after-move detection
 
-The semantic analyzer tracks a move state per noncopyable local; using a `Moved` or
-`MaybeValid` variable is a compile error:
+The semantic analyzer's `LifetimeChecker` (`compiler/lifetime_checker.hpp`) tracks
+a move state per noncopyable local; using a `Moved` or `MaybeValid` variable is a
+compile error:
 
 | State | Meaning |
 |---|---|
@@ -669,8 +670,8 @@ paths unwrap the borrow via `base_type()` before reading the call index. So
 converts to `ref fun` / `weak fun` (`fun → weak fun` via `WeakCreate`).
 
 For the remaining noncopyable kinds (inline value structs, coroutines, `List`/`Map`),
-`borrowed` is the identity, and the move-checker's native-index guard
-(`consume_noncopyable`) is the backstop that rejects only the unsound *move-out* of
+`borrowed` is the identity, and the lifetime checker's native-index guard
+(`LifetimeChecker::consume_noncopyable`) is the backstop that rejects only the unsound *move-out* of
 those while leaving every safe use (storage, per-element cleanup, in-place field
 reads / method calls) intact. An inline value struct *can't* be borrowed out (no
 header) but doesn't need to be; coroutines and noncopyable containers could later

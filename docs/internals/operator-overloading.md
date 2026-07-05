@@ -162,6 +162,7 @@ The shared operator→method-name mappings live in `include/roxy/compiler/operat
 | File | Purpose |
 |------|---------|
 | `include/roxy/compiler/operator_traits.hpp` | operator → method-name mappings |
-| `src/roxy/compiler/semantic.cpp` | trait/primitive registration, operator resolution |
+| `src/roxy/compiler/trait_system.cpp` | trait/primitive operator-method registration (`TraitSystem`) |
+| `src/roxy/compiler/semantic.cpp` | operator resolution (`try_resolve_binary_op`/`try_resolve_unary_op`, trait-bound dispatch) |
 | `src/roxy/compiler/ir_builder.cpp` | direct IR ops for primitives, trait calls for structs |
 | `tests/e2e/test_traits.cpp` | operator-overloading E2E tests |

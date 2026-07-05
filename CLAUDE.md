@@ -321,8 +321,8 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **AST** - Expression, statement, and declaration node kinds (literals, operators, calls, control flow, structs, enums, traits, etc.).
 **Files:** `compiler/ast.hpp`
 
-**Semantic Analysis** - Multi-pass analyzer with symbol resolution, type inference, type checking, and move-state tracking for `uniq` variables (use-after-move detection).
-**Details:** `docs/internals/frontend.md` | **Files:** `compiler/semantic.hpp`, `compiler/semantic.cpp`
+**Semantic Analysis** - Multi-pass analyzer with symbol resolution, type inference, and type checking. Extracted collaborators (each shared by reference via `SemaContext`, no back-reference to the analyzer): `LifetimeChecker` (move-state tracking for `uniq` variables / use-after-move detection, definite-termination branch merges, scope-exit destructor checks) and `TraitSystem` (builtin trait registration, trait declarations, impl grouping/validation, default-method injection).
+**Details:** `docs/internals/frontend.md` | **Files:** `compiler/semantic.hpp`, `compiler/semantic.cpp`, `compiler/sema_context.hpp`, `compiler/lifetime_checker.{hpp,cpp}`, `compiler/trait_system.{hpp,cpp}`
 
 ### Type System
 **Types** - Primitives (`void`, `bool`, `i32`, `i64`, `f32`, `f64`, `string`), structs, enums, references.

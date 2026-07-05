@@ -400,9 +400,10 @@ Type* TypeCache::borrowed(Type* inner_type) {
     // struct, coroutine, List/Map) keep their type so all their *safe* uses keep
     // working — for a value struct that means storage + RAII cleanup + in-place
     // field reads / method calls (it has no object header, so it genuinely can't
-    // be borrowed *out*, but it doesn't need to be for those). The move-checker's
-    // native-index guard (see consume_noncopyable) is the right backstop here: it
-    // rejects only the unsound bind/move-out while leaving everything else intact.
+    // be borrowed *out*, but it doesn't need to be for those). The lifetime
+    // checker's native-index guard (LifetimeChecker::consume_noncopyable) is the
+    // right backstop here: it rejects only the unsound bind/move-out while
+    // leaving everything else intact.
     return inner_type;
 }
 
@@ -834,6 +835,35 @@ void type_to_string(const Type* type, String& out) {
             append_string(out, type->type_param_info.name);
             break;
     }
+}
+
+// ===== Span append helpers (shared by SemanticAnalyzer and TraitSystem) =====
+
+void append_method(BumpAllocator& allocator, StructTypeInfo& info, MethodInfo method) {
+    Vector<MethodInfo> methods;
+    for (const auto& m : info.methods) {
+        methods.push_back(m);
+    }
+    methods.push_back(method);
+    info.methods = allocator.alloc_span(methods);
+}
+
+void append_constructor(BumpAllocator& allocator, StructTypeInfo& info, ConstructorInfo ctor) {
+    Vector<ConstructorInfo> ctors;
+    for (const auto& c : info.constructors) {
+        ctors.push_back(c);
+    }
+    ctors.push_back(ctor);
+    info.constructors = allocator.alloc_span(ctors);
+}
+
+void append_destructor(BumpAllocator& allocator, StructTypeInfo& info, DestructorInfo dtor) {
+    Vector<DestructorInfo> dtors;
+    for (const auto& d : info.destructors) {
+        dtors.push_back(d);
+    }
+    dtors.push_back(dtor);
+    info.destructors = allocator.alloc_span(dtors);
 }
 
 }

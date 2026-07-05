@@ -12,6 +12,9 @@
 #include "roxy/compiler/symbol_table.hpp"
 #include "roxy/compiler/error_reporter.hpp"
 #include "roxy/compiler/type_checker.hpp"
+#include "roxy/compiler/sema_context.hpp"
+#include "roxy/compiler/lifetime_checker.hpp"
+#include "roxy/compiler/trait_system.hpp"
 #include "roxy/core/tsl/robin_set.h"
 
 namespace rx {
@@ -24,13 +27,6 @@ class ModuleRegistry;
 struct InferredTypeArgs {
     bool success;
     Vector<Type*> type_args;  // indexed by type param position
-};
-
-// Move state for uniq ownership tracking
-enum class MoveState : u8 {
-    Live,         // Variable owns a valid value
-    Moved,        // Ownership has been transferred (use is an error)
-    MaybeValid,   // Conditionally moved (e.g., moved in one branch of if/else)
 };
 
 // SemanticAnalyzer performs type checking and symbol resolution
@@ -112,7 +108,6 @@ private:
     void resolve_constructor_member(Decl* decl);
     void resolve_destructor_member(Decl* decl);
     void resolve_method_member(Decl* decl);
-    void resolve_trait_parent(Decl* decl);
     // Make sure `struct_type`'s members/layout are resolved before a dependent
     // struct embeds it by value — resolution recurses so declaration order
     // doesn't matter. Returns false (and reports the "infinite size" error at
@@ -129,6 +124,13 @@ private:
 
     // Type resolution from AST TypeExpr
     Type* resolve_type_expr(TypeExpr* type_expr);
+
+    // Thunk installed into m_context (SemaContext::resolve_type_expr_fn) so
+    // collaborators (TraitSystem, future GenericCallResolver) get TypeExpr
+    // resolution without a back-reference to the rest of the analyzer.
+    static Type* resolve_type_expr_thunk(SemanticAnalyzer* analyzer, TypeExpr* type_expr) {
+        return analyzer->resolve_type_expr(type_expr);
+    }
 
     // Resolve fields of a generic struct instance (idempotent)
     void resolve_generic_struct_fields(GenericStructInstance* inst);
@@ -276,25 +278,6 @@ private:
     Type* try_resolve_binary_op(BinaryOp op, Type* left, Type* right);
     Type* try_resolve_unary_op(UnaryOp op, Type* operand);
 
-    // Register built-in operator methods for primitive types
-    void register_primitive_operator_methods();
-
-    // Register a builtin trait (Printable/Hash/Eq/Exception): create the trait
-    // type, register it by name, and attach a single required method. The method
-    // (and, when register_trait_on_primitives is set, the trait itself) is also
-    // installed on each kind in primitive_kinds. Returns the trait type so the
-    // caller can stash it in the matching TypeEnv slot.
-    Type* register_builtin_trait(StringView name, StringView method_name,
-                                 Span<Type*> method_param_types, Type* return_type,
-                                 Span<TypeKind> primitive_kinds,
-                                 bool register_trait_on_primitives);
-
-    // Register a builtin generic operator trait for the subscript operator:
-    //   Index<Idx, Output>     with  index(idx: Idx): Output
-    //   IndexMut<Idx, Output>  with  index_mut(idx: Idx, val: Output)
-    // `is_mut` selects index_mut (void return, extra value param) vs index.
-    Type* register_builtin_index_trait(StringView name, StringView method_name, bool is_mut);
-
     // Lvalue checking for assignment
     bool is_lvalue(Expr* expr) const;
 
@@ -307,6 +290,19 @@ private:
     SymbolTable& m_symbols;
     ErrorReporter m_reporter;
     TypeChecker m_checker;
+    // Shared collaborator context: the analyzer state bundle (allocator,
+    // type_env, types, modules, symbols, reporter, checker) plus the
+    // resolve_type_expr thunk, passed by reference to each extracted
+    // collaborator below (see sema_context.hpp).
+    SemaContext m_context;
+    // Per-function lifetime analysis (move states, definite termination,
+    // scope-exit destructor checks) — driven by the statement walkers here,
+    // state and rules owned by the checker (see lifetime_checker.hpp).
+    LifetimeChecker m_lifetimes;
+    Vector<Decl*> m_synthetic_decls;  // Injected default method declarations and lifted lambdas
+    // Trait machinery: builtin trait registration, trait declarations, impl
+    // grouping/validation, default-method injection (see trait_system.hpp).
+    TraitSystem m_traits;
     Program* m_program;                   // Current program being analyzed
 
     // Coroutine tracking (set while analyzing a function returning Coro<T>)
@@ -324,15 +320,6 @@ private:
 
     // Finally depth tracking (for yield-in-finally validation)
     u32 m_in_finally_depth = 0;
-
-    // Definite-termination analysis: true after analyzing a statement that
-    // always transfers control out of the current join point (return/throw/
-    // break/continue). Sticky through straight-line blocks; reset inside
-    // loop bodies; consumed at if/when/try merge sites to pick the surviving
-    // branch's move-state snapshot instead of producing MaybeValid.
-    bool m_branch_terminates = false;
-
-    Vector<Decl*> m_synthetic_decls;  // Injected default method declarations and lifted lambdas
 
     // Counter for unique lambda IDs (used to name synthesized env structs and call functions).
     u32 m_lambda_id_counter = 0;
@@ -384,11 +371,6 @@ private:
     bool is_hashable_key_type(Type* type);
     NativeRegistry* get_builtin_registry();
 
-    // Helpers for appending to bump-allocated Span lists on StructTypeInfo
-    void append_method(StructTypeInfo& info, MethodInfo method);
-    void append_constructor(StructTypeInfo& info, ConstructorInfo ctor);
-    void append_destructor(StructTypeInfo& info, DestructorInfo dtor);
-
     // Phase B: Definition-site checking of generic template bodies
     void analyze_generic_template_body(Decl* decl);
     const TraitMethodInfo* lookup_type_param_method(Type* type_param_type, StringView method_name,
@@ -404,129 +386,6 @@ private:
     bool resolve_template_bounds(Span<TypeParam> type_params, ResolvedTypeParams& out);
     bool check_type_arg_bounds(StringView template_name, Span<Type*> type_args,
                                const ResolvedTypeParams* bounds, SourceLocation loc);
-
-    // Trait analysis helpers
-    // Resolve a trait *method signature* TypeExpr: maps `Self` and the trait's
-    // own type-param names to abstract types. (Distinct from concretize_trait_type.)
-    Type* resolve_trait_method_type_expr(TypeExpr* type_expr, const TraitTypeInfo& trait_info);
-    void analyze_trait_method_decl(Decl* decl, Type* trait_type);
-    // Resolve the `for Trait<Args>` type args of a trait impl: validates arity,
-    // defaults a bare `for Trait` to all-Self, resolves each arg. Returns false
-    // (error already reported) on an arity mismatch.
-    bool resolve_trait_impl_type_args(MethodDecl& method_decl, const TraitTypeInfo& trait_info,
-                                      Type* struct_type, SourceLocation loc, Span<Type*>& out);
-
-    // validate_trait_implementations is split across the helpers below.
-    void validate_trait_implementations();
-    struct TraitImplGroup {
-        Type* struct_type;
-        Type* trait_type;
-        Span<Type*> trait_type_args;
-        Vector<Decl*> impl_decls;
-    };
-    Vector<TraitImplGroup> group_pending_trait_impls();
-    bool check_parent_trait_satisfied(const TraitImplGroup& group,
-                                      const Vector<TraitImplGroup>& all_groups);
-    void validate_and_register_impl_method(const TraitImplGroup& group, Decl* decl,
-                                           Vector<bool>& implemented);
-    void finalize_trait_impl(const TraitImplGroup& group, const Vector<bool>& implemented);
-
-    void inject_default_method(Type* struct_type, Type* trait_type,
-                               TraitMethodInfo& tmi, Span<Type*> trait_type_args);
-    // Concretize an abstract trait-method type (`Self` -> the implementing
-    // struct; a trait type-param -> the matching `for Trait<Args>` argument).
-    // (Distinct from resolve_trait_method_type_expr, which works on TypeExprs.)
-    Type* concretize_trait_type(Type* abstract_type, Type* struct_type, Span<Type*> trait_type_args);
-
-    // Pending trait implementations (struct_name resolved to struct type + trait decl)
-    struct PendingTraitImpl {
-        Decl* decl;
-        Type* struct_type;
-        Type* trait_type;
-        Span<Type*> trait_type_args;   // Resolved type args for generic traits
-    };
-    Vector<PendingTraitImpl> m_pending_trait_impls;
-
-    // Move-state tracking for noncopyable variables (per-function).
-    // Keyed by Symbol* for correct handling of variable shadowing.
-    tsl::robin_map<Symbol*, MoveState> m_move_states;
-
-    // Save/restore move states for branching (if/else)
-    using MoveStateSnapshot = tsl::robin_map<Symbol*, MoveState>;
-    MoveStateSnapshot save_move_states() const { return m_move_states; }
-    void restore_move_states(const MoveStateSnapshot& snapshot) { m_move_states = snapshot; }
-
-    // Merge move states from two branches (e.g., if/else)
-    void merge_move_states(const MoveStateSnapshot& then_states, const MoveStateSnapshot& else_states);
-
-    // Branch-merge helpers shared by if/when/try (all operate on m_move_states).
-    //
-    // Two-way merge for if/else: keeps the surviving branch's snapshot when one
-    // branch terminates, merges both when neither does, and sets
-    // m_branch_terminates = then_terminates && else_terminates. A no-else `if`
-    // calls this with else_states = pre_branch and else_terminates = false.
-    void merge_two_branches(const MoveStateSnapshot& pre_branch,
-                            const MoveStateSnapshot& then_states,
-                            const MoveStateSnapshot& else_states,
-                            bool then_terminates, bool else_terminates);
-
-    // N-way merge for when/try: merges every non-terminating snapshot into
-    // m_move_states. Returns true when every branch terminates (the join point
-    // is unreachable), in which case m_move_states is restored to the first
-    // snapshot. Does NOT touch m_branch_terminates — callers set it, since
-    // when/try diverge afterwards (try has a finally clause).
-    bool merge_branch_snapshots(const Vector<MoveStateSnapshot>& snapshots,
-                                const Vector<bool>& terminates);
-
-    // Check live uniq variables at scope exit for named-only destructors
-    void check_scope_exit_uniq_destructors(const Scope* scope, SourceLocation loc);
-    void check_all_scopes_uniq_destructors(SourceLocation loc, ScopeKind stop_kind);
-
-    // Cross-iteration use-after-move check shared by while/for. A loop-carried
-    // noncopyable variable that is Live before the loop but Moved/MaybeValid
-    // after the body would be used-after-move on the next iteration — unless the
-    // body unconditionally reassigns it first (see loop_reassigns_var_first).
-    void check_loop_cross_iteration_moves(Stmt* body,
-                                          const MoveStateSnapshot& pre_loop_states,
-                                          const MoveStateSnapshot& post_body_states,
-                                          SourceLocation loc);
-
-    // True if the loop `body`'s first executable statement is a plain `=`
-    // assignment to `var_name` whose RHS does not reference it. Such a variable
-    // is refreshed at the top of every iteration before any use, so it cannot be
-    // a cross-iteration use-after-move regardless of the back-edge state.
-    // Conservative: only the leading top-level statement is examined.
-    bool loop_reassigns_var_first(Stmt* body, StringView var_name) const;
-
-    // True if `expr` (recursively) contains an identifier reference to `name`.
-    // Conservative — unknown expression shapes are treated as referencing it.
-    bool expr_references_name(Expr* expr, StringView name) const;
-
-    // Check if a uniq variable is in a moved state and report an error
-    bool check_not_moved(StringView name, SourceLocation loc);
-
-    // Check that an expression is not a field access with move-semantics type.
-    // Returns false and reports error if it is (field-level moves are unsound).
-    bool check_not_field_move(Expr* expr, SourceLocation loc);
-
-    // Consume a noncopyable value: validates field-move legality and marks
-    // the source identifier as moved. Call this at every point that transfers
-    // ownership of a noncopyable value (var init, return, delete, call args,
-    // assignment, struct literal fields).
-    void consume_noncopyable(Expr* expr, SourceLocation loc);
-
-    // True if `expr` is a reference to an `out`/`inout` parameter — a member of
-    // the second-class family that must flow downward only (lifetimes.md "The second-class family").
-    // Used to reject escapes (bind-to-ref, store, return, capture). `self` is
-    // NOT covered here: it is typed ref<T> and its retention goes through the
-    // runtime promotion gate, not a compile error.
-    bool is_out_inout_param(Expr* expr);
-
-    // Mark a uniq variable as moved
-    void mark_moved(StringView name);
-
-    // Mark a uniq variable as live (for reassignment)
-    void mark_live(StringView name);
 
 public:
     const Vector<Decl*>& synthetic_decls() const { return m_synthetic_decls; }

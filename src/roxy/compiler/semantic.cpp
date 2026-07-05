@@ -65,6 +65,10 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, 
     , m_symbols(*m_owned_symbols)
     , m_reporter(allocator)
     , m_checker(m_reporter)
+    , m_context{m_allocator, m_type_env, m_types, m_modules, m_symbols, m_reporter, m_checker,
+                this, &SemanticAnalyzer::resolve_type_expr_thunk}
+    , m_lifetimes(m_context)
+    , m_traits(m_context, m_synthetic_decls)
     , m_program(nullptr)
 {
 }
@@ -80,82 +84,16 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, 
     , m_symbols(external_symbols)
     , m_reporter(allocator)
     , m_checker(m_reporter)
+    , m_context{m_allocator, m_type_env, m_types, m_modules, m_symbols, m_reporter, m_checker,
+                this, &SemanticAnalyzer::resolve_type_expr_thunk}
+    , m_lifetimes(m_context)
+    , m_traits(m_context, m_synthetic_decls)
     , m_program(nullptr)
 {
 }
 
 void SemanticAnalyzer::set_lsp_mode(bool enable) { m_reporter.set_lsp_mode(enable); }
 bool SemanticAnalyzer::lsp_mode() const { return m_reporter.lsp_mode(); }
-
-Type* SemanticAnalyzer::register_builtin_trait(
-        StringView name, StringView method_name,
-        Span<Type*> method_param_types, Type* return_type,
-        Span<TypeKind> primitive_kinds, bool register_trait_on_primitives) {
-    Type* trait_type = m_types.trait_type(name, nullptr);
-    m_type_env.register_trait_type(name, trait_type);
-
-    TraitMethodInfo tmi;
-    tmi.name = method_name;
-    tmi.param_types = method_param_types;
-    tmi.return_type = return_type;
-    tmi.decl = nullptr;
-    tmi.has_default = false;
-    trait_type->trait_info.methods =
-        Span<TraitMethodInfo>(m_allocator.emplace<TraitMethodInfo>(tmi), 1);
-
-    for (TypeKind tk : primitive_kinds) {
-        MethodInfo mi;
-        mi.name = method_name;
-        mi.param_types = method_param_types;
-        mi.return_type = return_type;
-        mi.decl = nullptr;
-        m_types.register_primitive_method(tk, mi);
-        if (register_trait_on_primitives) {
-            m_types.register_primitive_trait(tk, trait_type);
-        }
-    }
-    return trait_type;
-}
-
-Type* SemanticAnalyzer::register_builtin_index_trait(StringView name, StringView method_name,
-                                                     bool is_mut) {
-    Type* trait_type = m_types.trait_type(name, nullptr);
-    m_type_env.register_trait_type(name, trait_type);
-
-    // Two type params: <Idx, Output>. Output appears in the method's return type
-    // (index) or value parameter (index_mut), since Roxy has no associated types.
-    Vector<TypeParam> tparams;
-    TypeParam idx_param; idx_param.name = StringView("Idx", 3);
-    idx_param.loc = SourceLocation{}; idx_param.bounds = Span<TypeExpr*>();
-    TypeParam out_param; out_param.name = StringView("Output", 6);
-    out_param.loc = SourceLocation{}; out_param.bounds = Span<TypeExpr*>();
-    tparams.push_back(idx_param);
-    tparams.push_back(out_param);
-    trait_type->trait_info.type_params = m_allocator.alloc_span(tparams);
-
-    Type* idx_tp = m_types.type_param(StringView("Idx", 3), 0);
-    Type* out_tp = m_types.type_param(StringView("Output", 6), 1);
-
-    Vector<Type*> method_params;
-    method_params.push_back(idx_tp);
-    Type* return_type;
-    if (is_mut) {
-        method_params.push_back(out_tp);       // index_mut(idx: Idx, val: Output)
-        return_type = m_types.void_type();
-    } else {
-        return_type = out_tp;                  // index(idx: Idx): Output
-    }
-
-    TraitMethodInfo tmi;
-    tmi.name = method_name;
-    tmi.param_types = m_allocator.alloc_span(method_params);
-    tmi.return_type = return_type;
-    tmi.decl = nullptr;
-    tmi.has_default = false;
-    trait_type->trait_info.methods =
-        Span<TraitMethodInfo>(m_allocator.emplace<TraitMethodInfo>(tmi), 1);
-    return trait_type;
-}
 
 void SemanticAnalyzer::run_declaration_passes(Program* program) {
     m_program = program;
@@ -188,88 +126,12 @@ void SemanticAnalyzer::run_declaration_passes(Program* program) {
         m_registry->apply_methods_to_types(m_type_env, m_allocator);
     }
 
-    // Pass 1.7: Register builtin traits (Printable, Hash, Exception)
-    // and primitive operator methods — guarded against re-initialization
-    if (!m_type_env.printable_type()) {
-        TypeKind prim_kinds[] = {
-            TypeKind::Bool, TypeKind::I32, TypeKind::I64,
-            TypeKind::F32, TypeKind::F64, TypeKind::String
-        };
-        Type* printable_type = register_builtin_trait(
-            StringView("Printable", 9), StringView("to_string", 9),
-            Span<Type*>(nullptr, 0), m_types.string_type(),
-            Span<TypeKind>(prim_kinds, 6), /*register_trait_on_primitives=*/true);
-        m_type_env.set_printable_type(printable_type);
-    }
-
-    if (!m_type_env.hash_type()) {
-        TypeKind hashable_kinds[] = {
-            TypeKind::Bool,
-            TypeKind::I8, TypeKind::I16, TypeKind::I32, TypeKind::I64,
-            TypeKind::U8, TypeKind::U16, TypeKind::U32, TypeKind::U64,
-            TypeKind::F32, TypeKind::F64,
-            TypeKind::String
-        };
-        Type* hash_trait_type = register_builtin_trait(
-            StringView("Hash", 4), StringView("hash", 4),
-            Span<Type*>(nullptr, 0), m_types.u64_type(),
-            Span<TypeKind>(hashable_kinds, 12), /*register_trait_on_primitives=*/true);
-        m_type_env.set_hash_type(hash_trait_type);
-    }
-
-    // Builtin `Eq` trait used by Map's struct-key dispatch — `Map<K, V>` uses
-    // custom hash/eq runtime dispatch only when K explicitly implements both
-    // `Hash` and `Eq` (just defining `hash()` / `eq()` methods isn't enough).
-    // We declare `eq(other: Self): bool` as the required trait method so user
-    // `for Eq` impls match against it, but we don't register `eq` as a method
-    // on primitive types — that would shadow the native operator-dispatch
-    // path for `==` on primitives.
-    //
-    // Tests / user code may also write `trait Eq;` to declare the trait for
-    // operator overloading — the trait-decl handler below merges that with
-    // this builtin instead of erroring on duplicate.
-    if (!m_type_env.eq_type()) {
-        // Required method: fun Eq.eq(other: Self): bool. Eq is intentionally not
-        // registered on primitives (see comment above), so primitive_kinds is
-        // empty and register_trait_on_primitives is irrelevant.
-        Span<Type*> eq_params(m_allocator.emplace<Type*>(m_types.self_type()), 1);
-        Type* eq_trait_type = register_builtin_trait(
-            StringView("Eq", 2), StringView("eq", 2),
-            eq_params, m_types.bool_type(),
-            Span<TypeKind>(), /*register_trait_on_primitives=*/false);
-        m_type_env.set_eq_type(eq_trait_type);
-    }
-
-    if (!m_type_env.exception_type()) {
-        // `message` is installed on ExceptionRef as a primitive method, but the
-        // Exception trait itself is not registered on it (catch-all handles only
-        // message()), so register_trait_on_primitives is false.
-        TypeKind exc_kinds[] = { TypeKind::ExceptionRef };
-        Type* exception_trait_type = register_builtin_trait(
-            StringView("Exception", 9), StringView("message", 7),
-            Span<Type*>(nullptr, 0), m_types.string_type(),
-            Span<TypeKind>(exc_kinds, 1), /*register_trait_on_primitives=*/false);
-        m_type_env.set_exception_type(exception_trait_type);
-    }
-
-    // Builtin subscript-operator traits. `a[i]` rewrites to `a.index(i)` and
-    // `a[i] = v` to `a.index_mut(i, v)`; the dispatch is structural (any matching
-    // method), but these traits let user types formally opt in with
-    // `for Index<Idx, Output>` / `for IndexMut<Idx, Output>`. Built with two type
-    // params because Roxy has no associated types for the element (output) type.
-    // Registered with decl == nullptr so a user `trait Index<Idx, Output>;` merges
-    // rather than colliding (see the trait-decl handler).
-    if (!m_type_env.trait_type_by_name(StringView("Index", 5))) {
-        register_builtin_index_trait(StringView("Index", 5), StringView("index", 5),
-                                     /*is_mut=*/false);
-    }
-    if (!m_type_env.trait_type_by_name(StringView("IndexMut", 8))) {
-        register_builtin_index_trait(StringView("IndexMut", 8), StringView("index_mut", 9),
-                                     /*is_mut=*/true);
-    }
+    // Pass 1.7: Register builtin traits (Printable, Hash, Eq, Exception,
+    // Index/IndexMut) — guarded against re-initialization
+    m_traits.register_builtin_traits();
 
     // Pass 1.8: Register built-in operator trait methods for primitive types
-    register_primitive_operator_methods();
+    m_traits.register_primitive_operator_methods();
 
     // Pass 1.9: Resolve trait bounds on generic type parameters
     resolve_generic_bounds();
@@ -426,36 +288,7 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
             m_symbols.define(SymbolKind::Enum, name, type, decl->loc, decl);
         }
         else if (decl->kind == AstKind::DeclTrait) {
-            StringView name = decl->trait_decl.name;
-
-            // Allow user redeclaration of builtin traits (Hash, Eq, etc.):
-            // a builtin trait was registered with `decl == nullptr` at this
-            // pass's start; if the user writes `trait Eq;`, attach their decl
-            // to the existing trait type rather than erroring on duplicate.
-            // The user's trait method declarations (later in Pass 2) populate
-            // the trait's methods on the existing type.
-            Type* existing_trait = m_type_env.trait_type_by_name(name);
-            if (existing_trait != nullptr && existing_trait->trait_info.decl == nullptr) {
-                existing_trait->trait_info.decl = decl;
-                existing_trait->trait_info.type_params = decl->trait_decl.type_params;
-                m_symbols.define(SymbolKind::Trait, name, existing_trait, decl->loc, decl);
-                continue;
-            }
-
-            // Check for duplicate type/trait names
-            if (m_type_env.named_type_by_name(name) != nullptr ||
-                existing_trait != nullptr) {
-                error_fmt(decl->loc, "duplicate type declaration '{}'", name);
-                continue;
-            }
-
-            // Create the trait type
-            Type* type = m_types.trait_type(name, decl);
-            type->trait_info.type_params = decl->trait_decl.type_params;
-            m_type_env.register_trait_type(name, type);
-
-            // Define in global scope
-            m_symbols.define(SymbolKind::Trait, name, type, decl->loc, decl);
+            m_traits.collect_trait_declaration(decl);
         }
     }
 }
@@ -473,7 +306,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
             case AstKind::DeclConstructor: resolve_constructor_member(decl); break;
             case AstKind::DeclDestructor:  resolve_destructor_member(decl); break;
             case AstKind::DeclMethod:      resolve_method_member(decl); break;
-            case AstKind::DeclTrait:       resolve_trait_parent(decl); break;
+            case AstKind::DeclTrait:       m_traits.resolve_trait_parent(decl); break;
             default: break;
         }
     }
@@ -481,7 +314,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
     generate_synthetic_destructors(program);
 
     // Now validate all trait implementations
-    validate_trait_implementations();
+    m_traits.validate_trait_implementations();
 }
 
 bool SemanticAnalyzer::ensure_struct_members_resolved(Type* struct_type, SourceLocation loc) {
@@ -756,34 +589,11 @@ void SemanticAnalyzer::resolve_method_member(Decl* decl) {
     Type* trait_lookup = m_type_env.trait_type_by_name(method_decl.struct_name);
     if (trait_lookup && method_decl.trait_name.empty()) {
         // This is a trait method declaration (fun TraitName.method(...))
-        analyze_trait_method_decl(decl, trait_lookup);
+        m_traits.analyze_trait_method_decl(decl, trait_lookup);
     }
     else if (!method_decl.trait_name.empty()) {
         // This is a trait implementation (fun Type.method(...) for Trait<Args>)
-        Type* struct_type_lookup = m_type_env.named_type_by_name(method_decl.struct_name);
-        if (!struct_type_lookup) {
-            error_fmt(decl->loc, "method for unknown type '{}'", method_decl.struct_name);
-        } else if (struct_type_lookup->kind != TypeKind::Struct) {
-            error_fmt(decl->loc, "'{}' is not a struct type", method_decl.struct_name);
-        } else {
-            Type* impl_trait = m_type_env.trait_type_by_name(method_decl.trait_name);
-            if (!impl_trait) {
-                error_fmt(decl->loc, "unknown trait '{}'", method_decl.trait_name);
-            } else {
-                Type* trait_type = impl_trait;
-                TraitTypeInfo& trait_type_info = trait_type->trait_info;
-
-                // Resolve the `for Trait<Args>` type args of this impl.
-                Span<Type*> resolved_trait_type_args;
-                if (!resolve_trait_impl_type_args(method_decl, trait_type_info,
-                                                  struct_type_lookup, decl->loc,
-                                                  resolved_trait_type_args)) {
-                    return;
-                }
-
-                m_pending_trait_impls.push_back({decl, struct_type_lookup, trait_type, resolved_trait_type_args});
-            }
-        }
+        m_traits.resolve_trait_impl_member(decl);
     }
     else {
         // Regular method (no trait involvement)
@@ -793,23 +603,6 @@ void SemanticAnalyzer::resolve_method_member(Decl* decl) {
             return;  // Skip normal method analysis; handled in worklist
         }
         analyze_method_decl(decl);
-    }
-}
-
-void SemanticAnalyzer::resolve_trait_parent(Decl* decl) {
-    TraitDecl& trait_decl = decl->trait_decl;
-    Type* trait_type = m_type_env.trait_type_by_name(trait_decl.name);
-
-    // Resolve parent trait
-    if (!trait_decl.parent_name.empty()) {
-        Type* parent_trait = m_type_env.trait_type_by_name(trait_decl.parent_name);
-        if (!parent_trait) {
-            error_fmt(decl->loc, "unknown parent trait '{}'", trait_decl.parent_name);
-        } else if (parent_trait == trait_type) {
-            error_fmt(decl->loc, "trait '{}' cannot inherit from itself", trait_decl.name);
-        } else {
-            trait_type->trait_info.parent = parent_trait;
-        }
     }
 }
 
@@ -873,7 +666,7 @@ void SemanticAnalyzer::generate_synthetic_destructors(Program* program) {
             synthetic_dtor.name = StringView();
             synthetic_dtor.param_types = Span<Type*>();
             synthetic_dtor.decl = nullptr;
-            append_destructor(struct_info, synthetic_dtor);
+            append_destructor(m_allocator, struct_info, synthetic_dtor);
             changed = true;
         }
     }
@@ -1139,7 +932,7 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                     synthetic_dtor.name = StringView();
                     synthetic_dtor.param_types = Span<Type*>();
                     synthetic_dtor.decl = nullptr;
-                    append_destructor(concrete_info, synthetic_dtor);
+                    append_destructor(m_allocator, concrete_info, synthetic_dtor);
                 }
             }
         }
@@ -1245,7 +1038,7 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         ctor_info.name = ctor.name;
         ctor_info.param_types = m_allocator.alloc_span(param_types);
         ctor_info.decl = ctor_decl;
-        append_constructor(struct_type_info, ctor_info);
+        append_constructor(m_allocator, struct_type_info, ctor_info);
     }
 
     // Register DestructorInfo for external destructors
@@ -1262,7 +1055,7 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         dtor_info.name = dtor.name;
         dtor_info.param_types = m_allocator.alloc_span(param_types);
         dtor_info.decl = dtor_decl;
-        append_destructor(struct_type_info, dtor_info);
+        append_destructor(m_allocator, struct_type_info, dtor_info);
     }
 
     // Register MethodInfo for external methods so call sites can resolve them
@@ -1284,7 +1077,7 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         method_info.param_types = m_allocator.alloc_span(param_types);
         method_info.return_type = return_type;
         method_info.decl = method_decl;
-        append_method(struct_type_info, method_info);
+        append_method(m_allocator, struct_type_info, method_info);
     }
 
     // Generate synthetic default destructor if struct has fields needing cleanup
@@ -1315,7 +1108,7 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         synthetic_dtor.name = StringView();
         synthetic_dtor.param_types = Span<Type*>();
         synthetic_dtor.decl = nullptr;
-        append_destructor(struct_type_info, synthetic_dtor);
+        append_destructor(m_allocator, struct_type_info, synthetic_dtor);
     }
 
     inst->is_analyzed = true;
@@ -1543,7 +1336,7 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
 
         // Consume noncopyable source (field-move check + mark source as moved)
         if (var_type && var_type->noncopyable()) {
-            consume_noncopyable(var_decl.initializer, decl->loc);
+            m_lifetimes.consume_noncopyable(var_decl.initializer, decl->loc);
         }
     } else if (!var_type) {
         error(decl->loc, "variable declaration requires type annotation or initializer");
@@ -1554,390 +1347,8 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
     Symbol* var_sym = m_symbols.define(SymbolKind::Variable, var_decl.name, var_type, decl->loc, decl);
 
     // Track owned variables for move semantics (uniq refs and value structs with destructors)
-    if (var_type && var_type->noncopyable() && var_sym) {
-        m_move_states[var_sym] = MoveState::Live;
-    }
-}
-
-// ===== Move-State Tracking for Uniq Variables =====
-
-void SemanticAnalyzer::merge_move_states(const MoveStateSnapshot& then_states,
-                                          const MoveStateSnapshot& else_states) {
-    // For each tracked variable, merge states from both branches
-    for (auto it = m_move_states.begin(); it != m_move_states.end(); ++it) {
-        Symbol* sym = it->first;
-        auto then_it = then_states.find(sym);
-        auto else_it = else_states.find(sym);
-
-        MoveState then_state = (then_it != then_states.end()) ? then_it->second : it->second;
-        MoveState else_state = (else_it != else_states.end()) ? else_it->second : it->second;
-
-        if (then_state == else_state) {
-            it.value() = then_state;
-        } else {
-            // Branches disagree — variable may or may not be valid
-            it.value() = MoveState::MaybeValid;
-        }
-    }
-}
-
-void SemanticAnalyzer::merge_two_branches(const MoveStateSnapshot& pre_branch,
-                                          const MoveStateSnapshot& then_states,
-                                          const MoveStateSnapshot& else_states,
-                                          bool then_terminates, bool else_terminates) {
-    // Terminating branches contribute no state to the post-merge point.
-    // Pick the surviving branch's snapshot; if both terminate, the code
-    // after is unreachable but we pick then_states arbitrarily.
-    if (then_terminates && !else_terminates) {
-        restore_move_states(else_states);
-    } else if (!then_terminates && else_terminates) {
-        restore_move_states(then_states);
-    } else {
-        restore_move_states(pre_branch);
-        merge_move_states(then_states, else_states);
-    }
-    m_branch_terminates = then_terminates && else_terminates;
-}
-
-bool SemanticAnalyzer::merge_branch_snapshots(const Vector<MoveStateSnapshot>& snapshots,
-                                              const Vector<bool>& terminates) {
-    // Pairwise-merge only the surviving (non-terminating) snapshots.
-    bool have_survivor = false;
-    for (u32 i = 0; i < snapshots.size(); i++) {
-        if (terminates[i]) continue;
-        if (!have_survivor) {
-            restore_move_states(snapshots[i]);
-            have_survivor = true;
-        } else {
-            MoveStateSnapshot current = save_move_states();
-            merge_move_states(current, snapshots[i]);
-        }
-    }
-
-    // No survivor means every branch terminates: the join point is
-    // unreachable. Restore an arbitrary snapshot and report it upward.
-    if (!have_survivor && !snapshots.empty()) {
-        restore_move_states(snapshots[0]);
-        return true;
-    }
-    return false;
-}
-
-bool SemanticAnalyzer::expr_references_name(Expr* expr, StringView name) const {
-    if (!expr) return false;
-    switch (expr->kind) {
-        case AstKind::ExprIdentifier:
-            return expr->identifier.name == name;
-        case AstKind::ExprLiteral:
-        case AstKind::ExprThis:
-        case AstKind::ExprSuper:
-        case AstKind::ExprStaticGet:
-            return false;
-        case AstKind::ExprUnary:
-            return expr_references_name(expr->unary.operand, name);
-        case AstKind::ExprBinary:
-            return expr_references_name(expr->binary.left, name) ||
-                   expr_references_name(expr->binary.right, name);
-        case AstKind::ExprTernary:
-            return expr_references_name(expr->ternary.condition, name) ||
-                   expr_references_name(expr->ternary.then_expr, name) ||
-                   expr_references_name(expr->ternary.else_expr, name);
-        case AstKind::ExprCall: {
-            if (expr_references_name(expr->call.callee, name)) return true;
-            for (const auto& arg : expr->call.arguments) {
-                if (expr_references_name(arg.expr, name)) return true;
-            }
-            return false;
-        }
-        case AstKind::ExprIndex:
-            return expr_references_name(expr->index.object, name) ||
-                   expr_references_name(expr->index.index, name);
-        case AstKind::ExprGet:
-            return expr_references_name(expr->get.object, name);
-        case AstKind::ExprAssign:
-            return expr_references_name(expr->assign.target, name) ||
-                   expr_references_name(expr->assign.value, name);
-        case AstKind::ExprGrouping:
-            return expr_references_name(expr->grouping.expr, name);
-        case AstKind::ExprStructLiteral: {
-            for (const auto& field : expr->struct_literal.fields) {
-                if (expr_references_name(field.value, name)) return true;
-            }
-            return false;
-        }
-        case AstKind::ExprStringInterp: {
-            for (Expr* sub : expr->string_interp.expressions) {
-                if (expr_references_name(sub, name)) return true;
-            }
-            return false;
-        }
-        default:
-            // Lambdas (which may capture the variable) and any future expression
-            // kind: assume a reference so we never wrongly exempt a real hazard.
-            return true;
-    }
-}
-
-bool SemanticAnalyzer::loop_reassigns_var_first(Stmt* body, StringView var_name) const {
-    if (!body) return false;
-
-    // Find the leading statement. For a braced block, that is its first
-    // declaration — which must be a plain expression statement (a leading var
-    // decl introduces a new name, never a reassignment of the outer variable).
-    // `Decl::kind` holds the statement kind directly for statement-wrapped decls.
-    Stmt* first = body;
-    if (body->kind == AstKind::StmtBlock) {
-        if (body->block.declarations.size() == 0) return false;
-        Decl* decl = body->block.declarations[0];
-        if (!decl || decl->kind != AstKind::StmtExpr) return false;
-        first = &decl->stmt;
-    }
-
-    // The leading statement must be a plain `var_name = rhs` assignment.
-    if (first->kind != AstKind::StmtExpr) return false;
-    Expr* e = first->expr_stmt.expr;
-    if (!e || e->kind != AstKind::ExprAssign) return false;
-    const AssignExpr& assign = e->assign;
-    if (assign.op != AssignOp::Assign) return false;  // compound ops read the target first
-    if (!assign.target || assign.target->kind != AstKind::ExprIdentifier) return false;
-    if (assign.target->identifier.name != var_name) return false;
-
-    // The RHS must not read the variable (else it observes a possibly-moved value).
-    return !expr_references_name(assign.value, var_name);
-}
-
-void SemanticAnalyzer::check_loop_cross_iteration_moves(
-        Stmt* body,
-        const MoveStateSnapshot& pre_loop_states,
-        const MoveStateSnapshot& post_body_states,
-        SourceLocation loc) {
-    for (auto& [sym, pre_state] : pre_loop_states) {
-        if (pre_state != MoveState::Live) continue;
-        auto post_it = post_body_states.find(sym);
-        if (post_it == post_body_states.end()) continue;
-        MoveState post = post_it->second;
-        if (post != MoveState::Moved && post != MoveState::MaybeValid) continue;
-
-        // A variable refreshed by the body's leading statement is Live again
-        // before any use on every iteration, so the back-edge state is harmless.
-        if (sym && loop_reassigns_var_first(body, sym->name)) continue;
-
-        if (post == MoveState::Moved) {
-            error_fmt(loc,
-                "variable '{}' is moved in the loop body and never reassigned; "
-                "it would be used after move on the next iteration",
-                sym ? sym->name : StringView());
-        } else {
-            error_fmt(loc,
-                "variable '{}' may be moved in the loop body without being "
-                "reassigned; it could be used after move on the next iteration",
-                sym ? sym->name : StringView());
-        }
-    }
-}
-
-bool SemanticAnalyzer::check_not_moved(StringView name, SourceLocation loc) {
-    Symbol* sym = m_symbols.lookup(name);
-    if (!sym) return true;
-    auto it = m_move_states.find(sym);
-    if (it == m_move_states.end()) return true;  // Not tracked (not noncopyable)
-
-    if (it->second == MoveState::Moved) {
-        error_fmt(loc, "use of moved value '{}'", name);
-        return false;
-    }
-    if (it->second == MoveState::MaybeValid) {
-        error_fmt(loc, "use of possibly moved value '{}'", name);
-        return false;
-    }
-    return true;
-}
-
-bool SemanticAnalyzer::check_not_field_move(Expr* expr, SourceLocation loc) {
-    if (expr->kind != AstKind::ExprGet) return true;
-
-    Type* field_type = expr->resolved_type;
-    if (!field_type || field_type->is_copy()) return true;
-
-    // A noncopyable *value-struct* field can't be moved out. The containing
-    // struct is destroyed by a type-level descriptor that walks every field, so
-    // it would re-run the moved field's destructor (double-free); and unlike a
-    // pointer field it can't be nulled in place (the move-target aliases the same
-    // inline storage). Pointer-valued noncopyable fields (uniq/List/Map/Coro/fun)
-    // are fine — they are nulled in the root at the move (see the IR builder).
-    if (field_type->is_struct()) {
-        error(loc, "cannot move a value-type struct field out of a struct: the "
-                   "container can't track a partial move. Move the whole struct, "
-                   "borrow the field with 'ref', or make the field 'uniq'");
-        return false;
-    }
-
-    // Allow moving a noncopyable *pointer* field (uniq/List/Map/...) out of a
-    // local value-struct variable, including nested chains like `obj.inner.field`
-    // provided every link in the chain is a value struct (no references). A
-    // reference type anywhere along the chain breaks the rule: we can read through
-    // `uniq`/`ref`/`weak` but can't take ownership of storage we don't own.
-    //
-    // The root is marked moved here for *use-checking* — conservatively the whole
-    // variable becomes unusable, even though its sibling fields are still valid.
-    // But its scope-exit cleanup still runs: the IR builder nulls the moved-out
-    // field in the root (nullify_moved_field_source) so the root's destructor
-    // no-ops that field and frees the surviving siblings, instead of re-freeing
-    // the value the move transferred out.
-    Expr* current = expr->get.object;
-    while (current->kind == AstKind::ExprGet) {
-        Type* parent_type = current->resolved_type;
-        if (!parent_type || parent_type->is_reference() || !parent_type->is_struct()) {
-            error(loc, "cannot move out of a struct field; consider borrowing with 'ref' instead");
-            return false;
-        }
-        current = current->get.object;
-    }
-
-    if (current->kind == AstKind::ExprIdentifier) {
-        StringView root_name = current->identifier.name;
-        Type* root_type = current->resolved_type;
-
-        if (root_type && !root_type->is_reference() && root_type->is_struct()) {
-            Symbol* root_sym = m_symbols.lookup(root_name);
-            auto it = root_sym ? m_move_states.find(root_sym) : m_move_states.end();
-            if (it != m_move_states.end() && it->second == MoveState::Live) {
-                mark_moved(root_name);
-                return true;
-            }
-        }
-    }
-
-    error(loc, "cannot move out of a struct field; consider borrowing with 'ref' instead");
-    return false;
-}
-
-bool SemanticAnalyzer::is_out_inout_param(Expr* expr) {
-    if (!expr || expr->kind != AstKind::ExprIdentifier) return false;
-    Symbol* sym = m_symbols.lookup(expr->identifier.name);
-    return sym && sym->kind == SymbolKind::Parameter && sym->is_out_inout;
-}
-
-void SemanticAnalyzer::consume_noncopyable(Expr* expr, SourceLocation loc) {
-    if (!expr) return;
-    Type* type = expr->resolved_type;
-    if (!type || type->is_copy()) return;
-
-    // Look through parenthesization: `(p)` denotes the same storage as `p`
-    // (is_lvalue() recurses through grouping the same way). A move whose source
-    // is wrapped in a grouping must still mark the underlying variable moved;
-    // otherwise `consume((p))` launders the move past the identifier check below
-    // and leaves `p` Live — a use-after-move false negative.
-    while (expr->kind == AstKind::ExprGrouping) {
-        expr = expr->grouping.expr;
-        if (!expr) return;
-    }
-
-    // Second-class family (lifetimes.md "The second-class family"): an `out`/`inout` parameter borrows
-    // the caller's value and the caller retains ownership, so a noncopyable
-    // out/inout cannot be moved out of this frame (binding it, returning it,
-    // passing it by value, storing it, capturing it by move) — that would
-    // transfer and then free the caller's value, leaving it dangling. It may
-    // still be used in place or passed onward as another out/inout argument
-    // (the downward path, which does not consume). Copyable out/inout aren't
-    // affected: a copy escapes nothing, and the type system already blocks
-    // converting a value to `ref`/`weak`.
-    if (is_out_inout_param(expr)) {
-        error(loc, "cannot move an 'out'/'inout' parameter out of its frame; it "
-                   "borrows the caller's value (use it in place, or pass it "
-                   "onward as an 'out'/'inout' argument)");
-        return;
-    }
-
-    // Moving a noncopyable value out of an index expression can be unsound. `[]`
-    // dispatches to the `index` method, and the distinguishing signal is whether
-    // that method is native: a user-defined `index` (the Index trait) has a
-    // move-checked body, so its noncopyable return is a genuine ownership
-    // transfer and is sound to consume. A *native* `index` (built-in List/Map) is
-    // outside the move checker and returns the element by alias without nullifying
-    // the slot, so the new owner and the container's own scope-exit cleanup both
-    // free it (double-free). Reject the move only for a native index method.
-    // (This is the interim rule until `borrowed`-typed returns make the result a
-    // `ref`, at which point the move-out becomes a plain ref→uniq type error.)
-    if (expr->kind == AstKind::ExprIndex && expr->index.object) {
-        Type* obj_type = expr->index.object->resolved_type;
-        if (obj_type) {
-            const MethodInfo* index_method =
-                m_types.lookup_method(obj_type->base_type(), StringView("index", 5));
-            if (index_method && !index_method->native_name.empty()) {
-                error(loc, "cannot move a noncopyable value out of a container element; "
-                           "borrow it with 'ref' or remove it from the container instead");
-                return;
-            }
-        }
-    }
-
-    if (!check_not_field_move(expr, loc)) return;
-
-    if (expr->kind == AstKind::ExprIdentifier) {
-        mark_moved(expr->identifier.name);
-    }
-}
-
-void SemanticAnalyzer::mark_moved(StringView name) {
-    Symbol* sym = m_symbols.lookup(name);
-    if (!sym) return;
-    auto it = m_move_states.find(sym);
-    if (it != m_move_states.end()) {
-        it.value() = MoveState::Moved;
-    }
-}
-
-void SemanticAnalyzer::mark_live(StringView name) {
-    Symbol* sym = m_symbols.lookup(name);
-    if (!sym) return;
-    auto it = m_move_states.find(sym);
-    if (it != m_move_states.end()) {
-        it.value() = MoveState::Live;
-    }
-}
-
-void SemanticAnalyzer::check_scope_exit_uniq_destructors(const Scope* scope, SourceLocation loc) {
-    for (Symbol* sym : scope->symbols) {
-        if (sym->kind != SymbolKind::Variable && sym->kind != SymbolKind::Parameter) continue;
-
-        Type* type = sym->type;
-        if (!type || type->kind != TypeKind::Uniq) continue;
-
-        // Check if the variable is still live (not moved/deleted)
-        auto it = m_move_states.find(sym);
-        if (it == m_move_states.end() || it->second != MoveState::Live) continue;
-
-        // Get the inner struct type
-        Type* inner = type->inner_type();
-        if (!inner || inner->kind != TypeKind::Struct) continue;
-
-        // Check if struct has destructors but no default (unnamed) destructor
-        const StructTypeInfo& struct_info = inner->struct_info;
-        if (struct_info.destructors.size() == 0) continue;
-
-        bool has_default = false;
-        for (const DestructorInfo& dtor : struct_info.destructors) {
-            if (dtor.name.empty()) {
-                has_default = true;
-                break;
-            }
-        }
-
-        if (!has_default) {
-            error_fmt(loc, "variable '{}' of type 'uniq {}' has only named destructors; "
-                          "must be explicitly deleted with 'delete {}.name(args)' before scope exit",
-                      sym->name, struct_info.name, sym->name);
-        }
-    }
-}
-
-void SemanticAnalyzer::check_all_scopes_uniq_destructors(SourceLocation loc, ScopeKind stop_kind) {
-    Scope* scope = m_symbols.current_scope();
-    while (scope) {
-        check_scope_exit_uniq_destructors(scope, loc);
-        if (scope->kind == stop_kind) break;
-        scope = scope->parent;
+    if (var_type && var_type->noncopyable()) {
+        m_lifetimes.track_live(var_sym);
     }
 }
 
@@ -1952,7 +1363,7 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
     Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
 
     // Detect coroutine function (returns Coro<T>). These guards restore the
-    // outer coroutine context and move-state map when the function returns.
+    // outer coroutine context and lifetime state when the function returns.
     bool is_coroutine = return_type && return_type->is_coroutine();
     ScopedValue coro_guard(m_in_coroutine);
     ScopedValue yield_guard(m_coro_yield_type);
@@ -1961,9 +1372,9 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
         m_coro_yield_type = return_type->coro_info.yield_type;
     }
 
-    // Reset move states for this function body (restored on exit by the guard).
-    ScopedValue move_states_guard(m_move_states);
-    m_move_states.clear();
+    // Fresh lifetime state (move states + termination flag) for this body,
+    // restored on exit.
+    LifetimeChecker::FunctionScope lifetime_scope(m_lifetimes);
 
     // Push function scope
     m_symbols.push_function_scope(return_type);
@@ -1985,8 +1396,7 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
 
         // Track owned parameters as Live (uniq refs and value structs with destructors)
         if (ptype && ptype->noncopyable()) {
-            Symbol* param_sym = m_symbols.lookup(p.name);
-            if (param_sym) m_move_states[param_sym] = MoveState::Live;
+            m_lifetimes.track_live(m_symbols.lookup(p.name));
         }
     }
 
@@ -2000,9 +1410,9 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
         // A full implementation would check all paths
     }
 
-    check_scope_exit_uniq_destructors(m_symbols.current_scope(), decl->loc);
+    m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), decl->loc);
     m_symbols.pop_scope();
-    // coro_guard / yield_guard / move_states_guard restore on return.
+    // coro_guard / yield_guard / lifetime_scope restore on return.
 }
 
 void SemanticAnalyzer::analyze_struct_decl(Decl* decl) {
@@ -2145,7 +1555,7 @@ void SemanticAnalyzer::analyze_constructor_decl(Decl* decl) {
     ctor_info.decl = decl;
 
     // Add to struct's constructor list
-    append_constructor(struct_type->struct_info, ctor_info);
+    append_constructor(m_allocator, struct_type->struct_info, ctor_info);
 }
 
 void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
@@ -2194,7 +1604,7 @@ void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
     dtor_info.decl = decl;
 
     // Add to struct's destructor list
-    append_destructor(struct_type->struct_info, dtor_info);
+    append_destructor(m_allocator, struct_type->struct_info, dtor_info);
 }
 
 void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
@@ -2243,7 +1653,7 @@ void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
     method_info.decl = decl;
 
     // Add to struct's method list
-    append_method(struct_type->struct_info, method_info);
+    append_method(m_allocator, struct_type->struct_info, method_info);
 }
 
 void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
@@ -2267,9 +1677,9 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
         m_coro_yield_type = return_type->coro_info.yield_type;
     }
 
-    // Reset move states for this function body (restored on exit by the guard).
-    ScopedValue move_states_guard(m_move_states);
-    m_move_states.clear();
+    // Fresh lifetime state (move states + termination flag) for this body,
+    // restored on exit.
+    LifetimeChecker::FunctionScope lifetime_scope(m_lifetimes);
 
     // Push struct scope so 'self' and fields are accessible
     m_symbols.push_struct_scope(struct_type);
@@ -2297,18 +1707,17 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
 
         // Track owned parameters as Live (uniq refs and value structs with destructors)
         if (ptype && ptype->noncopyable()) {
-            Symbol* param_sym = m_symbols.lookup(p.name);
-            if (param_sym) m_move_states[param_sym] = MoveState::Live;
+            m_lifetimes.track_live(m_symbols.lookup(p.name));
         }
     }
 
     // Analyze body
     analyze_stmt(body);
 
-    check_scope_exit_uniq_destructors(m_symbols.current_scope(), decl->loc);
+    m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), decl->loc);
     m_symbols.pop_scope();  // function scope
     m_symbols.pop_scope();  // struct scope
-    // move_states_guard restores the outer function's move states on return.
+    // lifetime_scope restores the outer function's lifetime state on return.
 }
 
 void SemanticAnalyzer::analyze_constructor_body(Decl* decl, Type* struct_type) {
@@ -2332,108 +1741,6 @@ void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
     Type* return_type = method_decl.return_type ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
     if (!return_type) return_type = m_types.error_type();
     analyze_member_body(decl, struct_type, method_decl.params, method_decl.body, return_type);
-}
-
-// ===== Span Append Helpers =====
-
-void SemanticAnalyzer::append_method(StructTypeInfo& info, MethodInfo method) {
-    Vector<MethodInfo> methods;
-    for (const auto& m : info.methods) {
-        methods.push_back(m);
-    }
-    methods.push_back(method);
-    info.methods = m_allocator.alloc_span(methods);
-}
-
-void SemanticAnalyzer::append_constructor(StructTypeInfo& info, ConstructorInfo ctor) {
-    Vector<ConstructorInfo> ctors;
-    for (const auto& c : info.constructors) {
-        ctors.push_back(c);
-    }
-    ctors.push_back(ctor);
-    info.constructors = m_allocator.alloc_span(ctors);
-}
-
-void SemanticAnalyzer::append_destructor(StructTypeInfo& info, DestructorInfo dtor) {
-    Vector<DestructorInfo> dtors;
-    for (const auto& d : info.destructors) {
-        dtors.push_back(d);
-    }
-    dtors.push_back(dtor);
-    info.destructors = m_allocator.alloc_span(dtors);
-}
-
-// ===== Trait Validation =====
-
-Type* SemanticAnalyzer::resolve_trait_method_type_expr(TypeExpr* type_expr,
-                                                 const TraitTypeInfo& trait_info) {
-    if (!type_expr) {
-        return m_types.error_type();
-    }
-    if (type_expr->name == "Self") {
-        return m_types.self_type();
-    }
-    // Check if this is a trait type param
-    for (u32 i = 0; i < trait_info.type_params.size(); i++) {
-        if (type_expr->name == trait_info.type_params[i].name) {
-            return m_types.type_param(trait_info.type_params[i].name, i);
-        }
-    }
-    Type* resolved = resolve_type_expr(type_expr);
-    if (!resolved) resolved = m_types.error_type();
-    return resolved;
-}
-
-void SemanticAnalyzer::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
-    MethodDecl& method_decl = decl->method_decl;
-
-    // Check for duplicate method names in this trait. Builtin traits (Hash,
-    // Eq, etc.) pre-register their required methods with `decl == nullptr`;
-    // if the user redeclares the same method (matching name + arity), allow
-    // it as an idempotent re-declaration so user `trait Eq; fun Eq.eq(other:
-    // Self): bool;` doesn't conflict with the builtin Eq registration.
-    TraitTypeInfo& trait_type_info = trait_type->trait_info;
-    for (const auto& trait_method : trait_type_info.methods) {
-        if (trait_method.name == method_decl.name) {
-            bool is_builtin_redecl = trait_method.decl == nullptr &&
-                trait_method.param_types.size() == method_decl.params.size();
-            if (is_builtin_redecl) {
-                // The builtin shape stays; ignore the redeclaration silently.
-                return;
-            }
-            error_fmt(decl->loc, "duplicate trait method '{}' in trait '{}'",
-                     method_decl.name, trait_type_info.name);
-            return;
-        }
-    }
-
-    // Resolve parameter types - use TypeKind::Self for Self, TypeParam for trait type params
-    Vector<Type*> param_types;
-    for (const auto& param : method_decl.params) {
-        param_types.push_back(resolve_trait_method_type_expr(param.type, trait_type_info));
-    }
-
-    // Resolve return type (TypeKind::Self for Self, TypeParam for trait type params)
-    Type* return_type = method_decl.return_type
-        ? resolve_trait_method_type_expr(method_decl.return_type, trait_type_info)
-        : m_types.void_type();
-
-    // Create trait method info
-    TraitMethodInfo trait_method_info;
-    trait_method_info.name = method_decl.name;
-    trait_method_info.param_types = m_allocator.alloc_span(param_types);
-    trait_method_info.return_type = return_type;
-    trait_method_info.decl = decl;
-    trait_method_info.has_default = (method_decl.body != nullptr);
-
-    // Add to trait's method list
-    Vector<TraitMethodInfo> methods;
-    for (const auto& method : trait_type_info.methods) {
-        methods.push_back(method);
-    }
-    methods.push_back(trait_method_info);
-
-    trait_type_info.methods = m_allocator.alloc_span(methods);
 }
 
 // ===== Generic Trait Bound Resolution =====
@@ -2676,9 +1983,8 @@ void SemanticAnalyzer::analyze_generic_template_body(Decl* decl) {
     // Resolve return type (may reference type params → resolves to TypeParam via resolve_type_expr)
     Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
 
-    // Reset move states (same pattern as analyze_fun_decl).
-    ScopedValue move_states_guard(m_move_states);
-    m_move_states.clear();
+    // Fresh lifetime state (same pattern as analyze_fun_decl).
+    LifetimeChecker::FunctionScope lifetime_scope(m_lifetimes);
 
     // Push function scope with return type
     m_symbols.push_function_scope(return_type);
@@ -2696,408 +2002,7 @@ void SemanticAnalyzer::analyze_generic_template_body(Decl* decl) {
     analyze_stmt(fun_decl.body);
 
     m_symbols.pop_scope();
-    // move_states_guard / params_guard / bounds_guard restore on return.
-}
-
-bool SemanticAnalyzer::resolve_trait_impl_type_args(
-        MethodDecl& method_decl, const TraitTypeInfo& trait_info,
-        Type* struct_type, SourceLocation loc, Span<Type*>& out) {
-    out = Span<Type*>();
-    if (method_decl.trait_type_args.size() > 0) {
-        if (trait_info.type_params.size() == 0) {
-            error_fmt(loc, "trait '{}' does not take type arguments", method_decl.trait_name);
-            return false;
-        }
-        if (method_decl.trait_type_args.size() != trait_info.type_params.size()) {
-            error_fmt(loc, "trait '{}' expects {} type argument(s), got {}",
-                     method_decl.trait_name, trait_info.type_params.size(),
-                     method_decl.trait_type_args.size());
-            return false;
-        }
-        Vector<Type*> args;
-        for (auto* type_arg : method_decl.trait_type_args) {
-            Type* arg_type = resolve_type_expr(type_arg);
-            if (!arg_type) arg_type = m_types.error_type();
-            args.push_back(arg_type);
-        }
-        out = m_allocator.alloc_span(args);
-    } else if (trait_info.type_params.size() > 0) {
-        // Default all type params to Self (the implementing struct type).
-        // Enables `for Add` as shorthand for `for Add<Vec2>` on struct Vec2.
-        Vector<Type*> args;
-        for (u32 i = 0; i < trait_info.type_params.size(); i++) {
-            args.push_back(struct_type);
-        }
-        out = m_allocator.alloc_span(args);
-    }
-    return true;
-}
-
-Vector<SemanticAnalyzer::TraitImplGroup> SemanticAnalyzer::group_pending_trait_impls() {
-    // Group pending impls by (struct, trait, type_args). A simple list of
-    // groups suffices since we don't expect many.
-    Vector<TraitImplGroup> groups;
-    for (auto& pending : m_pending_trait_impls) {
-        TraitImplGroup* group = nullptr;
-        for (auto& g : groups) {
-            if (g.struct_type != pending.struct_type || g.trait_type != pending.trait_type) continue;
-            // Match on type args element-wise too.
-            bool args_match = g.trait_type_args.size() == pending.trait_type_args.size();
-            if (args_match) {
-                for (u32 i = 0; i < g.trait_type_args.size(); i++) {
-                    if (g.trait_type_args[i] != pending.trait_type_args[i]) { args_match = false; break; }
-                }
-            }
-            if (args_match) { group = &g; break; }
-        }
-        if (!group) {
-            groups.push_back({pending.struct_type, pending.trait_type, pending.trait_type_args, {}});
-            group = &groups.back();
-        }
-        group->impl_decls.push_back(pending.decl);
-    }
-    return groups;
-}
-
-bool SemanticAnalyzer::check_parent_trait_satisfied(const TraitImplGroup& group,
-                                                    const Vector<TraitImplGroup>& all_groups) {
-    TraitTypeInfo& trait_type_info = group.trait_type->trait_info;
-    if (!trait_type_info.parent) return true;
-
-    StructTypeInfo& struct_type_info = group.struct_type->struct_info;
-    for (const auto& impl : struct_type_info.implemented_traits) {
-        if (impl.trait == trait_type_info.parent) return true;
-    }
-    // Also satisfied if the parent trait is implemented in this same batch.
-    for (const auto& other : all_groups) {
-        if (other.struct_type == group.struct_type && other.trait_type == trait_type_info.parent) {
-            return true;
-        }
-    }
-    error_fmt(group.impl_decls[0]->loc,
-             "trait '{}' requires parent trait '{}' to be implemented for '{}'",
-             trait_type_info.name, trait_type_info.parent->trait_info.name, struct_type_info.name);
-    return false;
-}
-
-void SemanticAnalyzer::validate_and_register_impl_method(const TraitImplGroup& group, Decl* decl,
-                                                         Vector<bool>& implemented) {
-    TraitTypeInfo& trait_type_info = group.trait_type->trait_info;
-    StructTypeInfo& struct_type_info = group.struct_type->struct_info;
-    MethodDecl& method_decl = decl->method_decl;
-
-    for (u32 i = 0; i < trait_type_info.methods.size(); i++) {
-        const TraitMethodInfo& trait_method = trait_type_info.methods[i];
-        if (trait_method.name != method_decl.name) continue;
-        implemented[i] = true;
-
-        // Validate parameter count matches.
-        if (method_decl.params.size() != trait_method.param_types.size()) {
-            error_fmt(decl->loc, "method '{}' parameter count mismatch with trait '{}'",
-                     method_decl.name, trait_type_info.name);
-        }
-
-        // Resolve the impl's param/return types.
-        Vector<Type*> param_types;
-        for (const auto& param : method_decl.params) {
-            Type* ptype = resolve_type_expr(param.type);
-            if (!ptype) ptype = m_types.error_type();
-            param_types.push_back(ptype);
-        }
-        Type* return_type = method_decl.return_type ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
-        if (!return_type) return_type = m_types.error_type();
-
-        // Validate parameter types match the trait signature (Self / trait
-        // type-params concretized against this impl).
-        if (method_decl.params.size() == trait_method.param_types.size()) {
-            for (u32 p = 0; p < param_types.size(); p++) {
-                if (param_types[p]->is_error()) continue;
-                Type* expected = concretize_trait_type(trait_method.param_types[p],
-                                                       group.struct_type, group.trait_type_args);
-                if (param_types[p] != expected) {
-                    auto got_str = m_checker.type_string(param_types[p]);
-                    auto exp_str = m_checker.type_string(expected);
-                    error_fmt(decl->loc,
-                             "method '{}' parameter {} has type '{}' but trait '{}' expects '{}'",
-                             method_decl.name, p + 1, got_str.data(), trait_type_info.name, exp_str.data());
-                }
-            }
-        }
-
-        // Validate return type matches the trait signature.
-        if (!return_type->is_error()) {
-            Type* expected_ret = concretize_trait_type(trait_method.return_type,
-                                                       group.struct_type, group.trait_type_args);
-            if (return_type != expected_ret) {
-                auto got_str = m_checker.type_string(return_type);
-                auto exp_str = m_checker.type_string(expected_ret);
-                error_fmt(decl->loc,
-                         "method '{}' return type is '{}' but trait '{}' expects '{}'",
-                         method_decl.name, got_str.data(), trait_type_info.name, exp_str.data());
-            }
-        }
-
-        // Register as a regular method on the struct, unless one already exists.
-        bool is_duplicate = false;
-        for (const auto& method : struct_type_info.methods) {
-            if (method.name == method_decl.name) { is_duplicate = true; break; }
-        }
-        if (!is_duplicate) {
-            MethodInfo method_info;
-            method_info.name = method_decl.name;
-            method_info.param_types = m_allocator.alloc_span(param_types);
-            method_info.return_type = return_type;
-            method_info.decl = decl;
-            append_method(struct_type_info, method_info);
-        }
-        return;  // matched a trait method
-    }
-
-    error_fmt(decl->loc, "method '{}' is not defined in trait '{}'",
-             method_decl.name, trait_type_info.name);
-}
-
-void SemanticAnalyzer::finalize_trait_impl(const TraitImplGroup& group, const Vector<bool>& implemented) {
-    TraitTypeInfo& trait_type_info = group.trait_type->trait_info;
-    StructTypeInfo& struct_type_info = group.struct_type->struct_info;
-
-    // Missing required methods; inject defaults where the trait provides one.
-    for (u32 i = 0; i < trait_type_info.methods.size(); i++) {
-        if (implemented[i]) continue;
-        if (trait_type_info.methods[i].has_default) {
-            inject_default_method(group.struct_type, group.trait_type,
-                                  trait_type_info.methods[i], group.trait_type_args);
-        } else {
-            error_fmt(group.impl_decls[0]->loc,
-                     "trait '{}' requires method '{}' which is not implemented for '{}'",
-                     trait_type_info.name, trait_type_info.methods[i].name,
-                     struct_type_info.name);
-        }
-    }
-
-    // Append this trait to the struct's implemented_traits list.
-    Vector<TraitImplRecord> trait_records;
-    for (const auto& impl : struct_type_info.implemented_traits) {
-        trait_records.push_back(impl);
-    }
-    trait_records.push_back(TraitImplRecord{group.trait_type, group.trait_type_args});
-    struct_type_info.implemented_traits = m_allocator.alloc_span(trait_records);
-}
-
-void SemanticAnalyzer::validate_trait_implementations() {
-    Vector<TraitImplGroup> groups = group_pending_trait_impls();
-    for (auto& group : groups) {
-        if (!check_parent_trait_satisfied(group, groups)) continue;
-
-        Vector<bool> implemented(group.trait_type->trait_info.methods.size(), false);
-        for (Decl* decl : group.impl_decls) {
-            validate_and_register_impl_method(group, decl, implemented);
-        }
-        finalize_trait_impl(group, implemented);
-    }
-}
-
-Type* SemanticAnalyzer::concretize_trait_type(Type* abstract_type, Type* struct_type, Span<Type*> trait_type_args) {
-    if (abstract_type->is_self()) return struct_type;
-    if (abstract_type->is_type_param() && trait_type_args.size() > 0) {
-        u32 idx = abstract_type->type_param_info.index;
-        if (idx < trait_type_args.size()) return trait_type_args[idx];
-    }
-    return abstract_type;
-}
-
-void SemanticAnalyzer::inject_default_method(Type* struct_type, Type* trait_type,
-                                              TraitMethodInfo& trait_method_info, Span<Type*> trait_type_args) {
-    // Create a synthetic DeclMethod that targets the implementing struct
-    // with a cloned body from the trait's default method
-    Decl* trait_decl = trait_method_info.decl;
-    MethodDecl& trait_md = trait_decl->method_decl;
-    TraitTypeInfo& trait_type_info = trait_type->trait_info;
-
-    Decl* synth = m_allocator.emplace<Decl>();
-    synth->kind = AstKind::DeclMethod;
-    synth->loc = trait_decl->loc;
-    synth->method_decl.struct_name = struct_type->struct_info.name;
-    synth->method_decl.name = trait_method_info.name;
-    synth->method_decl.type_params = Span<TypeParam>();
-    synth->method_decl.is_pub = trait_md.is_pub;
-    synth->method_decl.is_native = false;
-    synth->method_decl.trait_name = trait_type->trait_info.name;
-    synth->method_decl.trait_type_args = Span<TypeExpr*>();
-
-    // Build type substitution: always include Self -> struct_type,
-    // plus trait type params -> concrete type args for generic traits
-    {
-        Vector<StringView> param_names;
-        Vector<Type*> concrete_types;
-
-        // Always substitute Self -> struct_type
-        param_names.push_back(StringView("Self", 4));
-        concrete_types.push_back(struct_type);
-
-        // Add trait type params for generic traits
-        if (trait_type_info.type_params.size() > 0 && trait_type_args.size() > 0) {
-            for (u32 i = 0; i < trait_type_info.type_params.size(); i++) {
-                param_names.push_back(trait_type_info.type_params[i].name);
-                concrete_types.push_back(trait_type_args[i]);
-            }
-        }
-
-        TypeSubstitution subst;
-        subst.param_names = m_allocator.alloc_span(param_names);
-        subst.concrete_types = m_allocator.alloc_span(concrete_types);
-
-        // Clone body with type substitution
-        synth->method_decl.body = m_type_env.generics().clone_stmt(trait_md.body, subst);
-
-        // Clone params with type-expr substitution
-        Vector<Param> cloned_params;
-        for (const auto& param : trait_md.params) {
-            Param p = param;
-            p.type = m_type_env.generics().substitute_type_expr(param.type, subst);
-            cloned_params.push_back(p);
-        }
-        synth->method_decl.params = m_allocator.alloc_span(cloned_params);
-        synth->method_decl.return_type = m_type_env.generics().substitute_type_expr(trait_md.return_type, subst);
-    }
-
-    // Resolve concrete param types (Self -> struct_type, TypeParam -> concrete type)
-    StructTypeInfo& struct_type_info = struct_type->struct_info;
-    Vector<Type*> param_types;
-    for (auto* param_type : trait_method_info.param_types) {
-        param_types.push_back(concretize_trait_type(param_type, struct_type, trait_type_args));
-    }
-    Type* return_type = concretize_trait_type(trait_method_info.return_type, struct_type, trait_type_args);
-
-    // Add MethodInfo to struct's method list
-    MethodInfo method_info;
-    method_info.name = trait_method_info.name;
-    method_info.param_types = m_allocator.alloc_span(param_types);
-    method_info.return_type = return_type;
-    method_info.decl = synth;
-
-    append_method(struct_type_info, method_info);
-
-    // Add to synthetic decls list for IR builder
-    m_synthetic_decls.push_back(synth);
-}
-
-// ===== Primitive Operator Registration =====
-
-void SemanticAnalyzer::register_primitive_operator_methods() {
-    // Guard: only register once (TypeEnv persists across modules)
-    // Use I32's "add" method as a sentinel — if it's already registered, skip.
-    if (m_types.lookup_primitive_method(TypeKind::I32, StringView("add", 3))) return;
-
-    // Helper: allocate a Span<Type*> with one element from the bump allocator
-    auto make_param_span = [this](Type* param) -> Span<Type*> {
-        Type** data = reinterpret_cast<Type**>(
-            m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
-        data[0] = param;
-        return Span<Type*>(data, 1);
-    };
-
-    Span<Type*> no_params(nullptr, 0);
-
-    // Helper: register a batch of operator methods for a primitive type
-    auto register_ops = [this](TypeKind kind, const char* const* op_names, u32 count,
-                               Span<Type*> param_types, Type* return_type) {
-        for (u32 i = 0; i < count; i++) {
-            MethodInfo method_info;
-            method_info.name = StringView(op_names[i], static_cast<u32>(strlen(op_names[i])));
-            method_info.param_types = param_types;
-            method_info.return_type = return_type;
-            method_info.decl = nullptr;
-            m_types.register_primitive_method(kind, method_info);
-        }
-    };
-
-    // Register for integer types (I32, I64)
-    struct { TypeKind kind; Type* type; } int_types[] = {
-        { TypeKind::I32, m_types.i32_type() },
-        { TypeKind::I64, m_types.i64_type() },
-    };
-    for (auto& entry : int_types) {
-        Span<Type*> self_param = make_param_span(entry.type);
-
-        const char* arith_ops[] = { "add", "sub", "mul", "div", "mod" };
-        register_ops(entry.kind, arith_ops, 5, self_param, entry.type);
-
-        const char* bit_ops[] = { "bit_and", "bit_or", "bit_xor", "shl", "shr" };
-        register_ops(entry.kind, bit_ops, 5, self_param, entry.type);
-
-        const char* cmp_ops[] = { "eq", "ne", "lt", "le", "gt", "ge" };
-        register_ops(entry.kind, cmp_ops, 6, self_param, m_types.bool_type());
-
-        const char* unary_ops[] = { "neg", "bit_not" };
-        register_ops(entry.kind, unary_ops, 2, no_params, entry.type);
-
-        const char* compound_ops[] = {
-            "add_assign", "sub_assign", "mul_assign", "div_assign", "mod_assign",
-            "bit_and_assign", "bit_or_assign", "bit_xor_assign", "shl_assign", "shr_assign"
-        };
-        register_ops(entry.kind, compound_ops, 10, self_param, m_types.void_type());
-    }
-
-    // Register for float types (F32, F64)
-    struct { TypeKind kind; Type* type; } float_types[] = {
-        { TypeKind::F32, m_types.f32_type() },
-        { TypeKind::F64, m_types.f64_type() },
-    };
-    for (auto& entry : float_types) {
-        Span<Type*> self_param = make_param_span(entry.type);
-
-        const char* arith_ops[] = { "add", "sub", "mul", "div" };
-        register_ops(entry.kind, arith_ops, 4, self_param, entry.type);
-
-        const char* cmp_ops[] = { "eq", "ne", "lt", "le", "gt", "ge" };
-        register_ops(entry.kind, cmp_ops, 6, self_param, m_types.bool_type());
-
-        const char* unary_ops[] = { "neg" };
-        register_ops(entry.kind, unary_ops, 1, no_params, entry.type);
-
-        const char* compound_ops[] = { "add_assign", "sub_assign", "mul_assign", "div_assign" };
-        register_ops(entry.kind, compound_ops, 4, self_param, m_types.void_type());
-    }
-
-    // Equality for the remaining integer kinds (i8/i16/u8/u16/u32/u64):
-    // same-type equality on canonically stored values is a bit comparison,
-    // so the signed EqI/NeI lowering is correct regardless of signedness.
-    // Ordered comparisons, arithmetic, and bitwise ops are deliberately NOT
-    // registered for these kinds: the IR/VM only have signed-i64 ops (no
-    // unsigned compare/div/shr, no width-wrapped arithmetic), so registering
-    // them would miscompile. They now produce a clear "operator not
-    // supported" diagnostic instead of a silent Error type; full support is
-    // tracked in TODO.md ("unsigned & small-int arithmetic").
-    {
-        struct { TypeKind kind; Type* type; } equality_only_int_types[] = {
-            { TypeKind::I8,  m_types.i8_type()  },
-            { TypeKind::I16, m_types.i16_type() },
-            { TypeKind::U8,  m_types.u8_type()  },
-            { TypeKind::U16, m_types.u16_type() },
-            { TypeKind::U32, m_types.u32_type() },
-            { TypeKind::U64, m_types.u64_type() },
-        };
-        const char* eq_ops[] = { "eq", "ne" };
-        for (auto& entry : equality_only_int_types) {
-            Span<Type*> self_param = make_param_span(entry.type);
-            register_ops(entry.kind, eq_ops, 2, self_param, m_types.bool_type());
-        }
-    }
-
-    // Register for bool: eq, ne → bool
-    {
-        Span<Type*> bool_param = make_param_span(m_types.bool_type());
-        const char* bool_ops[] = { "eq", "ne" };
-        register_ops(TypeKind::Bool, bool_ops, 2, bool_param, m_types.bool_type());
-    }
-
-    // Register for string: eq, ne → bool
-    {
-        Span<Type*> string_param = make_param_span(m_types.string_type());
-        const char* string_ops[] = { "eq", "ne" };
-        register_ops(TypeKind::String, string_ops, 2, string_param, m_types.bool_type());
-    }
+    // lifetime_scope / params_guard / bounds_guard restore on return.
 }
 
 // ===== Operator Dispatch Helpers =====
@@ -3225,7 +2130,7 @@ void SemanticAnalyzer::analyze_block_stmt(Stmt* stmt) {
         }
     }
 
-    check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
+    m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
     m_symbols.pop_scope();
 }
 
@@ -3238,31 +2143,31 @@ void SemanticAnalyzer::analyze_if_stmt(Stmt* stmt) {
     }
 
     // Save move states before branching
-    MoveStateSnapshot pre_branch_states = save_move_states();
+    MoveStateSnapshot pre_branch_states = m_lifetimes.save_move_states();
 
     // Reset termination flag for the then-branch; capture whether it ended
     // with an unconditional return/throw/break/continue.
-    m_branch_terminates = false;
+    m_lifetimes.set_branch_terminates(false);
     analyze_stmt(is.then_branch);
-    MoveStateSnapshot then_states = save_move_states();
-    bool then_terminates = m_branch_terminates;
+    MoveStateSnapshot then_states = m_lifetimes.save_move_states();
+    bool then_terminates = m_lifetimes.branch_terminates();
 
     if (is.else_branch) {
         // Restore to pre-branch state for else analysis
-        restore_move_states(pre_branch_states);
-        m_branch_terminates = false;
+        m_lifetimes.restore_move_states(pre_branch_states);
+        m_lifetimes.set_branch_terminates(false);
         analyze_stmt(is.else_branch);
-        MoveStateSnapshot else_states = save_move_states();
-        bool else_terminates = m_branch_terminates;
+        MoveStateSnapshot else_states = m_lifetimes.save_move_states();
+        bool else_terminates = m_lifetimes.branch_terminates();
 
-        merge_two_branches(pre_branch_states, then_states, else_states,
+        m_lifetimes.merge_two_branches(pre_branch_states, then_states, else_states,
                            then_terminates, else_terminates);
     } else {
         // No else branch — the implicit else is the pre-branch state (no moves)
-        // and can never terminate. merge_two_branches therefore leaves
-        // m_branch_terminates false: a no-else if never proves termination
+        // and can never terminate. merge_two_branches therefore leaves the
+        // branch-terminates flag false: a no-else if never proves termination
         // because the condition may be false.
-        merge_two_branches(pre_branch_states, then_states, pre_branch_states,
+        m_lifetimes.merge_two_branches(pre_branch_states, then_states, pre_branch_states,
                            then_terminates, /*else_terminates=*/false);
     }
 }
@@ -3276,27 +2181,27 @@ void SemanticAnalyzer::analyze_while_stmt(Stmt* stmt) {
     }
 
     // Save move states before loop body
-    MoveStateSnapshot pre_loop_states = save_move_states();
+    MoveStateSnapshot pre_loop_states = m_lifetimes.save_move_states();
 
     // The loop body may execute zero times, so any termination inside the
     // body (return/throw/break/continue) does not prove the loop itself
     // terminates. Preserve the caller's flag across the body.
-    bool pre_loop_terminates = m_branch_terminates;
+    bool pre_loop_terminates = m_lifetimes.branch_terminates();
 
     m_symbols.push_loop_scope();
     analyze_stmt(ws.body);
-    check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
+    m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
     m_symbols.pop_scope();
 
-    m_branch_terminates = pre_loop_terminates;
+    m_lifetimes.set_branch_terminates(pre_loop_terminates);
 
-    MoveStateSnapshot post_body_states = save_move_states();
+    MoveStateSnapshot post_body_states = m_lifetimes.save_move_states();
 
-    check_loop_cross_iteration_moves(ws.body, pre_loop_states, post_body_states, stmt->loc);
+    m_lifetimes.check_loop_cross_iteration_moves(ws.body, pre_loop_states, post_body_states, stmt->loc);
 
     // After loop: merge pre-loop with post-body (loop may execute 0 times)
-    restore_move_states(pre_loop_states);
-    merge_move_states(post_body_states, pre_loop_states);
+    m_lifetimes.restore_move_states(pre_loop_states);
+    m_lifetimes.merge_move_states(post_body_states, pre_loop_states);
 }
 
 void SemanticAnalyzer::analyze_for_stmt(Stmt* stmt) {
@@ -3326,31 +2231,31 @@ void SemanticAnalyzer::analyze_for_stmt(Stmt* stmt) {
     // does the increment fire. Analyzing the increment up-front would make
     // any moves it performs visible to the body and produce a false positive
     // on iteration 1 (the body actually sees a live value there).
-    MoveStateSnapshot pre_loop_states = save_move_states();
+    MoveStateSnapshot pre_loop_states = m_lifetimes.save_move_states();
 
     // The loop body may execute zero times — see note in analyze_while_stmt.
-    bool pre_loop_terminates = m_branch_terminates;
+    bool pre_loop_terminates = m_lifetimes.branch_terminates();
 
     m_symbols.push_loop_scope();
     analyze_stmt(fs.body);
-    check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
+    m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
     m_symbols.pop_scope();
 
-    m_branch_terminates = pre_loop_terminates;
+    m_lifetimes.set_branch_terminates(pre_loop_terminates);
 
     if (fs.increment) {
         analyze_expr(fs.increment);
     }
 
-    MoveStateSnapshot post_body_states = save_move_states();
+    MoveStateSnapshot post_body_states = m_lifetimes.save_move_states();
 
-    check_loop_cross_iteration_moves(fs.body, pre_loop_states, post_body_states, stmt->loc);
+    m_lifetimes.check_loop_cross_iteration_moves(fs.body, pre_loop_states, post_body_states, stmt->loc);
 
     // After loop: merge pre-loop with post-body (loop may execute 0 times)
-    restore_move_states(pre_loop_states);
-    merge_move_states(post_body_states, pre_loop_states);
+    m_lifetimes.restore_move_states(pre_loop_states);
+    m_lifetimes.merge_move_states(post_body_states, pre_loop_states);
 
-    check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
+    m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
     m_symbols.pop_scope();
 }
 
@@ -3368,7 +2273,7 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
             error(stmt->loc, "coroutine functions cannot return a value; use 'yield' instead");
         }
         m_symbols.mark_return();
-        m_branch_terminates = true;
+        m_lifetimes.set_branch_terminates(true);
         return;
     }
 
@@ -3386,34 +2291,34 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
         }
 
         // Consume noncopyable return value (field-move check + mark source as moved)
-        consume_noncopyable(rs.value, stmt->loc);
+        m_lifetimes.consume_noncopyable(rs.value, stmt->loc);
     } else {
         if (!expected->is_void()) {
             error(stmt->loc, "non-void function must return a value");
         }
     }
 
-    check_all_scopes_uniq_destructors(stmt->loc, ScopeKind::Function);
+    m_lifetimes.check_all_scopes_uniq_destructors(stmt->loc, ScopeKind::Function);
     m_symbols.mark_return();
-    m_branch_terminates = true;
+    m_lifetimes.set_branch_terminates(true);
 }
 
 void SemanticAnalyzer::analyze_break_stmt(Stmt* stmt) {
     if (!m_symbols.is_in_loop()) {
         error(stmt->loc, "'break' statement outside of loop");
     } else {
-        check_all_scopes_uniq_destructors(stmt->loc, ScopeKind::Loop);
+        m_lifetimes.check_all_scopes_uniq_destructors(stmt->loc, ScopeKind::Loop);
     }
-    m_branch_terminates = true;
+    m_lifetimes.set_branch_terminates(true);
 }
 
 void SemanticAnalyzer::analyze_continue_stmt(Stmt* stmt) {
     if (!m_symbols.is_in_loop()) {
         error(stmt->loc, "'continue' statement outside of loop");
     } else {
-        check_all_scopes_uniq_destructors(stmt->loc, ScopeKind::Loop);
+        m_lifetimes.check_all_scopes_uniq_destructors(stmt->loc, ScopeKind::Loop);
     }
-    m_branch_terminates = true;
+    m_lifetimes.set_branch_terminates(true);
 }
 
 void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
@@ -3429,7 +2334,7 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
     }
 
     // Cannot delete a struct field directly (would leave dangling pointer in parent)
-    if (!check_not_field_move(ds.expr, stmt->loc)) return;
+    if (!m_lifetimes.check_not_field_move(ds.expr, stmt->loc)) return;
 
     // Get the inner struct type
     Type* inner_type = type->ref_info.inner_type;
@@ -3484,7 +2389,7 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
     }
 
     // Consume the deleted variable (mark as moved)
-    consume_noncopyable(ds.expr, stmt->loc);
+    m_lifetimes.consume_noncopyable(ds.expr, stmt->loc);
 }
 
 void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
@@ -3509,7 +2414,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
     tsl::robin_map<StringView, bool> covered_variants;
 
     // Save move states before branching
-    MoveStateSnapshot pre_when_states = save_move_states();
+    MoveStateSnapshot pre_when_states = m_lifetimes.save_move_states();
     Vector<MoveStateSnapshot> case_snapshots;
     Vector<bool> case_terminates;
 
@@ -3534,8 +2439,8 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
         }
 
         // Restore pre-when state so each case starts fresh
-        restore_move_states(pre_when_states);
-        m_branch_terminates = false;
+        m_lifetimes.restore_move_states(pre_when_states);
+        m_lifetimes.set_branch_terminates(false);
 
         // Analyze case body in a new scope
         m_symbols.push_scope(ScopeKind::Block);
@@ -3549,15 +2454,15 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
         }
         m_symbols.pop_scope();
 
-        case_snapshots.push_back(save_move_states());
-        case_terminates.push_back(m_branch_terminates);
+        case_snapshots.push_back(m_lifetimes.save_move_states());
+        case_terminates.push_back(m_lifetimes.branch_terminates());
     }
 
     // Analyze else body if present
     bool has_else = ws.else_body.size() > 0;
     if (has_else) {
-        restore_move_states(pre_when_states);
-        m_branch_terminates = false;
+        m_lifetimes.restore_move_states(pre_when_states);
+        m_lifetimes.set_branch_terminates(false);
 
         m_symbols.push_scope(ScopeKind::Block);
         for (auto& decl : ws.else_body) {
@@ -3570,8 +2475,8 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
         }
         m_symbols.pop_scope();
 
-        case_snapshots.push_back(save_move_states());
-        case_terminates.push_back(m_branch_terminates);
+        case_snapshots.push_back(m_lifetimes.save_move_states());
+        case_terminates.push_back(m_lifetimes.branch_terminates());
     } else {
         // No else — an unmatched enum value falls past the whole statement,
         // so the pre-when state is a non-terminating survivor path.
@@ -3583,7 +2488,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
     // terminates (only possible when an else exists; otherwise the pre-when
     // fall-through is always non-terminating), the code after the when is
     // unreachable and termination propagates upward.
-    m_branch_terminates = merge_branch_snapshots(case_snapshots, case_terminates);
+    m_lifetimes.set_branch_terminates(m_lifetimes.merge_branch_snapshots(case_snapshots, case_terminates));
 }
 
 void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
@@ -3596,7 +2501,7 @@ void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
 
     Type* expr_type = analyze_expr(ts.expr);
     if (!expr_type || expr_type->is_error()) {
-        m_branch_terminates = true;
+        m_lifetimes.set_branch_terminates(true);
         return;
     }
 
@@ -3604,7 +2509,7 @@ void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
     Type* base = expr_type->base_type();
     if (!base->is_struct()) {
         error(stmt->loc, "throw expression must be a struct type that implements Exception");
-        m_branch_terminates = true;
+        m_lifetimes.set_branch_terminates(true);
         return;
     }
 
@@ -3613,29 +2518,29 @@ void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
         error_fmt(stmt->loc, "thrown type '{}' does not implement the Exception trait",
                   base->struct_info.name);
     }
-    m_branch_terminates = true;
+    m_lifetimes.set_branch_terminates(true);
 }
 
 void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
     TryStmt& ts = stmt->try_stmt;
 
     // Save move states before try body
-    MoveStateSnapshot pre_try = save_move_states();
+    MoveStateSnapshot pre_try = m_lifetimes.save_move_states();
 
     // Analyze try body (yield is allowed here)
-    m_branch_terminates = false;
+    m_lifetimes.set_branch_terminates(false);
     analyze_stmt(ts.try_body);
-    bool try_terminates = m_branch_terminates;
+    bool try_terminates = m_lifetimes.branch_terminates();
 
     // Save post-try states
-    MoveStateSnapshot post_try = save_move_states();
+    MoveStateSnapshot post_try = m_lifetimes.save_move_states();
 
     // Compute catch entry state: merge(pre_try, post_try)
     // An exception can be thrown at any point in the try body, so catch clauses
     // must see the conservative merge of pre-try and post-try states
-    restore_move_states(pre_try);
-    merge_move_states(pre_try, post_try);
-    MoveStateSnapshot catch_entry = save_move_states();
+    m_lifetimes.restore_move_states(pre_try);
+    m_lifetimes.merge_move_states(pre_try, post_try);
+    MoveStateSnapshot catch_entry = m_lifetimes.save_move_states();
 
     // Normal try exit is one exit path. If the try body ends in an
     // unconditional return/throw, the normal-exit path is unreachable.
@@ -3656,8 +2561,8 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
         }
 
         // Each catch starts from the same catch entry state
-        restore_move_states(catch_entry);
-        m_branch_terminates = false;
+        m_lifetimes.restore_move_states(catch_entry);
+        m_lifetimes.set_branch_terminates(false);
 
         m_symbols.push_scope(ScopeKind::Block);
 
@@ -3693,13 +2598,13 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
         analyze_stmt(clause.body);  // yield is allowed in catch bodies
         m_symbols.pop_scope();
 
-        exit_paths.push_back(save_move_states());
-        exit_terminates.push_back(m_branch_terminates);
+        exit_paths.push_back(m_lifetimes.save_move_states());
+        exit_terminates.push_back(m_lifetimes.branch_terminates());
     }
 
     // Merge the surviving (non-terminating) exit paths. If every exit path
     // terminates, code after the try is unreachable and all_terminate is true.
-    bool all_terminate = merge_branch_snapshots(exit_paths, exit_terminates);
+    bool all_terminate = m_lifetimes.merge_branch_snapshots(exit_paths, exit_terminates);
 
     // Analyze finally body if present (yield is NOT allowed here).
     // Finally runs on every exit path, so its own terminators are the
@@ -3708,16 +2613,16 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
         {
             ScopedValue finally_depth_guard(m_in_finally_depth);
             m_in_finally_depth++;
-            m_branch_terminates = false;
+            m_lifetimes.set_branch_terminates(false);
             analyze_stmt(ts.finally_body);
         }
         // If finally terminates, so does the whole statement; otherwise
         // use the all_terminate result computed from try+catches.
-        if (!m_branch_terminates) {
-            m_branch_terminates = all_terminate;
+        if (!m_lifetimes.branch_terminates()) {
+            m_lifetimes.set_branch_terminates(all_terminate);
         }
     } else {
-        m_branch_terminates = all_terminate;
+        m_lifetimes.set_branch_terminates(all_terminate);
     }
 }
 
@@ -3903,7 +2808,7 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
     // Check move state for owned variables (uniq refs and value structs with destructors)
     // Note: we check here but the actual move marking happens at call sites, return, delete
     if (sym->type && sym->type->noncopyable()) {
-        check_not_moved(id.name, expr->loc);
+        m_lifetimes.check_not_moved(id.name, expr->loc);
     }
 
     return sym->type;
@@ -3974,7 +2879,7 @@ bool SemanticAnalyzer::try_capture_identifier(Expr* expr, Symbol* sym, Type** ou
         // copyable captures (e.g., capturing a moved-from i32 isn't
         // possible since i32 isn't tracked, but for `ref` types the
         // underlying owner could be).
-        if (!check_not_moved(captured_name, captured_loc)) {
+        if (!m_lifetimes.check_not_moved(captured_name, captured_loc)) {
             *out = m_types.error_type();
             return true;
         }
@@ -4203,7 +3108,7 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
                           cap.name);
                 continue;
             }
-            mark_moved(cap.name);
+            m_lifetimes.mark_moved(cap.name);
         }
     }
 
@@ -4255,7 +3160,7 @@ bool SemanticAnalyzer::validate_lambda_captures(LambdaExpr& le, LambdaCaptureCon
                 error_fmt(entry.loc, "duplicate capture entry for '{}'", entry.name);
                 return false;
             }
-            if (!check_not_moved(entry.name, entry.loc)) return false;
+            if (!m_lifetimes.check_not_moved(entry.name, entry.loc)) return false;
 
             // Walk crossed Lambda boundaries between this lambda and the
             // symbol's defining scope. For each one, propagate a Move-mode
@@ -4527,10 +3432,11 @@ Decl* SemanticAnalyzer::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
     context.boundary_scope = m_symbols.current_scope();
     m_lambda_contexts.push_back(&context);
     {
-        // Analyze the lambda body with a fresh move-state map and outside any
-        // enclosing coroutine context; the guards restore both at block end.
-        ScopedValue move_states_guard(m_move_states);
-        m_move_states.clear();
+        // Analyze the lambda body with fresh lifetime state (move states +
+        // termination flag — a `return` in the lambda body must not read as
+        // "the enclosing branch terminates") and outside any enclosing
+        // coroutine context; the guards restore everything at block end.
+        LifetimeChecker::FunctionScope lifetime_scope(m_lifetimes);
 
         ScopedValue coro_guard(m_in_coroutine);
         ScopedValue yield_guard(m_coro_yield_type);
@@ -4551,16 +3457,15 @@ Decl* SemanticAnalyzer::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
                                        p.modifier != ParamModifier::None);
             }
             if (ptype && ptype->noncopyable()) {
-                Symbol* psym = m_symbols.lookup(p.name);
-                if (psym) m_move_states[psym] = MoveState::Live;
+                m_lifetimes.track_live(m_symbols.lookup(p.name));
             }
         }
 
         analyze_stmt(fd.body);
 
-        check_scope_exit_uniq_destructors(m_symbols.current_scope(), expr->loc);
+        m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), expr->loc);
         m_symbols.pop_scope();  // function scope
-        // coro_guard / yield_guard / move_states_guard restore at block end.
+        // coro_guard / yield_guard / lifetime_scope restore at block end.
     }
     m_lambda_contexts.pop_back();
     m_symbols.pop_scope();  // lambda boundary scope
@@ -4709,17 +3614,17 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
     // errors and miss conditional moves. Ternary branches are expressions
     // so they cannot contain return/throw/break/continue — no termination
     // flag handling is required.
-    MoveStateSnapshot pre_branch_states = save_move_states();
+    MoveStateSnapshot pre_branch_states = m_lifetimes.save_move_states();
 
     Type* then_type = analyze_expr(ternary_expr.then_expr);
-    MoveStateSnapshot then_states = save_move_states();
+    MoveStateSnapshot then_states = m_lifetimes.save_move_states();
 
-    restore_move_states(pre_branch_states);
+    m_lifetimes.restore_move_states(pre_branch_states);
     Type* else_type = analyze_expr(ternary_expr.else_expr);
-    MoveStateSnapshot else_states = save_move_states();
+    MoveStateSnapshot else_states = m_lifetimes.save_move_states();
 
-    restore_move_states(pre_branch_states);
-    merge_move_states(then_states, else_states);
+    m_lifetimes.restore_move_states(pre_branch_states);
+    m_lifetimes.merge_move_states(then_states, else_states);
 
     if (then_type->is_error()) return else_type;
     if (else_type->is_error()) return then_type;
@@ -4842,7 +3747,7 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
         // reassignment", even though `xs` stays live across iterations.
         if (param_types[i] && param_types[i]->noncopyable()
             && arg.modifier == ParamModifier::None) {
-            consume_noncopyable(arg.expr, arg.expr->loc);
+            m_lifetimes.consume_noncopyable(arg.expr, arg.expr->loc);
         }
     }
 }
@@ -5161,7 +4066,7 @@ Type* SemanticAnalyzer::check_instantiated_generic_call(
         // Mirrors check_call_args; the non-generic path goes through that helper.
         if (param_type && param_type->noncopyable()
             && arg.modifier == ParamModifier::None) {
-            consume_noncopyable(arg.expr, arg.expr->loc);
+            m_lifetimes.consume_noncopyable(arg.expr, arg.expr->loc);
         }
     }
 
@@ -5992,13 +4897,10 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
     if (assign_expr.op == AssignOp::Assign &&
         assign_expr.target->kind == AstKind::ExprIdentifier) {
         Symbol* target_sym = m_symbols.lookup(assign_expr.target->identifier.name);
-        if (target_sym) {
-            auto it = m_move_states.find(target_sym);
-            if (it != m_move_states.end() && it->second != MoveState::Live) {
-                saved_state = it->second;
-                it.value() = MoveState::Live;
-                restored_for_assign = true;
-            }
+        if (target_sym && m_lifetimes.lookup_state(target_sym, saved_state) &&
+            saved_state != MoveState::Live) {
+            m_lifetimes.set_state(target_sym, MoveState::Live);
+            restored_for_assign = true;
         }
     }
 
@@ -6008,10 +4910,7 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
     if (restored_for_assign) {
         Symbol* target_sym = m_symbols.lookup(assign_expr.target->identifier.name);
         if (target_sym) {
-            auto it = m_move_states.find(target_sym);
-            if (it != m_move_states.end()) {
-                it.value() = saved_state;
-            }
+            m_lifetimes.set_state(target_sym, saved_state);
         }
     }
 
@@ -6078,7 +4977,7 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
     // Reassignment to owned variable: mark it live again (auto-destroy of old value happens in IR)
     if (assign_expr.target->kind == AstKind::ExprIdentifier &&
         target_type && target_type->noncopyable()) {
-        mark_live(assign_expr.target->identifier.name);
+        m_lifetimes.mark_live(assign_expr.target->identifier.name);
     }
 
     // Consume noncopyable source (field-move check + mark source as moved).
@@ -6101,7 +5000,7 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
         moves_noncopyable = elem_type && elem_type->noncopyable();
     }
     if (assign_expr.op == AssignOp::Assign && moves_noncopyable) {
-        consume_noncopyable(assign_expr.value, assign_expr.value->loc);
+        m_lifetimes.consume_noncopyable(assign_expr.value, assign_expr.value->loc);
     }
 
     // Validate index_mut exists for index assignment targets
@@ -6358,7 +5257,7 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
 
             // Consume noncopyable source (field-move check + mark source as moved)
             if (field_type && field_type->noncopyable()) {
-                consume_noncopyable(fi.value, fi.loc);
+                m_lifetimes.consume_noncopyable(fi.value, fi.loc);
             }
 
             // Track discriminant value if this is a discriminant field
@@ -6404,7 +5303,7 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
 
             // Consume noncopyable source (field-move check + mark source as moved)
             if (variant_field_info->type && variant_field_info->type->noncopyable()) {
-                consume_noncopyable(fi.value, fi.loc);
+                m_lifetimes.consume_noncopyable(fi.value, fi.loc);
             }
             continue;
         }
