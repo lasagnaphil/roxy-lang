@@ -2436,6 +2436,22 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
     return sym->type;
 }
 
+Vector<u32> SemanticAnalyzer::collect_crossed_lambda_contexts(const Scope* stop_scope) {
+    Vector<u32> crossed_ctx_indices;
+    for (Scope* sc = m_symbols.current_scope(); sc; sc = sc->parent) {
+        if (sc == stop_scope) break;
+        if (sc->kind == ScopeKind::Lambda) {
+            for (u32 i = 0; i < m_lambda_contexts.size(); i++) {
+                if (m_lambda_contexts[i]->boundary_scope == sc) {
+                    crossed_ctx_indices.push_back(i);
+                    break;
+                }
+            }
+        }
+    }
+    return crossed_ctx_indices;
+}
+
 bool SemanticAnalyzer::try_capture_identifier(Expr* expr, Symbol* sym, Type** out) {
     IdentifierExpr& id = expr->identifier;
 
@@ -2455,23 +2471,11 @@ bool SemanticAnalyzer::try_capture_identifier(Expr* expr, Symbol* sym, Type** ou
         return false;
     }
 
-    // Walk from current scope toward sym->defining_scope, collecting the
-    // indices of every lambda context whose boundary scope sits between us
-    // and the symbol's defining scope (innermost first). For nested closures
-    // a lookup can cross multiple boundaries; each enclosing lambda must
-    // also capture the symbol so it can be passed inward through env-fields.
-    Vector<u32> crossed_ctx_indices;
-    for (Scope* sc = m_symbols.current_scope(); sc; sc = sc->parent) {
-        if (sc == sym->defining_scope) break;
-        if (sc->kind == ScopeKind::Lambda) {
-            for (u32 i = 0; i < m_lambda_contexts.size(); i++) {
-                if (m_lambda_contexts[i]->boundary_scope == sc) {
-                    crossed_ctx_indices.push_back(i);
-                    break;
-                }
-            }
-        }
-    }
+    // Collect every lambda context whose boundary sits between us and the
+    // symbol's defining scope (innermost first). For nested closures a lookup
+    // can cross multiple boundaries; each enclosing lambda must also capture
+    // the symbol so it can be passed inward through env-fields.
+    Vector<u32> crossed_ctx_indices = collect_crossed_lambda_contexts(sym->defining_scope);
 
     if (crossed_ctx_indices.empty()) return false;
 
@@ -2794,17 +2798,7 @@ bool SemanticAnalyzer::validate_lambda_captures(LambdaExpr& le, LambdaCaptureCon
             // ownership transfer.
             Vector<u32> crossed_ctx_indices;
             if (outer_sym->defining_scope) {
-                for (Scope* sc = m_symbols.current_scope(); sc; sc = sc->parent) {
-                    if (sc == outer_sym->defining_scope) break;
-                    if (sc->kind == ScopeKind::Lambda) {
-                        for (u32 i = 0; i < m_lambda_contexts.size(); i++) {
-                            if (m_lambda_contexts[i]->boundary_scope == sc) {
-                                crossed_ctx_indices.push_back(i);
-                                break;
-                            }
-                        }
-                    }
-                }
+                crossed_ctx_indices = collect_crossed_lambda_contexts(outer_sym->defining_scope);
             }
 
             // Helper to build a source expression that reads the variable
@@ -4323,11 +4317,10 @@ Type* SemanticAnalyzer::analyze_this_expr(Expr* expr) {
     // current scope up — if we cross a Lambda boundary before reaching the
     // struct scope, this is a closure capture.
     if (!m_lambda_contexts.empty()) {
-        bool crossed_lambda = false;
-        for (Scope* sc = m_symbols.current_scope(); sc; sc = sc->parent) {
-            if (sc->kind == ScopeKind::Struct) break;
-            if (sc->kind == ScopeKind::Lambda) { crossed_lambda = true; break; }
-        }
+        // A lambda boundary crossed before reaching the enclosing struct scope
+        // means this `self` must be captured into the closure's env.
+        bool crossed_lambda =
+            !collect_crossed_lambda_contexts(m_symbols.current_struct_scope()).empty();
 
         if (crossed_lambda) {
             // Ensure every enclosing lambda context has self captured (implicit

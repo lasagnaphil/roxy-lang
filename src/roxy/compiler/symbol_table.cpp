@@ -189,6 +189,15 @@ Type* SymbolTable::current_struct_type() const {
     return nullptr;
 }
 
+Scope* SymbolTable::current_struct_scope() const {
+    for (Scope* s = m_current; s; s = s->parent) {
+        if (s->kind == ScopeKind::Struct) {
+            return s;
+        }
+    }
+    return nullptr;
+}
+
 void SymbolTable::mark_return() {
     for (Scope* s = m_current; s; s = s->parent) {
         if (s->kind == ScopeKind::Function) {

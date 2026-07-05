@@ -196,6 +196,15 @@ private:
     // `expr` in place to `__env.<name>`, set *out to the result type, and return
     // true. Returns false when no capture applies (caller handles normally).
     bool try_capture_identifier(Expr* expr, Symbol* sym, Type** out);
+    // Walk from the current scope outward toward `stop_scope`, returning the
+    // indices (innermost first) of every active lambda context whose boundary
+    // Lambda scope is crossed on the way. Each active ScopeKind::Lambda scope
+    // has exactly one matching context in m_lambda_contexts (both pushed in
+    // synthesize_lambda_call_fn), so a crossed boundary always resolves to an
+    // index. Shared by the identifier-capture path (stop at the symbol's
+    // defining scope), the [move]-capture path (same), and self-capture
+    // detection (stop at the struct scope; only non-emptiness matters).
+    Vector<u32> collect_crossed_lambda_contexts(const Scope* stop_scope);
     Type* analyze_unary_expr(Expr* expr);
     Type* analyze_binary_expr(Expr* expr);
     Type* analyze_ternary_expr(Expr* expr);

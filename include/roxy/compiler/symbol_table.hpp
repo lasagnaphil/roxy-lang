@@ -143,6 +143,7 @@ public:
     bool is_in_struct() const;
     Type* current_return_type() const;
     Type* current_struct_type() const;
+    Scope* current_struct_scope() const;  // innermost enclosing ScopeKind::Struct, or null
     Scope* current_scope() const { return m_current; }
     Scope* global_scope() const { return m_global; }
 
