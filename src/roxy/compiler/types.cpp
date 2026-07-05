@@ -839,31 +839,31 @@ void type_to_string(const Type* type, String& out) {
 
 // ===== Span append helpers (shared by SemanticAnalyzer and TraitSystem) =====
 
-void append_method(BumpAllocator& allocator, StructTypeInfo& info, MethodInfo method) {
-    Vector<MethodInfo> methods;
-    for (const auto& m : info.methods) {
-        methods.push_back(m);
+namespace {
+// Return a fresh arena span holding `existing` followed by `value`. O(n) copy
+// per call — see TODO.md for the Vector-during-analysis-then-freeze fix that
+// would drop the append cost; the three wrappers below share this one body.
+template<typename T>
+Span<T> append_span(BumpAllocator& allocator, Span<T> existing, T value) {
+    Vector<T> items;
+    for (const auto& item : existing) {
+        items.push_back(item);
     }
-    methods.push_back(method);
-    info.methods = allocator.alloc_span(methods);
+    items.push_back(value);
+    return allocator.alloc_span(items);
+}
+}
+
+void append_method(BumpAllocator& allocator, StructTypeInfo& info, MethodInfo method) {
+    info.methods = append_span(allocator, info.methods, method);
 }
 
 void append_constructor(BumpAllocator& allocator, StructTypeInfo& info, ConstructorInfo ctor) {
-    Vector<ConstructorInfo> ctors;
-    for (const auto& c : info.constructors) {
-        ctors.push_back(c);
-    }
-    ctors.push_back(ctor);
-    info.constructors = allocator.alloc_span(ctors);
+    info.constructors = append_span(allocator, info.constructors, ctor);
 }
 
 void append_destructor(BumpAllocator& allocator, StructTypeInfo& info, DestructorInfo dtor) {
-    Vector<DestructorInfo> dtors;
-    for (const auto& d : info.destructors) {
-        dtors.push_back(d);
-    }
-    dtors.push_back(dtor);
-    info.destructors = allocator.alloc_span(dtors);
+    info.destructors = append_span(allocator, info.destructors, dtor);
 }
 
 bool struct_needs_synthetic_dtor(const StructTypeInfo& info) {
