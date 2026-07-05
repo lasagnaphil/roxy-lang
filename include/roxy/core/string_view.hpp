@@ -13,8 +13,8 @@ class StringView {
     u32 m_size;
 
 public:
-    StringView() : m_data(nullptr), m_size(0) {}
-    StringView(const char* data, u32 size) : m_data(data), m_size(size) {}
+    constexpr StringView() : m_data(nullptr), m_size(0) {}
+    constexpr StringView(const char* data, u32 size) : m_data(data), m_size(size) {}
 
     // Construct from null-terminated string (implicit for convenience with string literals)
     StringView(const char* str) : m_data(str), m_size(str ? (u32)strlen(str) : 0) {}
@@ -65,6 +65,14 @@ public:
     bool operator==(const char* str) const { return equals(str); }
     bool operator!=(const char* str) const { return !equals(str); }
 };
+
+// Compile-time-length literal: `"insert"_sv` builds the view with the
+// literal's true length — unlike the hand-counted `StringView("insert", 6)`
+// form, where a miscount silently truncates or reads past the literal, and
+// unlike the implicit `const char*` constructor, which pays a runtime strlen.
+constexpr StringView operator""_sv(const char* str, size_t len) {
+    return StringView(str, static_cast<u32>(len));
+}
 
 }
 

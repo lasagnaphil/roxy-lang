@@ -1151,7 +1151,7 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
         BlockParam exc_param;
         exc_param.value = m_current_func->new_value();
         exc_param.type = m_types.exception_ref_type();
-        exc_param.name = StringView("__exc", 5);
+        exc_param.name = "__exc"_sv;
         finally_catch_block->params.push_back(exc_param);
 
         set_current_block(finally_catch_block);

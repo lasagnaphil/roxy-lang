@@ -418,7 +418,7 @@ IRFunction* IRBuilder::build_module_init(Program* /*program*/) {
     }
     if (!any_init) return nullptr;
 
-    begin_ir_function(StringView("__module_init", 13), /*is_pub=*/false, 0);
+    begin_ir_function("__module_init"_sv, /*is_pub=*/false, 0);
     m_current_func->return_type = m_types.void_type();
     setup_parameters(Span<Param>(), nullptr);
     begin_function_body(false);
@@ -475,7 +475,7 @@ IRFunction* IRBuilder::build_module_shutdown() {
     }
     if (!any) return nullptr;
 
-    begin_ir_function(StringView("__module_shutdown", 17), /*is_pub=*/false, 0);
+    begin_ir_function("__module_shutdown"_sv, /*is_pub=*/false, 0);
     m_current_func->return_type = m_types.void_type();
     setup_parameters(Span<Param>(), nullptr);
     begin_function_body(false);
@@ -595,7 +595,7 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     // Non-pub functions are scoped to their module so they don't collide at link time.
     // "main" is the program entry point convention — leave it un-mangled so the host
     // can still invoke it via vm_call(&vm, "main", {}).
-    StringView name = (!decl->is_pub && decl->name != StringView("main", 4))
+    StringView name = (!decl->is_pub && decl->name != "main"_sv)
         ? mangle_module_local(decl->name)
         : decl->name;
     // Source line for AOT `#line` directives. Use the body's first line —
@@ -909,12 +909,12 @@ IRFunction* IRBuilder::build_cleanup_wrapper(Type* noncopyable_type, u32 wrapper
     BlockParam param;
     param.value = m_current_func->new_value();
     param.type = noncopyable_type;
-    param.name = StringView("ptr", 3);
+    param.name = "ptr"_sv;
     m_current_func->params.push_back(param);
     m_current_func->param_is_ptr.push_back(false);
 
     // Create entry block with the parameter as a block arg
-    m_current_block = create_block(StringView("entry", 5));
+    m_current_block = create_block("entry"_sv);
     m_current_block->params.push_back(param);
 
     ValueId param_val = param.value;

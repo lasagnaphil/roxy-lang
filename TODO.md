@@ -92,9 +92,9 @@ emission idioms repeated dozens of times. Correctness-adjacent items first.
   name (cold — struct-keyed map ctors only); `find_owned_local` scans by name on
   hot paths; `collect_assigned_vars` dedupe is O(n²). Small-N today; swap to keyed
   maps if they ever show in a profile.
-- [ ] `StringView("insert", 6)`-style manual lengths throughout — add a constexpr
-  literal helper (`"…"_sv` or sizeof-based) to remove the miscount hazard.
-  (Codebase-wide, but densest here.)
+- [ ] Adopt the `"…"_sv` literal (added 2026-07-05 in `core/string_view.hpp`,
+  applied across `ir_builder*.cpp`) in the rest of the codebase where
+  `StringView("…", N)` manual lengths appear.
 
 ---
 

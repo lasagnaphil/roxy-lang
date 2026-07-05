@@ -436,7 +436,7 @@ void IRBuilder::emit_map_value_delete_if_present(ValueId map_obj, Type* map_type
 
     StringView contains_native;
     for (const MethodInfo& method : map_type->map_info.methods) {
-        if (method.name == StringView("contains", 8)) { contains_native = method.native_name; break; }
+        if (method.name == "contains"_sv) { contains_native = method.native_name; break; }
     }
     i32 contains_idx = contains_native.empty() ? -1 : m_registry.get_index(contains_native);
     if (contains_idx < 0) return;
@@ -489,7 +489,7 @@ void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
 
     ValueId zero = emit_const_int(0, i32_type);
     ValueId idx_param = m_current_func->new_value();
-    header->params.push_back({idx_param, i32_type, StringView("__mapclr_idx", 12)});
+    header->params.push_back({idx_param, i32_type, "__mapclr_idx"_sv});
 
     Vector<BlockArgPair> init_args; init_args.push_back({zero});
     finish_block_goto(header->id, alloc_span(init_args));
@@ -517,7 +517,7 @@ void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
 bool IRBuilder::is_map_insert_noncopyable_value(CallExpr& call_expr) const {
     if (!call_expr.callee || call_expr.callee->kind != AstKind::ExprGet) return false;
     GetExpr& get_expr = call_expr.callee->get;
-    if (get_expr.name != StringView("insert", 6)) return false;
+    if (get_expr.name != "insert"_sv) return false;
     Type* obj_type = get_expr.object ? get_expr.object->resolved_type : nullptr;
     Type* base = obj_type ? obj_type->base_type() : nullptr;
     if (!base || !base->is_map()) return false;
@@ -777,7 +777,7 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, const FunctionRefTarget& target)
         Type* env_type = m_types.struct_type(env_struct_name, nullptr);
         FieldInfo* fields = reinterpret_cast<FieldInfo*>(
             m_allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
-        fields[0].name = StringView("__call_idx", 10);
+        fields[0].name = "__call_idx"_sv;
         fields[0].type = m_types.u32_type();
         fields[0].is_pub = false;
         fields[0].index = 0;
@@ -818,7 +818,7 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, const FunctionRefTarget& target)
         BlockParam env_param;
         env_param.value = tramp->new_value();
         env_param.type = ref_env_type;
-        env_param.name = StringView("__env", 5);
+        env_param.name = "__env"_sv;
         tramp->params.push_back(env_param);
         tramp->param_is_ptr.push_back(false);
 
@@ -841,7 +841,7 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, const FunctionRefTarget& target)
         // script / native / external functions uniformly.
         IRBlock* entry = m_allocator.emplace<IRBlock>();
         entry->id = BlockId{0};
-        entry->name = StringView("entry", 5);
+        entry->name = "entry"_sv;
         tramp->blocks.push_back(entry);
 
         IRInst* call_inst = m_allocator.emplace<IRInst>();
@@ -968,7 +968,7 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
             } else {
                 target.kind = FunctionRefTarget::Kind::Script;
                 target.name = sym->name;
-                if (!sym->is_pub && sym->name != StringView("main", 4)) {
+                if (!sym->is_pub && sym->name != "main"_sv) {
                     target.name = mangle_module_local(sym->name);
                 }
             }
@@ -1389,10 +1389,10 @@ ValueId IRBuilder::gen_map_constructor(Expr* expr) {
         Type* hash_trait = m_type_env.hash_type();
         Type* eq_trait = m_type_env.eq_type();
         if (hash_trait && m_types.implements_trait(key_type, hash_trait)) {
-            hash_fn_index = find_method_fn_index(key_type, StringView("hash", 4));
+            hash_fn_index = find_method_fn_index(key_type, "hash"_sv);
         }
         if (eq_trait && m_types.implements_trait(key_type, eq_trait)) {
-            eq_fn_index = find_method_fn_index(key_type, StringView("eq", 2));
+            eq_fn_index = find_method_fn_index(key_type, "eq"_sv);
         }
     }
 
@@ -1631,7 +1631,7 @@ ValueId IRBuilder::gen_call_direct(Expr* expr, const CallLowering& lowered) {
             }
         }
         if (is_function_symbol && !is_pub
-            && orig_name != StringView("main", 4)) {
+            && orig_name != "main"_sv) {
             emit_name = mangle_module_local(func_name);
         }
         result = emit_call(emit_name, final_args, expr->resolved_type);
@@ -1700,7 +1700,7 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         // Pushing a `ref` element into a List makes the container hold a counted
         // borrow — increment it. The hold is released when the element leaves
         // (container destroy / overwrite). lifetimes.md "Applying the model".
-        if (struct_type->is_list() && get_expr.name == StringView("push", 4)
+        if (struct_type->is_list() && get_expr.name == "push"_sv
             && struct_type->list_info.element_type
             && struct_type->list_info.element_type->kind == TypeKind::Ref
             && args.size() >= 1) {
@@ -1710,7 +1710,7 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         // (the list releases each element on destroy via the StrRelease element
         // descriptor). Retaining a fresh temp too keeps the count balanced: the
         // temp's own scope-exit release leaves exactly the list's count (finding 9b).
-        if (struct_type->is_list() && get_expr.name == StringView("push", 4)
+        if (struct_type->is_list() && get_expr.name == "push"_sv
             && struct_type->list_info.element_type
             && struct_type->list_info.element_type->kind == TypeKind::String
             && args.size() >= 1) {
@@ -1741,9 +1741,9 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
             return result;
         }
         if (struct_type->is_map()) {
-            if (get_expr.name == StringView("remove", 6) && args.size() >= 1) {
+            if (get_expr.name == "remove"_sv && args.size() >= 1) {
                 emit_map_value_delete_if_present(obj, struct_type, args[0]);
-            } else if (get_expr.name == StringView("clear", 5)) {
+            } else if (get_expr.name == "clear"_sv) {
                 emit_map_clear_value_cleanup(obj, struct_type);
             }
         }
@@ -3030,7 +3030,7 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
                     // pass through gen_lvalue_addr, which doesn't accept call/index/method
                     // rvalues and would error with "expression is not a valid lvalue".
                     StringView mangled = mangle_method(etype->struct_info.name,
-                                                       StringView("to_string", 9));
+                                                       "to_string"_sv);
                     ValueId ts = emit_call_resolved(mangled, alloc_span({val}), string_type);
                     // A user `to_string()` hands off an owned string — track it.
                     track_string_temp(ts, string_type);
@@ -3042,7 +3042,7 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
 
     // Edge case: empty f-string or no parts
     if (string_parts.empty()) {
-        return emit_const_string(StringView("", 0));
+        return emit_const_string(""_sv);
     }
 
     // Left-fold concatenation with str_concat
