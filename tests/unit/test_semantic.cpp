@@ -174,6 +174,56 @@ TEST_SUITE("Semantic") {
         CHECK(symbols.lookup("x")->type == types.i32_type());
     }
 
+    TEST_CASE("SymbolTable: incremental lookup-cache maintenance") {
+        // pop_scope restores each name's displaced entry instead of rebuilding
+        // the cache from the whole scope chain. Pin the invariants that makes
+        // safe.
+        BumpAllocator allocator{1024};
+        TypeCache types(allocator);
+        SymbolTable symbols(allocator);
+        SourceLocation loc = {0, 1, 1};
+
+        SUBCASE("same-name redefinition within one scope unwinds correctly") {
+            // The flat enum-variant namespace defines the same name twice in
+            // one scope (later shadows earlier). In an inner scope, a pop
+            // must unwind both entries back to the outer symbol.
+            Symbol* outer = symbols.define(SymbolKind::Variable, "v", types.i32_type(), loc);
+
+            symbols.push_scope(ScopeKind::Block);
+            Symbol* inner1 = symbols.define(SymbolKind::Variable, "v", types.f32_type(), loc);
+            Symbol* inner2 = symbols.define(SymbolKind::Variable, "v", types.f64_type(), loc);
+            CHECK(symbols.lookup("v") == inner2);
+            CHECK(inner1->shadowed == outer);
+            CHECK(inner2->shadowed == inner1);
+
+            symbols.pop_scope();
+            CHECK(symbols.lookup("v") == outer);
+        }
+
+        SUBCASE("multi-level shadowing restores per level") {
+            Symbol* g = symbols.define(SymbolKind::Variable, "x", types.i32_type(), loc);
+            symbols.push_scope(ScopeKind::Block);
+            Symbol* mid = symbols.define(SymbolKind::Variable, "x", types.f32_type(), loc);
+            symbols.push_scope(ScopeKind::Block);
+            Symbol* deep = symbols.define(SymbolKind::Variable, "x", types.f64_type(), loc);
+
+            CHECK(symbols.lookup("x") == deep);
+            symbols.pop_scope();
+            CHECK(symbols.lookup("x") == mid);
+            symbols.pop_scope();
+            CHECK(symbols.lookup("x") == g);
+        }
+
+        SUBCASE("popping a scope with an unshadowed name erases it") {
+            symbols.push_scope(ScopeKind::Block);
+            symbols.define(SymbolKind::Variable, "only_inner", types.i32_type(), loc);
+            CHECK(symbols.lookup("only_inner") != nullptr);
+            symbols.pop_scope();
+            CHECK(symbols.lookup("only_inner") == nullptr);
+            CHECK(symbols.lookup_local("only_inner") == nullptr);
+        }
+    }
+
     TEST_CASE("SymbolTable: Function scope") {
         BumpAllocator allocator{1024};
         TypeCache types(allocator);

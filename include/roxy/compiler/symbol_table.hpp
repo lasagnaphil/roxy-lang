@@ -39,6 +39,10 @@ struct Symbol {
     bool is_pub;          // Public visibility
     bool is_out_inout;    // For Parameter symbols: declared `out` or `inout` (second-class)
     Scope* defining_scope;  // Scope where this symbol was defined; used for capture detection
+    // The lookup-cache entry this symbol displaced when it was defined (null if
+    // the name was previously unbound). pop_scope restores it, so leaving a
+    // scope costs O(symbols in that scope) instead of a full cache rebuild.
+    Symbol* shadowed;
 
     Symbol()
         : kind(SymbolKind::Variable)
@@ -49,6 +53,7 @@ struct Symbol {
         , is_pub(false)
         , is_out_inout(false)
         , defining_scope(nullptr)
+        , shadowed(nullptr)
     {
         // Zero-initialize the union
         param.index = 0;
@@ -151,11 +156,15 @@ private:
     Scope* m_global;
     Scope* m_current;
 
-    // Fast lookup map for current scope chain
+    // Fast lookup map for the current scope chain: name -> innermost visible
+    // symbol. Maintained incrementally — define() records the displaced entry
+    // in Symbol::shadowed and pop_scope() restores the scope's entries in
+    // reverse definition order. Invariant: a name defined in the current scope
+    // always maps to that local symbol (nothing inside the scope can displace
+    // it except a same-scope redefinition).
     tsl::robin_map<StringView, Symbol*> m_lookup_cache;
 
     Scope* create_scope(ScopeKind kind);
-    void rebuild_lookup_cache();
 };
 
 }

@@ -48,28 +48,22 @@ void SymbolTable::push_struct_scope(Type* struct_type) {
 
 void SymbolTable::pop_scope() {
     if (m_current && m_current->parent) {
-        // Remove symbols from lookup cache
-        for (Symbol* sym : m_current->symbols) {
-            m_lookup_cache.erase(sym->name);
+        // Undo this scope's cache entries in reverse definition order: each
+        // symbol restores the entry it displaced (an outer symbol, an earlier
+        // same-scope definition, or nothing). Reverse order makes same-name
+        // redefinitions within one scope unwind correctly. O(symbols in this
+        // scope) — replacing the old full-chain cache rebuild that made every
+        // block exit cost O(total visible symbols).
+        Vector<Symbol*>& symbols = m_current->symbols;
+        for (u32 i = symbols.size(); i > 0; i--) {
+            Symbol* sym = symbols[i - 1];
+            if (sym->shadowed) {
+                m_lookup_cache[sym->name] = sym->shadowed;
+            } else {
+                m_lookup_cache.erase(sym->name);
+            }
         }
         m_current = m_current->parent;
-        // Rebuild cache to ensure shadowed symbols are accessible again
-        rebuild_lookup_cache();
-    }
-}
-
-void SymbolTable::rebuild_lookup_cache() {
-    m_lookup_cache.clear();
-    // Walk from global to current, so inner scopes shadow outer
-    Vector<Scope*> scopes;
-    for (Scope* s = m_current; s; s = s->parent) {
-        scopes.push_back(s);
-    }
-    // Iterate in reverse (global first)
-    for (i32 i = static_cast<i32>(scopes.size()) - 1; i >= 0; i--) {
-        for (Symbol* sym : scopes[i]->symbols) {
-            m_lookup_cache[sym->name] = sym;
-        }
     }
 }
 
@@ -84,6 +78,9 @@ Symbol* SymbolTable::define(SymbolKind kind, StringView name, Type* type, Source
     sym->defining_scope = m_current;
 
     m_current->symbols.push_back(sym);
+    // Record the displaced cache entry so pop_scope can restore it.
+    auto it = m_lookup_cache.find(name);
+    sym->shadowed = (it != m_lookup_cache.end()) ? it->second : nullptr;
     m_lookup_cache[name] = sym;
     return sym;
 }
