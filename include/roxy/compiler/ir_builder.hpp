@@ -12,6 +12,8 @@
 
 #include "roxy/core/tsl/robin_map.h"
 
+#include <initializer_list>
+
 namespace rx {
 
 // Forward declarations
@@ -119,6 +121,11 @@ private:
     // Native-vs-script dispatch: emit CallNative when `name` is a registered native,
     // otherwise a plain Call. Folds the get_index(name) >= 0 ? ... : ... idiom.
     ValueId emit_call_resolved(StringView name, Span<ValueId> args, Type* result_type);
+    // Emit a CallNative to a registry native with a fixed argument list, folding
+    // the get_index lookup + arena span allocation every site used to hand-roll.
+    // Reports an internal error and returns invalid when `name` is not registered;
+    // sites that legitimately skip a missing native check get_index themselves.
+    ValueId emit_native(StringView name, std::initializer_list<ValueId> args, Type* result_type);
     // Emit a CALL_INDIRECT through an already-evaluated closure value. Returns
     // invalid when the current block is terminated (emit_inst guard).
     ValueId emit_call_indirect(ValueId callee_val, Span<ValueId> args, Type* result_type);

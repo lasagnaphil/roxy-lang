@@ -1633,7 +1633,7 @@ void IRBuilder::emit_map_value_delete_if_present(ValueId map_obj, Type* map_type
     contains_args[0] = map_obj;
     contains_args[1] = key_val;
     ValueId present = emit_call_native(contains_native, contains_args, m_types.bool_type(),
-                                       static_cast<u8>(contains_idx));
+                                       static_cast<u32>(contains_idx));
     IRBlock* destroy_block = create_block("map_destroy_old");
     IRBlock* merge_block = create_block("map_after_destroy");
     finish_block_branch(present, destroy_block->id, merge_block->id);
@@ -1668,7 +1668,7 @@ void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
     // cap = __map_iter_capacity(map)   (loop-invariant; dominates the loop)
     Span<ValueId> cap_args = alloc_span<ValueId>(1);
     cap_args[0] = map_obj;
-    ValueId cap = emit_call_native(cap_name, cap_args, i32_type, static_cast<u8>(cap_idx));
+    ValueId cap = emit_call_native(cap_name, cap_args, i32_type, static_cast<u32>(cap_idx));
 
     // Counted loop over occupied buckets:
     //   for (idx = 0; (next = next_occupied(map, idx)) < cap; idx = next + 1)
@@ -1690,7 +1690,7 @@ void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
     Span<ValueId> next_args = alloc_span<ValueId>(2);
     next_args[0] = map_obj;
     next_args[1] = idx_param;
-    ValueId next = emit_call_native(next_name, next_args, i32_type, static_cast<u8>(next_idx));
+    ValueId next = emit_call_native(next_name, next_args, i32_type, static_cast<u32>(next_idx));
     ValueId cond = emit_binary(IROp::LtI, next, cap, m_types.bool_type());  // next < cap
     finish_block_branch(cond, body->id, exit_block->id);
 
@@ -1700,7 +1700,7 @@ void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
     val_args[1] = next;
     // Type the result as the value type so both backends treat the returned
     // pointer correctly (the C backend casts the u64 to the value's C type).
-    ValueId vp = emit_call_native(val_name, val_args, value_type, static_cast<u8>(val_idx));
+    ValueId vp = emit_call_native(val_name, val_args, value_type, static_cast<u32>(val_idx));
     IRInst* del = emit_inst(IROp::Delete, value_type);
     if (del) del->unary = vp;
     ValueId one = emit_const_int(1, i32_type);
@@ -3673,23 +3673,19 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
 
         StringView func_name;
         Type* result_type = nullptr;
-        i32 native_idx = -1;
 
         switch (binary_expr.op) {
             case BinaryOp::Add:
                 func_name = "str_concat";
                 result_type = m_types.string_type();
-                native_idx = m_registry.get_index(func_name);
                 break;
             case BinaryOp::Equal:
                 func_name = "str_eq";
                 result_type = m_types.bool_type();
-                native_idx = m_registry.get_index(func_name);
                 break;
             case BinaryOp::NotEqual:
                 func_name = "str_ne";
                 result_type = m_types.bool_type();
-                native_idx = m_registry.get_index(func_name);
                 break;
             default:
                 // Unsupported string operation - fall through to regular handling
@@ -3697,11 +3693,8 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
                 break;
         }
 
-        if (native_idx >= 0) {
-            Span<ValueId> args = alloc_span<ValueId>(2);
-            args[0] = left;
-            args[1] = right;
-            return emit_call_native(func_name, args, result_type, static_cast<u8>(native_idx));
+        if (!func_name.empty()) {
+            return emit_native(func_name, {left, right}, result_type);
         }
     }
 
@@ -3851,9 +3844,23 @@ ValueId IRBuilder::gen_ternary_expr(Expr* expr) {
 ValueId IRBuilder::emit_call_resolved(StringView name, Span<ValueId> args, Type* result_type) {
     i32 native_idx = m_registry.get_index(name);
     if (native_idx >= 0) {
-        return emit_call_native(name, args, result_type, static_cast<u8>(native_idx));
+        return emit_call_native(name, args, result_type, static_cast<u32>(native_idx));
     }
     return emit_call(name, args, result_type);
+}
+
+ValueId IRBuilder::emit_native(StringView name, std::initializer_list<ValueId> args, Type* result_type) {
+    i32 native_idx = m_registry.get_index(name);
+    if (native_idx < 0) {
+        report_error("Internal error: native function not in registry");
+        return ValueId::invalid();
+    }
+    Span<ValueId> arg_span = alloc_span<ValueId>(static_cast<u32>(args.size()));
+    u32 i = 0;
+    for (ValueId arg : args) {
+        arg_span[i++] = arg;
+    }
+    return emit_call_native(name, arg_span, result_type, static_cast<u32>(native_idx));
 }
 
 ValueId IRBuilder::emit_call_indirect(ValueId callee_val, Span<ValueId> args, Type* result_type) {
@@ -3908,23 +3915,18 @@ ValueId IRBuilder::gen_list_constructor(Expr* expr) {
 
     // Step 1: Allocate empty list with element_slot_count and element_is_inline args
     StringView alloc_name = list_type->list_info.alloc_native_name;
-    i32 alloc_idx = m_registry.get_index(alloc_name);
     Type* elem_type = list_type->list_info.element_type;
     u32 esc = get_type_slot_count(elem_type);
     bool is_inline = !elem_type->is_struct();
     ValueId esc_val = emit_const_int(static_cast<i64>(esc), m_types.i32_type());
     ValueId inline_val = emit_const_int(is_inline ? 1 : 0, m_types.i32_type());
-    Span<ValueId> alloc_args = alloc_span<ValueId>(2);
-    alloc_args[0] = esc_val;
-    alloc_args[1] = inline_val;
-    ValueId list_ptr = emit_call_native(alloc_name, alloc_args, expr->resolved_type,
-                                        static_cast<u8>(alloc_idx));
+    ValueId list_ptr = emit_native(alloc_name, {esc_val, inline_val}, expr->resolved_type);
 
     // Step 2: Call constructor method with [self, user_args...]
     StringView ctor_name = call_expr.mangled_name;  // "List$$new"
     i32 ctor_idx = m_registry.get_index(ctor_name);
     Span<ValueId> ctor_args = prepend_self(list_ptr, user_args);
-    emit_call_native(ctor_name, ctor_args, m_types.void_type(), static_cast<u8>(ctor_idx));
+    emit_call_native(ctor_name, ctor_args, m_types.void_type(), static_cast<u32>(ctor_idx));
 
     // If elements are counted borrows (`ref T`), tag the list so `.copy()`
     // RefIncs each element (mirrors the Map<_, ref V> value_is_ref tag above;
@@ -3936,7 +3938,7 @@ ValueId IRBuilder::gen_list_constructor(Expr* expr) {
             Span<ValueId> mark_args = alloc_span<ValueId>(1);
             mark_args[0] = list_ptr;
             emit_call_native(mark_name, mark_args, m_types.void_type(),
-                             static_cast<u8>(mark_idx));
+                             static_cast<u32>(mark_idx));
         }
     }
 
@@ -3961,7 +3963,6 @@ ValueId IRBuilder::gen_map_constructor(Expr* expr) {
     // (the u64 register packs the value), for struct keys the layout matches the
     // struct's slot count and the runtime expects a pointer to the bytes.
     StringView alloc_name = map_resolved_type->map_info.alloc_native_name;
-    i32 alloc_idx = m_registry.get_index(alloc_name);
     Type* key_type = map_resolved_type->map_info.key_type;
     Type* value_type = map_resolved_type->map_info.value_type;
     u32 ksc = key_type->is_struct() ? get_type_slot_count(key_type) : 2u;
@@ -3994,15 +3995,9 @@ ValueId IRBuilder::gen_map_constructor(Expr* expr) {
     ValueId vii_val = emit_const_int(value_is_inline ? 1 : 0, m_types.i32_type());
     ValueId hash_val = emit_const_int(static_cast<i64>(hash_fn_index), m_types.i32_type());
     ValueId eq_val = emit_const_int(static_cast<i64>(eq_fn_index), m_types.i32_type());
-    Span<ValueId> alloc_args = alloc_span<ValueId>(6);
-    alloc_args[0] = ksc_val;
-    alloc_args[1] = kii_val;
-    alloc_args[2] = vsc_val;
-    alloc_args[3] = vii_val;
-    alloc_args[4] = hash_val;
-    alloc_args[5] = eq_val;
-    ValueId map_ptr = emit_call_native(alloc_name, alloc_args, expr->resolved_type,
-                                       static_cast<u8>(alloc_idx));
+    ValueId map_ptr = emit_native(alloc_name,
+                                  {ksc_val, kii_val, vsc_val, vii_val, hash_val, eq_val},
+                                  expr->resolved_type);
 
     // Step 2: Call constructor with [self, key_kind, user_args...]. Determine
     // MapKeyKind from the key type.
@@ -4027,7 +4022,7 @@ ValueId IRBuilder::gen_map_constructor(Expr* expr) {
     for (u32 i = 0; i < user_argc; i++) {
         ctor_args[i + 2] = user_args[i];
     }
-    emit_call_native(ctor_name, ctor_args, m_types.void_type(), static_cast<u8>(ctor_idx));
+    emit_call_native(ctor_name, ctor_args, m_types.void_type(), static_cast<u32>(ctor_idx));
 
     // If values are counted borrows (`ref V`), tag the map so insert RefIncs and
     // remove/clear/destroy RefDec each value (lifetimes.md "Applying the model").
@@ -4038,7 +4033,7 @@ ValueId IRBuilder::gen_map_constructor(Expr* expr) {
             Span<ValueId> mark_args = alloc_span<ValueId>(1);
             mark_args[0] = map_ptr;
             emit_call_native(mark_name, mark_args, m_types.void_type(),
-                             static_cast<u8>(mark_idx));
+                             static_cast<u32>(mark_idx));
         }
     }
 
@@ -4179,7 +4174,7 @@ ValueId IRBuilder::gen_call_direct(Expr* expr, const CallLowering& lowered) {
     }
     // Native function
     else if (i32 native_idx = m_registry.get_index(lookup_name); native_idx >= 0) {
-        result = emit_call_native(lookup_name, final_args, expr->resolved_type, static_cast<u8>(native_idx));
+        result = emit_call_native(lookup_name, final_args, expr->resolved_type, static_cast<u32>(native_idx));
     } else {
         // Module-scope non-pub functions are mangled at definition (see build_function);
         // calls to them must use the mangled name so they resolve within the same module.
@@ -4229,7 +4224,7 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         i32 native_idx = m_registry.get_index(func_name);
         ValueId result;
         if (native_idx >= 0) {
-            result = emit_call_native(func_name, final_args, expr->resolved_type, static_cast<u8>(native_idx));
+            result = emit_call_native(func_name, final_args, expr->resolved_type, static_cast<u32>(native_idx));
         } else {
             result = emit_call_external(module_name, func_name, final_args, expr->resolved_type);
         }
@@ -4304,7 +4299,7 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
             i32 native_idx = m_registry.get_index(native_name);
             Span<ValueId> method_args = prepend_self(obj, args);
             ValueId result = emit_call_native(native_name, method_args, expr->resolved_type,
-                                              static_cast<u8>(native_idx));
+                                              static_cast<u32>(native_idx));
             // Deferred consume — now after the insert, in the merge block.
             consume_temp_noncopyable(args[1]);
             nullify_moved_field_source(call_expr.arguments[1].expr);
@@ -4320,7 +4315,7 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         StringView native_name = call_expr.mangled_name;
         i32 native_idx = m_registry.get_index(native_name);
         Span<ValueId> method_args = prepend_self(obj, args);
-        return emit_call_native(native_name, method_args, expr->resolved_type, static_cast<u8>(native_idx));
+        return emit_call_native(native_name, method_args, expr->resolved_type, static_cast<u32>(native_idx));
     }
 
     // User struct method. Look up the method in the type hierarchy to find where it's
@@ -5534,7 +5529,7 @@ ValueId IRBuilder::gen_super_call(Expr* expr) {
     i32 native_idx = m_registry.get_index(call_name);
     if (native_idx >= 0) {
         return emit_call_native(call_name, call_args, expr->resolved_type,
-                                static_cast<u8>(native_idx));
+                                static_cast<u32>(native_idx));
     }
     return emit_call(call_name, call_args, expr->resolved_type);
 }
@@ -5761,16 +5756,11 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
 
                 if (native_name) {
                     StringView name(native_name, static_cast<u32>(strlen(native_name)));
-                    i32 native_idx = m_registry.get_index(name);
-                    if (native_idx >= 0) {
-                        Span<ValueId> args = alloc_span<ValueId>(1);
-                        args[0] = val;
-                        ValueId ts = emit_call_native(name, args, string_type, static_cast<u8>(native_idx));
-                        // The to_string result is a fresh owned string temp — track
-                        // it so it's released at scope exit (finding 9b).
-                        track_string_temp(ts, string_type);
-                        string_parts.push_back(ts);
-                    }
+                    ValueId ts = emit_native(name, {val}, string_type);
+                    // The to_string result is a fresh owned string temp — track
+                    // it so it's released at scope exit (finding 9b).
+                    track_string_temp(ts, string_type);
+                    string_parts.push_back(ts);
                 } else if (etype->is_struct()) {
                     // Struct with to_string method: call the mangled method.
                     // gen_expr already returns a struct pointer for struct rvalues — the
@@ -5783,10 +5773,7 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
                     Span<ValueId> args = alloc_span<ValueId>(1);
                     args[0] = val;
 
-                    i32 native_idx = m_registry.get_index(mangled);
-                    ValueId ts = native_idx >= 0
-                        ? emit_call_native(mangled, args, string_type, static_cast<u8>(native_idx))
-                        : emit_call(mangled, args, string_type);
+                    ValueId ts = emit_call_resolved(mangled, args, string_type);
                     // A user `to_string()` hands off an owned string — track it.
                     track_string_temp(ts, string_type);
                     string_parts.push_back(ts);
@@ -5809,7 +5796,7 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
         Span<ValueId> args = alloc_span<ValueId>(2);
         args[0] = result;
         args[1] = string_parts[i];
-        result = emit_call_native(concat_name, args, string_type, static_cast<u8>(concat_idx));
+        result = emit_call_native(concat_name, args, string_type, static_cast<u32>(concat_idx));
         // Each concat produces a fresh owned string temp; track it for release at
         // scope exit (finding 9b). The final `result` is returned and re-tracked by
         // gen_expr (track_string_temp skips already-tracked values).

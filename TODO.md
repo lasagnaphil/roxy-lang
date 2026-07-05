@@ -71,6 +71,81 @@ per-item records in git history.
 
 ---
 
+## IRBuilder Refactoring
+
+From a 2026-07-05 deep review of `ir_builder.{hpp,cpp}` (~7,600 lines). The code is
+semantically sound and well-commented; nearly all findings are structural
+duplication — the same machinery copy-pasted across statement kinds, and the same
+emission idioms repeated dozens of times. Correctness-adjacent items first.
+
+- [ ] **`mark_call_args_moved` param-offset mismatch (suspected bug).** It uses
+  `callee is ExprGet ? 1 : 0` for the implicit-self offset, while
+  `self_pass_param_offset` carefully returns -1/0/1 (module-qualified calls,
+  container methods, and field-stored closures have no implicit self). For
+  `module.fn(x)` with a noncopyable arg the check reads `param_types[i+1]` —
+  misaligned — so the arg may not be marked moved (double-free shaped). Unify on
+  the careful version; write a characterization test first.
+- [ ] **Synthesized default ctor nested-struct init recurses one level only**
+  (`build_synthesized_default_constructor`): a struct field *inside* the nested
+  struct falls through to `emit_const_null` instead of recursing. Make field
+  default-init a real recursive helper.
+- [ ] **`gen_super_call` arg-lowering gap**: evaluates args without the noncopyable
+  consume/move bookkeeping that `lower_call_args` / `gen_constructor_call` do, and
+  hand-rolls the self-prepend loop `prepend_self` already provides. Share the
+  `modifier ? gen_lvalue_addr : gen_expr` arg loop (repeated 4×) so the ownership
+  policy is uniform.
+- [ ] **Extract the branch/merge (phi + scope-snapshot) machinery.** `gen_if_stmt` /
+  `gen_if_else_chain` / `gen_when_stmt` / `gen_try_stmt` each hand-roll
+  collect-assigned-vars → phi dedupe → merge-block params → scope (+ `is_moved`)
+  snapshot → per-branch restore → merge args → rebind: four local `PhiInfo`
+  structs, 12 copies of the snapshot/restore loop. Also a real divergence:
+  `gen_if_stmt` does termination-aware state selection at the merge, while
+  `gen_if_else_chain` (the same construct written as `else if`) unconditionally
+  restores pre-chain scopes — unify, keeping the termination-aware policy.
+  Perf tie-in: the per-scope `Vector<robin_map>` copies were a top profile entry
+  in the 2026-07-05 measurement (see the move-state snapshot item above);
+  centralizing the snapshot into one type is the prerequisite for an undo log.
+- [ ] **Dedup function-building scaffolding across the eight `build_*` entry
+  points**: prologue (emplace + name/is_pub/source_line), epilogue
+  (result/null/null — 8 verbatim copies), body loop (4 copies), hidden
+  large-struct-return param block (`build_function`/`build_method` verbatim),
+  return-type resolution. `begin_ir_function`/`finish_ir_function` + `gen_body` +
+  `add_hidden_return_param`.
+- [ ] **Extract shared field resolution + variant guard**: `gen_get_expr` and
+  `gen_assign_field` duplicate ~45 lines each of find_field → find_variant_field →
+  union-offset math → discriminant-check emission. One `resolve_field_access` +
+  `emit_variant_guard`.
+- [ ] **Dedup cleanup-record recording** between `pop_scope` and
+  `end_function_body`; in both copies the `first_in_scope` pre-scan is dead code
+  (the loop that follows already filters on `scope_depth`) — delete it. Extract
+  `record_scope_cleanup_records(depth, end_block)`.
+- [ ] **Micro-emission helpers**: `emit_delete(v, t)` (14 sites of `emit_inst` +
+  `if (inst) inst->unary = v`), `emit_nullify(v)` (9), `emit_assert_heap(v)` (4);
+  an `alloc_span(std::initializer_list)` overload (~20 manual fill sites);
+  `slot_count_or_1(t)` (5 sites of the `== 0 → 1` fixup); a
+  `holds_owning_pointer(Type*)` predicate for the
+  `Uniq || is_list || is_map || is_coroutine` chain (4+ sites) — and audit whether
+  `Function` (closures) belongs in that set: the sites disagree with the
+  `nullify_moved_field_source` header comment ("uniq/List/Map/Coro/fun").
+- [ ] **Split the TU / extract collaborators** (the semantic.cpp precedent):
+  (a) zero-risk `.cpp` split into decls/stmt/expr/lifetime files; (b) easy
+  extraction of Phase-1 folding (`try_fold_*` / `try_simplify_*`, ~350
+  nearly-stateless lines) into `ir_fold.{hpp,cpp}`; (c) longer-term
+  `OwnershipTracker` collaborator for `m_owned_locals` + consume/move/track/
+  cleanup-record machinery, mirroring `LifetimeChecker`.
+- [ ] **Repeated generic-instance filter**: `is_analyzed && concrete_type &&
+  !is_abstract` over `all_struct_instances()` appears 5× across the build phases →
+  `for_each_concrete_struct_instance(fn)`.
+- [ ] Linear-scan lookups: `find_method_fn_index` scans all module functions by
+  name (cold — struct-keyed map ctors only); `find_owned_local` scans by name on
+  hot paths; `collect_assigned_vars` dedupe is O(n²). Small-N today; swap to keyed
+  maps if they ever show in a profile.
+- [ ] `StringView("insert", 6)`-style manual lengths throughout — add a constexpr
+  literal helper (`"…"_sv` or sizeof-based) to remove the miscount hazard.
+  (Codebase-wide, but densest here.)
+
+---
+
 ## Bytecode VM Opcode Improvements
 
 From a 2026-04-26 review comparing Roxy's opcode set against Lua 5.4, LuaJIT,
