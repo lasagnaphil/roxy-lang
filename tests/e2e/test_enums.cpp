@@ -202,4 +202,48 @@ TEST_SUITE("E2E Enums") {
         CHECK(result.value == 3);
     }
 
+    // Explicit enum values may now be any compile-time-constant integer
+    // expression, not just a bare literal. Verified by making a folded variant
+    // collide with a literal one: they compare equal iff folding produced the
+    // right value (before, `1 + 2` and `-1` silently auto-incremented instead).
+    TEST_CASE_TEMPLATE("Enum values fold constant integer expressions", Backend, RX_E2E_BACKENDS) {
+        SUBCASE("arithmetic with precedence") {
+            const char* source = R"(
+            enum E { Computed = 2 * 3 + 1, Seven = 7 }
+            fun main(): i32 {
+                if (E::Computed == E::Seven) { return 1; }
+                return 0;
+            }
+        )";
+            auto result = Backend::run(source);
+            CHECK(result.success);
+            CHECK(result.value == 1);
+        }
+
+        SUBCASE("unary negation and subtraction") {
+            const char* source = R"(
+            enum E { Neg = -1, AlsoNeg = 0 - 1 }
+            fun main(): i32 {
+                if (E::Neg == E::AlsoNeg) { return 1; }
+                return 0;
+            }
+        )";
+            auto result = Backend::run(source);
+            CHECK(result.success);
+            CHECK(result.value == 1);
+        }
+    }
+
+    // A non-constant integer value expression is now rejected instead of
+    // silently auto-incrementing. Compile-only, so plain TEST_CASE.
+    TEST_CASE("Non-constant enum value is a compile error") {
+        const char* source = R"(
+            fun three(): i32 { return 3; }
+            enum E { A = three() }
+            fun main(): i32 { return 0; }
+        )";
+        BumpAllocator allocator(1 << 16);
+        CHECK(compile(allocator, source) == nullptr);
+    }
+
 }  // TEST_SUITE("E2E Enums")

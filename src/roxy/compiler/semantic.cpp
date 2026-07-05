@@ -457,6 +457,62 @@ void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
     type->struct_info.members_resolved = true;
 }
 
+namespace {
+// Fold a compile-time constant integer expression (for enum variant values).
+// Handles integer literals, grouping, unary -/~, and binary arithmetic/bitwise
+// ops over constants. Writes the result to `out` and returns true on success;
+// returns false (out untouched) for anything non-constant, a division by zero,
+// or an out-of-range shift.
+bool eval_const_int(Expr* e, i64& out) {
+    if (!e) return false;
+    switch (e->kind) {
+        case AstKind::ExprLiteral: {
+            LiteralExpr& lit = e->literal;
+            switch (lit.literal_kind) {
+                case LiteralKind::I32: case LiteralKind::I64:
+                case LiteralKind::U32: case LiteralKind::U64:
+                    out = lit.int_value;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+        case AstKind::ExprGrouping:
+            return eval_const_int(e->grouping.expr, out);
+        case AstKind::ExprUnary: {
+            i64 v;
+            if (!eval_const_int(e->unary.operand, v)) return false;
+            switch (e->unary.op) {
+                case UnaryOp::Negate: out = -v; return true;
+                case UnaryOp::BitNot: out = ~v; return true;
+                default: return false;
+            }
+        }
+        case AstKind::ExprBinary: {
+            i64 l, r;
+            if (!eval_const_int(e->binary.left, l) || !eval_const_int(e->binary.right, r)) {
+                return false;
+            }
+            switch (e->binary.op) {
+                case BinaryOp::Add: out = l + r; return true;
+                case BinaryOp::Sub: out = l - r; return true;
+                case BinaryOp::Mul: out = l * r; return true;
+                case BinaryOp::Div: if (r == 0) return false; out = l / r; return true;
+                case BinaryOp::Mod: if (r == 0) return false; out = l % r; return true;
+                case BinaryOp::BitAnd: out = l & r; return true;
+                case BinaryOp::BitOr:  out = l | r; return true;
+                case BinaryOp::BitXor: out = l ^ r; return true;
+                case BinaryOp::Shl: if (r < 0 || r >= 64) return false; out = l << r; return true;
+                case BinaryOp::Shr: if (r < 0 || r >= 64) return false; out = l >> r; return true;
+                default: return false;  // comparisons / logical ops aren't integer-valued
+            }
+        }
+        default:
+            return false;
+    }
+}
+}
+
 void SemanticAnalyzer::resolve_enum_members(Decl* decl) {
     EnumDecl& ed = decl->enum_decl;
     Type* type = m_type_env.named_type_by_name(ed.name);
@@ -467,17 +523,16 @@ void SemanticAnalyzer::resolve_enum_members(Decl* decl) {
 
         i64 value = next_value;
         if (v.value) {
-            // Analyze the value expression
+            // Analyze the value expression, then require it to fold to a
+            // compile-time integer constant. Previously only bare integer
+            // literals were honored — `A = 1 + 2` or `A = -1` silently fell
+            // through to auto-increment (a wrong value, no diagnostic).
             Type* vtype = analyze_expr(v.value);
-            if (vtype && !vtype->is_error() && !vtype->is_integer() && !vtype->is_int_literal()) {
-                error_fmt(v.loc, "enum variant value must be an integer");
-            }
-            // For simplicity, we require compile-time integer literals
-            if (v.value->kind == AstKind::ExprLiteral) {
-                LiteralKind lk = v.value->literal.literal_kind;
-                if (lk == LiteralKind::I32 || lk == LiteralKind::I64 ||
-                    lk == LiteralKind::U32 || lk == LiteralKind::U64) {
-                    value = v.value->literal.int_value;
+            if (vtype && !vtype->is_error()) {
+                if (!vtype->is_integer() && !vtype->is_int_literal()) {
+                    error_fmt(v.loc, "enum variant value must be an integer");
+                } else if (!eval_const_int(v.value, value)) {
+                    error_fmt(v.loc, "enum variant value must be a compile-time integer constant");
                 }
             }
         }
