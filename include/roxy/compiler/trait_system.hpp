@@ -64,7 +64,7 @@ public:
     // Trait method declaration: fun TraitName.method(...) — registers the
     // method (or merges an idempotent redeclaration of a builtin's method)
     // on the trait type.
-    void analyze_trait_method_decl(Decl* decl, Type* trait_type);
+    void register_trait_method_signature(Decl* decl, Type* trait_type);
 
     // Trait implementation member: fun Type.method(...) for Trait<Args> —
     // validates the target struct and trait, resolves the impl's trait type

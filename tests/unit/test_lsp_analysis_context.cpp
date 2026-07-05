@@ -136,6 +136,86 @@ fun test(): i32 {
         delete result.symbols;
     }
 
+    TEST_CASE("analyze method body") {
+        // Regression: analyze_function_body on a *method* must analyze its
+        // body against the struct receiver. It used to dispatch to the
+        // signature-registration path (then named analyze_method_decl), which
+        // re-reported "duplicate method" — the signature was already
+        // registered by rebuild_declarations — and never analyzed the body.
+        LspAnalysisContext context;
+
+        const char* source = R"(
+struct Point {
+    x: i32;
+    y: i32;
+}
+
+fun Point.sum(): i32 {
+    return self.x + self.y;
+}
+)";
+
+        BumpAllocator parse_allocator(8192);
+        SyntaxTree tree;
+        auto file = make_source_file(source, parse_allocator, tree);
+
+        Span<LspAnalysisContext::SourceFile> files(&file, 1);
+        context.rebuild_declarations(files);
+        CHECK(context.is_initialized());
+
+        SyntaxNode* method_node = find_first_function(tree.root);
+        REQUIRE(method_node != nullptr);
+        REQUIRE(method_node->kind == SyntaxKind::NodeMethodDecl);
+
+        BumpAllocator ast_allocator(8192);
+        BodyAnalysisResult result = context.analyze_function_body(method_node, ast_allocator);
+
+        CHECK(result.decl != nullptr);
+        CHECK(result.symbols != nullptr);
+        // A clean body analyzes cleanly — no spurious "duplicate method".
+        CHECK(result.success);
+        CHECK(result.errors.size() == 0);
+
+        delete result.symbols;
+    }
+
+    TEST_CASE("analyze method body reports body errors") {
+        // The companion check: errors in the method BODY are reported (proof
+        // that the body walker actually ran, not just that no duplicate
+        // registration happened).
+        LspAnalysisContext context;
+
+        const char* source = R"(
+struct Point {
+    x: i32;
+    y: i32;
+}
+
+fun Point.sum(): i32 {
+    return self.x + missing_variable;
+}
+)";
+
+        BumpAllocator parse_allocator(8192);
+        SyntaxTree tree;
+        auto file = make_source_file(source, parse_allocator, tree);
+
+        Span<LspAnalysisContext::SourceFile> files(&file, 1);
+        context.rebuild_declarations(files);
+
+        SyntaxNode* method_node = find_first_function(tree.root);
+        REQUIRE(method_node != nullptr);
+
+        BumpAllocator ast_allocator(8192);
+        BodyAnalysisResult result = context.analyze_function_body(method_node, ast_allocator);
+
+        CHECK(!result.success);
+        REQUIRE(result.errors.size() > 0);
+        CHECK(strstr(result.errors[0].message, "undefined identifier") != nullptr);
+
+        delete result.symbols;
+    }
+
     TEST_CASE("type_to_string") {
         LspAnalysisContext context;
 

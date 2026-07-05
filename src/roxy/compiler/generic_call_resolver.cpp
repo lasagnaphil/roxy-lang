@@ -245,7 +245,7 @@ void GenericCallResolver::analyze_generic_template_body(Decl* decl) {
     Type* return_type = fun_decl.return_type ? m_context.resolve_type_expr(fun_decl.return_type) : m_types.void_type();
 
     // Fresh per-function context and lifetime state (same pattern as
-    // analyze_fun_decl — every body-analysis entry point pushes one).
+    // analyze_fun_body — every body-analysis entry point pushes one).
     FunctionContextScope context_scope(m_function_context, m_lifetimes);
 
     // Push function scope with return type

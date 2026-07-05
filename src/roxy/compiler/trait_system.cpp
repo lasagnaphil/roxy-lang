@@ -347,7 +347,7 @@ Type* TraitSystem::resolve_trait_method_type_expr(TypeExpr* type_expr,
     return resolved;
 }
 
-void TraitSystem::analyze_trait_method_decl(Decl* decl, Type* trait_type) {
+void TraitSystem::register_trait_method_signature(Decl* decl, Type* trait_type) {
     MethodDecl& method_decl = decl->method_decl;
 
     // Check for duplicate method names in this trait. Builtin traits (Hash,

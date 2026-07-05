@@ -148,7 +148,7 @@ u32 SemanticAnalyzer::analyze_owned_pending_fun_instances() {
                  || this_module.empty()
                  || inst->template_module == this_module;
         if (owns) {
-            analyze_fun_decl(inst->instantiated_decl);
+            analyze_fun_body(inst->instantiated_decl);
             inst->is_analyzed = true;
             drained++;
         } else {
@@ -164,20 +164,40 @@ void SemanticAnalyzer::analyze_single_function(Decl* decl) {
     // Import builtin prelude so symbols are available
     import_builtin_prelude();
 
-    // Analyze the declaration based on its kind
+    // Dispatch to the BODY analyzer for the declaration's kind — this entry
+    // point re-analyzes one body against the already-populated TypeEnv; the
+    // signatures were registered by the declaration passes. (It previously
+    // dispatched members to the signature-registration methods — then named
+    // analyze_*_decl — which re-reported "duplicate method/constructor" into
+    // the LSP diagnostics and never analyzed the body.) Member bodies need
+    // their struct type; if the name doesn't resolve to a struct (broken or
+    // stale declaration state in LSP mode), there is no receiver context to
+    // analyze against — skip quietly.
     switch (decl->kind) {
         case AstKind::DeclFun:
-            analyze_fun_decl(decl);
+            analyze_fun_body(decl);
             break;
-        case AstKind::DeclMethod:
-            analyze_method_decl(decl);
+        case AstKind::DeclMethod: {
+            Type* struct_type = m_type_env.named_type_by_name(decl->method_decl.struct_name);
+            if (struct_type && struct_type->is_struct()) {
+                analyze_method_body(decl, struct_type);
+            }
             break;
-        case AstKind::DeclConstructor:
-            analyze_constructor_decl(decl);
+        }
+        case AstKind::DeclConstructor: {
+            Type* struct_type = m_type_env.named_type_by_name(decl->constructor_decl.struct_name);
+            if (struct_type && struct_type->is_struct()) {
+                analyze_constructor_body(decl, struct_type);
+            }
             break;
-        case AstKind::DeclDestructor:
-            analyze_destructor_decl(decl);
+        }
+        case AstKind::DeclDestructor: {
+            Type* struct_type = m_type_env.named_type_by_name(decl->destructor_decl.struct_name);
+            if (struct_type && struct_type->is_struct()) {
+                analyze_destructor_body(decl, struct_type);
+            }
             break;
+        }
         default:
             break;
     }
@@ -285,7 +305,7 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
         switch (decl->kind) {
             case AstKind::DeclStruct:      resolve_struct_members(decl); break;
             case AstKind::DeclEnum:        resolve_enum_members(decl); break;
-            case AstKind::DeclFun:         resolve_fun_signature(decl); break;
+            case AstKind::DeclFun:         register_fun_signature(decl); break;
             case AstKind::DeclVar:         resolve_global_var(decl); break;
             case AstKind::DeclConstructor: resolve_constructor_member(decl); break;
             case AstKind::DeclDestructor:  resolve_destructor_member(decl); break;
@@ -477,7 +497,7 @@ void SemanticAnalyzer::resolve_enum_members(Decl* decl) {
     type->enum_info.variants = m_allocator.alloc_span(variants);
 }
 
-void SemanticAnalyzer::resolve_fun_signature(Decl* decl) {
+void SemanticAnalyzer::register_fun_signature(Decl* decl) {
     // Skip generic function templates - they have unresolved type params
     FunDecl& fun_decl = decl->fun_decl;
     if (fun_decl.type_params.size() > 0) return;
@@ -554,7 +574,7 @@ void SemanticAnalyzer::resolve_constructor_member(Decl* decl) {
         generics().register_generic_struct_constructor(constructor_decl.struct_name, decl);
         return;
     }
-    analyze_constructor_decl(decl);
+    register_constructor_signature(decl);
 }
 
 void SemanticAnalyzer::resolve_destructor_member(Decl* decl) {
@@ -563,7 +583,7 @@ void SemanticAnalyzer::resolve_destructor_member(Decl* decl) {
         generics().register_generic_struct_destructor(destructor_decl.struct_name, decl);
         return;
     }
-    analyze_destructor_decl(decl);
+    register_destructor_signature(decl);
 }
 
 void SemanticAnalyzer::resolve_method_member(Decl* decl) {
@@ -573,7 +593,7 @@ void SemanticAnalyzer::resolve_method_member(Decl* decl) {
     Type* trait_lookup = m_type_env.trait_type_by_name(method_decl.struct_name);
     if (trait_lookup && method_decl.trait_name.empty()) {
         // This is a trait method declaration (fun TraitName.method(...))
-        m_traits.analyze_trait_method_decl(decl, trait_lookup);
+        m_traits.register_trait_method_signature(decl, trait_lookup);
     }
     else if (!method_decl.trait_name.empty()) {
         // This is a trait implementation (fun Type.method(...) for Trait<Args>)
@@ -586,7 +606,7 @@ void SemanticAnalyzer::resolve_method_member(Decl* decl) {
             generics().register_generic_struct_method(method_decl.struct_name, decl);
             return;  // Skip normal method analysis; handled in worklist
         }
-        analyze_method_decl(decl);
+        register_method_signature(decl);
     }
 }
 
@@ -777,7 +797,7 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                 m_generic_calls.analyze_generic_template_body(decl);
                 continue;
             }
-            analyze_fun_decl(decl);
+            analyze_fun_body(decl);
         }
         else if (decl->kind == AstKind::DeclStruct) {
             // Skip generic struct templates
@@ -804,7 +824,7 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                 method_decl->loc = method->body ? method->body->loc : decl->loc;
                 method_decl->fun_decl = *method;
 
-                analyze_fun_decl(method_decl);
+                analyze_fun_body(method_decl);
             }
 
             m_symbols.pop_scope();
@@ -935,7 +955,7 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                     this_module.empty() ||
                     inst->template_module == this_module;
                 if (owns_template) {
-                    analyze_fun_decl(inst->instantiated_decl);
+                    analyze_fun_body(inst->instantiated_decl);
                     inst->is_analyzed = true;
                 } else {
                     m_type_env.generics().sideline_cross_module_fun(inst);
@@ -1258,22 +1278,6 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
 
 // ===== Declaration Analysis =====
 
-void SemanticAnalyzer::analyze_decl(Decl* decl) {
-    if (!decl) return;
-
-    switch (decl->kind) {
-        case AstKind::DeclVar:
-            analyze_var_decl(decl);
-            break;
-        case AstKind::DeclFun:
-            analyze_fun_decl(decl);
-            break;
-        default:
-            // Other declarations already handled in earlier passes
-            break;
-    }
-}
-
 void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
     VarDecl& var_decl = decl->var_decl;
 
@@ -1331,7 +1335,7 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
     }
 }
 
-void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
+void SemanticAnalyzer::analyze_fun_body(Decl* decl) {
     FunDecl& fun_decl = decl->fun_decl;
 
     // Native functions don't have bodies
@@ -1387,14 +1391,6 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
     m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), decl->loc);
     m_symbols.pop_scope();
     // context_scope restores the outer per-function context on return.
-}
-
-void SemanticAnalyzer::analyze_struct_decl(Decl* decl) {
-    // Struct declarations are handled in earlier passes
-}
-
-void SemanticAnalyzer::analyze_enum_decl(Decl* decl) {
-    // Enum declarations are handled in earlier passes
 }
 
 // Helper to extract the last component of a dotted module path
@@ -1483,7 +1479,7 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
     }
 }
 
-void SemanticAnalyzer::analyze_constructor_decl(Decl* decl) {
+void SemanticAnalyzer::register_constructor_signature(Decl* decl) {
     ConstructorDecl& constructor_decl = decl->constructor_decl;
 
     // Look up the struct type
@@ -1532,7 +1528,7 @@ void SemanticAnalyzer::analyze_constructor_decl(Decl* decl) {
     append_constructor(m_allocator, struct_type->struct_info, ctor_info);
 }
 
-void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
+void SemanticAnalyzer::register_destructor_signature(Decl* decl) {
     DestructorDecl& destructor_decl = decl->destructor_decl;
 
     // Look up the struct type
@@ -1581,7 +1577,7 @@ void SemanticAnalyzer::analyze_destructor_decl(Decl* decl) {
     append_destructor(m_allocator, struct_type->struct_info, dtor_info);
 }
 
-void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
+void SemanticAnalyzer::register_method_signature(Decl* decl) {
     MethodDecl& method_decl = decl->method_decl;
 
     // Look up the struct type

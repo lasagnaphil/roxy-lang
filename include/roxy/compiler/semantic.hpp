@@ -99,7 +99,7 @@ private:
     // Per-declaration handlers dispatched by resolve_type_members.
     void resolve_struct_members(Decl* decl);
     void resolve_enum_members(Decl* decl);
-    void resolve_fun_signature(Decl* decl);
+    void register_fun_signature(Decl* decl);
     void resolve_global_var(Decl* decl);
     void resolve_constructor_member(Decl* decl);
     void resolve_destructor_member(Decl* decl);
@@ -138,16 +138,19 @@ private:
     // Resolve fields of a generic struct instance (idempotent)
     void resolve_generic_struct_fields(GenericStructInstance* inst);
 
-    // Declaration analysis
-    void analyze_decl(Decl* decl);
-    void analyze_var_decl(Decl* decl);
-    void analyze_fun_decl(Decl* decl);
-    void analyze_struct_decl(Decl* decl);
-    void analyze_enum_decl(Decl* decl);
+    // Pass 0 import handling
     void analyze_import_decl(Decl* decl);
-    void analyze_constructor_decl(Decl* decl);
-    void analyze_destructor_decl(Decl* decl);
-    void analyze_method_decl(Decl* decl);
+
+    // Pass 2 signature registration: resolve param/return types and append
+    // the ConstructorInfo/DestructorInfo/MethodInfo to the struct's tables.
+    // No body analysis happens here (bodies are Pass 3).
+    void register_constructor_signature(Decl* decl);
+    void register_destructor_signature(Decl* decl);
+    void register_method_signature(Decl* decl);
+
+    // Pass 3 body analysis (statement-level var decls are analyzed in-body).
+    void analyze_var_decl(Decl* decl);
+    void analyze_fun_body(Decl* decl);
     // Shared body analysis for constructors/destructors/methods; sets up the
     // per-function context (is_delete_destructor forbids throw in the body).
     void analyze_member_body(Decl* decl, Type* struct_type,
