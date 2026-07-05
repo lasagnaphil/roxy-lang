@@ -665,4 +665,39 @@ TEST_SUITE("Semantic") {
         }
     }
 
+    // ============================================================================
+    // Deep-review regression tests (see TODO.md "Semantic Analyzer Refactoring
+    // & Bugs" — one block per verified bug)
+    // ============================================================================
+
+    TEST_CASE("Semantic: missing trait method error renders names (not %.*s)") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        trait Greet;
+        fun Greet.hello(): string;
+        fun Greet.bye(): string;
+
+        struct P { x: i32 = 0; }
+
+        fun P.hello(): string for Greet {
+            return "hi";
+        }
+    )"));
+        CHECK(t.has_error_containing("trait 'Greet' requires method 'bye' which is not implemented for 'P'"));
+        CHECK(!t.has_error_containing("%.*s"));
+    }
+
+    TEST_CASE("Semantic: Printable error renders the type name (not %s)") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        struct Point { x: f32 = 0.0f; y: f32 = 0.0f; }
+        fun test() {
+            var p: Point = Point { x = 1.0f, y = 2.0f };
+            print(f"{p}");
+        }
+    )"));
+        CHECK(t.has_error_containing("type 'Point' does not implement Printable"));
+        CHECK(!t.has_error_containing("%s'"));
+    }
+
 }  // TEST_SUITE("Semantic")

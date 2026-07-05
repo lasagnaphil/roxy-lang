@@ -2835,10 +2835,9 @@ void SemanticAnalyzer::finalize_trait_impl(const TraitImplGroup& group, const Ve
                                   trait_type_info.methods[i], group.trait_type_args);
         } else {
             error_fmt(group.impl_decls[0]->loc,
-                     "trait '%.*s' requires method '%.*s' which is not implemented for '%.*s'",
-                     trait_type_info.name.size(), trait_type_info.name.data(),
-                     trait_type_info.methods[i].name.size(), trait_type_info.methods[i].name.data(),
-                     struct_type_info.name.size(), struct_type_info.name.data());
+                     "trait '{}' requires method '{}' which is not implemented for '{}'",
+                     trait_type_info.name, trait_type_info.methods[i].name,
+                     struct_type_info.name);
         }
     }
 
@@ -3775,8 +3774,8 @@ Type* SemanticAnalyzer::analyze_string_interp_expr(Expr* expr) {
         // Uniform trait check for ALL types (primitives and structs)
         if (!m_types.implements_trait(etype, m_type_env.printable_type())) {
             error_fmt(expression->loc,
-                     "type '%s' does not implement Printable (no to_string method)",
-                     type_kind_to_string(etype->kind));
+                     "type '{}' does not implement Printable (no to_string method)",
+                     m_checker.type_string(etype).data());
         }
     }
     return m_types.string_type();
@@ -4588,7 +4587,7 @@ Type* SemanticAnalyzer::analyze_unary_expr(Expr* expr) {
         }
 
         error_fmt(expr->loc, "'ref' requires a 'uniq' or 'ref' operand, got '{}'",
-                  m_checker.type_string(operand_type));
+                  m_checker.type_string(operand_type).data());
         return m_types.error_type();
     }
 
@@ -5606,7 +5605,7 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                     error_fmt(expr->loc,
                         "cannot '.copy()' a List with a non-copyable element type '{}' "
                         "(its elements own resources that can't be duplicated)",
-                        m_checker.type_string(et));
+                        m_checker.type_string(et).data());
                     return m_types.error_type();
                 }
                 const MethodInfo* mi = lookup_list_method(base_type->list_info, get_expr.name);
