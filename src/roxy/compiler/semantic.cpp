@@ -1317,12 +1317,15 @@ void SemanticAnalyzer::analyze_fun_body(Decl* decl) {
     // Analyze body
     analyze_stmt(fun_decl.body);
 
-    // Check return paths (simplified - doesn't track all paths)
-    // A more complete implementation would track control flow
-    if (!is_coroutine && !return_type->is_void() && !return_type->is_error()) {
-        // For now, we just warn if there's no return at all
-        // A full implementation would check all paths
-    }
+    // No all-paths-return diagnostic yet. LifetimeChecker::branch_terminates()
+    // already computes definite termination, but it is deliberately
+    // conservative: a `when` with no `else` reports non-terminating even when
+    // every enum case returns (the implicit fall-through counts as a live path),
+    // so `!branch_terminates()` would falsely flag the common exhaustive-`when`
+    // function as missing a return. A sound check is blocked on `when`
+    // exhaustiveness analysis (see TODO.md "Exhaustiveness checking"). The old
+    // `Scope::function.has_return`/`mark_return` machinery was never read and has
+    // been removed.
 
     m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), decl->loc);
     m_symbols.pop_scope();
@@ -1862,7 +1865,6 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
         if (rs.value) {
             error(stmt->loc, "coroutine functions cannot return a value; use 'yield' instead");
         }
-        m_symbols.mark_return();
         m_lifetimes.set_branch_terminates(true);
         return;
     }
@@ -1889,7 +1891,6 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
     }
 
     m_lifetimes.check_all_scopes_uniq_destructors(stmt->loc, ScopeKind::Function);
-    m_symbols.mark_return();
     m_lifetimes.set_branch_terminates(true);
 }
 

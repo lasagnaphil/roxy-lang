@@ -30,7 +30,6 @@ void SymbolTable::push_function_scope(Type* return_type) {
     Scope* scope = create_scope(ScopeKind::Function);
     scope->parent = m_current;
     scope->function.return_type = return_type;
-    scope->function.has_return = false;
     m_current = scope;
 }
 
@@ -196,15 +195,6 @@ Scope* SymbolTable::current_struct_scope() const {
         }
     }
     return nullptr;
-}
-
-void SymbolTable::mark_return() {
-    for (Scope* s = m_current; s; s = s->parent) {
-        if (s->kind == ScopeKind::Function) {
-            s->function.has_return = true;
-            return;
-        }
-    }
 }
 
 }

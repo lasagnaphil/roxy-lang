@@ -101,7 +101,6 @@ struct Scope {
     union {
         struct {
             Type* return_type;    // Expected return type
-            bool has_return;      // Whether all paths return
         } function;
 
         struct {
@@ -146,9 +145,6 @@ public:
     Scope* current_struct_scope() const;  // innermost enclosing ScopeKind::Struct, or null
     Scope* current_scope() const { return m_current; }
     Scope* global_scope() const { return m_global; }
-
-    // Mark current function as having a return statement
-    void mark_return();
 
 private:
     BumpAllocator& m_allocator;
