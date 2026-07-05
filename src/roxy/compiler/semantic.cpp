@@ -1868,7 +1868,10 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
         return;
     }
 
-    // Cannot delete a struct field directly (would leave dangling pointer in parent)
+    // Deleting through a field moves that field out. check_not_field_move
+    // permits it for a uniq *pointer* field (the IR builder nulls the slot in
+    // the root so its destructor won't double-free) but rejects value-struct
+    // fields and moves through a reference chain. See check_not_field_move.
     if (!m_lifetimes.check_not_field_move(ds.expr, stmt->loc)) return;
 
     // Get the inner struct type
