@@ -3998,9 +3998,13 @@ Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, 
             return result_type();
         }
 
-        // Check argument types and modifiers
-        ConstructorDecl* ctor_decl = &ctor->decl->constructor_decl;
-        check_call_args(call_expr.arguments, ctor->param_types, ctor_decl->params, expr->loc);
+        // Check argument types and modifiers. A ConstructorInfo may carry a
+        // null decl (a synthetic constructor, or an LSP-recovered one whose AST
+        // never fully formed) — fall back to empty params, matching the
+        // destructor path in analyze_delete_stmt and the method/free-fun paths.
+        Span<Param> ctor_params = ctor->decl ? ctor->decl->constructor_decl.params
+                                             : Span<Param>();
+        check_call_args(call_expr.arguments, ctor->param_types, ctor_params, expr->loc);
     } else {
         // No constructor defined - either using default construction or error
         if (!ctor_name.empty()) {
