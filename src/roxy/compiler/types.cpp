@@ -427,7 +427,15 @@ Type* TypeCache::enum_type(StringView name, Decl* decl, Type* underlying) {
     type->enum_info.name = name;
     type->enum_info.decl = decl;
     type->enum_info.underlying = underlying ? underlying : m_i32;
+    type->enum_info.variants = Span<EnumVariantInfo>();
     return type;
+}
+
+const EnumVariantInfo* EnumTypeInfo::find_variant(StringView variant_name) const {
+    for (const auto& variant : variants) {
+        if (variant.name == variant_name) return &variant;
+    }
+    return nullptr;
 }
 
 Type* TypeCache::trait_type(StringView name, Decl* decl) {

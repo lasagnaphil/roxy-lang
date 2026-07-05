@@ -2705,11 +2705,15 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         ValueId case_cond = ValueId::invalid();
         for (const auto& case_name : wc.case_names) {
 
-            // Look up the enum variant value from symbol table
+            // Look up the case's value in the DISCRIMINANT enum's own variant
+            // table. The flat symbol namespace would resolve a same-named
+            // variant of whichever enum was defined last — wrong constant.
             i64 variant_value = 0;
-            Symbol* sym = m_symbols.lookup(case_name);
-            if (sym && sym->kind == SymbolKind::EnumVariant) {
-                variant_value = sym->enum_variant.value;
+            if (discrim_type && discrim_type->is_enum()) {
+                if (const EnumVariantInfo* variant =
+                        discrim_type->enum_info.find_variant(case_name)) {
+                    variant_value = variant->value;
+                }
             }
 
             // Generate comparison: discriminant == variant_value
@@ -5693,12 +5697,16 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
 ValueId IRBuilder::gen_static_get_expr(Expr* expr) {
     StaticGetExpr& sge = expr->static_get;
 
-    // Currently only enum variants use static get (Type::Variant)
-    // Look up the enum variant symbol to get its value
-    Symbol* sym = m_symbols.lookup(sge.member_name);
-    if (sym && sym->kind == SymbolKind::EnumVariant) {
-        // Emit the enum variant's integer value
-        return emit_const_int(sym->enum_variant.value, expr->resolved_type);
+    // Currently only enum variants use static get (Type::Variant). Resolve
+    // through the enum type's own variant table (expr->resolved_type is the
+    // enum) — the flat symbol namespace would return a same-named variant of
+    // whichever enum was defined last, emitting the wrong constant.
+    Type* enum_type = expr->resolved_type;
+    if (enum_type && enum_type->is_enum()) {
+        if (const EnumVariantInfo* variant =
+                enum_type->enum_info.find_variant(sge.member_name)) {
+            return emit_const_int(variant->value, enum_type);
+        }
     }
 
     // Should not reach here if semantic analysis passed

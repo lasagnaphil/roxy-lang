@@ -179,12 +179,25 @@ struct StructTypeInfo {
                                                 const VariantInfo** out_variant = nullptr) const;
 };
 
+// One variant of an enum. Variants are resolved through the enum type's own
+// table (Enum::Variant, when-statement cases, tagged-union when clauses) —
+// NOT through the flat symbol namespace, where same-named variants of
+// different enums shadow each other.
+struct EnumVariantInfo {
+    StringView name;
+    i64 value;
+};
+
 // Type info for enum types
 struct EnumTypeInfo {
     StringView name;
     Decl* decl;           // Points to the EnumDecl AST node
     Type* underlying;     // Underlying integer type (defaults to i32)
     Span<MethodInfo> methods;  // Builtin methods (eq, ne)
+    Span<EnumVariantInfo> variants;  // Populated by resolve_enum_members
+
+    // Find a variant by name, returns nullptr if not found
+    const EnumVariantInfo* find_variant(StringView variant_name) const;
 };
 
 // Type info for list types

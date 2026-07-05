@@ -751,6 +751,21 @@ TEST_SUITE("Semantic") {
         CHECK(!t.has_error_containing("'yield' can only appear inside a coroutine function"));
     }
 
+    TEST_CASE("Semantic: same-named variants of different enums don't collide") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
+        enum A { X, Y }
+        enum B { X, Z }
+
+        fun test(): bool {
+            var v: A = A::X;
+            var w: B = B::X;
+            return v == A::X;
+        }
+    )"));
+        CHECK(t.error_count() == 0);
+    }
+
     TEST_CASE("Semantic: Printable error renders the type name (not %s)") {
         SemanticTestHelper t;
         CHECK(!t.run(R"(

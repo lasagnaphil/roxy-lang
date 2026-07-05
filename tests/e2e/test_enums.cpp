@@ -172,4 +172,34 @@ TEST_SUITE("E2E Enums") {
         CHECK(result.stdout_output == "13\n7\n30\n");
     }
 
+    TEST_CASE_TEMPLATE("Same-named variants across enums resolve independently", Backend, RX_E2E_BACKENDS) {
+        // Variants used to live in one flat symbol namespace: B's X shadowed
+        // A's X, making A::X unresolvable at semantic level — and the IR
+        // builder would have emitted B's value (0) for A's X (1) in the when
+        // dispatch. Both now resolve through each enum's own variant table.
+        const char* source = R"(
+        enum A { P, X }
+        enum B { X, Q }
+
+        fun main(): i32 {
+            var a: A = A::X;
+            var r: i32 = 0;
+            when a {
+                case P: r = 100;
+                case X: r = 1;
+            }
+            var b: B = B::X;
+            when b {
+                case X: r = r + 2;
+                case Q: r = r + 200;
+            }
+            return r;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
+
 }  // TEST_SUITE("E2E Enums")

@@ -583,7 +583,7 @@ void SemanticAnalyzer::resolve_enum_members(Decl* decl) {
     EnumDecl& ed = decl->enum_decl;
     Type* type = m_type_env.named_type_by_name(ed.name);
 
-    // Define enum variants in global scope (accessible as EnumName::Variant)
+    Vector<EnumVariantInfo> variants;
     i64 next_value = 0;
     for (auto& v : ed.variants) {
 
@@ -604,12 +604,20 @@ void SemanticAnalyzer::resolve_enum_members(Decl* decl) {
             }
         }
 
-        // Create a qualified name for the variant (e.g., "EnumName::VariantName")
-        // But for lookup purposes, we store it separately
+        // The variant table on the enum type is the authoritative resolution
+        // source (Enum::Variant, when-statement cases, tagged-union when
+        // clauses) — collision-proof across enums.
+        variants.push_back(EnumVariantInfo{v.name, value});
+
+        // Also define the bare name in scope for unqualified references.
+        // NOTE: this namespace is flat — same-named variants of different
+        // enums shadow each other here, which is inherent to bare names.
         m_symbols.define_enum_variant(v.name, type, v.loc, value);
 
         next_value = value + 1;
     }
+
+    type->enum_info.variants = m_allocator.alloc_span(variants);
 }
 
 void SemanticAnalyzer::resolve_fun_signature(Decl* decl) {
@@ -901,20 +909,20 @@ void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
         Vector<VariantInfo> variants;
 
         for (auto& case_decl : wfd.cases) {
-            // Validate case names are variants OF THE DISCRIMINANT'S enum —
-            // kind alone is not enough, since variants of all enums share one
-            // symbol namespace and a different enum's variant would otherwise
-            // be accepted with its (meaningless) discriminant value.
+            // Validate case names against the DISCRIMINANT enum's own variant
+            // table — collision-proof, and rejects other enums' variants. If
+            // the discriminant type already failed to resolve as an enum, the
+            // error was reported above; skip per-case noise.
             i64 discriminant_value = 0;
-            for (const auto& case_name : case_decl.case_names) {
-                Symbol* sym = m_symbols.lookup(case_name);
-                if (!sym || sym->kind != SymbolKind::EnumVariant) {
-                    error_fmt(case_decl.loc, "'{}' is not a known enum variant", case_name);
-                } else if (disc_type->is_enum() && sym->type != disc_type) {
-                    error_fmt(case_decl.loc, "'{}' is not a variant of enum '{}'",
-                              case_name, disc_type->enum_info.name);
-                } else {
-                    discriminant_value = sym->enum_variant.value;
+            if (disc_type->is_enum()) {
+                for (const auto& case_name : case_decl.case_names) {
+                    const EnumVariantInfo* variant = disc_type->enum_info.find_variant(case_name);
+                    if (!variant) {
+                        error_fmt(case_decl.loc, "'{}' is not a variant of enum '{}'",
+                                  case_name, disc_type->enum_info.name);
+                    } else {
+                        discriminant_value = variant->value;
+                    }
                 }
             }
 
@@ -936,14 +944,14 @@ void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
                 var_slot += slot_count;
             }
 
-            // Create VariantInfo for each case name. Only read the value off
-            // symbols that passed validation above (right kind, right enum);
-            // invalid cases already reported and compilation will fail.
+            // Create VariantInfo for each case name. Invalid cases were
+            // already reported above and compilation will fail; give them a
+            // placeholder value of 0.
             for (const auto& case_name : case_decl.case_names) {
-                Symbol* sym = m_symbols.lookup(case_name);
-                bool valid_variant = sym && sym->kind == SymbolKind::EnumVariant &&
-                                     (!disc_type->is_enum() || sym->type == disc_type);
-                i64 value = valid_variant ? sym->enum_variant.value : 0;
+                const EnumVariantInfo* variant = disc_type->is_enum()
+                    ? disc_type->enum_info.find_variant(case_name)
+                    : nullptr;
+                i64 value = variant ? variant->value : 0;
 
                 VariantInfo vi;
                 vi.case_name = case_name;
@@ -2060,21 +2068,12 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
                 // Define the enum type
                 m_symbols.define(SymbolKind::Enum, local_name, exp->type, name.loc, exp->decl);
 
-                // Also register enum variants so EnumName::Variant works
-                if (exp->type && exp->type->kind == TypeKind::Enum && exp->type->enum_info.decl) {
-                    EnumDecl& enum_decl = exp->type->enum_info.decl->enum_decl;
-                    i64 next_value = 0;
-                    for (auto& variant : enum_decl.variants) {
-                        i64 value = next_value;
-                        if (variant.value && variant.value->kind == AstKind::ExprLiteral) {
-                            LiteralKind lk = variant.value->literal.literal_kind;
-                            if (lk == LiteralKind::I32 || lk == LiteralKind::I64 ||
-                                lk == LiteralKind::U32 || lk == LiteralKind::U64) {
-                                value = variant.value->literal.int_value;
-                            }
-                        }
-                        m_symbols.define_enum_variant(variant.name, exp->type, name.loc, value);
-                        next_value = value + 1;
+                // Also register bare variant names for unqualified references.
+                // The defining module already populated the type's variant
+                // table (the authoritative source — no value recomputation).
+                if (exp->type && exp->type->kind == TypeKind::Enum) {
+                    for (const auto& variant : exp->type->enum_info.variants) {
+                        m_symbols.define_enum_variant(variant.name, exp->type, name.loc, variant.value);
                     }
                 }
             } else {
@@ -3467,8 +3466,10 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
         return;
     }
 
+    // Case names resolve through the enum type's own variant table (not the
+    // decl, which is null for native enums; not the flat symbol namespace,
+    // which collides across enums).
     EnumTypeInfo& eti = discrim_type->enum_info;
-    EnumDecl& ed = eti.decl->enum_decl;
 
     // Track which enum variants have been covered (for duplicate detection)
     tsl::robin_map<StringView, bool> covered_variants;
@@ -3482,16 +3483,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
     for (auto& wc : ws.cases) {
         // Validate case names are valid enum variants
         for (const auto& case_name : wc.case_names) {
-            // Look up the variant in the enum
-            bool found = false;
-            for (const auto& variant : ed.variants) {
-                if (variant.name == case_name) {
-                    found = true;
-                    break;
-                }
-            }
-
-            if (!found) {
+            if (!eti.find_variant(case_name)) {
                 error_fmt(wc.loc, "'{}' is not a variant of enum '{}'",
                          case_name, eti.name);
                 continue;
@@ -5936,9 +5928,10 @@ Type* SemanticAnalyzer::analyze_static_get_expr(Expr* expr) {
     }
 
     if (type->is_enum()) {
-        // Look up enum variant
-        Symbol* sym = m_symbols.lookup(sge.member_name);
-        if (sym && sym->kind == SymbolKind::EnumVariant && sym->type == type) {
+        // Resolve through the enum's own variant table, NOT the flat symbol
+        // namespace — a same-named variant of another enum would shadow this
+        // one there and make a perfectly valid Enum::Variant unresolvable.
+        if (type->enum_info.find_variant(sge.member_name)) {
             return type;
         }
         error_fmt(expr->loc, "enum '{}' has no variant '{}'", sge.type_name, sge.member_name);
