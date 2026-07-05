@@ -15,6 +15,7 @@
 #include "roxy/compiler/sema_context.hpp"
 #include "roxy/compiler/lifetime_checker.hpp"
 #include "roxy/compiler/trait_system.hpp"
+#include "roxy/compiler/generic_call_resolver.hpp"
 #include "roxy/core/tsl/robin_set.h"
 
 namespace rx {
@@ -22,12 +23,6 @@ namespace rx {
 // Forward declarations
 class NativeRegistry;
 class ModuleRegistry;
-
-// Result of generic type argument inference
-struct InferredTypeArgs {
-    bool success;
-    Vector<Type*> type_args;  // indexed by type param position
-};
 
 // SemanticAnalyzer performs type checking and symbol resolution
 class SemanticAnalyzer {
@@ -125,11 +120,18 @@ private:
     // Type resolution from AST TypeExpr
     Type* resolve_type_expr(TypeExpr* type_expr);
 
-    // Thunk installed into m_context (SemaContext::resolve_type_expr_fn) so
-    // collaborators (TraitSystem, future GenericCallResolver) get TypeExpr
-    // resolution without a back-reference to the rest of the analyzer.
+    // Thunks installed into m_context so collaborators (TraitSystem,
+    // GenericCallResolver) get TypeExpr resolution and walker re-entry
+    // (generic inference analyzes call arguments; Phase B analyzes template
+    // bodies) without a back-reference to the rest of the analyzer.
     static Type* resolve_type_expr_thunk(SemanticAnalyzer* analyzer, TypeExpr* type_expr) {
         return analyzer->resolve_type_expr(type_expr);
+    }
+    static Type* analyze_expr_thunk(SemanticAnalyzer* analyzer, Expr* expr) {
+        return analyzer->analyze_expr(expr);
+    }
+    static void analyze_stmt_thunk(SemanticAnalyzer* analyzer, Stmt* stmt) {
+        analyzer->analyze_stmt(stmt);
     }
 
     // Resolve fields of a generic struct instance (idempotent)
@@ -183,28 +185,15 @@ private:
     Type* analyze_primitive_cast(Expr* expr, Type* target_type);
     Type* analyze_constructor_call(Expr* expr, Type* struct_type, StringView ctor_name, bool is_heap);
 
-    // Call expression sub-helpers (extracted from analyze_call_expr)
-    // Generic function call with explicit type args: name<T>(args).
-    Type* analyze_generic_fun_call(Expr* expr, CallExpr& ce, StringView func_name);
-    // Generic function call without type args: infers them from the arguments.
-    Type* analyze_generic_fun_call_inferred(Expr* expr, CallExpr& ce, StringView func_name);
-    // Shared tail for both generic-fun-call paths: validates argument count
-    // against the instantiated function, type-checks each argument, resolves the
-    // return type, and records the callee's concrete function type. When
-    // args_pre_analyzed is true (inference path), arguments were already
-    // analyzed during inference, so their resolved_type is read instead of
-    // re-analyzing.
-    Type* check_instantiated_generic_call(Expr* expr, CallExpr& ce, StringView func_name,
-                                          GenericFunInstance* inst, bool args_pre_analyzed);
+    // Call expression sub-helpers (extracted from analyze_call_expr).
+    // Generic function calls (explicit and inferred type args) live on
+    // m_generic_calls (see generic_call_resolver.hpp).
     Type* analyze_list_constructor_call(Expr* expr, CallExpr& ce);
     Type* analyze_map_constructor_call(Expr* expr, CallExpr& ce);
     Type* analyze_generic_struct_constructor_call(Expr* expr, CallExpr& ce, StringView func_name);
     Type* analyze_super_call(Expr* expr, CallExpr& ce);
     Type* analyze_builtin_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, const MethodInfo* mi);
     Type* analyze_struct_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, Type* base_type);
-    Type* analyze_type_param_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type,
-                                          Type* type_param_type, const TraitMethodInfo* trait_method,
-                                          Type* found_in_trait);
     Type* analyze_regular_fun_call(Expr* expr, CallExpr& ce);
 
     // Shared argument checking for method/function calls
@@ -254,21 +243,6 @@ private:
     void ensure_self_captured_through(u32 target_idx, Type* struct_type,
                                       SourceLocation loc);
 
-    // Generic-template-ref coercion: when an identifier was deferred by
-    // analyze_identifier_expr (it named a generic function template), and the
-    // surrounding context expects a concrete function type, infer the type
-    // arguments from `expected`, instantiate the template, stash the
-    // monomorphized name on the identifier, and overwrite resolved_type.
-    // Returns true on successful coercion (or no-op when no coercion needed),
-    // false if the expression is a template ref but inference failed.
-    bool coerce_generic_template_ref(Expr* expr, Type* expected);
-
-    // Explicit-syntax generic ref: `identity<i32>` parsed in value position.
-    // The parser attached `generic_args` to the IdentifierExpr; this helper
-    // instantiates the template with those types (no inference), stashes the
-    // monomorphized name, and returns the resulting concrete function type.
-    Type* resolve_explicit_generic_template_ref(Expr* expr);
-
     // Operator result-type helpers (these dispatch through trait bounds, so they
     // stay on the analyzer; the pure relation/coercion checks live in TypeChecker)
     Type* get_binary_result_type(BinaryOp op, Type* left, Type* right, SourceLocation loc);
@@ -303,17 +277,16 @@ private:
     // Trait machinery: builtin trait registration, trait declarations, impl
     // grouping/validation, default-method injection (see trait_system.hpp).
     TraitSystem m_traits;
+    // Generic-call machinery: type-arg unification/inference, generic function
+    // calls, template refs in value position, trait bounds, and Phase B
+    // template-body checking incl. the active-type-param state (see
+    // generic_call_resolver.hpp).
+    GenericCallResolver m_generic_calls;
     Program* m_program;                   // Current program being analyzed
 
     // Coroutine tracking (set while analyzing a function returning Coro<T>)
     bool m_in_coroutine = false;
     Type* m_coro_yield_type = nullptr;
-
-    // Phase B: Active type parameter bounds (set when analyzing generic template bodies)
-    // Maps type param index → resolved trait bounds
-    Span<Span<TraitBound>> m_active_type_param_bounds;
-    // The type params of the current generic template being checked
-    Span<TypeParam> m_active_type_params;
 
     // Delete destructor tracking (throw is forbidden inside delete destructors)
     bool m_in_delete_destructor = false;
@@ -345,18 +318,6 @@ private:
     // Cycle detection for direct value-type recursion in struct fields
     tsl::robin_set<Type*> m_resolving_structs;
 
-    // Generic type argument inference
-    bool unify_type_expr(TypeExpr* pattern, Type* concrete,
-                         Span<TypeParam> type_params, Vector<Type*>& bindings);
-    InferredTypeArgs infer_type_args_from_call(Span<TypeParam> type_params,
-                                                Span<Param> params,
-                                                Span<CallArg> args,
-                                                SourceLocation loc);
-    InferredTypeArgs infer_type_args_from_fields(Span<TypeParam> type_params,
-                                                  Span<FieldDecl> template_fields,
-                                                  Span<FieldInit> literal_fields,
-                                                  SourceLocation loc);
-
     // List/Map/Coro/enum method population
     void populate_list_methods(Type* list_type);
     void populate_map_methods(Type* map_type);
@@ -370,22 +331,6 @@ private:
                                     StringView& out_alloc_name, StringView& out_copy_name);
     bool is_hashable_key_type(Type* type);
     NativeRegistry* get_builtin_registry();
-
-    // Phase B: Definition-site checking of generic template bodies
-    void analyze_generic_template_body(Decl* decl);
-    const TraitMethodInfo* lookup_type_param_method(Type* type_param_type, StringView method_name,
-                                                      Type** found_in_trait);
-    Type* substitute_trait_types(Type* type, Type* type_param, Type* found_in_trait);
-
-    // Generic trait bound resolution and checking
-    Span<TraitBound> resolve_type_param_bounds(Span<TypeExpr*> bound_exprs, SourceLocation loc);
-    void resolve_generic_bounds();
-    // Resolve one template's per-type-param trait bounds; returns false (no
-    // bounds) when no type param is bounded. Shared by both arms of
-    // resolve_generic_bounds (generic functions and generic structs).
-    bool resolve_template_bounds(Span<TypeParam> type_params, ResolvedTypeParams& out);
-    bool check_type_arg_bounds(StringView template_name, Span<Type*> type_args,
-                               const ResolvedTypeParams* bounds, SourceLocation loc);
 
 public:
     const Vector<Decl*>& synthetic_decls() const { return m_synthetic_decls; }

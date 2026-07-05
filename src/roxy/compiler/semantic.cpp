@@ -1,33 +1,13 @@
 #include "roxy/compiler/semantic.hpp"
 #include "roxy/compiler/operator_traits.hpp"
 #include "roxy/compiler/module_registry.hpp"
+#include "roxy/core/scoped_value.hpp"
 #include "roxy/vm/natives.hpp"
 #include "roxy/vm/binding/registry.hpp"
 
 #include <cstring>
-#include <utility>
 
 namespace rx {
-
-namespace {
-// RAII guard for the analyzer's implicit "current context" members. Saves a
-// slot's value on construction and restores it on destruction, so a method can
-// freely mutate the member and have the previous value reinstated at scope exit
-// — even on an early return. Replaces the manual `auto prev = m_x; m_x = ...;
-// ...; m_x = prev;` idiom, which silently leaks state if a return slips between
-// the save and the restore.
-template <typename T>
-class ScopedValue {
-public:
-    explicit ScopedValue(T& slot) : m_slot(slot), m_saved(slot) {}
-    ~ScopedValue() { m_slot = std::move(m_saved); }
-    ScopedValue(const ScopedValue&) = delete;
-    ScopedValue& operator=(const ScopedValue&) = delete;
-private:
-    T& m_slot;
-    T m_saved;
-};
-}
 
 // Build a MethodInfo with all fields set (native_name defaults to empty).
 static MethodInfo make_method(StringView name, Span<Type*> param_types,
@@ -66,9 +46,11 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, 
     , m_reporter(allocator)
     , m_checker(m_reporter)
     , m_context{m_allocator, m_type_env, m_types, m_modules, m_symbols, m_reporter, m_checker,
-                this, &SemanticAnalyzer::resolve_type_expr_thunk}
+                this, &SemanticAnalyzer::resolve_type_expr_thunk,
+                &SemanticAnalyzer::analyze_expr_thunk, &SemanticAnalyzer::analyze_stmt_thunk}
     , m_lifetimes(m_context)
     , m_traits(m_context, m_synthetic_decls)
+    , m_generic_calls(m_context, m_lifetimes)
     , m_program(nullptr)
 {
 }
@@ -85,9 +67,11 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, 
     , m_reporter(allocator)
     , m_checker(m_reporter)
     , m_context{m_allocator, m_type_env, m_types, m_modules, m_symbols, m_reporter, m_checker,
-                this, &SemanticAnalyzer::resolve_type_expr_thunk}
+                this, &SemanticAnalyzer::resolve_type_expr_thunk,
+                &SemanticAnalyzer::analyze_expr_thunk, &SemanticAnalyzer::analyze_stmt_thunk}
     , m_lifetimes(m_context)
     , m_traits(m_context, m_synthetic_decls)
+    , m_generic_calls(m_context, m_lifetimes)
     , m_program(nullptr)
 {
 }
@@ -134,7 +118,7 @@ void SemanticAnalyzer::run_declaration_passes(Program* program) {
     m_traits.register_primitive_operator_methods();
 
     // Pass 1.9: Resolve trait bounds on generic type parameters
-    resolve_generic_bounds();
+    m_generic_calls.resolve_generic_bounds();
 
     // Pass 2: Resolve type members (field types, parent types, method signatures)
     resolve_type_members(program);
@@ -539,7 +523,7 @@ void SemanticAnalyzer::resolve_global_var(Decl* decl) {
 
     if (var_decl.initializer) {
         Type* init_type = analyze_expr(var_decl.initializer);
-        if (var_type && coerce_generic_template_ref(var_decl.initializer, var_type)) {
+        if (var_type && m_generic_calls.coerce_generic_template_ref(var_decl.initializer, var_type)) {
             init_type = var_decl.initializer->resolved_type;
         }
         if (!var_type) {
@@ -790,7 +774,7 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
         if (decl->kind == AstKind::DeclFun) {
             if (decl->fun_decl.type_params.size() > 0) {
                 // Phase B: Check bounded template bodies against declared trait bounds
-                analyze_generic_template_body(decl);
+                m_generic_calls.analyze_generic_template_body(decl);
                 continue;
             }
             analyze_fun_decl(decl);
@@ -1159,13 +1143,8 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
         }
 
         // Check if this is an active generic type parameter (during template body checking)
-        if (!base_type && m_active_type_params.size() > 0) {
-            for (u32 i = 0; i < m_active_type_params.size(); i++) {
-                if (type_expr->name == m_active_type_params[i].name) {
-                    base_type = m_types.type_param(m_active_type_params[i].name, i);
-                    break;
-                }
-            }
+        if (!base_type) {
+            base_type = m_generic_calls.resolve_active_type_param(type_expr->name);
         }
 
         // Check for built-in List<T> type
@@ -1313,7 +1292,7 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
         Type* init_type = analyze_expr(var_decl.initializer);
         // Resolve generic-template-ref initializers against the declared type
         // before assignability checking; updates init_type via resolved_type.
-        if (var_type && coerce_generic_template_ref(var_decl.initializer, var_type)) {
+        if (var_type && m_generic_calls.coerce_generic_template_ref(var_decl.initializer, var_type)) {
             init_type = var_decl.initializer->resolved_type;
         }
         if (!var_type) {
@@ -1743,268 +1722,6 @@ void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
     analyze_member_body(decl, struct_type, method_decl.params, method_decl.body, return_type);
 }
 
-// ===== Generic Trait Bound Resolution =====
-
-Span<TraitBound> SemanticAnalyzer::resolve_type_param_bounds(Span<TypeExpr*> bound_exprs, SourceLocation loc) {
-    if (bound_exprs.size() == 0) return {};
-
-    Vector<TraitBound> bounds;
-    for (auto* bound_expr : bound_exprs) {
-        // Reject reference kinds on bounds
-        if (bound_expr->ref_kind != RefKind::None) {
-            error(bound_expr->loc, "trait bounds cannot have reference qualifiers");
-            continue;
-        }
-
-        // Look up the trait by name
-        Type* trait_type = m_type_env.trait_type_by_name(bound_expr->name);
-        if (!trait_type) {
-            error_fmt(bound_expr->loc, "unknown trait '{}' in type parameter bound", bound_expr->name);
-            continue;
-        }
-
-        // Resolve type args for generic trait bounds (e.g., Add<i32>)
-        Vector<Type*> resolved_type_args;
-        for (auto* type_arg_expr : bound_expr->type_args) {
-            Type* arg_type = resolve_type_expr(type_arg_expr);
-            if (!arg_type || arg_type->is_error()) {
-                // Already reported
-                continue;
-            }
-            resolved_type_args.push_back(arg_type);
-        }
-
-        // Validate type arg count against trait's type params
-        u32 expected_count = trait_type->trait_info.type_params.size();
-        if (resolved_type_args.size() != expected_count) {
-            error_fmt(bound_expr->loc, "trait '{}' expects {} type arguments but got {}",
-                     bound_expr->name, expected_count, (u32)resolved_type_args.size());
-            continue;
-        }
-
-        TraitBound bound;
-        bound.trait = trait_type;
-        bound.type_args = m_allocator.alloc_span(resolved_type_args);
-        bounds.push_back(bound);
-    }
-
-    return m_allocator.alloc_span(bounds);
-}
-
-bool SemanticAnalyzer::resolve_template_bounds(Span<TypeParam> type_params, ResolvedTypeParams& out) {
-    bool has_bounds = false;
-    for (const auto& type_param : type_params) {
-        if (type_param.bounds.size() > 0) { has_bounds = true; break; }
-    }
-    if (!has_bounds) return false;
-
-    Vector<Span<TraitBound>> all_param_bounds;
-    for (const auto& type_param : type_params) {
-        all_param_bounds.push_back(resolve_type_param_bounds(type_param.bounds, type_param.loc));
-    }
-    out.param_bounds = m_allocator.alloc_span(all_param_bounds);
-    return true;
-}
-
-void SemanticAnalyzer::resolve_generic_bounds() {
-    for (const auto& entry : m_type_env.generics().generic_funs_map()) {
-        ResolvedTypeParams resolved;
-        if (resolve_template_bounds(entry.second->fun_decl.type_params, resolved)) {
-            m_type_env.generics().set_fun_bounds(entry.first, resolved);
-        }
-    }
-    for (const auto& entry : m_type_env.generics().generic_structs_map()) {
-        ResolvedTypeParams resolved;
-        if (resolve_template_bounds(entry.second->struct_decl.type_params, resolved)) {
-            m_type_env.generics().set_struct_bounds(entry.first, resolved);
-        }
-    }
-}
-
-bool SemanticAnalyzer::check_type_arg_bounds(StringView template_name, Span<Type*> type_args,
-                                              const ResolvedTypeParams* bounds, SourceLocation loc) {
-    if (!bounds) return true;  // No bounds to check
-
-    bool all_ok = true;
-    for (u32 i = 0; i < type_args.size() && i < bounds->param_bounds.size(); i++) {
-        Type* concrete_type = type_args[i];
-        for (const auto& bound : bounds->param_bounds[i]) {
-            // Substitute TypeParam types in bound.type_args with concrete type args
-            Vector<Type*> substituted_type_args;
-            for (auto* bound_type_arg : bound.type_args) {
-                if (bound_type_arg->is_type_param()) {
-                    u32 param_index = bound_type_arg->type_param_info.index;
-                    if (param_index < type_args.size()) {
-                        substituted_type_args.push_back(type_args[param_index]);
-                    } else {
-                        substituted_type_args.push_back(bound_type_arg);
-                    }
-                } else {
-                    substituted_type_args.push_back(bound_type_arg);
-                }
-            }
-
-            Span<Type*> subst_args = m_allocator.alloc_span(substituted_type_args);
-            bool satisfies = m_types.implements_trait(concrete_type, bound.trait, subst_args);
-
-            if (!satisfies) {
-                auto concrete_str = m_checker.type_string(concrete_type);
-                // Build trait name with type args for error message
-                String trait_str;
-                auto append_sv = [&](StringView sv) { for (char c : sv) trait_str.push_back(c); };
-                auto append_cs = [&](const char* cs) { while (*cs) trait_str.push_back(*cs++); };
-                append_sv(bound.trait->trait_info.name);
-                if (subst_args.size() > 0) {
-                    append_cs("<");
-                    for (u32 j = 0; j < subst_args.size(); j++) {
-                        if (j > 0) append_cs(", ");
-                        type_to_string(subst_args[j], trait_str);
-                    }
-                    append_cs(">");
-                }
-                trait_str.push_back('\0');
-
-                error_fmt(loc,
-                    "type '{}' does not implement trait '{}' required by type parameter bound on '{}'",
-                    concrete_str.data(), trait_str.data(), template_name);
-                all_ok = false;
-            }
-        }
-    }
-    return all_ok;
-}
-
-// ============================================================================
-// Phase B: Definition-site checking of generic template bodies
-// ============================================================================
-
-Type* SemanticAnalyzer::substitute_trait_types(Type* type, Type* type_param, Type* found_in_trait) {
-    if (!type) return type;
-    if (type->is_self()) return type_param;
-    if (type->is_type_param()) {
-        // Substitute trait's own type params with the bound's type args
-        u32 tp_index = type_param->type_param_info.index;
-        if (tp_index < m_active_type_param_bounds.size()) {
-            for (const auto& bound : m_active_type_param_bounds[tp_index]) {
-                if (bound.trait == found_in_trait && bound.type_args.size() > type->type_param_info.index) {
-                    return bound.type_args[type->type_param_info.index];
-                }
-            }
-        }
-        // If the type param matches one of our active type params, keep it as-is
-        return type;
-    }
-    return type;
-}
-
-const TraitMethodInfo* SemanticAnalyzer::lookup_type_param_method(
-    Type* type_param_type, StringView method_name, Type** found_in_trait) {
-
-    u32 param_index = type_param_type->type_param_info.index;
-    if (param_index >= m_active_type_param_bounds.size()) return nullptr;
-
-    for (const auto& bound : m_active_type_param_bounds[param_index]) {
-        TraitTypeInfo& trait_info = bound.trait->trait_info;
-        // Search methods (including those on this trait)
-        for (const auto& method : trait_info.methods) {
-            if (method.name == method_name) {
-                if (found_in_trait) *found_in_trait = bound.trait;
-                return &method;
-            }
-        }
-        // Also check parent trait methods
-        Type* parent = trait_info.parent;
-        while (parent && parent->is_trait()) {
-            for (const auto& method : parent->trait_info.methods) {
-                if (method.name == method_name) {
-                    if (found_in_trait) *found_in_trait = parent;
-                    return &method;
-                }
-            }
-            parent = parent->trait_info.parent;
-        }
-    }
-    return nullptr;
-}
-
-Type* SemanticAnalyzer::analyze_type_param_method_call(
-    Expr* expr, CallExpr& call_expr, GetExpr& get_expr, Type* obj_type,
-    Type* type_param_type, const TraitMethodInfo* trait_method, Type* found_in_trait) {
-
-    auto substitute = [&](Type* t) -> Type* {
-        return substitute_trait_types(t, type_param_type, found_in_trait);
-    };
-
-    // Check argument count
-    if (call_expr.arguments.size() != trait_method->param_types.size()) {
-        error_fmt(expr->loc, "method '{}' expects {} arguments but got {}",
-                 trait_method->name, trait_method->param_types.size(), call_expr.arguments.size());
-        return substitute(trait_method->return_type);
-    }
-
-    // Type-check arguments with substituted parameter types
-    for (u32 i = 0; i < call_expr.arguments.size(); i++) {
-        Type* arg_type = analyze_expr(call_expr.arguments[i].expr);
-        Type* param_type = substitute(trait_method->param_types[i]);
-        if (!arg_type->is_error() && !param_type->is_error()) {
-            m_checker.check_assignable(param_type, arg_type, call_expr.arguments[i].expr->loc);
-        }
-    }
-
-    get_expr.object->resolved_type = obj_type;
-    return substitute(trait_method->return_type);
-}
-
-void SemanticAnalyzer::analyze_generic_template_body(Decl* decl) {
-    FunDecl& fun_decl = decl->fun_decl;
-    StringView func_name = fun_decl.name;
-
-    // Get resolved bounds for this template
-    const ResolvedTypeParams* bounds = m_type_env.generics().get_fun_bounds(func_name);
-
-    // Only check bodies of bounded templates (at least one type param has bounds)
-    if (!bounds) return;
-    bool has_any_bound = false;
-    for (u32 i = 0; i < bounds->param_bounds.size(); i++) {
-        if (bounds->param_bounds[i].size() > 0) { has_any_bound = true; break; }
-    }
-    if (!has_any_bound) return;
-
-    // Skip forward declarations (no body) and native functions
-    if (!fun_decl.body) return;
-    if (fun_decl.is_native) return;
-
-    // Set the bounds context (restored on exit by these guards).
-    ScopedValue bounds_guard(m_active_type_param_bounds);
-    ScopedValue params_guard(m_active_type_params);
-    m_active_type_param_bounds = bounds->param_bounds;
-    m_active_type_params = fun_decl.type_params;
-
-    // Resolve return type (may reference type params → resolves to TypeParam via resolve_type_expr)
-    Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
-
-    // Fresh lifetime state (same pattern as analyze_fun_decl).
-    LifetimeChecker::FunctionScope lifetime_scope(m_lifetimes);
-
-    // Push function scope with return type
-    m_symbols.push_function_scope(return_type);
-
-    // Define parameters in scope
-    for (u32 i = 0; i < fun_decl.params.size(); i++) {
-        Param& param = fun_decl.params[i];
-        Type* param_type = resolve_type_expr(param.type);
-        if (!param_type) param_type = m_types.error_type();
-        m_symbols.define_parameter(param.name, param_type, decl->loc, i,
-                                   param.modifier != ParamModifier::None);
-    }
-
-    // Analyze the body
-    analyze_stmt(fun_decl.body);
-
-    m_symbols.pop_scope();
-    // lifetime_scope / params_guard / bounds_guard restore on return.
-}
-
 // ===== Operator Dispatch Helpers =====
 
 Type* SemanticAnalyzer::try_resolve_binary_op(BinaryOp op, Type* left, Type* right) {
@@ -2023,12 +1740,12 @@ Type* SemanticAnalyzer::try_resolve_binary_op(BinaryOp op, Type* left, Type* rig
     }
 
     // Phase B: TypeParam path — look up through trait bounds
-    if (left->is_type_param() && m_active_type_param_bounds.size() > 0) {
+    if (left->is_type_param() && m_generic_calls.has_active_bounds()) {
         Type* found_in_trait = nullptr;
-        const TraitMethodInfo* trait_method = lookup_type_param_method(left, name, &found_in_trait);
+        const TraitMethodInfo* trait_method = m_generic_calls.lookup_type_param_method(left, name, &found_in_trait);
         if (trait_method && trait_method->param_types.size() == 1) {
-            Type* return_type = substitute_trait_types(trait_method->return_type, left, found_in_trait);
-            Type* param_type = substitute_trait_types(trait_method->param_types[0], left, found_in_trait);
+            Type* return_type = m_generic_calls.substitute_trait_types(trait_method->return_type, left, found_in_trait);
+            Type* param_type = m_generic_calls.substitute_trait_types(trait_method->param_types[0], left, found_in_trait);
             // Check right operand compatibility
             if (param_type == right || m_checker.is_assignable(param_type, right)) {
                 return return_type;
@@ -2048,11 +1765,11 @@ Type* SemanticAnalyzer::try_resolve_unary_op(UnaryOp op, Type* operand) {
     }
 
     // Phase B: TypeParam path — look up through trait bounds
-    if (operand->is_type_param() && m_active_type_param_bounds.size() > 0) {
+    if (operand->is_type_param() && m_generic_calls.has_active_bounds()) {
         Type* found_in_trait = nullptr;
-        const TraitMethodInfo* trait_method = lookup_type_param_method(operand, name, &found_in_trait);
+        const TraitMethodInfo* trait_method = m_generic_calls.lookup_type_param_method(operand, name, &found_in_trait);
         if (trait_method && trait_method->param_types.size() == 0 && trait_method->return_type) {
-            return substitute_trait_types(trait_method->return_type, operand, found_in_trait);
+            return m_generic_calls.substitute_trait_types(trait_method->return_type, operand, found_in_trait);
         }
     }
     return nullptr;
@@ -2281,7 +1998,7 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
 
     if (rs.value) {
         Type* actual = analyze_expr(rs.value);
-        if (expected && coerce_generic_template_ref(rs.value, expected)) {
+        if (expected && m_generic_calls.coerce_generic_template_ref(rs.value, expected)) {
             actual = rs.value->resolved_type;
         }
         if (!m_checker.check_assignable(expected, actual, stmt->loc)) {
@@ -2776,7 +2493,7 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
     if (m_type_env.generics().is_generic_fun(id.name)) {
         // Explicit-type-args: `identity<i32>`. Instantiate immediately.
         if (id.generic_args.size() > 0) {
-            return resolve_explicit_generic_template_ref(expr);
+            return m_generic_calls.resolve_explicit_generic_template_ref(expr);
         }
         // Bare template name: defer to the surrounding coerce site
         // (var-init annotation / call-arg / return / struct-field).
@@ -3729,7 +3446,7 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
 
         // Resolve generic-template-ref arg against param type before
         // assignability checking. Updates arg_type via resolved_type.
-        if (param_types[i] && coerce_generic_template_ref(arg.expr, param_types[i])) {
+        if (param_types[i] && m_generic_calls.coerce_generic_template_ref(arg.expr, param_types[i])) {
             arg_type = arg.expr->resolved_type;
         }
 
@@ -3761,330 +3478,6 @@ Type* SemanticAnalyzer::build_method_function_type(Type* self_type, const Method
         ptypes[j + 1] = method_info->param_types[j];
     }
     return m_types.function_type(Span<Type*>(ptypes, total_params), method_info->return_type);
-}
-
-// ============================================================================
-// Generic type argument inference
-// ============================================================================
-
-bool SemanticAnalyzer::unify_type_expr(TypeExpr* pattern, Type* concrete,
-                                        Span<TypeParam> type_params,
-                                        Vector<Type*>& bindings) {
-    if (!pattern || !concrete || concrete->is_error()) return false;
-
-    // Check if pattern name matches a type parameter
-    for (u32 i = 0; i < type_params.size(); i++) {
-        if (pattern->name == type_params[i].name && pattern->type_args.size() == 0) {
-            // Default IntLiteral to i32 when binding generic type params
-            if (concrete->is_int_literal()) concrete = m_types.i32_type();
-            // This is a type parameter reference
-            if (bindings[i] == nullptr) {
-                bindings[i] = concrete;
-                return true;
-            }
-            // Already bound — check consistency
-            return bindings[i] == concrete;
-        }
-    }
-
-    // Reference types: uniq/ref/weak
-    if (pattern->ref_kind != RefKind::None) {
-        if (pattern->ref_kind == RefKind::Uniq && concrete->kind == TypeKind::Uniq) {
-            // Create a sub-pattern without the ref wrapper
-            TypeExpr inner_pattern = *pattern;
-            inner_pattern.ref_kind = RefKind::None;
-            return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type,
-                                   type_params, bindings);
-        }
-        if (pattern->ref_kind == RefKind::Ref && concrete->kind == TypeKind::Ref) {
-            TypeExpr inner_pattern = *pattern;
-            inner_pattern.ref_kind = RefKind::None;
-            return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type,
-                                   type_params, bindings);
-        }
-        if (pattern->ref_kind == RefKind::Weak && concrete->kind == TypeKind::Weak) {
-            TypeExpr inner_pattern = *pattern;
-            inner_pattern.ref_kind = RefKind::None;
-            return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type,
-                                   type_params, bindings);
-        }
-        return false;
-    }
-
-    // List<T> pattern against List type
-    if (pattern->name == "List" && pattern->type_args.size() == 1 && concrete->is_list()) {
-        return unify_type_expr(pattern->type_args[0], concrete->list_info.element_type,
-                               type_params, bindings);
-    }
-
-    // Map<K, V> pattern against Map type
-    if (pattern->name == "Map" && pattern->type_args.size() == 2 && concrete->is_map()) {
-        return unify_type_expr(pattern->type_args[0], concrete->map_info.key_type,
-                               type_params, bindings)
-            && unify_type_expr(pattern->type_args[1], concrete->map_info.value_type,
-                               type_params, bindings);
-    }
-
-    // Coro<T> pattern against a coroutine type. Inference binds T from the
-    // yield type; note that *passing* the coro still fails assignability
-    // afterward (annotated Coro<T> resolves to the interned generic type,
-    // while a coroutine value carries its per-function type — see
-    // coroutine_type_for_func), but the diagnostic now points at that real
-    // limitation instead of a bogus "cannot infer type arguments".
-    if (pattern->name == "Coro" && pattern->type_args.size() == 1 && concrete->is_coroutine()) {
-        return unify_type_expr(pattern->type_args[0], concrete->coro_info.yield_type,
-                               type_params, bindings);
-    }
-
-    // Generic struct pattern: e.g., Box<T> against Box$i32
-    if (pattern->type_args.size() > 0 && concrete->is_struct()) {
-        GenericStructInstance* inst = m_type_env.generics().find_struct_instance_by_type(concrete);
-        if (inst) {
-            // Verify original template name matches
-            Decl* original = inst->original_decl;
-            if (original->struct_decl.name != pattern->name) return false;
-
-            // Match type arg count
-            if (inst->substitution.concrete_types.size() != pattern->type_args.size())
-                return false;
-
-            // Recurse into each type arg
-            for (u32 i = 0; i < pattern->type_args.size(); i++) {
-                if (!unify_type_expr(pattern->type_args[i],
-                                     inst->substitution.concrete_types[i],
-                                     type_params, bindings))
-                    return false;
-            }
-            return true;
-        }
-        return false;
-    }
-
-    // Function-kind pattern: `fun(P1, P2) -> R` against a Function concrete type
-    if (pattern->kind == TypeExprKind::Function && concrete->kind == TypeKind::Function) {
-        Span<Type*> concrete_params = concrete->func_info.param_types;
-        if (pattern->type_args.size() != concrete_params.size()) return false;
-        for (u32 i = 0; i < pattern->type_args.size(); i++) {
-            if (!unify_type_expr(pattern->type_args[i], concrete_params[i],
-                                 type_params, bindings)) {
-                return false;
-            }
-        }
-        Type* concrete_ret = concrete->func_info.return_type;
-        if (pattern->return_type) {
-            if (!concrete_ret) return false;
-            if (!unify_type_expr(pattern->return_type, concrete_ret,
-                                 type_params, bindings)) return false;
-        } else {
-            // Pattern omits return type ⇒ void
-            if (concrete_ret && !concrete_ret->is_void()) return false;
-        }
-        return true;
-    }
-
-    // Concrete name match (primitives, structs, enums)
-    if (pattern->type_args.size() == 0) {
-        // Resolve the pattern name to a type and compare
-        Type* pattern_type = m_type_env.type_by_name(pattern->name);
-        if (pattern_type && pattern_type == concrete) return true;
-
-        return false;
-    }
-
-    return false;
-}
-
-InferredTypeArgs SemanticAnalyzer::infer_type_args_from_call(
-        Span<TypeParam> type_params, Span<Param> params,
-        Span<CallArg> args, SourceLocation loc) {
-    InferredTypeArgs result;
-    result.success = false;
-    result.type_args.resize(type_params.size());
-    for (u32 i = 0; i < type_params.size(); i++) result.type_args[i] = nullptr;
-
-    // Arg count mismatch — cannot infer
-    if (args.size() != params.size()) return result;
-
-    // Analyze each argument to get its concrete type, then unify
-    for (u32 i = 0; i < args.size(); i++) {
-        Type* arg_type = analyze_expr(args[i].expr);
-        if (!arg_type || arg_type->is_error()) return result;
-
-        if (!unify_type_expr(params[i].type, arg_type, type_params, result.type_args)) {
-            return result;
-        }
-    }
-
-    // Check that all type params were resolved
-    for (u32 i = 0; i < type_params.size(); i++) {
-        if (result.type_args[i] == nullptr) return result;
-    }
-
-    result.success = true;
-    return result;
-}
-
-InferredTypeArgs SemanticAnalyzer::infer_type_args_from_fields(
-        Span<TypeParam> type_params, Span<FieldDecl> template_fields,
-        Span<FieldInit> literal_fields, SourceLocation loc) {
-    InferredTypeArgs result;
-    result.success = false;
-    result.type_args.resize(type_params.size());
-    for (u32 i = 0; i < type_params.size(); i++) result.type_args[i] = nullptr;
-
-    // For each literal field, find the matching template field and unify
-    for (u32 i = 0; i < literal_fields.size(); i++) {
-        // Find matching template field by name
-        TypeExpr* field_type_expr = nullptr;
-        for (u32 j = 0; j < template_fields.size(); j++) {
-            if (template_fields[j].name == literal_fields[i].name) {
-                field_type_expr = template_fields[j].type;
-                break;
-            }
-        }
-        if (!field_type_expr) return result;  // Unknown field
-
-        Type* value_type = analyze_expr(literal_fields[i].value);
-        if (!value_type || value_type->is_error()) return result;
-
-        if (!unify_type_expr(field_type_expr, value_type, type_params, result.type_args)) {
-            return result;
-        }
-    }
-
-    // Check that all type params were resolved
-    for (u32 i = 0; i < type_params.size(); i++) {
-        if (result.type_args[i] == nullptr) return result;
-    }
-
-    result.success = true;
-    return result;
-}
-
-Type* SemanticAnalyzer::analyze_generic_fun_call(Expr* expr, CallExpr& ce, StringView func_name) {
-    Decl* template_decl = m_type_env.generics().get_generic_fun_decl(func_name);
-    FunDecl& template_fun_decl = template_decl->fun_decl;
-
-    // Validate type arg count
-    if (ce.type_args.size() != template_fun_decl.type_params.size()) {
-        error_fmt(expr->loc, "generic function '{}' expects {} type arguments but got {}",
-                 func_name, template_fun_decl.type_params.size(), ce.type_args.size());
-        return m_types.error_type();
-    }
-
-    // Resolve type args to concrete types
-    Vector<Type*> type_arg_types;
-    for (auto& type_arg : ce.type_args) {
-        Type* arg_type = resolve_type_expr(type_arg);
-        if (!arg_type || arg_type->is_error()) return m_types.error_type();
-        type_arg_types.push_back(arg_type);
-    }
-
-    // Check trait bounds on type args
-    Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
-    const ResolvedTypeParams* bounds = m_type_env.generics().get_fun_bounds(func_name);
-    if (!check_type_arg_bounds(func_name, type_args, bounds, expr->loc)) {
-        return m_types.error_type();
-    }
-
-    // Instantiate the generic function and type-check the call against it.
-    StringView mangled = m_type_env.generics().instantiate_fun(func_name, type_args);
-    ce.mangled_name = mangled;
-    GenericFunInstance* inst = m_type_env.generics().find_fun_instance(mangled);
-    return check_instantiated_generic_call(expr, ce, func_name, inst, /*args_pre_analyzed=*/false);
-}
-
-Type* SemanticAnalyzer::analyze_generic_fun_call_inferred(Expr* expr, CallExpr& ce, StringView func_name) {
-    Decl* template_decl = m_type_env.generics().get_generic_fun_decl(func_name);
-    FunDecl& template_fun_decl = template_decl->fun_decl;
-
-    // Infer type args from the call arguments (this analyzes each argument).
-    InferredTypeArgs inferred = infer_type_args_from_call(
-        template_fun_decl.type_params, template_fun_decl.params,
-        ce.arguments, expr->loc);
-    if (!inferred.success) {
-        error_fmt(expr->loc,
-            "cannot infer type arguments for generic function '{}'; "
-            "provide explicit type arguments", func_name);
-        return m_types.error_type();
-    }
-
-    // Check trait bounds on the inferred type args
-    Span<Type*> type_args = m_allocator.alloc_span(inferred.type_args);
-    const ResolvedTypeParams* bounds = m_type_env.generics().get_fun_bounds(func_name);
-    if (!check_type_arg_bounds(func_name, type_args, bounds, expr->loc)) {
-        return m_types.error_type();
-    }
-
-    // Instantiate and type-check. Arguments were already analyzed during
-    // inference, so the shared tail reads their resolved types directly.
-    StringView mangled = m_type_env.generics().instantiate_fun(func_name, type_args);
-    ce.mangled_name = mangled;
-    GenericFunInstance* inst = m_type_env.generics().find_fun_instance(mangled);
-    return check_instantiated_generic_call(expr, ce, func_name, inst, /*args_pre_analyzed=*/true);
-}
-
-Type* SemanticAnalyzer::check_instantiated_generic_call(
-        Expr* expr, CallExpr& ce, StringView func_name,
-        GenericFunInstance* inst, bool args_pre_analyzed) {
-    FunDecl& inst_fun_decl = inst->instantiated_decl->fun_decl;
-
-    if (ce.arguments.size() != inst_fun_decl.params.size()) {
-        error_fmt(expr->loc, "function '{}' expects {} arguments but got {}",
-                 func_name, inst_fun_decl.params.size(), ce.arguments.size());
-        return m_types.error_type();
-    }
-
-    // Resolve each parameter type from the instantiated function and
-    // type-check the corresponding argument.
-    Vector<Type*> resolved_param_types;
-    resolved_param_types.reserve(ce.arguments.size());
-    for (u32 i = 0; i < ce.arguments.size(); i++) {
-        CallArg& arg = ce.arguments[i];
-        // On the inference path the arguments were already analyzed in
-        // infer_type_args_from_call; re-analyzing would be redundant.
-        Type* arg_type = args_pre_analyzed ? arg.expr->resolved_type
-                                           : analyze_expr(arg.expr);
-
-        Type* param_type = nullptr;
-        if (inst_fun_decl.params[i].type) {
-            param_type = resolve_type_expr(inst_fun_decl.params[i].type);
-        }
-        resolved_param_types.push_back(param_type ? param_type : m_types.error_type());
-
-        // Generic-template-ref arg against the substituted param type.
-        if (param_type && coerce_generic_template_ref(arg.expr, param_type)) {
-            arg_type = arg.expr->resolved_type;
-        }
-
-        if (param_type && !param_type->is_error() && arg_type && !arg_type->is_error()) {
-            m_checker.check_assignable(param_type, arg_type, arg.expr->loc);
-            m_checker.coerce_int_literal(arg.expr, param_type);
-        }
-
-        // Move semantics: passing an owned arg to a noncopyable param consumes it.
-        // Mirrors check_call_args; the non-generic path goes through that helper.
-        if (param_type && param_type->noncopyable()
-            && arg.modifier == ParamModifier::None) {
-            m_lifetimes.consume_noncopyable(arg.expr, arg.expr->loc);
-        }
-    }
-
-    // Resolve return type from the instantiated function.
-    Type* return_type = m_types.void_type();
-    if (inst_fun_decl.return_type) {
-        return_type = resolve_type_expr(inst_fun_decl.return_type);
-    }
-
-    // Record the instantiated function type on the callee so the IR builder
-    // can read param types for post-call move/nullify decisions on
-    // noncopyable arguments.
-    if (ce.callee) {
-        ce.callee->resolved_type = m_types.function_type(
-            m_allocator.alloc_span(resolved_param_types), return_type);
-    }
-
-    return return_type;
 }
 
 void SemanticAnalyzer::populate_enum_methods(Type* type) {
@@ -4284,7 +3677,7 @@ Type* SemanticAnalyzer::analyze_generic_struct_constructor_call(Expr* expr, Call
     // Check trait bounds on type args
     Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
     const ResolvedTypeParams* bounds = m_type_env.generics().get_struct_bounds(func_name);
-    if (!check_type_arg_bounds(func_name, type_args, bounds, expr->loc)) {
+    if (!m_generic_calls.check_type_arg_bounds(func_name, type_args, bounds, expr->loc)) {
         return m_types.error_type();
     }
 
@@ -4513,7 +3906,7 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         StringView func_name = call_expr.callee->identifier.name;
 
         if (m_type_env.generics().is_generic_fun(func_name)) {
-            return analyze_generic_fun_call(expr, call_expr, func_name);
+            return m_generic_calls.analyze_generic_fun_call(expr, call_expr, func_name);
         }
         if (func_name == "List") {
             return analyze_list_constructor_call(expr, call_expr);
@@ -4530,7 +3923,7 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
     if (call_expr.type_args.size() == 0 && call_expr.callee->kind == AstKind::ExprIdentifier) {
         StringView func_name = call_expr.callee->identifier.name;
         if (m_type_env.generics().is_generic_fun(func_name)) {
-            return analyze_generic_fun_call_inferred(expr, call_expr, func_name);
+            return m_generic_calls.analyze_generic_fun_call_inferred(expr, call_expr, func_name);
         }
     }
 
@@ -4611,11 +4004,11 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                 error_fmt(expr->loc, "Coro has no method '{}'", get_expr.name);
                 return m_types.error_type();
             }
-            if (base_type && base_type->is_type_param() && m_active_type_param_bounds.size() > 0) {
+            if (base_type && base_type->is_type_param() && m_generic_calls.has_active_bounds()) {
                 Type* found_in_trait = nullptr;
-                const TraitMethodInfo* trait_method = lookup_type_param_method(base_type, get_expr.name, &found_in_trait);
+                const TraitMethodInfo* trait_method = m_generic_calls.lookup_type_param_method(base_type, get_expr.name, &found_in_trait);
                 if (trait_method) {
-                    return analyze_type_param_method_call(expr, call_expr, get_expr, obj_type, base_type,
+                    return m_generic_calls.analyze_type_param_method_call(expr, call_expr, get_expr, obj_type, base_type,
                                                           trait_method, found_in_trait);
                 }
                 error_fmt(expr->loc, "no method '{}' found in trait bounds for type parameter '{}'",
@@ -4795,10 +4188,10 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
         return m_types.error_type();
     }
 
-    if (base_type->is_type_param() && m_active_type_param_bounds.size() > 0) {
+    if (base_type->is_type_param() && m_generic_calls.has_active_bounds()) {
         // Type parameters have no fields, but may have methods via bounds
         Type* found_in_trait = nullptr;
-        const TraitMethodInfo* trait_method = lookup_type_param_method(base_type, get_expr.name, &found_in_trait);
+        const TraitMethodInfo* trait_method = m_generic_calls.lookup_type_param_method(base_type, get_expr.name, &found_in_trait);
         if (trait_method) {
             // Methods on type params must be called, not accessed as values
             return m_types.error_type();
@@ -5139,7 +4532,7 @@ Type* SemanticAnalyzer::resolve_struct_literal_type(Expr* expr, StructLiteralExp
 
         // Check trait bounds on type args
         const ResolvedTypeParams* bounds = m_type_env.generics().get_struct_bounds(sl.type_name);
-        if (!check_type_arg_bounds(sl.type_name, type_args, bounds, expr->loc)) {
+        if (!m_generic_calls.check_type_arg_bounds(sl.type_name, type_args, bounds, expr->loc)) {
             return m_types.error_type();
         }
 
@@ -5156,7 +4549,7 @@ Type* SemanticAnalyzer::resolve_struct_literal_type(Expr* expr, StructLiteralExp
         Decl* template_decl = m_type_env.generics().get_generic_struct_decl(sl.type_name);
         StructDecl& template_struct_decl = template_decl->struct_decl;
 
-        auto inferred = infer_type_args_from_fields(
+        auto inferred = m_generic_calls.infer_type_args_from_fields(
             template_struct_decl.type_params, template_struct_decl.fields,
             sl.fields, expr->loc);
 
@@ -5165,7 +4558,7 @@ Type* SemanticAnalyzer::resolve_struct_literal_type(Expr* expr, StructLiteralExp
 
             // Check trait bounds on inferred type args
             const ResolvedTypeParams* bounds = m_type_env.generics().get_struct_bounds(sl.type_name);
-            if (!check_type_arg_bounds(sl.type_name, type_args, bounds, expr->loc)) {
+            if (!m_generic_calls.check_type_arg_bounds(sl.type_name, type_args, bounds, expr->loc)) {
                 return m_types.error_type();
             }
 
@@ -5249,7 +4642,7 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
             // Type-check field value
             Type* value_type = analyze_expr(fi.value);
             Type* field_type = type->struct_info.fields[field_idx].type;
-            if (field_type && coerce_generic_template_ref(fi.value, field_type)) {
+            if (field_type && m_generic_calls.coerce_generic_template_ref(fi.value, field_type)) {
                 value_type = fi.value->resolved_type;
             }
             m_checker.check_assignable(field_type, value_type, fi.loc);
@@ -5324,135 +4717,6 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
 }
 
 // ===== Type Checking Helpers =====
-
-bool SemanticAnalyzer::coerce_generic_template_ref(Expr* expr, Type* expected) {
-    if (!expr || expr->kind != AstKind::ExprIdentifier) return true;
-    IdentifierExpr& id = expr->identifier;
-    if (!id.is_generic_template_ref) return true;
-    if (!expected || !expected->is_function()) {
-        error_fmt(expr->loc,
-            "cannot use generic function '{}' as a value here; it needs a "
-            "concrete function-type context (e.g. a typed variable or a "
-            "typed function parameter) to bind the type parameters", id.name);
-        return false;
-    }
-
-    Decl* template_decl = m_type_env.generics().get_generic_fun_decl(id.name);
-    if (!template_decl || template_decl->kind != AstKind::DeclFun) {
-        error_fmt(expr->loc, "internal error: missing template decl for '{}'", id.name);
-        return false;
-    }
-    FunDecl& template_fun_decl = template_decl->fun_decl;
-    FunctionTypeInfo& expected_fti = expected->func_info;
-
-    // Param-count mismatch ⇒ no plausible binding.
-    if (template_fun_decl.params.size() != expected_fti.param_types.size()) {
-        error_fmt(expr->loc,
-            "generic function '{}' has {} parameters but expected function "
-            "type takes {}", id.name,
-            template_fun_decl.params.size(), expected_fti.param_types.size());
-        return false;
-    }
-
-    // Bind type params by unifying each template param TypeExpr against the
-    // corresponding concrete param type, then the return TypeExpr against the
-    // concrete return type. unify_type_expr already handles Function-kind
-    // patterns (semantic.cpp:4719) so nested fun(T)->T params bind too.
-    Vector<Type*> bindings;
-    bindings.resize(template_fun_decl.type_params.size());
-    for (u32 i = 0; i < bindings.size(); i++) bindings[i] = nullptr;
-    for (u32 i = 0; i < template_fun_decl.params.size(); i++) {
-        if (!unify_type_expr(template_fun_decl.params[i].type,
-                             expected_fti.param_types[i],
-                             template_fun_decl.type_params, bindings)) {
-            error_fmt(expr->loc,
-                "cannot bind type parameters of '{}' against expected "
-                "function type at parameter {}", id.name, i);
-            return false;
-        }
-    }
-    if (template_fun_decl.return_type) {
-        Type* concrete_ret = expected_fti.return_type
-            ? expected_fti.return_type : m_types.void_type();
-        if (!unify_type_expr(template_fun_decl.return_type, concrete_ret,
-                             template_fun_decl.type_params, bindings)) {
-            error_fmt(expr->loc,
-                "cannot bind type parameters of '{}' against expected return type",
-                id.name);
-            return false;
-        }
-    }
-    for (u32 i = 0; i < bindings.size(); i++) {
-        if (!bindings[i]) {
-            error_fmt(expr->loc,
-                "cannot infer type parameter '{}' of generic function '{}'",
-                template_fun_decl.type_params[i].name, id.name);
-            return false;
-        }
-    }
-
-    // Check trait bounds, instantiate, and stash the monomorphized name.
-    Span<Type*> type_args = m_allocator.alloc_span(bindings);
-    const ResolvedTypeParams* bounds = m_type_env.generics().get_fun_bounds(id.name);
-    if (!check_type_arg_bounds(id.name, type_args, bounds, expr->loc)) {
-        return false;
-    }
-    StringView mangled = m_type_env.generics().instantiate_fun(id.name, type_args);
-    id.mangled_name = mangled;
-    id.is_generic_template_ref = false;
-    expr->resolved_type = expected;
-    return true;
-}
-
-Type* SemanticAnalyzer::resolve_explicit_generic_template_ref(Expr* expr) {
-    IdentifierExpr& id = expr->identifier;
-    Decl* template_decl = m_type_env.generics().get_generic_fun_decl(id.name);
-    if (!template_decl || template_decl->kind != AstKind::DeclFun) {
-        error_fmt(expr->loc, "internal error: missing template decl for '{}'", id.name);
-        return m_types.error_type();
-    }
-    FunDecl& template_fun_decl = template_decl->fun_decl;
-    if (id.generic_args.size() != template_fun_decl.type_params.size()) {
-        error_fmt(expr->loc,
-            "generic function '{}' expects {} type arguments but got {}",
-            id.name, template_fun_decl.type_params.size(), id.generic_args.size());
-        return m_types.error_type();
-    }
-
-    Vector<Type*> type_arg_types;
-    type_arg_types.reserve(id.generic_args.size());
-    for (auto* arg_expr : id.generic_args) {
-        Type* arg_type = resolve_type_expr(arg_expr);
-        if (!arg_type || arg_type->is_error()) return m_types.error_type();
-        type_arg_types.push_back(arg_type);
-    }
-
-    Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
-    const ResolvedTypeParams* bounds = m_type_env.generics().get_fun_bounds(id.name);
-    if (!check_type_arg_bounds(id.name, type_args, bounds, expr->loc)) {
-        return m_types.error_type();
-    }
-
-    StringView mangled = m_type_env.generics().instantiate_fun(id.name, type_args);
-    id.mangled_name = mangled;
-
-    // Build the instantiated function type from the post-substitution decl,
-    // matching what gen_function_ref reads off expr->resolved_type.
-    GenericFunInstance* inst = m_type_env.generics().find_fun_instance(mangled);
-    FunDecl& inst_decl = inst->instantiated_decl->fun_decl;
-    Vector<Type*> param_types;
-    param_types.reserve(inst_decl.params.size());
-    for (auto& p : inst_decl.params) {
-        Type* pt = resolve_type_expr(p.type);
-        param_types.push_back(pt ? pt : m_types.error_type());
-    }
-    Type* ret_type = inst_decl.return_type
-        ? resolve_type_expr(inst_decl.return_type) : m_types.void_type();
-    Type* fn_type = m_types.function_type(
-        m_allocator.alloc_span(param_types), ret_type);
-    expr->resolved_type = fn_type;
-    return fn_type;
-}
 
 Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* right, SourceLocation loc) {
     switch (op) {

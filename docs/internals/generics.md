@@ -200,6 +200,7 @@ type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ;
 | `include/roxy/compiler/ast.hpp` | `TypeParam`, `type_params`/`type_args` on decls and exprs |
 | `include/roxy/compiler/types.hpp` | `TypeKind::TypeParam` for unresolved type parameters |
 | `include/roxy/shared/lexer.hpp` | `save_position()` / `restore_position()` for trial-parse backtracking |
-| `src/roxy/compiler/semantic.cpp` | Template registration, instantiation, type resolution, bounds checking |
+| `src/roxy/compiler/generic_call_resolver.cpp` | Type-arg unification/inference, generic call analysis, template refs, bounds resolution/checking, Phase B body checking (`GenericCallResolver`) |
+| `src/roxy/compiler/semantic.cpp` | Template registration (Pass 1), generic-instance worklists, generic struct field resolution |
 | `src/roxy/compiler/ir_builder.cpp` | IR generation for generic instances |
 | `tests/e2e/test_generics.cpp` | E2E tests (incl. Phase A/B trait bounds and generic struct methods) |
