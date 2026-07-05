@@ -866,4 +866,26 @@ void append_destructor(BumpAllocator& allocator, StructTypeInfo& info, Destructo
     info.destructors = allocator.alloc_span(dtors);
 }
 
+bool struct_needs_synthetic_dtor(const StructTypeInfo& info) {
+    for (const auto& field : info.fields) {
+        if (member_needs_drop(field.type)) return true;
+    }
+    for (const auto& clause : info.when_clauses) {
+        for (const auto& variant : clause.variants) {
+            for (const auto& variant_field : variant.fields) {
+                if (member_needs_drop(variant_field.type)) return true;
+            }
+        }
+    }
+    return false;
+}
+
+void add_synthetic_default_dtor(BumpAllocator& allocator, StructTypeInfo& info) {
+    DestructorInfo synthetic_dtor;
+    synthetic_dtor.name = StringView();
+    synthetic_dtor.param_types = Span<Type*>();
+    synthetic_dtor.decl = nullptr;
+    append_destructor(allocator, info, synthetic_dtor);
+}
+
 }

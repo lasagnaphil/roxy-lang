@@ -635,37 +635,9 @@ void SemanticAnalyzer::generate_synthetic_destructors(Program* program) {
             if (has_default_dtor) continue;
 
             // Check if any field needs cleanup (regular fields or variant fields)
-            bool needs_cleanup = false;
-            for (const auto& field : struct_info.fields) {
-                if (!field.type) continue;
-                if (member_needs_drop(field.type)) {
-                    needs_cleanup = true;
-                    break;
-                }
-            }
-            if (!needs_cleanup) {
-                // Also check variant fields in when clauses
-                for (const auto& clause : struct_info.when_clauses) {
-                    for (const auto& variant : clause.variants) {
-                        for (const auto& variant_field : variant.fields) {
-                            if (member_needs_drop(variant_field.type)) {
-                                needs_cleanup = true;
-                                break;
-                            }
-                        }
-                        if (needs_cleanup) break;
-                    }
-                    if (needs_cleanup) break;
-                }
-            }
-            if (!needs_cleanup) continue;
+            if (!struct_needs_synthetic_dtor(struct_info)) continue;
 
-            // Add synthetic default destructor (decl = nullptr marks it as synthetic)
-            DestructorInfo synthetic_dtor;
-            synthetic_dtor.name = StringView();
-            synthetic_dtor.param_types = Span<Type*>();
-            synthetic_dtor.decl = nullptr;
-            append_destructor(m_allocator, struct_info, synthetic_dtor);
+            add_synthetic_default_dtor(m_allocator, struct_info);
             changed = true;
         }
     }
@@ -908,34 +880,8 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
 
                 // Generate synthetic default destructor if struct has fields needing cleanup
                 StructTypeInfo& concrete_info = inst->concrete_type->struct_info;
-                bool needs_cleanup = false;
-                for (const auto& field : concrete_info.fields) {
-                    if (!field.type) continue;
-                    if (member_needs_drop(field.type)) {
-                        needs_cleanup = true;
-                        break;
-                    }
-                }
-                if (!needs_cleanup) {
-                    for (const auto& clause : concrete_info.when_clauses) {
-                        for (const auto& variant : clause.variants) {
-                            for (const auto& variant_field : variant.fields) {
-                                if (member_needs_drop(variant_field.type)) {
-                                    needs_cleanup = true;
-                                    break;
-                                }
-                            }
-                            if (needs_cleanup) break;
-                        }
-                        if (needs_cleanup) break;
-                    }
-                }
-                if (needs_cleanup) {
-                    DestructorInfo synthetic_dtor;
-                    synthetic_dtor.name = StringView();
-                    synthetic_dtor.param_types = Span<Type*>();
-                    synthetic_dtor.decl = nullptr;
-                    append_destructor(m_allocator, concrete_info, synthetic_dtor);
+                if (struct_needs_synthetic_dtor(concrete_info)) {
+                    add_synthetic_default_dtor(m_allocator, concrete_info);
                 }
             }
         }
@@ -1079,34 +1025,8 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
     }
 
     // Generate synthetic default destructor if struct has fields needing cleanup
-    bool needs_cleanup = false;
-    for (const auto& field : struct_type_info.fields) {
-        if (!field.type) continue;
-        if (member_needs_drop(field.type)) {
-            needs_cleanup = true;
-            break;
-        }
-    }
-    if (!needs_cleanup) {
-        for (const auto& clause : struct_type_info.when_clauses) {
-            for (const auto& variant : clause.variants) {
-                for (const auto& variant_field : variant.fields) {
-                    if (member_needs_drop(variant_field.type)) {
-                        needs_cleanup = true;
-                        break;
-                    }
-                }
-                if (needs_cleanup) break;
-            }
-            if (needs_cleanup) break;
-        }
-    }
-    if (needs_cleanup) {
-        DestructorInfo synthetic_dtor;
-        synthetic_dtor.name = StringView();
-        synthetic_dtor.param_types = Span<Type*>();
-        synthetic_dtor.decl = nullptr;
-        append_destructor(m_allocator, struct_type_info, synthetic_dtor);
+    if (struct_needs_synthetic_dtor(struct_type_info)) {
+        add_synthetic_default_dtor(m_allocator, struct_type_info);
     }
 
     inst->is_analyzed = true;

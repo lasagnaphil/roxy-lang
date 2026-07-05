@@ -609,6 +609,17 @@ void append_method(BumpAllocator& allocator, StructTypeInfo& info, MethodInfo me
 void append_constructor(BumpAllocator& allocator, StructTypeInfo& info, ConstructorInfo ctor);
 void append_destructor(BumpAllocator& allocator, StructTypeInfo& info, DestructorInfo dtor);
 
+// True if `info` has any field — regular or when-clause variant — whose type
+// needs dropping (member_needs_drop). This is the condition under which a
+// struct receives a synthetic default destructor; shared by the whole-program
+// synthetic-destructor pass and both generic-instance resolution paths.
+bool struct_needs_synthetic_dtor(const StructTypeInfo& info);
+
+// Append a synthetic default destructor (empty name, no params, decl == null)
+// to `info`. Does NOT guard against an existing default destructor — callers
+// reachable more than once check that first.
+void add_synthetic_default_dtor(BumpAllocator& allocator, StructTypeInfo& info);
+
 // Look up a method in a struct's type hierarchy (walks inheritance chain)
 // Returns the MethodInfo and optionally sets found_in_type to where the method was defined
 const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name, Type** found_in_type = nullptr);
