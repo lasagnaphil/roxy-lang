@@ -82,10 +82,7 @@ Features:
 The analyzer shares its collaborators by reference (no back-reference to the
 analyzer itself): `ErrorReporter` (error collection/formatting), `TypeChecker`
 (pure type relations and coercions), `LifetimeChecker` (per-function move
-states and the branch-termination flag, guarded as a unit by
-`LifetimeChecker::FunctionScope` at every body-analysis entry point — including
-synthesized lambda call functions, so a `return` inside a lambda body cannot
-leak "this branch terminates" into the enclosing statement's merge logic),
+states and the branch-termination flag),
 `TraitSystem` (builtin trait registration, trait declarations, impl
 grouping/validation, default-method injection), and `GenericCallResolver`
 (type-arg unification/inference, generic function calls, template refs in
@@ -98,6 +95,18 @@ generic inference and Phase B bodies — are exposed through function-pointer
 thunks on the context (`SemaContext::resolve_type_expr` / `analyze_expr` /
 `analyze_stmt`), so no collaborator holds a reference to the analyzer itself.
 
+All per-function analysis state — the `FunctionContext` slots (coroutine /
+delete-destructor / finally depth) and the `LifetimeChecker`'s move states and
+branch-termination flag — is pushed and popped as ONE unit by
+`FunctionContextScope` at every body-analysis entry point (free function,
+member body, synthesized lambda call function, Phase B generic template
+body). A nested body (a lambda analyzed mid-statement) gets a fresh default
+context: its `return` cannot read as "the enclosing branch terminates", and
+its `throw` is not "inside" the enclosing delete destructor. Three bugs of the
+"forgot one slot at one entry point" class motivated the single guard (the
+coroutine-method diagnostic gap, the lambda branch-terminates leak, the lambda
+in-delete-destructor leak).
+
 ## Files
 
 - `include/roxy/shared/lexer.hpp` - Lexer class
@@ -108,6 +117,7 @@ thunks on the context (`SemaContext::resolve_type_expr` / `analyze_expr` /
 - `include/roxy/compiler/semantic.hpp` - Semantic analyzer
 - `src/roxy/compiler/semantic.cpp` - Semantic analysis implementation
 - `include/roxy/compiler/sema_context.hpp` - Shared collaborator context (state bundle + resolve_type_expr/analyze_expr/analyze_stmt thunks)
+- `include/roxy/compiler/function_context.hpp` - Per-function context slots + the one-unit FunctionContextScope guard
 - `include/roxy/compiler/type_checker.hpp` - Type relations and coercions
 - `src/roxy/compiler/type_checker.cpp` - Type checker implementation
 - `include/roxy/compiler/lifetime_checker.hpp` - Lifetime analysis (move states, termination, scope-exit checks)

@@ -244,8 +244,9 @@ void GenericCallResolver::analyze_generic_template_body(Decl* decl) {
     // Resolve return type (may reference type params → resolves to TypeParam via resolve_type_expr)
     Type* return_type = fun_decl.return_type ? m_context.resolve_type_expr(fun_decl.return_type) : m_types.void_type();
 
-    // Fresh lifetime state (same pattern as analyze_fun_decl).
-    LifetimeChecker::FunctionScope lifetime_scope(m_lifetimes);
+    // Fresh per-function context and lifetime state (same pattern as
+    // analyze_fun_decl — every body-analysis entry point pushes one).
+    FunctionContextScope context_scope(m_function_context, m_lifetimes);
 
     // Push function scope with return type
     m_symbols.push_function_scope(return_type);
@@ -263,7 +264,7 @@ void GenericCallResolver::analyze_generic_template_body(Decl* decl) {
     m_context.analyze_stmt(fun_decl.body);
 
     m_symbols.pop_scope();
-    // lifetime_scope / params_guard / bounds_guard restore on return.
+    // context_scope / params_guard / bounds_guard restore on return.
 }
 
 // Resolve `name` against the active template's type parameters (set while a

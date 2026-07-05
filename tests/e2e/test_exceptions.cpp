@@ -1185,6 +1185,41 @@ TEST_SUITE("E2E Exceptions") {
             CHECK(!result.success);
         }
 
+        SUBCASE("Throw inside a lambda defined in a delete destructor is allowed") {
+            // A lambda body is its own function: its `throw` executes when the
+            // closure is called, not as part of the destructor's own body —
+            // exactly like calling a named throwing function from the
+            // destructor, which is allowed. The analyzer's in-delete-destructor
+            // flag must not leak into the synthesized lambda body.
+            const char* source = R"(
+            struct MyError {
+                code: i32;
+            }
+
+            fun MyError.message(): string for Exception {
+                return "error";
+            }
+
+            struct Widget {
+                id: i32;
+            }
+
+            fun delete Widget() {
+                var report = fun() {
+                    throw MyError { code = 7 };
+                };
+            }
+
+            fun main(): i32 {
+                var w: uniq Widget = uniq Widget { id = 1 };
+                return 0;
+            }
+        )";
+
+            auto result = Backend::run(source);
+            CHECK(result.success);
+        }
+
         SUBCASE("Throw in named destructor is allowed") {
             const char* source = R"(
             struct MyError {

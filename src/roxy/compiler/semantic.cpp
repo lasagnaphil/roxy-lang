@@ -50,7 +50,7 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, 
                 &SemanticAnalyzer::analyze_expr_thunk, &SemanticAnalyzer::analyze_stmt_thunk}
     , m_lifetimes(m_context)
     , m_traits(m_context, m_synthetic_decls)
-    , m_generic_calls(m_context, m_lifetimes)
+    , m_generic_calls(m_context, m_lifetimes, m_function_context)
     , m_program(nullptr)
 {
 }
@@ -71,7 +71,7 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, 
                 &SemanticAnalyzer::analyze_expr_thunk, &SemanticAnalyzer::analyze_stmt_thunk}
     , m_lifetimes(m_context)
     , m_traits(m_context, m_synthetic_decls)
-    , m_generic_calls(m_context, m_lifetimes)
+    , m_generic_calls(m_context, m_lifetimes, m_function_context)
     , m_program(nullptr)
 {
 }
@@ -1341,19 +1341,14 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
     // Resolve return type
     Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
 
-    // Detect coroutine function (returns Coro<T>). These guards restore the
-    // outer coroutine context and lifetime state when the function returns.
+    // Fresh per-function context (coroutine/destructor/finally slots) and
+    // lifetime state for this body, restored as one unit on exit.
     bool is_coroutine = return_type && return_type->is_coroutine();
-    ScopedValue coro_guard(m_in_coroutine);
-    ScopedValue yield_guard(m_coro_yield_type);
+    FunctionContextScope context_scope(m_function_context, m_lifetimes);
     if (is_coroutine) {
-        m_in_coroutine = true;
-        m_coro_yield_type = return_type->coro_info.yield_type;
+        m_function_context.in_coroutine = true;
+        m_function_context.coro_yield_type = return_type->coro_info.yield_type;
     }
-
-    // Fresh lifetime state (move states + termination flag) for this body,
-    // restored on exit.
-    LifetimeChecker::FunctionScope lifetime_scope(m_lifetimes);
 
     // Push function scope
     m_symbols.push_function_scope(return_type);
@@ -1391,7 +1386,7 @@ void SemanticAnalyzer::analyze_fun_decl(Decl* decl) {
 
     m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), decl->loc);
     m_symbols.pop_scope();
-    // coro_guard / yield_guard / lifetime_scope restore on return.
+    // context_scope restores the outer per-function context on return.
 }
 
 void SemanticAnalyzer::analyze_struct_decl(Decl* decl) {
@@ -1637,8 +1632,14 @@ void SemanticAnalyzer::analyze_method_decl(Decl* decl) {
 
 void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
                                             Span<Param> params, Stmt* body,
-                                            Type* return_type) {
+                                            Type* return_type,
+                                            bool is_delete_destructor) {
     if (!body) return;
+
+    // Fresh per-function context (coroutine/destructor/finally slots) and
+    // lifetime state for this body, restored as one unit on exit.
+    FunctionContextScope context_scope(m_function_context, m_lifetimes);
+    m_function_context.in_delete_destructor = is_delete_destructor;
 
     // Coroutine methods are not supported yet: resolve_method_member never
     // creates the per-function coroutine type (coroutine_type_for_func), and
@@ -1646,19 +1647,13 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
     // Report the real limitation once, then analyze the body in coroutine
     // context so every `yield` inside doesn't pile on a misleading
     // "'yield' can only appear inside a coroutine function" error.
-    ScopedValue coro_guard(m_in_coroutine);
-    ScopedValue yield_guard(m_coro_yield_type);
     if (return_type && return_type->is_coroutine()) {
         error(decl->loc, "coroutine methods are not yet supported; use a free "
                          "function returning Coro<T> that takes the struct as "
                          "a parameter");
-        m_in_coroutine = true;
-        m_coro_yield_type = return_type->coro_info.yield_type;
+        m_function_context.in_coroutine = true;
+        m_function_context.coro_yield_type = return_type->coro_info.yield_type;
     }
-
-    // Fresh lifetime state (move states + termination flag) for this body,
-    // restored on exit.
-    LifetimeChecker::FunctionScope lifetime_scope(m_lifetimes);
 
     // Push struct scope so 'self' and fields are accessible
     m_symbols.push_struct_scope(struct_type);
@@ -1696,7 +1691,7 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
     m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), decl->loc);
     m_symbols.pop_scope();  // function scope
     m_symbols.pop_scope();  // struct scope
-    // lifetime_scope restores the outer function's lifetime state on return.
+    // context_scope restores the outer function's context on return.
 }
 
 void SemanticAnalyzer::analyze_constructor_body(Decl* decl, Type* struct_type) {
@@ -1706,13 +1701,10 @@ void SemanticAnalyzer::analyze_constructor_body(Decl* decl, Type* struct_type) {
 
 void SemanticAnalyzer::analyze_destructor_body(Decl* decl, Type* struct_type) {
     auto& dd = decl->destructor_decl;
-    // Track delete destructor context to forbid throw inside it.
-    // Named destructors (dd.name is non-empty) are explicitly called and can throw.
-    ScopedValue in_delete_guard(m_in_delete_destructor);
-    if (dd.name.empty()) {
-        m_in_delete_destructor = true;
-    }
-    analyze_member_body(decl, struct_type, dd.params, dd.body, m_types.void_type());
+    // A *delete* (unnamed) destructor body forbids throw; named destructors
+    // (dd.name non-empty) are explicitly called and can throw.
+    analyze_member_body(decl, struct_type, dd.params, dd.body, m_types.void_type(),
+                        /*is_delete_destructor=*/dd.name.empty());
 }
 
 void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
@@ -1985,7 +1977,7 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
     }
 
     // In coroutine functions, only bare 'return;' is allowed (no return value)
-    if (m_in_coroutine) {
+    if (m_function_context.in_coroutine) {
         if (rs.value) {
             error(stmt->loc, "coroutine functions cannot return a value; use 'yield' instead");
         }
@@ -2211,7 +2203,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
 void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
     ThrowStmt& ts = stmt->throw_stmt;
 
-    if (m_in_delete_destructor) {
+    if (m_function_context.in_delete_destructor) {
         error(stmt->loc, "'throw' is not allowed inside a delete destructor");
         return;
     }
@@ -2328,8 +2320,8 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
     // conservative upper bound for the whole try/catch/finally.
     if (ts.finally_body) {
         {
-            ScopedValue finally_depth_guard(m_in_finally_depth);
-            m_in_finally_depth++;
+            ScopedValue finally_depth_guard(m_function_context.finally_depth);
+            m_function_context.finally_depth++;
             m_lifetimes.set_branch_terminates(false);
             analyze_stmt(ts.finally_body);
         }
@@ -2346,12 +2338,12 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
 void SemanticAnalyzer::analyze_yield_stmt(Stmt* stmt) {
     YieldStmt& ys = stmt->yield_stmt;
 
-    if (!m_in_coroutine) {
+    if (!m_function_context.in_coroutine) {
         error(stmt->loc, "'yield' can only appear inside a coroutine function (one returning Coro<T>)");
         return;
     }
 
-    if (m_in_finally_depth > 0) {
+    if (m_function_context.finally_depth > 0) {
         error(stmt->loc, "'yield' inside finally is not supported");
         return;
     }
@@ -2359,10 +2351,10 @@ void SemanticAnalyzer::analyze_yield_stmt(Stmt* stmt) {
     Type* actual = analyze_expr(ys.value);
     if (!actual || actual->is_error()) return;
 
-    if (!m_checker.check_assignable(m_coro_yield_type, actual, stmt->loc)) {
+    if (!m_checker.check_assignable(m_function_context.coro_yield_type, actual, stmt->loc)) {
         // Error already reported
     } else {
-        m_checker.coerce_int_literal(ys.value, m_coro_yield_type);
+        m_checker.coerce_int_literal(ys.value, m_function_context.coro_yield_type);
     }
 }
 
@@ -3149,16 +3141,14 @@ Decl* SemanticAnalyzer::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
     context.boundary_scope = m_symbols.current_scope();
     m_lambda_contexts.push_back(&context);
     {
-        // Analyze the lambda body with fresh lifetime state (move states +
-        // termination flag — a `return` in the lambda body must not read as
-        // "the enclosing branch terminates") and outside any enclosing
-        // coroutine context; the guards restore everything at block end.
-        LifetimeChecker::FunctionScope lifetime_scope(m_lifetimes);
-
-        ScopedValue coro_guard(m_in_coroutine);
-        ScopedValue yield_guard(m_coro_yield_type);
-        m_in_coroutine = false;
-        m_coro_yield_type = nullptr;
+        // Analyze the lambda body under a fresh per-function context: a
+        // lambda body is its own function, so it is not a coroutine, not
+        // inside the enclosing delete destructor or finally blocks (its
+        // statements run when the closure is CALLED, not here), and its
+        // lifetime state (move states + termination flag — a `return` in the
+        // lambda body must not read as "the enclosing branch terminates") is
+        // its own. The guard restores everything as one unit at block end.
+        FunctionContextScope context_scope(m_function_context, m_lifetimes);
 
         m_symbols.push_function_scope(ret_type);
 
@@ -3182,7 +3172,7 @@ Decl* SemanticAnalyzer::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
 
         m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), expr->loc);
         m_symbols.pop_scope();  // function scope
-        // coro_guard / yield_guard / lifetime_scope restore at block end.
+        // context_scope restores the outer per-function context at block end.
     }
     m_lambda_contexts.pop_back();
     m_symbols.pop_scope();  // lambda boundary scope

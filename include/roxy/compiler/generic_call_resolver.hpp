@@ -12,6 +12,7 @@
 #include "roxy/compiler/type_checker.hpp"
 #include "roxy/compiler/sema_context.hpp"
 #include "roxy/compiler/lifetime_checker.hpp"
+#include "roxy/compiler/function_context.hpp"
 
 namespace rx {
 
@@ -35,7 +36,8 @@ struct InferredTypeArgs {
 // re-enters the walkers through SemaContext::analyze_expr / analyze_stmt.
 class GenericCallResolver {
 public:
-    GenericCallResolver(SemaContext& context, LifetimeChecker& lifetimes)
+    GenericCallResolver(SemaContext& context, LifetimeChecker& lifetimes,
+                        FunctionContext& function_context)
         : m_context(context)
         , m_allocator(context.allocator)
         , m_type_env(context.type_env)
@@ -43,7 +45,8 @@ public:
         , m_symbols(context.symbols)
         , m_reporter(context.reporter)
         , m_checker(context.checker)
-        , m_lifetimes(lifetimes) {}
+        , m_lifetimes(lifetimes)
+        , m_function_context(function_context) {}
 
     // ===== Pass 1.9: trait bounds on generic type parameters =====
 
@@ -150,7 +153,10 @@ private:
     SymbolTable& m_symbols;
     ErrorReporter& m_reporter;
     TypeChecker& m_checker;
-    LifetimeChecker& m_lifetimes;  // arg-consume in calls; FunctionScope for Phase B bodies
+    LifetimeChecker& m_lifetimes;  // arg-consume in calls; bundled into the Phase B body guard
+    // The analyzer's per-function context: Phase B body checking pushes a
+    // fresh one (via FunctionContextScope) like every other body entry point.
+    FunctionContext& m_function_context;
 
     // Phase B: active type parameter bounds (set while analyzing a bounded
     // generic template body); maps type param index → resolved trait bounds.

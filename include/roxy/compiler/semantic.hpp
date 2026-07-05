@@ -13,6 +13,7 @@
 #include "roxy/compiler/error_reporter.hpp"
 #include "roxy/compiler/type_checker.hpp"
 #include "roxy/compiler/sema_context.hpp"
+#include "roxy/compiler/function_context.hpp"
 #include "roxy/compiler/lifetime_checker.hpp"
 #include "roxy/compiler/trait_system.hpp"
 #include "roxy/compiler/generic_call_resolver.hpp"
@@ -147,8 +148,11 @@ private:
     void analyze_constructor_decl(Decl* decl);
     void analyze_destructor_decl(Decl* decl);
     void analyze_method_decl(Decl* decl);
+    // Shared body analysis for constructors/destructors/methods; sets up the
+    // per-function context (is_delete_destructor forbids throw in the body).
     void analyze_member_body(Decl* decl, Type* struct_type,
-                             Span<Param> params, Stmt* body, Type* return_type);
+                             Span<Param> params, Stmt* body, Type* return_type,
+                             bool is_delete_destructor = false);
     void analyze_constructor_body(Decl* decl, Type* struct_type);
     void analyze_destructor_body(Decl* decl, Type* struct_type);
     void analyze_method_body(Decl* decl, Type* struct_type);
@@ -277,22 +281,17 @@ private:
     // Trait machinery: builtin trait registration, trait declarations, impl
     // grouping/validation, default-method injection (see trait_system.hpp).
     TraitSystem m_traits;
+    // Per-function context slots (coroutine / delete-destructor / finally
+    // depth) consulted by the statement walkers; pushed and popped as one
+    // unit (together with the lifetime state) by FunctionContextScope at
+    // every body-analysis entry point (see function_context.hpp).
+    FunctionContext m_function_context;
     // Generic-call machinery: type-arg unification/inference, generic function
     // calls, template refs in value position, trait bounds, and Phase B
     // template-body checking incl. the active-type-param state (see
     // generic_call_resolver.hpp).
     GenericCallResolver m_generic_calls;
     Program* m_program;                   // Current program being analyzed
-
-    // Coroutine tracking (set while analyzing a function returning Coro<T>)
-    bool m_in_coroutine = false;
-    Type* m_coro_yield_type = nullptr;
-
-    // Delete destructor tracking (throw is forbidden inside delete destructors)
-    bool m_in_delete_destructor = false;
-
-    // Finally depth tracking (for yield-in-finally validation)
-    u32 m_in_finally_depth = 0;
 
     // Counter for unique lambda IDs (used to name synthesized env structs and call functions).
     u32 m_lambda_id_counter = 0;

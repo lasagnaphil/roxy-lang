@@ -322,7 +322,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Files:** `compiler/ast.hpp`
 
 **Semantic Analysis** - Multi-pass analyzer with symbol resolution, type inference, and type checking. Extracted collaborators (each shared by reference via `SemaContext`, no back-reference to the analyzer): `LifetimeChecker` (move-state tracking for `uniq` variables / use-after-move detection, definite-termination branch merges, scope-exit destructor checks), `TraitSystem` (builtin trait registration, trait declarations, impl grouping/validation, default-method injection), and `GenericCallResolver` (type-arg unification/inference, generic function calls, template refs in value position, trait bounds, Phase B template-body checking).
-**Details:** `docs/internals/frontend.md` | **Files:** `compiler/semantic.hpp`, `compiler/semantic.cpp`, `compiler/sema_context.hpp`, `compiler/lifetime_checker.{hpp,cpp}`, `compiler/trait_system.{hpp,cpp}`, `compiler/generic_call_resolver.{hpp,cpp}`
+**Details:** `docs/internals/frontend.md` | **Files:** `compiler/semantic.hpp`, `compiler/semantic.cpp`, `compiler/sema_context.hpp`, `compiler/function_context.hpp`, `compiler/lifetime_checker.{hpp,cpp}`, `compiler/trait_system.{hpp,cpp}`, `compiler/generic_call_resolver.{hpp,cpp}`
 
 ### Type System
 **Types** - Primitives (`void`, `bool`, `i32`, `i64`, `f32`, `f64`, `string`), structs, enums, references.
