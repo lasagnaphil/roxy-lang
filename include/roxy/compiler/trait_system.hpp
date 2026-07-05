@@ -25,8 +25,8 @@ namespace rx {
 //
 // NOT here: trait *bounds* on generic type parameters and the Phase B
 // type-param method lookup (`lookup_type_param_method`, operator dispatch
-// through bounds) — those belong to generic call resolution and stay with the
-// analyzer until that extraction (TODO.md "Split the god class").
+// through bounds) — those live on GenericCallResolver (see
+// generic_call_resolver.hpp).
 class TraitSystem {
 public:
     TraitSystem(SemaContext& context, Vector<Decl*>& synthetic_decls)
