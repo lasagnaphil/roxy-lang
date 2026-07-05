@@ -176,8 +176,8 @@ TEST_SUITE("Semantic") {
 
     TEST_CASE("SymbolTable: incremental lookup-cache maintenance") {
         // pop_scope restores each name's displaced entry instead of rebuilding
-        // the cache from the whole scope chain. Pin the invariants that makes
-        // safe.
+        // the cache from the whole scope chain; lookup_local answers from the
+        // cache via a defining_scope check. Pin the invariants that makes safe.
         BumpAllocator allocator{1024};
         TypeCache types(allocator);
         SymbolTable symbols(allocator);
@@ -212,6 +212,26 @@ TEST_SUITE("Semantic") {
             CHECK(symbols.lookup("x") == mid);
             symbols.pop_scope();
             CHECK(symbols.lookup("x") == g);
+        }
+
+        SUBCASE("lookup_local sees only the current scope") {
+            symbols.define(SymbolKind::Variable, "y", types.i32_type(), loc);
+            symbols.push_scope(ScopeKind::Block);
+
+            // Visible but not local.
+            CHECK(symbols.lookup("y") != nullptr);
+            CHECK(symbols.lookup_local("y") == nullptr);
+
+            // Local after a same-scope definition.
+            Symbol* local = symbols.define(SymbolKind::Variable, "y", types.f64_type(), loc);
+            CHECK(symbols.lookup_local("y") == local);
+
+            // Sibling scope: previous block's local is neither local nor stale.
+            symbols.pop_scope();
+            symbols.push_scope(ScopeKind::Block);
+            CHECK(symbols.lookup_local("y") == nullptr);
+            CHECK(symbols.lookup("y")->type == types.i32_type());
+            symbols.pop_scope();
         }
 
         SUBCASE("popping a scope with an unshadowed name erases it") {

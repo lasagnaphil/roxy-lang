@@ -132,10 +132,14 @@ Symbol* SymbolTable::lookup(StringView name) const {
 }
 
 Symbol* SymbolTable::lookup_local(StringView name) const {
-    for (Symbol* sym : m_current->symbols) {
-        if (sym->name == name) {
-            return sym;
-        }
+    // The cache maps every visible name to its innermost symbol, so a local
+    // definition — if one exists — is exactly the cached entry (nothing inside
+    // the current scope can displace it except a same-scope redefinition,
+    // which is also local). O(1), replacing a linear scan of the current scope
+    // that made the per-export prelude import quadratic on the global scope.
+    auto it = m_lookup_cache.find(name);
+    if (it != m_lookup_cache.end() && it->second->defining_scope == m_current) {
+        return it->second;
     }
     return nullptr;
 }

@@ -161,7 +161,8 @@ private:
     // in Symbol::shadowed and pop_scope() restores the scope's entries in
     // reverse definition order. Invariant: a name defined in the current scope
     // always maps to that local symbol (nothing inside the scope can displace
-    // it except a same-scope redefinition).
+    // it except a same-scope redefinition), which is what lets lookup_local
+    // answer from the cache via a defining_scope check.
     tsl::robin_map<StringView, Symbol*> m_lookup_cache;
 
     Scope* create_scope(ScopeKind kind);
