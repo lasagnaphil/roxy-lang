@@ -3060,6 +3060,31 @@ void SemanticAnalyzer::register_primitive_operator_methods() {
         register_ops(entry.kind, compound_ops, 4, self_param, m_types.void_type());
     }
 
+    // Equality for the remaining integer kinds (i8/i16/u8/u16/u32/u64):
+    // same-type equality on canonically stored values is a bit comparison,
+    // so the signed EqI/NeI lowering is correct regardless of signedness.
+    // Ordered comparisons, arithmetic, and bitwise ops are deliberately NOT
+    // registered for these kinds: the IR/VM only have signed-i64 ops (no
+    // unsigned compare/div/shr, no width-wrapped arithmetic), so registering
+    // them would miscompile. They now produce a clear "operator not
+    // supported" diagnostic instead of a silent Error type; full support is
+    // tracked in TODO.md ("unsigned & small-int arithmetic").
+    {
+        struct { TypeKind kind; Type* type; } equality_only_int_types[] = {
+            { TypeKind::I8,  m_types.i8_type()  },
+            { TypeKind::I16, m_types.i16_type() },
+            { TypeKind::U8,  m_types.u8_type()  },
+            { TypeKind::U16, m_types.u16_type() },
+            { TypeKind::U32, m_types.u32_type() },
+            { TypeKind::U64, m_types.u64_type() },
+        };
+        const char* eq_ops[] = { "eq", "ne" };
+        for (auto& entry : equality_only_int_types) {
+            Span<Type*> self_param = make_param_span(entry.type);
+            register_ops(entry.kind, eq_ops, 2, self_param, m_types.bool_type());
+        }
+    }
+
     // Register for bool: eq, ne → bool
     {
         Span<Type*> bool_param = make_param_span(m_types.bool_type());
@@ -6545,7 +6570,15 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
                 return result;
             // Type mismatch check for better error messages
             if (left->is_numeric() && right->is_numeric()) {
-                m_checker.require_types_match(left, right, loc, "arithmetic operator");
+                if (m_checker.require_types_match(left, right, loc, "arithmetic operator")) {
+                    // Same numeric type, but no registered operator: the type
+                    // has no backend support for this op (unsigned/small-int
+                    // arithmetic, `%` on floats). Report it — silently
+                    // returning error_type let the expression compile as
+                    // Error-typed and misbehave downstream.
+                    error_fmt(loc, "operator '{}' is not supported for type '{}'",
+                              binary_op_to_symbol(op), m_checker.type_string(left).data());
+                }
                 return m_types.error_type();
             }
             error(loc, "invalid operands for arithmetic operator");
@@ -6568,7 +6601,10 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
                 return result;
             // Type mismatch check for better error messages
             if (left->is_numeric() && right->is_numeric()) {
-                m_checker.require_types_match(left, right, loc, "comparison operator");
+                if (m_checker.require_types_match(left, right, loc, "comparison operator")) {
+                    error_fmt(loc, "operator '{}' is not supported for type '{}'",
+                              binary_op_to_symbol(op), m_checker.type_string(left).data());
+                }
                 return m_types.error_type();
             }
             error(loc, "invalid operands for comparison operator");
@@ -6590,7 +6626,10 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
             if (Type* result = try_resolve_binary_op(op, left, right))
                 return result;
             if (left->is_integer() && right->is_integer()) {
-                m_checker.require_types_match(left, right, loc, "bitwise operator");
+                if (m_checker.require_types_match(left, right, loc, "bitwise operator")) {
+                    error_fmt(loc, "operator '{}' is not supported for type '{}'",
+                              binary_op_to_symbol(op), m_checker.type_string(left).data());
+                }
                 return m_types.error_type();
             }
             error(loc, "bitwise operators require integer operands");
@@ -6608,7 +6647,12 @@ Type* SemanticAnalyzer::get_unary_result_type(UnaryOp op, Type* operand, SourceL
                 return m_types.int_literal_type();
             if (Type* result = try_resolve_unary_op(op, operand))
                 return result;
-            error(loc, "unary '-' requires numeric operand");
+            if (operand->is_numeric()) {
+                error_fmt(loc, "operator '-' is not supported for type '{}'",
+                          m_checker.type_string(operand).data());
+            } else {
+                error(loc, "unary '-' requires numeric operand");
+            }
             return m_types.error_type();
 
         case UnaryOp::Not:
@@ -6622,7 +6666,12 @@ Type* SemanticAnalyzer::get_unary_result_type(UnaryOp op, Type* operand, SourceL
                 return m_types.int_literal_type();
             if (Type* result = try_resolve_unary_op(op, operand))
                 return result;
-            error(loc, "unary '~' requires integer operand");
+            if (operand->is_integer()) {
+                error_fmt(loc, "operator '~' is not supported for type '{}'",
+                          m_checker.type_string(operand).data());
+            } else {
+                error(loc, "unary '~' requires integer operand");
+            }
             return m_types.error_type();
 
         case UnaryOp::Ref:

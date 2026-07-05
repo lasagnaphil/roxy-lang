@@ -798,6 +798,67 @@ TEST_SUITE("Semantic") {
         CHECK(t.has_error_containing("has infinite size"));
     }
 
+    TEST_CASE("Semantic: unsupported primitive operators error loudly") {
+        SUBCASE("u32 arithmetic") {
+            SemanticTestHelper t;
+            CHECK(!t.run(R"(
+            fun test() {
+                var x: u32 = 40;
+                var y: u32 = 2;
+                var z = x + y;
+            }
+        )"));
+            CHECK(t.has_error_containing("operator '+' is not supported for type 'u32'"));
+        }
+
+        SUBCASE("u32 ordered comparison") {
+            SemanticTestHelper t;
+            CHECK(!t.run(R"(
+            fun test(): bool {
+                var x: u32 = 1;
+                var y: u32 = 2;
+                return x < y;
+            }
+        )"));
+            CHECK(t.has_error_containing("operator '<' is not supported for type 'u32'"));
+        }
+
+        SUBCASE("float modulo") {
+            SemanticTestHelper t;
+            CHECK(!t.run(R"(
+            fun test(): f32 {
+                var x: f32 = 5.0f;
+                var y: f32 = 2.0f;
+                return x % y;
+            }
+        )"));
+            CHECK(t.has_error_containing("operator '%' is not supported for type 'f32'"));
+        }
+
+        SUBCASE("unary negate on unsigned") {
+            SemanticTestHelper t;
+            CHECK(!t.run(R"(
+            fun test(): u32 {
+                var x: u32 = 1;
+                return -x;
+            }
+        )"));
+            CHECK(t.has_error_containing("operator '-' is not supported for type 'u32'"));
+        }
+
+        SUBCASE("u64 equality is supported") {
+            SemanticTestHelper t;
+            CHECK(t.run(R"(
+            fun test(): bool {
+                var x: u64 = 5ul;
+                var y: u64 = 5ul;
+                return x == y;
+            }
+        )"));
+            CHECK(t.error_count() == 0);
+        }
+    }
+
     TEST_CASE("Semantic: Printable error renders the type name (not %s)") {
         SemanticTestHelper t;
         CHECK(!t.run(R"(

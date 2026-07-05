@@ -39,6 +39,41 @@ inline const char* unary_op_to_trait_method(UnaryOp op) {
     }
 }
 
+// Maps binary operators to their source spelling (for diagnostics).
+inline const char* binary_op_to_symbol(BinaryOp op) {
+    switch (op) {
+        case BinaryOp::Add:      return "+";
+        case BinaryOp::Sub:      return "-";
+        case BinaryOp::Mul:      return "*";
+        case BinaryOp::Div:      return "/";
+        case BinaryOp::Mod:      return "%";
+        case BinaryOp::BitAnd:   return "&";
+        case BinaryOp::BitOr:    return "|";
+        case BinaryOp::BitXor:   return "^";
+        case BinaryOp::Shl:      return "<<";
+        case BinaryOp::Shr:      return ">>";
+        case BinaryOp::Equal:    return "==";
+        case BinaryOp::NotEqual: return "!=";
+        case BinaryOp::Less:     return "<";
+        case BinaryOp::LessEq:   return "<=";
+        case BinaryOp::Greater:  return ">";
+        case BinaryOp::GreaterEq: return ">=";
+        case BinaryOp::And:      return "&&";
+        case BinaryOp::Or:       return "||";
+        default: return "?";
+    }
+}
+
+// Maps unary operators to their source spelling (for diagnostics).
+inline const char* unary_op_to_symbol(UnaryOp op) {
+    switch (op) {
+        case UnaryOp::Negate: return "-";
+        case UnaryOp::Not:    return "!";
+        case UnaryOp::BitNot: return "~";
+        default: return "?";
+    }
+}
+
 // Maps compound assignment operators to trait method names.
 inline const char* assign_op_to_trait_method(AssignOp op) {
     switch (op) {

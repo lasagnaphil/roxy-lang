@@ -287,4 +287,44 @@ TEST_SUITE("E2E Int Literals") {
         CHECK_FALSE(result.success);
     }
 
+    TEST_CASE_TEMPLATE("Equality works on all integer kinds", Backend, RX_E2E_BACKENDS) {
+        // eq/ne used to be registered only for i32/i64; u8..u64 comparisons
+        // silently typed as Error. Equality is a bit comparison on canonical
+        // values, so it is now registered for every integer kind.
+        const char* source = R"(
+        fun main(): i32 {
+            var a: u32 = 40;
+            var b: u32 = 40;
+            var c: u64 = 9000000000ul;
+            var d: u64 = 9000000000ul;
+            var r: i32 = 0;
+            if (a == b) { r = r + 1; }
+            if (c == d) { r = r + 2; }
+            if (a != b) { r = r + 100; }
+            return r;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
+
+    TEST_CASE_TEMPLATE("Unsupported unsigned arithmetic is a loud error", Backend, RX_E2E_BACKENDS) {
+        // u32 + u32 used to type as Error with NO diagnostic and compile to
+        // garbage. There is still no unsigned arithmetic backend support, but
+        // now it fails compilation with a clear message.
+        const char* source = R"(
+        fun main(): i32 {
+            var x: u32 = 40;
+            var y: u32 = 2;
+            var z = x + y;
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK_FALSE(result.success);
+    }
+
 }  // TEST_SUITE("E2E Int Literals")
