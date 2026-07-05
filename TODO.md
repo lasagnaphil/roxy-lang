@@ -22,7 +22,15 @@ Last updated: 2026-07-06
 
 ## Low Priority
 
-(none currently)
+- [ ] **Register overflow on huge single functions**: a function with more than
+  ~255 simultaneously live values fails bytecode lowering with "Register
+  overflow: function uses too many values (max 255)" despite the
+  furthest-first spilling — observed 2026-07-06 on generated 8k-statement
+  bodies where every statement binds a string/uniq local that stays live to
+  scope end (the adversarial linear-scan workloads). Diagnose whether spilling
+  is bypassed for cleanup-record-pinned values or simply capped;
+  pathological-input-only today (untested whether the C backend, which does
+  no register allocation, accepts the same inputs).
 
 ---
 
@@ -85,11 +93,6 @@ and measurements in git history. Remaining:
   deliberately kept: cold path (struct-keyed map constructors only, ≤2 scans
   each), and an incremental name→index map would need maintenance at every
   build-phase push_back for no measurable win.
-- [ ] After the 2026-07-06 keyed-map swap, the adversarial hostile workloads
-  (32k-statement single-function bodies) are dominated by `run_local_cse`
-  (block-local CSE, `ir_optimize.cpp`) — a pre-existing, separate hotspot.
-  Revisit with the optimization.md future phases if giant generated functions
-  ever matter.
 - [ ] Adopt the `"…"_sv` literal (added 2026-07-05 in `core/string_view.hpp`,
   applied across `ir_builder*.cpp`) in the rest of the codebase where
   `StringView("…", N)` manual lengths appear.

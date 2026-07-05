@@ -534,13 +534,26 @@ struct CSEKey {
 
 struct CSEKeyHash {
     size_t operator()(const CSEKey& k) const noexcept {
-        // FNV-1a-style mix with a 64-bit prime to avoid the small-input
-        // collisions that `* 31 + x` chains exhibit.
+        // Multiplicative combine + splitmix64 finalizer. The finalizer is
+        // load-bearing: robin_map's power-of-two policy takes buckets from
+        // the LOW hash bits, and the bare `h*prime + x` chain maps an
+        // arithmetic key progression to an arithmetic hash progression —
+        // e.g. sequential ConstInt payloads (added last, so h = K + i) fill
+        // one long CONTIGUOUS bucket run. Each family alone is fine, but any
+        // key from another family that lands inside such a run probes and
+        // robin-hood-shifts across its whole length, so interleaved
+        // progressions (exactly what a large generated function's constants
+        // produce) degrade inserts to O(n). Measured 2026-07-06, 96k distinct
+        // keys from a 32k-statement function: each family alone inserts in
+        // ~1-2ms; interleaved without the finalizer 512ms; with it 3.6ms.
         u64 h = static_cast<u64>(k.op);
         h = h * 1099511628211ULL + reinterpret_cast<uintptr_t>(k.result_type);
         h = h * 1099511628211ULL + k.a;
         h = h * 1099511628211ULL + k.b;
         h = h * 1099511628211ULL + k.payload;
+        h ^= h >> 30; h *= 0xbf58476d1ce4e5b9ULL;
+        h ^= h >> 27; h *= 0x94d049bb133111ebULL;
+        h ^= h >> 31;
         return static_cast<size_t>(h);
     }
 };
