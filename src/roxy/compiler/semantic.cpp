@@ -1077,7 +1077,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             if (key_type->is_error()) return m_types.error_type();
             if (val_type->is_error()) return m_types.error_type();
             if (!is_hashable_key_type(key_type)) {
-                error(type_expr->loc, "Map key type must implement Hash");
+                error(type_expr->loc, "Map key type must be a primitive, enum, or struct");
                 return m_types.error_type();
             }
             base_type = m_types.map_type(key_type, val_type);
@@ -3434,7 +3434,7 @@ Type* SemanticAnalyzer::analyze_map_constructor_call(Expr* expr, CallExpr& ce) {
     if (val_type->is_error()) return m_types.error_type();
 
     if (!is_hashable_key_type(key_type)) {
-        error(expr->loc, "Map key type must implement Hash");
+        error(expr->loc, "Map key type must be a primitive, enum, or struct");
         return m_types.error_type();
     }
 
