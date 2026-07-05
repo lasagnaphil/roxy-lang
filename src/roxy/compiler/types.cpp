@@ -417,6 +417,7 @@ Type* TypeCache::struct_type(StringView name, Decl* decl, StringView module_name
     type->struct_info.fields = Span<FieldInfo>();
     type->struct_info.implemented_traits = Span<TraitImplRecord>();
     type->struct_info.slot_count = 0;
+    type->struct_info.members_resolved = false;
     // Named types are not interned - each declaration creates a unique type
     return type;
 }

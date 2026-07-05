@@ -822,4 +822,78 @@ TEST_SUITE("E2E Structs") {
         CHECK(result.value == 25);  // 10 * 2.5 = 25.0 -> 25
     }
 
+    // ── Declaration-order independence ──────────────────────────────────
+    // Value-embedded struct members used to require the embedded struct to be
+    // declared first; a forward reference was misdiagnosed as "recursive
+    // struct type has infinite size". Member resolution now recurses.
+
+    TEST_CASE_TEMPLATE("Value field referencing a later-declared struct", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Outer {
+            inner: Inner;
+            tag: i32;
+        }
+
+        struct Inner {
+            a: i32;
+            b: i32;
+        }
+
+        fun main(): i32 {
+            var o: Outer = Outer { inner = Inner { a = 30, b = 12 }, tag = 100 };
+            return o.inner.a + o.inner.b;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
+
+    TEST_CASE_TEMPLATE("Inheriting from a later-declared parent", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Dog : Animal {
+            tricks: i32;
+        }
+
+        struct Animal {
+            legs: i32;
+        }
+
+        fun main(): i32 {
+            var d: Dog = Dog { legs = 4, tricks = 3 };
+            return d.legs * 10 + d.tricks;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 43);
+    }
+
+    TEST_CASE_TEMPLATE("Generic instance embedding a later-declared struct", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Wrap {
+            boxed: Box<Later>;
+        }
+
+        struct Box<T> {
+            value: T;
+        }
+
+        struct Later {
+            x: i32;
+        }
+
+        fun main(): i32 {
+            var w: Wrap = Wrap { boxed = Box { value = Later { x = 7 } } };
+            return w.boxed.value.x;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 7);
+    }
+
 }  // TEST_SUITE("E2E Structs")

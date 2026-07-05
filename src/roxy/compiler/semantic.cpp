@@ -478,11 +478,37 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
         }
     }
 
-    detect_mutual_struct_recursion(program);
     generate_synthetic_destructors(program);
 
     // Now validate all trait implementations
     validate_trait_implementations();
+}
+
+bool SemanticAnalyzer::ensure_struct_members_resolved(Type* struct_type, SourceLocation loc) {
+    if (!struct_type || struct_type->kind != TypeKind::Struct) return true;
+    StructTypeInfo& info = struct_type->struct_info;
+    if (info.members_resolved) return true;
+
+    // A struct currently being resolved higher up this recursion is a genuine
+    // value-type cycle: its layout depends (directly or transitively) on ours
+    // and ours on its — infinite size. This subsumes the old post-hoc
+    // detect_mutual_struct_recursion pass AND the direct self-reference check
+    // (the struct itself sits in m_resolving_structs while its own fields
+    // resolve).
+    if (m_resolving_structs.count(struct_type)) {
+        error_fmt(loc,
+            "recursive struct type '{}' has infinite size; "
+            "use 'uniq {}' for indirection",
+            info.name, info.name);
+        return false;
+    }
+
+    // No AST decl (registry-built native structs, synthesized lambda envs):
+    // the layout is owned elsewhere; nothing to resolve here.
+    if (!info.decl) return true;
+
+    resolve_struct_members(info.decl);
+    return true;
 }
 
 void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
@@ -492,6 +518,13 @@ void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
     if (struct_decl.type_params.size() > 0) return;
 
     Type* type = m_type_env.named_type_by_name(struct_decl.name);
+    if (!type || !type->is_struct()) return;
+
+    // Memoized: a dependent struct's field may have pulled this in already,
+    // ahead of its source position (declaration order doesn't matter).
+    if (type->struct_info.members_resolved) return;
+    m_resolving_structs.insert(type);
+    bool has_cycle = false;
 
     // Resolve parent type
     if (!struct_decl.parent_name.empty()) {
@@ -501,6 +534,9 @@ void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
         } else if (parent->kind != TypeKind::Struct) {
             error_fmt(decl->loc, "parent type '{}' is not a struct", struct_decl.parent_name);
         } else {
+            // The parent's fields are embedded below, so its members must be
+            // resolved first (it may be declared later in the file).
+            if (!ensure_struct_members_resolved(parent, decl->loc)) has_cycle = true;
             type->struct_info.parent = parent;
         }
     }
@@ -523,6 +559,15 @@ void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
             field_type = m_types.error_type();
         }
 
+        // A value-embedded struct field contributes its full layout, so the
+        // field's struct must be resolved first (recurses; reports the
+        // infinite-size error on genuine cycles). Reference-wrapped fields
+        // (uniq/ref/weak) are pointer-sized and impose no layout dependency —
+        // that's exactly what makes recursive types via `uniq` legal.
+        if (field_type->kind == TypeKind::Struct) {
+            if (!ensure_struct_members_resolved(field_type, field.loc)) has_cycle = true;
+        }
+
         // A `ref` field is a counted borrow: the struct is move-only (noncopyable)
         // and ref_incs the field on construction / ref_decs on drop, so a borrow
         // stored in a struct keeps the owner alive (or traps) exactly like a
@@ -539,22 +584,14 @@ void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
         fields.push_back(info);
     }
 
-    // Check for direct self-referencing cycles (infinite size)
-    bool has_cycle = false;
-    for (u32 fi = 0; fi < struct_decl.fields.size(); fi++) {
-        auto& field_info = fields[fields.size() - struct_decl.fields.size() + fi];
-        if (field_info.type->kind == TypeKind::Struct &&
-            field_info.type == type) {
-            error_fmt(struct_decl.fields[fi].loc,
-                "recursive struct type '{}' has infinite size; "
-                "use 'uniq {}' for indirection",
-                field_info.type->struct_info.name,
-                field_info.type->struct_info.name);
-            has_cycle = true;
-        }
+    if (has_cycle) {
+        // Error(s) already reported at the offending field(s). Mark resolved
+        // so other reference sites don't re-resolve and duplicate the errors;
+        // compilation fails regardless.
+        m_resolving_structs.erase(type);
+        type->struct_info.members_resolved = true;
+        return;
     }
-
-    if (has_cycle) return;
 
     // Compute field slot offsets for regular fields
     u32 current_slot = 0;
@@ -573,10 +610,13 @@ void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
     type->struct_info.fields = m_allocator.alloc_span(fields);
     type->struct_info.when_clauses = m_allocator.alloc_span(when_clauses);
 
-    // Initialize empty constructor/destructor/method lists
-    type->struct_info.constructors = Span<ConstructorInfo>(nullptr, 0);
-    type->struct_info.destructors = Span<DestructorInfo>(nullptr, 0);
-    type->struct_info.methods = Span<MethodInfo>(nullptr, 0);
+    // Constructor/destructor/method spans are deliberately NOT reset here:
+    // they start empty (zeroed by the Type factory), and member declarations
+    // appearing before the struct decl in source order may already have
+    // appended to them.
+
+    m_resolving_structs.erase(type);
+    type->struct_info.members_resolved = true;
 }
 
 void SemanticAnalyzer::resolve_enum_members(Decl* decl) {
@@ -773,43 +813,6 @@ void SemanticAnalyzer::resolve_trait_parent(Decl* decl) {
     }
 }
 
-void SemanticAnalyzer::detect_mutual_struct_recursion(Program* program) {
-    // After all structs are resolved, recompute each struct's expected
-    // slot_count. If it differs from the stored value, a field referenced a
-    // not-yet-resolved struct (mutual recursion or invalid forward reference
-    // of a value type).
-    for (auto* decl : program->declarations) {
-        if (!decl || decl->kind != AstKind::DeclStruct) continue;
-        if (decl->struct_decl.type_params.size() > 0) continue;
-
-        Type* type = m_type_env.named_type_by_name(decl->struct_decl.name);
-        if (!type || !type->is_struct()) continue;
-
-        u32 recomputed_slots = 0;
-        for (const auto& field : type->struct_info.fields) {
-            recomputed_slots += get_type_slot_count(field.type);
-        }
-
-        if (recomputed_slots != type->struct_info.slot_count) {
-            // Find the offending field and report error
-            for (u32 fi = 0; fi < decl->struct_decl.fields.size(); fi++) {
-                Type* field_type = type->struct_info.fields[fi].type;
-                if (field_type && field_type->kind == TypeKind::Struct) {
-                    // Check if this field's slot count changed
-                    u32 current_field_slots = get_type_slot_count(field_type);
-                    if (current_field_slots != type->struct_info.fields[fi].slot_count) {
-                        error_fmt(decl->struct_decl.fields[fi].loc,
-                            "recursive struct type '{}' has infinite size; "
-                            "use 'uniq {}' for indirection",
-                            field_type->struct_info.name,
-                            field_type->struct_info.name);
-                    }
-                }
-            }
-        }
-    }
-}
-
 void SemanticAnalyzer::generate_synthetic_destructors(Program* program) {
     // Generate synthetic default destructors for structs that have fields
     // needing cleanup. A field needs cleanup if:
@@ -932,6 +935,13 @@ void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
             for (auto& field : case_decl.fields) {
                 Type* field_type = resolve_type_expr(field.type);
                 if (!field_type) field_type = m_types.error_type();
+
+                // Value-embedded struct variant fields contribute layout, so
+                // the field's struct must be resolved first (same rule as
+                // regular fields; cycles report the infinite-size error).
+                if (field_type->kind == TypeKind::Struct) {
+                    ensure_struct_members_resolved(field_type, field.loc);
+                }
 
                 u32 slot_count = get_type_slot_count(field_type);
                 VariantFieldInfo variant_field_info;
@@ -1172,9 +1182,20 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
     m_resolving_structs.insert(inst->concrete_type);
 
     Vector<FieldInfo> fields;
+    bool has_cycle = false;
     for (u32 fi = 0; fi < struct_decl.fields.size(); fi++) {
         Type* field_type = resolve_type_expr(struct_decl.fields[fi].type);
         if (!field_type) field_type = m_types.error_type();
+
+        // Same rule as resolve_struct_members: a value-embedded struct field
+        // must have its members resolved first (recurses for declaration-order
+        // independence; genuine cycles — including cycles through this very
+        // instance — report the infinite-size error).
+        if (field_type->kind == TypeKind::Struct) {
+            if (!ensure_struct_members_resolved(field_type, struct_decl.fields[fi].loc)) {
+                has_cycle = true;
+            }
+        }
 
         FieldInfo info;
         info.name = struct_decl.fields[fi].name;
@@ -1186,24 +1207,11 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         fields.push_back(info);
     }
 
-    // Check for direct value-type cycles
-    bool has_cycle = false;
-    for (u32 fi = 0; fi < fields.size(); fi++) {
-        if (fields[fi].type->kind == TypeKind::Struct &&
-            m_resolving_structs.count(fields[fi].type)) {
-            error_fmt(struct_decl.fields[fi].loc,
-                "recursive struct type '{}' has infinite size; "
-                "use 'uniq {}' for indirection",
-                fields[fi].type->struct_info.name,
-                fields[fi].type->struct_info.name);
-            has_cycle = true;
-        }
-    }
-
     m_resolving_structs.erase(inst->concrete_type);
 
     if (has_cycle) {
         inst->is_analyzed = true;
+        inst->concrete_type->struct_info.members_resolved = true;
         return;
     }
 
@@ -1311,6 +1319,7 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
     }
 
     inst->is_analyzed = true;
+    struct_type_info.members_resolved = true;
 }
 
 Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {

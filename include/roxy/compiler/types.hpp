@@ -168,6 +168,8 @@ struct StructTypeInfo {
     Span<WhenClauseInfo> when_clauses;   // Tagged union discriminants
     Span<TraitImplRecord> implemented_traits;  // Trait implementations (with type args for generic traits)
     u32 slot_count;                // Total u32 slots needed for this struct
+    bool members_resolved;         // Fields/layout resolved (resolve_struct_members ran, or
+                                   // the type is registry-built/synthesized and owns its layout)
 
     // Find a field by name, returns nullptr if not found
     const FieldInfo* find_field(StringView field_name) const;

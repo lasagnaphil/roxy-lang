@@ -766,6 +766,38 @@ TEST_SUITE("Semantic") {
         CHECK(t.error_count() == 0);
     }
 
+    TEST_CASE("Semantic: tagged-union variant field can reference a later struct") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
+        enum Kind { Solo, Boxed }
+
+        struct Holder {
+            when k: Kind {
+                case Solo:
+                    n: i32;
+                case Boxed:
+                    item: Item;
+            }
+        }
+
+        struct Item {
+            a: i32;
+            b: i32;
+        }
+    )"));
+        CHECK(t.error_count() == 0);
+    }
+
+    TEST_CASE("Semantic: three-struct value cycle still reports infinite size") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        struct A { b: B; }
+        struct B { c: C; }
+        struct C { a: A; }
+    )"));
+        CHECK(t.has_error_containing("has infinite size"));
+    }
+
     TEST_CASE("Semantic: Printable error renders the type name (not %s)") {
         SemanticTestHelper t;
         CHECK(!t.run(R"(

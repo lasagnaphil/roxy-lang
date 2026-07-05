@@ -113,8 +113,13 @@ private:
     void resolve_destructor_member(Decl* decl);
     void resolve_method_member(Decl* decl);
     void resolve_trait_parent(Decl* decl);
-    // Trailing whole-program passes run after all members are resolved.
-    void detect_mutual_struct_recursion(Program* program);
+    // Make sure `struct_type`'s members/layout are resolved before a dependent
+    // struct embeds it by value — resolution recurses so declaration order
+    // doesn't matter. Returns false (and reports the "infinite size" error at
+    // `loc`) when `struct_type` is already being resolved higher up the
+    // recursion, i.e. a genuine value-type cycle.
+    bool ensure_struct_members_resolved(Type* struct_type, SourceLocation loc);
+    // Trailing whole-program pass run after all members are resolved.
     void generate_synthetic_destructors(Program* program);
     void resolve_when_clauses(Span<WhenFieldDecl> when_decls,
                               Vector<FieldInfo>& fields,
