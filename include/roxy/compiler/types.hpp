@@ -167,6 +167,13 @@ struct StructTypeInfo {
     Span<MethodInfo> methods;            // Methods for this struct
     Span<WhenClauseInfo> when_clauses;   // Tagged union discriminants
     Span<TraitImplRecord> implemented_traits;  // Trait implementations (with type args for generic traits)
+    // Arena capacities of the constructor/destructor/method tables above, for
+    // the geometric growth in the append_* builders (types.cpp). Zero — or
+    // stale after a direct span assignment (always <= the span size) — reads
+    // as "full", so the next append reallocates; direct assignment stays legal.
+    u32 constructors_capacity;
+    u32 destructors_capacity;
+    u32 methods_capacity;
     u32 slot_count;                // Total u32 slots needed for this struct
     bool members_resolved;         // Fields/layout resolved (resolve_struct_members ran, or
                                    // the type is registry-built/synthesized and owns its layout)

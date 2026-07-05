@@ -840,30 +840,44 @@ void type_to_string(const Type* type, String& out) {
 // ===== Span append helpers (shared by SemanticAnalyzer and TraitSystem) =====
 
 namespace {
-// Return a fresh arena span holding `existing` followed by `value`. O(n) copy
-// per call — see TODO.md for the Vector-during-analysis-then-freeze fix that
-// would drop the append cost; the three wrappers below share this one body.
+// Append `value` to an arena-backed member table with geometric capacity
+// growth. `capacity` rides alongside the span on StructTypeInfo; a span the
+// caller assigned directly leaves it stale (always <= the span size), which
+// reads as "full" so the next append reallocates — both styles compose. There
+// is no single "members complete" point to freeze at (appends arrive from
+// Pass 2 source order, trait default injection, generic-instance registration,
+// and synthetic-dtor generation), hence grow-in-place rather than
+// build-then-freeze. On growth the old buffer becomes arena garbage, so total
+// arena waste is O(final size) — the previous rebuild-into-fresh-arena-memory
+// per append cost O(n^2) time and arena bytes to build an n-member table.
 template<typename T>
-Span<T> append_span(BumpAllocator& allocator, Span<T> existing, T value) {
-    Vector<T> items;
-    for (const auto& item : existing) {
-        items.push_back(item);
+void append_span(BumpAllocator& allocator, Span<T>& span, u32& capacity, T value) {
+    u32 size = span.size();
+    if (size >= capacity) {
+        u32 new_capacity = size < 4 ? 4 : size * 2;
+        T* data = reinterpret_cast<T*>(
+            allocator.alloc_bytes(sizeof(T) * new_capacity, alignof(T)));
+        for (u32 i = 0; i < size; i++) {
+            data[i] = span[i];
+        }
+        span = Span<T>(data, size);
+        capacity = new_capacity;
     }
-    items.push_back(value);
-    return allocator.alloc_span(items);
+    span.data()[size] = value;
+    span = Span<T>(span.data(), size + 1);
 }
 }
 
 void append_method(BumpAllocator& allocator, StructTypeInfo& info, MethodInfo method) {
-    info.methods = append_span(allocator, info.methods, method);
+    append_span(allocator, info.methods, info.methods_capacity, method);
 }
 
 void append_constructor(BumpAllocator& allocator, StructTypeInfo& info, ConstructorInfo ctor) {
-    info.constructors = append_span(allocator, info.constructors, ctor);
+    append_span(allocator, info.constructors, info.constructors_capacity, ctor);
 }
 
 void append_destructor(BumpAllocator& allocator, StructTypeInfo& info, DestructorInfo dtor) {
-    info.destructors = append_span(allocator, info.destructors, dtor);
+    append_span(allocator, info.destructors, info.destructors_capacity, dtor);
 }
 
 bool struct_needs_synthetic_dtor(const StructTypeInfo& info) {
