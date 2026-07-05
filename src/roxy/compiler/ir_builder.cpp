@@ -862,80 +862,69 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
         emit_call(parent_ctor_name, ctor_args, m_types.void_type());
     }
 
-    // Get the number of inherited fields (from parent)
-    u32 inherited_field_count = parent_type ? parent_type->struct_info.fields.size() : 0;
+    // Initialize own fields (declared defaults / zero-init / recursive nested
+    // structs), own discriminants, and own union regions. Inherited fields were
+    // populated by the parent constructor call above.
+    emit_own_field_default_init(self_param.value, struct_type);
 
-    // Generate field initialization code (only for own fields, not inherited)
+    // End function body (will add implicit return)
+    end_function_body();
+
+    IRFunction* result = m_current_func;
+    m_current_func = nullptr;
+    m_current_block = nullptr;
+    return result;
+}
+
+ValueId IRBuilder::emit_zero_value(Type* type) {
+    if (type->is_bool()) return emit_const_bool(false);
+    if (type->is_integer() || type->is_enum()) return emit_const_int(0, type);
+    if (type->is_float()) return emit_const_float(0.0, type);
+    if (type->kind == TypeKind::String) return emit_const_string("");
+    return emit_const_null();
+}
+
+void IRBuilder::emit_own_field_default_init(ValueId self_ptr, Type* struct_type) {
+    StructTypeInfo& struct_type_info = struct_type->struct_info;
+    // No declaration (synthesized struct types) — nothing declares a default.
+    if (!struct_type_info.decl) return;
     StructDecl& struct_decl = struct_type_info.decl->struct_decl;
-    ValueId self_ptr = self_param.value;
-
-    // Helper lambda to zero-initialize a field
-    auto zero_init_field = [&](const FieldInfo& field_info) -> ValueId {
-        if (field_info.type->is_bool()) {
-            return emit_const_bool(false);
-        } else if (field_info.type->is_integer() || field_info.type->is_enum()) {
-            return emit_const_int(0, field_info.type);
-        } else if (field_info.type->is_float()) {
-            return emit_const_float(0.0, field_info.type);
-        } else if (field_info.type->kind == TypeKind::String) {
-            return emit_const_string("");
-        } else {
-            return emit_const_null();
-        }
-    };
 
     // Initialize regular fields from struct_decl.fields
     for (const auto& field : struct_decl.fields) {
-        // Find the corresponding FieldInfo in struct_type_info.fields
         const FieldInfo* field_info = struct_type_info.find_field(field.name);
         if (!field_info) continue;
 
-        ValueId value;
         if (field.default_value) {
-            value = gen_expr(field.default_value);
-        } else if (field_info->type && field_info->type->is_struct()) {
-            // For nested structs, recursively zero-init
-            u32 nested_slots = field_info->type->struct_info.slot_count;
-            ValueId nested_ptr = emit_stack_alloc(nested_slots, field_info->type);
-            // Zero the nested struct fields
-            StructTypeInfo& nested_struct_type_info = field_info->type->struct_info;
-            StructDecl& nested_struct_decl = nested_struct_type_info.decl->struct_decl;
-            for (const auto& nested_field : nested_struct_decl.fields) {
-                const FieldInfo* nested_field_info = nested_struct_type_info.find_field(nested_field.name);
-                if (!nested_field_info) continue;
-                ValueId nval;
-                if (nested_field.default_value) {
-                    nval = gen_expr(nested_field.default_value);
-                } else {
-                    nval = zero_init_field(*nested_field_info);
-                }
-                emit_set_field(nested_ptr, nested_field_info->name, nested_field_info->slot_offset, nested_field_info->slot_count, nval, nested_field_info->type);
+            ValueId value = gen_expr(field.default_value);
+            // Struct rvalues are pointers — copy slot-by-slot into the field.
+            if (field_info->type && field_info->type->is_struct()) {
+                ValueId field_addr = emit_get_field_addr(self_ptr, field_info->name,
+                                                         field_info->slot_offset, field_info->type);
+                emit_struct_copy(field_addr, value, field_info->slot_count);
+            } else {
+                emit_set_field(self_ptr, field_info->name, field_info->slot_offset,
+                               field_info->slot_count, value, field_info->type);
             }
-            // Copy nested struct to field
-            ValueId field_addr = emit_get_field_addr(self_ptr, field_info->name, field_info->slot_offset, field_info->type);
-            emit_struct_copy(field_addr, nested_ptr, nested_slots);
-            continue;
+        } else if (field_info->type && field_info->type->is_struct()) {
+            // Nested value struct: default-init it in place, at any depth.
+            ValueId field_addr = emit_get_field_addr(self_ptr, field_info->name,
+                                                     field_info->slot_offset, field_info->type);
+            emit_struct_default_init(field_addr, field_info->type);
         } else {
-            value = zero_init_field(*field_info);
-        }
-
-        // For struct-typed fields with default values, use StructCopy
-        if (field_info->type && field_info->type->is_struct() && field.default_value) {
-            ValueId field_addr = emit_get_field_addr(self_ptr, field_info->name, field_info->slot_offset, field_info->type);
-            emit_struct_copy(field_addr, value, field_info->slot_count);
-        } else {
-            emit_set_field(self_ptr, field_info->name, field_info->slot_offset, field_info->slot_count, value, field_info->type);
+            ValueId value = emit_zero_value(field_info->type);
+            emit_set_field(self_ptr, field_info->name, field_info->slot_offset,
+                           field_info->slot_count, value, field_info->type);
         }
     }
 
-    // Initialize discriminant fields from when clauses (zero-init them)
+    // Discriminants are zero-initialized (first enum variant)
     for (const auto& wfd : struct_decl.when_clauses) {
         const FieldInfo* field_info = struct_type_info.find_field(wfd.discriminant_name);
         if (!field_info) continue;
-
-        // Discriminants are zero-initialized (first enum variant)
-        ValueId value = zero_init_field(*field_info);
-        emit_set_field(self_ptr, field_info->name, field_info->slot_offset, field_info->slot_count, value, field_info->type);
+        ValueId value = emit_zero_value(field_info->type);
+        emit_set_field(self_ptr, field_info->name, field_info->slot_offset,
+                       field_info->slot_count, value, field_info->type);
     }
 
     // Zero the whole union region of each when-clause. Stack allocation
@@ -949,14 +938,16 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
         if (clause.union_slot_count == 0) continue;
         emit_zero_slots(self_ptr, clause.union_slot_offset, clause.union_slot_count);
     }
+}
 
-    // End function body (will add implicit return)
-    end_function_body();
-
-    IRFunction* result = m_current_func;
-    m_current_func = nullptr;
-    m_current_block = nullptr;
-    return result;
+void IRBuilder::emit_struct_default_init(ValueId ptr, Type* struct_type) {
+    // Walk the inheritance chain: unlike the synthesized constructor's own
+    // body, an in-place nested-field init has no parent-constructor call to
+    // populate inherited fields, so every level initializes here.
+    for (Type* current = struct_type; current && current->is_struct();
+         current = current->struct_info.parent) {
+        emit_own_field_default_init(ptr, current);
+    }
 }
 
 IRFunction* IRBuilder::build_synthesized_default_destructor(Type* struct_type) {

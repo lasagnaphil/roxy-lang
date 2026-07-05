@@ -346,6 +346,27 @@ private:
     // count is odd.
     void emit_zero_slots(ValueId self_ptr, u32 start_slot, u32 slot_count);
 
+    // Zero/"empty" constant for a scalar field (bool false, int/enum 0, float
+    // 0.0, string ""); null for pointer-shaped types. Struct fields recurse via
+    // emit_struct_default_init instead.
+    ValueId emit_zero_value(Type* type);
+
+    // Default-initialize `struct_type`'s OWN declared fields in place at
+    // `self_ptr`: declared default values, zero/empty scalars, recursive init
+    // for nested value-struct fields, zeroed discriminants and union regions.
+    // Inherited fields are NOT touched — the synthesized default constructor
+    // covers them via the parent-constructor call, and nested fields via the
+    // chain walk in emit_struct_default_init.
+    void emit_own_field_default_init(ValueId self_ptr, Type* struct_type);
+
+    // Default-initialize EVERY field of `struct_type` in place at `ptr`,
+    // walking the inheritance chain — for nested value-struct fields, which
+    // have no parent-constructor call to cover inherited fields. Recurses to
+    // any depth (the old code unrolled exactly one level, so a struct field
+    // inside a nested struct was null-filled instead of taking its declared
+    // defaults, and nested discriminants/union regions kept garbage).
+    void emit_struct_default_init(ValueId ptr, Type* struct_type);
+
     // Apply reference wrapper to base type based on RefKind
     Type* apply_ref_kind(Type* base_type, RefKind ref_kind);
 

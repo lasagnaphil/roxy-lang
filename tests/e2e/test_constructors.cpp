@@ -38,6 +38,42 @@ TEST_SUITE("E2E Constructors") {
         CHECK(result.stdout_output == "10\n20\n");
     }
 
+    TEST_CASE_TEMPLATE("synthesized ctor initializes deeply nested defaults", Backend, RX_E2E_BACKENDS) {
+        // Regression: the synthesized default constructor used to unroll
+        // nested-struct init exactly one level, so a struct field inside a
+        // nested struct was null-filled instead of taking its declared
+        // defaults (o.mid.inner.a read 0, not 5).
+        const char* source = R"(
+        struct Inner {
+            a: i32 = 5;
+            b: i32;
+        }
+
+        struct Middle {
+            inner: Inner;
+            m: i32 = 3;
+        }
+
+        struct Outer {
+            mid: Middle;
+            tag: i32 = 9;
+        }
+
+        fun main(): i32 {
+            var o: Outer = Outer();
+            print(f"{o.mid.inner.a}");
+            print(f"{o.mid.inner.b}");
+            print(f"{o.mid.m}");
+            print(f"{o.tag}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "5\n0\n3\n9\n");
+    }
+
     TEST_CASE_TEMPLATE("stack-allocated with params", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {

@@ -78,10 +78,6 @@ semantically sound and well-commented; nearly all findings are structural
 duplication — the same machinery copy-pasted across statement kinds, and the same
 emission idioms repeated dozens of times. Correctness-adjacent items first.
 
-- [ ] **Synthesized default ctor nested-struct init recurses one level only**
-  (`build_synthesized_default_constructor`): a struct field *inside* the nested
-  struct falls through to `emit_const_null` instead of recursing. Make field
-  default-init a real recursive helper.
 - [ ] **`gen_super_call` arg-lowering gap**: evaluates args without the noncopyable
   consume/move bookkeeping that `lower_call_args` / `gen_constructor_call` do, and
   hand-rolls the self-prepend loop `prepend_self` already provides. Share the
