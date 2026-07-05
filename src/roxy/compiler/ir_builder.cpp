@@ -451,10 +451,8 @@ IRFunction* IRBuilder::build_module_init(Program* /*program*/) {
     }
     if (!any_init) return nullptr;
 
-    m_current_func = m_allocator.emplace<IRFunction>();
-    m_current_func->name = StringView("__module_init", 13);
+    begin_ir_function(StringView("__module_init", 13), /*is_pub=*/false, 0);
     m_current_func->return_type = m_types.void_type();
-    m_current_source_line = 0;
     setup_parameters(Span<Param>(), nullptr);
     begin_function_body(false);
 
@@ -491,10 +489,7 @@ IRFunction* IRBuilder::build_module_init(Program* /*program*/) {
     }
 
     end_function_body();
-    IRFunction* result = m_current_func;
-    m_current_func = nullptr;
-    m_current_block = nullptr;
-    return result;
+    return finish_ir_function();
 }
 
 // Synthesize `__module_shutdown`: destroy noncopyable globals (uniq/List/Map,
@@ -513,10 +508,8 @@ IRFunction* IRBuilder::build_module_shutdown() {
     }
     if (!any) return nullptr;
 
-    m_current_func = m_allocator.emplace<IRFunction>();
-    m_current_func->name = StringView("__module_shutdown", 17);
+    begin_ir_function(StringView("__module_shutdown", 17), /*is_pub=*/false, 0);
     m_current_func->return_type = m_types.void_type();
-    m_current_source_line = 0;
     setup_parameters(Span<Param>(), nullptr);
     begin_function_body(false);
 
@@ -552,10 +545,7 @@ IRFunction* IRBuilder::build_module_shutdown() {
     }
 
     end_function_body();
-    IRFunction* result = m_current_func;
-    m_current_func = nullptr;
-    m_current_block = nullptr;
-    return result;
+    return finish_ir_function();
 }
 
 void IRBuilder::collect_backend_types(Program* program) {
@@ -586,40 +576,71 @@ void IRBuilder::collect_backend_types(Program* program) {
     }
 }
 
-IRFunction* IRBuilder::build_function(FunDecl* decl) {
+void IRBuilder::begin_ir_function(StringView name, bool is_pub, u32 source_line) {
     m_current_func = m_allocator.emplace<IRFunction>();
+    m_current_func->name = name;
+    m_current_func->is_pub = is_pub;
+    m_current_func->source_line = source_line;
+    // Instructions emitted before the first statement (parameter RefIncs,
+    // zero-init preambles, synthesized bodies) carry "unknown" rather than a
+    // stale line from the previously built function.
+    m_current_source_line = 0;
+}
+
+IRFunction* IRBuilder::finish_ir_function() {
+    IRFunction* result = m_current_func;
+    m_current_func = nullptr;
+    m_current_block = nullptr;
+    return result;
+}
+
+void IRBuilder::gen_body(Stmt* body) {
+    if (!body || body->kind != AstKind::StmtBlock) return;
+    for (auto* decl : body->block.declarations) {
+        gen_decl(decl);
+    }
+}
+
+void IRBuilder::add_hidden_return_param() {
+    if (!m_current_func->returns_large_struct()) return;
+    BlockParam hidden_param;
+    hidden_param.value = m_current_func->new_value();
+    hidden_param.type = m_current_func->return_type;  // Pointer to struct
+    hidden_param.name = "__ret_ptr";
+    m_current_func->params.push_back(hidden_param);
+    m_current_func->param_is_ptr.push_back(true);
+}
+
+Type* IRBuilder::resolve_return_type(TypeExpr* return_type_expr, StringView symbol_name) {
+    if (!return_type_expr) return m_types.void_type();
+    // Prefer the symbol table's resolved function type (semantic analysis
+    // already resolved it) for declarations that are function symbols.
+    if (!symbol_name.empty()) {
+        Symbol* func_sym = m_symbols.lookup(symbol_name);
+        if (func_sym && func_sym->type && func_sym->type->is_function()) {
+            return func_sym->type->func_info.return_type;
+        }
+    }
+    Type* type = m_type_env.type_by_name(return_type_expr->name);
+    if (!type) type = m_types.void_type();
+    return apply_ref_kind(type, return_type_expr->ref_kind);
+}
+
+IRFunction* IRBuilder::build_function(FunDecl* decl) {
     // Non-pub functions are scoped to their module so they don't collide at link time.
     // "main" is the program entry point convention — leave it un-mangled so the host
     // can still invoke it via vm_call(&vm, "main", {}).
-    if (!decl->is_pub && decl->name != StringView("main", 4)) {
-        m_current_func->name = mangle_module_local(decl->name);
-    } else {
-        m_current_func->name = decl->name;
-    }
-    m_current_func->is_pub = decl->is_pub;
+    StringView name = (!decl->is_pub && decl->name != StringView("main", 4))
+        ? mangle_module_local(decl->name)
+        : decl->name;
     // Source line for AOT `#line` directives. Use the body's first line —
     // typically the same as the function header or the next line after.
-    if (decl->body) m_current_func->source_line = decl->body->loc.line;
+    begin_ir_function(name, decl->is_pub, decl->body ? decl->body->loc.line : 0);
 
     // Set up parameters
     setup_parameters(decl->params);
 
-    // Resolve return type - check the symbol table first (semantic analysis already resolved it)
-    if (decl->return_type) {
-        // Look up the function's resolved type from the symbol table
-        Symbol* func_sym = m_symbols.lookup(decl->name);
-        if (func_sym && func_sym->type && func_sym->type->is_function()) {
-            m_current_func->return_type = func_sym->type->func_info.return_type;
-        } else {
-            m_current_func->return_type = m_type_env.type_by_name(decl->return_type->name);
-            if (!m_current_func->return_type) {
-                m_current_func->return_type = m_types.void_type();
-            }
-            m_current_func->return_type = apply_ref_kind(m_current_func->return_type, decl->return_type->ref_kind);
-        }
-    } else {
-        m_current_func->return_type = m_types.void_type();
-    }
+    m_current_func->return_type = resolve_return_type(decl->return_type, decl->name);
 
     // Detect coroutine function (returns Coro<T>)
     if (m_current_func->return_type && m_current_func->return_type->is_coroutine()) {
@@ -639,40 +660,17 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     }
 
     // Check for large struct return - add hidden output pointer as last parameter
-    if (m_current_func->returns_large_struct()) {
-        BlockParam hidden_param;
-        hidden_param.value = m_current_func->new_value();
-        hidden_param.type = m_current_func->return_type;  // Pointer to struct
-        hidden_param.name = "__ret_ptr";
-        m_current_func->params.push_back(hidden_param);
-        m_current_func->param_is_ptr.push_back(true);
-    }
+    add_hidden_return_param();
 
-    // Begin function body
     begin_function_body(true);  // skip hidden return pointer
-
-    // Generate body
-    if (decl->body && decl->body->kind == AstKind::StmtBlock) {
-        BlockStmt& block = decl->body->block;
-        for (auto* decl : block.declarations) {
-            gen_decl(decl);
-        }
-    }
-
-    // End function body
+    gen_body(decl->body);
     end_function_body();
-
-    IRFunction* result = m_current_func;
-    m_current_func = nullptr;
-    m_current_block = nullptr;
-    return result;
+    return finish_ir_function();
 }
 
 IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_type) {
-    m_current_func = m_allocator.emplace<IRFunction>();
-    m_current_func->name = mangle_constructor(decl->struct_name, decl->name);
-    m_current_func->is_pub = decl->is_pub;
-    if (decl->body) m_current_func->source_line = decl->body->loc.line;
+    begin_ir_function(mangle_constructor(decl->struct_name, decl->name), decl->is_pub,
+                      decl->body ? decl->body->loc.line : 0);
 
     // Set up parameters with 'self' as first parameter
     setup_parameters(decl->params, struct_type);
@@ -735,28 +733,14 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
         }
     }
 
-    // Generate body
-    if (decl->body && decl->body->kind == AstKind::StmtBlock) {
-        BlockStmt& block = decl->body->block;
-        for (auto* decl : block.declarations) {
-            gen_decl(decl);
-        }
-    }
-
-    // End function body
+    gen_body(decl->body);
     end_function_body();
-
-    IRFunction* result = m_current_func;
-    m_current_func = nullptr;
-    m_current_block = nullptr;
-    return result;
+    return finish_ir_function();
 }
 
 IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type) {
-    m_current_func = m_allocator.emplace<IRFunction>();
-    m_current_func->name = mangle_destructor(decl->struct_name, decl->name);
-    m_current_func->is_pub = decl->is_pub;
-    if (decl->body) m_current_func->source_line = decl->body->loc.line;
+    begin_ir_function(mangle_destructor(decl->struct_name, decl->name), decl->is_pub,
+                      decl->body ? decl->body->loc.line : 0);
 
     // Set up parameters with 'self' as first parameter
     setup_parameters(decl->params, struct_type);
@@ -764,16 +748,8 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
     // Destructors return void
     m_current_func->return_type = m_types.void_type();
 
-    // Begin function body
     begin_function_body(false);
-
-    // Generate body
-    if (decl->body && decl->body->kind == AstKind::StmtBlock) {
-        BlockStmt& block = decl->body->block;
-        for (auto* decl : block.declarations) {
-            gen_decl(decl);
-        }
-    }
+    gen_body(decl->body);
 
     // After child destructor body, call parent's default destructor if present
     // Only chain default destructors (named destructors are called explicitly)
@@ -790,72 +766,34 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
         emit_field_cleanup(m_current_func->params[0].value, struct_type);
     }
 
-    // End function body
     end_function_body();
-
-    IRFunction* result = m_current_func;
-    m_current_func = nullptr;
-    m_current_block = nullptr;
-    return result;
+    return finish_ir_function();
 }
 
 IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
-    m_current_func = m_allocator.emplace<IRFunction>();
-    m_current_func->name = mangle_method(decl->struct_name, decl->name);
-    m_current_func->is_pub = decl->is_pub;
-    if (decl->body) m_current_func->source_line = decl->body->loc.line;
+    begin_ir_function(mangle_method(decl->struct_name, decl->name), decl->is_pub,
+                      decl->body ? decl->body->loc.line : 0);
 
     // Set up parameters with 'self' as first parameter
     setup_parameters(decl->params, struct_type);
 
-    // Resolve return type
-    if (decl->return_type) {
-        m_current_func->return_type = m_type_env.type_by_name(decl->return_type->name);
-        if (!m_current_func->return_type) {
-            m_current_func->return_type = m_types.void_type();
-        }
-        m_current_func->return_type = apply_ref_kind(m_current_func->return_type, decl->return_type->ref_kind);
-    } else {
-        m_current_func->return_type = m_types.void_type();
-    }
+    // Resolve return type (methods aren't function symbols — pass no name)
+    m_current_func->return_type = resolve_return_type(decl->return_type, StringView());
 
     // Check for large struct return - add hidden output pointer as last parameter
-    if (m_current_func->returns_large_struct()) {
-        BlockParam hidden_param;
-        hidden_param.value = m_current_func->new_value();
-        hidden_param.type = m_current_func->return_type;
-        hidden_param.name = "__ret_ptr";
-        m_current_func->params.push_back(hidden_param);
-        m_current_func->param_is_ptr.push_back(true);
-    }
+    add_hidden_return_param();
 
-    // Begin function body
     begin_function_body(true);  // skip hidden return pointer
-
-    // Generate body
-    if (decl->body && decl->body->kind == AstKind::StmtBlock) {
-        BlockStmt& block = decl->body->block;
-        for (auto* decl : block.declarations) {
-            gen_decl(decl);
-        }
-    }
-
-    // End function body
+    gen_body(decl->body);
     end_function_body();
-
-    IRFunction* result = m_current_func;
-    m_current_func = nullptr;
-    m_current_block = nullptr;
-    return result;
+    return finish_ir_function();
 }
 
 IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) {
-    m_current_func = m_allocator.emplace<IRFunction>();
-
     StructTypeInfo& struct_type_info = struct_type->struct_info;
-    m_current_func->name = mangle_constructor(struct_type_info.name);
-    m_current_func->is_pub = struct_type_info.decl
-        && struct_type_info.decl->struct_decl.is_pub;
+    begin_ir_function(mangle_constructor(struct_type_info.name),
+                      struct_type_info.decl && struct_type_info.decl->struct_decl.is_pub,
+                      0);
 
     // Set up parameters - only 'self'
     setup_parameters({}, struct_type);
@@ -883,11 +821,7 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
 
     // End function body (will add implicit return)
     end_function_body();
-
-    IRFunction* result = m_current_func;
-    m_current_func = nullptr;
-    m_current_block = nullptr;
-    return result;
+    return finish_ir_function();
 }
 
 ValueId IRBuilder::emit_zero_value(Type* type) {
@@ -965,12 +899,10 @@ void IRBuilder::emit_struct_default_init(ValueId ptr, Type* struct_type) {
 }
 
 IRFunction* IRBuilder::build_synthesized_default_destructor(Type* struct_type) {
-    m_current_func = m_allocator.emplace<IRFunction>();
-
     StructTypeInfo& struct_type_info = struct_type->struct_info;
-    m_current_func->name = mangle_destructor(struct_type_info.name);
-    m_current_func->is_pub = struct_type_info.decl
-        && struct_type_info.decl->struct_decl.is_pub;
+    begin_ir_function(mangle_destructor(struct_type_info.name),
+                      struct_type_info.decl && struct_type_info.decl->struct_decl.is_pub,
+                      0);
 
     // Set up parameters - only 'self'
     setup_parameters({}, struct_type);
@@ -998,20 +930,13 @@ IRFunction* IRBuilder::build_synthesized_default_destructor(Type* struct_type) {
     // Clean up uniq fields
     emit_field_cleanup(self_ptr, struct_type);
 
-    // End function body
     end_function_body();
-
-    IRFunction* result = m_current_func;
-    m_current_func = nullptr;
-    m_current_block = nullptr;
-    return result;
+    return finish_ir_function();
 }
 
 IRFunction* IRBuilder::build_cleanup_wrapper(Type* noncopyable_type, u32 wrapper_index) {
-    m_current_func = m_allocator.emplace<IRFunction>();
-
-    // Name: __cleanup_wrapper_<index>
-    m_current_func->name = intern_format("__cleanup_wrapper_{}", wrapper_index);
+    begin_ir_function(intern_format("__cleanup_wrapper_{}", wrapper_index),
+                      /*is_pub=*/false, 0);
 
     // Single parameter: the list/map pointer
     m_current_func->return_type = m_types.void_type();
@@ -1038,10 +963,7 @@ IRFunction* IRBuilder::build_cleanup_wrapper(Type* noncopyable_type, u32 wrapper
         m_current_block->terminator.return_value = ValueId::invalid();
     }
 
-    IRFunction* result = m_current_func;
-    m_current_func = nullptr;
-    m_current_block = nullptr;
-    return result;
+    return finish_ir_function();
 }
 
 // Block management

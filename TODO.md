@@ -89,12 +89,6 @@ emission idioms repeated dozens of times. Correctness-adjacent items first.
   Perf tie-in: the per-scope `Vector<robin_map>` copies were a top profile entry
   in the 2026-07-05 measurement (see the move-state snapshot item above);
   centralizing the snapshot into one type is the prerequisite for an undo log.
-- [ ] **Dedup function-building scaffolding across the eight `build_*` entry
-  points**: prologue (emplace + name/is_pub/source_line), epilogue
-  (result/null/null — 8 verbatim copies), body loop (4 copies), hidden
-  large-struct-return param block (`build_function`/`build_method` verbatim),
-  return-type resolution. `begin_ir_function`/`finish_ir_function` + `gen_body` +
-  `add_hidden_return_param`.
 - [ ] **Split the TU / extract collaborators** (the semantic.cpp precedent):
   (a) zero-risk `.cpp` split into decls/stmt/expr/lifetime files; (b) easy
   extraction of Phase-1 folding (`try_fold_*` / `try_simplify_*`, ~350

@@ -389,6 +389,29 @@ private:
     // Apply reference wrapper to base type based on RefKind
     Type* apply_ref_kind(Type* base_type, RefKind ref_kind);
 
+    // Function-building scaffolding shared by every build_* entry point.
+    // begin_ir_function allocates m_current_func, stamps name / is_pub /
+    // source_line (0 = synthesized), and resets the per-instruction source-line
+    // tracker. finish_ir_function returns the built function and clears the
+    // builder's current-function/block state.
+    void begin_ir_function(StringView name, bool is_pub, u32 source_line);
+    IRFunction* finish_ir_function();
+
+    // Generate a StmtBlock body's declarations (no-op for null / non-block).
+    void gen_body(Stmt* body);
+
+    // Append the hidden output-pointer parameter when the current function
+    // returns a large struct (no-op otherwise). Call after return_type is set,
+    // before begin_function_body.
+    void add_hidden_return_param();
+
+    // Resolve a declared return type (null = void). When `symbol_name` names a
+    // function symbol whose type semantic analysis already resolved, prefer
+    // that; otherwise resolve by name + ref kind. Methods pass an empty
+    // symbol_name — they aren't in the symbol table, and a same-named free
+    // function must not hijack the lookup.
+    Type* resolve_return_type(TypeExpr* return_type_expr, StringView symbol_name);
+
     // Set up function parameters from a list of Params
     // If self_type is non-null, adds 'self' as the first parameter with ref<self_type>
     void setup_parameters(Span<Param> params, Type* self_type = nullptr);
