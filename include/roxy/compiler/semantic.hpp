@@ -175,6 +175,13 @@ private:
 
     // Pass 3 body analysis (statement-level var decls are analyzed in-body).
     void analyze_var_decl(Decl* decl);
+    // Shared core of analyze_var_decl (local) and resolve_global_var (global):
+    // analyze the initializer, coerce a generic-template-ref against the
+    // declared type, infer the type when none was declared (rejecting nil,
+    // defaulting int literals to i32), check assignability, and consume a
+    // noncopyable source. `declared_type` is the resolved annotation, or null
+    // when there is none. Returns the finalized variable type.
+    Type* analyze_var_initializer(VarDecl& var_decl, Decl* decl, Type* declared_type);
     void analyze_fun_body(Decl* decl);
     // Shared body analysis for constructors/destructors/methods; sets up the
     // per-function context (is_delete_destructor forbids throw in the body).

@@ -197,4 +197,39 @@ TEST_SUITE("E2E Globals") {
         CHECK(dm.success == true);
         CHECK(dm.value == 0);
     }
+
+    // Module globals share the local-var declaration rules (resolve_global_var
+    // routes through analyze_var_initializer): redefinition, nil-inference, and
+    // noncopyable move tracking all apply. These were gaps before the paths
+    // were unified. Compile-only, so plain TEST_CASE.
+    TEST_CASE("redefinition of a global is a compile error") {
+        const char* source = R"(
+            var x: i32 = 1;
+            var x: i32 = 2;
+            fun main(): i32 { return x; }
+        )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) == nullptr);
+    }
+
+    TEST_CASE("global inferred from nil is a compile error") {
+        const char* source = R"(
+            var g = nil;
+            fun main(): i32 { return 0; }
+        )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) == nullptr);
+    }
+
+    TEST_CASE("use-after-move between uniq globals is a compile error") {
+        const char* source = R"(
+            struct Box { v: i32; }
+            var a: uniq Box = uniq Box { v = 1 };
+            var b: uniq Box = a;   // moves a
+            var c: uniq Box = a;   // a is moved-from here
+            fun main(): i32 { return 0; }
+        )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) == nullptr);
+    }
 }

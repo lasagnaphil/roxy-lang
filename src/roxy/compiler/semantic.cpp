@@ -529,36 +529,25 @@ void SemanticAnalyzer::register_fun_signature(Decl* decl) {
 void SemanticAnalyzer::resolve_global_var(Decl* decl) {
     VarDecl& var_decl = decl->var_decl;
 
-    Type* var_type = nullptr;
-    if (var_decl.type) {
-        var_type = resolve_type_expr(var_decl.type);
+    // Same duplicate/inference/move-tracking rules as a local var (see
+    // analyze_var_decl); module globals are analyzed once, here in the
+    // declaration pass, so their initializers' move states track between
+    // globals (a later global moving an earlier uniq global is caught).
+    if (m_symbols.lookup_local(var_decl.name)) {
+        error_fmt(decl->loc, "redefinition of '{}'", var_decl.name);
+        return;
     }
 
-    if (var_decl.initializer) {
-        Type* init_type = analyze_expr(var_decl.initializer);
-        if (var_type && m_generic_calls.coerce_generic_template_ref(var_decl.initializer, var_type)) {
-            init_type = var_decl.initializer->resolved_type;
-        }
-        if (!var_type) {
-            // Type inference
-            var_type = init_type;
-            if (var_type->is_int_literal()) {
-                var_type = m_types.i32_type();
-                m_checker.coerce_int_literal(var_decl.initializer, var_type);
-            }
-        } else if (!m_checker.check_assignable(var_type, init_type, decl->loc)) {
-            // Error already reported by check_assignable
-        } else {
-            m_checker.coerce_int_literal(var_decl.initializer, var_type);
-        }
-    } else if (!var_type) {
-        error(decl->loc, "variable declaration requires type annotation or initializer");
-        var_type = m_types.error_type();
-    }
+    Type* var_type = var_decl.type ? resolve_type_expr(var_decl.type) : nullptr;
+    var_type = analyze_var_initializer(var_decl, decl, var_type);
 
     var_decl.resolved_type = var_type;
     Symbol* sym = m_symbols.define(SymbolKind::Variable, var_decl.name, var_type, decl->loc, decl);
     sym->is_pub = var_decl.is_pub;
+
+    if (var_type && var_type->noncopyable()) {
+        m_lifetimes.track_live(sym);
+    }
 }
 
 void SemanticAnalyzer::resolve_constructor_member(Decl* decl) {
@@ -1164,20 +1153,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
 
 // ===== Declaration Analysis =====
 
-void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
-    VarDecl& var_decl = decl->var_decl;
-
-    // Check for duplicate in current scope
-    if (m_symbols.lookup_local(var_decl.name)) {
-        error_fmt(decl->loc, "redefinition of '{}'", var_decl.name);
-        return;
-    }
-
-    Type* var_type = nullptr;
-    if (var_decl.type) {
-        var_type = resolve_type_expr(var_decl.type);
-    }
-
+Type* SemanticAnalyzer::analyze_var_initializer(VarDecl& var_decl, Decl* decl, Type* var_type) {
     if (var_decl.initializer) {
         Type* init_type = analyze_expr(var_decl.initializer);
         // Resolve generic-template-ref initializers against the declared type
@@ -1211,6 +1187,20 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
         error(decl->loc, "variable declaration requires type annotation or initializer");
         var_type = m_types.error_type();
     }
+    return var_type;
+}
+
+void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
+    VarDecl& var_decl = decl->var_decl;
+
+    // Check for duplicate in current scope
+    if (m_symbols.lookup_local(var_decl.name)) {
+        error_fmt(decl->loc, "redefinition of '{}'", var_decl.name);
+        return;
+    }
+
+    Type* var_type = var_decl.type ? resolve_type_expr(var_decl.type) : nullptr;
+    var_type = analyze_var_initializer(var_decl, decl, var_type);
 
     var_decl.resolved_type = var_type;
     Symbol* var_sym = m_symbols.define(SymbolKind::Variable, var_decl.name, var_type, decl->loc, decl);
