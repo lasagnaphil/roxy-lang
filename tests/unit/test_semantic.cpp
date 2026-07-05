@@ -707,6 +707,31 @@ TEST_SUITE("Semantic") {
         CHECK(!t.has_error_containing("'Green'"));
     }
 
+    TEST_CASE("Semantic: Coro<T> unifies during generic inference") {
+        // Inference from a Coro argument used to fail outright ("cannot infer
+        // type arguments"). Unification now binds T from the yield type; the
+        // remaining error is the honest pre-existing limitation that a
+        // coroutine value (per-function type) is not assignable to an
+        // annotated Coro<T> parameter (interned generic type).
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        fun make(): Coro<i32> {
+            yield 1;
+        }
+
+        fun first<T>(c: Coro<T>): i32 {
+            return 0;
+        }
+
+        fun test(): i32 {
+            var c = make();
+            return first(c);
+        }
+    )"));
+        CHECK(!t.has_error_containing("cannot infer type arguments"));
+        CHECK(t.has_error_containing("cannot assign"));
+    }
+
     TEST_CASE("Semantic: Printable error renders the type name (not %s)") {
         SemanticTestHelper t;
         CHECK(!t.run(R"(

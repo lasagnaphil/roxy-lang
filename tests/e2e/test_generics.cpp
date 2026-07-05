@@ -1367,4 +1367,25 @@ TEST_SUITE("E2E Generics") {
         }
     }
 
+    TEST_CASE_TEMPLATE("Generic inference from Map parameter", Backend, RX_E2E_BACKENDS) {
+        // unify_type_expr used to special-case only List among the builtin
+        // containers, so K/V could not be inferred from a Map argument.
+        const char* source = R"(
+        fun map_len<K, V>(m: inout Map<K, V>): i32 {
+            return m.len();
+        }
+
+        fun main(): i32 {
+            var m: Map<string, i32> = Map<string, i32>();
+            m.insert("a", 1);
+            m.insert("b", 2);
+            return map_len(inout m);
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 2);
+    }
+
 }  // TEST_SUITE("E2E Generics")

@@ -4870,6 +4870,25 @@ bool SemanticAnalyzer::unify_type_expr(TypeExpr* pattern, Type* concrete,
                                type_params, bindings);
     }
 
+    // Map<K, V> pattern against Map type
+    if (pattern->name == "Map" && pattern->type_args.size() == 2 && concrete->is_map()) {
+        return unify_type_expr(pattern->type_args[0], concrete->map_info.key_type,
+                               type_params, bindings)
+            && unify_type_expr(pattern->type_args[1], concrete->map_info.value_type,
+                               type_params, bindings);
+    }
+
+    // Coro<T> pattern against a coroutine type. Inference binds T from the
+    // yield type; note that *passing* the coro still fails assignability
+    // afterward (annotated Coro<T> resolves to the interned generic type,
+    // while a coroutine value carries its per-function type — see
+    // coroutine_type_for_func), but the diagnostic now points at that real
+    // limitation instead of a bogus "cannot infer type arguments".
+    if (pattern->name == "Coro" && pattern->type_args.size() == 1 && concrete->is_coroutine()) {
+        return unify_type_expr(pattern->type_args[0], concrete->coro_info.yield_type,
+                               type_params, bindings);
+    }
+
     // Generic struct pattern: e.g., Box<T> against Box$i32
     if (pattern->type_args.size() > 0 && concrete->is_struct()) {
         GenericStructInstance* inst = m_type_env.generics().find_struct_instance_by_type(concrete);
