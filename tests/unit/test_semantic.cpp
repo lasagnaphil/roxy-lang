@@ -732,6 +732,25 @@ TEST_SUITE("Semantic") {
         CHECK(t.has_error_containing("cannot assign"));
     }
 
+    TEST_CASE("Semantic: coroutine methods get an honest unsupported error") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        struct S { n: i32 = 3; }
+
+        fun S.count(): Coro<i32> {
+            var i: i32 = self.n;
+            while (i > 0) {
+                yield i;
+                i = i - 1;
+            }
+        }
+    )"));
+        CHECK(t.has_error_containing("coroutine methods are not yet supported"));
+        // The old behavior was a misleading yield-placement error on a method
+        // that plainly returns Coro<T>.
+        CHECK(!t.has_error_containing("'yield' can only appear inside a coroutine function"));
+    }
+
     TEST_CASE("Semantic: Printable error renders the type name (not %s)") {
         SemanticTestHelper t;
         CHECK(!t.run(R"(

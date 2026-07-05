@@ -2243,6 +2243,22 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
                                             Type* return_type) {
     if (!body) return;
 
+    // Coroutine methods are not supported yet: resolve_method_member never
+    // creates the per-function coroutine type (coroutine_type_for_func), and
+    // coroutine lowering has no state-machine path that carries `self`.
+    // Report the real limitation once, then analyze the body in coroutine
+    // context so every `yield` inside doesn't pile on a misleading
+    // "'yield' can only appear inside a coroutine function" error.
+    ScopedValue coro_guard(m_in_coroutine);
+    ScopedValue yield_guard(m_coro_yield_type);
+    if (return_type && return_type->is_coroutine()) {
+        error(decl->loc, "coroutine methods are not yet supported; use a free "
+                         "function returning Coro<T> that takes the struct as "
+                         "a parameter");
+        m_in_coroutine = true;
+        m_coro_yield_type = return_type->coro_info.yield_type;
+    }
+
     // Reset move states for this function body (restored on exit by the guard).
     ScopedValue move_states_guard(m_move_states);
     m_move_states.clear();
