@@ -3602,8 +3602,39 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
     return m_types.error_type();
 }
 
+bool SemanticAnalyzer::check_container_copy_method(Expr* expr, Type* base_type,
+                                                   StringView method_name) {
+    if (method_name != StringView("copy", 4) || !base_type) return true;
+
+    if (base_type->is_list()) {
+        Type* et = base_type->list_info.element_type;
+        if (et && !et->is_copy()) {
+            error_fmt(expr->loc,
+                "cannot '.copy()' a List with a non-copyable element type '{}' "
+                "(its elements own resources that can't be duplicated)",
+                m_checker.type_string(et).data());
+            return false;
+        }
+    } else if (base_type->is_map()) {
+        Type* kt = base_type->map_info.key_type;
+        Type* vt = base_type->map_info.value_type;
+        if ((kt && !kt->is_copy()) || (vt && !vt->is_copy())) {
+            error_fmt(expr->loc,
+                "cannot '.copy()' a Map with a non-copyable key or value type "
+                "(its entries own resources that can't be duplicated)");
+            return false;
+        }
+    }
+    return true;
+}
+
 Type* SemanticAnalyzer::analyze_builtin_method_call(Expr* expr, CallExpr& ce, GetExpr& ge,
                                                      Type* obj_type, const MethodInfo* mi) {
+    Type* base_type = obj_type->base_type();
+    if (!check_container_copy_method(expr, base_type, mi->name)) {
+        return m_types.error_type();
+    }
+
     if (ce.arguments.size() != mi->param_types.size()) {
         error_fmt(expr->loc, "{}() takes {} argument{} but got {}",
                  mi->name, mi->param_types.size(),
@@ -3616,7 +3647,6 @@ Type* SemanticAnalyzer::analyze_builtin_method_call(Expr* expr, CallExpr& ce, Ge
     ge.object->resolved_type = obj_type;
 
     // Set callee's resolved_type to a function type for IR builder move tracking
-    Type* base_type = obj_type->base_type();
     ce.callee->resolved_type = build_method_function_type(base_type, mi);
 
     return mi->return_type;
@@ -3762,35 +3792,12 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
             Type* base_type = obj_type->base_type();
 
             if (base_type && base_type->is_list()) {
-                // `.copy()` deep-copies the element buffer, so it can only duplicate
-                // copyable elements. A noncopyable element (`uniq`, a nested
-                // container, a struct with a destructor) owns a resource that can't
-                // be duplicated — a shallow copy would double-free. (`ref`/`weak`
-                // elements are copyable: the copy re-increments the borrow.)
-                Type* et = base_type->list_info.element_type;
-                if (get_expr.name == StringView("copy", 4) && et && !et->is_copy()) {
-                    error_fmt(expr->loc,
-                        "cannot '.copy()' a List with a non-copyable element type '{}' "
-                        "(its elements own resources that can't be duplicated)",
-                        m_checker.type_string(et).data());
-                    return m_types.error_type();
-                }
                 const MethodInfo* mi = lookup_list_method(base_type->list_info, get_expr.name);
                 if (mi) return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
                 error_fmt(expr->loc, "List has no method '{}'", get_expr.name);
                 return m_types.error_type();
             }
             if (base_type && base_type->is_map()) {
-                // See the List note above: `.copy()` needs copyable key AND value.
-                Type* kt = base_type->map_info.key_type;
-                Type* vt = base_type->map_info.value_type;
-                if (get_expr.name == StringView("copy", 4) &&
-                    ((kt && !kt->is_copy()) || (vt && !vt->is_copy()))) {
-                    error_fmt(expr->loc,
-                        "cannot '.copy()' a Map with a non-copyable key or value type "
-                        "(its entries own resources that can't be duplicated)");
-                    return m_types.error_type();
-                }
                 const MethodInfo* mi = lookup_map_method(base_type->map_info, get_expr.name);
                 if (mi) return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
                 error_fmt(expr->loc, "Map has no method '{}'", get_expr.name);

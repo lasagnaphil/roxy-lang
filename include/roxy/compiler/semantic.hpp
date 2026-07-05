@@ -241,6 +241,13 @@ private:
     Type* analyze_generic_struct_constructor_call(Expr* expr, CallExpr& ce, StringView func_name);
     Type* analyze_super_call(Expr* expr, CallExpr& ce);
     Type* analyze_builtin_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, const MethodInfo* mi);
+    // `.copy()` on a List/Map deep-copies the backing buffer, so it needs
+    // copyable elements (List) or copyable key AND value (Map) — a noncopyable
+    // element owns a resource a shallow copy would double-free. No-op for any
+    // other method or container kind. Returns false (error reported) when the
+    // copy is rejected. On the builtin-method-call path so both container
+    // dispatch arms share it.
+    bool check_container_copy_method(Expr* expr, Type* base_type, StringView method_name);
     Type* analyze_struct_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, Type* base_type);
     Type* analyze_regular_fun_call(Expr* expr, CallExpr& ce);
 
