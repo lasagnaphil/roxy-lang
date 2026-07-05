@@ -392,9 +392,6 @@ void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
     // Then add own fields
     for (auto& field : struct_decl.fields) {
         Type* field_type = resolve_type_expr(field.type);
-        if (!field_type) {
-            field_type = m_types.error_type();
-        }
 
         // A value-embedded struct field contributes its full layout, so the
         // field's struct must be resolved first (recurses; reports the
@@ -507,13 +504,11 @@ void SemanticAnalyzer::register_fun_signature(Decl* decl) {
     Vector<Type*> param_types;
     for (const auto& param : fun_decl.params) {
         Type* ptype = resolve_type_expr(param.type);
-        if (!ptype) ptype = m_types.error_type();
         param_types.push_back(ptype);
     }
 
     // Resolve return type
     Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
-    if (!return_type) return_type = m_types.error_type();
 
     // For coroutine functions, create a function-specific coroutine type
     // so that method calls (.resume(), .done()) can be resolved to the
@@ -683,9 +678,7 @@ void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
     for (auto& wfd : when_decls) {
         // Resolve discriminant type - must be enum
         Type* disc_type = resolve_type_expr(wfd.discriminant_type);
-        if (!disc_type || disc_type->is_error()) {
-            disc_type = m_types.error_type();
-        } else if (!disc_type->is_enum()) {
+        if (!disc_type->is_error() && !disc_type->is_enum()) {
             error_fmt(wfd.loc, "when discriminant must be an enum type");
             disc_type = m_types.error_type();
         }
@@ -731,7 +724,6 @@ void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
             u32 var_slot = 0;
             for (auto& field : case_decl.fields) {
                 Type* field_type = resolve_type_expr(field.type);
-                if (!field_type) field_type = m_types.error_type();
 
                 // Value-embedded struct variant fields contribute layout, so
                 // the field's struct must be resolved first (same rule as
@@ -989,7 +981,6 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
     bool has_cycle = false;
     for (u32 fi = 0; fi < struct_decl.fields.size(); fi++) {
         Type* field_type = resolve_type_expr(struct_decl.fields[fi].type);
-        if (!field_type) field_type = m_types.error_type();
 
         // Same rule as resolve_struct_members: a value-embedded struct field
         // must have its members resolved first (recurses for declaration-order
@@ -1041,7 +1032,6 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         Vector<Type*> param_types;
         for (const auto& param : ctor.params) {
             Type* ptype = resolve_type_expr(param.type);
-            if (!ptype) ptype = m_types.error_type();
             param_types.push_back(ptype);
         }
 
@@ -1058,7 +1048,6 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         Vector<Type*> param_types;
         for (const auto& param : dtor.params) {
             Type* ptype = resolve_type_expr(param.type);
-            if (!ptype) ptype = m_types.error_type();
             param_types.push_back(ptype);
         }
 
@@ -1076,12 +1065,10 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         Vector<Type*> param_types;
         for (const auto& param : method.params) {
             Type* ptype = resolve_type_expr(param.type);
-            if (!ptype) ptype = m_types.error_type();
             param_types.push_back(ptype);
         }
 
         Type* return_type = method.return_type ? resolve_type_expr(method.return_type) : m_types.void_type();
-        if (!return_type) return_type = m_types.error_type();
 
         MethodInfo method_info;
         method_info.name = method.name;
@@ -1127,20 +1114,24 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
 }
 
 Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
-    if (!type_expr) return nullptr;
+    // Never returns null: a null TypeExpr (possible in LSP-recovered ASTs)
+    // and every resolution failure yield error_type. Callers that treat "no
+    // annotation" as a signal (e.g. var-decl inference) must branch on the
+    // TypeExpr itself, not on the result.
+    if (!type_expr) return m_types.error_type();
 
     // Function type: fun(T1, T2) -> R
     if (type_expr->kind == TypeExprKind::Function) {
         Vector<Type*> params;
         for (auto* param_expr : type_expr->type_args) {
             Type* pt = resolve_type_expr(param_expr);
-            if (!pt || pt->is_error()) return m_types.error_type();
+            if (pt->is_error()) return m_types.error_type();
             params.push_back(pt);
         }
         Type* ret = type_expr->return_type
             ? resolve_type_expr(type_expr->return_type)
             : m_types.void_type();
-        if (!ret || ret->is_error()) return m_types.error_type();
+        if (ret->is_error()) return m_types.error_type();
         Type* base_type = m_types.function_type(m_allocator.alloc_span(params), ret);
 
         switch (type_expr->ref_kind) {
@@ -1181,7 +1172,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
                 return m_types.error_type();
             }
             Type* elem = resolve_type_expr(type_expr->type_args[0]);
-            if (!elem || elem->is_error()) return m_types.error_type();
+            if (elem->is_error()) return m_types.error_type();
             base_type = m_types.list_type(elem);
             populate_list_methods(base_type);
         }
@@ -1193,7 +1184,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
                 return m_types.error_type();
             }
             Type* yield_type = resolve_type_expr(type_expr->type_args[0]);
-            if (!yield_type || yield_type->is_error()) return m_types.error_type();
+            if (yield_type->is_error()) return m_types.error_type();
             base_type = m_types.coroutine_type(yield_type);
             populate_coro_methods(base_type);
         }
@@ -1206,8 +1197,8 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             }
             Type* key_type = resolve_type_expr(type_expr->type_args[0]);
             Type* val_type = resolve_type_expr(type_expr->type_args[1]);
-            if (!key_type || key_type->is_error()) return m_types.error_type();
-            if (!val_type || val_type->is_error()) return m_types.error_type();
+            if (key_type->is_error()) return m_types.error_type();
+            if (val_type->is_error()) return m_types.error_type();
             if (!is_hashable_key_type(key_type)) {
                 error(type_expr->loc, "Map key type must implement Hash");
                 return m_types.error_type();
@@ -1223,7 +1214,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             Vector<Type*> type_arg_types;
             for (auto* type_arg : type_expr->type_args) {
                 Type* arg_type = resolve_type_expr(type_arg);
-                if (!arg_type || arg_type->is_error()) return m_types.error_type();
+                if (arg_type->is_error()) return m_types.error_type();
                 type_arg_types.push_back(arg_type);
             }
 
@@ -1374,7 +1365,6 @@ void SemanticAnalyzer::analyze_fun_body(Decl* decl) {
     for (u32 i = 0; i < fun_decl.params.size(); i++) {
         Param& p = fun_decl.params[i];
         Type* ptype = resolve_type_expr(p.type);
-        if (!ptype) ptype = m_types.error_type();
         p.resolved_type = ptype;
 
         // Check for duplicate parameter names
@@ -1527,7 +1517,6 @@ void SemanticAnalyzer::register_constructor_signature(Decl* decl) {
     Vector<Type*> param_types;
     for (const auto& param : constructor_decl.params) {
         Type* ptype = resolve_type_expr(param.type);
-        if (!ptype) ptype = m_types.error_type();
         param_types.push_back(ptype);
     }
 
@@ -1576,7 +1565,6 @@ void SemanticAnalyzer::register_destructor_signature(Decl* decl) {
     Vector<Type*> param_types;
     for (const auto& param : destructor_decl.params) {
         Type* ptype = resolve_type_expr(param.type);
-        if (!ptype) ptype = m_types.error_type();
         param_types.push_back(ptype);
     }
 
@@ -1620,13 +1608,11 @@ void SemanticAnalyzer::register_method_signature(Decl* decl) {
     Vector<Type*> param_types;
     for (const auto& param : method_decl.params) {
         Type* ptype = resolve_type_expr(param.type);
-        if (!ptype) ptype = m_types.error_type();
         param_types.push_back(ptype);
     }
 
     // Resolve return type
     Type* return_type = method_decl.return_type ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
-    if (!return_type) return_type = m_types.error_type();
 
     // Create method info
     MethodInfo method_info;
@@ -1685,7 +1671,6 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
     for (u32 i = 0; i < params.size(); i++) {
         Param& p = params[i];
         Type* ptype = resolve_type_expr(p.type);
-        if (!ptype) ptype = m_types.error_type();
 
         if (m_symbols.lookup_local(p.name)) {
             error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
@@ -1725,7 +1710,6 @@ void SemanticAnalyzer::analyze_destructor_body(Decl* decl, Type* struct_type) {
 void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
     MethodDecl& method_decl = decl->method_decl;
     Type* return_type = method_decl.return_type ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
-    if (!return_type) return_type = m_types.error_type();
     analyze_member_body(decl, struct_type, method_decl.params, method_decl.body, return_type);
 }
 
@@ -2293,7 +2277,7 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
         if (clause.exception_type) {
             // Typed catch: catch (e: Type)
             Type* catch_type = resolve_type_expr(clause.exception_type);
-            if (catch_type && !catch_type->is_error()) {
+            if (!catch_type->is_error()) {
                 Type* base = catch_type->base_type();
                 if (!base->is_struct()) {
                     error(clause.loc, "catch type must be a struct type that implements Exception");
@@ -2777,11 +2761,11 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
     Vector<Type*> sig_param_types;
     for (auto& p : le.params) {
         Type* pt = resolve_type_expr(p.type);
-        if (!pt || pt->is_error()) return m_types.error_type();
+        if (pt->is_error()) return m_types.error_type();
         sig_param_types.push_back(pt);
     }
     Type* ret_type = le.return_type ? resolve_type_expr(le.return_type) : m_types.void_type();
-    if (!ret_type || ret_type->is_error()) return m_types.error_type();
+    if (ret_type->is_error()) return m_types.error_type();
 
     u32 lambda_id = m_lambda_id_counter++;
     StringView env_name = alloc_view_fmt(m_allocator, "__lambda_%u_env", lambda_id);
@@ -3170,7 +3154,6 @@ Decl* SemanticAnalyzer::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
         for (u32 i = 0; i < fd.params.size(); i++) {
             Param& p = fd.params[i];
             Type* ptype = resolve_type_expr(p.type);
-            if (!ptype) ptype = m_types.error_type();
             p.resolved_type = ptype;
             if (m_symbols.lookup_local(p.name)) {
                 error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
@@ -3551,7 +3534,7 @@ Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) 
         return m_types.error_type();
     }
     Type* elem_type = resolve_type_expr(ce.type_args[0]);
-    if (!elem_type || elem_type->is_error()) return m_types.error_type();
+    if (elem_type->is_error()) return m_types.error_type();
 
     Type* list_type = m_types.list_type(elem_type);
     populate_list_methods(list_type);
@@ -3623,8 +3606,8 @@ Type* SemanticAnalyzer::analyze_map_constructor_call(Expr* expr, CallExpr& ce) {
     }
     Type* key_type = resolve_type_expr(ce.type_args[0]);
     Type* val_type = resolve_type_expr(ce.type_args[1]);
-    if (!key_type || key_type->is_error()) return m_types.error_type();
-    if (!val_type || val_type->is_error()) return m_types.error_type();
+    if (key_type->is_error()) return m_types.error_type();
+    if (val_type->is_error()) return m_types.error_type();
 
     if (!is_hashable_key_type(key_type)) {
         error(expr->loc, "Map key type must implement Hash");
@@ -3675,7 +3658,7 @@ Type* SemanticAnalyzer::analyze_generic_struct_constructor_call(Expr* expr, Call
     Vector<Type*> type_arg_types;
     for (auto& type_arg : ce.type_args) {
         Type* arg_type = resolve_type_expr(type_arg);
-        if (!arg_type || arg_type->is_error()) return m_types.error_type();
+        if (arg_type->is_error()) return m_types.error_type();
         type_arg_types.push_back(arg_type);
     }
 
@@ -4533,7 +4516,7 @@ Type* SemanticAnalyzer::resolve_struct_literal_type(Expr* expr, StructLiteralExp
         Vector<Type*> type_arg_types;
         for (auto* type_arg : sl.type_args) {
             Type* arg_type = resolve_type_expr(type_arg);
-            if (!arg_type || arg_type->is_error()) return m_types.error_type();
+            if (arg_type->is_error()) return m_types.error_type();
             type_arg_types.push_back(arg_type);
         }
 

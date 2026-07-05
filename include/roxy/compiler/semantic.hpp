@@ -118,7 +118,10 @@ private:
                               u32& current_slot);
     void analyze_function_bodies(Program* program);
 
-    // Type resolution from AST TypeExpr
+    // Type resolution from AST TypeExpr. Never returns null: a null TypeExpr
+    // (LSP-recovered ASTs) and every resolution failure yield error_type, with
+    // the error reported at the failure site. Callers that treat a *missing*
+    // annotation as a signal (var-decl inference) branch on the TypeExpr.
     Type* resolve_type_expr(TypeExpr* type_expr);
 
     // Thunks installed into m_context so collaborators (TraitSystem,

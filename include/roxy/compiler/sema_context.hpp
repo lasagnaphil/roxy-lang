@@ -28,7 +28,8 @@ struct Stmt;
 // - resolve_type_expr: full TypeExpr resolution (generic instantiation,
 //   builtin-container method population, active-type-param lookup) — used by
 //   trait method signatures, `for Trait<Args>` args, impl method types,
-//   generic type args and bounds.
+//   generic type args and bounds. Never returns null (null input and every
+//   failure yield error_type).
 // - analyze_expr / analyze_stmt: re-entry into the expression/statement
 //   walkers — used by generic type-arg inference (arguments are analyzed to
 //   obtain their concrete types) and Phase B generic-template-body checking.

@@ -28,7 +28,7 @@ Span<TraitBound> GenericCallResolver::resolve_type_param_bounds(Span<TypeExpr*> 
         Vector<Type*> resolved_type_args;
         for (auto* type_arg_expr : bound_expr->type_args) {
             Type* arg_type = m_context.resolve_type_expr(type_arg_expr);
-            if (!arg_type || arg_type->is_error()) {
+            if (arg_type->is_error()) {
                 // Already reported
                 continue;
             }
@@ -272,7 +272,6 @@ void GenericCallResolver::analyze_generic_template_body(Decl* decl) {
         Param& param = fun_decl.params[i];
         Type* param_type = m_context.resolve_type_expr(
             generics.substitute_type_expr(param.type, identity_substitution));
-        if (!param_type) param_type = m_types.error_type();
         m_symbols.define_parameter(param.name, param_type, decl->loc, i,
                                    param.modifier != ParamModifier::None);
     }
@@ -513,7 +512,7 @@ Type* GenericCallResolver::analyze_generic_fun_call(Expr* expr, CallExpr& ce, St
     Vector<Type*> type_arg_types;
     for (auto& type_arg : ce.type_args) {
         Type* arg_type = m_context.resolve_type_expr(type_arg);
-        if (!arg_type || arg_type->is_error()) return m_types.error_type();
+        if (arg_type->is_error()) return m_types.error_type();
         type_arg_types.push_back(arg_type);
     }
 
@@ -724,7 +723,7 @@ Type* GenericCallResolver::resolve_explicit_generic_template_ref(Expr* expr) {
     type_arg_types.reserve(id.generic_args.size());
     for (auto* arg_expr : id.generic_args) {
         Type* arg_type = m_context.resolve_type_expr(arg_expr);
-        if (!arg_type || arg_type->is_error()) return m_types.error_type();
+        if (arg_type->is_error()) return m_types.error_type();
         type_arg_types.push_back(arg_type);
     }
 
@@ -744,8 +743,7 @@ Type* GenericCallResolver::resolve_explicit_generic_template_ref(Expr* expr) {
     Vector<Type*> param_types;
     param_types.reserve(inst_decl.params.size());
     for (auto& p : inst_decl.params) {
-        Type* pt = m_context.resolve_type_expr(p.type);
-        param_types.push_back(pt ? pt : m_types.error_type());
+        param_types.push_back(m_context.resolve_type_expr(p.type));
     }
     Type* ret_type = inst_decl.return_type
         ? m_context.resolve_type_expr(inst_decl.return_type) : m_types.void_type();

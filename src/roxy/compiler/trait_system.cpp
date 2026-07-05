@@ -342,9 +342,7 @@ Type* TraitSystem::resolve_trait_method_type_expr(TypeExpr* type_expr,
             return m_types.type_param(trait_info.type_params[i].name, i);
         }
     }
-    Type* resolved = m_context.resolve_type_expr(type_expr);
-    if (!resolved) resolved = m_types.error_type();
-    return resolved;
+    return m_context.resolve_type_expr(type_expr);
 }
 
 void TraitSystem::register_trait_method_signature(Decl* decl, Type* trait_type) {
@@ -447,9 +445,7 @@ bool TraitSystem::resolve_trait_impl_type_args(
         }
         Vector<Type*> args;
         for (auto* type_arg : method_decl.trait_type_args) {
-            Type* arg_type = m_context.resolve_type_expr(type_arg);
-            if (!arg_type) arg_type = m_types.error_type();
-            args.push_back(arg_type);
+            args.push_back(m_context.resolve_type_expr(type_arg));
         }
         out = m_allocator.alloc_span(args);
     } else if (trait_info.type_params.size() > 0) {
@@ -531,12 +527,9 @@ void TraitSystem::validate_and_register_impl_method(const TraitImplGroup& group,
         // Resolve the impl's param/return types.
         Vector<Type*> param_types;
         for (const auto& param : method_decl.params) {
-            Type* ptype = m_context.resolve_type_expr(param.type);
-            if (!ptype) ptype = m_types.error_type();
-            param_types.push_back(ptype);
+            param_types.push_back(m_context.resolve_type_expr(param.type));
         }
         Type* return_type = method_decl.return_type ? m_context.resolve_type_expr(method_decl.return_type) : m_types.void_type();
-        if (!return_type) return_type = m_types.error_type();
 
         // Validate parameter types match the trait signature (Self / trait
         // type-params concretized against this impl).
