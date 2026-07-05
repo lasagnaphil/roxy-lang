@@ -338,6 +338,59 @@ TEST_SUITE("E2E Modules") {
         delete module;
     }
 
+    TEST_CASE("Compiler: module-qualified call moves noncopyable argument") {
+        // Regression test: mark_call_args_moved used a naive "callee is a GetExpr
+        // → params start at 1" offset, but a module-qualified callee's function
+        // type has no implicit self, so the uniq argument was never marked moved
+        // and the caller's scope-exit Delete double-freed the object the callee
+        // already owned (and freed).
+        BumpAllocator allocator(16384);
+
+        const char* utils_source = R"(
+        pub struct Thing {
+            val: i32;
+        }
+
+        pub fun make_thing(v: i32): uniq Thing {
+            return uniq Thing { val = v };
+        }
+
+        pub fun consume(t: uniq Thing): i32 {
+            return t.val;
+        }
+    )";
+
+        const char* main_source = R"(
+        import utils;
+
+        fun main(): i32 {
+            var t = utils.make_thing(7);
+            return utils.consume(t);
+        }
+    )";
+
+        Compiler compiler(allocator);
+        compiler.add_source("utils", utils_source, static_cast<u32>(strlen(utils_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
+        REQUIRE(!compiler.has_errors());
+
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
+
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
+
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 7);
+
+        vm_destroy(&vm);
+        delete module;
+    }
+
     TEST_CASE("Compiler: circular import detection") {
         BumpAllocator allocator(16384);
 

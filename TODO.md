@@ -78,13 +78,6 @@ semantically sound and well-commented; nearly all findings are structural
 duplication — the same machinery copy-pasted across statement kinds, and the same
 emission idioms repeated dozens of times. Correctness-adjacent items first.
 
-- [ ] **`mark_call_args_moved` param-offset mismatch (suspected bug).** It uses
-  `callee is ExprGet ? 1 : 0` for the implicit-self offset, while
-  `self_pass_param_offset` carefully returns -1/0/1 (module-qualified calls,
-  container methods, and field-stored closures have no implicit self). For
-  `module.fn(x)` with a noncopyable arg the check reads `param_types[i+1]` —
-  misaligned — so the arg may not be marked moved (double-free shaped). Unify on
-  the careful version; write a characterization test first.
 - [ ] **Synthesized default ctor nested-struct init recurses one level only**
   (`build_synthesized_default_constructor`): a struct field *inside* the nested
   struct falls through to `emit_const_null` instead of recursing. Make field

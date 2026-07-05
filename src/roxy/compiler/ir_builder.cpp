@@ -2388,27 +2388,41 @@ static bool is_bare_self(Expr* e) {
 }
 
 // For a call argument, the index into the callee's `func_info.param_types` is
-// `arg_index + offset`. Returns that offset, or -1 to signal "don't gate" for
-// callee shapes whose param layout isn't certain (module-qualified calls,
-// container/coroutine methods, field-stored closures). Genuine user-struct
-// methods carry `self` at param_types[0] (offset 1); free/native functions and
-// closure locals (identifier callees) do not (offset 0). Mirrors the dispatch
-// in gen_call_member, used here only to heap-gate a bare-`self` argument bound
-// to a `ref` parameter (lifetimes.md "Promotion").
+// `arg_index + offset`. The layouts, per how semantic analysis types the callee:
+//   - identifier callee (free/native function, closure local): the function's
+//     own type, no implicit self → 0.
+//   - module-qualified callee (`module.fn` — the object resolves to no type):
+//     the imported function's own type, no implicit self → 0.
+//   - field-stored closure (`obj.callback` where callback is a fun-typed
+//     field): the field's plain function type, no implicit self → 0.
+//   - genuine method callee — user-struct methods AND List/Map/Coro builtin
+//     methods, both typed via build_method_function_type — carries `self` at
+//     param_types[0] → 1.
+//   - any other callee expression (indirect call through a call result, index,
+//     ...): its own plain function type → 0.
+// Returns -1 only when the object's type is unresolved and the shape can't be
+// classified (defensive; callers skip). Used to heap-gate a bare-`self`
+// argument bound to a `ref`/`weak` parameter (lifetimes.md "Promotion") and by
+// mark_call_args_moved to align arguments with owned parameters.
 static i32 self_pass_param_offset(CallExpr& call_expr) {
     Expr* callee = call_expr.callee;
-    if (callee->kind == AstKind::ExprIdentifier) return 0;
-    if (callee->kind == AstKind::ExprGet) {
-        Expr* obj = callee->get.object;
-        if (!obj || obj->resolved_type == nullptr) return -1;  // module-qualified
-        Type* obj_struct = obj->resolved_type->base_type();
-        if (!obj_struct || !obj_struct->is_struct()) return -1;  // container/coro
-        const FieldInfo* fn_field = obj_struct->struct_info.find_field(callee->get.name);
+    if (!callee) return -1;
+    if (callee->kind != AstKind::ExprGet) return 0;
+    Expr* obj = callee->get.object;
+    if (!obj) return -1;
+    if (obj->resolved_type == nullptr) return 0;  // module-qualified: no self
+    Type* obj_base = obj->resolved_type->base_type();
+    if (!obj_base) return -1;
+    if (obj_base->is_struct()) {
+        const FieldInfo* fn_field = obj_base->struct_info.find_field(callee->get.name);
         if (fn_field && fn_field->type && fn_field->type->base_type()->is_function())
-            return -1;  // field-stored closure: no implicit self
+            return 0;  // field-stored closure: no implicit self
         return 1;  // genuine user-struct method
     }
-    return -1;  // indirect / other: skip
+    if (obj_base->is_container() || obj_base->is_coroutine()) {
+        return 1;  // builtin method: build_method_function_type includes self
+    }
+    return 0;  // any other object shape: the callee carries a plain fn type
 }
 
 void IRBuilder::emit_ref_borrow_inc(ValueId val, Expr* source) {
@@ -4472,8 +4486,14 @@ void IRBuilder::mark_call_args_moved(Expr* expr) {
     if (callee_func_type) callee_func_type = callee_func_type->base_type();
     if (!callee_func_type || !callee_func_type->is_function()) return;
     Span<Type*> param_types = callee_func_type->func_info.param_types;
-    // Method calls include implicit 'self' as param_types[0]; user args start at 1.
-    u32 param_offset = (call_expr.callee->kind == AstKind::ExprGet) ? 1 : 0;
+    // Offset user args past the implicit `self` for genuine method callees only.
+    // The old blanket "GetExpr callee → 1" misaligned module-qualified calls and
+    // field-stored closures (whose function types have no implicit self), so a
+    // noncopyable argument was never marked moved — the caller's scope-exit
+    // Delete then double-freed the object the callee already owned.
+    i32 self_offset = self_pass_param_offset(call_expr);
+    if (self_offset < 0) return;
+    u32 param_offset = static_cast<u32>(self_offset);
     for (u32 i = 0; i < call_expr.arguments.size() && (i + param_offset) < param_types.size(); i++) {
         const CallArg& arg = call_expr.arguments[i];
         if (arg.modifier != ParamModifier::None) continue;
