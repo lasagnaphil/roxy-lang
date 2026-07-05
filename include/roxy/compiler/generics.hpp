@@ -32,6 +32,14 @@ struct GenericFunInstance {
     TypeSubstitution substitution;
     Decl* instantiated_decl;         // Cloned + substituted AST
     bool is_analyzed;
+    // True when any type argument is itself a TypeParam — an abstract instance
+    // (e.g. "identity$$T") created while Phase B checks a bounded template body
+    // whose body calls this generic function with a type-param argument. Like
+    // the abstract GenericStructInstance, it exists only so the Phase B call
+    // type-checks; its body names the bare type param and cannot be analyzed
+    // outside the bounds context, so it is quarantined from the pending-fun
+    // drains and from the IR builder.
+    bool is_abstract = false;
     // Module that defined the template. Owns body analysis and IR emission
     // for this instance — references inside the body resolve against this
     // module's symbol table, not the module that triggered the

@@ -1500,4 +1500,28 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 2);
     }
 
+    // A bounded template whose body calls another generic function with a
+    // type-param-typed argument instantiates the inner template against the
+    // abstract type param during Phase B (identity$$T). That abstract instance
+    // must be quarantined: analyzing its body outside the bounds context used
+    // to report "unknown type 'T'" and fail the whole compile.
+    TEST_CASE_TEMPLATE("Generic bound: bounded body calls a generic fun", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun identity<T>(v: T): T {
+            return v;
+        }
+
+        fun outer<T: Printable>(v: T): T {
+            return identity(v);
+        }
+
+        fun main(): i32 {
+            return outer<i32>(42);
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
+
 }  // TEST_SUITE("E2E Generics")

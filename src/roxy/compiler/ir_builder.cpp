@@ -186,6 +186,7 @@ void IRBuilder::build_generic_fun_instances() {
     // or in single-module compilations) fall through to the current module.
     for (auto* instance : m_type_env.generics().all_fun_instances()) {
         if (!instance->is_analyzed || !instance->instantiated_decl) continue;
+        if (instance->is_abstract) continue;  // Phase-B artifact, never codegen'd
         bool owns =
             instance->template_module.empty() ||
             m_module_name.empty() ||

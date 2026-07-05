@@ -306,6 +306,18 @@ StringView GenericInstantiator::instantiate_fun(StringView name, Span<Type*> typ
     instance->is_analyzed = false;
     instance->template_module = get_fun_template_module(name);
 
+    // A type argument containing a TypeParam (e.g. identity<T> called from a
+    // bounded template body) marks this as an abstract Phase-B checking
+    // artifact, not a real monomorphization — quarantined from the drains and
+    // the IR builder (see GenericFunInstance::is_abstract).
+    instance->is_abstract = false;
+    for (auto* type_arg : type_args) {
+        if (type_contains_type_param(type_arg)) {
+            instance->is_abstract = true;
+            break;
+        }
+    }
+
     m_all_fun_instances.push_back(instance);
     m_pending_funs.push_back(instance);
     m_fun_instance_cache[mangled] = instance;

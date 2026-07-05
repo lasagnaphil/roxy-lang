@@ -134,6 +134,12 @@ void SemanticAnalyzer::set_program(Program* program) {
 }
 
 bool SemanticAnalyzer::drain_pending_fun_instance(GenericFunInstance* inst) {
+    // Abstract Phase-B artifacts (e.g. identity$$T) exist only so a bounded
+    // template body's call type-checks; their body names the bare type param
+    // and can't be analyzed outside the bounds context — drop them (the IR
+    // builder skips them too), mirroring the abstract-struct-instance handling.
+    if (inst->is_abstract) return false;
+
     StringView this_module = m_program ? m_program->module_name : StringView{};
     bool owns_template = inst->template_module.empty()
                       || this_module.empty()
