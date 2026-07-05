@@ -220,9 +220,10 @@ field accesses become `GetField` at the union base offset. Variables assigned
 across cases are reconciled at a merge block via phi (block-argument) values.
 
 The semantic analyzer validates that the discriminant is an enum, that case names
-are valid variants, and that struct-literal variant fields match the discriminant.
-It computes union layout (max of variant slot counts) and per-variant field
-offsets.
+are variants of *that* enum (resolved through the enum type's own variant table,
+so a same-named variant of a different enum is rejected), and that struct-literal
+variant fields match the discriminant. It computes union layout (max of variant
+slot counts) and per-variant field offsets.
 
 ## Grammar
 

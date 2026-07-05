@@ -111,7 +111,9 @@ struct Tree {
 
 ## Cycle Detection
 
-During `resolve_type_members`, the analyzer maintains a set of struct types currently being resolved. When a struct field is itself a directly-embedded struct already in that set, it reports an infinite-size error. `uniq T` / `ref T` / `weak T` fields skip the check — they are always pointer-sized.
+Struct member resolution is memoized and recursive (`ensure_struct_members_resolved` + `StructTypeInfo::members_resolved`): a value-embedded struct field, parent struct, tagged-union variant field, or generic-instance field pulls in the referenced struct's resolution on demand. Declaration order therefore doesn't matter — forward references to later-declared structs are legal.
+
+The analyzer maintains a set of struct types currently being resolved (`m_resolving_structs`). When resolution re-enters a struct already in that set, the embedding is a genuine value-type cycle — direct, mutual, or through a generic instance — and it reports an infinite-size error at the embedding field. `uniq T` / `ref T` / `weak T` fields skip both the recursion and the check — they are always pointer-sized.
 
 ```
 error: recursive struct type 'Node' has infinite size

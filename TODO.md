@@ -2,14 +2,13 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-07-05 (semantic analyzer deep review added — 8 probe-verified bugs + refactoring plan, see "Semantic Analyzer Refactoring & Bugs" section)
-
+Last updated: 2026-07-05 (cleanup after the semantic-analyzer bugfix batch — the 8 verified bugs from the deep review are fixed in commits `b7e9ab0`..`0fb1b44`; their detailed landed notes live in those commit messages. The refactoring backlog from the same review remains below.)
 
 ---
 
 ## High Priority
 
-(none currently — the 8 verified semantic-analyzer bugs from the 2026-07-05 review are all fixed; see "Semantic Analyzer Refactoring & Bugs" below for the landed notes and the remaining refactoring items)
+(none currently)
 
 ---
 
@@ -27,20 +26,22 @@ Last updated: 2026-07-05 (semantic analyzer deep review added — 8 probe-verifi
 
 ## Planned Features
 
-- [ ] **Unsigned & small-int arithmetic** (u8/u16/u32/u64/i8/i16 beyond `==`/`!=`): needs unsigned IR ops (compare/div/mod/shr), width-wrapping semantics for narrow arithmetic (post-op narrowing or dedicated opcodes), VM opcode support, and a C-backend signedness audit (it emits from the same signed-i64 IR). Semantic layer now rejects these with "operator not supported" instead of silently mistyping (2026-07-05).
-- [ ] Casting unsuffixed integer literals fails: `u8(200)` → "cannot cast 'i32' to 'u8'" because the literal has IntLiteral kind, which `TypeChecker::can_cast` doesn't treat as numeric (`is_numeric()` covers I8..F64 only). Casting a *variable* works. Coerce the literal (or accept IntLiteral) in `analyze_primitive_cast`. Discovered 2026-07-05 during the operator-coverage fix.
+- [ ] **Unsigned & small-int arithmetic** (u8/u16/u32/u64/i8/i16 beyond `==`/`!=`): needs unsigned IR ops (compare/div/mod/shr), width-wrapping semantics for narrow arithmetic (post-op narrowing or dedicated opcodes), VM opcode support, and a C-backend signedness audit (it emits from the same signed-i64 IR). The semantic layer rejects these with "operator not supported" instead of silently mistyping (since 2026-07-05).
+- [ ] **First-class coroutine values**: passing or returning a `Coro<T>` fails assignability — an annotated `Coro<T>` resolves to the interned generic type while a coroutine value carries its per-function type (`coroutine_type_for_func`, which encodes the mangled `resume`/`done` names). Needs unified typing plus dynamic resume/done dispatch. Inference already binds `T` from a coro argument.
+- [ ] **Coroutine methods** (`fun S.count(): Coro<i32>`): rejected with an explicit "coroutine methods are not yet supported" error (since 2026-07-05); needs the per-function coro type for methods plus a `self`-carrying state machine in coroutine lowering.
+- [ ] **Casting unsuffixed integer literals to small int types** fails: `u8(200)` → "cannot cast 'i32' to 'u8'" because the literal has IntLiteral kind, which `TypeChecker::can_cast` doesn't treat as numeric. Casting a *variable* works. Coerce the literal (or accept IntLiteral) in `analyze_primitive_cast`.
 - [ ] Flow-sensitive typing for tagged union variant fields
 - [ ] Exhaustiveness checking for when statements
 - [ ] Variant constructors (`Type.Variant { ... }` syntax)
 - [ ] LSP server Phase 8: full semantic analysis (TypeCache/TypeEnv integration)
 - [ ] LSP server Phase 9: polish (signature help, code actions, workspace symbols, semantic tokens)
-- [ ] AOT compilation to C — Phases 1–4 fully complete (codegen, runtime library + C++ wrappers, header generation, runtime unification across VM/AOT, `RoxyVM*` dropped from native signatures, AOT NativeRegistry dispatch with `aot_symbol_name` override + dual-mode `bind_native` + auto-emitted extern decls, `MapHeader` slimmed via per-VM dispatch side-table). Phase 5: function-level + statement-level `#line` directives in generated AOT source landed (debuggers attribute every IR-emitted statement to its Roxy source line). Other Phase 5 items (DCE, Relooper, `switch` lowering, readable variable names) deliberately not pursued — the C compiler's optimizer handles them and they don't affect debugger UX. See `docs/internals/c-backend.md`.
+- [x] AOT compilation to C — **feature-complete**: every language feature compiles through the C backend, `roxy_ctx` runtime unification across VM/AOT, header generation, `#line` directives for debugger attribution. Remaining codegen-quality items (DCE, Relooper, `switch` lowering, readable variable names) deliberately not pursued — the C compiler's optimizer covers them. See `docs/internals/c-backend.md`.
 
 ---
 
 ## Code Quality Improvements
 
-- [ ] Standardize error message formatting across compiler
+- [ ] Standardize error message formatting across the compiler; consider a compile-time `{}`-placeholder check for `error_fmt`/`format_to` (the printf-residue bugs fixed 2026-07-05 would have been caught at build time)
 - [ ] Consider Result<T, Error> type for fallible operations
 
 ---
@@ -52,25 +53,14 @@ Last updated: 2026-07-05 (semantic analyzer deep review added — 8 probe-verifi
 
 ---
 
-## Semantic Analyzer Refactoring & Bugs
+## Semantic Analyzer Refactoring
 
-From a 2026-07-05 deep review of `semantic.cpp` (6.6k lines) and collaborators (`symbol_table.cpp`, `types.cpp`, `compiler.cpp`, `generics.cpp`). Every bug below was **verified by running probe programs through the `roxy` CLI**; none is documented as an intended limitation. Suggested sequence: pin bugs with regression tests → mechanical dedup → semantic fixes → subsystem extraction → context/naming polish.
-
-### Verified bugs (probe-confirmed)
-
-- [x] **Unsupported primitive operators silently produce `Error` type — no diagnostic, garbage output.** *Landed 2026-07-05.* Every same-type-but-no-operator fallback in `get_binary_result_type`/`get_unary_result_type` now errors loudly ("operator '+' is not supported for type 'u32'" — new `binary_op_to_symbol`/`unary_op_to_symbol` helpers), covering arithmetic/comparison/bitwise/unary/compound-assign paths. `eq`/`ne` registered for all remaining integer kinds (i8/i16/u8/u16/u32/u64 — bit comparison on canonical values, safe under the signed-i64 lowering). Ordered comparisons/arithmetic/bitwise for those kinds are deliberately NOT registered — the IR/VM have no unsigned compare/div/shr and no width-wrapped arithmetic, so registering them would trade the silent error for silent wrong results; see the "unsigned & small-int arithmetic" item under Planned Features.
-- [x] **printf-style format strings fed to the `{}`-only formatter.** *Landed 2026-07-05.* Converted both sites to `{}` placeholders. Also fixed a related truncation family: `TypeChecker::type_string` counts its trailing NUL in `String::size()`, so passing the `String` directly to `error_fmt` embeds a NUL mid-message (message cut at the type name) — three direct-pass sites now use `.data()` like the rest. Follow-up idea kept open: compile-time format check.
-- [x] **Tagged-union `when` clauses accept variants of the wrong enum.** *Landed 2026-07-05.* `resolve_when_clauses` now requires `sym->type == discriminant_type` ("'Small' is not a variant of enum 'Color'"), and the VariantInfo pass only reads discriminant values off validated symbols. (The per-enum variant-table item below will replace the global lookup entirely.)
-- [x] **Enum variants live in a flat global namespace.** *Landed 2026-07-05.* `EnumTypeInfo` now carries a per-enum variant table (`Span<EnumVariantInfo>` + `find_variant`), populated by `resolve_enum_members`. `Enum::Variant` (semantic + IR builder), when-statement cases (semantic + IR builder — the IR builder had the same collision bug and would have emitted the wrong constant), and tagged-union when clauses all resolve through it; enum imports now read the table instead of recomputing values from the decl (dedup win); `analyze_when_stmt` no longer dereferences a possibly-null decl. Bare unqualified variant names still use the flat scope (inherent to bare names).
-- [x] **Value-struct forward references misdiagnosed as infinite recursion.** *Landed 2026-07-05.* Struct member resolution is now memoized and recursive (`ensure_struct_members_resolved` + `StructTypeInfo::members_resolved`): value-embedded field structs, parents, tagged-union variant fields, and generic-instance fields all resolve on demand, so declaration order no longer matters. Genuine value cycles (incl. mutual and through generic instances) are caught by the in-progress set with the same "infinite size" error; the post-hoc `detect_mutual_struct_recursion` recompute pass is deleted. Bonus: member decls (ctors etc.) appearing before their struct decl no longer risk being wiped by the layout pass.
-- [x] **Generic functions containing lambdas fail with "unknown type 'T'".** *Landed 2026-07-05.* The generics cloner now has a real `ExprLambda` case (substitutes param/return TypeExprs, clones body + capture list, resets env/call-function annotations so each instantiation synthesizes its own) — previously it fell into `default` and aliased the template's AST. Also added the missing `ExprStringInterp` clone (same shared-subtree family). Second layer fixed too: the cross-module drain loop in `Compiler::analyze_all` now persists each drained analyzer's `synthetic_decls` (they used to be dropped → "closure call function not found during lowering"). Verified same-module (both backends) and cross-module.
-- [x] **Methods can't be coroutines, with a misleading error.** *Landed 2026-07-05 (diagnostic).* `analyze_member_body` now reports "coroutine methods are not yet supported; use a free function returning Coro<T>..." and analyzes the body in coroutine context so the yields don't add the misleading placement error. Actual coroutine-method support (per-function coro type for methods + self-carrying state machine) remains future work.
-- [x] **Generic type-arg inference only understands `List` among builtin containers.** *Landed 2026-07-05.* `unify_type_expr` now unifies `Map<K, V>` (key+value) and `Coro<T>` (yield type). Map inference verified end-to-end (`map_len(inout m)`). Note for Coro: inference now binds T, but *passing* a coroutine still fails assignability — annotated `Coro<T>` resolves to the interned generic type while a coroutine value carries its per-function type (`coroutine_type_for_func`); first-class coroutine values are a separate feature.
+From a 2026-07-05 deep review of `semantic.cpp` (6.6k lines) and collaborators (`symbol_table.cpp`, `types.cpp`, `compiler.cpp`, `generics.cpp`). The review also surfaced 8 probe-verified bugs — all fixed the same day (commits `b7e9ab0`..`0fb1b44`: error-message rendering, wrong-enum `when` cases, Map/Coro inference, coroutine-method diagnostic, per-enum variant tables, declaration-order-independent struct resolution, loud operator errors, generics×lambdas). What remains is the refactoring backlog, roughly ordered mechanical → structural. References use function names rather than line numbers (which rot).
 
 ### Architectural refactorings
 
-- [ ] **Split the god class along existing seams.** `SemanticAnalyzer` owns ~8 separable concerns in one 6.6k-line file. `ErrorReporter` was already extracted with the right pattern (shared by reference so collaborators report errors without a back-reference); extend it. Candidates in order of self-containedness: **MoveChecker** (~800 lines: move states, snapshots/merges, `m_branch_terminates`, loop cross-iteration checks, `consume_noncopyable`, scope-exit dtor checks), **LambdaCaptureAnalyzer** (~700 lines: contexts, `try_capture_identifier`, validate/synthesize/backfill, `ensure_self_captured_through`), **TraitSystem** (~700 lines: builtin registration, trait method decls, impl grouping/validation, default injection, `concretize_trait_type`), **GenericCallResolver** (~700 lines: unify/infer, both generic-call paths, template-ref coercion, bounds). Share a small `SemaContext` {allocator, type_env, types, symbols, reporter, checker, modules}.
-- [ ] **Bundle per-function context state.** `m_in_coroutine`, `m_coro_yield_type`, `m_in_delete_destructor`, `m_in_finally_depth`, `m_branch_terminates`, `m_move_states`, `m_active_type_params/bounds` are guarded ad hoc with `ScopedValue` at four entry points (`analyze_fun_decl`, `analyze_member_body`, `synthesize_lambda_call_fn`, `analyze_generic_template_body`); the coroutine-method bug above is a forgotten setup at one of them. A single `FunctionContext` pushed/popped as a unit eliminates the error class.
+- [ ] **Split the god class along existing seams.** `SemanticAnalyzer` owns ~8 separable concerns in one 6.6k-line file. `ErrorReporter` was already extracted with the right pattern (shared by reference so collaborators can report errors without a back-reference); extend it. Candidates in order of self-containedness: **MoveChecker** (~800 lines: move states, snapshots/merges, `m_branch_terminates`, loop cross-iteration checks, `consume_noncopyable`, scope-exit dtor checks), **LambdaCaptureAnalyzer** (~700 lines: contexts, `try_capture_identifier`, validate/synthesize/backfill, `ensure_self_captured_through`), **TraitSystem** (~700 lines: builtin registration, trait method decls, impl grouping/validation, default injection, `concretize_trait_type`), **GenericCallResolver** (~700 lines: unify/infer, both generic-call paths, template-ref coercion, bounds). Share a small `SemaContext` {allocator, type_env, types, symbols, reporter, checker, modules}.
+- [ ] **Bundle per-function context state.** `m_in_coroutine`, `m_coro_yield_type`, `m_in_delete_destructor`, `m_in_finally_depth`, `m_branch_terminates`, `m_move_states`, `m_active_type_params/bounds` are guarded ad hoc with `ScopedValue` at four entry points (`analyze_fun_decl`, `analyze_member_body`, `synthesize_lambda_call_fn`, `analyze_generic_template_body`); the coroutine-method diagnostic gap (fixed 2026-07-05) was a forgotten setup at exactly one of them. A single `FunctionContext` pushed/popped as a unit eliminates the error class.
 - [ ] **Fix the naming inversion.** `analyze_constructor_decl`/`analyze_destructor_decl`/`analyze_method_decl` register signatures (Pass 2) while `analyze_fun_decl` analyzes a body (Pass 3); `resolve_*` overlaps both. Rename to `register_*_signature` vs `analyze_*_body` uniformly.
 - [ ] **Make the semantic→IR annotation contract explicit.** `ce.callee->resolved_type` variously means callee function type / struct type (ctor call) / `ref(parent)` (super call) / cast target; `get_expr.object->resolved_type = nullptr` signals module access; bare generic template refs return `error_type` + `is_generic_template_ref` flag that every coercion site must remember to check. Document the contract in one place or add explicit annotation fields on the AST nodes.
 - [ ] **Decide on AST mutation vs. side-band annotations.** Analysis rewrites the tree in place (captured identifiers → `ExprGet(__env, …)`, generic TypeExprs → mangled name with `type_args` cleared, struct-literal names mangled), so re-analysis of the same AST is non-idempotent — a risk for LSP Phase 8 and incremental compilation.
@@ -78,30 +68,30 @@ From a 2026-07-05 deep review of `semantic.cpp` (6.6k lines) and collaborators (
 
 ### Duplication cleanups (mechanical)
 
-- [ ] Synthetic-dtor "needs_cleanup" scan (fields + variant fields) ×3: semantic.cpp:834, 1087, 1265 → `struct_needs_synthetic_dtor()` + `add_synthetic_default_dtor()` helpers.
-- [ ] Pending-generic-fun drain (ownership test + sideline) ×2: semantic.cpp:290 vs 1124.
-- [ ] Enum-variant value computation ×2: semantic.cpp:587 (resolve) vs 2054 (import) — both silently ignore non-literal constant expressions (`enum E { A = 1 + 2 }` auto-increments instead); dedup and either support const-exprs or error.
-- [ ] Super-call argument checking ×3 inside `analyze_super_call` (semantic.cpp:5346).
-- [ ] Crossed-lambda-boundary scope walk ×3: semantic.cpp:3886, 4217, 6072.
-- [ ] Ctor/dtor registration near-duplicates: `analyze_constructor_decl` vs `analyze_destructor_decl`, plus both re-implemented inline in `resolve_generic_struct_fields` (semantic.cpp:1209).
-- [ ] `resolve_global_var` vs `analyze_var_decl` drift (semantic.cpp:651 vs 1478): global path lacks the nil-inference error, redefinition check, and noncopyable move tracking. Unify.
-- [ ] `append_method`/`append_constructor`/`append_destructor` (semantic.cpp:2305): three copies of an O(n²) span-rebuild that also churns the arena; template it or use `Vector` during analysis and freeze to spans.
-- [ ] List/Map `.copy()` element checks live inline in `analyze_call_expr` (semantic.cpp:5598); move into the builtin-method-call path.
+- [ ] Synthetic-dtor "needs_cleanup" scan (fields + variant fields) ×3: `generate_synthetic_destructors`, the generic-instance worklist in `analyze_function_bodies`, and `resolve_generic_struct_fields` → extract `struct_needs_synthetic_dtor()` + `add_synthetic_default_dtor()`.
+- [ ] Pending-generic-fun drain (ownership test + sideline) ×2: `analyze_owned_pending_fun_instances` vs the worklist in `analyze_function_bodies`.
+- [ ] Super-call argument checking ×3 inside `analyze_super_call` (default ctor / named ctor / method arms).
+- [ ] Crossed-lambda-boundary scope walk ×3: `try_capture_identifier`, the `[move]` path of `validate_lambda_captures`, `analyze_this_expr`.
+- [ ] Ctor/dtor registration near-duplicates: `analyze_constructor_decl` vs `analyze_destructor_decl`, plus both re-implemented inline in `resolve_generic_struct_fields`.
+- [ ] `resolve_global_var` vs `analyze_var_decl` drift: the global path lacks the nil-inference error, redefinition check, and noncopyable move tracking. Unify.
+- [ ] `append_method`/`append_constructor`/`append_destructor`: three copies of an O(n²) span-rebuild that also churns the arena; template it or use `Vector` during analysis and freeze to spans.
+- [ ] List/Map `.copy()` element checks live inline in `analyze_call_expr`; move into the builtin-method-call path.
 
 ### Performance
 
-- [ ] **`SymbolTable::pop_scope` rebuilds the entire lookup cache** (symbol_table.cpp:50-75), walking every scope including global (all functions + builtin prelude + every enum variant) on **every block exit**. O(total program symbols) per `}`. Fix: per-name shadow stacks or save-the-shadowed-symbol-on-define.
-- [ ] `lookup_local` linear-scans the current scope; prelude import calls it per export → quadratic startup on the global scope.
+- [ ] **`SymbolTable::pop_scope` rebuilds the entire lookup cache** (`rebuild_lookup_cache` walks every scope including global — all functions + builtin prelude + every enum variant) on **every block exit**: O(total program symbols) per `}`. Fix: per-name shadow stacks or save-the-shadowed-symbol-on-define.
+- [ ] `SymbolTable::lookup_local` linear-scans the current scope; prelude import calls it per export → quadratic startup on the global scope.
 - [ ] Move-state snapshots copy the whole map at every branch point (if/while/for/when/try/ternary) — fine at current scale; revisit with an undo log only if profiling warrants.
 
 ### Smaller correctness-adjacent debts
 
-- [ ] All-paths-return checking is a stub (semantic.cpp:1971) while `m_branch_terminates` already computes definite termination and `Scope::function.has_return`/`mark_return` machinery exists but is never read — finish missing-return diagnostics nearly for free, or delete the dead machinery.
+- [ ] All-paths-return checking is a stub (end of `analyze_fun_decl`) while `m_branch_terminates` already computes definite termination and the `Scope::function.has_return`/`mark_return` machinery exists but is never read — finish missing-return diagnostics nearly for free, or delete the dead machinery.
 - [ ] `is_hashable_key_type` accepts every struct (bytewise hashing) while the error text says "must implement Hash" — align message and semantics.
-- [ ] Stale comment in `analyze_delete_stmt` (semantic.cpp:3373): says struct-field deletes are forbidden, but `check_not_field_move` permits pointer-field deletes by design.
+- [ ] Stale comment in `analyze_delete_stmt`: says struct-field deletes are forbidden, but `check_not_field_move` permits pointer-field deletes by design.
 - [ ] Audit `try`/`finally` move-state entry: the finally body is analyzed against the merged *normal* exits only; the exceptional pass-through path isn't merged in. Traced as conservative in cases tried, but deserves a test.
-- [ ] LSP-mode null tolerance is ad hoc: some paths null-check everything, others dereference decl/info chains unconditionally (e.g., `eti.decl->enum_decl` at semantic.cpp:3446). Define a per-pass policy.
-- [ ] Manual string building with `push_back` loops in `check_type_arg_bounds` (semantic.cpp:2512) next to a perfectly good `format_to_arena`.
+- [ ] LSP-mode null tolerance is ad hoc: some paths null-check every child, others assume decl/info chains are present (e.g. `analyze_constructor_call` dereferences `ctor->decl` — true for user ctors today, but nothing enforces it). Define a per-pass policy.
+- [ ] `resolve_enum_members` only honors compile-time integer *literals* for variant values — `enum E { A = 1 + 2 }` silently auto-increments instead. Support const exprs or reject with an error.
+- [ ] Manual string building with `push_back` loops in `check_type_arg_bounds` next to a perfectly good `format_to_arena`.
 
 ---
 
@@ -130,7 +120,6 @@ From a 2026-04-26 review comparing Roxy's opcode set against Lua 5.4, LuaJIT, CP
 
 ## Testing Gaps
 
-- [x] Regression tests for the 8 verified semantic-analyzer bugs — landed 2026-07-05 alongside each fix (unit tests in `test_semantic.cpp`, e2e in `test_enums.cpp`/`test_structs.cpp`/`test_generics.cpp`/`test_int_literal.cpp`/`test_modules.cpp`)
 - [ ] Test deeply nested struct field access (>5 levels; currently only 3 levels tested)
 - [ ] Test error recovery in semantic analysis
 - [ ] Add fuzzing for parser/lexer

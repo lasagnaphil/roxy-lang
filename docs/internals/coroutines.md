@@ -106,6 +106,8 @@ It first finds every `Yield` (each block ends in a `Goto` to its resume block) a
 
 - `yield` inside `finally` is a compile-time error — `finally` runs in multiple contexts (normal and exception exit), making coroutine state management infeasible.
 - `return <value>` inside a coroutine is a compile-time error — use `yield` to produce values; bare `return;` ends the coroutine early.
+- **Methods cannot be coroutines** — a method returning `Coro<T>` is rejected with "coroutine methods are not yet supported" (the body is still analyzed in coroutine context so its yields type-check without cascading errors). Needs the per-function coro type for methods plus a `self`-carrying state machine; use a free function taking the struct as a parameter instead.
+- **Coroutines are not first-class values yet** — passing or returning a `Coro<T>` fails assignability, because an annotated `Coro<T>` is the interned generic type while a coroutine value carries its per-function type (see `coroutine_type_for_func`). Both restrictions are tracked in TODO.md under Planned Features.
 
 ## Files
 

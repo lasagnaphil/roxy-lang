@@ -67,7 +67,7 @@ Method/ctor/dtor templates are registered during `resolve_type_members` and clon
 
 ## Type inference
 
-When type arguments are omitted, the compiler unifies the template's parameter `TypeExpr` tree against the concrete argument types and binds each type parameter.
+When type arguments are omitted, the compiler unifies the template's parameter `TypeExpr` tree against the concrete argument types and binds each type parameter. Unification descends through reference wrappers (`uniq`/`ref`/`weak`), the builtin containers (`List<T>`, `Map<K, V>`, `Coro<T>`), nested generic-struct patterns (`Box<T>` against a `Box$i32` instance), and function types (`fun(T) -> T`).
 
 ```roxy
 identity(42);                      // T = i32 (function arg)
@@ -117,6 +117,8 @@ Slot layout is computed per instantiation: `Pair<i32, i32>` is 2 slots, `Pair<i6
 ### How it works
 
 Generic functions and structs are registered as **templates** in `GenericInstantiator` during Pass 1 (`collect_type_declarations`) — they are not added as regular symbols, and later passes skip them. When an instantiation site is reached (`identity<i32>(42)`, `Box<i32> { ... }`), the entire AST is deep-cloned and every `TypeExpr` naming a type parameter is replaced with the concrete type; compound types like `Box<T>` substitute recursively. After cloning, `resolve_type_expr` rewrites TypeExpr names to mangled names (`Box$i32`) so the IR builder finds the right type.
+
+Lambdas inside template bodies clone like everything else: the cloner substitutes the lambda's parameter/return `TypeExpr`s, deep-clones its body and capture list, and resets the analysis annotations so each instantiation synthesizes its own env struct and lifted call function. For cross-module instances (drained by `Compiler::analyze_all`'s fixed-point loop), those synthesized call functions are persisted into the owning module's `synthetic_decls` so the IR builder emits them.
 
 A post-Pass-3 **worklist loop** processes pending instances (structs first, then functions) until none remain, since generic function bodies can trigger further struct instantiations. A generic struct's fields and method signatures are resolved inline on first instantiation (not deferred) so same-pass users can access them; method/ctor/dtor *bodies* are analyzed later in the worklist.
 
