@@ -159,6 +159,20 @@ private:
     void register_destructor_signature(Decl* decl);
     void register_method_signature(Decl* decl);
 
+    // Shared building blocks for the register_*_signature functions above (and
+    // the inline registration in resolve_generic_struct_fields):
+    //   resolve_param_types  — resolve each param's TypeExpr into an arena span.
+    //   resolve_member_struct — look up + kind-check the receiver struct;
+    //     `noun` names the member kind for the "unknown struct" diagnostic.
+    //   report_duplicate_member — reject a duplicate member `name` against
+    //     `existing`, returning true (and reporting) on a clash. Works for
+    //     ctors/dtors (empty name → "default") and methods (always named).
+    Span<Type*> resolve_param_types(Span<Param> params);
+    Type* resolve_member_struct(SourceLocation loc, StringView struct_name, const char* noun);
+    template<typename InfoT>
+    bool report_duplicate_member(SourceLocation loc, Span<InfoT> existing, StringView name,
+                                 StringView struct_name, const char* noun);
+
     // Pass 3 body analysis (statement-level var decls are analyzed in-body).
     void analyze_var_decl(Decl* decl);
     void analyze_fun_body(Decl* decl);

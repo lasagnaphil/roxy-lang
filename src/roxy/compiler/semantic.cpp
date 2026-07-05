@@ -504,12 +504,7 @@ void SemanticAnalyzer::register_fun_signature(Decl* decl) {
     if (fun_decl.type_params.size() > 0) return;
 
     // Register function in global scope (for forward references)
-    // Resolve parameter types
-    Vector<Type*> param_types;
-    for (const auto& param : fun_decl.params) {
-        Type* ptype = resolve_type_expr(param.type);
-        param_types.push_back(ptype);
-    }
+    Span<Type*> param_types = resolve_param_types(fun_decl.params);
 
     // Resolve return type
     Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
@@ -524,8 +519,7 @@ void SemanticAnalyzer::register_fun_signature(Decl* decl) {
     }
 
     // Create function type
-    Type* func_type = m_types.function_type(
-        m_allocator.alloc_span(param_types), return_type);
+    Type* func_type = m_types.function_type(param_types, return_type);
 
     // Define function in global scope
     Symbol* sym = m_symbols.define(SymbolKind::Function, fun_decl.name, func_type, decl->loc, decl);
@@ -969,15 +963,9 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
     // Register ConstructorInfo for external constructors
     for (Decl* ctor_decl : inst->instantiated_constructors) {
         ConstructorDecl& ctor = ctor_decl->constructor_decl;
-        Vector<Type*> param_types;
-        for (const auto& param : ctor.params) {
-            Type* ptype = resolve_type_expr(param.type);
-            param_types.push_back(ptype);
-        }
-
         ConstructorInfo ctor_info;
         ctor_info.name = ctor.name;
-        ctor_info.param_types = m_allocator.alloc_span(param_types);
+        ctor_info.param_types = resolve_param_types(ctor.params);
         ctor_info.decl = ctor_decl;
         append_constructor(m_allocator, struct_type_info, ctor_info);
     }
@@ -985,15 +973,9 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
     // Register DestructorInfo for external destructors
     for (Decl* dtor_decl : inst->instantiated_destructors) {
         DestructorDecl& dtor = dtor_decl->destructor_decl;
-        Vector<Type*> param_types;
-        for (const auto& param : dtor.params) {
-            Type* ptype = resolve_type_expr(param.type);
-            param_types.push_back(ptype);
-        }
-
         DestructorInfo dtor_info;
         dtor_info.name = dtor.name;
-        dtor_info.param_types = m_allocator.alloc_span(param_types);
+        dtor_info.param_types = resolve_param_types(dtor.params);
         dtor_info.decl = dtor_decl;
         append_destructor(m_allocator, struct_type_info, dtor_info);
     }
@@ -1001,19 +983,11 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
     // Register MethodInfo for external methods so call sites can resolve them
     for (Decl* method_decl : inst->instantiated_methods) {
         MethodDecl& method = method_decl->method_decl;
-
-        Vector<Type*> param_types;
-        for (const auto& param : method.params) {
-            Type* ptype = resolve_type_expr(param.type);
-            param_types.push_back(ptype);
-        }
-
-        Type* return_type = method.return_type ? resolve_type_expr(method.return_type) : m_types.void_type();
-
         MethodInfo method_info;
         method_info.name = method.name;
-        method_info.param_types = m_allocator.alloc_span(param_types);
-        method_info.return_type = return_type;
+        method_info.param_types = resolve_param_types(method.params);
+        method_info.return_type = method.return_type
+            ? resolve_type_expr(method.return_type) : m_types.void_type();
         method_info.decl = method_decl;
         append_method(m_allocator, struct_type_info, method_info);
     }
@@ -1396,146 +1370,95 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
     }
 }
 
+Span<Type*> SemanticAnalyzer::resolve_param_types(Span<Param> params) {
+    Vector<Type*> param_types;
+    for (const auto& param : params) {
+        param_types.push_back(resolve_type_expr(param.type));
+    }
+    return m_allocator.alloc_span(param_types);
+}
+
+Type* SemanticAnalyzer::resolve_member_struct(SourceLocation loc, StringView struct_name,
+                                              const char* noun) {
+    Type* struct_type = m_type_env.named_type_by_name(struct_name);
+    if (!struct_type) {
+        error_fmt(loc, "{} for unknown struct '{}'", noun, struct_name);
+        return nullptr;
+    }
+    if (struct_type->kind != TypeKind::Struct) {
+        error_fmt(loc, "'{}' is not a struct type", struct_name);
+        return nullptr;
+    }
+    return struct_type;
+}
+
+template<typename InfoT>
+bool SemanticAnalyzer::report_duplicate_member(SourceLocation loc, Span<InfoT> existing,
+                                               StringView name, StringView struct_name,
+                                               const char* noun) {
+    for (const auto& member : existing) {
+        if (member.name == name) {
+            if (name.empty()) {
+                error_fmt(loc, "duplicate default {} for struct '{}'", noun, struct_name);
+            } else {
+                error_fmt(loc, "duplicate {} '{}' for struct '{}'", noun, name, struct_name);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 void SemanticAnalyzer::register_constructor_signature(Decl* decl) {
     ConstructorDecl& constructor_decl = decl->constructor_decl;
 
-    // Look up the struct type
-    Type* struct_type = m_type_env.named_type_by_name(constructor_decl.struct_name);
-    if (!struct_type) {
-        error_fmt(decl->loc, "constructor for unknown struct '{}'",
-                 constructor_decl.struct_name);
+    Type* struct_type = resolve_member_struct(decl->loc, constructor_decl.struct_name, "constructor");
+    if (!struct_type) return;
+    if (report_duplicate_member(decl->loc, struct_type->struct_info.constructors,
+                                constructor_decl.name, constructor_decl.struct_name, "constructor")) {
         return;
     }
 
-    if (struct_type->kind != TypeKind::Struct) {
-        error_fmt(decl->loc, "'{}' is not a struct type",
-                 constructor_decl.struct_name);
-        return;
-    }
-
-    // Check for duplicate constructor names
-    for (const auto& ctor : struct_type->struct_info.constructors) {
-        if (ctor.name == constructor_decl.name) {
-            if (constructor_decl.name.empty()) {
-                error_fmt(decl->loc, "duplicate default constructor for struct '{}'",
-                         constructor_decl.struct_name);
-            } else {
-                error_fmt(decl->loc, "duplicate constructor '{}' for struct '{}'",
-                         constructor_decl.name, constructor_decl.struct_name);
-            }
-            return;
-        }
-    }
-
-    // Resolve parameter types
-    Vector<Type*> param_types;
-    for (const auto& param : constructor_decl.params) {
-        Type* ptype = resolve_type_expr(param.type);
-        param_types.push_back(ptype);
-    }
-
-    // Create constructor info
     ConstructorInfo ctor_info;
     ctor_info.name = constructor_decl.name;
-    ctor_info.param_types = m_allocator.alloc_span(param_types);
+    ctor_info.param_types = resolve_param_types(constructor_decl.params);
     ctor_info.decl = decl;
-
-    // Add to struct's constructor list
     append_constructor(m_allocator, struct_type->struct_info, ctor_info);
 }
 
 void SemanticAnalyzer::register_destructor_signature(Decl* decl) {
     DestructorDecl& destructor_decl = decl->destructor_decl;
 
-    // Look up the struct type
-    Type* struct_type = m_type_env.named_type_by_name(destructor_decl.struct_name);
-    if (!struct_type) {
-        error_fmt(decl->loc, "destructor for unknown struct '{}'",
-                 destructor_decl.struct_name);
+    Type* struct_type = resolve_member_struct(decl->loc, destructor_decl.struct_name, "destructor");
+    if (!struct_type) return;
+    if (report_duplicate_member(decl->loc, struct_type->struct_info.destructors,
+                                destructor_decl.name, destructor_decl.struct_name, "destructor")) {
         return;
     }
 
-    if (struct_type->kind != TypeKind::Struct) {
-        error_fmt(decl->loc, "'{}' is not a struct type",
-                 destructor_decl.struct_name);
-        return;
-    }
-
-    // Check for duplicate destructor names
-    for (const auto& dtor : struct_type->struct_info.destructors) {
-        if (dtor.name == destructor_decl.name) {
-            if (destructor_decl.name.empty()) {
-                error_fmt(decl->loc, "duplicate default destructor for struct '{}'",
-                         destructor_decl.struct_name);
-            } else {
-                error_fmt(decl->loc, "duplicate destructor '{}' for struct '{}'",
-                         destructor_decl.name, destructor_decl.struct_name);
-            }
-            return;
-        }
-    }
-
-    // Resolve parameter types
-    Vector<Type*> param_types;
-    for (const auto& param : destructor_decl.params) {
-        Type* ptype = resolve_type_expr(param.type);
-        param_types.push_back(ptype);
-    }
-
-    // Create destructor info
     DestructorInfo dtor_info;
     dtor_info.name = destructor_decl.name;
-    dtor_info.param_types = m_allocator.alloc_span(param_types);
+    dtor_info.param_types = resolve_param_types(destructor_decl.params);
     dtor_info.decl = decl;
-
-    // Add to struct's destructor list
     append_destructor(m_allocator, struct_type->struct_info, dtor_info);
 }
 
 void SemanticAnalyzer::register_method_signature(Decl* decl) {
     MethodDecl& method_decl = decl->method_decl;
 
-    // Look up the struct type
-    Type* struct_type = m_type_env.named_type_by_name(method_decl.struct_name);
-    if (!struct_type) {
-        error_fmt(decl->loc, "method for unknown struct '{}'",
-                 method_decl.struct_name);
+    Type* struct_type = resolve_member_struct(decl->loc, method_decl.struct_name, "method");
+    if (!struct_type) return;
+    if (report_duplicate_member(decl->loc, struct_type->struct_info.methods,
+                                method_decl.name, method_decl.struct_name, "method")) {
         return;
     }
 
-    if (struct_type->kind != TypeKind::Struct) {
-        error_fmt(decl->loc, "'{}' is not a struct type",
-                 method_decl.struct_name);
-        return;
-    }
-
-    // Check for duplicate method names
-    for (const auto& method : struct_type->struct_info.methods) {
-        if (method.name == method_decl.name) {
-            error_fmt(decl->loc, "duplicate method '{}' for struct '{}'",
-                     method_decl.name, method_decl.struct_name);
-            return;
-        }
-    }
-
-    // Resolve parameter types
-    Vector<Type*> param_types;
-    for (const auto& param : method_decl.params) {
-        Type* ptype = resolve_type_expr(param.type);
-        param_types.push_back(ptype);
-    }
-
-    // Resolve return type
-    Type* return_type = method_decl.return_type ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
-
-    // Create method info
     MethodInfo method_info;
     method_info.name = method_decl.name;
-    method_info.param_types = m_allocator.alloc_span(param_types);
-    method_info.return_type = return_type;
+    method_info.param_types = resolve_param_types(method_decl.params);
+    method_info.return_type = method_decl.return_type
+        ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
     method_info.decl = decl;
-
-    // Add to struct's method list
     append_method(m_allocator, struct_type->struct_info, method_info);
 }
 
