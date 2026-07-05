@@ -78,12 +78,16 @@ semantically sound and well-commented; nearly all findings are structural
 duplication — the same machinery copy-pasted across statement kinds, and the same
 emission idioms repeated dozens of times. Correctness-adjacent items first.
 
-- [ ] **Split the TU / extract collaborators** (the semantic.cpp precedent):
-  (a) zero-risk `.cpp` split into decls/stmt/expr/lifetime files; (b) easy
-  extraction of Phase-1 folding (`try_fold_*` / `try_simplify_*`, ~350
-  nearly-stateless lines) into `ir_fold.{hpp,cpp}`; (c) longer-term
-  `OwnershipTracker` collaborator for `m_owned_locals` + consume/move/track/
-  cleanup-record machinery, mirroring `LifetimeChecker`.
+- [ ] **`OwnershipTracker` collaborator** (the remaining piece of the TU-split
+  item): pull `m_owned_locals` + the consume/move-marking/string-retain/
+  cleanup-record machinery (now grouped in `ir_builder_lifetime.cpp`) out
+  behind a collaborator object, mirroring the semantic side's
+  `LifetimeChecker`. The 2026-07-05 split already did (a) the four-way `.cpp`
+  split (`ir_builder.cpp` = build phases/scaffolding, `_stmt`, `_expr`,
+  `_lifetime`; shared internal helpers in `ir_builder_internal.hpp`) and
+  (b) the pure constant folding extraction into `ir_fold.{hpp,cpp}`
+  (`fold_binary_const` / `fold_unary_const` / `fold_cast_const`, reusable by
+  future optimization passes).
 - [ ] Linear-scan lookups: `find_method_fn_index` scans all module functions by
   name (cold — struct-keyed map ctors only); `find_owned_local` scans by name on
   hot paths; `collect_assigned_vars` dedupe is O(n²). Small-N today; swap to keyed

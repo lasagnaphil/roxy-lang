@@ -67,7 +67,11 @@ add_library(roxy_compiler
     src/roxy/compiler/trait_system.cpp
     src/roxy/compiler/generic_call_resolver.cpp
     src/roxy/compiler/ssa_ir.cpp
+    src/roxy/compiler/ir_fold.cpp
     src/roxy/compiler/ir_builder.cpp
+    src/roxy/compiler/ir_builder_stmt.cpp
+    src/roxy/compiler/ir_builder_expr.cpp
+    src/roxy/compiler/ir_builder_lifetime.cpp
     src/roxy/compiler/ir_validator.cpp
     src/roxy/compiler/ir_optimize.cpp
     src/roxy/compiler/generics.cpp

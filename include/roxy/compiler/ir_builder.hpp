@@ -5,6 +5,7 @@
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/format.hpp"
 #include "roxy/compiler/ast.hpp"
+#include "roxy/compiler/ir_fold.hpp"
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/type_env.hpp"
 #include "roxy/compiler/types.hpp"
@@ -121,6 +122,9 @@ private:
 
     // Phase 1 IR optimizations: applied during emission. Return invalid if no
     // fold/simplification applies; the caller falls through to normal emission.
+    // The pure constant evaluation lives in ir_fold.{hpp,cpp} (fold_*_const);
+    // these wrappers look up the operand instructions and emit the result.
+    ValueId emit_folded_const(const FoldedConst& folded, Type* result_type);
     ValueId try_fold_binary(IROp op, ValueId left, ValueId right, Type* result_type);
     ValueId try_fold_unary(IROp op, ValueId operand, Type* result_type);
     ValueId try_fold_cast(ValueId source, Type* source_type, Type* target_type);
