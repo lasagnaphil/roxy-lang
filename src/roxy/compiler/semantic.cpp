@@ -133,6 +133,20 @@ void SemanticAnalyzer::set_program(Program* program) {
     m_program = program;
 }
 
+bool SemanticAnalyzer::drain_pending_fun_instance(GenericFunInstance* inst) {
+    StringView this_module = m_program ? m_program->module_name : StringView{};
+    bool owns_template = inst->template_module.empty()
+                      || this_module.empty()
+                      || inst->template_module == this_module;
+    if (owns_template) {
+        analyze_fun_body(inst->instantiated_decl);
+        inst->is_analyzed = true;
+        return true;
+    }
+    m_type_env.generics().sideline_cross_module_fun(inst);
+    return false;
+}
+
 u32 SemanticAnalyzer::analyze_owned_pending_fun_instances() {
     // Drain pending generic-fun instances whose template was registered by
     // this analyzer's module. Cross-module-owned instances are sidelined
@@ -140,20 +154,10 @@ u32 SemanticAnalyzer::analyze_owned_pending_fun_instances() {
     // (which land back in m_pending_funs) get drained on the next iteration
     // of the compiler's outer loop.
     if (!m_type_env.generics().has_pending_funs()) return 0;
-    StringView this_module = m_program ? m_program->module_name : StringView{};
     auto pending = m_type_env.generics().take_pending_funs();
     u32 drained = 0;
     for (auto* inst : pending) {
-        bool owns = inst->template_module.empty()
-                 || this_module.empty()
-                 || inst->template_module == this_module;
-        if (owns) {
-            analyze_fun_body(inst->instantiated_decl);
-            inst->is_analyzed = true;
-            drained++;
-        } else {
-            m_type_env.generics().sideline_cross_module_fun(inst);
-        }
+        if (drain_pending_fun_instance(inst)) drained++;
     }
     return drained;
 }
@@ -892,19 +896,9 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
         // module's context (re-queueing them here would infinite-loop the
         // outer worklist).
         if (m_type_env.generics().has_pending_funs()) {
-            StringView this_module = m_program ? m_program->module_name : StringView{};
             auto pending_funs = m_type_env.generics().take_pending_funs();
             for (auto* inst : pending_funs) {
-                bool owns_template =
-                    inst->template_module.empty() ||
-                    this_module.empty() ||
-                    inst->template_module == this_module;
-                if (owns_template) {
-                    analyze_fun_body(inst->instantiated_decl);
-                    inst->is_analyzed = true;
-                } else {
-                    m_type_env.generics().sideline_cross_module_fun(inst);
-                }
+                drain_pending_fun_instance(inst);
             }
         }
     }

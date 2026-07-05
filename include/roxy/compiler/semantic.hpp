@@ -141,6 +141,14 @@ private:
     // Resolve fields of a generic struct instance (idempotent)
     void resolve_generic_struct_fields(GenericStructInstance* inst);
 
+    // Drain one pending generic-fun instance: if its template belongs to this
+    // module (or module ownership is indeterminate), analyze its body and mark
+    // it analyzed; otherwise sideline it for the compiler's cross-module
+    // post-pass (re-queueing it here would infinite-loop the worklist).
+    // Returns true if analyzed here. Shared by analyze_owned_pending_fun_instances
+    // and the worklist in analyze_function_bodies.
+    bool drain_pending_fun_instance(GenericFunInstance* inst);
+
     // Pass 0 import handling
     void analyze_import_decl(Decl* decl);
 
