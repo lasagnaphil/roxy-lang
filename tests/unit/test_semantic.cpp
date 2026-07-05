@@ -687,6 +687,26 @@ TEST_SUITE("Semantic") {
         CHECK(!t.has_error_containing("%.*s"));
     }
 
+    TEST_CASE("Semantic: when clause rejects variants of a different enum") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        enum Color { Red, Green }
+        enum Size { Small, Big }
+
+        struct Item {
+            when c: Color {
+                case Small:
+                    n: i32;
+                case Green:
+                    m: i32;
+            }
+        }
+    )"));
+        CHECK(t.has_error_containing("'Small' is not a variant of enum 'Color'"));
+        // Green IS a Color variant — it must not be flagged.
+        CHECK(!t.has_error_containing("'Green'"));
+    }
+
     TEST_CASE("Semantic: Printable error renders the type name (not %s)") {
         SemanticTestHelper t;
         CHECK(!t.run(R"(

@@ -901,12 +901,18 @@ void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
         Vector<VariantInfo> variants;
 
         for (auto& case_decl : wfd.cases) {
-            // Validate case names are enum variants
+            // Validate case names are variants OF THE DISCRIMINANT'S enum —
+            // kind alone is not enough, since variants of all enums share one
+            // symbol namespace and a different enum's variant would otherwise
+            // be accepted with its (meaningless) discriminant value.
             i64 discriminant_value = 0;
             for (const auto& case_name : case_decl.case_names) {
                 Symbol* sym = m_symbols.lookup(case_name);
                 if (!sym || sym->kind != SymbolKind::EnumVariant) {
                     error_fmt(case_decl.loc, "'{}' is not a known enum variant", case_name);
+                } else if (disc_type->is_enum() && sym->type != disc_type) {
+                    error_fmt(case_decl.loc, "'{}' is not a variant of enum '{}'",
+                              case_name, disc_type->enum_info.name);
                 } else {
                     discriminant_value = sym->enum_variant.value;
                 }
@@ -930,10 +936,14 @@ void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
                 var_slot += slot_count;
             }
 
-            // Create VariantInfo for each case name
+            // Create VariantInfo for each case name. Only read the value off
+            // symbols that passed validation above (right kind, right enum);
+            // invalid cases already reported and compilation will fail.
             for (const auto& case_name : case_decl.case_names) {
                 Symbol* sym = m_symbols.lookup(case_name);
-                i64 value = sym ? sym->enum_variant.value : 0;
+                bool valid_variant = sym && sym->kind == SymbolKind::EnumVariant &&
+                                     (!disc_type->is_enum() || sym->type == disc_type);
+                i64 value = valid_variant ? sym->enum_variant.value : 0;
 
                 VariantInfo vi;
                 vi.case_name = case_name;
