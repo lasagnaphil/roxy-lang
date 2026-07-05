@@ -103,14 +103,6 @@ emission idioms repeated dozens of times. Correctness-adjacent items first.
   `end_function_body`; in both copies the `first_in_scope` pre-scan is dead code
   (the loop that follows already filters on `scope_depth`) — delete it. Extract
   `record_scope_cleanup_records(depth, end_block)`.
-- [ ] **Micro-emission helpers**: `emit_delete(v, t)` (14 sites of `emit_inst` +
-  `if (inst) inst->unary = v`), `emit_nullify(v)` (9), `emit_assert_heap(v)` (4);
-  an `alloc_span(std::initializer_list)` overload (~20 manual fill sites);
-  `slot_count_or_1(t)` (5 sites of the `== 0 → 1` fixup); a
-  `holds_owning_pointer(Type*)` predicate for the
-  `Uniq || is_list || is_map || is_coroutine` chain (4+ sites) — and audit whether
-  `Function` (closures) belongs in that set: the sites disagree with the
-  `nullify_moved_field_source` header comment ("uniq/List/Map/Coro/fun").
 - [ ] **Split the TU / extract collaborators** (the semantic.cpp precedent):
   (a) zero-risk `.cpp` split into decls/stmt/expr/lifetime files; (b) easy
   extraction of Phase-1 folding (`try_fold_*` / `try_simplify_*`, ~350

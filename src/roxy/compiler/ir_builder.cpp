@@ -14,6 +14,25 @@ namespace rx {
 
 // get_type_slot_count is declared in types.hpp and defined in types.cpp.
 
+// get_type_slot_count with the historical "0 (null/opaque type) counts as one
+// slot" default applied.
+static u32 slot_count_or_1(Type* type) {
+    u32 slot_count = get_type_slot_count(type);
+    return slot_count == 0 ? 1 : slot_count;
+}
+
+// True for types whose value is an owning heap pointer held in a register /
+// slot: `uniq T`, List, Map, Coro, and `fun` closures (a uniq env pointer).
+// They share teardown shape — load the pointer, typed Delete — and their
+// cleanup records are narrowed by a Nullify at the destroy point. (`fun` was
+// previously missing from the hand-written chains, leaking an overwritten
+// closure on out/inout & global reassignment and leaving a closure local's
+// cleanup record un-narrowed after its normal-path delete.)
+static bool holds_owning_pointer(Type* type) {
+    return type && (type->kind == TypeKind::Uniq || type->kind == TypeKind::Function
+                    || type->is_list() || type->is_map() || type->is_coroutine());
+}
+
 IRBuilder::IRBuilder(BumpAllocator& allocator, TypeEnv& type_env, NativeRegistry& registry,
                      SymbolTable& symbols, ModuleRegistry& module_registry)
     : m_allocator(allocator)
@@ -386,8 +405,7 @@ void IRBuilder::collect_globals(Program* program) {
         VarDecl& var_decl = decl->var_decl;
         Type* type = var_decl.resolved_type;
         if (!type) continue;
-        u32 slot_count = get_type_slot_count(type);
-        if (slot_count == 0) slot_count = 1;
+        u32 slot_count = slot_count_or_1(type);
         IRGlobal g;
         g.name = var_decl.name;
         g.type = type;
@@ -525,13 +543,11 @@ IRFunction* IRBuilder::build_module_shutdown() {
         ValueId addr = emit_global_addr(slot_offset, type);
         if (type->is_struct()) {
             // Value struct with a destructor: destroy in place via its address.
-            IRInst* del = emit_inst(IROp::Delete, type);
-            if (del) del->unary = addr;
+            emit_delete(addr, type);
         } else {
             // uniq / List / Map: the slot holds the owning pointer.
             ValueId val = emit_load_ptr(addr, slot_count, type);
-            IRInst* del = emit_inst(IROp::Delete, type);
-            if (del) del->unary = val;
+            emit_delete(val, type);
         }
     }
 
@@ -691,9 +707,9 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
     // If struct has parent and no explicit super(), call parent's default constructor
     if (parent_type && !has_explicit_super) {
         StringView parent_ctor_name = mangle_constructor(parent_type->struct_info.name);
-        Span<ValueId> ctor_args = alloc_span<ValueId>(1);
-        ctor_args[0] = m_current_func->params[0].value;  // 'self' is first parameter
-        emit_call(parent_ctor_name, ctor_args, m_types.void_type());
+        // 'self' is the first parameter
+        emit_call(parent_ctor_name, alloc_span({m_current_func->params[0].value}),
+                  m_types.void_type());
     }
 
     // Zero-init this struct's own slot range before the user body runs.
@@ -764,9 +780,9 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
     Type* parent_type = struct_type->struct_info.parent;
     if (parent_type && decl->name.empty()) {
         StringView parent_dtor_name = mangle_destructor(parent_type->struct_info.name);
-        Span<ValueId> dtor_args = alloc_span<ValueId>(1);
-        dtor_args[0] = m_current_func->params[0].value;  // 'self' is first parameter
-        emit_call(parent_dtor_name, dtor_args, m_types.void_type());
+        // 'self' is the first parameter
+        emit_call(parent_dtor_name, alloc_span({m_current_func->params[0].value}),
+                  m_types.void_type());
     }
 
     // For default destructors, clean up uniq fields after user body and parent chain
@@ -857,9 +873,7 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
     Type* parent_type = struct_type->struct_info.parent;
     if (parent_type) {
         StringView parent_ctor_name = mangle_constructor(parent_type->struct_info.name);
-        Span<ValueId> ctor_args = alloc_span<ValueId>(1);
-        ctor_args[0] = self_param.value;
-        emit_call(parent_ctor_name, ctor_args, m_types.void_type());
+        emit_call(parent_ctor_name, alloc_span({self_param.value}), m_types.void_type());
     }
 
     // Initialize own fields (declared defaults / zero-init / recursive nested
@@ -975,9 +989,7 @@ IRFunction* IRBuilder::build_synthesized_default_destructor(Type* struct_type) {
         for (const auto& dtor : parent_type->struct_info.destructors) {
             if (dtor.name.empty()) {
                 StringView parent_dtor_name = mangle_destructor(parent_type->struct_info.name);
-                Span<ValueId> dtor_args = alloc_span<ValueId>(1);
-                dtor_args[0] = self_ptr;
-                emit_call(parent_dtor_name, dtor_args, m_types.void_type());
+                emit_call(parent_dtor_name, alloc_span({self_ptr}), m_types.void_type());
                 break;
             }
         }
@@ -1018,10 +1030,7 @@ IRFunction* IRBuilder::build_cleanup_wrapper(Type* noncopyable_type, u32 wrapper
     ValueId param_val = param.value;
 
     // Emit typed delete — runtime handles container iteration and element cleanup
-    IRInst* del_inst = emit_inst(IROp::Delete, noncopyable_type);
-    if (del_inst) {
-        del_inst->unary = param_val;
-    }
+    emit_delete(param_val, noncopyable_type);
 
     // Set Return terminator directly (avoid finish_block_return which calls emit_ref_param_decrements).
     if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
@@ -1580,6 +1589,21 @@ void IRBuilder::emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_
     }
 }
 
+void IRBuilder::emit_delete(ValueId value, Type* type) {
+    IRInst* inst = emit_inst(IROp::Delete, type);
+    if (inst) inst->unary = value;
+}
+
+void IRBuilder::emit_nullify(ValueId value) {
+    IRInst* inst = emit_inst(IROp::Nullify, m_types.void_type());
+    if (inst) inst->unary = value;
+}
+
+void IRBuilder::emit_assert_heap(ValueId value) {
+    IRInst* inst = emit_inst(IROp::AssertHeap, m_types.void_type());
+    if (inst) inst->unary = value;
+}
+
 void IRBuilder::emit_ref_inc(ValueId ptr) {
     IRInst* inst = emit_inst(IROp::RefInc, m_types.void_type());
     if (inst) inst->unary = ptr;
@@ -1620,19 +1644,15 @@ void IRBuilder::emit_map_value_delete_if_present(ValueId map_obj, Type* map_type
     if (contains_idx < 0) return;
 
     // if (map.contains(key)) { delete map[key]; }
-    Span<ValueId> contains_args = alloc_span<ValueId>(2);
-    contains_args[0] = map_obj;
-    contains_args[1] = key_val;
-    ValueId present = emit_call_native(contains_native, contains_args, m_types.bool_type(),
-                                       static_cast<u32>(contains_idx));
+    ValueId present = emit_call_native(contains_native, alloc_span({map_obj, key_val}),
+                                       m_types.bool_type(), static_cast<u32>(contains_idx));
     IRBlock* destroy_block = create_block("map_destroy_old");
     IRBlock* merge_block = create_block("map_after_destroy");
     finish_block_branch(present, destroy_block->id, merge_block->id);
 
     set_current_block(destroy_block);
     ValueId old = emit_index_get(map_obj, key_val, ContainerKind::Map, value_type);
-    IRInst* del = emit_inst(IROp::Delete, value_type);
-    if (del) del->unary = old;
+    emit_delete(old, value_type);
     finish_block_goto(merge_block->id);
 
     set_current_block(merge_block);
@@ -1657,9 +1677,8 @@ void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
     Type* i32_type = m_types.i32_type();
 
     // cap = __map_iter_capacity(map)   (loop-invariant; dominates the loop)
-    Span<ValueId> cap_args = alloc_span<ValueId>(1);
-    cap_args[0] = map_obj;
-    ValueId cap = emit_call_native(cap_name, cap_args, i32_type, static_cast<u32>(cap_idx));
+    ValueId cap = emit_call_native(cap_name, alloc_span({map_obj}), i32_type,
+                                   static_cast<u32>(cap_idx));
 
     // Counted loop over occupied buckets:
     //   for (idx = 0; (next = next_occupied(map, idx)) < cap; idx = next + 1)
@@ -1678,22 +1697,17 @@ void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
     finish_block_goto(header->id, alloc_span(init_args));
 
     set_current_block(header);
-    Span<ValueId> next_args = alloc_span<ValueId>(2);
-    next_args[0] = map_obj;
-    next_args[1] = idx_param;
-    ValueId next = emit_call_native(next_name, next_args, i32_type, static_cast<u32>(next_idx));
+    ValueId next = emit_call_native(next_name, alloc_span({map_obj, idx_param}), i32_type,
+                                    static_cast<u32>(next_idx));
     ValueId cond = emit_binary(IROp::LtI, next, cap, m_types.bool_type());  // next < cap
     finish_block_branch(cond, body->id, exit_block->id);
 
     set_current_block(body);
-    Span<ValueId> val_args = alloc_span<ValueId>(2);
-    val_args[0] = map_obj;
-    val_args[1] = next;
     // Type the result as the value type so both backends treat the returned
     // pointer correctly (the C backend casts the u64 to the value's C type).
-    ValueId vp = emit_call_native(val_name, val_args, value_type, static_cast<u32>(val_idx));
-    IRInst* del = emit_inst(IROp::Delete, value_type);
-    if (del) del->unary = vp;
+    ValueId vp = emit_call_native(val_name, alloc_span({map_obj, next}), value_type,
+                                  static_cast<u32>(val_idx));
+    emit_delete(vp, value_type);
     ValueId one = emit_const_int(1, i32_type);
     ValueId idx_next = emit_binary(IROp::AddI, next, one, i32_type);
     Vector<BlockArgPair> back_args; back_args.push_back({idx_next});
@@ -1762,8 +1776,7 @@ ValueId IRBuilder::maybe_wrap_weak(ValueId value, Type* source_type, Type* targe
         // call-arg / capture sites pass source_expr = nullptr because they gate
         // separately. Mirrors emit_ref_borrow_inc's gate on the `ref` side.
         if (source_expr && is_bare_self(source_expr)) {
-            IRInst* ah = emit_inst(IROp::AssertHeap, m_types.void_type());
-            if (ah) ah->unary = value;
+            emit_assert_heap(value);
         }
         return emit_weak_create(value, target_type);
     }
@@ -2420,8 +2433,7 @@ void IRBuilder::emit_ref_borrow_inc(ValueId val, Expr* source) {
     if (is_bare_self(source)) {
         // Self-promotion gate: trap if the receiver is stack-allocated, before
         // the inc writes into a bogus (stack-relative) object header.
-        IRInst* assert_inst = emit_inst(IROp::AssertHeap, m_types.void_type());
-        if (assert_inst) assert_inst->unary = val;
+        emit_assert_heap(val);
     }
     emit_ref_inc(val);
 }
@@ -2580,10 +2592,7 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
     }
 
     // Free the memory
-    IRInst* inst = emit_inst(IROp::Delete, m_types.void_type());
-    if (inst) {
-        inst->unary = val;
-    }
+    emit_delete(val, m_types.void_type());
 
     // Mark the variable as moved so scope cleanup doesn't double-destroy. The memory
     // was just explicitly Delete'd, so leave the SSA register alone (null_ssa=false);
@@ -3267,8 +3276,7 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
         // allocated (copyable struct + ref/weak self capture). The check fires
         // on the source pointer before we store it into the env field.
         if (cap.needs_heap_check) {
-            IRInst* assert_inst = emit_inst(IROp::AssertHeap, m_types.void_type());
-            if (assert_inst) assert_inst->unary = v;
+            emit_assert_heap(v);
         }
 
         // A `ref` capture (a [ref self] promotion or a captured ref local) is a
@@ -3595,8 +3603,7 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
         // For primitive types and pointer-sized types, dereference the pointer to get the value.
         // get_type_slot_count covers every non-struct width (incl. weak=4, uniq/ref/fn=2);
         // structs returned above. 0 means null/opaque type — preserve the prior 1-slot default.
-        u32 slot_count = get_type_slot_count(type);
-        if (slot_count == 0) slot_count = 1;
+        u32 slot_count = slot_count_or_1(type);
         return emit_load_ptr(val, slot_count, type);
     }
 
@@ -3617,9 +3624,7 @@ ValueId IRBuilder::gen_unary_expr(Expr* expr) {
             if (mi && found_in) {
                 ValueId self_ptr = gen_lvalue_addr(unary_expr.operand);
                 StringView mangled = mangle_method(found_in->struct_info.name, method_name);
-                Span<ValueId> args = alloc_span<ValueId>(1);
-                args[0] = self_ptr;
-                return emit_call(mangled, args, expr->resolved_type);
+                return emit_call(mangled, alloc_span({self_ptr}), expr->resolved_type);
             }
         }
     }
@@ -3705,12 +3710,7 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
                 ValueId right_val = gen_expr(binary_expr.right);
 
                 StringView mangled = mangle_method(found_in->struct_info.name, method_name);
-
-                Span<ValueId> args = alloc_span<ValueId>(2);
-                args[0] = self_ptr;
-                args[1] = right_val;
-
-                return emit_call(mangled, args, expr->resolved_type);
+                return emit_call(mangled, alloc_span({self_ptr, right_val}), expr->resolved_type);
             }
         }
     }
@@ -3929,9 +3929,7 @@ ValueId IRBuilder::gen_list_constructor(Expr* expr) {
         StringView mark_name("__list_mark_ref_elements", 24);
         i32 mark_idx = m_registry.get_index(mark_name);
         if (mark_idx >= 0) {
-            Span<ValueId> mark_args = alloc_span<ValueId>(1);
-            mark_args[0] = list_ptr;
-            emit_call_native(mark_name, mark_args, m_types.void_type(),
+            emit_call_native(mark_name, alloc_span({list_ptr}), m_types.void_type(),
                              static_cast<u32>(mark_idx));
         }
     }
@@ -4024,9 +4022,7 @@ ValueId IRBuilder::gen_map_constructor(Expr* expr) {
         StringView mark_name("__map_mark_ref_values", 21);
         i32 mark_idx = m_registry.get_index(mark_name);
         if (mark_idx >= 0) {
-            Span<ValueId> mark_args = alloc_span<ValueId>(1);
-            mark_args[0] = map_ptr;
-            emit_call_native(mark_name, mark_args, m_types.void_type(),
+            emit_call_native(mark_name, alloc_span({map_ptr}), m_types.void_type(),
                              static_cast<u32>(mark_idx));
         }
     }
@@ -4098,8 +4094,7 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
                     }
                     // Structs skipped above; get_type_slot_count gives the correct width
                     // for every remaining type (weak=4, uniq/ref/list/map/string/fn=2).
-                    u32 slot_count = get_type_slot_count(type);
-                    if (slot_count == 0) slot_count = 1;
+                    u32 slot_count = slot_count_or_1(type);
                     lowered.inout_args.push_back({arg.expr->identifier.name, args[i], type, slot_count});
                 }
             }
@@ -4141,8 +4136,7 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
                     if (pidx < ptypes.size() && ptypes[pidx] &&
                         (ptypes[pidx]->kind == TypeKind::Ref ||
                          ptypes[pidx]->kind == TypeKind::Weak)) {
-                        IRInst* ah = emit_inst(IROp::AssertHeap, m_types.void_type());
-                        if (ah) ah->unary = args[i];
+                        emit_assert_heap(args[i]);
                     }
                 }
             }
@@ -4393,8 +4387,7 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
     // record's scope at the RefDec; lowering narrows its start to the RefInc.
     if (recv_borrow.is_valid() && m_current_block) {
         emit_ref_dec(recv_borrow);
-        IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-        if (nullify) nullify->unary = recv_borrow;
+        emit_nullify(recv_borrow);
         IRCleanupInfo ci;
         ci.value = recv_borrow;
         ci.type = obj_type;
@@ -4652,8 +4645,7 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     for (IRCleanupInfo& ci : call_borrows) {
         if (ci.kind == IRCleanupKind::Unpin) emit_container_unpin(ci.value);
         else emit_ref_dec(ci.value);
-        IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-        if (nullify) nullify->unary = ci.value;
+        emit_nullify(ci.value);
         ci.end_block = m_current_block->id;
         m_call_borrow_cleanups.push_back(ci);
     }
@@ -4678,10 +4670,7 @@ ValueId IRBuilder::gen_index_expr(Expr* expr) {
             ValueId self_ptr = gen_lvalue_addr(index_expr.object);
             ValueId index_val = gen_expr(index_expr.index);
             StringView mangled = mangle_method(found_in->struct_info.name, method_name);
-            Span<ValueId> args = alloc_span<ValueId>(2);
-            args[0] = self_ptr;
-            args[1] = index_val;
-            return emit_call(mangled, args, expr->resolved_type);
+            return emit_call(mangled, alloc_span({self_ptr, index_val}), expr->resolved_type);
         }
     }
 
@@ -4827,11 +4816,8 @@ ValueId IRBuilder::gen_compound_assign(Expr* expr, ValueId rhs, bool& handled) {
             if (mi && found_in) {
                 ValueId self_ptr = gen_lvalue_addr(assign_expr.target);
                 StringView mangled = mangle_method(found_in->struct_info.name, method_name);
-                Span<ValueId> args = alloc_span<ValueId>(2);
-                args[0] = self_ptr;
-                args[1] = rhs;
                 handled = true;
-                return emit_call(mangled, args, m_types.void_type());
+                return emit_call(mangled, alloc_span({self_ptr, rhs}), m_types.void_type());
             }
         }
     }
@@ -4890,21 +4876,18 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
         // get_type_slot_count handles structs (struct_info.slot_count) and every other
         // width uniformly. The old inline check omitted list/map/string/weak, under-counting
         // their slots when stored through an out/inout pointer.
-        u32 slot_count = get_type_slot_count(type);
-        if (slot_count == 0) slot_count = 1;
+        u32 slot_count = slot_count_or_1(type);
 
         // Reassigning an owning out/inout pointer must free the value it
         // currently points at, or the overwritten object leaks — the same
         // old-value destroy gen_assign_field does for `uniq` fields. Pointer-
-        // valued owners (uniq/list/map/coro) hold the owned pointer in the
+        // valued owners (uniq/list/map/coro/fun) hold the owned pointer in the
         // slot, so load it and emit a typed Delete; DEL_OBJ on null is a safe
         // no-op, so a zero-initialized (uninitialized `out`) slot is harmless.
         // Value-struct inout reassignment is a separate, rarer path, left as-is.
-        if (type && (type->kind == TypeKind::Uniq || type->is_list()
-                     || type->is_map() || type->is_coroutine())) {
+        if (holds_owning_pointer(type)) {
             ValueId old = emit_load_ptr(ptr, slot_count, type);
-            IRInst* del = emit_inst(IROp::Delete, type);
-            if (del) del->unary = old;
+            emit_delete(old, type);
         }
 
         ValueId result = emit_store_ptr(ptr, value, slot_count, type);
@@ -4937,13 +4920,10 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
             ValueId addr = emit_global_addr(goffset, gtype);
             // Destroy the overwritten value (mirrors gen_assign_field).
             if (gtype && gtype->is_struct() && gtype->noncopyable()) {
-                IRInst* del = emit_inst(IROp::Delete, gtype);
-                if (del) del->unary = addr;
-            } else if (gtype && (gtype->kind == TypeKind::Uniq || gtype->is_list()
-                                 || gtype->is_map() || gtype->is_coroutine())) {
+                emit_delete(addr, gtype);
+            } else if (holds_owning_pointer(gtype)) {
                 ValueId old = emit_load_ptr(addr, gslots, gtype);
-                IRInst* del = emit_inst(IROp::Delete, gtype);
-                if (del) del->unary = old;
+                emit_delete(old, gtype);
             }
             value = maybe_wrap_weak(value, assign_expr.value->resolved_type, gtype, assign_expr.value);
             ValueId result;
@@ -5230,11 +5210,7 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
             ValueId self_ptr = gen_lvalue_addr(index_expr.object);
             ValueId index_val = gen_expr(index_expr.index);
             StringView mangled = mangle_method(found_in->struct_info.name, method_name);
-            Span<ValueId> args = alloc_span<ValueId>(3);
-            args[0] = self_ptr;
-            args[1] = index_val;
-            args[2] = value;
-            return emit_call(mangled, args, m_types.void_type());
+            return emit_call(mangled, alloc_span({self_ptr, index_val, value}), m_types.void_type());
         }
     }
 
@@ -5273,8 +5249,7 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
             // List: the index is always in bounds, so the old element always
             // exists — destroy it unconditionally.
             ValueId old = emit_index_get(obj, index_val, kind, elem_type);
-            IRInst* del = emit_inst(IROp::Delete, elem_type);
-            if (del) del->unary = old;
+            emit_delete(old, elem_type);
         } else if (elem_noncopyable) {
             // Map: a slot has an old value only for an already-present key, so the
             // helper guards the destroy with a `contains` check (a new key destroys
@@ -5753,10 +5728,7 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
                     // rvalues and would error with "expression is not a valid lvalue".
                     StringView mangled = mangle_method(etype->struct_info.name,
                                                        StringView("to_string", 9));
-                    Span<ValueId> args = alloc_span<ValueId>(1);
-                    args[0] = val;
-
-                    ValueId ts = emit_call_resolved(mangled, args, string_type);
+                    ValueId ts = emit_call_resolved(mangled, alloc_span({val}), string_type);
                     // A user `to_string()` hands off an owned string — track it.
                     track_string_temp(ts, string_type);
                     string_parts.push_back(ts);
@@ -5776,10 +5748,8 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
     i32 concat_idx = m_registry.get_index(concat_name);
 
     for (u32 i = 1; i < string_parts.size(); i++) {
-        Span<ValueId> args = alloc_span<ValueId>(2);
-        args[0] = result;
-        args[1] = string_parts[i];
-        result = emit_call_native(concat_name, args, string_type, static_cast<u32>(concat_idx));
+        result = emit_call_native(concat_name, alloc_span({result, string_parts[i]}),
+                                  string_type, static_cast<u32>(concat_idx));
         // Each concat produces a fresh owned string temp; track it for release at
         // scope exit (finding 9b). The final `result` is returned and re-tracked by
         // gen_expr (track_string_temp skips already-tracked values).
@@ -5816,8 +5786,7 @@ ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {
 
             // Calculate slot count. Structs returned above; get_type_slot_count covers every
             // remaining width (weak=4, uniq/ref/list/map/string/fn=2). 0 => opaque, default 1.
-            u32 slot_count = get_type_slot_count(type);
-            if (slot_count == 0) slot_count = 1;
+            u32 slot_count = slot_count_or_1(type);
 
             // Allocate stack space
             ValueId addr = emit_stack_alloc(slot_count, type);
@@ -6146,8 +6115,7 @@ void IRBuilder::consume_or_retain_string(ValueId val, Type* type, bool adopted_b
                 // Stored into a field/container/global (not sharing a tracked
                 // local's register): end the temp's cleanup record and null its
                 // mapping so its scope-exit release is suppressed.
-                IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-                if (nullify) nullify->unary = val;
+                emit_nullify(val);
                 ValueId null_val = emit_const_null();
                 define_local(info.name, null_val, info.type);
             }
@@ -6170,8 +6138,7 @@ void IRBuilder::consume_temp_noncopyable(ValueId val, bool adopted_by_variable) 
             // handles destruction — no Nullify needed. Otherwise, emit a Nullify annotation
             // so the bytecode builder ends the cleanup record scope at this point.
             if (!adopted_by_variable) {
-                IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-                if (nullify) nullify->unary = val;
+                emit_nullify(val);
             }
             // Update the local mapping to null so yield/block-arg captures see null
             // instead of the stale pointer (prevents double-free in coroutines).
@@ -6197,8 +6164,7 @@ void IRBuilder::mark_moved_from(StringView name, bool null_ssa, bool nullify_rec
 
     // Zero the cleanup record's register so exception-path cleanup skips it.
     if (nullify_record && owned_info->initial_value.is_valid()) {
-        IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-        if (nullify) nullify->unary = owned_info->initial_value;
+        emit_nullify(owned_info->initial_value);
     }
 
     owned_info->is_moved = true;
@@ -6239,8 +6205,7 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
         // unwind path doesn't double-decrement after the normal-path RefDec
         // (mirrors the owned-local Nullify below).
         if (info.initial_value.is_valid()) {
-            IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-            if (nullify) nullify->unary = info.initial_value;
+            emit_nullify(info.initial_value);
         }
         info.is_moved = true;
         return;
@@ -6252,8 +6217,7 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
     if (info.kind == OwnedKind::StrOwn) {
         emit_str_release(current_value);
         if (info.initial_value.is_valid()) {
-            IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-            if (nullify) nullify->unary = info.initial_value;
+            emit_nullify(info.initial_value);
         }
         info.is_moved = true;
         return;
@@ -6265,11 +6229,9 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
     // `fun delete` does not run — a type-erased free can't reach a bytecode
     // destructor, the same limitation as the unhandled-exception path.
     if (info.type && info.type->kind == TypeKind::ExceptionRef) {
-        IRInst* inst = emit_inst(IROp::Delete, m_types.void_type());
-        if (inst) inst->unary = current_value;
+        emit_delete(current_value, m_types.void_type());
         if (info.initial_value.is_valid()) {
-            IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-            if (nullify) nullify->unary = info.initial_value;
+            emit_nullify(info.initial_value);
         }
         info.is_moved = true;
         return;
@@ -6277,19 +6239,14 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
 
     // Emit a single typed Delete — the runtime handles null checks,
     // destructor calls, container element iteration, and freeing.
-    IRInst* inst = emit_inst(IROp::Delete, info.type);
-    if (inst) {
-        inst->unary = current_value;
-    }
+    emit_delete(current_value, info.type);
 
     // Null-ify heap-allocated values to prevent double-cleanup from exception handler.
     // Use a Nullify annotation (not a runtime ConstNull) so the bytecode builder
     // narrows the cleanup record scope instead of zeroing the register.
-    if (info.type->kind == TypeKind::Uniq || info.type->is_list()
-        || info.type->is_map() || info.type->is_coroutine()) {
+    if (holds_owning_pointer(info.type)) {
         if (info.initial_value.is_valid()) {
-            IRInst* nullify = emit_inst(IROp::Nullify, m_types.void_type());
-            if (nullify) nullify->unary = info.initial_value;
+            emit_nullify(info.initial_value);
         }
     }
 
@@ -6302,16 +6259,14 @@ void IRBuilder::emit_single_field_destroy(ValueId obj_ptr, StringView field_name
     if (field_type->is_struct() && field_type->noncopyable()) {
         ValueId field_addr = emit_get_field_addr(obj_ptr, field_name,
             slot_offset, field_type);
-        IRInst* inst = emit_inst(IROp::Delete, field_type);
-        if (inst) inst->unary = field_addr;
+        emit_delete(field_addr, field_type);
         return;
     }
 
     // For pointer-valued fields (uniq, list, map): load the pointer and emit typed Delete
     ValueId field_val = emit_get_field(obj_ptr, field_name,
         slot_offset, slot_count, field_type);
-    IRInst* inst = emit_inst(IROp::Delete, field_type);
-    if (inst) inst->unary = field_val;
+    emit_delete(field_val, field_type);
 }
 
 void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {

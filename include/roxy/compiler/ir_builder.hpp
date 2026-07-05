@@ -147,6 +147,16 @@ private:
     ValueId emit_store_ptr(ValueId ptr, ValueId value, u32 slot_count, Type* result_type);
     void emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_count);
 
+    // One-operand emission helpers for the void-result annotation/lifecycle ops.
+    // emit_delete: typed Delete (runtime handles null checks, destructor
+    // dispatch, container element iteration, freeing); pass void_type() for a
+    // type-erased free. emit_nullify: compile-time cleanup-record narrowing
+    // annotation. emit_assert_heap: the promotion gate that traps a
+    // stack-allocated receiver (lifetimes.md "Promotion").
+    void emit_delete(ValueId value, Type* type);
+    void emit_nullify(ValueId value);
+    void emit_assert_heap(ValueId value);
+
     // Reference counting for constraint reference model
     void emit_ref_inc(ValueId ptr);
     void emit_ref_dec(ValueId ptr);
@@ -610,6 +620,18 @@ private:
         Span<T> span = alloc_span<T>(static_cast<u32>(vec.size()));
         for (u32 i = 0; i < vec.size(); i++) {
             span[i] = vec[i];
+        }
+        return span;
+    }
+
+    // Helper to allocate a span from a braced list: alloc_span({a, b, c})
+    template<typename T>
+    Span<T> alloc_span(std::initializer_list<T> items) {
+        if (items.size() == 0) return {};
+        Span<T> span = alloc_span<T>(static_cast<u32>(items.size()));
+        u32 i = 0;
+        for (const T& item : items) {
+            span[i++] = item;
         }
         return span;
     }
