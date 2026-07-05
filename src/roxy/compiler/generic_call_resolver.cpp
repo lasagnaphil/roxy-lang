@@ -109,25 +109,22 @@ bool GenericCallResolver::check_type_arg_bounds(StringView template_name, Span<T
             bool satisfies = m_types.implements_trait(concrete_type, bound.trait, subst_args);
 
             if (!satisfies) {
-                auto concrete_str = m_checker.type_string(concrete_type);
-                // Build trait name with type args for error message
-                String trait_str;
-                auto append_sv = [&](StringView sv) { for (char c : sv) trait_str.push_back(c); };
-                auto append_cs = [&](const char* cs) { while (*cs) trait_str.push_back(*cs++); };
-                append_sv(bound.trait->trait_info.name);
+                // Render the required trait (with substituted type args) for the
+                // error message: "Trait" or "Trait<A, B>".
+                StringView trait_str = bound.trait->trait_info.name;
                 if (subst_args.size() > 0) {
-                    append_cs("<");
+                    String args;
                     for (u32 j = 0; j < subst_args.size(); j++) {
-                        if (j > 0) append_cs(", ");
-                        type_to_string(subst_args[j], trait_str);
+                        if (j > 0) args.append(", ", 2);
+                        type_to_string(subst_args[j], args);
                     }
-                    append_cs(">");
+                    trait_str = format_to_arena(m_allocator, "{}<{}>",
+                                                bound.trait->trait_info.name, args);
                 }
-                trait_str.push_back('\0');
 
                 m_reporter.error_fmt(loc,
                     "type '{}' does not implement trait '{}' required by type parameter bound on '{}'",
-                    concrete_str.data(), trait_str.data(), template_name);
+                    m_checker.type_string(concrete_type), trait_str, template_name);
                 all_ok = false;
             }
         }
