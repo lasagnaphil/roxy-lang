@@ -4715,69 +4715,66 @@ ValueId IRBuilder::gen_get_expr(Expr* expr) {
         emit_weak_deref_check(obj);
     }
 
-    u32 slot_offset = 0;
-    u32 slot_count = 1;
-    Type* field_type = nullptr;
-    bool is_variant_field = false;
-    const WhenClauseInfo* when_clause = nullptr;
-    const VariantInfo* variant = nullptr;
+    FieldAccess access = resolve_field_access(struct_type, get_expr.name);
 
-    if (struct_type && struct_type->is_struct()) {
-        const FieldInfo* field_info = struct_type->struct_info.find_field(get_expr.name);
-        if (field_info) {
-            slot_offset = field_info->slot_offset;
-            slot_count = field_info->slot_count;
-            field_type = field_info->type;
-        } else {
-            // Check for variant field in when clauses
-            const VariantFieldInfo* variant_field_info = struct_type->struct_info.find_variant_field(
-                get_expr.name, &when_clause, &variant);
-            if (variant_field_info) {
-                is_variant_field = true;
-                // Compute the actual offset: union_slot_offset + variant field's offset within the union
-                slot_offset = when_clause->union_slot_offset + variant_field_info->slot_offset;
-                slot_count = variant_field_info->slot_count;
-                field_type = variant_field_info->type;
-            }
-        }
-    }
-
-    // If this is a variant field, emit runtime discriminant check
-    if (is_variant_field && when_clause && variant) {
-        // Load the discriminant
-        ValueId disc = emit_get_field(obj, when_clause->discriminant_name,
-                                      when_clause->discriminant_slot_offset, 1,
-                                      when_clause->discriminant_type);
-
-        // Create the expected discriminant value constant
-        ValueId expected = emit_const_int(variant->discriminant_value,
-                                          when_clause->discriminant_type);
-
-        // Compare discriminant with expected value
-        ValueId matches = emit_binary(IROp::EqI, disc, expected, m_types.bool_type());
-
-        // Create pass and fail blocks
-        IRBlock* pass_block = create_block("variant_check_pass");
-        IRBlock* fail_block = create_block("variant_check_fail");
-
-        // Branch based on discriminant check
-        finish_block_branch(matches, pass_block->id, fail_block->id);
-
-        // In fail block: emit unreachable (will lower to TRAP)
-        set_current_block(fail_block);
-        finish_block_unreachable();
-
-        // Continue in pass block
-        set_current_block(pass_block);
-    }
+    // Variant field: emit the runtime discriminant check before touching it.
+    emit_variant_guard(obj, access, "variant_check");
 
     // If the field is a struct type, we need to compute its address (pointer)
     // instead of loading its value, since nested struct access needs the address.
-    if (field_type && field_type->is_struct()) {
-        return emit_get_field_addr(obj, get_expr.name, slot_offset, expr->resolved_type);
+    if (access.field_type && access.field_type->is_struct()) {
+        return emit_get_field_addr(obj, get_expr.name, access.slot_offset, expr->resolved_type);
     }
 
-    return emit_get_field(obj, get_expr.name, slot_offset, slot_count, expr->resolved_type);
+    return emit_get_field(obj, get_expr.name, access.slot_offset, access.slot_count,
+                          expr->resolved_type);
+}
+
+IRBuilder::FieldAccess IRBuilder::resolve_field_access(Type* struct_type, StringView name) {
+    FieldAccess access;
+    if (!struct_type || !struct_type->is_struct()) return access;
+
+    if (const FieldInfo* field_info = struct_type->struct_info.find_field(name)) {
+        access.slot_offset = field_info->slot_offset;
+        access.slot_count = field_info->slot_count;
+        access.field_type = field_info->type;
+        return access;
+    }
+
+    // Check for variant field in when clauses. The actual offset is
+    // union_slot_offset + the variant field's offset within the union.
+    const VariantFieldInfo* variant_field_info = struct_type->struct_info.find_variant_field(
+        name, &access.when_clause, &access.variant);
+    if (variant_field_info) {
+        access.is_variant_field = true;
+        access.slot_offset = access.when_clause->union_slot_offset + variant_field_info->slot_offset;
+        access.slot_count = variant_field_info->slot_count;
+        access.field_type = variant_field_info->type;
+    }
+    return access;
+}
+
+void IRBuilder::emit_variant_guard(ValueId obj, const FieldAccess& access, const char* label) {
+    if (!access.is_variant_field || !access.when_clause || !access.variant) return;
+
+    // Load the discriminant and compare against this variant's value.
+    ValueId disc = emit_get_field(obj, access.when_clause->discriminant_name,
+                                  access.when_clause->discriminant_slot_offset, 1,
+                                  access.when_clause->discriminant_type);
+    ValueId expected = emit_const_int(access.variant->discriminant_value,
+                                      access.when_clause->discriminant_type);
+    ValueId matches = emit_binary(IROp::EqI, disc, expected, m_types.bool_type());
+
+    IRBlock* pass_block = create_block(intern_format("{}_pass", label));
+    IRBlock* fail_block = create_block(intern_format("{}_fail", label));
+    finish_block_branch(matches, pass_block->id, fail_block->id);
+
+    // In fail block: emit unreachable (will lower to TRAP)
+    set_current_block(fail_block);
+    finish_block_unreachable();
+
+    // Continue in pass block
+    set_current_block(pass_block);
 }
 
 ValueId IRBuilder::gen_assign_expr(Expr* expr) {
@@ -5054,66 +5051,19 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
         emit_weak_deref_check(obj);
     }
 
-    u32 slot_offset = 0;
-    u32 slot_count = 1;
-    Type* field_type = nullptr;
-    bool is_variant_field = false;
-    const WhenClauseInfo* when_clause = nullptr;
-    const VariantInfo* variant = nullptr;
+    FieldAccess access = resolve_field_access(struct_type, get_expr.name);
+    u32 slot_offset = access.slot_offset;
+    u32 slot_count = access.slot_count;
+    Type* field_type = access.field_type;
 
-    if (struct_type && struct_type->is_struct()) {
-        const FieldInfo* field_info = struct_type->struct_info.find_field(get_expr.name);
-        if (field_info) {
-            slot_offset = field_info->slot_offset;
-            slot_count = field_info->slot_count;
-            field_type = field_info->type;
-        } else {
-            // Check for variant field in when clauses
-            const VariantFieldInfo* variant_field_info = struct_type->struct_info.find_variant_field(
-                get_expr.name, &when_clause, &variant);
-            if (variant_field_info) {
-                is_variant_field = true;
-                slot_offset = when_clause->union_slot_offset + variant_field_info->slot_offset;
-                slot_count = variant_field_info->slot_count;
-                field_type = variant_field_info->type;
-            }
-        }
-    }
-
-    // If this is a variant field, emit runtime discriminant check
-    if (is_variant_field && when_clause && variant) {
-        // Load the discriminant
-        ValueId disc = emit_get_field(obj, when_clause->discriminant_name,
-                                      when_clause->discriminant_slot_offset, 1,
-                                      when_clause->discriminant_type);
-
-        // Create the expected discriminant value constant
-        ValueId expected = emit_const_int(variant->discriminant_value,
-                                          when_clause->discriminant_type);
-
-        // Compare discriminant with expected value
-        ValueId matches = emit_binary(IROp::EqI, disc, expected, m_types.bool_type());
-
-        // Create pass and fail blocks
-        IRBlock* pass_block = create_block("variant_set_pass");
-        IRBlock* fail_block = create_block("variant_set_fail");
-
-        // Branch based on discriminant check
-        finish_block_branch(matches, pass_block->id, fail_block->id);
-
-        // In fail block: emit unreachable (will lower to TRAP)
-        set_current_block(fail_block);
-        finish_block_unreachable();
-
-        // Continue in pass block
-        set_current_block(pass_block);
-    }
+    // Variant field: emit the runtime discriminant check before storing.
+    emit_variant_guard(obj, access, "variant_set");
 
     // Reassigning a tagged-union discriminant abandons the current variant: drop
     // its owned fields and clear the union storage before the new discriminant is
     // stored. Only a *regular* field can be a discriminant (a variant-field write
     // took the branch above), so check the struct's when-clauses by name.
-    if (!is_variant_field && struct_type && struct_type->is_struct()) {
+    if (!access.is_variant_field && struct_type && struct_type->is_struct()) {
         for (const auto& clause : struct_type->struct_info.when_clauses) {
             if (clause.discriminant_name == get_expr.name) {
                 emit_discriminant_reassign_cleanup(obj, clause, value);

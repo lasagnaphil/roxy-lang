@@ -589,6 +589,24 @@ private:
     // validate the referent is still alive; trap on a dangling/recycled weak.
     void emit_weak_deref_check(ValueId weak_val);
 
+    // Resolved field-access info shared by gen_get_expr / gen_assign_field:
+    // a regular field, or a variant field with its guard context. slot_offset
+    // is absolute (union base already applied for variant fields).
+    struct FieldAccess {
+        u32 slot_offset = 0;
+        u32 slot_count = 1;
+        Type* field_type = nullptr;
+        bool is_variant_field = false;
+        const WhenClauseInfo* when_clause = nullptr;
+        const VariantInfo* variant = nullptr;
+    };
+    FieldAccess resolve_field_access(Type* struct_type, StringView name);
+
+    // Runtime discriminant check for a variant-field access: trap when the
+    // union currently holds a different variant. `label` prefixes the
+    // pass/fail block names. No-op for non-variant accesses.
+    void emit_variant_guard(ValueId obj, const FieldAccess& access, const char* label);
+
     // Emit cleanup (implicit destruction) for all live owned locals at or above min_scope_depth
     void emit_scope_cleanup(u32 min_scope_depth);
 

@@ -95,10 +95,6 @@ emission idioms repeated dozens of times. Correctness-adjacent items first.
   large-struct-return param block (`build_function`/`build_method` verbatim),
   return-type resolution. `begin_ir_function`/`finish_ir_function` + `gen_body` +
   `add_hidden_return_param`.
-- [ ] **Extract shared field resolution + variant guard**: `gen_get_expr` and
-  `gen_assign_field` duplicate ~45 lines each of find_field → find_variant_field →
-  union-offset math → discriminant-check emission. One `resolve_field_access` +
-  `emit_variant_guard`.
 - [ ] **Split the TU / extract collaborators** (the semantic.cpp precedent):
   (a) zero-risk `.cpp` split into decls/stmt/expr/lifetime files; (b) easy
   extraction of Phase-1 folding (`try_fold_*` / `try_simplify_*`, ~350
