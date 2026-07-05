@@ -47,6 +47,15 @@ struct GenericStructInstance {
     Decl* instantiated_decl;         // Cloned + substituted StructDecl
     Type* concrete_type;             // The concrete struct Type*
     bool is_analyzed;
+    // True when any type argument is itself a TypeParam — an abstract
+    // instance (e.g. "Box$$T") created while Phase B checks a bounded
+    // template body that names Box<T>. Abstract instances exist only to give
+    // the Phase B walk field/method types to check against: they are
+    // quarantined from codegen (the IR builder skips them) and from the
+    // member-body analysis worklist. Their mangled names carry a reserved
+    // '$'-prefixed argument segment so they can never collide with a
+    // concrete instance.
+    bool is_abstract;
     Vector<Decl*> instantiated_methods;       // Cloned external method DeclMethod nodes
     Vector<Decl*> instantiated_constructors;  // Cloned external constructor DeclConstructor nodes
     Vector<Decl*> instantiated_destructors;   // Cloned external destructor DeclDestructor nodes
@@ -117,6 +126,11 @@ public:
 
     // Name mangling
     StringView mangle_name(StringView base_name, Span<Type*> type_args);
+
+    // True if `type` is or contains a TypeParam (recursing through refs,
+    // containers, function types, and abstract struct instances). A generic
+    // instantiated with such an argument is an abstract Phase-B artifact.
+    bool type_contains_type_param(Type* type) const;
 
     // Trait bounds storage for generic templates
     void set_fun_bounds(StringView name, ResolvedTypeParams bounds);

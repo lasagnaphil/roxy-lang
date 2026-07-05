@@ -241,8 +241,24 @@ void GenericCallResolver::analyze_generic_template_body(Decl* decl) {
     m_active_type_param_bounds = bounds->param_bounds;
     m_active_type_params = fun_decl.type_params;
 
-    // Resolve return type (may reference type params → resolves to TypeParam via resolve_type_expr)
-    Type* return_type = fun_decl.return_type ? m_context.resolve_type_expr(fun_decl.return_type) : m_types.void_type();
+    // Phase B is check-only, but the walkers REWRITE the tree they analyze
+    // (lambda captures rewrite identifiers to __env reads, generic TypeExprs
+    // are mangled in place — the single-shot analysis rule in ast.hpp), and
+    // the template's pristine AST is the clone source for every later
+    // instantiation. Walk a throwaway identity-substitution clone (no type
+    // params bound → a structurally identical copy) so the template stays
+    // reusable.
+    GenericInstantiator& generics = m_type_env.generics();
+    TypeSubstitution identity_substitution{};
+    Stmt* checked_body = generics.clone_stmt(fun_decl.body, identity_substitution);
+
+    // Resolve return type (may reference type params → resolves to TypeParam
+    // via resolve_type_expr) from a cloned TypeExpr — resolution mutates
+    // generic TypeExprs in place.
+    Type* return_type = fun_decl.return_type
+        ? m_context.resolve_type_expr(
+              generics.substitute_type_expr(fun_decl.return_type, identity_substitution))
+        : m_types.void_type();
 
     // Fresh per-function context and lifetime state (same pattern as
     // analyze_fun_body — every body-analysis entry point pushes one).
@@ -251,17 +267,23 @@ void GenericCallResolver::analyze_generic_template_body(Decl* decl) {
     // Push function scope with return type
     m_symbols.push_function_scope(return_type);
 
-    // Define parameters in scope
+    // Define parameters in scope (cloned TypeExprs, same reason as above)
     for (u32 i = 0; i < fun_decl.params.size(); i++) {
         Param& param = fun_decl.params[i];
-        Type* param_type = m_context.resolve_type_expr(param.type);
+        Type* param_type = m_context.resolve_type_expr(
+            generics.substitute_type_expr(param.type, identity_substitution));
         if (!param_type) param_type = m_types.error_type();
         m_symbols.define_parameter(param.name, param_type, decl->loc, i,
                                    param.modifier != ParamModifier::None);
     }
 
-    // Analyze the body
-    m_context.analyze_stmt(fun_decl.body);
+    // Analyze the cloned body. Lambdas synthesized during this walk are
+    // Phase-B throwaways (each real instantiation synthesizes its own from
+    // its own clone) — truncate them so the IR builder never sees
+    // TypeParam-typed closure envs.
+    u32 synthetic_count_before = m_synthetic_decls.size();
+    m_context.analyze_stmt(checked_body);
+    m_synthetic_decls.resize(synthetic_count_before);
 
     m_symbols.pop_scope();
     // context_scope / params_guard / bounds_guard restore on return.

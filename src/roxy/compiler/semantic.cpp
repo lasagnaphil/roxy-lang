@@ -50,7 +50,7 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, 
                 &SemanticAnalyzer::analyze_expr_thunk, &SemanticAnalyzer::analyze_stmt_thunk}
     , m_lifetimes(m_context)
     , m_traits(m_context, m_synthetic_decls)
-    , m_generic_calls(m_context, m_lifetimes, m_function_context)
+    , m_generic_calls(m_context, m_lifetimes, m_function_context, m_synthetic_decls)
     , m_program(nullptr)
 {
 }
@@ -71,7 +71,7 @@ SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, 
                 &SemanticAnalyzer::analyze_expr_thunk, &SemanticAnalyzer::analyze_stmt_thunk}
     , m_lifetimes(m_context)
     , m_traits(m_context, m_synthetic_decls)
-    , m_generic_calls(m_context, m_lifetimes, m_function_context)
+    , m_generic_calls(m_context, m_lifetimes, m_function_context, m_synthetic_decls)
     , m_program(nullptr)
 {
 }
@@ -892,6 +892,13 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
 
             // Analyze bodies (after ALL struct types and infos are registered)
             for (auto* inst : pending_structs) {
+                // Abstract Phase-B artifacts (e.g. Holder$$T) exist only so
+                // the template-body walk has field/method types to check;
+                // their member bodies reference bare type params that don't
+                // resolve outside the Phase B bounds context, and they are
+                // never codegen'd (the IR builder skips them too).
+                if (inst->is_abstract) continue;
+
                 // Analyze external method bodies
                 for (Decl* method_decl : inst->instantiated_methods) {
                     analyze_method_body(method_decl, inst->concrete_type);
@@ -1342,6 +1349,12 @@ void SemanticAnalyzer::analyze_fun_body(Decl* decl) {
     if (fun_decl.is_native) return;
     if (!fun_decl.body) return;
 
+    // Single-shot rule: analysis mutates the AST it walks (see the annotation
+    // contract in ast.hpp) — re-lower or clone a fresh tree instead of
+    // re-analyzing this one.
+    assert(!decl->body_analyzed && "AST body re-analysis (single-shot rule; see ast.hpp)");
+    decl->body_analyzed = true;
+
     // Resolve return type
     Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
 
@@ -1631,6 +1644,12 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
                                             Type* return_type,
                                             bool is_delete_destructor) {
     if (!body) return;
+
+    // Single-shot rule: analysis mutates the AST it walks (see the annotation
+    // contract in ast.hpp) — re-lower or clone a fresh tree instead of
+    // re-analyzing this one.
+    assert(!decl->body_analyzed && "AST body re-analysis (single-shot rule; see ast.hpp)");
+    decl->body_analyzed = true;
 
     // Fresh per-function context (coroutine/destructor/finally slots) and
     // lifetime state for this body, restored as one unit on exit.

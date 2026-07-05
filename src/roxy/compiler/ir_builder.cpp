@@ -200,6 +200,7 @@ void IRBuilder::build_generic_struct_ctors_dtors(tsl::robin_map<StringView, bool
     // Generate constructors/destructors for generic struct instances
     for (auto* instance : m_type_env.generics().all_struct_instances()) {
         if (!instance->is_analyzed || !instance->concrete_type) continue;
+        if (instance->is_abstract) continue;  // Phase-B artifact, never codegen'd
 
         for (Decl* ctor_decl : instance->instantiated_constructors) {
             ConstructorDecl& ctor = ctor_decl->constructor_decl;
@@ -247,7 +248,7 @@ void IRBuilder::build_synthesized_default_ctors(Program* program,
 
     // Generate synthesized default constructors for generic struct instances
     for (auto* instance : m_type_env.generics().all_struct_instances()) {
-        if (instance->is_analyzed && instance->concrete_type) {
+        if (instance->is_analyzed && instance->concrete_type && !instance->is_abstract) {
             // Check if there's a user-defined default constructor for this instance
             if (has_default_ctor.find(instance->mangled_name) == has_default_ctor.end()) {
                 IRFunction* func = build_synthesized_default_constructor(instance->concrete_type);
@@ -261,6 +262,7 @@ void IRBuilder::build_generic_struct_methods() {
     // Generate external methods for generic struct instances
     for (auto* instance : m_type_env.generics().all_struct_instances()) {
         if (!instance->is_analyzed || !instance->concrete_type) continue;
+        if (instance->is_abstract) continue;  // Phase-B artifact, never codegen'd
 
         for (Decl* method_decl : instance->instantiated_methods) {
             MethodDecl& method = method_decl->method_decl;
@@ -298,7 +300,7 @@ void IRBuilder::build_synthesized_default_dtors(Program* program) {
 
     // Generate synthesized default destructors for generic struct instances with uniq fields
     for (auto* instance : m_type_env.generics().all_struct_instances()) {
-        if (instance->is_analyzed && instance->concrete_type) {
+        if (instance->is_analyzed && instance->concrete_type && !instance->is_abstract) {
             Type* concrete_type = instance->concrete_type;
             if (!concrete_type->is_struct()) continue;
 
@@ -561,7 +563,7 @@ void IRBuilder::collect_backend_types(Program* program) {
 
     // Collect monomorphized generic struct instances
     for (auto* instance : m_type_env.generics().all_struct_instances()) {
-        if (instance->is_analyzed && instance->concrete_type) {
+        if (instance->is_analyzed && instance->concrete_type && !instance->is_abstract) {
             m_module->struct_types.push_back(instance->concrete_type);
         }
     }

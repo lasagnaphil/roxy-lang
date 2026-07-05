@@ -433,14 +433,30 @@ struct Type;
 //     overwrites resolved_type. If no site coerces it, analysis reports an
 //     error — the IR builder must never see the flag still set.
 //
-// --- AST mutation (non-idempotent: re-analyzing the same AST is unsound;
-//     see TODO.md "AST mutation vs. side-band annotations") ---
+// --- AST mutation: the single-shot analysis rule ---
+// Beyond annotating, analysis REWRITES the tree it walks:
 //   - captured identifiers rewrite to ExprGet(__env, name); captured `self`
 //     rewrites to ExprGet(__env, __self);
 //   - generic TypeExprs rewrite to the mangled instance name with type_args
 //     cleared;
 //   - LambdaExpr gets env_struct_name / call_function_name / env_struct_type /
-//     resolved_captures backfilled for closure emission (see LambdaExpr).
+//     resolved_captures backfilled for closure emission (see LambdaExpr), and
+//     lambda analysis synthesizes call-function decls and env struct types as
+//     side effects.
+// These rewrites are non-idempotent, so the rule is: an AST body is analyzed
+// AT MOST ONCE (enforced by Decl::body_analyzed + assert at the body-analysis
+// entry points). In-place mutation is deliberate — the annotations above are
+// the IR builder's input, and side-band tables would tax every reader — so a
+// consumer that needs to analyze the "same" code twice must analyze two
+// trees:
+//   - the LSP lowers a fresh AST from the CST for every analysis
+//     (LspAnalysisContext::rebuild_declarations / analyze_function_body);
+//   - generic templates are multi-consumer by design: every instantiation
+//     deep-clones the pristine template (GenericInstantiator::clone_*), and
+//     Phase B definition-site checking walks a throwaway
+//     identity-substitution clone, never the template itself;
+//   - trait default methods are cloned per implementing struct
+//     (TraitSystem::inject_default_method).
 // ============================================================================
 
 // Expression node
@@ -749,6 +765,11 @@ struct TraitDecl {
 struct Decl {
     AstKind kind;
     SourceLocation loc;
+    // Set by the body-analysis entry points. Guards the single-shot analysis
+    // rule (see the annotation contract above struct Expr): analysis mutates
+    // the tree it walks, so a body must never be analyzed twice — re-lower
+    // (or clone) a fresh AST instead.
+    bool body_analyzed;
     union {
         VarDecl var_decl;
         FunDecl fun_decl;
@@ -763,7 +784,7 @@ struct Decl {
         Stmt stmt;  // For statement declarations (like expression statements)
     };
 
-    Decl() : kind(AstKind::DeclVar), loc{0, 0, 0, 0} {
+    Decl() : kind(AstKind::DeclVar), loc{0, 0, 0, 0}, body_analyzed(false) {
         memset(&var_decl, 0, sizeof(var_decl));
     }
     ~Decl() {}

@@ -115,7 +115,20 @@ StringView GenericInstantiator::type_name_for_mangling(Type* type) {
         case TypeKind::IntLiteral: return "i32";
         case TypeKind::ExceptionRef: return "ExceptionRef";
         case TypeKind::Error:  return "error";
-        case TypeKind::TypeParam: return type->type_param_info.name;
+        case TypeKind::TypeParam: {
+            // Reserved '$' prefix: a TypeParam argument marks an ABSTRACT
+            // instantiation (Phase B checking a bounded template body that
+            // names e.g. Box<T>). "Box$$T" cannot collide with any concrete
+            // instance — '$' is illegal in user identifiers, so a user struct
+            // literally named "T" still mangles to the distinct "Box$T".
+            StringView param_name = type->type_param_info.name;
+            u32 total_len = 1 + param_name.size();
+            char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(total_len + 1, 1));
+            buf[0] = '$';
+            memcpy(buf + 1, param_name.data(), param_name.size());
+            buf[total_len] = '\0';
+            return StringView(buf, total_len);
+        }
         case TypeKind::List: {
             // List$<elem>
             StringView prefix = "List";
@@ -192,6 +205,39 @@ StringView GenericInstantiator::type_name_for_mangling(Type* type) {
     }
     assert(false && "Unhandled type kind in type_name_for_mangling");
     return "unknown";
+}
+
+bool GenericInstantiator::type_contains_type_param(Type* type) const {
+    if (!type) return false;
+    switch (type->kind) {
+        case TypeKind::TypeParam:
+            return true;
+        case TypeKind::Uniq:
+        case TypeKind::Ref:
+        case TypeKind::Weak:
+            return type_contains_type_param(type->ref_info.inner_type);
+        case TypeKind::List:
+            return type_contains_type_param(type->list_info.element_type);
+        case TypeKind::Map:
+            return type_contains_type_param(type->map_info.key_type)
+                || type_contains_type_param(type->map_info.value_type);
+        case TypeKind::Coroutine:
+            return type_contains_type_param(type->coro_info.yield_type);
+        case TypeKind::Function: {
+            for (auto* param_type : type->func_info.param_types) {
+                if (type_contains_type_param(param_type)) return true;
+            }
+            return type_contains_type_param(type->func_info.return_type);
+        }
+        case TypeKind::Struct: {
+            // The only structs containing TypeParams are abstract instances
+            // themselves (e.g. Box<Holder$$T>).
+            GenericStructInstance* instance = find_struct_instance_by_type(type);
+            return instance && instance->is_abstract;
+        }
+        default:
+            return false;
+    }
 }
 
 StringView GenericInstantiator::mangle_name(StringView base_name, Span<Type*> type_args) {
@@ -311,6 +357,17 @@ StringView GenericInstantiator::instantiate_struct(StringView name, Span<Type*> 
     instance->instantiated_decl = instantiated;
     instance->concrete_type = concrete_type;
     instance->is_analyzed = false;
+
+    // A type argument containing a TypeParam (directly or nested, e.g.
+    // Box<List<T>>) means this is an abstract Phase-B checking artifact, not
+    // a real monomorphization (see GenericStructInstance).
+    instance->is_abstract = false;
+    for (auto* type_arg : type_args) {
+        if (type_contains_type_param(type_arg)) {
+            instance->is_abstract = true;
+            break;
+        }
+    }
 
     // Clone external method templates for this instantiation
     const Vector<Decl*>* ext_methods = get_generic_struct_methods(name);

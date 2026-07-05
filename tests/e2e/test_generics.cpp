@@ -930,6 +930,62 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 42);
     }
 
+    TEST_CASE_TEMPLATE("Generic Phase B: template body stays pristine for later instantiation", Backend, RX_E2E_BACKENDS) {
+        // Phase B used to type-check a bounded template by walking the
+        // template's own AST. Analysis mutates the tree it walks (lambda
+        // captures rewrite identifiers to __env reads; generic TypeExprs are
+        // rewritten to the mangled instance name), so an instantiation
+        // triggered AFTER the Phase B walk cloned a corrupted template.
+        // Phase B now walks a throwaway clone.
+        SUBCASE("lambda capture in a bounded template, caller after template") {
+            const char* source = R"(
+            trait Greetable;
+            fun Greetable.greet(): i32;
+
+            struct Person { id: i32; }
+            fun Person.greet(): i32 for Greetable { return self.id; }
+
+            fun call_via_lambda<T: Greetable>(v: T): i32 {
+                var base: i32 = v.greet();
+                var f = fun(x: i32): i32 => x + base;
+                return f(1);
+            }
+
+            fun main(): i32 {
+                var p: Person = Person { id = 41 };
+                return call_via_lambda<Person>(p);
+            }
+        )";
+            auto result = Backend::run(source);
+            CHECK(result.success);
+            CHECK(result.value == 42);
+        }
+
+        SUBCASE("generic-struct param in a bounded template, caller after template") {
+            const char* source = R"(
+            trait Greetable;
+            fun Greetable.greet(): i32;
+
+            struct Person { id: i32; }
+            fun Person.greet(): i32 for Greetable { return self.id; }
+
+            struct Holder<U> { value: U; }
+
+            fun unbox_greet<T: Greetable>(h: Holder<T>): i32 {
+                return h.value.greet();
+            }
+
+            fun main(): i32 {
+                var hp: Holder<Person> = Holder<Person> { value = Person { id = 42 } };
+                return unbox_greet(hp);
+            }
+        )";
+            auto result = Backend::run(source);
+            CHECK(result.success);
+            CHECK(result.value == 42);
+        }
+    }
+
     TEST_CASE_TEMPLATE("Generic Phase B: generic trait bound with type args", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Scalable<T>;

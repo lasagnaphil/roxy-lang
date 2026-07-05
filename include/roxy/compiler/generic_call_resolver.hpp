@@ -37,7 +37,7 @@ struct InferredTypeArgs {
 class GenericCallResolver {
 public:
     GenericCallResolver(SemaContext& context, LifetimeChecker& lifetimes,
-                        FunctionContext& function_context)
+                        FunctionContext& function_context, Vector<Decl*>& synthetic_decls)
         : m_context(context)
         , m_allocator(context.allocator)
         , m_type_env(context.type_env)
@@ -46,7 +46,8 @@ public:
         , m_reporter(context.reporter)
         , m_checker(context.checker)
         , m_lifetimes(lifetimes)
-        , m_function_context(function_context) {}
+        , m_function_context(function_context)
+        , m_synthetic_decls(synthetic_decls) {}
 
     // ===== Pass 1.9: trait bounds on generic type parameters =====
 
@@ -157,6 +158,11 @@ private:
     // The analyzer's per-function context: Phase B body checking pushes a
     // fresh one (via FunctionContextScope) like every other body entry point.
     FunctionContext& m_function_context;
+    // The analyzer's synthetic-decl list (shared by reference, same pattern
+    // as TraitSystem): Phase B truncates it back after walking a template
+    // body clone, so throwaway lambda call functions synthesized during the
+    // check never reach the IR builder.
+    Vector<Decl*>& m_synthetic_decls;
 
     // Phase B: active type parameter bounds (set while analyzing a bounded
     // generic template body); maps type param index → resolved trait bounds.
