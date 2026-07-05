@@ -1765,6 +1765,89 @@ void IRBuilder::gen_block_stmt(Stmt* stmt) {
     pop_scope();
 }
 
+IRBuilder::ScopeSnapshot IRBuilder::snapshot_scopes(bool with_move_state) {
+    ScopeSnapshot snapshot;
+    snapshot.scopes.reserve(m_local_scopes.size());
+    for (auto& scope : m_local_scopes) {
+        snapshot.scopes.push_back(scope);
+    }
+    if (with_move_state) {
+        snapshot.has_move_state = true;
+        snapshot.is_moved.reserve(m_owned_locals.size());
+        for (auto& info : m_owned_locals) {
+            snapshot.is_moved.push_back(info.is_moved);
+        }
+    }
+    return snapshot;
+}
+
+void IRBuilder::restore_scopes(const ScopeSnapshot& snapshot, bool restore_move_state) {
+    m_local_scopes.clear_keep_capacity();
+    for (const auto& scope : snapshot.scopes) {
+        m_local_scopes.push_back(scope);
+    }
+    if (restore_move_state && snapshot.has_move_state) {
+        for (u32 i = 0; i < snapshot.is_moved.size() && i < m_owned_locals.size(); i++) {
+            m_owned_locals[i].is_moved = snapshot.is_moved[i];
+        }
+    }
+}
+
+void IRBuilder::restore_scopes_move(ScopeSnapshot&& snapshot) {
+    m_local_scopes = std::move(snapshot.scopes);
+    if (snapshot.has_move_state) {
+        for (u32 i = 0; i < snapshot.is_moved.size() && i < m_owned_locals.size(); i++) {
+            m_owned_locals[i].is_moved = snapshot.is_moved[i];
+        }
+    }
+}
+
+Vector<IRBuilder::PhiInfo> IRBuilder::make_merge_phis(IRBlock* merge_block,
+                                                      const Vector<StringView>& modified) {
+    Vector<PhiInfo> phi_info;
+    for (const auto& name : modified) {
+        LocalVar* local_var = find_local(name);
+        if (!local_var || !local_var->value.is_valid()) continue;
+        bool seen = false;
+        for (const auto& phi : phi_info) {
+            if (phi.name == name) { seen = true; break; }
+        }
+        if (seen) continue;
+        ValueId param = m_current_func->new_value();
+        merge_block->params.push_back({param, local_var->type, name});
+        phi_info.push_back({name, local_var->type, param, local_var->value});
+    }
+    return phi_info;
+}
+
+Span<BlockArgPair> IRBuilder::phi_original_args(const Vector<PhiInfo>& phi_info) {
+    Span<BlockArgPair> args = alloc_span<BlockArgPair>(static_cast<u32>(phi_info.size()));
+    for (u32 i = 0; i < phi_info.size(); i++) {
+        args[i] = BlockArgPair{phi_info[i].original_value};
+    }
+    return args;
+}
+
+Span<BlockArgPair> IRBuilder::phi_current_args(const Vector<PhiInfo>& phi_info) {
+    Span<BlockArgPair> args = alloc_span<BlockArgPair>(static_cast<u32>(phi_info.size()));
+    for (u32 i = 0; i < phi_info.size(); i++) {
+        args[i] = BlockArgPair{lookup_local(phi_info[i].name)};
+    }
+    return args;
+}
+
+void IRBuilder::bind_merge_phis(const Vector<PhiInfo>& phi_info) {
+    for (const auto& phi : phi_info) {
+        define_local(phi.name, phi.merge_param, phi.type);
+    }
+}
+
+void IRBuilder::goto_merge_if_open(IRBlock* merge_block, const Vector<PhiInfo>& phi_info) {
+    if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+        finish_block_goto(merge_block->id, phi_current_args(phi_info));
+    }
+}
+
 void IRBuilder::gen_if_stmt(Stmt* stmt) {
     IfStmt& is = stmt->if_stmt;
 
@@ -1777,69 +1860,27 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     // Evaluate condition
     ValueId cond = gen_expr(is.condition);
 
-    // Collect variables assigned in both branches
-    Vector<StringView> then_modified, else_modified;
-    collect_assigned_vars(is.then_branch, then_modified);
+    // Variables assigned in either branch that already exist before the if
+    // need phi nodes (block params) at the merge point.
+    Vector<StringView> modified;
+    collect_assigned_vars(is.then_branch, modified);
     if (is.else_branch) {
-        collect_assigned_vars(is.else_branch, else_modified);
+        collect_assigned_vars(is.else_branch, modified);
     }
 
-    // Find variables that are assigned in either branch and exist before the if
-    // These need phi nodes (block params) at the merge point
-    Vector<StringView> phi_vars;
-    for (const auto& name : then_modified) {
-        LocalVar* lv = find_local(name);
-        if (lv && lv->value.is_valid()) {
-            bool found = false;
-            for (const auto& pv : phi_vars) {
-                if (pv == name) { found = true; break; }
-            }
-            if (!found) phi_vars.push_back(name);
-        }
-    }
-    for (const auto& name : else_modified) {
-        LocalVar* lv = find_local(name);
-        if (lv && lv->value.is_valid()) {
-            bool found = false;
-            for (const auto& pv : phi_vars) {
-                if (pv == name) { found = true; break; }
-            }
-            if (!found) phi_vars.push_back(name);
-        }
-    }
-
-    // Create blocks
+    // Create blocks and merge-block phi params
     IRBlock* then_block = create_block("then");
     IRBlock* else_block = is.else_branch ? create_block("else") : nullptr;
     IRBlock* merge_block = create_block("endif");
-
-    // Create block params on merge block for phi variables
-    struct PhiInfo {
-        StringView name;
-        Type* type;
-        ValueId merge_param;
-        ValueId original_value;
-    };
-    Vector<PhiInfo> phi_info;
-    for (const auto& pv : phi_vars) {
-        LocalVar* lv = find_local(pv);
-        if (lv) {
-            ValueId param = m_current_func->new_value();
-            merge_block->params.push_back({param, lv->type, pv});
-            phi_info.push_back({pv, lv->type, param, lv->value});
-        }
-    }
+    Vector<PhiInfo> phi_info = make_merge_phis(merge_block, modified);
 
     // Branch based on condition
     if (else_block) {
         finish_block_branch(cond, then_block->id, else_block->id);
     } else {
         // No else branch - pass original values as args to merge_block
-        Vector<BlockArgPair> fallthrough_args;
-        for (const auto& pi : phi_info) {
-            fallthrough_args.push_back({pi.original_value});
-        }
-        finish_block_branch(cond, then_block->id, merge_block->id, {}, alloc_span(fallthrough_args));
+        finish_block_branch(cond, then_block->id, merge_block->id, {},
+                            phi_original_args(phi_info));
     }
 
     // Save pre-if local-scope and is_moved state. We must roll the IR builder's
@@ -1847,74 +1888,33 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     // branches so the merge block — reachable only via the surviving paths —
     // doesn't see consumed/nil-replaced locals from a branch that returned. This
     // mirrors the semantic-side definite-termination move-state merging.
-    Vector<tsl::robin_map<StringView, LocalVar>> saved_scopes_pre;
-    saved_scopes_pre.reserve(m_local_scopes.size());
-    for (auto& scope : m_local_scopes) {
-        saved_scopes_pre.push_back(scope);
-    }
-    Vector<bool> saved_is_moved_pre;
-    saved_is_moved_pre.reserve(m_owned_locals.size());
-    for (auto& info : m_owned_locals) {
-        saved_is_moved_pre.push_back(info.is_moved);
-    }
-
-    auto restore_pre_if_state = [&]() {
-        // Runs at most once per if (the else path and the no-else path are
-        // mutually exclusive), so move the snapshot back instead of deep-copying
-        // every scope map. Do not call this more than once.
-        m_local_scopes = std::move(saved_scopes_pre);
-        for (u32 i = 0; i < saved_is_moved_pre.size() && i < m_owned_locals.size(); i++) {
-            m_owned_locals[i].is_moved = saved_is_moved_pre[i];
-        }
-    };
+    // (Move-restored at most once: the else path and the no-else path below are
+    // mutually exclusive.)
+    ScopeSnapshot pre_if = snapshot_scopes(/*with_move_state=*/true);
 
     // Generate then branch
     set_current_block(then_block);
     gen_stmt(is.then_branch);
     bool then_terminated = !m_current_block || m_current_block->terminator.kind != TerminatorKind::None;
-    if (!then_terminated) {
-        // Build args for merge block
-        Vector<BlockArgPair> then_args;
-        for (const auto& pi : phi_info) {
-            ValueId val = lookup_local(pi.name);
-            then_args.push_back({val});
-        }
-        finish_block_goto(merge_block->id, alloc_span(then_args));
-    }
+    goto_merge_if_open(merge_block, phi_info);
 
     // Snapshot post-then state in case the else branch terminates and we need to
     // restore the then-branch's mutations for code after the merge.
-    Vector<tsl::robin_map<StringView, LocalVar>> saved_scopes_post_then;
-    Vector<bool> saved_is_moved_post_then;
+    ScopeSnapshot post_then;
     if (else_block && !then_terminated) {
-        saved_scopes_post_then.reserve(m_local_scopes.size());
-        for (auto& scope : m_local_scopes) {
-            saved_scopes_post_then.push_back(scope);
-        }
-        saved_is_moved_post_then.reserve(m_owned_locals.size());
-        for (auto& info : m_owned_locals) {
-            saved_is_moved_post_then.push_back(info.is_moved);
-        }
+        post_then = snapshot_scopes(/*with_move_state=*/true);
     }
 
     // Generate else branch
     bool else_terminated = false;
     if (else_block) {
         // Restore pre-if state so the else branch sees original values
-        restore_pre_if_state();
+        restore_scopes_move(std::move(pre_if));
 
         set_current_block(else_block);
         gen_stmt(is.else_branch);
         else_terminated = !m_current_block || m_current_block->terminator.kind != TerminatorKind::None;
-        if (!else_terminated) {
-            // Build args for merge block
-            Vector<BlockArgPair> else_args;
-            for (const auto& pi : phi_info) {
-                ValueId val = lookup_local(pi.name);
-                else_args.push_back({val});
-            }
-            finish_block_goto(merge_block->id, alloc_span(else_args));
-        }
+        goto_merge_if_open(merge_block, phi_info);
     }
 
     // Pick the IR-builder state to use at the merge block:
@@ -1927,25 +1927,17 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     //     vars are rebound from merge-block params below.
     if (!else_block) {
         if (then_terminated) {
-            restore_pre_if_state();
+            restore_scopes_move(std::move(pre_if));
         }
     } else if (then_terminated && !else_terminated) {
         // Current state is post-else, which is correct.
     } else if (else_terminated && !then_terminated) {
-        // Restore post-then snapshot (used only here — move it back).
-        m_local_scopes = std::move(saved_scopes_post_then);
-        for (u32 i = 0; i < saved_is_moved_post_then.size() && i < m_owned_locals.size(); i++) {
-            m_owned_locals[i].is_moved = saved_is_moved_post_then[i];
-        }
+        restore_scopes_move(std::move(post_then));
     }
 
-    // Continue with merge block
+    // Continue with merge block; bind variables to merge params (phi results)
     set_current_block(merge_block);
-
-    // Bind variables to merge block params (phi results)
-    for (const auto& pi : phi_info) {
-        define_local(pi.name, pi.merge_param, pi.type);
-    }
+    bind_merge_phis(phi_info);
 }
 
 void IRBuilder::gen_if_else_chain(Stmt* stmt) {
@@ -1975,62 +1967,21 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
     }
     if (default_body) collect_assigned_vars(default_body, all_modified);
 
-    // 2. Find phi vars: modified vars that exist before the if chain
-    Vector<StringView> phi_vars;
-    for (const auto& name : all_modified) {
-        LocalVar* local_var = find_local(name);
-        if (local_var && local_var->value.is_valid()) {
-            bool found = false;
-            for (const auto& existing : phi_vars) {
-                if (existing == name) { found = true; break; }
-            }
-            if (!found) phi_vars.push_back(name);
-        }
-    }
-
-    // 3. Create merge block with parameters for phi vars
+    // 2. Create merge block with parameters for phi vars
     IRBlock* merge_block = create_block("endif");
+    Vector<PhiInfo> phi_info = make_merge_phis(merge_block, all_modified);
 
-    struct PhiInfo {
-        StringView name;
-        Type* type;
-        ValueId merge_param;
-        ValueId original_value;
-    };
-    Vector<PhiInfo> phi_info;
-    for (const auto& phi_var : phi_vars) {
-        LocalVar* local_var = find_local(phi_var);
-        if (local_var) {
-            ValueId param = m_current_func->new_value();
-            merge_block->params.push_back({param, local_var->type, phi_var});
-            phi_info.push_back({phi_var, local_var->type, param, local_var->value});
-        }
-    }
+    // 3. Save variable + move state ONCE before any branch
+    ScopeSnapshot saved = snapshot_scopes(/*with_move_state=*/true);
 
-    // 4. Save variable state ONCE before any branch
-    Vector<tsl::robin_map<StringView, LocalVar>> saved_scopes;
-    saved_scopes.reserve(m_local_scopes.size());
-    for (auto& scope : m_local_scopes) {
-        saved_scopes.push_back(scope);
-    }
-
-    // Save is_moved state for owned locals
-    Vector<bool> saved_is_moved;
-    for (auto& info : m_owned_locals) {
-        saved_is_moved.push_back(info.is_moved);
-    }
-
-    // 5. Create body blocks for each branch + optional default
+    // 4. Create body blocks for each branch + optional default
     Vector<IRBlock*> body_blocks;
     for (u32 i = 0; i < branches.size(); i++) {
         body_blocks.push_back(create_block("then"));
     }
-    IRBlock* default_block = nullptr;
-    if (default_body) {
-        default_block = create_block("else");
-    }
+    IRBlock* default_block = default_body ? create_block("else") : nullptr;
 
-    // 6. Generate comparison chain: evaluate each condition, branch to body or next check
+    // 5. Generate comparison chain: evaluate each condition, branch to body or next check
     for (u32 i = 0; i < branches.size(); i++) {
         ValueId cond = gen_expr(branches[i].condition);
 
@@ -2046,12 +1997,8 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
 
         // Branch: if condition true, go to body, else check next
         if (fallthrough_block == merge_block) {
-            Vector<BlockArgPair> fallthrough_args;
-            for (const auto& pi : phi_info) {
-                fallthrough_args.push_back({pi.original_value});
-            }
             finish_block_branch(cond, body_blocks[i]->id, fallthrough_block->id,
-                                {}, alloc_span(fallthrough_args));
+                                {}, phi_original_args(phi_info));
         } else {
             finish_block_branch(cond, body_blocks[i]->id, fallthrough_block->id);
         }
@@ -2062,77 +2009,53 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
         }
     }
 
-    // 7. Generate branch bodies
+    // 6. Generate branch bodies (each sees the pre-chain state). When a
+    // default exists, every path into the merge goes through some branch, so
+    // the merge must adopt a surviving branch's post-state — track the last
+    // one. (Surviving branches agree by construction: semantic forbids
+    // divergent moves on non-phi vars. Restoring the PRE-chain state instead
+    // would resurrect is_moved=false for a local every surviving path
+    // actually moved — a scope-exit double-free when the last branch
+    // terminates without moving it.)
+    ScopeSnapshot post_surviving;
+    bool any_surviving = false;
+    auto gen_chain_body = [&](IRBlock* block, Stmt* body) {
+        restore_scopes(saved);
+        set_current_block(block);
+        gen_stmt(body);
+        bool terminated = !m_current_block
+            || m_current_block->terminator.kind != TerminatorKind::None;
+        goto_merge_if_open(merge_block, phi_info);
+        if (!terminated && default_block) {
+            post_surviving = snapshot_scopes(/*with_move_state=*/true);
+            any_surviving = true;
+        }
+    };
     for (u32 i = 0; i < branches.size(); i++) {
-        // Restore scopes so this branch sees original values
-        m_local_scopes.clear_keep_capacity();
-        for (auto& scope : saved_scopes) {
-            m_local_scopes.push_back(scope);
-        }
-
-        // Restore is_moved state
-        for (u32 j = 0; j < saved_is_moved.size() && j < m_owned_locals.size(); j++) {
-            m_owned_locals[j].is_moved = saved_is_moved[j];
-        }
-
-        set_current_block(body_blocks[i]);
-        gen_stmt(branches[i].body);
-
-        // Jump to merge block with phi args if not terminated
-        if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-            Vector<BlockArgPair> args;
-            for (const auto& pi : phi_info) {
-                ValueId val = lookup_local(pi.name);
-                args.push_back({val});
-            }
-            finish_block_goto(merge_block->id, alloc_span(args));
-        }
+        gen_chain_body(body_blocks[i], branches[i].body);
     }
-
-    // 8. Generate default body if present
     if (default_block) {
-        // Restore scopes
-        m_local_scopes.clear_keep_capacity();
-        for (auto& scope : saved_scopes) {
-            m_local_scopes.push_back(scope);
-        }
-
-        // Restore is_moved state
-        for (u32 j = 0; j < saved_is_moved.size() && j < m_owned_locals.size(); j++) {
-            m_owned_locals[j].is_moved = saved_is_moved[j];
-        }
-
-        set_current_block(default_block);
-        gen_stmt(default_body);
-
-        // Jump to merge block with phi args if not terminated
-        if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-            Vector<BlockArgPair> args;
-            for (const auto& pi : phi_info) {
-                ValueId val = lookup_local(pi.name);
-                args.push_back({val});
-            }
-            finish_block_goto(merge_block->id, alloc_span(args));
-        }
+        gen_chain_body(default_block, default_body);
     }
 
-    // 9. Continue from merge block, bind phi results.
-    // Restore pre-chain local-scope SSA bindings so the last branch's
-    // mutations (e.g. struct-literal nullify-replacing a moved local to nil)
-    // don't leak into post-chain code. Phi vars are immediately rebound from
-    // merge_param below; non-phi vars must agree across surviving paths by
-    // construction (semantic forbids divergent moves on them). is_moved is
-    // intentionally left alone — see the rationale in gen_try_stmt and
-    // gen_when_stmt.
-    m_local_scopes.clear_keep_capacity();
-    for (auto& scope : saved_scopes) {
-        m_local_scopes.push_back(scope);
+    // 7. Pick the merge-block state (termination-aware, mirroring gen_if_stmt):
+    //   - no default: the all-conditions-false fall-through edge reaches merge
+    //     carrying the pre-chain state → restore pre-chain SSA bindings (phi
+    //     vars are rebound below, so this only affects non-phi vars, which
+    //     must agree across surviving paths by construction). is_moved is left
+    //     as-is: for legal programs it already equals the pre-chain state,
+    //     since the fall-through path survives and surviving paths must agree.
+    //   - default present: adopt the last surviving branch's post-state
+    //     (scopes AND is_moved). If every branch terminated, the merge is
+    //     unreachable — restore pre-chain bindings for determinism.
+    if (default_block && any_surviving) {
+        restore_scopes_move(std::move(post_surviving));
+    } else {
+        restore_scopes(saved, /*restore_move_state=*/false);
     }
 
     set_current_block(merge_block);
-    for (const auto& pi : phi_info) {
-        define_local(pi.name, pi.merge_param, pi.type);
-    }
+    bind_merge_phis(phi_info);
 }
 
 void IRBuilder::gen_while_stmt(Stmt* stmt) {
@@ -2550,48 +2473,19 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         }
     }
 
-    // 2. Find phi vars: modified vars that exist before the when
-    Vector<StringView> phi_vars;
-    for (const auto& name : modified_in_cases) {
-        LocalVar* lv = find_local(name);
-        if (lv && lv->value.is_valid()) {
-            bool found = false;
-            for (const auto& pv : phi_vars) {
-                if (pv == name) { found = true; break; }
-            }
-            if (!found) phi_vars.push_back(name);
-        }
-    }
-
-    // 3. Evaluate discriminant
+    // 2. Evaluate discriminant
     ValueId discrim = gen_expr(ws.discriminant);
     Type* discrim_type = ws.discriminant->resolved_type;
 
-    // 4. Create merge block with parameters for phi vars
+    // 3. Create merge block with phi params for modified vars that exist
+    // before the when
     IRBlock* merge_block = create_block("endwhen");
+    Vector<PhiInfo> phi_info = make_merge_phis(merge_block, modified_in_cases);
 
-    struct PhiInfo {
-        StringView name;
-        Type* type;
-        ValueId merge_param;
-        ValueId original_value;
-    };
-    Vector<PhiInfo> phi_info;
-    for (const auto& pv : phi_vars) {
-        LocalVar* lv = find_local(pv);
-        if (lv) {
-            ValueId param = m_current_func->new_value();
-            merge_block->params.push_back({param, lv->type, pv});
-            phi_info.push_back({pv, lv->type, param, lv->value});
-        }
-    }
-
-    // 5. Save variable state before any case (so all cases see original values)
-    Vector<tsl::robin_map<StringView, LocalVar>> saved_scopes;
-    saved_scopes.reserve(m_local_scopes.size());
-    for (auto& scope : m_local_scopes) {
-        saved_scopes.push_back(scope);
-    }
+    // 4. Save variable state before any case (so all cases see original
+    // values). Scopes only: is_moved is intentionally not snapshotted here —
+    // see the merge-state note below and the rationale in gen_try_stmt.
+    ScopeSnapshot saved = snapshot_scopes(/*with_move_state=*/false);
 
     // Track case blocks and their corresponding case names for code gen
     struct CaseInfo {
@@ -2660,12 +2554,8 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         // Branch: if condition matches, go to case body, else check next
         // When falling through to merge, pass original phi values
         if (fallthrough_block == merge_block) {
-            Vector<BlockArgPair> fallthrough_args;
-            for (const auto& pi : phi_info) {
-                fallthrough_args.push_back({pi.original_value});
-            }
             finish_block_branch(case_cond, ci.body_block->id, fallthrough_block->id,
-                                {}, alloc_span(fallthrough_args));
+                                {}, phi_original_args(phi_info));
         } else {
             finish_block_branch(case_cond, ci.body_block->id, fallthrough_block->id);
         }
@@ -2676,64 +2566,30 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         }
     }
 
-    // 7. Generate case bodies
+    // 7. Generate case bodies (each sees the pre-when scope state)
     for (u32 i = 0; i < ws.cases.size(); i++) {
-        WhenCase& wc = ws.cases[i];
         CaseInfo& ci = case_infos[i];
 
-        // Restore scope so this case sees original values
-        m_local_scopes.clear_keep_capacity();
-        for (auto& scope : saved_scopes) {
-            m_local_scopes.push_back(scope);
-        }
-
+        restore_scopes(saved);
         set_current_block(ci.body_block);
         push_scope();
-
-        // Generate body statements
-        for (auto* d : wc.body) {
+        for (auto* d : ci.wc->body) {
             gen_decl(d);
         }
-
         pop_scope();
-
-        // Jump to merge block with phi args if not terminated
-        if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-            Vector<BlockArgPair> args;
-            for (const auto& pi : phi_info) {
-                ValueId val = lookup_local(pi.name);
-                args.push_back({val});
-            }
-            finish_block_goto(merge_block->id, alloc_span(args));
-        }
+        goto_merge_if_open(merge_block, phi_info);
     }
 
     // 8. Generate else body if present
     if (else_block) {
-        // Restore scope
-        m_local_scopes.clear_keep_capacity();
-        for (auto& scope : saved_scopes) {
-            m_local_scopes.push_back(scope);
-        }
-
+        restore_scopes(saved);
         set_current_block(else_block);
         push_scope();
-
         for (auto* d : ws.else_body) {
             gen_decl(d);
         }
-
         pop_scope();
-
-        // Jump to merge block with phi args if not terminated
-        if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-            Vector<BlockArgPair> args;
-            for (const auto& pi : phi_info) {
-                ValueId val = lookup_local(pi.name);
-                args.push_back({val});
-            }
-            finish_block_goto(merge_block->id, alloc_span(args));
-        }
+        goto_merge_if_open(merge_block, phi_info);
     }
 
     // 9. Continue from merge block, bind phi results.
@@ -2745,15 +2601,9 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
     // non-phi vars — which by construction must agree across all surviving
     // paths (semantic forbids divergent moves on non-phi vars). is_moved is
     // intentionally left alone, mirroring the rationale in gen_try_stmt.
-    m_local_scopes.clear_keep_capacity();
-    for (auto& scope : saved_scopes) {
-        m_local_scopes.push_back(scope);
-    }
-
+    restore_scopes(saved);
     set_current_block(merge_block);
-    for (const auto& pi : phi_info) {
-        define_local(pi.name, pi.merge_param, pi.type);
-    }
+    bind_merge_phis(phi_info);
 }
 
 void IRBuilder::gen_throw_stmt(Stmt* stmt) {
@@ -2853,41 +2703,9 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
         collect_assigned_vars(ts.finally_body, modified_vars);
     }
 
-    // Deduplicate and filter to existing variables
-    struct PhiInfo {
-        StringView name;
-        Type* type;
-        ValueId merge_param;
-    };
-    Vector<PhiInfo> phi_info;
-    for (const auto& name : modified_vars) {
-        LocalVar* local_var = find_local(name);
-        if (!local_var || !local_var->value.is_valid()) continue;
-        bool found = false;
-        for (const auto& pi : phi_info) {
-            if (pi.name == name) { found = true; break; }
-        }
-        if (!found) {
-            phi_info.push_back({name, local_var->type, ValueId::invalid()});
-        }
-    }
-
-    // Create after block with phi params
+    // Create after block with phi params (deduped, filtered to existing vars)
     IRBlock* after_block = create_block("try.after");
-    for (auto& pi : phi_info) {
-        pi.merge_param = m_current_func->new_value();
-        after_block->params.push_back({pi.merge_param, pi.type, pi.name});
-    }
-
-    // Helper to build block args for jumping to after_block
-    auto build_after_args = [&]() -> Span<BlockArgPair> {
-        Vector<BlockArgPair> args;
-        for (const auto& pi : phi_info) {
-            ValueId val = lookup_local(pi.name);
-            args.push_back({val});
-        }
-        return alloc_span(args);
-    };
+    Vector<PhiInfo> phi_info = make_merge_phis(after_block, modified_vars);
 
     // Snapshot pre-try local-scope SSA bindings. Each catch block must see the
     // locals as they were *before* the try body ran — otherwise the catch sees
@@ -2902,17 +2720,7 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
     // for a uniq local already consumed in the try body, double-freeing the
     // already-dead slab slot. Use-after-move in catch is the semantic
     // analyzer's job to reject, not the IR builder's to repair.
-    Vector<tsl::robin_map<StringView, LocalVar>> saved_scopes_pre;
-    saved_scopes_pre.reserve(m_local_scopes.size());
-    for (auto& scope : m_local_scopes) {
-        saved_scopes_pre.push_back(scope);
-    }
-    auto restore_pre_try_state = [&]() {
-        m_local_scopes.clear_keep_capacity();
-        for (auto& scope : saved_scopes_pre) {
-            m_local_scopes.push_back(scope);
-        }
-    };
+    ScopeSnapshot pre_try = snapshot_scopes(/*with_move_state=*/false);
 
     // Record the first block of the try body
     IRBlock* try_entry_block = create_block("try.body");
@@ -2952,7 +2760,7 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
             pop_scope();
         }
         if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-            finish_block_goto(after_block->id, build_after_args());
+            finish_block_goto(after_block->id, phi_current_args(phi_info));
         }
     }
 
@@ -2977,7 +2785,7 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
 
         // Restore pre-try state: the catch path begins where the throw aborted,
         // so any rebindings/moves the try body did must not be visible here.
-        restore_pre_try_state();
+        restore_scopes(pre_try);
 
         // Define catch variable in scope
         push_scope();
@@ -3015,7 +2823,7 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
                 pop_scope();
             }
             if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
-                finish_block_goto(after_block->id, build_after_args());
+                finish_block_goto(after_block->id, phi_current_args(phi_info));
             }
         }
 
@@ -3049,7 +2857,7 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
         set_current_block(finally_catch_block);
 
         // Restore pre-try state for the same reason as the typed catches.
-        restore_pre_try_state();
+        restore_scopes(pre_try);
 
         // Execute finally body
         push_scope();
@@ -3078,9 +2886,7 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
 
     // Continue after try/catch - bind phi variables to merge params
     set_current_block(after_block);
-    for (const auto& pi : phi_info) {
-        define_local(pi.name, pi.merge_param, pi.type);
-    }
+    bind_merge_phis(phi_info);
 }
 
 // Expression generation

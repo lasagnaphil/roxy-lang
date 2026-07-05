@@ -237,6 +237,54 @@ private:
     // pure field paths, so the extra load it emits is side-effect-free.
     ValueId heap_root_of_lvalue(Expr* lvalue, Type** out_type);
 
+    // Local variable mapping entry: name -> SSA value + type (the scope maps
+    // in m_local_scopes hold these; declared here so ScopeSnapshot can use it).
+    struct LocalVar {
+        ValueId value;
+        Type* type;
+    };
+
+    // ── Branch/merge machinery shared by if / else-if chain / when / try ──
+
+    // Deep snapshot of the local-scope SSA bindings, optionally including the
+    // owned locals' is_moved flags. Branch codegen snapshots before the first
+    // branch and restores per branch so each sees the pre-branch state, then
+    // picks a merge-point state (see each statement's policy comment). These
+    // copies were a top profile entry in the 2026-07-05 measurement — if that
+    // ever matters, this type is the single place to swap in an undo log.
+    struct ScopeSnapshot {
+        Vector<tsl::robin_map<StringView, LocalVar>> scopes;
+        Vector<bool> is_moved;       // captured only when has_move_state
+        bool has_move_state = false;
+    };
+    ScopeSnapshot snapshot_scopes(bool with_move_state);
+    // Copy-restore (snapshot stays reusable). is_moved flags are restored only
+    // when the snapshot captured them AND restore_move_state is true.
+    void restore_scopes(const ScopeSnapshot& snapshot, bool restore_move_state = true);
+    // Move-restore (single use; steals the scope maps instead of deep-copying).
+    void restore_scopes_move(ScopeSnapshot&& snapshot);
+
+    // Info about a variable needing a phi (block param) at a merge point.
+    struct PhiInfo {
+        StringView name;
+        Type* type;
+        ValueId merge_param;    // Block param ValueId on the merge block
+        ValueId original_value; // Value before the branch (fall-through edges)
+    };
+    // Deduplicate `modified` down to variables that exist (with a valid SSA
+    // value) before the branch, create one merge-block param per survivor,
+    // and return the PhiInfo list (in first-occurrence order).
+    Vector<PhiInfo> make_merge_phis(IRBlock* merge_block, const Vector<StringView>& modified);
+    // Block args carrying each phi's pre-branch value (fall-through edge).
+    Span<BlockArgPair> phi_original_args(const Vector<PhiInfo>& phi_info);
+    // Block args carrying each phi's current value (a branch-exit edge).
+    Span<BlockArgPair> phi_current_args(const Vector<PhiInfo>& phi_info);
+    // Rebind each phi var to its merge-block param.
+    void bind_merge_phis(const Vector<PhiInfo>& phi_info);
+    // If the current block is still open, jump to the merge block passing the
+    // phis' current values.
+    void goto_merge_if_open(IRBlock* merge_block, const Vector<PhiInfo>& phi_info);
+
     // Statement generation
     void gen_stmt(Stmt* stmt);
     void gen_expr_stmt(Stmt* stmt);
@@ -466,11 +514,8 @@ private:
     // `gen_stmt` / `gen_decl`. 0 = unknown (synthesized stubs, builtins).
     u32 m_current_source_line = 0;
 
-    // Local variable mapping: name -> value ID
-    struct LocalVar {
-        ValueId value;
-        Type* type;
-    };
+    // Local variable mapping: name -> LocalVar (struct declared above the
+    // branch/merge machinery section)
     Vector<tsl::robin_map<StringView, LocalVar>> m_local_scopes;
 
     // Track which parameters are pointers (for out/inout semantics)

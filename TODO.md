@@ -78,17 +78,6 @@ semantically sound and well-commented; nearly all findings are structural
 duplication — the same machinery copy-pasted across statement kinds, and the same
 emission idioms repeated dozens of times. Correctness-adjacent items first.
 
-- [ ] **Extract the branch/merge (phi + scope-snapshot) machinery.** `gen_if_stmt` /
-  `gen_if_else_chain` / `gen_when_stmt` / `gen_try_stmt` each hand-roll
-  collect-assigned-vars → phi dedupe → merge-block params → scope (+ `is_moved`)
-  snapshot → per-branch restore → merge args → rebind: four local `PhiInfo`
-  structs, 12 copies of the snapshot/restore loop. Also a real divergence:
-  `gen_if_stmt` does termination-aware state selection at the merge, while
-  `gen_if_else_chain` (the same construct written as `else if`) unconditionally
-  restores pre-chain scopes — unify, keeping the termination-aware policy.
-  Perf tie-in: the per-scope `Vector<robin_map>` copies were a top profile entry
-  in the 2026-07-05 measurement (see the move-state snapshot item above);
-  centralizing the snapshot into one type is the prerequisite for an undo log.
 - [ ] **Split the TU / extract collaborators** (the semantic.cpp precedent):
   (a) zero-risk `.cpp` split into decls/stmt/expr/lifetime files; (b) easy
   extraction of Phase-1 folding (`try_fold_*` / `try_simplify_*`, ~350
