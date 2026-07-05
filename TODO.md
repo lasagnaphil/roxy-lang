@@ -2,14 +2,14 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-05-10 (closures landed end-to-end; bounded quantification Phase B landed; C backend Phase 3 landed — runtime library, C++ RAII/container wrappers, header generation with `make_<T>` factories; **C backend Phase 4 fully landed** — `roxy_ctx` thread-local context, `RoxyVM` ctx member, AOT main wrapper, runtime unification across VM and AOT (`rx::RoxyString` etc. alias `roxy::*`), `RoxyVM*` dropped from embedder native signatures, AOT NativeRegistry dispatch, `MapHeader` slimmed via per-VM dispatch side-table)
+Last updated: 2026-07-05 (semantic analyzer deep review added — 8 probe-verified bugs + refactoring plan, see "Semantic Analyzer Refactoring & Bugs" section)
 
 
 ---
 
 ## High Priority
 
-(none currently)
+- [ ] Semantic analyzer verified bugs — 8 probe-confirmed issues (silent error-type leak for unsupported primitive operators, flat enum-variant namespace, wrong-enum `when` cases, generics×lambdas broken, etc.). See "Semantic Analyzer Refactoring & Bugs" below.
 
 ---
 
@@ -50,6 +50,59 @@ Last updated: 2026-05-10 (closures landed end-to-end; bounded quantification Pha
 
 ---
 
+## Semantic Analyzer Refactoring & Bugs
+
+From a 2026-07-05 deep review of `semantic.cpp` (6.6k lines) and collaborators (`symbol_table.cpp`, `types.cpp`, `compiler.cpp`, `generics.cpp`). Every bug below was **verified by running probe programs through the `roxy` CLI**; none is documented as an intended limitation. Suggested sequence: pin bugs with regression tests → mechanical dedup → semantic fixes → subsystem extraction → context/naming polish.
+
+### Verified bugs (probe-confirmed)
+
+- [ ] **Unsupported primitive operators silently produce `Error` type — no diagnostic, garbage output.** `register_primitive_operator_methods` (semantic.cpp:2954) only registers arithmetic for I32/I64/F32/F64 (plus `eq`/`ne` on bool/string). For `u32 + u32` the fallback in `get_binary_result_type` (semantic.cpp:6501) calls `require_types_match` — which passes silently when the types match — then returns `error_type` unconditionally. Probe: `var x: u32 = 40; var y: u32 = 2; var z = x + y; print(f"{z}");` compiles with zero errors and prints an empty line (f-string interp skips error-typed values); the annotated variant `var z: u32 = x + y` prints 42 only because the IR builder types the add off the operands. Affects u8/u16/u32/u64/i8/i16 arithmetic, comparisons, unary ops, compound assigns. Fix: data-driven operator registration over all numeric TypeKinds + make the fallback error loudly ("operator not defined for type") as a backstop.
+- [ ] **printf-style format strings fed to the `{}`-only formatter.** `finalize_trait_impl` (semantic.cpp:2838) uses `"%.*s"` with `.size()/.data()` pairs; `analyze_string_interp_expr` (semantic.cpp:3778) uses `"%s"`. `rx::format_to` understands only `{}`. Verified output: `trait '%.*s' requires method '%.*s' which is not implemented for '%.*s'` — literally. Consider a compile-time format-check to prevent recurrence.
+- [ ] **Tagged-union `when` clauses accept variants of the wrong enum.** `resolve_when_clauses` (semantic.cpp:906) checks `sym->kind == EnumVariant` but never `sym->type == discriminant_type`. Probe: `when c: Color { case Small: ... }` where `Small` belongs to `enum Size` compiles and runs.
+- [ ] **Enum variants live in a flat global namespace.** `define_enum_variant` registers unqualified names in global scope (semantic.cpp:609); the last-defined enum wins in the lookup cache. Probe: `enum A { X, Y } enum B { X, Z }` makes `A::X` unresolvable — "enum 'A' has no variant 'X'" on a legal program. Fix: per-enum variant tables in `EnumTypeInfo`; resolve `Enum::Variant` and when-case names through the enum type (structurally fixes the wrong-enum bug above too).
+- [ ] **Value-struct forward references misdiagnosed as infinite recursion.** Probe: `struct A { b: B; } struct B { x: i32; }` → "recursive struct type 'B' has infinite size; use 'uniq B'". Pass-2 member resolution is source-order dependent; `detect_mutual_struct_recursion` (semantic.cpp:768) can't distinguish "field's struct resolved later" from a genuine cycle. Fix: dependency-ordered member resolution (the C emitter already dependency-sorts struct emission) or two-phase layout.
+- [ ] **Generic functions containing lambdas fail with "unknown type 'T'".** Verified same-module and cross-module. The generics cloner (`generics.cpp`) has no `ExprLambda` case, so lambda param/return TypeExprs are never substituted at instantiation. Latent second layer once cloning is fixed: the cross-module drain loop (compiler.cpp:277) never persists `analyzer.synthetic_decls()`, so cross-module instances containing lambdas would silently lose their lifted call functions before IR build.
+- [ ] **Methods can't be coroutines, with a misleading error.** Probe: `fun S.count(): Coro<i32> { yield ...; }` → "'yield' can only appear inside a coroutine function (one returning Coro<T>)" — but it is one. `analyze_member_body` (semantic.cpp:2231) never sets `m_in_coroutine`, and `resolve_method_member` skips the `coroutine_type_for_func` transformation that `resolve_fun_signature` performs. Either support coroutine methods or reject `Coro` method returns at signature time with an honest message.
+- [ ] **Generic type-arg inference only understands `List` among builtin containers.** `unify_type_expr` (semantic.cpp:4859) special-cases `List<T>` but not `Map<K,V>` / `Coro<T>`. Probe: `fun mlen<K, V>(m: inout Map<K, V>): i32` → "cannot infer type arguments" at an obviously inferable call site.
+
+### Architectural refactorings
+
+- [ ] **Split the god class along existing seams.** `SemanticAnalyzer` owns ~8 separable concerns in one 6.6k-line file. `ErrorReporter` was already extracted with the right pattern (shared by reference so collaborators report errors without a back-reference); extend it. Candidates in order of self-containedness: **MoveChecker** (~800 lines: move states, snapshots/merges, `m_branch_terminates`, loop cross-iteration checks, `consume_noncopyable`, scope-exit dtor checks), **LambdaCaptureAnalyzer** (~700 lines: contexts, `try_capture_identifier`, validate/synthesize/backfill, `ensure_self_captured_through`), **TraitSystem** (~700 lines: builtin registration, trait method decls, impl grouping/validation, default injection, `concretize_trait_type`), **GenericCallResolver** (~700 lines: unify/infer, both generic-call paths, template-ref coercion, bounds). Share a small `SemaContext` {allocator, type_env, types, symbols, reporter, checker, modules}.
+- [ ] **Bundle per-function context state.** `m_in_coroutine`, `m_coro_yield_type`, `m_in_delete_destructor`, `m_in_finally_depth`, `m_branch_terminates`, `m_move_states`, `m_active_type_params/bounds` are guarded ad hoc with `ScopedValue` at four entry points (`analyze_fun_decl`, `analyze_member_body`, `synthesize_lambda_call_fn`, `analyze_generic_template_body`); the coroutine-method bug above is a forgotten setup at one of them. A single `FunctionContext` pushed/popped as a unit eliminates the error class.
+- [ ] **Fix the naming inversion.** `analyze_constructor_decl`/`analyze_destructor_decl`/`analyze_method_decl` register signatures (Pass 2) while `analyze_fun_decl` analyzes a body (Pass 3); `resolve_*` overlaps both. Rename to `register_*_signature` vs `analyze_*_body` uniformly.
+- [ ] **Make the semantic→IR annotation contract explicit.** `ce.callee->resolved_type` variously means callee function type / struct type (ctor call) / `ref(parent)` (super call) / cast target; `get_expr.object->resolved_type = nullptr` signals module access; bare generic template refs return `error_type` + `is_generic_template_ref` flag that every coercion site must remember to check. Document the contract in one place or add explicit annotation fields on the AST nodes.
+- [ ] **Decide on AST mutation vs. side-band annotations.** Analysis rewrites the tree in place (captured identifiers → `ExprGet(__env, …)`, generic TypeExprs → mangled name with `type_args` cleared, struct-literal names mangled), so re-analysis of the same AST is non-idempotent — a risk for LSP Phase 8 and incremental compilation.
+- [ ] **Normalize the `resolve_type_expr` null contract.** Returns null only for null input, yet ~30 call sites do `if (!ptype) ptype = error_type()`. Make it never-null and delete the noise.
+
+### Duplication cleanups (mechanical)
+
+- [ ] Synthetic-dtor "needs_cleanup" scan (fields + variant fields) ×3: semantic.cpp:834, 1087, 1265 → `struct_needs_synthetic_dtor()` + `add_synthetic_default_dtor()` helpers.
+- [ ] Pending-generic-fun drain (ownership test + sideline) ×2: semantic.cpp:290 vs 1124.
+- [ ] Enum-variant value computation ×2: semantic.cpp:587 (resolve) vs 2054 (import) — both silently ignore non-literal constant expressions (`enum E { A = 1 + 2 }` auto-increments instead); dedup and either support const-exprs or error.
+- [ ] Super-call argument checking ×3 inside `analyze_super_call` (semantic.cpp:5346).
+- [ ] Crossed-lambda-boundary scope walk ×3: semantic.cpp:3886, 4217, 6072.
+- [ ] Ctor/dtor registration near-duplicates: `analyze_constructor_decl` vs `analyze_destructor_decl`, plus both re-implemented inline in `resolve_generic_struct_fields` (semantic.cpp:1209).
+- [ ] `resolve_global_var` vs `analyze_var_decl` drift (semantic.cpp:651 vs 1478): global path lacks the nil-inference error, redefinition check, and noncopyable move tracking. Unify.
+- [ ] `append_method`/`append_constructor`/`append_destructor` (semantic.cpp:2305): three copies of an O(n²) span-rebuild that also churns the arena; template it or use `Vector` during analysis and freeze to spans.
+- [ ] List/Map `.copy()` element checks live inline in `analyze_call_expr` (semantic.cpp:5598); move into the builtin-method-call path.
+
+### Performance
+
+- [ ] **`SymbolTable::pop_scope` rebuilds the entire lookup cache** (symbol_table.cpp:50-75), walking every scope including global (all functions + builtin prelude + every enum variant) on **every block exit**. O(total program symbols) per `}`. Fix: per-name shadow stacks or save-the-shadowed-symbol-on-define.
+- [ ] `lookup_local` linear-scans the current scope; prelude import calls it per export → quadratic startup on the global scope.
+- [ ] Move-state snapshots copy the whole map at every branch point (if/while/for/when/try/ternary) — fine at current scale; revisit with an undo log only if profiling warrants.
+
+### Smaller correctness-adjacent debts
+
+- [ ] All-paths-return checking is a stub (semantic.cpp:1971) while `m_branch_terminates` already computes definite termination and `Scope::function.has_return`/`mark_return` machinery exists but is never read — finish missing-return diagnostics nearly for free, or delete the dead machinery.
+- [ ] `is_hashable_key_type` accepts every struct (bytewise hashing) while the error text says "must implement Hash" — align message and semantics.
+- [ ] Stale comment in `analyze_delete_stmt` (semantic.cpp:3373): says struct-field deletes are forbidden, but `check_not_field_move` permits pointer-field deletes by design.
+- [ ] Audit `try`/`finally` move-state entry: the finally body is analyzed against the merged *normal* exits only; the exceptional pass-through path isn't merged in. Traced as conservative in cases tried, but deserves a test.
+- [ ] LSP-mode null tolerance is ad hoc: some paths null-check everything, others dereference decl/info chains unconditionally (e.g., `eti.decl->enum_decl` at semantic.cpp:3446). Define a per-pass policy.
+- [ ] Manual string building with `push_back` loops in `check_type_arg_bounds` (semantic.cpp:2512) next to a perfectly good `format_to_arena`.
+
+---
+
 ## Bytecode VM Opcode Improvements
 
 From a 2026-04-26 review comparing Roxy's opcode set against Lua 5.4, LuaJIT, CPython 3.13, Wren, JVM, and V8 Ignition. The base design (register-based, 32-bit fixed-width ABC/ABI/AOFF, computed-goto dispatch, type-specialized arithmetic, fused i64 compare+branch) is Lua-class and sound. Items below are concrete deltas, ordered roughly by ROI.
@@ -75,6 +128,7 @@ From a 2026-04-26 review comparing Roxy's opcode set against Lua 5.4, LuaJIT, CP
 
 ## Testing Gaps
 
+- [ ] Regression tests for the 8 verified semantic-analyzer bugs (see "Semantic Analyzer Refactoring & Bugs"); each item there includes a minimal repro sketch
 - [ ] Test deeply nested struct field access (>5 levels; currently only 3 levels tested)
 - [ ] Test error recovery in semantic analysis
 - [ ] Add fuzzing for parser/lexer
