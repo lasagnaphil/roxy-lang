@@ -144,6 +144,28 @@ Symbol* SymbolTable::lookup_local(StringView name) const {
     return nullptr;
 }
 
+Symbol* SymbolTable::lookup_function_local(StringView name) const {
+    Symbol* sym = lookup(name);
+    if (!sym) return nullptr;
+    if (sym->kind != SymbolKind::Variable && sym->kind != SymbolKind::Parameter) {
+        return nullptr;
+    }
+    // Walk the scope chain of the function currently being analyzed. The walk
+    // stops at the Global scope (module-level names are shadowable) and after
+    // the outermost Function scope — but a Function scope parented by a Lambda
+    // boundary scope belongs to a lambda, and the shadowing ban crosses lambda
+    // boundaries (like C#), so the walk continues through it.
+    for (Scope* scope = m_current; scope; scope = scope->parent) {
+        if (scope->kind == ScopeKind::Global) break;
+        if (scope == sym->defining_scope) return sym;
+        if (scope->kind == ScopeKind::Function &&
+            (!scope->parent || scope->parent->kind != ScopeKind::Lambda)) {
+            break;
+        }
+    }
+    return nullptr;
+}
+
 bool SymbolTable::is_in_loop() const {
     for (Scope* s = m_current; s; s = s->parent) {
         if (s->kind == ScopeKind::Loop) {

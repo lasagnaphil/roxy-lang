@@ -173,6 +173,13 @@ private:
     bool report_duplicate_member(SourceLocation loc, Span<InfoT> existing, StringView name,
                                  StringView struct_name, const char* noun);
 
+    // Local-shadowing ban (C#/Java tier): a local declaration — `var`, catch
+    // variable, or lambda parameter — may not reuse a name already bound to a
+    // variable or parameter of the current function, including across lambda
+    // boundaries. Module-level names (globals, functions, types) and struct
+    // fields stay shadowable. Reports an error and returns false on a shadow.
+    bool check_no_local_shadowing(StringView name, SourceLocation loc);
+
     // Pass 3 body analysis (statement-level var decls are analyzed in-body).
     void analyze_var_decl(Decl* decl);
     // Shared core of analyze_var_decl (local) and resolve_global_var (global):

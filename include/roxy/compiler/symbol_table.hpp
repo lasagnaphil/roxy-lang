@@ -141,6 +141,16 @@ public:
     Symbol* lookup(StringView name) const;           // Look up in all scopes
     Symbol* lookup_local(StringView name) const;     // Look up in current scope only
 
+    // Innermost visible binding of `name` IF it is a variable or parameter of
+    // the function currently being analyzed — i.e. defined between the current
+    // scope and the enclosing function boundary. A lambda's Function scope
+    // (always parented by its Lambda boundary scope) does not end the walk, so
+    // enclosing-function locals are still found from inside a lambda body.
+    // Returns null when the name is unbound or resolves outside the current
+    // function (module globals / functions / types / struct fields — all of
+    // which may be shadowed). Used by the local-shadowing ban.
+    Symbol* lookup_function_local(StringView name) const;
+
     // Scope queries
     bool is_in_loop() const;
     bool is_in_function() const;

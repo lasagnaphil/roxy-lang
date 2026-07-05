@@ -538,6 +538,147 @@ TEST_SUITE("Semantic") {
         CHECK(t.has_error_containing("redefinition"));
     }
 
+    // ── Local-shadowing ban (C#/Java tier) ─────────────────────────────────
+    // A local declaration (`var`, catch variable, lambda parameter) may not
+    // reuse a name bound to a variable or parameter of the current function,
+    // including across lambda boundaries. Module-level names (globals,
+    // functions) stay shadowable, and sequential (non-overlapping) scopes may
+    // reuse names. Before the ban, shadowing programs passed semantic analysis
+    // and were miscompiled by the name-keyed IR builder (wrong-value rebinds,
+    // leaked uniq locals).
+
+    TEST_CASE("Semantic Error: local shadows local in nested block") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        fun test() {
+            var x: i32 = 1;
+            {
+                var x: i32 = 2;
+            }
+        }
+    )"));
+        CHECK(t.has_error_containing("shadows"));
+    }
+
+    TEST_CASE("Semantic Error: local shadows parameter") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        fun test(n: i32) {
+            {
+                var n: i32 = 2;
+            }
+        }
+    )"));
+        CHECK(t.has_error_containing("shadows"));
+        CHECK(t.has_error_containing("parameter"));
+    }
+
+    TEST_CASE("Semantic Error: for initializer shadows local") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        fun test() {
+            var i: i32 = 0;
+            for (var i: i32 = 0; i < 10; i = i + 1) {
+            }
+        }
+    )"));
+        CHECK(t.has_error_containing("shadows"));
+    }
+
+    TEST_CASE("Semantic Error: catch variable shadows local") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        fun test() {
+            var e: i32 = 1;
+            try {
+                var y: i32 = 2;
+            } catch (e) {
+            }
+        }
+    )"));
+        CHECK(t.has_error_containing("shadows"));
+    }
+
+    TEST_CASE("Semantic Error: lambda parameter shadows enclosing local") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        fun test() {
+            var x: i32 = 1;
+            var f = fun(x: i32): i32 => x + 1;
+        }
+    )"));
+        CHECK(t.has_error_containing("shadows"));
+    }
+
+    TEST_CASE("Semantic Error: lambda body local shadows enclosing local") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        fun test() {
+            var x: i32 = 1;
+            var f = fun(): i32 {
+                var x: i32 = 2;
+                return x;
+            };
+        }
+    )"));
+        CHECK(t.has_error_containing("shadows"));
+    }
+
+    TEST_CASE("Semantic Error: nested lambda shadows across two boundaries") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        fun test() {
+            var x: i32 = 1;
+            var f = fun(): i32 {
+                var g = fun(): i32 {
+                    var x: i32 = 2;
+                    return x;
+                };
+                return g();
+            };
+        }
+    )"));
+        CHECK(t.has_error_containing("shadows"));
+    }
+
+    TEST_CASE("local shadowing a global is allowed") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
+        var g: i32 = 1;
+        fun test(): i32 {
+            var g: i32 = 2;
+            return g;
+        }
+    )"));
+    }
+
+    TEST_CASE("local named after a function is allowed") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
+        fun helper(): i32 { return 1; }
+        fun test(): i32 {
+            var helper: i32 = 2;
+            return helper;
+        }
+    )"));
+    }
+
+    TEST_CASE("sequential scopes may reuse a name") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
+        fun test() {
+            {
+                var t: i32 = 1;
+            }
+            {
+                var t: i32 = 2;
+            }
+            for (var i: i32 = 0; i < 3; i = i + 1) {}
+            for (var i: i32 = 0; i < 3; i = i + 1) {}
+        }
+    )"));
+    }
+
     TEST_CASE("Semantic Error: Unknown type") {
         SemanticTestHelper t;
         CHECK(!t.run(R"(

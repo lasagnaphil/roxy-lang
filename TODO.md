@@ -4,7 +4,7 @@ This document tracks known technical debt, incomplete implementations, and plann
 improvements. Completed items are removed as they land — the per-item records
 (measurements, rationale, regression-test pointers) live in this file's git history.
 
-Last updated: 2026-07-05
+Last updated: 2026-07-06
 
 ---
 
@@ -89,9 +89,21 @@ emission idioms repeated dozens of times. Correctness-adjacent items first.
   (`fold_binary_const` / `fold_unary_const` / `fold_cast_const`, reusable by
   future optimization passes).
 - [ ] Linear-scan lookups: `find_method_fn_index` scans all module functions by
-  name (cold — struct-keyed map ctors only); `find_owned_local` scans by name on
-  hot paths; `collect_assigned_vars` dedupe is O(n²). Small-N today; swap to keyed
-  maps if they ever show in a profile.
+  name (cold — struct-keyed map ctors only); `find_owned_local` plus the four
+  ValueId-keyed temp scans (`track_string_temp` / `track_noncopyable_call_temp` /
+  `consume_or_retain_string` / `consume_temp_noncopyable`) scan `m_owned_locals`
+  on hot paths; `collect_assigned_vars` dedupe is O(n²). **Measured 2026-07-06**
+  (Release, adversarial single-function bodies): quadratic growth confirmed for
+  all three shapes, but invisible below ~1,000 statements per function (8k
+  statements: 60–240ms total; `track_string_temp` alone was 85% of profile
+  samples on the string-temp workload). The keyed-map swap is now trivially
+  safe: local shadowing is banned (2026-07-06, `check_no_local_shadowing` /
+  `SymbolTable::lookup_function_local`), so visible local names are unique per
+  function — the ban also closed the two latent shadowing miscompiles the same
+  investigation found (shadowing declarations rebinding the outer local's SSA
+  binding, and `find_owned_local` marking the outermost same-named owned local
+  moved → outer uniq leaked). Fold the swap into the OwnershipTracker
+  extraction above.
 - [ ] Adopt the `"…"_sv` literal (added 2026-07-05 in `core/string_view.hpp`,
   applied across `ir_builder*.cpp`) in the rest of the codebase where
   `StringView("…", N)` manual lengths appear.

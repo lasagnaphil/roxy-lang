@@ -44,6 +44,30 @@ package_path    -> Identifier ( "." Identifier )* ;
 import_list     -> "*" | Identifier ( "," Identifier )* ;
 ```
 
+### Scoping: no local shadowing
+
+A local declaration — a `var`, a catch variable, or a lambda parameter — may
+not reuse a name already bound to a variable or parameter of the enclosing
+function (C#/Java-style rule). The ban crosses lambda boundaries: a lambda
+body may not shadow a local of the function it appears in. Module-level names
+remain shadowable — a local may reuse the name of a global, a function, or a
+type — and sequential (non-overlapping) scopes may reuse names freely:
+
+```roxy
+var g: i32 = 1;
+
+fun demo(n: i32) {
+    var g: i32 = 2;        // OK: shadows a module-level global
+    { var t: i32 = 1; }
+    { var t: i32 = 2; }    // OK: previous t's scope has ended
+    { var n: i32 = 3; }    // error: shadows parameter n
+    var f = fun(): i32 {
+        var g: i32 = 4;    // error: shadows the local g (crosses lambda boundary)
+        return g;
+    };
+}
+```
+
 ## Statements
 
 ```

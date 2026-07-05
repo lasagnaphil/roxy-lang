@@ -1251,12 +1251,26 @@ Type* SemanticAnalyzer::analyze_var_initializer(VarDecl& var_decl, Decl* decl, T
     return var_type;
 }
 
+bool SemanticAnalyzer::check_no_local_shadowing(StringView name, SourceLocation loc) {
+    Symbol* shadowed = m_symbols.lookup_function_local(name);
+    if (!shadowed) return true;
+    const char* what = shadowed->kind == SymbolKind::Parameter ? "parameter" : "variable";
+    error_fmt(loc,
+              "declaration of '{}' shadows the {} declared at line {}; "
+              "shadowing is not allowed within a function",
+              name, what, shadowed->loc.line);
+    return false;
+}
+
 void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
     VarDecl& var_decl = decl->var_decl;
 
     // Check for duplicate in current scope
     if (m_symbols.lookup_local(var_decl.name)) {
         error_fmt(decl->loc, "redefinition of '{}'", var_decl.name);
+        return;
+    }
+    if (!check_no_local_shadowing(var_decl.name, decl->loc)) {
         return;
     }
 
@@ -2166,6 +2180,11 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
 
         m_symbols.push_scope(ScopeKind::Block);
 
+        // The catch variable is a local declaration, so the shadowing ban
+        // applies. On a shadow, skip the define (the body then reports uses
+        // as undefined — same cascade as the duplicate-parameter path).
+        bool catch_var_ok = check_no_local_shadowing(clause.var_name, clause.loc);
+
         if (clause.exception_type) {
             // Typed catch: catch (e: Type)
             Type* catch_type = resolve_type_expr(clause.exception_type);
@@ -2183,16 +2202,20 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
                 clause.resolved_type = catch_type;
                 // Define as ref<Type> in catch scope
                 Type* ref_catch_type = m_types.ref_type(catch_type);
-                m_symbols.define(SymbolKind::Variable, clause.var_name, ref_catch_type,
-                                 clause.loc);
+                if (catch_var_ok) {
+                    m_symbols.define(SymbolKind::Variable, clause.var_name, ref_catch_type,
+                                     clause.loc);
+                }
             }
         } else {
             // Catch-all: catch (e)
             has_catch_all = true;
             clause.resolved_type = nullptr;
             // Define as ExceptionRef (opaque handle, only message() callable)
-            m_symbols.define(SymbolKind::Variable, clause.var_name,
-                             m_types.exception_ref_type(), clause.loc);
+            if (catch_var_ok) {
+                m_symbols.define(SymbolKind::Variable, clause.var_name,
+                                 m_types.exception_ref_type(), clause.loc);
+            }
         }
 
         analyze_stmt(clause.body);  // yield is allowed in catch bodies
@@ -3079,9 +3102,17 @@ Decl* SemanticAnalyzer::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
             Param& p = fd.params[i];
             Type* ptype = resolve_type_expr(p.type);
             p.resolved_type = ptype;
+            // A USER lambda parameter shadowing an enclosing-function local is
+            // banned (the walk crosses the Lambda boundary), matching the
+            // var-decl and catch-variable sites. The synthesized `__env`
+            // parameter (param 0 of every lifted lambda) is exempt: nested
+            // lambdas each carry their own `__env`, which is sound — every
+            // lambda body becomes its own IR function — and not something the
+            // user wrote.
+            bool is_synthesized_env = p.name == StringView("__env", 5);
             if (m_symbols.lookup_local(p.name)) {
                 error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
-            } else {
+            } else if (is_synthesized_env || check_no_local_shadowing(p.name, p.loc)) {
                 m_symbols.define_parameter(p.name, ptype, p.loc, i,
                                        p.modifier != ParamModifier::None);
             }

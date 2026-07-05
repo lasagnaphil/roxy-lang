@@ -17,6 +17,10 @@ void IRBuilder::define_local(StringView name, ValueId value, Type* type) {
 
     // Search for an existing binding in outer scopes and update it
     // This is necessary for SSA - assignments should update the existing definition
+    // Sound for declarations too: semantic analysis rejects a local shadowing
+    // another local/parameter of the same function (check_no_local_shadowing),
+    // so a declaration can only find an existing binding for a name whose
+    // previous scope has already been popped — never a live outer binding.
     for (i32 i = static_cast<i32>(m_local_scopes.size()) - 1; i >= 0; i--) {
         auto it = m_local_scopes[i].find(name);
         if (it != m_local_scopes[i].end()) {
