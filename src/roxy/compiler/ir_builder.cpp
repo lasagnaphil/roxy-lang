@@ -6010,39 +6010,7 @@ void IRBuilder::pop_scope() {
     u32 depth = static_cast<u32>(m_local_scopes.size());
 
     // Record cleanup info for exception-path cleanup BEFORE emit_scope_cleanup.
-    // Uses initial_value (the SSA value at declaration time) so lowering can map it
-    // to the correct register. The null-check in the VM ensures that if the variable
-    // was already cleaned up (register is 0), it's safely skipped.
-    // Records are pushed in declaration order (forward); the VM's execute_cleanup
-    // iterates in reverse to achieve LIFO cleanup order.
-    {
-        BlockId end_block = m_current_block ? m_current_block->id : BlockId::invalid();
-        if (!m_current_block && !m_current_func->blocks.empty()) {
-            end_block = m_current_func->blocks.back()->id;
-        }
-        // Find the first owned local in this scope
-        u32 first_in_scope = 0;
-        for (u32 i = 0; i < m_owned_locals.size(); i++) {
-            if (m_owned_locals[i].scope_depth >= depth) {
-                first_in_scope = i;
-                break;
-            }
-            if (i == m_owned_locals.size() - 1) {
-                first_in_scope = static_cast<u32>(m_owned_locals.size()); // none found
-            }
-        }
-        for (u32 i = first_in_scope; i < m_owned_locals.size(); i++) {
-            auto& info = m_owned_locals[i];
-            if (info.scope_depth < depth) continue;
-            if (info.start_block.is_valid() && end_block.is_valid() && info.initial_value.is_valid()) {
-                IRCleanupKind kind = info.kind == OwnedKind::RefBorrow ? IRCleanupKind::RefDec
-                                   : info.kind == OwnedKind::StrOwn    ? IRCleanupKind::StrRelease
-                                   : IRCleanupKind::Delete;
-                m_current_func->cleanup_info.push_back(
-                    {info.initial_value, info.type, info.start_block, end_block, kind});
-            }
-        }
-    }
+    record_scope_cleanup_records(depth);
 
     // Emit cleanup for live owned locals in this scope
     emit_scope_cleanup(depth);
@@ -6053,6 +6021,26 @@ void IRBuilder::pop_scope() {
     }
 
     m_local_scopes.pop_back();
+}
+
+BlockId IRBuilder::current_or_last_block_id() const {
+    if (m_current_block) return m_current_block->id;
+    if (!m_current_func->blocks.empty()) return m_current_func->blocks.back()->id;
+    return BlockId::invalid();
+}
+
+void IRBuilder::record_scope_cleanup_records(u32 depth) {
+    BlockId end_block = current_or_last_block_id();
+    if (!end_block.is_valid()) return;
+    for (auto& info : m_owned_locals) {
+        if (info.scope_depth < depth) continue;
+        if (!info.start_block.is_valid() || !info.initial_value.is_valid()) continue;
+        IRCleanupKind kind = info.kind == OwnedKind::RefBorrow ? IRCleanupKind::RefDec
+                           : info.kind == OwnedKind::StrOwn    ? IRCleanupKind::StrRelease
+                           : IRCleanupKind::Delete;
+        m_current_func->cleanup_info.push_back(
+            {info.initial_value, info.type, info.start_block, end_block, kind});
+    }
 }
 
 IRBuilder::LocalVar* IRBuilder::find_local(StringView name) {
@@ -6799,32 +6787,8 @@ void IRBuilder::end_function_body() {
     // propagate through them (cross-frame unwinding).
     if (!m_local_scopes.empty()) {
         u32 depth = static_cast<u32>(m_local_scopes.size());
-        BlockId end_block = m_current_block ? m_current_block->id : BlockId::invalid();
-        if (!m_current_block && !m_current_func->blocks.empty()) {
-            end_block = m_current_func->blocks.back()->id;
-        }
-        // Record in declaration order; VM iterates in reverse for LIFO cleanup
-        u32 first_in_scope = 0;
-        for (u32 i = 0; i < m_owned_locals.size(); i++) {
-            if (m_owned_locals[i].scope_depth >= depth) {
-                first_in_scope = i;
-                break;
-            }
-            if (i == m_owned_locals.size() - 1) {
-                first_in_scope = static_cast<u32>(m_owned_locals.size());
-            }
-        }
-        for (u32 i = first_in_scope; i < m_owned_locals.size(); i++) {
-            auto& info = m_owned_locals[i];
-            if (info.scope_depth < depth) continue;
-            if (info.start_block.is_valid() && end_block.is_valid() && info.initial_value.is_valid()) {
-                IRCleanupKind kind = info.kind == OwnedKind::RefBorrow ? IRCleanupKind::RefDec
-                                   : info.kind == OwnedKind::StrOwn    ? IRCleanupKind::StrRelease
-                                   : IRCleanupKind::Delete;
-                m_current_func->cleanup_info.push_back(
-                    {info.initial_value, info.type, info.start_block, end_block, kind});
-            }
-        }
+        record_scope_cleanup_records(depth);
+        BlockId end_block = current_or_last_block_id();
 
         // Ref parameters are counted borrows live for the whole function. Their
         // normal-path RefDec is the explicit decrement at each return

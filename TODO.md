@@ -99,10 +99,6 @@ emission idioms repeated dozens of times. Correctness-adjacent items first.
   `gen_assign_field` duplicate ~45 lines each of find_field → find_variant_field →
   union-offset math → discriminant-check emission. One `resolve_field_access` +
   `emit_variant_guard`.
-- [ ] **Dedup cleanup-record recording** between `pop_scope` and
-  `end_function_body`; in both copies the `first_in_scope` pre-scan is dead code
-  (the loop that follows already filters on `scope_depth`) — delete it. Extract
-  `record_scope_cleanup_records(depth, end_block)`.
 - [ ] **Split the TU / extract collaborators** (the semantic.cpp precedent):
   (a) zero-risk `.cpp` split into decls/stmt/expr/lifetime files; (b) easy
   extraction of Phase-1 folding (`try_fold_*` / `try_simplify_*`, ~350

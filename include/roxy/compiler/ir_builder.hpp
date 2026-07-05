@@ -592,6 +592,19 @@ private:
     // Emit cleanup (implicit destruction) for all live owned locals at or above min_scope_depth
     void emit_scope_cleanup(u32 min_scope_depth);
 
+    // The current block's id, or the last created block's when the current
+    // block is already closed — the end of a cleanup-record range.
+    BlockId current_or_last_block_id() const;
+
+    // Record exception-path cleanup records (Delete / RefDec / StrRelease by
+    // owned kind) for every owned local at or above `depth`, ending at the
+    // current-or-last block. Uses initial_value (the SSA value at declaration)
+    // so lowering maps each record to the right register; the VM null-checks
+    // the register so an already-cleaned value is safely skipped. Records are
+    // pushed in declaration order — the VM's execute_cleanup iterates in
+    // reverse for LIFO cleanup. Shared by pop_scope and end_function_body.
+    void record_scope_cleanup_records(u32 depth);
+
     // Find an owned local by name
     OwnedLocalInfo* find_owned_local(StringView name);
 
