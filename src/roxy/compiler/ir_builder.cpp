@@ -5492,10 +5492,13 @@ ValueId IRBuilder::gen_super_call(Expr* expr) {
         return ValueId::invalid();
     }
 
-    // Determine if this is a constructor call or method call
-    // Constructor calls return void (expr->resolved_type is void)
-    // Method calls return the method's return type
-    bool is_constructor_call = expr->resolved_type && expr->resolved_type->kind == TypeKind::Void;
+    // Constructor vs method call, from the analyzer's explicit annotation:
+    // super() (empty method name) is always the parent's default constructor;
+    // super.name(...) is a named constructor iff the analyzer resolved it to
+    // one and recorded the name in constructor_name (a void result type does
+    // NOT imply a constructor — super methods can return void).
+    bool is_constructor_call = super_expr.method_name.empty()
+                            || call_expr.constructor_name.size() > 0;
 
     StructTypeInfo& target_struct_type_info = target_type->struct_info;
 

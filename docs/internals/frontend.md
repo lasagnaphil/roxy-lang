@@ -107,6 +107,13 @@ its `throw` is not "inside" the enclosing delete destructor. Three bugs of the
 coroutine-method diagnostic gap, the lambda branch-terminates leak, the lambda
 in-delete-destructor leak).
 
+Analysis results flow to the IR builder as in-place AST annotations
+(`resolved_type` plus name/flag fields, including several deliberate
+overloads such as the callee-type dispatch signal and the null-object module
+sentinel). The authoritative spec of that contract is the "semantic→IR
+annotation contract" comment above `struct Expr` in `compiler/ast.hpp` — keep
+it updated when adding or overloading an annotation.
+
 ## Files
 
 - `include/roxy/shared/lexer.hpp` - Lexer class

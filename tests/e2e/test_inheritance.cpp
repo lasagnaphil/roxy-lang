@@ -121,6 +121,43 @@ TEST_SUITE("E2E Inheritance") {
         CHECK(result.stdout_output == "11\n");
     }
 
+    TEST_CASE_TEMPLATE("Super method call returning void", Backend, RX_E2E_BACKENDS) {
+        // Regression: gen_super_call used to classify constructor-vs-method by
+        // "the call's result type is void" — a void-returning super *method*
+        // was therefore mangled as a constructor and the call failed to
+        // resolve. The semantic analyzer now annotates the distinction
+        // explicitly (CallExpr::constructor_name).
+        const char* source = R"(
+        struct Animal {
+            hp: i32;
+        }
+
+        fun Animal.heal() {
+            self.hp = self.hp + 10;
+        }
+
+        struct Dog : Animal {
+            breed: i32;
+        }
+
+        fun Dog.heal() {
+            super.heal();
+            self.hp = self.hp + 1;
+        }
+
+        fun main(): i32 {
+            var d: Dog = Dog { hp = 100, breed = 5 };
+            d.heal();
+            print(f"{d.hp}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "111\n");
+    }
+
     TEST_CASE_TEMPLATE("Constructor chaining implicit", Backend, RX_E2E_BACKENDS) {
         // Test implicit super() call to parent's default constructor
         // Note: implicit super() only works when parent has a default (parameterless) constructor

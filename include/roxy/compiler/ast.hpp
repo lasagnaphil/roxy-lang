@@ -226,8 +226,15 @@ struct CallExpr {
     Expr* callee;
     Span<CallArg> arguments;
     Span<TypeExpr*> type_args;    // Explicit type arguments: identity<i32>(42)
-    StringView constructor_name;  // For named constructors: Point.from_coords() -> "from_coords"
-    StringView mangled_name;      // Set by semantic analysis for generic calls
+    // Named-constructor name — Point.from_coords(...) → "from_coords"; also
+    // set by analysis when super.name(...) resolves to a parent's named
+    // constructor (empty for default ctors and for method calls). See the
+    // annotation contract above struct Expr.
+    StringView constructor_name;
+    // Set by semantic analysis: monomorphized name for generic calls, or the
+    // native symbol for builtin method/constructor calls. See the annotation
+    // contract above struct Expr.
+    StringView mangled_name;
     bool is_heap;                 // true for "uniq Type(...)" constructor calls
 };
 
@@ -238,6 +245,9 @@ struct IndexExpr {
 };
 
 // Get expression: obj.field
+// After analysis, object->resolved_type == nullptr means `object` names an
+// imported MODULE (module.member) — see the annotation contract above
+// struct Expr.
 struct GetExpr {
     Expr* object;
     StringView name;
@@ -360,11 +370,84 @@ struct LambdaExpr {
 // Forward declaration
 struct Type;
 
+// ============================================================================
+// The semantic→IR annotation contract
+// ============================================================================
+//
+// Semantic analysis communicates its resolution results to the IR builder by
+// annotating the AST in place. This comment is the authoritative spec of that
+// contract: every writer lives in the semantic analyzer (or its
+// collaborators), every reader in the IR builder. If you add an annotation or
+// overload an existing one, document it here.
+//
+// --- Expr::resolved_type ---
+// The expression's type, set by analyze_expr on every analyzed node (nullptr
+// before analysis). Beyond that plain meaning, the analyzer overloads
+// specific nodes' resolved_type as a dispatch side-channel:
+//
+//   CallExpr.callee->resolved_type (drives gen_call_expr dispatch):
+//     primitive type  → primitive cast: i32(x), f64(y), bool(z)
+//     struct type     → constructor call: Foo(...) / uniq Foo(...) (bare
+//                       identifier callee; for named ctors Type.name(...) the
+//                       GetExpr *object* carries the struct type instead)
+//     List/Map type   → builtin container constructor; mangled_name holds the
+//                       native ctor symbol ("List$$new" / "Map$$new")
+//     ref<Ancestor>   → super call: the ancestor whose ctor/method the call
+//                       resolved to (the mangling target). constructor_name
+//                       distinguishes ctor from method — do NOT infer it from
+//                       a void result type (super methods can return void).
+//     function type   → ordinary / method / monomorphized-generic call. For
+//                       method calls this is (ref<receiver>, params...) -> R
+//                       built by build_method_function_type; the IR builder
+//                       reads its param types for post-call move/nullify
+//                       decisions on noncopyable arguments.
+//
+//   GetExpr.object->resolved_type == nullptr (after analysis) → the object
+//     names an imported MODULE (module.member); the IR builder treats null as
+//     "module-qualified access, no receiver". For real receivers the analyzer
+//     re-sets the object's resolved_type to the receiver's original type,
+//     reference wrapper included (uniq/ref/weak).
+//
+//   CatchClause.resolved_type == nullptr → catch-all clause (opaque
+//     ExceptionRef); a typed catch carries the caught struct type.
+//
+// --- Name annotations (StringViews written by analysis, read at emit) ---
+//   CallExpr.mangled_name         monomorphized name for generic calls
+//                                 ("identity$i32"), or the native symbol for
+//                                 builtin method/constructor calls
+//                                 (list/map/coro/primitive methods).
+//   CallExpr.constructor_name     named-constructor name for Type.name(...)
+//                                 and super.name(...) constructor calls
+//                                 (empty for default ctors and methods).
+//   IdentifierExpr.mangled_name   monomorphized target for a generic function
+//                                 reference in value position.
+//   StructLiteralExpr.mangled_name / type_name
+//                                 generic struct literals are rewritten to the
+//                                 mangled instance name.
+//
+// --- Semantic-internal flags (never visible to the IR builder) ---
+//   IdentifierExpr.is_generic_template_ref — set when a bare generic-function
+//     name is referenced; resolved_type stays error_type until a coercion
+//     site (var init, call arg, return, struct-literal field) binds the type
+//     params via coerce_generic_template_ref, which clears the flag and
+//     overwrites resolved_type. If no site coerces it, analysis reports an
+//     error — the IR builder must never see the flag still set.
+//
+// --- AST mutation (non-idempotent: re-analyzing the same AST is unsound;
+//     see TODO.md "AST mutation vs. side-band annotations") ---
+//   - captured identifiers rewrite to ExprGet(__env, name); captured `self`
+//     rewrites to ExprGet(__env, __self);
+//   - generic TypeExprs rewrite to the mangled instance name with type_args
+//     cleared;
+//   - LambdaExpr gets env_struct_name / call_function_name / env_struct_type /
+//     resolved_captures backfilled for closure emission (see LambdaExpr).
+// ============================================================================
+
 // Expression node
 struct Expr {
     AstKind kind;
     SourceLocation loc;
-    Type* resolved_type;  // Set by semantic analysis, nullptr before analysis
+    Type* resolved_type;  // Set by semantic analysis; see the annotation contract above
     union {
         LiteralExpr literal;
         IdentifierExpr identifier;
@@ -473,7 +556,10 @@ struct CatchClause {
     TypeExpr* exception_type;     // Type annotation (nullptr for catch-all)
     Stmt* body;                   // Block statement
     SourceLocation loc;
-    Type* resolved_type;          // Set by semantic analysis
+    // Set by semantic analysis: the caught struct type for a typed catch,
+    // nullptr for a catch-all clause (opaque ExceptionRef) — see the
+    // annotation contract above struct Expr.
+    Type* resolved_type;
 };
 
 // Try statement: try { ... } catch (e: Type) { ... } finally { ... }

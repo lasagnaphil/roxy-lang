@@ -3752,6 +3752,10 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
             }
         }
 
+        // Annotate that this super call resolved to a named CONSTRUCTOR — the
+        // IR builder must not infer ctor-vs-method from the void result type
+        // (a super *method* returning void would be misclassified).
+        ce.constructor_name = super_expr.method_name;
         ce.callee->resolved_type = m_types.ref_type(parent_type);
         return m_types.void_type();
     }
