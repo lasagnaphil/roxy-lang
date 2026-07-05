@@ -73,37 +73,23 @@ per-item records in git history.
 
 ## IRBuilder Refactoring
 
-From a 2026-07-05 deep review of `ir_builder.{hpp,cpp}` (~7,600 lines). The code is
-semantically sound and well-commented; nearly all findings are structural
-duplication — the same machinery copy-pasted across statement kinds, and the same
-emission idioms repeated dozens of times. Correctness-adjacent items first.
+From a 2026-07-05 deep review of `ir_builder.{hpp,cpp}` (~7,600 lines). The
+structural items are done and removed from this file — the four-way TU split,
+the `ir_fold` extraction, and (2026-07-06) the `OwnershipTracker` collaborator
+(`ownership_tracker.{hpp,cpp}`: owned-local state + keyed name/value lookups,
+replacing the hot-path linear scans; sound because local shadowing is banned)
+together with the `collect_assigned_vars` seen-set dedupe — per-item records
+and measurements in git history. Remaining:
 
-- [ ] **`OwnershipTracker` collaborator** (the remaining piece of the TU-split
-  item): pull `m_owned_locals` + the consume/move-marking/string-retain/
-  cleanup-record machinery (now grouped in `ir_builder_lifetime.cpp`) out
-  behind a collaborator object, mirroring the semantic side's
-  `LifetimeChecker`. The 2026-07-05 split already did (a) the four-way `.cpp`
-  split (`ir_builder.cpp` = build phases/scaffolding, `_stmt`, `_expr`,
-  `_lifetime`; shared internal helpers in `ir_builder_internal.hpp`) and
-  (b) the pure constant folding extraction into `ir_fold.{hpp,cpp}`
-  (`fold_binary_const` / `fold_unary_const` / `fold_cast_const`, reusable by
-  future optimization passes).
-- [ ] Linear-scan lookups: `find_method_fn_index` scans all module functions by
-  name (cold — struct-keyed map ctors only); `find_owned_local` plus the four
-  ValueId-keyed temp scans (`track_string_temp` / `track_noncopyable_call_temp` /
-  `consume_or_retain_string` / `consume_temp_noncopyable`) scan `m_owned_locals`
-  on hot paths; `collect_assigned_vars` dedupe is O(n²). **Measured 2026-07-06**
-  (Release, adversarial single-function bodies): quadratic growth confirmed for
-  all three shapes, but invisible below ~1,000 statements per function (8k
-  statements: 60–240ms total; `track_string_temp` alone was 85% of profile
-  samples on the string-temp workload). The keyed-map swap is now trivially
-  safe: local shadowing is banned (2026-07-06, `check_no_local_shadowing` /
-  `SymbolTable::lookup_function_local`), so visible local names are unique per
-  function — the ban also closed the two latent shadowing miscompiles the same
-  investigation found (shadowing declarations rebinding the outer local's SSA
-  binding, and `find_owned_local` marking the outermost same-named owned local
-  moved → outer uniq leaked). Fold the swap into the OwnershipTracker
-  extraction above.
+- [ ] `find_method_fn_index` still scans all module functions by name —
+  deliberately kept: cold path (struct-keyed map constructors only, ≤2 scans
+  each), and an incremental name→index map would need maintenance at every
+  build-phase push_back for no measurable win.
+- [ ] After the 2026-07-06 keyed-map swap, the adversarial hostile workloads
+  (32k-statement single-function bodies) are dominated by `run_local_cse`
+  (block-local CSE, `ir_optimize.cpp`) — a pre-existing, separate hotspot.
+  Revisit with the optimization.md future phases if giant generated functions
+  ever matter.
 - [ ] Adopt the `"…"_sv` literal (added 2026-07-05 in `core/string_view.hpp`,
   applied across `ir_builder*.cpp`) in the rest of the codebase where
   `StringView("…", N)` manual lengths appear.

@@ -6,6 +6,7 @@
 #include "roxy/core/format.hpp"
 #include "roxy/compiler/ast.hpp"
 #include "roxy/compiler/ir_fold.hpp"
+#include "roxy/compiler/ownership_tracker.hpp"
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/type_env.hpp"
 #include "roxy/compiler/types.hpp"
@@ -581,24 +582,12 @@ private:
     Vector<Type*> m_env_struct_types;
 
     // Ownership tracking for locals that need RAII / implicit destruction
-    // Covers both uniq references (heap-allocated) and value structs with destructors
-    // Whether a tracked local owns its value (destroy on cleanup) or is a `ref`
-    // borrow (decrement its count on cleanup). RefBorrow locals reuse the owned-
-    // local machinery (LIFO scope cleanup, exception records, liveness) but emit
-    // RefDec instead of Delete.
-    enum class OwnedKind : u8 { Owned, RefBorrow, StrOwn };
-
-    struct OwnedLocalInfo {
-        StringView name;
-        Type* type;            // Full variable type (uniq T or struct T)
-        u32 scope_depth;       // Scope level where declared
-        bool is_moved;         // Ownership transferred (pass, return, explicit delete)
-        bool is_temporary;     // True for compiler-generated temporaries (__tmp*)
-        BlockId start_block;   // Block where variable becomes live (for cleanup records)
-        ValueId initial_value; // SSA value at declaration (for cleanup record register mapping)
-        OwnedKind kind = OwnedKind::Owned;  // Owned value vs ref borrow
-    };
-    Vector<OwnedLocalInfo> m_owned_locals;
+    // (uniq references, value structs with destructors, containers, ref
+    // borrows, owned strings). The OwnershipTracker collaborator owns the
+    // state and keyed lookups (ownership_tracker.hpp); the IRBuilder keeps
+    // all IR emission (destroys, Nullify annotations, SSA rebinds) and
+    // transitions the tracker — mirroring the semantic side's LifetimeChecker.
+    OwnershipTracker m_ownership;
 
     u32 m_next_temp_id = 0;  // Counter for generating unique temporary names (__tmp0, __tmp1, ...)
 
@@ -708,17 +697,23 @@ private:
     // reverse for LIFO cleanup. Shared by pop_scope and end_function_body.
     void record_scope_cleanup_records(u32 depth);
 
-    // Find an owned local by name
-    OwnedLocalInfo* find_owned_local(StringView name);
-
     // Variable management (declared after LocalVar struct)
     void define_local(StringView name, ValueId value, Type* type);
     ValueId lookup_local(StringView name);
     LocalVar* find_local(StringView name);  // Returns pointer to LocalVar or nullptr
 
-    // Loop variable analysis (declared after LoopVarInfo struct)
+    // Loop variable analysis (declared after LoopVarInfo struct). The public
+    // entry points seed a membership set from `out`'s current contents (call
+    // sites accumulate across several collect calls — if/else branches, for
+    // body + increment — and loop-header param creation relies on `out` being
+    // duplicate-free), then delegate to the _impl recursion, which dedupes
+    // through the set instead of rescanning `out` per assignment (O(n²)).
     void collect_assigned_vars(Stmt* stmt, Vector<StringView>& out);
     void collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out);
+    void collect_assigned_vars_impl(Stmt* stmt, Vector<StringView>& out,
+                                    tsl::robin_map<StringView, bool>& seen);
+    void collect_assigned_vars_expr_impl(Expr* expr, Vector<StringView>& out,
+                                         tsl::robin_map<StringView, bool>& seen);
     Span<BlockArgPair> make_loop_args(const Vector<LoopVarInfo>& loop_vars);
 
     // Helper to create a span in the allocator

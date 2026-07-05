@@ -2,8 +2,10 @@
 // (the build_* entry points, parameter setup, function begin/end, mangling).
 // Statement lowering lives in ir_builder_stmt.cpp, expression lowering and
 // instruction emission in ir_builder_expr.cpp, ownership/cleanup bookkeeping
-// in ir_builder_lifetime.cpp, and pure constant folding in ir_fold.cpp.
-// File-internal helpers shared across the TUs live in ir_builder_internal.hpp.
+// in ir_builder_lifetime.cpp (tracked state and keyed lookups in the
+// OwnershipTracker collaborator, ownership_tracker.{hpp,cpp}), and pure
+// constant folding in ir_fold.cpp. File-internal helpers shared across the
+// TUs live in ir_builder_internal.hpp.
 
 #include "roxy/compiler/ir_builder.hpp"
 
@@ -986,7 +988,7 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
 
     // Initialize local variable scopes and ownership tracking
     m_local_scopes.clear_keep_capacity();
-    m_owned_locals.clear_keep_capacity();
+    m_ownership.reset();
     m_next_temp_id = 0;
     push_scope();
 
@@ -1008,7 +1010,7 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
         if (bp.type && bp.type->noncopyable() && !m_param_is_ptr.count(bp.name)) {
             u32 scope_depth = static_cast<u32>(m_local_scopes.size());
             BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
-            m_owned_locals.push_back({bp.name, bp.type, scope_depth, false, false, current_block_id, bp.value});
+            m_ownership.track({bp.name, bp.type, scope_depth, false, false, current_block_id, bp.value});
         }
     }
 
@@ -1066,9 +1068,7 @@ void IRBuilder::end_function_body() {
             }
         }
 
-        while (!m_owned_locals.empty() && m_owned_locals.back().scope_depth >= depth) {
-            m_owned_locals.pop_back();
-        }
+        m_ownership.pop_to_depth(depth);
         m_local_scopes.pop_back();
     }
 

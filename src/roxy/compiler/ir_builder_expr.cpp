@@ -2384,7 +2384,7 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
     }
 
     if (target_type && target_type->noncopyable()) {
-        OwnedLocalInfo* owned_info = find_owned_local(name);
+        OwnedLocalInfo* owned_info = m_ownership.find_by_name(name);
         if (owned_info && !owned_info->is_moved) {
             emit_implicit_destroy(*owned_info);
             owned_info->is_moved = false;  // Reset — new value is now live
@@ -2707,16 +2707,9 @@ ValueId IRBuilder::gen_constructor_call(Expr* expr) {
         // result_type is uniq<StructType>
         Span<ValueId> empty_args = {};
         obj = emit_new(struct_type->struct_info.name, empty_args, result_type);
-        // Track temporary for exception cleanup via m_owned_locals.
+        // Track the heap temporary for scope-exit / exception cleanup.
         // Consumed when passed/assigned/returned (marked is_moved + Nullify).
-        if (result_type && result_type->noncopyable() && m_current_block) {
-            StringView temp_name = intern_format("__tmp{}", m_next_temp_id++);
-
-            define_local(temp_name, obj, result_type);
-            u32 scope_depth = static_cast<u32>(m_local_scopes.size());
-            m_owned_locals.push_back({temp_name, result_type, scope_depth, false, true,
-                                      m_current_block->id, obj});
-        }
+        track_noncopyable_call_temp(obj, result_type);
     } else {
         // Type() - stack allocation
         // result_type is StructType (value type)
@@ -2810,15 +2803,8 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         // Use mangled name for generic struct instances (e.g., "Box$i32")
         StringView type_name = sl.mangled_name.size() > 0 ? sl.mangled_name : sl.type_name;
         struct_ptr = emit_new(type_name, empty_args, result_type);
-        // Track temporary for exception cleanup via m_owned_locals
-        if (result_type && result_type->noncopyable() && m_current_block) {
-            StringView temp_name = intern_format("__tmp{}", m_next_temp_id++);
-
-            define_local(temp_name, struct_ptr, result_type);
-            u32 scope_depth = static_cast<u32>(m_local_scopes.size());
-            m_owned_locals.push_back({temp_name, result_type, scope_depth, false, true,
-                                      m_current_block->id, struct_ptr});
-        }
+        // Track the heap temporary for scope-exit / exception cleanup.
+        track_noncopyable_call_temp(struct_ptr, result_type);
     } else {
         // Type { ... } - stack allocation
         struct_type = result_type;

@@ -342,7 +342,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 
 ### IR and Bytecode
 **SSA IR** - Block arguments (not phi nodes); operations spanning arithmetic, comparisons, memory, calls, control flow, object lifecycle, and closures.
-**Details:** `docs/internals/ssa-ir.md` | **Files:** `compiler/ssa_ir.hpp`, `compiler/ir_builder.hpp`
+**Details:** `docs/internals/ssa-ir.md` | **Files:** `compiler/ssa_ir.hpp`, `compiler/ir_builder.hpp`, `compiler/ownership_tracker.{hpp,cpp}` (owned-local state + keyed name/value lookups behind the IRBuilder's `OwnershipTracker` collaborator; the builder keeps all IR emission)
 
 **IR Optimizations** - Phase 1 (constant folding, algebraic simplifications, cast folding) eagerly applied during IR building. Phases 2 (DCE, copy propagation), 3 (branch folding, block merging, trivial block-argument elimination), and 4 (block-local Common Subexpression Elimination) as standalone passes between coroutine lowering and IR validation, iterated to a fixed point with a final RPO sweep.
 **Details:** `docs/internals/optimization.md` | **Files:** `compiler/ir_optimize.hpp`, `compiler/ir_optimize.cpp`

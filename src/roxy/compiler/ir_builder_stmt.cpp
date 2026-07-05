@@ -138,10 +138,7 @@ IRBuilder::ScopeSnapshot IRBuilder::snapshot_scopes(bool with_move_state) {
     }
     if (with_move_state) {
         snapshot.has_move_state = true;
-        snapshot.is_moved.reserve(m_owned_locals.size());
-        for (auto& info : m_owned_locals) {
-            snapshot.is_moved.push_back(info.is_moved);
-        }
+        m_ownership.snapshot_move_state(snapshot.is_moved);
     }
     return snapshot;
 }
@@ -152,18 +149,14 @@ void IRBuilder::restore_scopes(const ScopeSnapshot& snapshot, bool restore_move_
         m_local_scopes.push_back(scope);
     }
     if (restore_move_state && snapshot.has_move_state) {
-        for (u32 i = 0; i < snapshot.is_moved.size() && i < m_owned_locals.size(); i++) {
-            m_owned_locals[i].is_moved = snapshot.is_moved[i];
-        }
+        m_ownership.restore_move_state(snapshot.is_moved);
     }
 }
 
 void IRBuilder::restore_scopes_move(ScopeSnapshot&& snapshot) {
     m_local_scopes = std::move(snapshot.scopes);
     if (snapshot.has_move_state) {
-        for (u32 i = 0; i < snapshot.is_moved.size() && i < m_owned_locals.size(); i++) {
-            m_owned_locals[i].is_moved = snapshot.is_moved[i];
-        }
+        m_ownership.restore_move_state(snapshot.is_moved);
     }
 }
 
@@ -596,7 +589,7 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
             // depends on the returned expression:
             OwnedLocalInfo* ref_local =
                 rs.value->kind == AstKind::ExprIdentifier
-                    ? find_owned_local(rs.value->identifier.name) : nullptr;
+                    ? m_ownership.find_by_name(rs.value->identifier.name) : nullptr;
             if (ref_local && ref_local->kind == OwnedKind::RefBorrow) {
                 // Ref *local*: hand off by marking it moved so emit_scope_cleanup
                 // skips its normal-path RefDec — its create-inc survives as the
@@ -1013,7 +1006,7 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
     // SSA value, even when the call threw and never produced one), and the
     // after-block phi feeds those undefined values out.
     //
-    // We deliberately do NOT snapshot m_owned_locals.is_moved here. That flag
+    // We deliberately do NOT snapshot the owned locals' is_moved here. That flag
     // governs IR-builder bookkeeping for runtime cleanup (whether to emit a
     // destroy at scope exit / before reassignment). Rolling it back would
     // re-enable the implicit-destroy preamble of `r = uniq T()` inside catch
@@ -1107,9 +1100,9 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
             : m_types.exception_ref_type();
         u32 catch_scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId catch_owned_block = m_current_block ? m_current_block->id : BlockId::invalid();
-        m_owned_locals.push_back({clause.var_name, owned_exc_type, catch_scope_depth,
-                                  false, false, catch_owned_block, exc_param.value,
-                                  OwnedKind::Owned});
+        m_ownership.track({clause.var_name, owned_exc_type, catch_scope_depth,
+                           false, false, catch_owned_block, exc_param.value,
+                           OwnedKind::Owned});
 
         gen_stmt(clause.body);
         pop_scope();
@@ -1279,7 +1272,7 @@ void IRBuilder::gen_var_decl(Decl* decl) {
 
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
-        m_owned_locals.push_back({var_decl.name, type, scope_depth, false, false, current_block_id, value});
+        m_ownership.track({var_decl.name, type, scope_depth, false, false, current_block_id, value});
 
         // Mark the source variable as moved when initializing from an identifier
         if (var_decl.initializer && var_decl.initializer->kind == AstKind::ExprIdentifier) {
@@ -1303,8 +1296,8 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         }
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
-        m_owned_locals.push_back({var_decl.name, type, scope_depth, false, false,
-                                  current_block_id, value, OwnedKind::RefBorrow});
+        m_ownership.track({var_decl.name, type, scope_depth, false, false,
+                           current_block_id, value, OwnedKind::RefBorrow});
     } else if (type && type->kind == TypeKind::String) {
         // String local: a reference-counted owned value (finding 9b). Adopt a
         // fresh producer temp (count transfers) or retain an existing owner, then
@@ -1312,19 +1305,37 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         consume_or_retain_string(value, type, /*adopted_by_variable=*/true);
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
-        m_owned_locals.push_back({var_decl.name, type, scope_depth, false, false,
-                                  current_block_id, value, OwnedKind::StrOwn});
+        m_ownership.track({var_decl.name, type, scope_depth, false, false,
+                           current_block_id, value, OwnedKind::StrOwn});
     }
 }
 
 // Variable management
 
+// Public entry points: seed the membership set from `out`'s current contents
+// (call sites accumulate across several collect calls — if/else branches, for
+// body + increment — and loop-header param creation relies on `out` being
+// duplicate-free), then delegate to the _impl recursion, which dedupes through
+// the set instead of rescanning `out` per assignment (formerly O(n²)).
 void IRBuilder::collect_assigned_vars(Stmt* stmt, Vector<StringView>& out) {
+    tsl::robin_map<StringView, bool> seen;
+    for (const auto& existing : out) seen[existing] = true;
+    collect_assigned_vars_impl(stmt, out, seen);
+}
+
+void IRBuilder::collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out) {
+    tsl::robin_map<StringView, bool> seen;
+    for (const auto& existing : out) seen[existing] = true;
+    collect_assigned_vars_expr_impl(expr, out, seen);
+}
+
+void IRBuilder::collect_assigned_vars_impl(Stmt* stmt, Vector<StringView>& out,
+                                           tsl::robin_map<StringView, bool>& seen) {
     if (!stmt) return;
 
     switch (stmt->kind) {
         case AstKind::StmtExpr:
-            collect_assigned_vars_expr(stmt->expr_stmt.expr, out);
+            collect_assigned_vars_expr_impl(stmt->expr_stmt.expr, out, seen);
             break;
         case AstKind::StmtBlock: {
             BlockStmt& block = stmt->block;
@@ -1332,52 +1343,52 @@ void IRBuilder::collect_assigned_vars(Stmt* stmt, Vector<StringView>& out) {
                 if (!d) continue;
                 // Recurse into statements (not var decls - those are new vars)
                 if (d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtYield) {
-                    collect_assigned_vars(&d->stmt, out);
+                    collect_assigned_vars_impl(&d->stmt, out, seen);
                 }
             }
             break;
         }
         case AstKind::StmtIf:
-            collect_assigned_vars(stmt->if_stmt.then_branch, out);
-            collect_assigned_vars(stmt->if_stmt.else_branch, out);
+            collect_assigned_vars_impl(stmt->if_stmt.then_branch, out, seen);
+            collect_assigned_vars_impl(stmt->if_stmt.else_branch, out, seen);
             break;
         case AstKind::StmtWhile:
-            collect_assigned_vars(stmt->while_stmt.body, out);
+            collect_assigned_vars_impl(stmt->while_stmt.body, out, seen);
             break;
         case AstKind::StmtFor:
-            collect_assigned_vars(stmt->for_stmt.body, out);
-            collect_assigned_vars_expr(stmt->for_stmt.increment, out);
+            collect_assigned_vars_impl(stmt->for_stmt.body, out, seen);
+            collect_assigned_vars_expr_impl(stmt->for_stmt.increment, out, seen);
             break;
         case AstKind::StmtWhen: {
             WhenStmt& ws = stmt->when_stmt;
             for (auto& when_case : ws.cases) {
                 for (auto* d : when_case.body) {
                     if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtYield) {
-                        collect_assigned_vars(&d->stmt, out);
+                        collect_assigned_vars_impl(&d->stmt, out, seen);
                     }
                 }
             }
             for (auto* d : ws.else_body) {
                 if (d && d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtYield) {
-                    collect_assigned_vars(&d->stmt, out);
+                    collect_assigned_vars_impl(&d->stmt, out, seen);
                 }
             }
             break;
         }
         case AstKind::StmtThrow:
-            collect_assigned_vars_expr(stmt->throw_stmt.expr, out);
+            collect_assigned_vars_expr_impl(stmt->throw_stmt.expr, out, seen);
             break;
         case AstKind::StmtYield:
-            collect_assigned_vars_expr(stmt->yield_stmt.value, out);
+            collect_assigned_vars_expr_impl(stmt->yield_stmt.value, out, seen);
             break;
         case AstKind::StmtTry: {
             TryStmt& ts = stmt->try_stmt;
-            collect_assigned_vars(ts.try_body, out);
+            collect_assigned_vars_impl(ts.try_body, out, seen);
             for (u32 i = 0; i < ts.catches.size(); i++) {
-                collect_assigned_vars(ts.catches[i].body, out);
+                collect_assigned_vars_impl(ts.catches[i].body, out, seen);
             }
             if (ts.finally_body) {
-                collect_assigned_vars(ts.finally_body, out);
+                collect_assigned_vars_impl(ts.finally_body, out, seen);
             }
             break;
         }
@@ -1386,46 +1397,44 @@ void IRBuilder::collect_assigned_vars(Stmt* stmt, Vector<StringView>& out) {
     }
 }
 
-void IRBuilder::collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out) {
+void IRBuilder::collect_assigned_vars_expr_impl(Expr* expr, Vector<StringView>& out,
+                                                tsl::robin_map<StringView, bool>& seen) {
     if (!expr) return;
+
+    // Record an assigned/written identifier once (first-occurrence order).
+    auto add_once = [&](StringView name) {
+        auto it = seen.find(name);
+        if (it != seen.end()) return;
+        seen[name] = true;
+        out.push_back(name);
+    };
 
     switch (expr->kind) {
         case AstKind::ExprAssign: {
             // Check if the target is an identifier
             if (expr->assign.target->kind == AstKind::ExprIdentifier) {
-                StringView name = expr->assign.target->identifier.name;
-                // Add if not already present
-                bool found = false;
-                for (const auto& existing : out) {
-                    if (existing == name) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    out.push_back(name);
-                }
+                add_once(expr->assign.target->identifier.name);
             }
             // Recurse into value expression (it might have nested assignments)
-            collect_assigned_vars_expr(expr->assign.value, out);
+            collect_assigned_vars_expr_impl(expr->assign.value, out, seen);
             break;
         }
         case AstKind::ExprBinary:
-            collect_assigned_vars_expr(expr->binary.left, out);
-            collect_assigned_vars_expr(expr->binary.right, out);
+            collect_assigned_vars_expr_impl(expr->binary.left, out, seen);
+            collect_assigned_vars_expr_impl(expr->binary.right, out, seen);
             break;
         case AstKind::ExprUnary:
-            collect_assigned_vars_expr(expr->unary.operand, out);
+            collect_assigned_vars_expr_impl(expr->unary.operand, out, seen);
             break;
         case AstKind::ExprTernary:
-            collect_assigned_vars_expr(expr->ternary.condition, out);
-            collect_assigned_vars_expr(expr->ternary.then_expr, out);
-            collect_assigned_vars_expr(expr->ternary.else_expr, out);
+            collect_assigned_vars_expr_impl(expr->ternary.condition, out, seen);
+            collect_assigned_vars_expr_impl(expr->ternary.then_expr, out, seen);
+            collect_assigned_vars_expr_impl(expr->ternary.else_expr, out, seen);
             break;
         case AstKind::ExprCall:
-            collect_assigned_vars_expr(expr->call.callee, out);
+            collect_assigned_vars_expr_impl(expr->call.callee, out, seen);
             for (auto& arg : expr->call.arguments) {
-                collect_assigned_vars_expr(arg.expr, out);
+                collect_assigned_vars_expr_impl(arg.expr, out, seen);
                 // An `inout`/`out` argument stores through the caller's slot
                 // via the post-call reload (see gen_call_expr's inout_args).
                 // Treat it as a write to the identifier so loop variable
@@ -1435,28 +1444,23 @@ void IRBuilder::collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out) 
                 // a stale register / trip register allocation.
                 if ((arg.modifier == ParamModifier::Inout || arg.modifier == ParamModifier::Out)
                     && arg.expr && arg.expr->kind == AstKind::ExprIdentifier) {
-                    StringView name = arg.expr->identifier.name;
-                    bool found = false;
-                    for (const auto& existing : out) {
-                        if (existing == name) { found = true; break; }
-                    }
-                    if (!found) out.push_back(name);
+                    add_once(arg.expr->identifier.name);
                 }
             }
             break;
         case AstKind::ExprIndex:
-            collect_assigned_vars_expr(expr->index.object, out);
-            collect_assigned_vars_expr(expr->index.index, out);
+            collect_assigned_vars_expr_impl(expr->index.object, out, seen);
+            collect_assigned_vars_expr_impl(expr->index.index, out, seen);
             break;
         case AstKind::ExprGet:
-            collect_assigned_vars_expr(expr->get.object, out);
+            collect_assigned_vars_expr_impl(expr->get.object, out, seen);
             break;
         case AstKind::ExprGrouping:
-            collect_assigned_vars_expr(expr->grouping.expr, out);
+            collect_assigned_vars_expr_impl(expr->grouping.expr, out, seen);
             break;
         case AstKind::ExprStringInterp:
             for (auto* sub_expr : expr->string_interp.expressions) {
-                collect_assigned_vars_expr(sub_expr, out);
+                collect_assigned_vars_expr_impl(sub_expr, out, seen);
             }
             break;
         default:

@@ -68,6 +68,7 @@ add_library(roxy_compiler
     src/roxy/compiler/generic_call_resolver.cpp
     src/roxy/compiler/ssa_ir.cpp
     src/roxy/compiler/ir_fold.cpp
+    src/roxy/compiler/ownership_tracker.cpp
     src/roxy/compiler/ir_builder.cpp
     src/roxy/compiler/ir_builder_stmt.cpp
     src/roxy/compiler/ir_builder_expr.cpp

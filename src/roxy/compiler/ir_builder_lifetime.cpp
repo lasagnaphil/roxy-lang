@@ -1,8 +1,10 @@
 // IRBuilder — ownership and cleanup bookkeeping: local-scope maps, owned-local
 // tracking (consume / move-marking / string retain-release), implicit
-// destruction, field cleanup, and exception-path cleanup records. Split out of
-// ir_builder.cpp; file-internal helpers shared across the ir_builder*.cpp TUs
-// live in ir_builder_internal.hpp.
+// destruction, field cleanup, and exception-path cleanup records. The tracked
+// state and its keyed lookups live in the OwnershipTracker collaborator
+// (ownership_tracker.{hpp,cpp}); this TU keeps the IR-emitting transitions
+// that consult it. Split out of ir_builder.cpp; file-internal helpers shared
+// across the ir_builder*.cpp TUs live in ir_builder_internal.hpp.
 
 #include "roxy/compiler/ir_builder.hpp"
 
@@ -60,9 +62,7 @@ void IRBuilder::pop_scope() {
     emit_scope_cleanup(depth);
 
     // Remove owned local tracking for this scope
-    while (!m_owned_locals.empty() && m_owned_locals.back().scope_depth >= depth) {
-        m_owned_locals.pop_back();
-    }
+    m_ownership.pop_to_depth(depth);
 
     m_local_scopes.pop_back();
 }
@@ -76,7 +76,8 @@ BlockId IRBuilder::current_or_last_block_id() const {
 void IRBuilder::record_scope_cleanup_records(u32 depth) {
     BlockId end_block = current_or_last_block_id();
     if (!end_block.is_valid()) return;
-    for (auto& info : m_owned_locals) {
+    for (u32 i = 0; i < m_ownership.count(); i++) {
+        const OwnedLocalInfo& info = m_ownership.entry(i);
         if (info.scope_depth < depth) continue;
         if (!info.start_block.is_valid() || !info.initial_value.is_valid()) continue;
         IRCleanupKind kind = info.kind == OwnedKind::RefBorrow ? IRCleanupKind::RefDec
@@ -98,61 +99,45 @@ IRBuilder::LocalVar* IRBuilder::find_local(StringView name) {
     return nullptr;
 }
 
-IRBuilder::OwnedLocalInfo* IRBuilder::find_owned_local(StringView name) {
-    for (auto& info : m_owned_locals) {
-        if (info.name == name) {
-            return &info;
-        }
-    }
-    return nullptr;
-}
-
 void IRBuilder::track_noncopyable_call_temp(ValueId val, Type* type) {
     if (!type || type->is_copy() || !m_current_block || !val.is_valid()) return;
     // Skip if already tracked as a temporary (constructor/struct-literal paths
     // self-track their heap temps at creation).
-    for (const auto& info : m_owned_locals) {
-        if (info.is_temporary && info.initial_value.id == val.id) return;
-    }
+    if (m_ownership.has_temp_for(val)) return;
     StringView temp_name = intern_format("__tmp{}", m_next_temp_id++);
     define_local(temp_name, val, type);
     u32 scope_depth = static_cast<u32>(m_local_scopes.size());
-    m_owned_locals.push_back({temp_name, type, scope_depth, false, true,
-                              m_current_block->id, val});
+    m_ownership.track({temp_name, type, scope_depth, false, true,
+                       m_current_block->id, val});
 }
 
 void IRBuilder::track_string_temp(ValueId val, Type* type) {
     if (!type || type->kind != TypeKind::String || !m_current_block || !val.is_valid()) return;
     // Skip if already tracked as a temporary (avoid double-tracking).
-    for (const auto& info : m_owned_locals) {
-        if (info.is_temporary && info.initial_value.id == val.id) return;
-    }
+    if (m_ownership.has_temp_for(val)) return;
     StringView temp_name = intern_format("__str{}", m_next_temp_id++);
     define_local(temp_name, val, type);
     u32 scope_depth = static_cast<u32>(m_local_scopes.size());
-    m_owned_locals.push_back({temp_name, type, scope_depth, false, /*is_temporary=*/true,
-                              m_current_block->id, val, OwnedKind::StrOwn});
+    m_ownership.track({temp_name, type, scope_depth, false, /*is_temporary=*/true,
+                       m_current_block->id, val, OwnedKind::StrOwn});
 }
 
 void IRBuilder::consume_or_retain_string(ValueId val, Type* type, bool adopted_by_variable) {
     if (!type || type->kind != TypeKind::String || !val.is_valid()) return;
     // A tracked owned string temp: adopt its count-1 ownership (consume the temp)
     // rather than retaining a second reference.
-    for (i32 i = static_cast<i32>(m_owned_locals.size()) - 1; i >= 0; i--) {
-        auto& info = m_owned_locals[i];
-        if (info.kind == OwnedKind::StrOwn && info.is_temporary && !info.is_moved
-            && info.initial_value.id == val.id) {
-            info.is_moved = true;  // adopt: ownership transfers to the destination
-            if (!adopted_by_variable) {
-                // Stored into a field/container/global (not sharing a tracked
-                // local's register): end the temp's cleanup record and null its
-                // mapping so its scope-exit release is suppressed.
-                emit_nullify(val);
-                ValueId null_val = emit_const_null();
-                define_local(info.name, null_val, info.type);
-            }
-            return;
+    OwnedLocalInfo* info = m_ownership.find_live_temp(val);
+    if (info && info->kind == OwnedKind::StrOwn) {
+        info->is_moved = true;  // adopt: ownership transfers to the destination
+        if (!adopted_by_variable) {
+            // Stored into a field/container/global (not sharing a tracked
+            // local's register): end the temp's cleanup record and null its
+            // mapping so its scope-exit release is suppressed.
+            emit_nullify(val);
+            ValueId null_val = emit_const_null();
+            define_local(info->name, null_val, info->type);
         }
+        return;
     }
     // Not a fresh temp — an existing owner (identifier, borrowed field/element
     // read) is being copied, so retain to create the destination's own count.
@@ -160,30 +145,26 @@ void IRBuilder::consume_or_retain_string(ValueId val, Type* type, bool adopted_b
 }
 
 void IRBuilder::consume_temp_noncopyable(ValueId val, bool adopted_by_variable) {
-    // Find the temporary in m_owned_locals by ValueId (temporaries have __tmp names).
-    // Only matches temporaries, not named variables that happen to share the same ValueId.
-    for (i32 i = static_cast<i32>(m_owned_locals.size()) - 1; i >= 0; i--) {
-        auto& info = m_owned_locals[i];
-        if (info.initial_value.id == val.id && !info.is_moved && info.is_temporary) {
-            info.is_moved = true;
-            // When adopted by a variable (same register), the variable's cleanup record
-            // handles destruction — no Nullify needed. Otherwise, emit a Nullify annotation
-            // so the bytecode builder ends the cleanup record scope at this point.
-            if (!adopted_by_variable) {
-                emit_nullify(val);
-            }
-            // Update the local mapping to null so yield/block-arg captures see null
-            // instead of the stale pointer (prevents double-free in coroutines).
-            ValueId null_val = emit_const_null();
-            define_local(info.name, null_val, info.type);
-            return;
-        }
+    // Find the live temporary produced as `val` (temporaries have __tmp names).
+    // Only matches temporaries, not named variables that happen to share the
+    // same ValueId (the tracker's value index holds temporaries only).
+    OwnedLocalInfo* info = m_ownership.find_live_temp(val);
+    if (!info) return;  // not a tracked temporary (named variable / copyable type)
+    info->is_moved = true;
+    // When adopted by a variable (same register), the variable's cleanup record
+    // handles destruction — no Nullify needed. Otherwise, emit a Nullify annotation
+    // so the bytecode builder ends the cleanup record scope at this point.
+    if (!adopted_by_variable) {
+        emit_nullify(val);
     }
-    // Not found — val is not a tracked temporary (e.g., named variable, or copyable type)
+    // Update the local mapping to null so yield/block-arg captures see null
+    // instead of the stale pointer (prevents double-free in coroutines).
+    ValueId null_val = emit_const_null();
+    define_local(info->name, null_val, info->type);
 }
 
 void IRBuilder::mark_moved_from(StringView name, bool null_ssa, bool nullify_record) {
-    OwnedLocalInfo* owned_info = find_owned_local(name);
+    OwnedLocalInfo* owned_info = m_ownership.find_by_name(name);
     if (!owned_info || owned_info->is_moved) return;
 
     // For uniq sources, re-point the SSA name at null so future reads (and the
@@ -480,8 +461,8 @@ void IRBuilder::emit_scope_cleanup(u32 min_scope_depth) {
     if (!m_current_block) return;  // Block already terminated
 
     // LIFO order (reverse declaration order, like C++ destructors)
-    for (i32 i = static_cast<i32>(m_owned_locals.size()) - 1; i >= 0; i--) {
-        auto& info = m_owned_locals[i];
+    for (i32 i = static_cast<i32>(m_ownership.count()) - 1; i >= 0; i--) {
+        OwnedLocalInfo& info = m_ownership.entry(static_cast<u32>(i));
         if (info.scope_depth >= min_scope_depth && !info.is_moved) {
             emit_implicit_destroy(info);
         }
