@@ -1146,6 +1146,51 @@ TEST_SUITE("E2E Modules") {
         delete module;
     }
 
+    TEST_CASE("cross-module generic function containing a lambda") {
+        // Cross-module generic instances drain through a fresh analyzer in
+        // Compiler::analyze_all's fixed-point loop. The lambda inside the
+        // instantiated body synthesizes a lifted call function into that
+        // analyzer's synthetic_decls — which used to be dropped, so lowering
+        // failed with "closure call function not found".
+        BumpAllocator allocator(16384);
+
+        const char* genmod_source = R"(
+        pub fun apply_lambda<T>(x: T): T {
+            var f = fun(v: T): T => v;
+            return f(x);
+        }
+    )";
+
+        const char* main_source = R"(
+        from genmod import apply_lambda;
+
+        fun main(): i32 {
+            return apply_lambda(41) + 1;
+        }
+    )";
+
+        Compiler compiler(allocator);
+        compiler.add_source("genmod", genmod_source, static_cast<u32>(strlen(genmod_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
+        REQUIRE(!compiler.has_errors());
+
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
+
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
+
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 42);
+
+        vm_destroy(&vm);
+        delete module;
+    }
+
     } // namespace rx
 
 }  // TEST_SUITE("E2E Modules")

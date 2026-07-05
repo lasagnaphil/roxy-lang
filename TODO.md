@@ -9,7 +9,7 @@ Last updated: 2026-07-05 (semantic analyzer deep review added — 8 probe-verifi
 
 ## High Priority
 
-- [ ] Semantic analyzer verified bugs — 8 probe-confirmed issues (silent error-type leak for unsupported primitive operators, flat enum-variant namespace, wrong-enum `when` cases, generics×lambdas broken, etc.). See "Semantic Analyzer Refactoring & Bugs" below.
+(none currently — the 8 verified semantic-analyzer bugs from the 2026-07-05 review are all fixed; see "Semantic Analyzer Refactoring & Bugs" below for the landed notes and the remaining refactoring items)
 
 ---
 
@@ -63,7 +63,7 @@ From a 2026-07-05 deep review of `semantic.cpp` (6.6k lines) and collaborators (
 - [x] **Tagged-union `when` clauses accept variants of the wrong enum.** *Landed 2026-07-05.* `resolve_when_clauses` now requires `sym->type == discriminant_type` ("'Small' is not a variant of enum 'Color'"), and the VariantInfo pass only reads discriminant values off validated symbols. (The per-enum variant-table item below will replace the global lookup entirely.)
 - [x] **Enum variants live in a flat global namespace.** *Landed 2026-07-05.* `EnumTypeInfo` now carries a per-enum variant table (`Span<EnumVariantInfo>` + `find_variant`), populated by `resolve_enum_members`. `Enum::Variant` (semantic + IR builder), when-statement cases (semantic + IR builder — the IR builder had the same collision bug and would have emitted the wrong constant), and tagged-union when clauses all resolve through it; enum imports now read the table instead of recomputing values from the decl (dedup win); `analyze_when_stmt` no longer dereferences a possibly-null decl. Bare unqualified variant names still use the flat scope (inherent to bare names).
 - [x] **Value-struct forward references misdiagnosed as infinite recursion.** *Landed 2026-07-05.* Struct member resolution is now memoized and recursive (`ensure_struct_members_resolved` + `StructTypeInfo::members_resolved`): value-embedded field structs, parents, tagged-union variant fields, and generic-instance fields all resolve on demand, so declaration order no longer matters. Genuine value cycles (incl. mutual and through generic instances) are caught by the in-progress set with the same "infinite size" error; the post-hoc `detect_mutual_struct_recursion` recompute pass is deleted. Bonus: member decls (ctors etc.) appearing before their struct decl no longer risk being wiped by the layout pass.
-- [ ] **Generic functions containing lambdas fail with "unknown type 'T'".** Verified same-module and cross-module. The generics cloner (`generics.cpp`) has no `ExprLambda` case, so lambda param/return TypeExprs are never substituted at instantiation. Latent second layer once cloning is fixed: the cross-module drain loop (compiler.cpp:277) never persists `analyzer.synthetic_decls()`, so cross-module instances containing lambdas would silently lose their lifted call functions before IR build.
+- [x] **Generic functions containing lambdas fail with "unknown type 'T'".** *Landed 2026-07-05.* The generics cloner now has a real `ExprLambda` case (substitutes param/return TypeExprs, clones body + capture list, resets env/call-function annotations so each instantiation synthesizes its own) — previously it fell into `default` and aliased the template's AST. Also added the missing `ExprStringInterp` clone (same shared-subtree family). Second layer fixed too: the cross-module drain loop in `Compiler::analyze_all` now persists each drained analyzer's `synthetic_decls` (they used to be dropped → "closure call function not found during lowering"). Verified same-module (both backends) and cross-module.
 - [x] **Methods can't be coroutines, with a misleading error.** *Landed 2026-07-05 (diagnostic).* `analyze_member_body` now reports "coroutine methods are not yet supported; use a free function returning Coro<T>..." and analyzes the body in coroutine context so the yields don't add the misleading placement error. Actual coroutine-method support (per-function coro type for methods + self-carrying state machine) remains future work.
 - [x] **Generic type-arg inference only understands `List` among builtin containers.** *Landed 2026-07-05.* `unify_type_expr` now unifies `Map<K, V>` (key+value) and `Coro<T>` (yield type). Map inference verified end-to-end (`map_len(inout m)`). Note for Coro: inference now binds T, but *passing* a coroutine still fails assignability — annotated `Coro<T>` resolves to the interned generic type while a coroutine value carries its per-function type (`coroutine_type_for_func`); first-class coroutine values are a separate feature.
 
@@ -130,7 +130,7 @@ From a 2026-04-26 review comparing Roxy's opcode set against Lua 5.4, LuaJIT, CP
 
 ## Testing Gaps
 
-- [ ] Regression tests for the 8 verified semantic-analyzer bugs (see "Semantic Analyzer Refactoring & Bugs"); each item there includes a minimal repro sketch
+- [x] Regression tests for the 8 verified semantic-analyzer bugs — landed 2026-07-05 alongside each fix (unit tests in `test_semantic.cpp`, e2e in `test_enums.cpp`/`test_structs.cpp`/`test_generics.cpp`/`test_int_literal.cpp`/`test_modules.cpp`)
 - [ ] Test deeply nested struct field access (>5 levels; currently only 3 levels tested)
 - [ ] Test error recovery in semantic analysis
 - [ ] Add fuzzing for parser/lexer

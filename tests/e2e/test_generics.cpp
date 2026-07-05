@@ -1367,6 +1367,62 @@ TEST_SUITE("E2E Generics") {
         }
     }
 
+    TEST_CASE_TEMPLATE("Generic function containing a lambda", Backend, RX_E2E_BACKENDS) {
+        // The generics cloner used to fall through `default` for ExprLambda,
+        // sharing the template's parameter TypeExprs and body across
+        // instantiations — instantiating failed with "unknown type 'T'".
+        SUBCASE("lambda param/return typed by T") {
+            const char* source = R"(
+            fun apply_lambda<T>(x: T): T {
+                var f = fun(v: T): T => v;
+                return f(x);
+            }
+
+            fun main(): i32 {
+                return apply_lambda(41) + 1;
+            }
+        )";
+            auto result = Backend::run(source);
+            CHECK(result.success);
+            CHECK(result.value == 42);
+        }
+
+        SUBCASE("lambda capturing a template-typed local") {
+            const char* source = R"(
+            fun add_twice<T>(x: T): T {
+                var offset: T = x;
+                var f = fun(v: T): T => v + offset;
+                return f(x);
+            }
+
+            fun main(): i32 {
+                return add_twice(21);
+            }
+        )";
+            auto result = Backend::run(source);
+            CHECK(result.success);
+            CHECK(result.value == 42);
+        }
+
+        SUBCASE("two instantiations get independent lambdas") {
+            const char* source = R"(
+            fun pick<T>(x: T): T {
+                var f = fun(v: T): T => v;
+                return f(x);
+            }
+
+            fun main(): i32 {
+                var a: i32 = pick(40);
+                var b: i64 = pick(2l);
+                return a + i32(b);
+            }
+        )";
+            auto result = Backend::run(source);
+            CHECK(result.success);
+            CHECK(result.value == 42);
+        }
+    }
+
     TEST_CASE_TEMPLATE("Generic inference from Map parameter", Backend, RX_E2E_BACKENDS) {
         // unify_type_expr used to special-case only List among the builtin
         // containers, so K/V could not be inferred from a Map argument.

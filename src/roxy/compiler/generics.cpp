@@ -632,6 +632,62 @@ Expr* GenericInstantiator::clone_expr(Expr* expr, const TypeSubstitution& subst)
             }
             e->struct_literal.mangled_name = StringView(nullptr, 0);
             break;
+        case AstKind::ExprStringInterp:
+            // f-string: clone the interpolated expressions so instances don't
+            // share mutable AST (the text `parts` are immutable and may be
+            // shared). Previously fell into `default` and aliased them.
+            if (expr->string_interp.expressions.size() > 0) {
+                Expr** exprs = reinterpret_cast<Expr**>(
+                    m_allocator.alloc_bytes(sizeof(Expr*) * expr->string_interp.expressions.size(),
+                                            alignof(Expr*)));
+                for (u32 i = 0; i < expr->string_interp.expressions.size(); i++) {
+                    exprs[i] = clone_expr(expr->string_interp.expressions[i], subst);
+                }
+                e->string_interp.expressions =
+                    Span<Expr*>(exprs, expr->string_interp.expressions.size());
+            }
+            break;
+        case AstKind::ExprLambda: {
+            // A lambda inside a generic template body references the
+            // template's type params in its parameter/return TypeExprs, and
+            // its body must be a private copy (semantic analysis rewrites
+            // captured identifiers in place). Previously fell into `default`,
+            // sharing everything — instantiation then failed with
+            // "unknown type 'T'" on the unsubstituted parameter types.
+            LambdaExpr& lambda = e->lambda;
+            const LambdaExpr& original = expr->lambda;
+
+            if (original.captures.size() > 0) {
+                CaptureEntry* entries = reinterpret_cast<CaptureEntry*>(
+                    m_allocator.alloc_bytes(sizeof(CaptureEntry) * original.captures.size(),
+                                            alignof(CaptureEntry)));
+                for (u32 i = 0; i < original.captures.size(); i++) {
+                    entries[i] = original.captures[i];
+                }
+                lambda.captures = Span<CaptureEntry>(entries, original.captures.size());
+            }
+
+            if (original.params.size() > 0) {
+                Param* params = reinterpret_cast<Param*>(
+                    m_allocator.alloc_bytes(sizeof(Param) * original.params.size(), alignof(Param)));
+                for (u32 i = 0; i < original.params.size(); i++) {
+                    params[i] = original.params[i];
+                    params[i].type = substitute_type_expr(original.params[i].type, subst);
+                    params[i].resolved_type = nullptr;
+                }
+                lambda.params = Span<Param>(params, original.params.size());
+            }
+            lambda.return_type = substitute_type_expr(original.return_type, subst);
+            lambda.body = clone_stmt(original.body, subst);
+
+            // Reset analysis annotations: each instantiation synthesizes its
+            // own env struct and lifted call function.
+            lambda.env_struct_name = StringView(nullptr, 0);
+            lambda.call_function_name = StringView(nullptr, 0);
+            lambda.env_struct_type = nullptr;
+            lambda.resolved_captures = Span<CaptureInfo>();
+            break;
+        }
         default:
             break;
     }

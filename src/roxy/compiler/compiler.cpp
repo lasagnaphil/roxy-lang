@@ -284,6 +284,15 @@ bool Compiler::analyze_all() {
                 }
                 return false;
             }
+
+            // Persist any decls this drain synthesized (a drained instance's
+            // body may contain lambdas, whose lifted call functions land in
+            // the fresh analyzer's synthetic_decls). Dropping them here left
+            // the IR builder without the lambda's call function ("closure
+            // call function not found during lowering").
+            for (auto* d : analyzer.synthetic_decls()) {
+                m_module_states[idx].synthetic_decls.push_back(d);
+            }
         }
         // No module owned any of the pending — break to avoid infinite loop.
         if (total_drained == 0) break;
