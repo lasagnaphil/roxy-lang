@@ -2,7 +2,7 @@
 
 This document tracks known technical debt, incomplete implementations, and planned improvements.
 
-Last updated: 2026-07-05 (semantic-analyzer refactoring sweep: the god-class split is **finished** — LifetimeChecker, TraitSystem, GenericCallResolver extracted behind a shared SemaContext; lambda capture analysis deliberately stays inline. FunctionContext bundling landed (all per-function slots push/pop as one unit). The naming inversion is fixed (`register_*_signature` vs `analyze_*_body`). Each step surfaced and fixed a leak of the same "forgot one slot / wrong dispatch" class: lambda branch-terminates, lambda in-delete-destructor, and the LSP member-body dispatch. The 8 verified bugs from the earlier deep review are fixed in commits `b7e9ab0`..`0fb1b44`. Latest: both remaining architectural items are closed — the AST-mutation question is decided (in-place mutation stays, codified as the single-shot analysis rule; codifying it surfaced and fixed Phase B corrupting bounded templates for later instantiation) and `resolve_type_expr` is never-null with the ~35 defensive fallbacks deleted.)
+Last updated: 2026-07-05 (duplication-cleanup sweep: all 8 mechanical duplication items closed, one commit each — synthetic-dtor scan, pending-fun drain, super-call args, lambda-boundary walk, ctor/dtor/method registration, global-var drift, append_* dedup, List/Map `.copy()` check. The `resolve_global_var` unification also closed real gaps: globals now get the redefinition check, nil-inference error, and inter-global use-after-move tracking (regression tests added). The append_* O(n²) rebuild is now a single template but the rebuild cost itself moved to Performance. Earlier same-day sweep: the god-class split is **finished** — LifetimeChecker, TraitSystem, GenericCallResolver extracted behind a shared SemaContext; lambda capture analysis deliberately stays inline. FunctionContext bundling landed (all per-function slots push/pop as one unit). The naming inversion is fixed (`register_*_signature` vs `analyze_*_body`). Each step surfaced and fixed a leak of the same "forgot one slot / wrong dispatch" class: lambda branch-terminates, lambda in-delete-destructor, and the LSP member-body dispatch. The 8 verified bugs from the earlier deep review are fixed in commits `b7e9ab0`..`0fb1b44`. Latest: both remaining architectural items are closed — the AST-mutation question is decided (in-place mutation stays, codified as the single-shot analysis rule; codifying it surfaced and fixed Phase B corrupting bounded templates for later instantiation) and `resolve_type_expr` is never-null with the ~35 defensive fallbacks deleted.)
 
 ---
 
@@ -71,20 +71,24 @@ From a 2026-07-05 deep review of `semantic.cpp` (6.6k lines) and collaborators (
 
 ### Duplication cleanups (mechanical)
 
-- [ ] Synthetic-dtor "needs_cleanup" scan (fields + variant fields) ×3: `generate_synthetic_destructors`, the generic-instance worklist in `analyze_function_bodies`, and `resolve_generic_struct_fields` → extract `struct_needs_synthetic_dtor()` + `add_synthetic_default_dtor()`.
-- [ ] Pending-generic-fun drain (ownership test + sideline) ×2: `analyze_owned_pending_fun_instances` vs the worklist in `analyze_function_bodies`.
-- [ ] Super-call argument checking ×3 inside `analyze_super_call` (default ctor / named ctor / method arms).
-- [ ] Crossed-lambda-boundary scope walk ×3: `try_capture_identifier`, the `[move]` path of `validate_lambda_captures`, `analyze_this_expr`.
-- [ ] Ctor/dtor registration near-duplicates: `analyze_constructor_decl` vs `analyze_destructor_decl`, plus both re-implemented inline in `resolve_generic_struct_fields`.
-- [ ] `resolve_global_var` vs `analyze_var_decl` drift: the global path lacks the nil-inference error, redefinition check, and noncopyable move tracking. Unify.
-- [ ] `append_method`/`append_constructor`/`append_destructor`: three copies of an O(n²) span-rebuild that also churns the arena; template it or use `Vector` during analysis and freeze to spans. (Now free functions in `types.{hpp,cpp}`, shared by SemanticAnalyzer and TraitSystem — the rebuild itself is still the open item.)
-- [ ] List/Map `.copy()` element checks live inline in `analyze_call_expr`; move into the builtin-method-call path.
+All landed in a one-commit-per-item sweep (2026-07-05). Each was a pure,
+test-verified extraction except where noted.
+
+- [x] ~~Synthetic-dtor "needs_cleanup" scan ×3~~: extracted `struct_needs_synthetic_dtor()` + `add_synthetic_default_dtor()` (free functions in `types.{hpp,cpp}`); the three sites (`generate_synthetic_destructors`, the `analyze_function_bodies` worklist, `resolve_generic_struct_fields`) call them.
+- [x] ~~Pending-generic-fun drain ×2~~: extracted `drain_pending_fun_instance()` (ownership test + analyze-or-sideline), shared by `analyze_owned_pending_fun_instances` and the `analyze_function_bodies` worklist.
+- [x] ~~Super-call argument checking ×3~~: extracted `check_super_call_arg_types()`; the arity check stays inline per arm (diagnostic + bail-out type genuinely differ). Kept distinct from `check_call_args` (super calls have no out/inout/move machinery).
+- [x] ~~Crossed-lambda-boundary scope walk ×3~~: extracted `collect_crossed_lambda_contexts(stop_scope)`; the identifier/`[move]` paths use the indices, self-capture (`analyze_this_expr`) tests non-emptiness via new `SymbolTable::current_struct_scope()`. Equivalence rests on the 1:1 active-Lambda-scope ↔ `m_lambda_contexts` invariant.
+- [x] ~~Ctor/dtor registration near-duplicates~~: extracted `resolve_member_struct()`, a templated `report_duplicate_member()`, and `resolve_param_types()`; `register_constructor/destructor/method_signature` drop to ~10 lines each and the generic-instance registrations + `register_fun_signature` reuse `resolve_param_types`.
+- [x] ~~`resolve_global_var` vs `analyze_var_decl` drift~~: unified through `analyze_var_initializer()`; the global path **gained** the redefinition check, nil-inference error, and noncopyable move tracking (globals are analyzed once in the declaration pass, so inter-global use-after-move is now caught). Regression tests in `test_globals.cpp`.
+- [x] ~~`append_method`/`append_constructor`/`append_destructor` ×3~~: collapsed onto a file-local `append_span<T>` template in `types.cpp`. **Duplication only** — the O(n) per-call arena rebuild is unchanged; see the Performance item below.
+- [x] ~~List/Map `.copy()` element checks inline in `analyze_call_expr`~~: moved into `check_container_copy_method()`, invoked at the top of `analyze_builtin_method_call` (no-op for non-copy methods / Coro).
 
 ### Performance
 
 - [ ] **`SymbolTable::pop_scope` rebuilds the entire lookup cache** (`rebuild_lookup_cache` walks every scope including global — all functions + builtin prelude + every enum variant) on **every block exit**: O(total program symbols) per `}`. Fix: per-name shadow stacks or save-the-shadowed-symbol-on-define.
 - [ ] `SymbolTable::lookup_local` linear-scans the current scope; prelude import calls it per export → quadratic startup on the global scope.
 - [ ] Move-state snapshots copy the whole map at every branch point (if/while/for/when/try/ternary) — fine at current scale; revisit with an undo log only if profiling warrants.
+- [ ] `append_span<T>` (in `types.cpp`, behind `append_method`/`append_constructor`/`append_destructor`) rebuilds the whole span into fresh arena memory on every append — O(n) per call, O(n²) to build a struct's member tables, and it churns the bump allocator. The duplication is gone (one template); the rebuild cost is not. Fix: accumulate into a `Vector` during analysis and freeze to a span once members are complete.
 
 ### Smaller correctness-adjacent debts
 
