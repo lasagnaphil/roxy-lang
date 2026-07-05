@@ -138,6 +138,6 @@ From a 2026-04-26 review comparing Roxy's opcode set against Lua 5.4, LuaJIT, CP
 - [ ] Test error recovery in semantic analysis
 - [ ] Add fuzzing for parser/lexer
 - [ ] Test cross-module imports with complex dependency graphs (diamond dependencies, >3 levels)
-- [ ] Test variable shadowing with noncopyable types (inner scope same name as moved outer variable)
-- [ ] Test struct literals with noncopyable field values (source variable should be marked moved)
-- [ ] Test self-assignment of noncopyable variables (`x = x`)
+- [x] ~~Test variable shadowing with noncopyable types~~: covered — `test_raii.cpp` "variable shadowing does not corrupt outer move state" (inner scope redeclares a moved outer uniq; outer stays moved after the inner scope exits).
+- [x] ~~Test struct literals with noncopyable field values~~: covered — `test_raii.cpp` "struct literal field marks source as moved" (use-after-move rejected + move-without-later-use accepted), plus the terminating-branch struct-literal move regressions.
+- [x] ~~Test self-assignment of noncopyable variables (`x = x`)~~: covered — rejected in `analyze_assign_expr` with a dedicated diagnostic; `test_raii.cpp` "self-assignment of noncopyable compile error" (+ regression guard that same-name field/variable assignments still pass).
