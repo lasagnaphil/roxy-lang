@@ -3593,6 +3593,18 @@ Type* SemanticAnalyzer::analyze_generic_struct_constructor_call(Expr* expr, Call
     return analyze_constructor_call(expr, struct_type, ce.constructor_name, ce.is_heap);
 }
 
+void SemanticAnalyzer::check_super_call_arg_types(CallExpr& ce, Span<Type*> param_types) {
+    for (u32 i = 0; i < ce.arguments.size(); i++) {
+        CallArg& arg = ce.arguments[i];
+        Type* arg_type = analyze_expr(arg.expr);
+        if (!m_checker.check_assignable(param_types[i], arg_type, arg.expr->loc)) {
+            // Error already reported
+        } else {
+            m_checker.coerce_int_literal(arg.expr, param_types[i]);
+        }
+    }
+}
+
 Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
     SuperExpr& super_expr = ce.callee->super_expr;
 
@@ -3629,16 +3641,7 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
                          ctor->param_types.size(), ce.arguments.size());
                 return m_types.void_type();
             }
-
-            for (u32 i = 0; i < ce.arguments.size(); i++) {
-                CallArg& arg = ce.arguments[i];
-                Type* arg_type = analyze_expr(arg.expr);
-                if (!m_checker.check_assignable(ctor->param_types[i], arg_type, arg.expr->loc)) {
-                    // Error already reported
-                } else {
-                    m_checker.coerce_int_literal(arg.expr, ctor->param_types[i]);
-                }
-            }
+            check_super_call_arg_types(ce, ctor->param_types);
         }
 
         // Store parent type in callee for IR builder
@@ -3657,16 +3660,7 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
                      ctor->param_types.size(), ce.arguments.size());
             return m_types.void_type();
         }
-
-        for (u32 i = 0; i < ce.arguments.size(); i++) {
-            CallArg& arg = ce.arguments[i];
-            Type* arg_type = analyze_expr(arg.expr);
-            if (!m_checker.check_assignable(ctor->param_types[i], arg_type, arg.expr->loc)) {
-                // Error already reported
-            } else {
-                m_checker.coerce_int_literal(arg.expr, ctor->param_types[i]);
-            }
-        }
+        check_super_call_arg_types(ce, ctor->param_types);
 
         // Annotate that this super call resolved to a named CONSTRUCTOR — the
         // IR builder must not infer ctor-vs-method from the void result type
@@ -3688,16 +3682,7 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
                      super_expr.method_name, mi->param_types.size(), ce.arguments.size());
             return mi->return_type;
         }
-
-        for (u32 i = 0; i < ce.arguments.size(); i++) {
-            CallArg& arg = ce.arguments[i];
-            Type* arg_type = analyze_expr(arg.expr);
-            if (!m_checker.check_assignable(mi->param_types[i], arg_type, arg.expr->loc)) {
-                // Error already reported
-            } else {
-                m_checker.coerce_int_literal(arg.expr, mi->param_types[i]);
-            }
-        }
+        check_super_call_arg_types(ce, mi->param_types);
 
         // Store found_in_type for IR builder to mangle correctly
         ce.callee->resolved_type = m_types.ref_type(found_in_type);

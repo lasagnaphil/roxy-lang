@@ -218,6 +218,14 @@ private:
     void check_call_args(Span<CallArg> args, Span<Type*> param_types,
                          Span<Param> params, SourceLocation loc);
 
+    // The per-argument type check shared by analyze_super_call's three arms
+    // (default ctor / named ctor / method): analyze each arg, check
+    // assignability against the parent param type, and coerce int literals.
+    // Arity is checked by the caller — its diagnostic and bail-out result type
+    // differ per arm. Simpler than check_call_args on purpose: super calls
+    // carry no out/inout modifiers or move semantics.
+    void check_super_call_arg_types(CallExpr& ce, Span<Type*> param_types);
+
     // Build a function type for a method call: (ref<self_type>, method_params...) -> return_type
     Type* build_method_function_type(Type* self_type, const MethodInfo* method_info);
 
