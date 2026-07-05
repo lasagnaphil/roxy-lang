@@ -218,10 +218,7 @@ void IRBuilder::build_generic_fun_instances() {
 
 void IRBuilder::build_generic_struct_ctors_dtors(tsl::robin_map<StringView, bool>& has_default_ctor) {
     // Generate constructors/destructors for generic struct instances
-    for (auto* instance : m_type_env.generics().all_struct_instances()) {
-        if (!instance->is_analyzed || !instance->concrete_type) continue;
-        if (instance->is_abstract) continue;  // Phase-B artifact, never codegen'd
-
+    for_each_concrete_struct_instance([&](auto* instance) {
         for (Decl* ctor_decl : instance->instantiated_constructors) {
             ConstructorDecl& ctor = ctor_decl->constructor_decl;
             if (ctor.body) {
@@ -240,7 +237,7 @@ void IRBuilder::build_generic_struct_ctors_dtors(tsl::robin_map<StringView, bool
                 m_module->functions.push_back(func);
             }
         }
-    }
+    });
 }
 
 void IRBuilder::build_synthesized_default_ctors(Program* program,
@@ -267,23 +264,18 @@ void IRBuilder::build_synthesized_default_ctors(Program* program,
     if (m_has_error) return;
 
     // Generate synthesized default constructors for generic struct instances
-    for (auto* instance : m_type_env.generics().all_struct_instances()) {
-        if (instance->is_analyzed && instance->concrete_type && !instance->is_abstract) {
-            // Check if there's a user-defined default constructor for this instance
-            if (has_default_ctor.find(instance->mangled_name) == has_default_ctor.end()) {
-                IRFunction* func = build_synthesized_default_constructor(instance->concrete_type);
-                m_module->functions.push_back(func);
-            }
+    for_each_concrete_struct_instance([&](auto* instance) {
+        // Check if there's a user-defined default constructor for this instance
+        if (has_default_ctor.find(instance->mangled_name) == has_default_ctor.end()) {
+            IRFunction* func = build_synthesized_default_constructor(instance->concrete_type);
+            m_module->functions.push_back(func);
         }
-    }
+    });
 }
 
 void IRBuilder::build_generic_struct_methods() {
     // Generate external methods for generic struct instances
-    for (auto* instance : m_type_env.generics().all_struct_instances()) {
-        if (!instance->is_analyzed || !instance->concrete_type) continue;
-        if (instance->is_abstract) continue;  // Phase-B artifact, never codegen'd
-
+    for_each_concrete_struct_instance([&](auto* instance) {
         for (Decl* method_decl : instance->instantiated_methods) {
             MethodDecl& method = method_decl->method_decl;
             if (method.body) {
@@ -291,7 +283,7 @@ void IRBuilder::build_generic_struct_methods() {
                 m_module->functions.push_back(func);
             }
         }
-    }
+    });
 }
 
 void IRBuilder::build_synthesized_default_dtors(Program* program) {
@@ -319,21 +311,19 @@ void IRBuilder::build_synthesized_default_dtors(Program* program) {
     if (m_has_error) return;
 
     // Generate synthesized default destructors for generic struct instances with uniq fields
-    for (auto* instance : m_type_env.generics().all_struct_instances()) {
-        if (instance->is_analyzed && instance->concrete_type && !instance->is_abstract) {
-            Type* concrete_type = instance->concrete_type;
-            if (!concrete_type->is_struct()) continue;
+    for_each_concrete_struct_instance([&](auto* instance) {
+        Type* concrete_type = instance->concrete_type;
+        if (!concrete_type->is_struct()) return;
 
-            // Check for synthetic default destructor (decl == nullptr)
-            for (const auto& dtor : concrete_type->struct_info.destructors) {
-                if (dtor.name.empty() && dtor.decl == nullptr) {
-                    IRFunction* func = build_synthesized_default_destructor(concrete_type);
-                    m_module->functions.push_back(func);
-                    break;
-                }
+        // Check for synthetic default destructor (decl == nullptr)
+        for (const auto& dtor : concrete_type->struct_info.destructors) {
+            if (dtor.name.empty() && dtor.decl == nullptr) {
+                IRFunction* func = build_synthesized_default_destructor(concrete_type);
+                m_module->functions.push_back(func);
+                break;
             }
         }
-    }
+    });
 
     // Synthesized closure-env structs aren't in program->declarations, so build
     // their destructors here. An env gets one only when it has cleanup-needing
@@ -569,11 +559,9 @@ void IRBuilder::collect_backend_types(Program* program) {
     }
 
     // Collect monomorphized generic struct instances
-    for (auto* instance : m_type_env.generics().all_struct_instances()) {
-        if (instance->is_analyzed && instance->concrete_type && !instance->is_abstract) {
-            m_module->struct_types.push_back(instance->concrete_type);
-        }
-    }
+    for_each_concrete_struct_instance([&](auto* instance) {
+        m_module->struct_types.push_back(instance->concrete_type);
+    });
 }
 
 void IRBuilder::begin_ir_function(StringView name, bool is_pub, u32 source_line) {

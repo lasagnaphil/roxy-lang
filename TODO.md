@@ -95,9 +95,6 @@ emission idioms repeated dozens of times. Correctness-adjacent items first.
   nearly-stateless lines) into `ir_fold.{hpp,cpp}`; (c) longer-term
   `OwnershipTracker` collaborator for `m_owned_locals` + consume/move/track/
   cleanup-record machinery, mirroring `LifetimeChecker`.
-- [ ] **Repeated generic-instance filter**: `is_analyzed && concrete_type &&
-  !is_abstract` over `all_struct_instances()` appears 5× across the build phases →
-  `for_each_concrete_struct_instance(fn)`.
 - [ ] Linear-scan lookups: `find_method_fn_index` scans all module functions by
   name (cold — struct-keyed map ctors only); `find_owned_local` scans by name on
   hot paths; `collect_assigned_vars` dedupe is O(n²). Small-N today; swap to keyed

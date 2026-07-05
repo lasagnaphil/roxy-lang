@@ -72,6 +72,19 @@ private:
     void build_coroutine_cleanup_wrappers();
     void collect_backend_types(Program* program);
 
+    // Invoke fn(instance) for every generic struct instance that reaches
+    // codegen: analyzed, with a concrete type, and not a Phase-B abstract
+    // artifact (those are never codegen'd). This filter previously appeared
+    // verbatim at five build-phase sites.
+    template<typename Fn>
+    void for_each_concrete_struct_instance(Fn&& fn) {
+        for (auto* instance : m_type_env.generics().all_struct_instances()) {
+            if (!instance->is_analyzed || !instance->concrete_type) continue;
+            if (instance->is_abstract) continue;
+            fn(instance);
+        }
+    }
+
     // Module-level globals (lifetimes/globals support). collect_globals assigns
     // each top-level `var` a slot offset in the module's global array (run first
     // so function bodies can reference globals); build_module_init synthesizes
