@@ -1,6 +1,7 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
+#include "roxy/core/format.hpp"
 #include "roxy/compiler/ssa_ir.hpp"
 
 namespace rx {
@@ -17,7 +18,7 @@ private:
     void report_error(const char* message);
 
     template<typename... Args>
-    void report_error_fmt(const char* fmt, const Args&... args);
+    void report_error_fmt(fmt_string<sizeof...(Args)> fmt, const Args&... args);
 
     bool validate_function(IRFunction* func);
     bool validate_block(IRFunction* func, IRBlock* block);

@@ -85,8 +85,8 @@ private:
     // sites stay unchanged while the machinery lives in ErrorReporter.
     void error(SourceLocation loc, const char* message) { m_reporter.error(loc, message); }
     template<typename... Args>
-    void error_fmt(SourceLocation loc, const char* fmt, const Args&... args) {
-        m_reporter.error_fmt(loc, fmt, args...);
+    void error_fmt(SourceLocation loc, fmt_string<sizeof...(Args)> fmt, const Args&... args) {
+        m_reporter.error_fmt(loc, runtime_format_string{fmt.str}, args...);
     }
     bool too_many_errors() const { return m_reporter.too_many_errors(); }
 

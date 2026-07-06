@@ -204,7 +204,7 @@ fun init_pair(x: out i32, y: out i32) {
 
 - **Build tool:** CMake with Ninja
 - **Compiler:** clang-cl (Windows), clang/gcc (macOS/Linux)
-- **C++ Standard:** C++17
+- **C++ Standard:** C++20 (compiler internals; the AOT-emitted C/C++ runtime stays C++17-clean)
 
 ### Build Commands
 

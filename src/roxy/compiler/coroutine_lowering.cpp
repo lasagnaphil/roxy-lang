@@ -35,7 +35,7 @@ static StringView alloc_string(BumpAllocator& allocator, const char* str) {
 }
 
 static StringView alloc_string_fmt(BumpAllocator& allocator, const char* fmt, StringView arg) {
-    return format_to_arena(allocator, fmt, arg);
+    return format_to_arena(allocator, runtime(fmt), arg);
 }
 
 static constexpr i32 CORO_STATE_DONE = 0x7FFFFFFF;

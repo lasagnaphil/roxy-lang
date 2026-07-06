@@ -313,7 +313,67 @@ inline i32 fmt_impl(char* buf, u32 size, const char* fmt, const FmtArg* args, u3
     return static_cast<i32>(pos);
 }
 
+// Count the argument-consuming placeholders in a format string. Must mirror
+// fmt_impl's parsing exactly: {} and a well-formed {:spec} each consume one
+// argument; {{ / }} escapes, a lone { with no closing }, and an unterminated
+// {: do not. Used by fmt_string's consteval constructor for the build-time
+// placeholder/argument-count check, so it must be constexpr.
+constexpr u32 count_placeholders(const char* fmt) {
+    u32 n = 0;
+    while (*fmt) {
+        if (fmt[0] == '{') {
+            if (fmt[1] == '{') {
+                fmt += 2;                       // {{ escape
+            } else if (fmt[1] == '}') {
+                n++; fmt += 2;                  // {} placeholder
+            } else if (fmt[1] == ':') {
+                const char* end = fmt + 2;
+                while (*end && *end != '}') end++;
+                if (*end == '}') { n++; fmt = end + 1; }  // {:spec} placeholder
+                else fmt++;                     // no closing } -> literal
+            } else {
+                fmt++;                          // lone { -> literal
+            }
+        } else if (fmt[0] == '}' && fmt[1] == '}') {
+            fmt += 2;                           // }} escape
+        } else {
+            fmt++;
+        }
+    }
+    return n;
+}
+
+// Deliberately non-constexpr: calling it from fmt_string's consteval
+// constructor on a count mismatch makes that construction a non-constant
+// expression, turning the mismatch into a compile error whose diagnostic
+// names this function. (Avoids `throw`, so it works under -fno-exceptions.)
+inline void format_placeholder_count_does_not_match_argument_count() {}
+
 } // namespace detail
+
+// Compile-time-checked format string. A string literal implicitly converts to
+// this through the consteval constructor, which verifies the placeholder count
+// equals NArgs (the caller's argument count) at build time. Non-literal format
+// strings cannot form one — route those through rx::runtime() instead.
+template<size_t NArgs>
+struct fmt_string {
+    const char* str;
+
+    template<size_t N>
+    consteval fmt_string(const char (&s)[N]) : str(s) {
+        if (detail::count_placeholders(s) != NArgs)
+            detail::format_placeholder_count_does_not_match_argument_count();
+    }
+};
+
+// Escape hatch for genuinely dynamic format strings (built at runtime, or
+// forwarded through a `const char*` parameter). Bypasses the build-time check,
+// mirroring std::vformat / fmt::runtime.
+struct runtime_format_string {
+    const char* str;
+};
+
+inline runtime_format_string runtime(const char* fmt) { return {fmt}; }
 
 /// Format to a buffer using {} placeholders.
 /// Returns number of chars that would have been written (excluding null terminator).
@@ -321,19 +381,26 @@ inline i32 fmt_impl(char* buf, u32 size, const char* fmt, const FmtArg* args, u3
 /// Use {{ and }} to write literal braces.
 /// Supports format specifiers: {:04} {:+} {:<12} {:>8} {:08x} {:08X}
 /// Supports: bool, char, integers, f32, f64, const char*, StringView, String, StaticString, pointers, enums.
+/// The format string is placeholder-count-checked at build time when it is a
+/// literal; pass rx::runtime(fmt) for a dynamic one.
 template<typename... Args>
-i32 format_to(char* buf, u32 size, const char* fmt, const Args&... args) {
+i32 format_to(char* buf, u32 size, runtime_format_string fmt, const Args&... args) {
     if constexpr (sizeof...(Args) == 0) {
-        return detail::fmt_impl(buf, size, fmt, nullptr, 0);
+        return detail::fmt_impl(buf, size, fmt.str, nullptr, 0);
     } else {
         detail::FmtArg arg_array[] = {detail::make_arg(args)...};
-        return detail::fmt_impl(buf, size, fmt, arg_array, sizeof...(Args));
+        return detail::fmt_impl(buf, size, fmt.str, arg_array, sizeof...(Args));
     }
+}
+
+template<typename... Args>
+i32 format_to(char* buf, u32 size, fmt_string<sizeof...(Args)> fmt, const Args&... args) {
+    return format_to(buf, size, runtime_format_string{fmt.str}, args...);
 }
 
 /// Format and return a String using {} placeholders.
 template<typename... Args>
-String format(const char* fmt, const Args&... args) {
+String format(runtime_format_string fmt, const Args&... args) {
     char stack_buf[256];
     i32 n = format_to(stack_buf, sizeof(stack_buf), fmt, args...);
     if (static_cast<u32>(n) < sizeof(stack_buf)) {
@@ -345,6 +412,11 @@ String format(const char* fmt, const Args&... args) {
     return result;
 }
 
+template<typename... Args>
+String format(fmt_string<sizeof...(Args)> fmt, const Args&... args) {
+    return format(runtime_format_string{fmt.str}, args...);
+}
+
 /// Format into an arena-allocated, null-terminated StringView using any
 /// allocator exposing `alloc_bytes(u32 size, u32 align)` (e.g. BumpAllocator).
 /// Probes the length with a stack buffer, allocates exactly that many bytes,
@@ -352,12 +424,17 @@ String format(const char* fmt, const Args&... args) {
 /// buffer are handled without truncation or out-of-bounds copies. Use this for
 /// name mangling instead of `format_to` into a fixed `char buf[N]`.
 template<typename Alloc, typename... Args>
-StringView format_to_arena(Alloc& alloc, const char* fmt, const Args&... args) {
+StringView format_to_arena(Alloc& alloc, runtime_format_string fmt, const Args&... args) {
     char probe[256];
     u32 len = static_cast<u32>(format_to(probe, sizeof(probe), fmt, args...));
     char* dst = reinterpret_cast<char*>(alloc.alloc_bytes(len + 1, 1));
     format_to(dst, len + 1, fmt, args...);
     return StringView(dst, len);
+}
+
+template<typename Alloc, typename... Args>
+StringView format_to_arena(Alloc& alloc, fmt_string<sizeof...(Args)> fmt, const Args&... args) {
+    return format_to_arena(alloc, runtime_format_string{fmt.str}, args...);
 }
 
 } // namespace rx

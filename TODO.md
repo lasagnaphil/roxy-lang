@@ -50,7 +50,7 @@ Last updated: 2026-07-06
 
 ## Code Quality Improvements
 
-- [ ] Standardize error message formatting across the compiler; consider a compile-time `{}`-placeholder check for `error_fmt`/`format_to` (the printf-residue bugs fixed 2026-07-05 would have been caught at build time). A cheap variant: a debug-build assert comparing `{}` count against the argument count in `ErrorReporter::error_fmt`.
+- [ ] Standardize error message formatting across the compiler: consistent quoting, capitalization, and terminology in diagnostics. (The compile-time `{}`-placeholder/argument-count check that shared this item landed 2026-07-06 — the build was bumped to C++20 and `rx::fmt_string`'s `consteval` constructor now rejects placeholder/arg count mismatches at build time for literal format strings passed to `format_to`/`format`/`error_fmt`/`intern_format`/…; `rx::runtime()` is the escape hatch for dynamic format strings. See `core/format.hpp`.)
 - [ ] Consider Result<T, Error> type for fallible operations
 
 ---

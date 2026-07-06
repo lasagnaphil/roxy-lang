@@ -48,7 +48,7 @@ public:
     }
 
     template<typename... Args>
-    void error_fmt(SourceLocation loc, const char* fmt, const Args&... args) {
+    void error_fmt(SourceLocation loc, runtime_format_string fmt, const Args&... args) {
         if (too_many_errors()) return;
 
         char buffer[512];
@@ -59,6 +59,11 @@ public:
         memcpy(msg, buffer, len + 1);
 
         m_errors.push_back({loc, msg, true});
+    }
+
+    template<typename... Args>
+    void error_fmt(SourceLocation loc, fmt_string<sizeof...(Args)> fmt, const Args&... args) {
+        error_fmt(loc, runtime_format_string{fmt.str}, args...);
     }
 
 private:

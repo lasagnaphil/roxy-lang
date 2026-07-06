@@ -73,9 +73,9 @@ private:
     // Error reporting
     void add_error(const char* message);
     template<typename... Args>
-    void add_error_fmt(const char* fmt, const Args&... args) {
+    void add_error_fmt(fmt_string<sizeof...(Args)> fmt, const Args&... args) {
         char buffer[512];
-        format_to(buffer, sizeof(buffer), fmt, args...);
+        format_to(buffer, sizeof(buffer), runtime_format_string{fmt.str}, args...);
         add_error(buffer);
     }
 

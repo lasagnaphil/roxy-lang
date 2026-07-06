@@ -12,10 +12,10 @@ void IRValidator::report_error(const char* message) {
 }
 
 template<typename... Args>
-void IRValidator::report_error_fmt(const char* fmt, const Args&... args) {
+void IRValidator::report_error_fmt(fmt_string<sizeof...(Args)> fmt, const Args&... args) {
     if (m_has_error) return;
     m_has_error = true;
-    format_to(m_error_buf, sizeof(m_error_buf), fmt, args...);
+    format_to(m_error_buf, sizeof(m_error_buf), runtime_format_string{fmt.str}, args...);
     m_error = m_error_buf;
 }
 

@@ -419,8 +419,8 @@ private:
     // Mangle a name into an arena-allocated StringView without truncation.
     // Thin wrapper over rx::format_to_arena bound to this builder's allocator.
     template<typename... Args>
-    StringView intern_format(const char* fmt, const Args&... args) {
-        return format_to_arena(m_allocator, fmt, args...);
+    StringView intern_format(fmt_string<sizeof...(Args)> fmt, const Args&... args) {
+        return format_to_arena(m_allocator, runtime_format_string{fmt.str}, args...);
     }
 
     // Zero `slot_count` contiguous u32 slots of `self_ptr` starting at

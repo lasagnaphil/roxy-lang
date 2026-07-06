@@ -124,16 +124,24 @@ public:
 
     // Format: clear and write formatted string
     template<typename... Args>
-    i32 format(const char* fmt, const Args&... args) {
+    i32 format(runtime_format_string fmt, const Args&... args) {
         i32 n = format_to(m_buf, N, fmt, args...);
         m_size = static_cast<u32>(n) < N ? static_cast<u32>(n) : N - 1;
         return n;
+    }
+    template<typename... Args>
+    i32 format(fmt_string<sizeof...(Args)> fmt, const Args&... args) {
+        return format(runtime_format_string{fmt.str}, args...);
     }
 };
 
 /// format_to overload for StaticString: clears and writes formatted string.
 template<u32 N, typename... Args>
-i32 format_to(StaticString<N>& out, const char* fmt, const Args&... args) {
+i32 format_to(StaticString<N>& out, runtime_format_string fmt, const Args&... args) {
+    return out.format(fmt, args...);
+}
+template<u32 N, typename... Args>
+i32 format_to(StaticString<N>& out, fmt_string<sizeof...(Args)> fmt, const Args&... args) {
     return out.format(fmt, args...);
 }
 
