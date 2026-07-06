@@ -487,6 +487,7 @@ re-enabled, ASAN builds also need to run outside the sandbox for the symbolizer.
   - `strings.md` - String objects, concatenation, comparison
   - `interop.md` - Native functions, automatic C++ binding
   - `frontend.md` - Lexer, parser, semantic analysis
+  - `error-handling.md` - Compiler-internal error strategy: error-collecting passes (accumulate + never-null `error_type` sentinels) vs fail-fast checks, and why `Result<T, Error>` is deliberately not adopted
   - `modules.md` - Module system, imports, multi-file compilation
   - `globals.md` - Module-level globals: storage, `__module_init`/`__module_shutdown`, GLOBAL_ADDR, RAII teardown
   - `constructors.md` - Named constructors/destructors, `self` keyword

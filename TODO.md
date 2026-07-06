@@ -51,13 +51,11 @@ Last updated: 2026-07-06
 ## Code Quality Improvements
 
 - [ ] Standardize error message formatting across the compiler: consistent quoting, capitalization, and terminology in diagnostics. (The compile-time `{}`-placeholder/argument-count check that shared this item landed 2026-07-06 — the build was bumped to C++20 and `rx::fmt_string`'s `consteval` constructor now rejects placeholder/arg count mismatches at build time for literal format strings passed to `format_to`/`format`/`error_fmt`/`intern_format`/…; `rx::runtime()` is the escape hatch for dynamic format strings. See `core/format.hpp`.)
-- [ ] Consider Result<T, Error> type for fallible operations
 
 ---
 
 ## Documentation Needed
 
-- [ ] Document error type propagation pattern in semantic analysis (pairs naturally with the LSP null-tolerance policy item below — same audit)
 - [ ] Document thread-safety limitations (single VM per thread assumed)
 
 ---
