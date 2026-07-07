@@ -937,16 +937,13 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             return;
         }
 
-        // --- Binary arithmetic (integer) ---
-        case IROp::AddI: case IROp::SubI: case IROp::MulI:
-        case IROp::DivI: case IROp::ModI: {
+        // --- Binary arithmetic (integer add/sub/mul) ---
+        case IROp::AddI: case IROp::SubI: case IROp::MulI: {
             const char* op_str = nullptr;
             switch (inst->op) {
                 case IROp::AddI: op_str = " + "; break;
                 case IROp::SubI: op_str = " - "; break;
                 case IROp::MulI: op_str = " * "; break;
-                case IROp::DivI: op_str = " / "; break;
-                case IROp::ModI: op_str = " % "; break;
                 default: break;
             }
             out.append("    ");
@@ -956,6 +953,28 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             out.append(op_str);
             emit_value(inst->binary.right, out);
             out.append(";\n");
+            return;
+        }
+
+        // --- Integer division / modulo (guarded) ---
+        // Route through roxy_rt's checked helpers so INT_MIN/-1 and divide-by-zero
+        // don't invoke C signed-division UB (which SIGFPE-traps on x86 idiv). A raw
+        // `v0 / v1` would crash AOT binaries on x86 for ordinary-looking arithmetic.
+        case IROp::DivI: case IROp::ModI: {
+            bool is64 = inst->type &&
+                        (inst->type->kind == TypeKind::I64 || inst->type->kind == TypeKind::U64);
+            const char* fn = inst->op == IROp::DivI
+                ? (is64 ? "roxy_idiv_i64" : "roxy_idiv_i32")
+                : (is64 ? "roxy_imod_i64" : "roxy_imod_i32");
+            out.append("    ");
+            emit_value(inst->result, out);
+            out.append(" = ");
+            out.append(fn);
+            out.append("(");
+            emit_value(inst->binary.left, out);
+            out.append(", ");
+            emit_value(inst->binary.right, out);
+            out.append(");\n");
             return;
         }
 

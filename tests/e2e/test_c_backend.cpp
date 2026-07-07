@@ -108,6 +108,81 @@ TEST_SUITE("E2E C Backend") {
         }
     }
 
+    // Regression: C signed division has two UB cases that SIGFPE-trap on x86 idiv
+    // (INT_MIN / -1 overflow, and divide-by-zero). The emitter routes DivI/ModI
+    // through roxy_rt's checked helpers so AOT binaries don't crash on
+    // ordinary-looking arithmetic. Roxy leaves signed overflow undefined, so the
+    // guaranteed contract is only "no crash + a defined value" (INT_MIN / -1
+    // returns the wrapped INT_MIN, matching ARM sdiv; x % -1 returns 0). Operands
+    // go through function params so the IR folder can't fold at compile time —
+    // this exercises the emitted runtime division.
+    TEST_CASE("Guarded i32 INT_MIN / -1 does not trap") {
+        const char* source = R"(
+            fun divide(a: i32, b: i32): i32 { return a / b; }
+            fun main(): i32 {
+                var min: i32 = -2147483647 - 1;   // INT32_MIN
+                var neg: i32 = 0 - 1;             // -1
+                print(f"{divide(min, neg)}");
+                return 0;
+            }
+        )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.stdout_output == "-2147483648\n");
+    }
+
+    TEST_CASE("Guarded i32 INT_MIN % -1 is 0") {
+        const char* source = R"(
+            fun modulo(a: i32, b: i32): i32 { return a % b; }
+            fun main(): i32 {
+                var min: i32 = -2147483647 - 1;
+                var neg: i32 = 0 - 1;
+                print(f"{modulo(min, neg)}");
+                return 0;
+            }
+        )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.stdout_output == "0\n");
+    }
+
+    TEST_CASE("Guarded i64 INT64_MIN / -1 does not trap") {
+        const char* source = R"(
+            fun divide(a: i64, b: i64): i64 { return a / b; }
+            fun main(): i32 {
+                var min: i64 = -9223372036854775807l - 1l;   // INT64_MIN
+                var neg: i64 = 0l - 1l;                       // -1
+                print(f"{divide(min, neg)}");
+                return 0;
+            }
+        )";
+        CBackendResult result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.stdout_output == "-9223372036854775808\n");
+    }
+
+    TEST_CASE("Integer division/modulo emit through the guarded helpers") {
+        // Architecture-independent guard check: ARM sdiv doesn't trap on INT_MIN/-1,
+        // so the behavioral tests above pass on ARM even with raw division. Assert
+        // the emitter actually routes DivI/ModI through roxy_rt's checked helpers —
+        // that routing is what keeps the AOT binary from SIGFPE-ing on x86.
+        const char* source = R"(
+            fun d(a: i32, b: i32): i32 { return a / b; }
+            fun m(a: i32, b: i32): i32 { return a % b; }
+            fun dl(a: i64, b: i64): i64 { return a / b; }
+            fun ml(a: i64, b: i64): i64 { return a % b; }
+            fun main(): i32 { return 0; }
+        )";
+        String cpp = compile_to_cpp(source);
+        CHECK(cpp.find("roxy_idiv_i32(") != String::npos);
+        CHECK(cpp.find("roxy_imod_i32(") != String::npos);
+        CHECK(cpp.find("roxy_idiv_i64(") != String::npos);
+        CHECK(cpp.find("roxy_imod_i64(") != String::npos);
+    }
+
     TEST_CASE("Negation") {
         const char* source = R"(
         fun main(): i32 {

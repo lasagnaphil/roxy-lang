@@ -3,10 +3,44 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <assert.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// ===== Checked integer division/modulo =====
+// C signed division has two cases that trap (SIGFPE) on x86 `idiv`: divide by
+// zero, and INT_MIN / -1 (signed overflow). Roxy leaves signed overflow
+// undefined, but AOT binaries must not crash on ordinary-looking arithmetic, so
+// DivI/ModI route through these guards instead of emitting a raw `/` or `%`.
+// INT_MIN / -1 returns the two's-complement-wrapped value (INT_MIN), matching
+// ARM `sdiv`; INT_MIN % -1 (and x % -1 generally) returns 0. Divide-by-zero
+// asserts (the runtime's error idiom, as in str_char_at / roxy_free) and, so the
+// release build is UB-free rather than trapping, falls back to a defined 0 — a
+// hard release-mode trap is the deferred AOT trap-reporting work.
+static inline int32_t roxy_idiv_i32(int32_t a, int32_t b) {
+    assert(b != 0 && "Division by zero");
+    if (b == 0) return 0;
+    if (b == -1) return (int32_t)(0u - (uint32_t)a);
+    return a / b;
+}
+static inline int32_t roxy_imod_i32(int32_t a, int32_t b) {
+    assert(b != 0 && "Division by zero");
+    if (b == 0 || b == -1) return 0;
+    return a % b;
+}
+static inline int64_t roxy_idiv_i64(int64_t a, int64_t b) {
+    assert(b != 0 && "Division by zero");
+    if (b == 0) return 0;
+    if (b == -1) return (int64_t)(0ull - (uint64_t)a);
+    return a / b;
+}
+static inline int64_t roxy_imod_i64(int64_t a, int64_t b) {
+    assert(b != 0 && "Division by zero");
+    if (b == 0 || b == -1) return 0;
+    return a % b;
+}
 
 // ===== Object Header =====
 
