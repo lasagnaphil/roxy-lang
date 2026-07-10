@@ -290,6 +290,15 @@ struct Type {
         return kind >= TypeKind::U8 && kind <= TypeKind::U64;
     }
 
+    // Integer types narrower than 32 bits. Under Java/C#-style numeric promotion
+    // these have no native arithmetic — they widen to i32 for every operation.
+    // (u32/u64 are deliberately excluded: their values can exceed 2^31, so they
+    // need genuine unsigned ops rather than promotion.)
+    bool is_narrow_integer() const {
+        return kind == TypeKind::I8 || kind == TypeKind::I16 ||
+               kind == TypeKind::U8 || kind == TypeKind::U16;
+    }
+
     bool is_float() const {
         return kind == TypeKind::F32 || kind == TypeKind::F64;
     }

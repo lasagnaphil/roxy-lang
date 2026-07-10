@@ -3986,6 +3986,16 @@ Type* SemanticAnalyzer::analyze_primitive_cast(Expr* expr, Type* target_type) {
         return m_types.error_type();
     }
 
+    // Concretize an unsuffixed literal argument to i32 before casting: can_cast
+    // doesn't treat the polymorphic IntLiteral kind as numeric (so `u8(200)` would
+    // wrongly fail), and lowering's cast path can't take an IntLiteral source. We
+    // pin to i32 (its canonical default), NOT the target — so an out-of-range cast
+    // like `u8(300)` still truncates via TRUNC_U rather than becoming a no-op.
+    if (source_type->is_int_literal()) {
+        m_checker.coerce_int_literal(call_expr.arguments[0].expr, m_types.i32_type());
+        source_type = m_types.i32_type();
+    }
+
     // Check if the cast is valid
     if (!m_checker.can_cast(source_type, target_type)) {
         auto source_str = m_checker.type_string(source_type);
@@ -4661,6 +4671,14 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
 // ===== Type Checking Helpers =====
 
 Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* right, SourceLocation loc) {
+    // Java/C#-style numeric promotion: narrow integer types (i8/i16/u8/u16) have no
+    // native arithmetic — they widen to i32 for the operation, and the result is i32.
+    // Resolution then finds i32's registered operator methods. u32/u64 are NOT narrow
+    // (they get native unsigned arithmetic separately and stay unsupported here);
+    // string/struct/float/bool operands are never narrow, so this leaves them untouched.
+    if (left && left->is_narrow_integer()) left = m_types.i32_type();
+    if (right && right->is_narrow_integer()) right = m_types.i32_type();
+
     switch (op) {
         case BinaryOp::Add:
         case BinaryOp::Sub:
@@ -4746,6 +4764,11 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
 }
 
 Type* SemanticAnalyzer::get_unary_result_type(UnaryOp op, Type* operand, SourceLocation loc) {
+    // Numeric promotion (see get_binary_result_type): a narrow integer operand widens
+    // to i32 for '-' / '~', yielding an i32 result. int_literal / bool operands are not
+    // narrow, so the int-literal short-circuit and '!' below are unaffected.
+    if (operand && operand->is_narrow_integer()) operand = m_types.i32_type();
+
     switch (op) {
         case UnaryOp::Negate:
             if (operand->is_int_literal())

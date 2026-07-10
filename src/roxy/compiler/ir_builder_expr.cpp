@@ -2274,6 +2274,22 @@ ValueId IRBuilder::gen_compound_assign(Expr* expr, ValueId rhs, bool& handled) {
             break;
     }
 
+    // Narrow-integer targets auto-narrow: `x op= y`  ==>  `x = T(x op y)`. The fold is
+    // computed at i32 (matching the promotion in get_binary_result_type), then truncated
+    // back to the narrow type via IROp::Cast (lowers to TRUNC_S/TRUNC_U). Plain assignment
+    // still requires an explicit cast; compound assignment is the ergonomic exception.
+    if (type && type->is_narrow_integer()) {
+        Type* i32_type = m_types.i32_type();
+        ValueId wide = emit_binary(op, old_val, rhs, i32_type);
+        IRInst* cast = emit_inst(IROp::Cast, type);
+        if (cast) {
+            cast->cast.source = wide;
+            cast->cast.source_type = i32_type;
+            return cast->result;
+        }
+        return wide;
+    }
+
     return emit_binary(op, old_val, rhs, type);
 }
 

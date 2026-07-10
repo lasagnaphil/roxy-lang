@@ -4,7 +4,7 @@ This document tracks known technical debt, incomplete implementations, and plann
 improvements. Completed items are removed as they land — the per-item records
 (measurements, rationale, regression-test pointers) live in this file's git history.
 
-Last updated: 2026-07-06
+Last updated: 2026-07-10
 
 ---
 
@@ -36,10 +36,26 @@ Last updated: 2026-07-06
 
 ## Planned Features
 
-- [ ] **Unsigned & small-int arithmetic** (u8/u16/u32/u64/i8/i16 beyond `==`/`!=`): needs unsigned IR ops (compare/div/mod/shr), width-wrapping semantics for narrow arithmetic (post-op narrowing or dedicated opcodes), VM opcode support, and a C-backend signedness audit (it emits from the same signed-i64 IR). The semantic layer rejects these with "operator not supported" instead of silently mistyping (since 2026-07-05).
+- [ ] **Native `u32`/`u64` arithmetic** (step 2 of the narrow/unsigned plan settled 2026-07-08;
+  step 1 — narrow-type promotion — landed 2026-07-10, see below). `u32`/`u64` must become
+  native computation types with wrapping unsigned arithmetic (`u32` promotes nothing — it *is*
+  the computation type). Motivated by hashes, packed RGBA colors, and 64-bit handles. Remaining
+  work: add `DIV_U`/`MOD_U` opcodes (`LT_U`/`LE_U`/`GT_U`/`GE_U`, `USHR`, `TRUNC_U` already exist
+  in `bytecode.hpp`); unsigned IR ops + unsigned result-type propagation through sema/IR; and a
+  C-backend fix to emit `uint32_t`/`uint64_t` so unsigned div/mod/shr/compare aren't generated
+  from the signed-`i64` IR path. Until then the semantic layer rejects `u32`/`u64` arithmetic
+  with "operator '…' is not supported for type '…'" (`semantic.cpp` ~4690); regression-guarded
+  by `test_narrow_arith.cpp` ("Wide-unsigned arithmetic stays rejected").
+  - **Done 2026-07-10 — narrow types (`u8`/`u16`/`i8`/`i16`)**: Java/C# numeric promotion. Every
+    binary/unary op promotes narrow operands to *signed* `i32` (in `get_binary_result_type` /
+    `get_unary_result_type` via the new `Type::is_narrow_integer()`), yielding an `i32` result;
+    no new opcodes (signed `AddI`/`LtI`/… + the existing `GET_FIELD` sign-extension invariant
+    cover it). Storing back into a narrow lvalue needs an explicit cast (`check_assignable`'s
+    strict rule), *except* compound assignment, which auto-narrows in `gen_compound_assign`
+    (`x op= y` ⇒ `x = T(x op y)`). The `u8(200)` literal-cast papercut is fixed too
+    (`analyze_primitive_cast` concretizes an `IntLiteral` arg to `i32` before `can_cast`).
 - [ ] **First-class coroutine values**: passing or returning a `Coro<T>` fails assignability — an annotated `Coro<T>` resolves to the interned generic type while a coroutine value carries its per-function type (`coroutine_type_for_func`, which encodes the mangled `resume`/`done` names). Needs unified typing plus dynamic resume/done dispatch (the closure design — `__call_idx` + `CALL_INDIRECT` — is the obvious template). Inference already binds `T` from a coro argument.
 - [ ] **Coroutine methods** (`fun S.count(): Coro<i32>`): rejected with an explicit "coroutine methods are not yet supported" error (since 2026-07-05); needs the per-function coro type for methods plus a `self`-carrying state machine in coroutine lowering.
-- [ ] **Casting unsuffixed integer literals to small int types** fails: `u8(200)` → "cannot cast 'i32' to 'u8'" because the literal has IntLiteral kind, which `TypeChecker::can_cast` doesn't treat as numeric. Casting a *variable* works. Coerce the literal (or accept IntLiteral) in `analyze_primitive_cast`.
 - [ ] Flow-sensitive typing for tagged union variant fields
 - [ ] Exhaustiveness checking for when statements. Also the blocker for two diagnostics: the all-paths-return check (see the note in `analyze_fun_body` — `branch_terminates()` deliberately reads a no-else `when` as non-terminating), and sharper move-state merges (an exhaustive no-else `when` currently keeps the pre-when fall-through as a live path). The IR builder's fall-through block for a no-else `when` must agree with whatever semantics is chosen.
 - [ ] Variant constructors (`Type.Variant { ... }` syntax)

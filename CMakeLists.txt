@@ -208,6 +208,7 @@ add_executable(roxy_tests
     tests/e2e/test_traits.cpp
     tests/e2e/test_generics.cpp
     tests/e2e/test_int_literal.cpp
+    tests/e2e/test_narrow_arith.cpp
     tests/e2e/test_exceptions.cpp
     tests/e2e/test_coroutines.cpp
     tests/e2e/test_closures.cpp
