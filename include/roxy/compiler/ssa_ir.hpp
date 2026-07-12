@@ -148,6 +148,13 @@ enum class IROp : u8 {
     // Function<sig>. Lowering expands to NEW_OBJ + a sequence of SetField writes.
     Closure,
 
+    // Materialize a function's dispatch index (u32) as a value. Resolved at
+    // bytecode lowering (LOAD_INT of the runtime function index) / C emission
+    // (g_closure_fns[] slot), the same late-binding used for a closure's
+    // __call_idx. Used to seed a coroutine state struct's __resume_idx so an
+    // erased Coro<T> can resume via CALL_INDIRECT.
+    FuncIndex,
+
     // Trap if `unary` (a pointer) is not owned by the slab allocator. Used for
     // closure captures of `self` (ref or weak) where the receiver might be
     // stack-allocated; copyable struct methods can't statically prove heap
@@ -239,6 +246,12 @@ struct ClosureData {
     Span<ValueId> captures;
 };
 
+// Function-index data (for FuncIndex): the named function's dispatch index,
+// resolved late at lowering (VM function table) / C emission (g_closure_fns[]).
+struct FuncIndexData {
+    StringView func_name;
+};
+
 // Field access data
 struct FieldData {
     ValueId object;
@@ -326,6 +339,7 @@ struct IRInst {
         CallExternalData call_external; // For CallExternal
         CallIndirectData call_indirect; // For CallIndirect
         ClosureData closure;            // For Closure
+        FuncIndexData func_index;       // For FuncIndex
         FieldData field;                // For GetField/SetField
         NewData new_data;               // For New
         StackAllocData stack_alloc;     // For StackAlloc

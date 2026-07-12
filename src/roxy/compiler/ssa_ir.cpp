@@ -94,6 +94,7 @@ const char* ir_op_to_string(IROp op) {
         case IROp::New:    return "new";
         case IROp::Delete: return "delete";
         case IROp::Closure: return "closure";
+        case IROp::FuncIndex: return "func_index";
         case IROp::AssertHeap: return "assert_heap";
 
         case IROp::Call:         return "call";
@@ -383,6 +384,11 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
             }
             append_str(out, ")");
         }
+            break;
+
+        case IROp::FuncIndex:
+            append_str(out, " &");
+            append_string_view(out, inst->func_index.func_name);
             break;
 
         case IROp::BlockArg: {

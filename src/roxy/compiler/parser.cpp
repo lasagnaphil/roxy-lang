@@ -1614,6 +1614,11 @@ Decl* Parser::fun_declaration(bool is_pub, bool is_native) {
     decl->fun_decl.body = body;
     decl->fun_decl.is_pub = is_pub;
     decl->fun_decl.is_native = is_native;
+    // Classified in semantic analysis (register_fun_signature). Must be
+    // initialized here: FunDecl lives in Decl's union, whose constructor only
+    // zeroes var_decl, so this field would otherwise be garbage for any function
+    // not routed through the coroutine-classification branch.
+    decl->fun_decl.is_coroutine = false;
     return decl;
 }
 

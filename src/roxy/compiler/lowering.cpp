@@ -1095,6 +1095,7 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
                 case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
                 case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
                 case IROp::StackAlloc: case IROp::GlobalAddr: case IROp::BlockArg:
+                case IROp::FuncIndex:
                 case IROp::Yield:
                     break;
             }
@@ -1300,6 +1301,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                 case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
                 case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
                 case IROp::StackAlloc: case IROp::GlobalAddr: case IROp::BlockArg:
+                case IROp::FuncIndex:
                     break;
             }
             point++;
@@ -2335,7 +2337,16 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 u32 size_bytes = struct_type->struct_info.slot_count * sizeof(u32);
 
                 type_idx = static_cast<u16>(m_module->types.size());
-                m_module->types.push_back({type_name, size_bytes, struct_type->struct_info.slot_count});
+                BCTypeInfo info{type_name, size_bytes, struct_type->struct_info.slot_count};
+                // Record the struct's destructor so a type-erased delete
+                // (BCDeleteDesc::Closure — used to drop an erased Coro<T> whose
+                // concrete state struct isn't statically known) can dispatch it
+                // by runtime type_id. Mirrors the closure-env registration below.
+                if (struct_has_default_destructor(struct_type)) {
+                    u16 dtor_idx = lookup_destructor_index(struct_type);
+                    if (dtor_idx != 0) info.dtor_func_idx = dtor_idx;
+                }
+                m_module->types.push_back(info);
                 m_type_indices[type_name] = type_idx;
             }
 
@@ -2438,6 +2449,26 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 }
             }
 
+            spill_if_needed(inst->result, dst);
+            break;
+        }
+
+        case IROp::FuncIndex: {
+            // Materialize the named function's runtime index as a constant — the
+            // same late-binding used for a closure's __call_idx (resolved from
+            // m_func_indices, pre-populated for every module function above).
+            auto func_it = m_func_indices.find(inst->func_index.func_name);
+            if (func_it == m_func_indices.end()) {
+                report_error("Internal error: FuncIndex target function not found during lowering");
+                break;
+            }
+            u32 idx_value = func_it->second;
+            if (idx_value <= 0x7FFF) {
+                emit_abi(Opcode::LOAD_INT, dst, static_cast<u16>(idx_value));
+            } else {
+                u16 const_idx = add_constant(BCConstant::make_int(static_cast<i64>(idx_value)));
+                emit_abi(Opcode::LOAD_CONST, dst, const_idx);
+            }
             spill_if_needed(inst->result, dst);
             break;
         }

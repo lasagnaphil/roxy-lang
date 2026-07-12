@@ -609,8 +609,11 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
 
     m_current_func->return_type = resolve_return_type(decl->return_type, decl->name);
 
-    // Detect coroutine function (returns Coro<T>)
-    if (m_current_func->return_type && m_current_func->return_type->is_coroutine()) {
+    // A function is a coroutine (state machine to lower) iff its body yields —
+    // classified once in semantic analysis (FunDecl::is_coroutine). A function
+    // that merely returns/forwards a Coro<T> value is ordinary, even though its
+    // return type is_coroutine().
+    if (decl->is_coroutine && m_current_func->return_type && m_current_func->return_type->is_coroutine()) {
         m_current_func->is_coroutine = true;
         m_current_func->coro_type = m_current_func->return_type;
         m_current_func->coro_yield_type = m_current_func->return_type->coro_info.yield_type;

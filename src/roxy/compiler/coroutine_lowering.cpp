@@ -161,6 +161,13 @@ static ValueId emit_call(BumpAllocator& allocator, IRFunction* func, IRBlock* bl
     return inst->result;
 }
 
+static ValueId emit_func_index(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
+                                StringView func_name, Type* u32_type) {
+    IRInst* inst = make_inst(allocator, func, block, IROp::FuncIndex, u32_type);
+    inst->func_index.func_name = func_name;
+    return inst->result;
+}
+
 static void emit_delete(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
                           ValueId value, Type* void_type) {
     IRInst* inst = make_inst(allocator, func, block, IROp::Delete, void_type);
@@ -212,10 +219,11 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
     ValueId self_val = self_param.value;
     IRBlock* entry = create_block(allocator, dtor_func, alloc_string(allocator, "entry"));
 
-    // Process fields in reverse order (LIFO, like C++ member destruction)
-    // Skip __state and __yield_val (indices 0 and 1)
+    // Process fields in reverse order (LIFO, like C++ member destruction).
+    // Skip the three reserved header fields __resume_idx, __state, __yield_val
+    // (indices 0, 1, 2) — only params/promoted locals own resources.
     const auto& fields = struct_type->struct_info.fields;
-    for (i32 i = static_cast<i32>(fields.size()) - 1; i >= 2; i--) {
+    for (i32 i = static_cast<i32>(fields.size()) - 1; i >= 3; i--) {
         const FieldInfo& field = fields[i];
         if (!field.type) continue;
 
@@ -777,7 +785,14 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
         emit_set_field(allocator, func, block, self_val,
                        state_field->name, state_field->slot_offset, state_field->slot_count,
                        done_val, types.i32_type());
-        ValueId default_val = emit_const_int(allocator, func, block, 0, coro_yield_type);
+        // Return a default of the yield type. The value is never observed (done()
+        // is true on this path). `ConstInt 0` is only valid C for scalar yield
+        // types; for a struct yield, return the zero-initialized __yield_val field
+        // (roxy_alloc zeroes the state struct) — a valid value of the right type.
+        ValueId default_val = coro_yield_type->is_struct()
+            ? emit_get_field(allocator, func, block, self_val, yield_field->name,
+                             yield_field->slot_offset, yield_field->slot_count, coro_yield_type)
+            : emit_const_int(allocator, func, block, 0, coro_yield_type);
         finish_return(block, default_val);
     }
 
@@ -892,10 +907,31 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
         }
     }
 
-    // Step 3: Build the coroutine struct type
+    // Step 3: Build the coroutine struct type.
+    //
+    // Field order is a runtime contract for first-class Coro<T> values:
+    //   slot 0: __resume_idx (u32) — the resume function's dispatch index, read
+    //           by CALL_INDIRECT exactly like a closure env's __call_idx, so an
+    //           erased Coro<T> can `.resume()` without knowing its concrete type.
+    //   slot 1: __state (i32) — at a fixed offset in every coroutine struct so
+    //           `.done()` inlines a load+compare with no dispatch.
+    // __yield_val, params, and promoted locals follow.
     u32 num_params = static_cast<u32>(original->params.size());
     Vector<FieldInfo> fields;
     u32 current_slot = 0;
+
+    // __resume_idx
+    {
+        FieldInfo field;
+        field.name = alloc_string(allocator, "__resume_idx");
+        field.type = types.u32_type();
+        field.is_pub = false;
+        field.index = 0;
+        field.slot_offset = current_slot;
+        field.slot_count = 1;
+        current_slot += 1;
+        fields.push_back(field);
+    }
 
     // __state
     {
@@ -903,7 +939,7 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
         field.name = alloc_string(allocator, "__state");
         field.type = types.i32_type();
         field.is_pub = false;
-        field.index = 0;
+        field.index = 1;
         field.slot_offset = current_slot;
         field.slot_count = 1;
         current_slot += 1;
@@ -917,12 +953,15 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
         field.name = alloc_string(allocator, "__yield_val");
         field.type = coro_yield_type;
         field.is_pub = false;
-        field.index = 1;
+        field.index = 2;
         field.slot_offset = current_slot;
         field.slot_count = yield_val_slot_count;
         current_slot += yield_val_slot_count;
         fields.push_back(field);
     }
+
+    // Index of the first parameter field (after __resume_idx, __state, __yield_val).
+    const u32 first_param_field = 3;
 
     // Original function parameters
     for (u32 i = 0; i < num_params; i++) {
@@ -930,7 +969,7 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
         field.name = original->params[i].name;
         field.type = original->params[i].type;
         field.is_pub = false;
-        field.index = 2 + i;
+        field.index = first_param_field + i;
         field.slot_offset = current_slot;
         field.slot_count = get_type_slot_count(original->params[i].type);
         current_slot += field.slot_count;
@@ -942,7 +981,7 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
         bool is_param = false;
         for (u32 p = 0; p < num_params; p++) {
             if (original->params[p].name == promoted_vars[i].name) {
-                promoted_vars[i].field_slot_offset = fields[2 + p].slot_offset;
+                promoted_vars[i].field_slot_offset = fields[first_param_field + p].slot_offset;
                 is_param = true;
                 break;
             }
@@ -998,8 +1037,12 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
         return nullptr;
     };
 
+    const FieldInfo* resume_idx_field = find_field(alloc_string(allocator, "__resume_idx"));
     const FieldInfo* state_field = find_field(alloc_string(allocator, "__state"));
     const FieldInfo* yield_field = find_field(alloc_string(allocator, "__yield_val"));
+
+    // The resume function's name (this coroutine, transformed in place below).
+    StringView resume_name = alloc_string_fmt(allocator, "__coro_{}$$resume", original->name);
 
     // ===== Generate init function =====
     IRFunction* init_func = allocator.emplace<IRFunction>();
@@ -1017,6 +1060,12 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
 
     IRBlock* init_entry = create_block(allocator, init_func, alloc_string(allocator, "entry"));
     ValueId obj = emit_new(allocator, init_func, init_entry, struct_name, uniq_struct_type);
+    // Seed __resume_idx with the resume function's dispatch index so an erased
+    // Coro<T> value can `.resume()` via CALL_INDIRECT (resolved at lowering).
+    ValueId resume_idx = emit_func_index(allocator, init_func, init_entry, resume_name, types.u32_type());
+    emit_set_field(allocator, init_func, init_entry, obj,
+                   resume_idx_field->name, resume_idx_field->slot_offset, resume_idx_field->slot_count,
+                   resume_idx, types.u32_type());
     ValueId zero = emit_const_int(allocator, init_func, init_entry, 0, types.i32_type());
     emit_set_field(allocator, init_func, init_entry, obj,
                    state_field->name, state_field->slot_offset, state_field->slot_count,
@@ -1037,28 +1086,9 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     }
     finish_return(init_entry, obj);
 
-    // ===== Generate done function =====
-    StringView done_name = alloc_string_fmt(allocator, "__coro_{}$$done", original->name);
-    IRFunction* done_func = allocator.emplace<IRFunction>();
-    done_func->name = done_name;
-    done_func->return_type = types.bool_type();
-
-    BlockParam done_self;
-    done_self.value = done_func->new_value();
-    done_self.type = ref_struct_type;
-    done_self.name = alloc_string(allocator, "self");
-    done_func->params.push_back(done_self);
-    done_func->param_is_ptr.push_back(false);
-
-    IRBlock* done_entry = create_block(allocator, done_func, alloc_string(allocator, "entry"));
-    ValueId done_state_val = emit_get_field(allocator, done_func, done_entry,
-                                            done_self.value, state_field->name,
-                                            state_field->slot_offset, state_field->slot_count,
-                                            types.i32_type());
-    ValueId done_sentinel = emit_const_int(allocator, done_func, done_entry, CORO_STATE_DONE, types.i32_type());
-    ValueId is_done = emit_eq_i(allocator, done_func, done_entry,
-                                 done_state_val, done_sentinel, types.bool_type());
-    finish_return(done_entry, is_done);
+    // No $$done function is generated: `.done()` is inlined at every call site as
+    // a load of __state (fixed slot 1) compared against CORO_STATE_DONE, so it
+    // needs no dispatch and works uniformly on erased Coro<T> values.
 
     // Catch-clause variable names: a promoted `ref` catch param is a state field
     // set by exception dispatch, not a counted borrow, so the destructor must not
@@ -1177,7 +1207,6 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
         }
     }
     module->functions.push_back(original);
-    module->functions.push_back(done_func);
     module->functions.push_back(dtor_func);
 }
 

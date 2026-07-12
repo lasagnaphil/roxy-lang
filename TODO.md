@@ -36,8 +36,7 @@ Last updated: 2026-07-12
 
 ## Planned Features
 
-- [ ] **First-class coroutine values**: passing or returning a `Coro<T>` fails assignability — an annotated `Coro<T>` resolves to the interned generic type while a coroutine value carries its per-function type (`coroutine_type_for_func`, which encodes the mangled `resume`/`done` names). Needs unified typing plus dynamic resume/done dispatch (the closure design — `__call_idx` + `CALL_INDIRECT` — is the obvious template). Inference already binds `T` from a coro argument.
-- [ ] **Coroutine methods** (`fun S.count(): Coro<i32>`): rejected with an explicit "coroutine methods are not yet supported" error (since 2026-07-05); needs the per-function coro type for methods plus a `self`-carrying state machine in coroutine lowering.
+- [ ] **Coroutine methods** (`fun S.count(): Coro<i32>`): rejected with an explicit "coroutine methods are not yet supported" error (since 2026-07-05); needs the per-function coro type for methods plus a `self`-carrying state machine in coroutine lowering. (First-class coroutine *values* — passing/returning/storing an erased `Coro<T>` — landed 2026-07-12: yield-based coroutine classification, `resume()` via `CALL_INDIRECT`, inlined `done()`, erased-delete via `DropKind::Closure`. See `docs/internals/coroutines.md` → "First-Class Coroutine Values".)
 - [ ] Flow-sensitive typing for tagged union variant fields
 - [ ] Exhaustiveness checking for when statements. Also the blocker for two diagnostics: the all-paths-return check (see the note in `analyze_fun_body` — `branch_terminates()` deliberately reads a no-else `when` as non-terminating), and sharper move-state merges (an exhaustive no-else `when` currently keeps the pre-when fall-through as a live path). The IR builder's fall-through block for a no-else `when` must agree with whatever semantics is chosen.
 - [ ] Variant constructors (`Type.Variant { ... }` syntax)

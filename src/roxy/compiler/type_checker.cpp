@@ -15,6 +15,13 @@ bool TypeChecker::is_assignable(Type* target, Type* source) const {
     if (target->is_struct() && source->is_struct()) {
         if (is_subtype_of(source, target)) return true;
     }
+    // Coroutine values are first-class: a per-function Coro<T> (from a coroutine
+    // call) and the interned generic Coro<T> (from a `Coro<T>` annotation) are
+    // assignable when their yield types match. resume/done dispatch dynamically
+    // (CALL_INDIRECT / inline __state), so func_name need not match.
+    if (target->is_coroutine() && source->is_coroutine()) {
+        return target->coro_info.yield_type == source->coro_info.yield_type;
+    }
     if (target->is_reference() && source->is_reference()) {
         if (target->kind == source->kind) {
             Type* target_inner = target->ref_info.inner_type;
@@ -48,6 +55,14 @@ bool TypeChecker::check_assignable(Type* target, Type* source, SourceLocation lo
     // Struct subtyping: Child assignable to Parent (value slicing for values)
     if (target->is_struct() && source->is_struct()) {
         if (is_subtype_of(source, target)) {
+            return true;
+        }
+    }
+
+    // Coroutine values are first-class: assignable when yield types match
+    // (dispatch is dynamic, so the per-function/generic distinction is erased).
+    if (target->is_coroutine() && source->is_coroutine()) {
+        if (target->coro_info.yield_type == source->coro_info.yield_type) {
             return true;
         }
     }

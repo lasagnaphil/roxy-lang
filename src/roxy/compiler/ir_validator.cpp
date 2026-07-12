@@ -399,11 +399,12 @@ bool IRValidator::validate_instruction(IRFunction* func, IRBlock* block, IRInst*
             break;
         }
 
-        // Constants, StackAlloc, GlobalAddr - no operand ValueIds to validate
+        // Constants, StackAlloc, GlobalAddr, FuncIndex - no operand ValueIds to validate
         case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
         case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
         case IROp::StackAlloc:
         case IROp::GlobalAddr:
+        case IROp::FuncIndex:
             break;
 
         // Yield should never appear after coroutine lowering

@@ -21,6 +21,66 @@ static MethodInfo make_method(StringView name, Span<Type*> param_types,
     return method;
 }
 
+// Recursively determine whether a statement (sub)tree contains a `yield`.
+// A Coro<T>-returning function is a real coroutine (state machine) only if its
+// body yields; otherwise it is an ordinary function producing/forwarding a
+// first-class coroutine value. Deliberately does NOT descend into nested
+// lambda/function bodies — a yield there belongs to that body (and is rejected
+// separately), never to the enclosing function.
+static bool stmt_contains_yield(Stmt* stmt);
+
+static bool decl_contains_yield(Decl* decl) {
+    if (!decl) return false;
+    // A "declaration" that is actually a wrapped statement (block bodies hold
+    // Span<Decl*>). Real declarations (nested var/fun/struct) never contribute
+    // a yield to this function.
+    if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtYield) {
+        return stmt_contains_yield(&decl->stmt);
+    }
+    return false;
+}
+
+static bool stmt_contains_yield(Stmt* stmt) {
+    if (!stmt) return false;
+    switch (stmt->kind) {
+        case AstKind::StmtYield:
+            return true;
+        case AstKind::StmtBlock:
+            for (Decl* d : stmt->block.declarations) {
+                if (decl_contains_yield(d)) return true;
+            }
+            return false;
+        case AstKind::StmtIf:
+            return stmt_contains_yield(stmt->if_stmt.then_branch)
+                || stmt_contains_yield(stmt->if_stmt.else_branch);
+        case AstKind::StmtWhile:
+            return stmt_contains_yield(stmt->while_stmt.body);
+        case AstKind::StmtFor:
+            return decl_contains_yield(stmt->for_stmt.initializer)
+                || stmt_contains_yield(stmt->for_stmt.body);
+        case AstKind::StmtWhen: {
+            for (const WhenCase& c : stmt->when_stmt.cases) {
+                for (Decl* d : c.body) {
+                    if (decl_contains_yield(d)) return true;
+                }
+            }
+            for (Decl* d : stmt->when_stmt.else_body) {
+                if (decl_contains_yield(d)) return true;
+            }
+            return false;
+        }
+        case AstKind::StmtTry: {
+            if (stmt_contains_yield(stmt->try_stmt.try_body)) return true;
+            for (const CatchClause& cc : stmt->try_stmt.catches) {
+                if (stmt_contains_yield(cc.body)) return true;
+            }
+            return stmt_contains_yield(stmt->try_stmt.finally_body);
+        }
+        default:
+            return false;
+    }
+}
+
 static const ConstructorInfo* find_constructor(Span<ConstructorInfo> constructors, StringView name) {
     for (const auto& constructor : constructors) {
         if (constructor.name == name) {
@@ -570,13 +630,19 @@ void SemanticAnalyzer::register_fun_signature(Decl* decl) {
     // Resolve return type
     Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
 
-    // For coroutine functions, create a function-specific coroutine type
-    // so that method calls (.resume(), .done()) can be resolved to the
-    // correct mangled function names.
+    // A Coro<T>-returning function is a real coroutine only if its body yields.
+    // A non-yielding one merely produces/forwards a first-class coroutine value
+    // and stays an ordinary function (its return type is the interned generic
+    // Coro<T>, already carrying resume/done methods from resolve_type_expr).
+    // Real coroutines get a function-specific coroutine type (carrying func_name
+    // for the state-struct wiring in coroutine lowering).
     if (return_type && return_type->is_coroutine()) {
-        return_type = m_types.coroutine_type_for_func(
-            return_type->coro_info.yield_type, fun_decl.name);
-        populate_coro_methods(return_type);
+        fun_decl.is_coroutine = stmt_contains_yield(fun_decl.body);
+        if (fun_decl.is_coroutine) {
+            return_type = m_types.coroutine_type_for_func(
+                return_type->coro_info.yield_type, fun_decl.name);
+            populate_coro_methods(return_type);
+        }
     }
 
     // Create function type
@@ -1303,8 +1369,11 @@ void SemanticAnalyzer::analyze_fun_body(Decl* decl) {
     Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
 
     // Fresh per-function context (coroutine/destructor/finally slots) and
-    // lifetime state for this body, restored as one unit on exit.
-    bool is_coroutine = return_type && return_type->is_coroutine();
+    // lifetime state for this body, restored as one unit on exit. `is_coroutine`
+    // (classified by yield-presence in register_fun_signature) gates `yield`
+    // legality and the no-value-return rule — a non-yielding Coro<T>-returning
+    // function is ordinary and may `return <coro value>`.
+    bool is_coroutine = fun_decl.is_coroutine;
     FunctionContextScope context_scope(m_function_context, m_lifetimes);
     if (is_coroutine) {
         m_function_context.in_coroutine = true;

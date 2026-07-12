@@ -167,26 +167,35 @@ struct Skill {
 
 ### Coroutines
 
-Coroutines need no dedicated emitter support beyond type mapping. `coroutine_lower()`
-runs *before* the C backend and rewrites every `Coro<T>` function into ordinary
-functions — `init` (the original name, returns the coro), `__coro_<func>$$resume`,
-`__coro_<func>$$done`, and `__coro_<func>$$delete` — built entirely from ops the
+`coroutine_lower()` runs *before* the C backend and rewrites every coroutine
+function into ordinary functions — `init` (the original name, returns the coro),
+`__coro_<func>$$resume`, and `__coro_<func>$$delete` — built entirely from ops the
 backend already handles (`New`, `GetField`, `SetField`, `EqI`, `Branch`, `Return`).
 `IROp::Yield` never reaches the emitter (the IR validator rejects any survivor).
+Since coroutine values are first-class, the emitter has a small amount of
+dedicated logic for the erased case:
 
-Two things make this work:
-
-- **`Coro<T>` is a pointer to its state struct.** `TypeKind::Coroutine` emits as
-  `__coro_<func>*` (`coro_info.generated_struct_type` + `*`), matching the
-  `uniq __coro_<func>` the init function allocates and the `ref __coro_<func>`
-  the resume/done/delete functions take. The synthesized state struct is appended
-  to `IRModule::struct_types` *in the lowering pass* (it's created after
+- **A known `Coro<T>` is a pointer to its state struct.** `TypeKind::Coroutine`
+  emits as `__coro_<func>*` (`coro_info.generated_struct_type` + `*`), matching the
+  `uniq __coro_<func>` the init function allocates and the `ref __coro_<func>` the
+  resume/delete functions take. The synthesized state struct is appended to
+  `IRModule::struct_types` *in the lowering pass* (created after
   `collect_backend_types` runs), so it gets a typedef, a dependency-sorted
   definition, and a `TYPEID_` define like any other struct.
-- **Deleting a `Coro<T>` runs `__coro_<func>$$delete`.** `emit_typed_delete`
-  treats the coroutine's state struct as the destructor pointee, so promoted
-  `uniq`/noncopyable fields are cleaned up before `roxy_free` (the C analogue of
-  the VM's descriptor-driven coro cleanup).
+- **An erased `Coro<T>` is `void*`.** The interned generic type (an annotation /
+  forwarded value) has no `generated_struct_type`, so it emits as `void*`, exactly
+  like a closure value. `resume()` is an `IROp::CallIndirect` — `((T(*)(void*))
+  g_closure_fns[*(uint32_t*)coro])(coro)`, the same dispatch as a closure — with
+  the resume function registered in `g_closure_fns[]` via `IROp::FuncIndex` (which
+  emits its dense table index for `__resume_idx`). `done()` reads `__state` through
+  a `((__coro_header*)coro)->__state` cast (the common `{__resume_idx, __state}`
+  prefix), so it works without the concrete struct.
+- **Deleting a `Coro<T>` runs `__coro_<func>$$delete`.** For a known value
+  `emit_typed_delete` treats the state struct as the destructor pointee (promoted
+  `uniq`/noncopyable fields are cleaned up before `roxy_free`). An erased value
+  drops via `DropKind::Closure` → `__closure_delete`, which switches on `__resume_idx`
+  to the state struct's `$$delete` (the resume function's dispatch slot doubles as
+  the delete key, its "env" recorded as `__coro_<func>`).
 
 The lowering promotes locals that survive a yield into state-struct fields and
 stores into them with raw `SetField`, where the regular path would use

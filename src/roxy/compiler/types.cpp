@@ -132,8 +132,20 @@ DropPlan compute_drop_plan(Type* type) {
         case TypeKind::Coroutine: {
             p.free_obj = true;  // heap state struct
             Type* coro_struct = type->coro_info.generated_struct_type;
-            if (drop_struct_has_default_dtor(coro_struct)) {
-                p.kind = DropKind::CallDtor; p.struct_type = coro_struct;
+            if (coro_struct) {
+                // Known coroutine value (per-function type): its concrete state
+                // struct — hence destructor — is statically known, so call it.
+                if (drop_struct_has_default_dtor(coro_struct)) {
+                    p.kind = DropKind::CallDtor; p.struct_type = coro_struct;
+                }
+            } else {
+                // Erased Coro<T> (interned generic type — from an annotation or a
+                // forwarded value): the concrete state struct is unknown here.
+                // Dispatch the destructor at runtime by the value's identity,
+                // exactly like a first-class closure (VM: closure_env_dtors by
+                // type_id; C: __closure_delete by __resume_idx). A coroutine value
+                // is layout-compatible — slot 0 is the dispatch index.
+                p.kind = DropKind::Closure;
             }
             break;
         }

@@ -53,11 +53,18 @@ void CEmitter::emit_type(Type* type, String& out) {
             out.append("roxy_weak");
             break;
         case TypeKind::Coroutine:
-            // Coro<T> is a pointer to its synthesized state struct (__coro_<func>).
-            // Matches `uniq __coro_<func>` (New result) and `ref __coro_<func>`
-            // (resume/done/$$delete self param), which both emit as the same ptr.
-            emit_type(type->coro_info.generated_struct_type, out);
-            out.append("*");
+            // A known coroutine value (per-function type) is a pointer to its
+            // synthesized state struct (__coro_<func>); matches `uniq/ref
+            // __coro_<func>` which emit as the same ptr. An erased Coro<T> (the
+            // interned generic type, from an annotation or forwarded value) has no
+            // concrete struct — emit `void*`, type-erased like a closure value.
+            // resume() casts it in CALL_INDIRECT; done() casts it to __coro_header.
+            if (type->coro_info.generated_struct_type) {
+                emit_type(type->coro_info.generated_struct_type, out);
+                out.append("*");
+            } else {
+                out.append("void*");
+            }
             break;
         case TypeKind::ExceptionRef:
             // Opaque catch-all handle — a pointer to the heap exception object.
@@ -175,6 +182,17 @@ void CEmitter::emit_field_access(ValueId object, StringView field_name, String& 
         out.append("*)");
         emit_value(object, out);
         out.append(".ptr)->");
+        emit_mangled_name(field_name, out);
+        return;
+    }
+    // A Coroutine-typed object (done()'s __state read) is a first-class value
+    // whose concrete state struct may be erased (void*). Read the reserved header
+    // field via the common __coro_header prefix — valid for both erased and known
+    // (`__coro_<fn>*`) representations.
+    if (ot && ot->kind == TypeKind::Coroutine) {
+        out.append("((__coro_header*)");
+        emit_value(object, out);
+        out.append(")->");
         emit_mangled_name(field_name, out);
         return;
     }
@@ -900,6 +918,19 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 }
                 out.append(buf);
             }
+            return;
+        }
+        case IROp::FuncIndex: {
+            // The named function's slot in g_closure_fns[] — the AOT analogue of
+            // the VM function index. Used to seed a coroutine's __resume_idx so an
+            // erased Coro<T> resumes via the same indirect dispatch as a closure.
+            auto it = m_closure_fn_index.find(inst->func_index.func_name);
+            u32 idx = (it != m_closure_fn_index.end()) ? it->second : 0;
+            out.append("    ");
+            emit_value(inst->result, out);
+            char buf[32];
+            format_to(buf, sizeof(buf), " = {};\n", idx);
+            out.append(buf);
             return;
         }
         case IROp::ConstF: {
@@ -2526,6 +2557,19 @@ Type* CEmitter::find_struct_type(StringView name) {
     return nullptr;
 }
 
+// `__coro_<fn>$$resume` -> `__coro_<fn>` (the state struct name). The resume
+// name is a superstring, so the struct name is a zero-copy prefix sub-view.
+static StringView coro_struct_name_from_resume(StringView resume_name) {
+    static const StringView kSuffix("$$resume", 8);
+    if (resume_name.size() >= kSuffix.size()) {
+        StringView tail(resume_name.data() + resume_name.size() - kSuffix.size(), kSuffix.size());
+        if (tail == kSuffix) {
+            return StringView(resume_name.data(), resume_name.size() - kSuffix.size());
+        }
+    }
+    return resume_name;  // unexpected shape — fall back (no dtor case will match)
+}
+
 void CEmitter::collect_closure_dispatch(const IRModule* module) {
     m_closure_fn_index.clear();
     m_closure_fns.clear();
@@ -2536,12 +2580,24 @@ void CEmitter::collect_closure_dispatch(const IRModule* module) {
             const IRBlock* block = func->blocks[b];
             for (u32 i = 0; i < block->instructions.size(); i++) {
                 const IRInst* inst = block->instructions[i];
-                if (inst->op != IROp::Closure) continue;
-                StringView fn = inst->closure.call_function_name;
-                if (m_closure_fn_index.find(fn) != m_closure_fn_index.end()) continue;
-                m_closure_fn_index[fn] = static_cast<u32>(m_closure_fns.size());
-                m_closure_fns.push_back(fn);
-                m_closure_env_names.push_back(inst->closure.env_struct_name);
+                if (inst->op == IROp::Closure) {
+                    StringView fn = inst->closure.call_function_name;
+                    if (m_closure_fn_index.find(fn) != m_closure_fn_index.end()) continue;
+                    m_closure_fn_index[fn] = static_cast<u32>(m_closure_fns.size());
+                    m_closure_fns.push_back(fn);
+                    m_closure_env_names.push_back(inst->closure.env_struct_name);
+                } else if (inst->op == IROp::FuncIndex) {
+                    // A coroutine's __resume_idx: the resume function joins the
+                    // same dispatch table as closures (CALL_INDIRECT reads slot 0
+                    // of both). The "env" for delete purposes is the state struct
+                    // `__coro_<fn>` (resume name minus the `$$resume` suffix), so
+                    // __closure_delete can dispatch `__coro_<fn>$$delete`.
+                    StringView fn = inst->func_index.func_name;
+                    if (m_closure_fn_index.find(fn) != m_closure_fn_index.end()) continue;
+                    m_closure_fn_index[fn] = static_cast<u32>(m_closure_fns.size());
+                    m_closure_fns.push_back(fn);
+                    m_closure_env_names.push_back(coro_struct_name_from_resume(fn));
+                }
             }
         }
     }
@@ -3758,6 +3814,12 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
 
     // Struct typedefs (in dependency order)
     emit_struct_typedefs(module, output);
+
+    // Common coroutine header prefix. Every __coro_<fn> state struct begins with
+    // { __resume_idx, __state } (slots 0 and 1), so an erased Coro<T> (emitted as
+    // void*) can read __state for done() via this cast without knowing the
+    // concrete struct. __resume_idx is read by CALL_INDIRECT for resume().
+    output.append("typedef struct { uint32_t __resume_idx; int32_t __state; } __coro_header;\n\n");
 
     // Module-level global variable definitions.
     emit_global_definitions(module, output);

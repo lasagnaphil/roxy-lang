@@ -1071,4 +1071,145 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(VMBackend::run(mid_iteration).success == false);
     }
 
+    // ========================================================================
+    // First-class coroutine values (pass / return / store an erased Coro<T>).
+    // These exercise dynamic resume/done dispatch: the concrete coroutine
+    // function is not known at the call site.
+    // ========================================================================
+
+    TEST_CASE_TEMPLATE("Coroutine returned from a wrapper function", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun counter(): Coro<i32> {
+            yield 1;
+            yield 2;
+        }
+        fun make(): Coro<i32> {
+            return counter();
+        }
+        fun main(): i32 {
+            var g = make();
+            return g.resume() + g.resume();   // 1 + 2
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine passed to a function (moved, erased param)", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun gen(): Coro<i32> {
+            yield 7;
+            yield 8;
+        }
+        fun first(c: Coro<i32>): i32 {
+            return c.resume();   // c owned here; deleted (while suspended) at return
+        }
+        fun main(): i32 {
+            var g = gen();
+            return first(g);     // moves g into first
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 7);
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine dynamic dispatch across source functions", Backend, RX_E2E_BACKENDS) {
+        // sum_two receives Coro<i32> values produced by two DIFFERENT coroutine
+        // functions — the resume target cannot be statically bound.
+        const char* source = R"(
+        fun ones(): Coro<i32> {
+            yield 1;
+            yield 1;
+        }
+        fun twos(): Coro<i32> {
+            yield 2;
+            yield 2;
+        }
+        fun sum_two(c: Coro<i32>): i32 {
+            return c.resume() + c.resume();
+        }
+        fun main(): i32 {
+            return sum_two(ones()) + sum_two(twos());   // (1+1) + (2+2)
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 6);
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine yielding a struct, passed erased", Backend, RX_E2E_BACKENDS) {
+        // Resume returns a small struct through CALL_INDIRECT (the erased-value
+        // dispatch path), exercising small-struct return unpacking.
+        const char* source = R"(
+        struct P { x: i32 = 0; y: i32 = 0; }
+        fun points(): Coro<P> {
+            yield P { x = 1, y = 2 };
+            yield P { x = 3, y = 4 };
+        }
+        fun sum_first(c: Coro<P>): i32 {
+            var p: P = c.resume();
+            return p.x + p.y;
+        }
+        fun main(): i32 {
+            return sum_first(points());   // 1 + 2
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine stored in annotated var, resume + done", Backend, RX_E2E_BACKENDS) {
+        // A `Coro<i32>` annotation resolves to the interned generic type (empty
+        // func_name) — resume/done must still work via dynamic dispatch.
+        const char* source = R"(
+        fun gen(): Coro<i32> {
+            yield 5;
+        }
+        fun main(): i32 {
+            var g: Coro<i32> = gen();
+            var v: i32 = g.resume();
+            g.resume();                 // run past the last yield
+            var d: i32 = 0;
+            if (g.done()) { d = 1; }
+            return v * 10 + d;          // 51
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 51);
+    }
+
+    TEST_CASE_TEMPLATE("Erased coroutine dropped while suspended runs destructor", Backend, RX_E2E_BACKENDS) {
+        // take_first resumes once then drops the coroutine mid-iteration. The
+        // erased Coro<i32> must run its state-struct destructor (dispatched by
+        // runtime identity, since the concrete type is unknown at the drop site)
+        // so the promoted `uniq R` is cleaned up exactly once — observed via the
+        // destructor's print.
+        const char* source = R"(
+        struct R { n: i32 = 0; }
+        fun delete R() { print(f"drop R"); }
+
+        fun gen(): Coro<i32> {
+            var r: uniq R = uniq R();   // promoted owned local; cleaned by state dtor
+            r.n = 1;
+            yield r.n;
+            yield 2;
+            yield 3;
+        }
+        fun take_first(c: Coro<i32>): i32 {
+            return c.resume();
+        }
+        fun main(): i32 {
+            return take_first(gen());
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 1);
+        CHECK(result.stdout_output == "drop R\n");
+    }
+
 }  // TEST_SUITE("E2E Coroutines")

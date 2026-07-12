@@ -644,6 +644,12 @@ struct FunDecl {
     Stmt* body;             // BlockStmt, nullptr if native
     bool is_pub;
     bool is_native;
+    // Set by semantic analysis (register_fun_signature): true iff the return
+    // type is Coro<T> AND the body contains a `yield`. A function that merely
+    // returns/forwards a Coro<T> value (no yield) is NOT a coroutine — it is an
+    // ordinary function producing a first-class coroutine value. Read by
+    // analyze_fun_body and the IR builder to decide state-machine lowering.
+    bool is_coroutine = false;
 };
 
 // Struct field declaration

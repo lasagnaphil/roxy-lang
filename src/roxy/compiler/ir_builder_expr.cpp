@@ -1685,10 +1685,24 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         emit_weak_deref_check(obj);
     }
 
-    // Coro method call (resume/done — lowered functions): self is the coroutine object.
+    // Coro method call. Both dispatch dynamically so first-class (erased) Coro<T>
+    // values work: a coroutine value is a heap pointer to its state struct whose
+    // slot 0 is __resume_idx (the resume function's dispatch index, exactly like a
+    // closure env's __call_idx) and slot 1 is __state.
     if (struct_type && struct_type->is_coroutine()) {
-        Span<ValueId> method_args = prepend_self(obj, args);
-        return emit_call(call_expr.mangled_name, method_args, expr->resolved_type);
+        if (get_expr.name == "done"_sv) {
+            // Inline: load __state (fixed slot 1) and compare to the done sentinel.
+            // Uniform across all coroutines — no dispatch, no $$done function.
+            ValueId state = emit_get_field(obj, "__state"_sv, /*slot_offset*/1, /*slot_count*/1,
+                                           m_types.i32_type());
+            // CORO_STATE_DONE (see coroutine_lowering.cpp): positive sentinel above
+            // all yield-point states.
+            ValueId sentinel = emit_const_int(0x7FFFFFFF, m_types.i32_type());
+            return emit_binary(IROp::EqI, state, sentinel, m_types.bool_type());
+        }
+        // resume(): CALL_INDIRECT through __resume_idx, the coro value as receiver.
+        // (resume takes no explicit args; final_args is empty.)
+        return emit_call_indirect(obj, final_args, expr->resolved_type);
     }
 
     // "Field of function type": obj.callback(args) where callback is a struct field
