@@ -20,6 +20,8 @@ const char* ir_op_to_string(IROp op) {
         case IROp::MulI: return "mul_i";
         case IROp::DivI: return "div_i";
         case IROp::ModI: return "mod_i";
+        case IROp::DivU: return "div_u";
+        case IROp::ModU: return "mod_u";
         case IROp::NegI: return "neg_i";
 
         case IROp::AddF: return "add_f";
@@ -40,6 +42,11 @@ const char* ir_op_to_string(IROp op) {
         case IROp::LeI: return "le_i";
         case IROp::GtI: return "gt_i";
         case IROp::GeI: return "ge_i";
+
+        case IROp::LtU: return "lt_u";
+        case IROp::LeU: return "le_u";
+        case IROp::GtU: return "gt_u";
+        case IROp::GeU: return "ge_u";
 
         case IROp::EqF: return "eq_f";
         case IROp::NeF: return "ne_f";
@@ -65,6 +72,7 @@ const char* ir_op_to_string(IROp op) {
         case IROp::BitNot: return "bit_not";
         case IROp::Shl:    return "shl";
         case IROp::Shr:    return "shr";
+        case IROp::UShr:   return "ushr";
 
         case IROp::I_TO_F64: return "i_to_f64";
         case IROp::F64_TO_I: return "f64_to_i";
@@ -198,6 +206,8 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         case IROp::MulI:
         case IROp::DivI:
         case IROp::ModI:
+        case IROp::DivU:
+        case IROp::ModU:
         case IROp::AddF:
         case IROp::SubF:
         case IROp::MulF:
@@ -212,6 +222,10 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         case IROp::LeI:
         case IROp::GtI:
         case IROp::GeI:
+        case IROp::LtU:
+        case IROp::LeU:
+        case IROp::GtU:
+        case IROp::GeU:
         case IROp::EqF:
         case IROp::NeF:
         case IROp::LtF:
@@ -231,6 +245,7 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         case IROp::BitXor:
         case IROp::Shl:
         case IROp::Shr:
+        case IROp::UShr:
             append_str(out, " ");
             append_value_id(out, inst->binary.left);
             append_str(out, ", ");

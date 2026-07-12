@@ -983,11 +983,13 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
 
                 // Non-RK binary ops still in the IR set: both sides require registers.
                 case IROp::DivI: case IROp::ModI:
+                case IROp::DivU: case IROp::ModU:
                 case IROp::DivF:
                 case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor:
-                case IROp::Shl: case IROp::Shr:
+                case IROp::Shl: case IROp::Shr: case IROp::UShr:
                 case IROp::EqI: case IROp::NeI:
                 case IROp::LtI: case IROp::LeI: case IROp::GtI: case IROp::GeI:
+                case IROp::LtU: case IROp::LeU: case IROp::GtU: case IROp::GeU:
                 case IROp::EqF: case IROp::NeF:
                 case IROp::LtF: case IROp::LeF: case IROp::GtF: case IROp::GeF:
                 case IROp::And: case IROp::Or:
@@ -1176,10 +1178,12 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
             switch (inst->op) {
                 // Binary ops
                 case IROp::AddI: case IROp::SubI: case IROp::MulI: case IROp::DivI: case IROp::ModI:
+                case IROp::DivU: case IROp::ModU:
                 case IROp::AddF: case IROp::SubF: case IROp::MulF: case IROp::DivF:
                 case IROp::AddD: case IROp::SubD: case IROp::MulD: case IROp::DivD:
-                case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor: case IROp::Shl: case IROp::Shr:
+                case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor: case IROp::Shl: case IROp::Shr: case IROp::UShr:
                 case IROp::EqI: case IROp::NeI: case IROp::LtI: case IROp::LeI: case IROp::GtI: case IROp::GeI:
+                case IROp::LtU: case IROp::LeU: case IROp::GtU: case IROp::GeU:
                 case IROp::EqF: case IROp::NeF: case IROp::LtF: case IROp::LeF: case IROp::GtF: case IROp::GeF:
                 case IROp::EqD: case IROp::NeD: case IROp::LtD: case IROp::LeD: case IROp::GtD: case IROp::GeD:
                 case IROp::And: case IROp::Or:
@@ -1688,7 +1692,7 @@ bool BytecodeBuilder::try_emit_rk_binary(IRInst* inst, u8 dst) {
 
     // Mark RK comparisons as unfusable when their result outlives this block.
     // Same reason as the non-RK path: fusion drops the register write.
-    bool is_cmp = (inst->op >= IROp::EqI && inst->op <= IROp::GeI)
+    bool is_cmp = (inst->op >= IROp::EqI && inst->op <= IROp::GeU)
                || (inst->op >= IROp::EqD && inst->op <= IROp::GeD);
     if (is_cmp && inst->result.is_valid() &&
         inst->result.id < m_value_same_block.size() &&
@@ -1792,6 +1796,8 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::MulI:
         case IROp::DivI:
         case IROp::ModI:
+        case IROp::DivU:
+        case IROp::ModU:
         case IROp::AddF:
         case IROp::SubF:
         case IROp::MulF:
@@ -1805,12 +1811,17 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::BitXor:
         case IROp::Shl:
         case IROp::Shr:
+        case IROp::UShr:
         case IROp::EqI:
         case IROp::NeI:
         case IROp::LtI:
         case IROp::LeI:
         case IROp::GtI:
         case IROp::GeI:
+        case IROp::LtU:
+        case IROp::LeU:
+        case IROp::GtU:
+        case IROp::GeU:
         case IROp::EqF:
         case IROp::NeF:
         case IROp::LtF:
@@ -2807,6 +2818,8 @@ Opcode BytecodeBuilder::get_opcode(IROp op) const {
         case IROp::MulI:    return Opcode::MUL_I;
         case IROp::DivI:    return Opcode::DIV_I;
         case IROp::ModI:    return Opcode::MOD_I;
+        case IROp::DivU:    return Opcode::DIV_U;
+        case IROp::ModU:    return Opcode::MOD_U;
         case IROp::NegI:    return Opcode::NEG_I;
 
         // f32 arithmetic
@@ -2830,6 +2843,12 @@ Opcode BytecodeBuilder::get_opcode(IROp op) const {
         case IROp::LeI:     return Opcode::LE_I;
         case IROp::GtI:     return Opcode::GT_I;
         case IROp::GeI:     return Opcode::GE_I;
+
+        // Unsigned integer comparisons
+        case IROp::LtU:     return Opcode::LT_U;
+        case IROp::LeU:     return Opcode::LE_U;
+        case IROp::GtU:     return Opcode::GT_U;
+        case IROp::GeU:     return Opcode::GE_U;
 
         // f32 comparisons
         case IROp::EqF:     return Opcode::EQ_F;
@@ -2866,6 +2885,7 @@ Opcode BytecodeBuilder::get_opcode(IROp op) const {
         case IROp::BitNot:  return Opcode::BIT_NOT;
         case IROp::Shl:     return Opcode::SHL;
         case IROp::Shr:     return Opcode::SHR;
+        case IROp::UShr:    return Opcode::USHR;
 
         // Type conversions
         case IROp::I_TO_F64:  return Opcode::I_TO_F64;

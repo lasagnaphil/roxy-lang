@@ -31,6 +31,8 @@ enum class Opcode : u8 {
     DIV_I       = 0x13,     // dst = src1 / src2
     MOD_I       = 0x14,     // dst = src1 % src2
     NEG_I       = 0x15,     // dst = -src1
+    DIV_U       = 0x16,     // dst = src1 / src2 (unsigned)
+    MOD_U       = 0x17,     // dst = src1 % src2 (unsigned)
 
     // 0x20-0x24: f32 Arithmetic (F = float)
     ADD_F       = 0x20,     // dst = src1 + src2 (f32)

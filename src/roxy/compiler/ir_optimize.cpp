@@ -499,6 +499,7 @@ bool is_cse_eligible(IROp op) {
         // Arithmetic.
         case IROp::AddI: case IROp::SubI: case IROp::MulI:
         case IROp::DivI: case IROp::ModI: case IROp::NegI:
+        case IROp::DivU: case IROp::ModU:
         case IROp::AddF: case IROp::SubF: case IROp::MulF:
         case IROp::DivF: case IROp::NegF:
         case IROp::AddD: case IROp::SubD: case IROp::MulD:
@@ -506,6 +507,7 @@ bool is_cse_eligible(IROp op) {
         // Comparisons.
         case IROp::EqI: case IROp::NeI: case IROp::LtI:
         case IROp::LeI: case IROp::GtI: case IROp::GeI:
+        case IROp::LtU: case IROp::LeU: case IROp::GtU: case IROp::GeU:
         case IROp::EqF: case IROp::NeF: case IROp::LtF:
         case IROp::LeF: case IROp::GtF: case IROp::GeF:
         case IROp::EqD: case IROp::NeD: case IROp::LtD:
@@ -514,7 +516,7 @@ bool is_cse_eligible(IROp op) {
         case IROp::Not: case IROp::And: case IROp::Or:
         // Bitwise.
         case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor:
-        case IROp::BitNot: case IROp::Shl:   case IROp::Shr:
+        case IROp::BitNot: case IROp::Shl:   case IROp::Shr:  case IROp::UShr:
         // Conversions / Cast — pure functions of source value (+ result type).
         case IROp::I_TO_F64: case IROp::F64_TO_I:
         case IROp::I_TO_B:   case IROp::B_TO_I:
@@ -563,17 +565,19 @@ CSEKey make_cse_key(IRInst* inst) {
         // Binary ops.
         case IROp::AddI: case IROp::SubI: case IROp::MulI:
         case IROp::DivI: case IROp::ModI:
+        case IROp::DivU: case IROp::ModU:
         case IROp::AddF: case IROp::SubF: case IROp::MulF: case IROp::DivF:
         case IROp::AddD: case IROp::SubD: case IROp::MulD: case IROp::DivD:
         case IROp::EqI: case IROp::NeI: case IROp::LtI:
         case IROp::LeI: case IROp::GtI: case IROp::GeI:
+        case IROp::LtU: case IROp::LeU: case IROp::GtU: case IROp::GeU:
         case IROp::EqF: case IROp::NeF: case IROp::LtF:
         case IROp::LeF: case IROp::GtF: case IROp::GeF:
         case IROp::EqD: case IROp::NeD: case IROp::LtD:
         case IROp::LeD: case IROp::GtD: case IROp::GeD:
         case IROp::And: case IROp::Or:
         case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor:
-        case IROp::Shl: case IROp::Shr:
+        case IROp::Shl: case IROp::Shr: case IROp::UShr:
             k.a = inst->binary.left.id;
             k.b = inst->binary.right.id;
             break;

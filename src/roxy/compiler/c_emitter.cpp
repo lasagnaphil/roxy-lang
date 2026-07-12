@@ -960,12 +960,18 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         // Route through roxy_rt's checked helpers so INT_MIN/-1 and divide-by-zero
         // don't invoke C signed-division UB (which SIGFPE-traps on x86 idiv). A raw
         // `v0 / v1` would crash AOT binaries on x86 for ordinary-looking arithmetic.
-        case IROp::DivI: case IROp::ModI: {
+        case IROp::DivI: case IROp::ModI:
+        case IROp::DivU: case IROp::ModU: {
             bool is64 = inst->type &&
                         (inst->type->kind == TypeKind::I64 || inst->type->kind == TypeKind::U64);
-            const char* fn = inst->op == IROp::DivI
-                ? (is64 ? "roxy_idiv_i64" : "roxy_idiv_i32")
-                : (is64 ? "roxy_imod_i64" : "roxy_imod_i32");
+            const char* fn;
+            switch (inst->op) {
+                // Unsigned helpers guard only divide-by-zero (no INT_MIN/-1 case).
+                case IROp::DivU: fn = "roxy_udiv_u64"; break;
+                case IROp::ModU: fn = "roxy_umod_u64"; break;
+                case IROp::DivI: fn = is64 ? "roxy_idiv_i64" : "roxy_idiv_i32"; break;
+                default:         fn = is64 ? "roxy_imod_i64" : "roxy_imod_i32"; break;
+            }
             out.append("    ");
             emit_value(inst->result, out);
             out.append(" = ");
@@ -1029,16 +1035,19 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         }
 
         // --- Comparisons (integer) ---
+        // Unsigned compares (LtU..GeU) emit the same C operators; correctness comes
+        // from the operands being declared uint32_t/uint64_t (C makes `<` unsigned).
         case IROp::EqI: case IROp::NeI: case IROp::LtI:
-        case IROp::LeI: case IROp::GtI: case IROp::GeI: {
+        case IROp::LeI: case IROp::GtI: case IROp::GeI:
+        case IROp::LtU: case IROp::LeU: case IROp::GtU: case IROp::GeU: {
             const char* op_str = nullptr;
             switch (inst->op) {
                 case IROp::EqI: op_str = " == "; break;
                 case IROp::NeI: op_str = " != "; break;
-                case IROp::LtI: op_str = " < ";  break;
-                case IROp::LeI: op_str = " <= "; break;
-                case IROp::GtI: op_str = " > ";  break;
-                case IROp::GeI: op_str = " >= "; break;
+                case IROp::LtI: case IROp::LtU: op_str = " < ";  break;
+                case IROp::LeI: case IROp::LeU: op_str = " <= "; break;
+                case IROp::GtI: case IROp::GtU: op_str = " > ";  break;
+                case IROp::GeI: case IROp::GeU: op_str = " >= "; break;
                 default: break;
             }
             out.append("    ");
@@ -1128,15 +1137,17 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         }
 
         // --- Bitwise ---
+        // UShr emits the same `>>`; it is only produced for u64 operands, whose
+        // uint64_t C type makes `>>` a logical (zero-filling) shift.
         case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor:
-        case IROp::Shl: case IROp::Shr: {
+        case IROp::Shl: case IROp::Shr: case IROp::UShr: {
             const char* op_str = nullptr;
             switch (inst->op) {
                 case IROp::BitAnd: op_str = " & ";  break;
                 case IROp::BitOr:  op_str = " | ";  break;
                 case IROp::BitXor: op_str = " ^ ";  break;
                 case IROp::Shl:    op_str = " << "; break;
-                case IROp::Shr:    op_str = " >> "; break;
+                case IROp::Shr: case IROp::UShr: op_str = " >> "; break;
                 default: break;
             }
             out.append("    ");
@@ -3316,6 +3327,7 @@ static const char* lookup_static_native_mapping(StringView name) {
         {"bool$$to_string", "roxy_bool_to_string"},
         {"i32$$to_string", "roxy_i32_to_string"},
         {"i64$$to_string", "roxy_i64_to_string"},
+        {"u64$$to_string", "roxy_u64_to_string"},
         {"f32$$to_string", "roxy_f32_to_string"},
         {"f64$$to_string", "roxy_f64_to_string"},
         {"string$$to_string", "roxy_string_to_string"},

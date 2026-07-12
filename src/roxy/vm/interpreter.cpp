@@ -595,7 +595,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         [0x13] = &&op_DIV_I,
         [0x14] = &&op_MOD_I,
         [0x15] = &&op_NEG_I,
-        [0x16] = &&op_DEFAULT, [0x17] = &&op_DEFAULT,
+        [0x16] = &&op_DIV_U, [0x17] = &&op_MOD_U,
         [0x18] = &&op_DEFAULT, [0x19] = &&op_DEFAULT,
         [0x1A] = &&op_DEFAULT, [0x1B] = &&op_DEFAULT,
         [0x1C] = &&op_DEFAULT, [0x1D] = &&op_DEFAULT,
@@ -885,6 +885,27 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             return false;
         }
         regs[decode_a(instr)] = reg_from_i64(reg_as_i64(regs[decode_b(instr)]) % divisor);
+        DISPATCH();
+    }
+
+    OP(DIV_U) {
+        // Registers are raw u64; unsigned division needs no INT_MIN/-1 guard.
+        u64 divisor = regs[decode_c(instr)];
+        if (divisor == 0) {
+            vm->error = "Division by zero";
+            return false;
+        }
+        regs[decode_a(instr)] = regs[decode_b(instr)] / divisor;
+        DISPATCH();
+    }
+
+    OP(MOD_U) {
+        u64 divisor = regs[decode_c(instr)];
+        if (divisor == 0) {
+            vm->error = "Division by zero";
+            return false;
+        }
+        regs[decode_a(instr)] = regs[decode_b(instr)] % divisor;
         DISPATCH();
     }
 

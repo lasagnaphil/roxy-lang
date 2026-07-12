@@ -21,6 +21,8 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::DIV_I:         return "DIV_I";
         case Opcode::MOD_I:         return "MOD_I";
         case Opcode::NEG_I:         return "NEG_I";
+        case Opcode::DIV_U:         return "DIV_U";
+        case Opcode::MOD_U:         return "MOD_U";
 
         // f32 Arithmetic
         case Opcode::ADD_F:         return "ADD_F";
@@ -257,6 +259,8 @@ u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out) {
         case Opcode::MUL_I:
         case Opcode::DIV_I:
         case Opcode::MOD_I:
+        case Opcode::DIV_U:
+        case Opcode::MOD_U:
         case Opcode::ADD_D:
         case Opcode::SUB_D:
         case Opcode::MUL_D:

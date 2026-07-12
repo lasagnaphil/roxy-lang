@@ -116,17 +116,19 @@ inline void for_each_operand(IRInst* inst, Fn&& fn) {
         // ── Binary ops ──
         case IROp::AddI: case IROp::SubI: case IROp::MulI:
         case IROp::DivI: case IROp::ModI:
+        case IROp::DivU: case IROp::ModU:
         case IROp::AddF: case IROp::SubF: case IROp::MulF: case IROp::DivF:
         case IROp::AddD: case IROp::SubD: case IROp::MulD: case IROp::DivD:
         case IROp::EqI: case IROp::NeI: case IROp::LtI:
         case IROp::LeI: case IROp::GtI: case IROp::GeI:
+        case IROp::LtU: case IROp::LeU: case IROp::GtU: case IROp::GeU:
         case IROp::EqF: case IROp::NeF: case IROp::LtF:
         case IROp::LeF: case IROp::GtF: case IROp::GeF:
         case IROp::EqD: case IROp::NeD: case IROp::LtD:
         case IROp::LeD: case IROp::GtD: case IROp::GeD:
         case IROp::And: case IROp::Or:
         case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor:
-        case IROp::Shl: case IROp::Shr:
+        case IROp::Shl: case IROp::Shr: case IROp::UShr:
             fn(inst->binary.left);
             fn(inst->binary.right);
             break;

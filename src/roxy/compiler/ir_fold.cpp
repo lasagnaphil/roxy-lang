@@ -129,6 +129,45 @@ bool fold_binary_const(IROp op, const IRInst* left, const IRInst* right, FoldedC
         return true;
     }
 
+    // Unsigned integer division/modulo — unsigned semantics; only div-by-zero
+    // is left unfolded (no INT_MIN/-1 overflow case for unsigned).
+    case IROp::DivU:
+    case IROp::ModU: {
+        if (left->op != IROp::ConstInt || right->op != IROp::ConstInt) return false;
+        u64 a = static_cast<u64>(left->const_data.int_val);
+        u64 b = static_cast<u64>(right->const_data.int_val);
+        if (b == 0) return false;
+        out.kind = FoldedConst::Kind::Int;
+        out.int_val = static_cast<i64>((op == IROp::DivU) ? (a / b) : (a % b));
+        return true;
+    }
+
+    // Unsigned ordered comparisons.
+    case IROp::LtU:
+    case IROp::LeU:
+    case IROp::GtU:
+    case IROp::GeU: {
+        if (left->op != IROp::ConstInt || right->op != IROp::ConstInt) return false;
+        u64 a = static_cast<u64>(left->const_data.int_val);
+        u64 b = static_cast<u64>(right->const_data.int_val);
+        out.kind = FoldedConst::Kind::Bool;
+        out.bool_val = (op == IROp::LtU) ? (a < b)
+                     : (op == IROp::LeU) ? (a <= b)
+                     : (op == IROp::GtU) ? (a > b)
+                                         : (a >= b);
+        return true;
+    }
+
+    // Logical (unsigned) shift right.
+    case IROp::UShr: {
+        if (left->op != IROp::ConstInt || right->op != IROp::ConstInt) return false;
+        u64 a = static_cast<u64>(left->const_data.int_val);
+        u64 b = static_cast<u64>(right->const_data.int_val) & 63;
+        out.kind = FoldedConst::Kind::Int;
+        out.int_val = static_cast<i64>(a >> b);
+        return true;
+    }
+
     default:
         return false;
     }

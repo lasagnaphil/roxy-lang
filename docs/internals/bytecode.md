@@ -30,7 +30,7 @@ Each function call allocates a new register window from the shared register file
 | Range | Category | Key Opcodes |
 |-------|----------|-------------|
 | 0x00-0x0F | Constants, Moves | `LOAD_NULL`, `LOAD_TRUE`, `LOAD_FALSE`, `LOAD_INT`, `LOAD_CONST`, `MOV` |
-| 0x10-0x1F | Integer Arithmetic | `ADD_I`, `SUB_I`, `MUL_I`, `DIV_I`, `MOD_I`, `NEG_I` |
+| 0x10-0x1F | Integer Arithmetic | `ADD_I`, `SUB_I`, `MUL_I`, `DIV_I`, `MOD_I`, `NEG_I`, `DIV_U`, `MOD_U` |
 | 0x20-0x24 | f32 Arithmetic | `ADD_F`, `SUB_F`, `MUL_F`, `DIV_F`, `NEG_F` |
 | 0x25-0x29 | f64 Arithmetic | `ADD_D`, `SUB_D`, `MUL_D`, `DIV_D`, `NEG_D` |
 | 0x30-0x3F | Bitwise | `BIT_AND`, `BIT_OR`, `BIT_XOR`, `BIT_NOT`, `SHL`, `SHR`, `USHR` |

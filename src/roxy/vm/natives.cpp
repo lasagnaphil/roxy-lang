@@ -312,6 +312,17 @@ static void native_i64_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = reinterpret_cast<u64>(result);
 }
 
+// Native function: u64$$to_string(val: u64) -> string
+static void native_u64_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack_back().registers;
+    u64 val = regs[first_arg];
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%llu", (unsigned long long)val);
+    // Dynamic string: owned (count 1), freed on release (finding 9b).
+    void* result = roxy_string_new_owned(buf, static_cast<u32>(len));
+    regs[dst] = reinterpret_cast<u64>(result);
+}
+
 // Native function: f32$$to_string(val: f32) -> string
 static void native_f32_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
@@ -1064,6 +1075,7 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_native("bool$$to_string",   native_bool_to_string,   "fun to_string(val: bool): string");
     registry.bind_native("i32$$to_string",    native_i32_to_string,    "fun to_string(val: i32): string");
     registry.bind_native("i64$$to_string",    native_i64_to_string,    "fun to_string(val: i64): string");
+    registry.bind_native("u64$$to_string",    native_u64_to_string,    "fun to_string(val: u64): string");
     registry.bind_native("f32$$to_string",    native_f32_to_string,    "fun to_string(val: f32): string");
     registry.bind_native("f64$$to_string",    native_f64_to_string,    "fun to_string(val: f64): string");
     registry.bind_native("string$$to_string", native_string_to_string, "fun to_string(val: string): string");

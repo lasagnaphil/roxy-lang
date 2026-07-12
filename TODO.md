@@ -36,24 +36,35 @@ Last updated: 2026-07-10
 
 ## Planned Features
 
-- [ ] **Native `u32`/`u64` arithmetic** (step 2 of the narrow/unsigned plan settled 2026-07-08;
-  step 1 — narrow-type promotion — landed 2026-07-10, see below). `u32`/`u64` must become
-  native computation types with wrapping unsigned arithmetic (`u32` promotes nothing — it *is*
-  the computation type). Motivated by hashes, packed RGBA colors, and 64-bit handles. Remaining
-  work: add `DIV_U`/`MOD_U` opcodes (`LT_U`/`LE_U`/`GT_U`/`GE_U`, `USHR`, `TRUNC_U` already exist
-  in `bytecode.hpp`); unsigned IR ops + unsigned result-type propagation through sema/IR; and a
-  C-backend fix to emit `uint32_t`/`uint64_t` so unsigned div/mod/shr/compare aren't generated
-  from the signed-`i64` IR path. Until then the semantic layer rejects `u32`/`u64` arithmetic
-  with "operator '…' is not supported for type '…'" (`semantic.cpp` ~4690); regression-guarded
-  by `test_narrow_arith.cpp` ("Wide-unsigned arithmetic stays rejected").
-  - **Done 2026-07-10 — narrow types (`u8`/`u16`/`i8`/`i16`)**: Java/C# numeric promotion. Every
-    binary/unary op promotes narrow operands to *signed* `i32` (in `get_binary_result_type` /
-    `get_unary_result_type` via the new `Type::is_narrow_integer()`), yielding an `i32` result;
-    no new opcodes (signed `AddI`/`LtI`/… + the existing `GET_FIELD` sign-extension invariant
-    cover it). Storing back into a narrow lvalue needs an explicit cast (`check_assignable`'s
-    strict rule), *except* compound assignment, which auto-narrows in `gen_compound_assign`
-    (`x op= y` ⇒ `x = T(x op y)`). The `u8(200)` literal-cast papercut is fixed too
-    (`analyze_primitive_cast` concretizes an `IntLiteral` arg to `i32` before `can_cast`).
+- [ ] **Native `u32` arithmetic** (final piece of the narrow/unsigned plan settled 2026-07-08;
+  narrow-type promotion landed 2026-07-10, native `u64` landed 2026-07-10 — see below). `u32` must
+  become a native computation type with wrapping unsigned arithmetic (packed RGBA colors, 32-bit
+  hashes/IDs). Chosen approach (dedicated `u32` opcodes were evaluated and rejected — a
+  self-contained mask-on-read set needs ~15 opcodes and busts the budget): **canonical
+  zero-extension.** Reuse the `u64` unsigned IR ops (`DivU`/`ModU`/`LtU`../`UShr`) on zero-extended
+  `u32` values — signed-positive, so they're correct — and maintain the invariant with a
+  `TRUNC_U 32` hook after every `u32` producer that can dirty the upper 32 bits (`AddI`/`SubI`/
+  `MulI`/`Shl`/`NegI`/`BitNot`) *and* after `u32` `GetField`/`LoadPtr` (VM `GET_FIELD` sign-extends
+  1-slot reads, so a `u32` field ≥ 2³¹ loads as a negative i64 — the one real hazard). **No new
+  opcodes.** The C backend already handles `u32` for free (`uint32_t`). Gate op-selection on `U32`
+  in `get_binary_op`/`get_comparison_op`/`gen_compound_assign` (currently `U64`-only), register
+  `u32` operators in `trait_system`, remove `U32` from `equality_only_int_types`, and add
+  `u32`/`roxy_u32_to_string` + `roxy_udiv_u32`/`roxy_umod_u32`. Until then the semantic layer
+  rejects `u32` arithmetic (`semantic.cpp` ~4690), regression-guarded by `test_narrow_arith.cpp`
+  ("u32 arithmetic stays rejected").
+  - **Done 2026-07-10 — narrow types (`u8`/`u16`/`i8`/`i16`)**: Java/C# numeric promotion to *signed*
+    `i32` (in `get_binary_result_type`/`get_unary_result_type` via `Type::is_narrow_integer()`);
+    no new opcodes. Storing back into a narrow lvalue needs an explicit cast, *except* compound
+    assignment, which auto-narrows in `gen_compound_assign` (`x op= y` ⇒ `x = T(x op y)`). The
+    `u8(200)` literal-cast papercut is fixed (`analyze_primitive_cast` concretizes `IntLiteral` to
+    `i32`). Tests: `test_narrow_arith.cpp`.
+  - **Done 2026-07-10 — native `u64`**: full-width wrapping arithmetic. 7 unsigned IR ops
+    (`DivU`/`ModU`/`LtU`/`LeU`/`GtU`/`GeU`/`UShr`); new `DIV_U`/`MOD_U` opcodes (`LT_U`../`USHR`
+    already existed, were orphaned); `add`/`sub`/`mul`/`shl`/bitwise/`eq`/`ne` reuse the shared
+    signed ops (bit-identical at 64-bit). No truncation (full width) and `u64` fields are 2 lossless
+    slots, so no `GET_FIELD` hazard. `u64` registered in `trait_system`, op-selection gated on `U64`,
+    C-backend `roxy_udiv_u64`/`roxy_umod_u64`, and `u64` `to_string` (`%llu`) across VM/C/f-string.
+    Tests: `test_unsigned_arith.cpp`.
 - [ ] **First-class coroutine values**: passing or returning a `Coro<T>` fails assignability — an annotated `Coro<T>` resolves to the interned generic type while a coroutine value carries its per-function type (`coroutine_type_for_func`, which encodes the mangled `resume`/`done` names). Needs unified typing plus dynamic resume/done dispatch (the closure design — `__call_idx` + `CALL_INDIRECT` — is the obvious template). Inference already binds `T` from a coro argument.
 - [ ] **Coroutine methods** (`fun S.count(): Coro<i32>`): rejected with an explicit "coroutine methods are not yet supported" error (since 2026-07-05); needs the per-function coro type for methods plus a `self`-carrying state machine in coroutine lowering.
 - [ ] Flow-sensitive typing for tagged union variant fields

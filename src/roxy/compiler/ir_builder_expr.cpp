@@ -2237,6 +2237,8 @@ ValueId IRBuilder::gen_compound_assign(Expr* expr, ValueId rhs, bool& handled) {
     // Primitive compound assignment: fold the target's current value with the RHS.
     ValueId old_val = gen_expr(assign_expr.target);
 
+    // Unsigned div/mod/shr diverge for u64 targets (see get_binary_op).
+    bool is_u64 = type && type->kind == TypeKind::U64;
     IROp op;
     switch (assign_expr.op) {
         case AssignOp::AddAssign:
@@ -2249,10 +2251,10 @@ ValueId IRBuilder::gen_compound_assign(Expr* expr, ValueId rhs, bool& handled) {
             op = type->is_float() ? IROp::MulF : IROp::MulI;
             break;
         case AssignOp::DivAssign:
-            op = type->is_float() ? IROp::DivF : IROp::DivI;
+            op = type->is_float() ? IROp::DivF : (is_u64 ? IROp::DivU : IROp::DivI);
             break;
         case AssignOp::ModAssign:
-            op = IROp::ModI;
+            op = is_u64 ? IROp::ModU : IROp::ModI;
             break;
         case AssignOp::BitAndAssign:
             op = IROp::BitAnd;
@@ -2267,7 +2269,7 @@ ValueId IRBuilder::gen_compound_assign(Expr* expr, ValueId rhs, bool& handled) {
             op = IROp::Shl;
             break;
         case AssignOp::ShrAssign:
-            op = IROp::Shr;
+            op = is_u64 ? IROp::UShr : IROp::Shr;
             break;
         default:
             op = IROp::Copy;
@@ -3007,6 +3009,7 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
                     case TypeKind::Bool:   native_name = "bool$$to_string"; break;
                     case TypeKind::I32:    native_name = "i32$$to_string"; break;
                     case TypeKind::I64:    native_name = "i64$$to_string"; break;
+                    case TypeKind::U64:    native_name = "u64$$to_string"; break;
                     case TypeKind::F32:    native_name = "f32$$to_string"; break;
                     case TypeKind::F64:    native_name = "f64$$to_string"; break;
                     default: break;
@@ -3152,6 +3155,11 @@ ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {
 IROp IRBuilder::get_binary_op(BinaryOp op, Type* type) {
     bool is_f32 = type && type->kind == TypeKind::F32;
     bool is_f64 = type && type->kind == TypeKind::F64;
+    // Unsigned discrimination is gated on U64 only: add/sub/mul/shl/bitwise are
+    // bit-identical for signed/unsigned at 64-bit width, so only div/mod/shr
+    // diverge. (u32 arithmetic is not yet enabled — see TODO.md — so we do not
+    // route it here; its canonicalization would need to land first.)
+    bool is_u64 = type && type->kind == TypeKind::U64;
 
     switch (op) {
         case BinaryOp::Add:
@@ -3161,9 +3169,9 @@ IROp IRBuilder::get_binary_op(BinaryOp op, Type* type) {
         case BinaryOp::Mul:
             return is_f32 ? IROp::MulF : (is_f64 ? IROp::MulD : IROp::MulI);
         case BinaryOp::Div:
-            return is_f32 ? IROp::DivF : (is_f64 ? IROp::DivD : IROp::DivI);
+            return is_f32 ? IROp::DivF : (is_f64 ? IROp::DivD : (is_u64 ? IROp::DivU : IROp::DivI));
         case BinaryOp::Mod:
-            return IROp::ModI;
+            return is_u64 ? IROp::ModU : IROp::ModI;
         case BinaryOp::BitAnd:
             return IROp::BitAnd;
         case BinaryOp::BitOr:
@@ -3173,7 +3181,7 @@ IROp IRBuilder::get_binary_op(BinaryOp op, Type* type) {
         case BinaryOp::Shl:
             return IROp::Shl;
         case BinaryOp::Shr:
-            return IROp::Shr;
+            return is_u64 ? IROp::UShr : IROp::Shr;
         default:
             return IROp::Copy;
     }
@@ -3182,6 +3190,8 @@ IROp IRBuilder::get_binary_op(BinaryOp op, Type* type) {
 IROp IRBuilder::get_comparison_op(BinaryOp op, Type* type) {
     bool is_f32 = type && type->kind == TypeKind::F32;
     bool is_f64 = type && type->kind == TypeKind::F64;
+    // eq/ne are bit compares (same signed/unsigned); only ordered compares diverge.
+    bool is_u64 = type && type->kind == TypeKind::U64;
 
     switch (op) {
         case BinaryOp::Equal:
@@ -3189,13 +3199,13 @@ IROp IRBuilder::get_comparison_op(BinaryOp op, Type* type) {
         case BinaryOp::NotEqual:
             return is_f32 ? IROp::NeF : (is_f64 ? IROp::NeD : IROp::NeI);
         case BinaryOp::Less:
-            return is_f32 ? IROp::LtF : (is_f64 ? IROp::LtD : IROp::LtI);
+            return is_f32 ? IROp::LtF : (is_f64 ? IROp::LtD : (is_u64 ? IROp::LtU : IROp::LtI));
         case BinaryOp::LessEq:
-            return is_f32 ? IROp::LeF : (is_f64 ? IROp::LeD : IROp::LeI);
+            return is_f32 ? IROp::LeF : (is_f64 ? IROp::LeD : (is_u64 ? IROp::LeU : IROp::LeI));
         case BinaryOp::Greater:
-            return is_f32 ? IROp::GtF : (is_f64 ? IROp::GtD : IROp::GtI);
+            return is_f32 ? IROp::GtF : (is_f64 ? IROp::GtD : (is_u64 ? IROp::GtU : IROp::GtI));
         case BinaryOp::GreaterEq:
-            return is_f32 ? IROp::GeF : (is_f64 ? IROp::GeD : IROp::GeI);
+            return is_f32 ? IROp::GeF : (is_f64 ? IROp::GeD : (is_u64 ? IROp::GeU : IROp::GeI));
         default:
             return IROp::EqI;
     }

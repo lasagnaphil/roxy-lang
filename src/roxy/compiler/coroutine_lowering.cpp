@@ -380,7 +380,7 @@ static void remap_inst_values(const tsl::robin_map<u32, ValueId>& value_map, IRI
         default:
             // Unary/binary ops
             inst->unary = remap_value(value_map, inst->unary);
-            if (inst->op >= IROp::AddI && inst->op <= IROp::Shr) {
+            if (inst->op >= IROp::AddI && inst->op <= IROp::UShr) {
                 inst->binary.left = remap_value(value_map, inst->binary.left);
                 inst->binary.right = remap_value(value_map, inst->binary.right);
             }

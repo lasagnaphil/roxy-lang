@@ -57,6 +57,8 @@ enum class IROp : u8 {
     MulI,
     DivI,
     ModI,
+    DivU,           // unsigned division
+    ModU,           // unsigned modulo
     NegI,
 
     // Arithmetic (f32)
@@ -80,6 +82,12 @@ enum class IROp : u8 {
     LeI,
     GtI,
     GeI,
+    // Unsigned ordered comparisons (eq/ne are bit-identical, reuse EqI/NeI).
+    // Kept inside the [EqI, GeU] span so lowering's is_cmp range check covers them.
+    LtU,
+    LeU,
+    GtU,
+    GeU,
 
     // Comparison (f32)
     EqF,
@@ -109,6 +117,7 @@ enum class IROp : u8 {
     BitNot,
     Shl,
     Shr,
+    UShr,           // logical (unsigned) shift right; kept last of the [AddI, UShr] binary span
 
     // Type conversions
     I_TO_F64,       // int to f64
