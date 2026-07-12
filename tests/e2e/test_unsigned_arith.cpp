@@ -153,4 +153,112 @@ TEST_SUITE("E2E Unsigned Arithmetic") {
         CHECK(result.stdout_output == "12345678901234567890\n");
     }
 
+    // ── u32: native arithmetic via canonical zero-extension (32-bit wrapping) ──
+    // The VM keeps u32 values zero-extended (lowering's TRUNC_U 32 hook after
+    // producers that dirty bits >= 32, and after GET_FIELD's sign-extending load);
+    // the C backend gets it for free from the uint32_t type.
+
+    TEST_CASE_TEMPLATE("u32 add/mul wrap at 32 bits", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var a: u32 = 0xFFFFFFFFu;
+            var two: u32 = 2u;
+            print(f"{a + two}");
+            print(f"{a * two}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        // (2^32-1)+2 = 1; (2^32-1)*2 = 2^32-2 (both mod 2^32).
+        CHECK(result.stdout_output == "1\n4294967294\n");
+    }
+
+    TEST_CASE_TEMPLATE("u32 unsigned comparison / division / shift with high bit set", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var a: u32 = 0x80000000u;
+            var one: u32 = 1u;
+            var two: u32 = 2u;
+            var three: u32 = 3u;
+            print(f"{a > one}");
+            print(f"{a / two}");
+            print(f"{a % three}");
+            print(f"{a >> one}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        // 2^31 is > 1 (unsigned); /2 = 2^30; %3 = 2; >>1 = 2^30 (logical).
+        CHECK(result.stdout_output == "true\n1073741824\n2\n1073741824\n");
+    }
+
+    TEST_CASE_TEMPLATE("u32 struct field with high bit set", Backend, RX_E2E_BACKENDS) {
+        // The key VM hazard: GET_FIELD sign-extends a 1-slot load, so a u32 field
+        // >= 2^31 would read back as a negative i64 without the TRUNC_U 32 fix.
+        const char* source = R"(
+        struct S { v: u32; }
+        fun main(): i32 {
+            var s: S = S { v = 0x80000000u };
+            var one: u32 = 1u;
+            print(f"{s.v}");
+            print(f"{s.v > one}");
+            print(f"{s.v + one}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        // s.v = 2^31; > 1 true; +1 = 2^31+1 (no sign-extension garbage).
+        CHECK(result.stdout_output == "2147483648\ntrue\n2147483649\n");
+    }
+
+    TEST_CASE_TEMPLATE("u32 compound assignment wraps", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var h: u32 = 0xFFFFFFFFu;
+            h *= 2u;
+            print(f"{h}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "4294967294\n");
+    }
+
+    TEST_CASE_TEMPLATE("Wrapping FNV-1a-32 hash", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var h: u32 = 2166136261u;
+            var prime: u32 = 16777619u;
+            var i: u32 = 1u;
+            while (i <= 4u) {
+                h = h ^ i;
+                h = h * prime;
+                i = i + 1u;
+            }
+            print(f"{h}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1463068797\n");
+    }
+
+    TEST_CASE_TEMPLATE("u32 prints as unsigned", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var x: u32 = 0xFFFFFFFFu;
+            print(f"{x}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "4294967295\n");  // not -1
+    }
+
 }  // TEST_SUITE("E2E Unsigned Arithmetic")

@@ -310,21 +310,22 @@ TEST_SUITE("E2E Int Literals") {
         CHECK(result.value == 3);
     }
 
-    TEST_CASE_TEMPLATE("Unsupported unsigned arithmetic is a loud error", Backend, RX_E2E_BACKENDS) {
-        // u32 + u32 used to type as Error with NO diagnostic and compile to
-        // garbage. There is still no unsigned arithmetic backend support, but
-        // now it fails compilation with a clear message.
+    TEST_CASE_TEMPLATE("Unsigned arithmetic is supported", Backend, RX_E2E_BACKENDS) {
+        // u32 + u32 once typed as Error with no diagnostic; it now has native
+        // unsigned arithmetic (see test_unsigned_arith.cpp for the semantics).
         const char* source = R"(
         fun main(): i32 {
             var x: u32 = 40;
             var y: u32 = 2;
-            var z = x + y;
+            var z: u32 = x + y;
+            print(f"{z}");
             return 0;
         }
     )";
 
         auto result = Backend::run(source);
-        CHECK_FALSE(result.success);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
     }
 
 }  // TEST_SUITE("E2E Int Literals")

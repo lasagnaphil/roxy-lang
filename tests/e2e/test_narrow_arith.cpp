@@ -286,20 +286,4 @@ TEST_SUITE("E2E Narrow Arithmetic") {
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE_TEMPLATE("u32 arithmetic stays rejected", Backend, RX_E2E_BACKENDS) {
-        // u32 is not promoted and does not yet have native arithmetic (it needs the
-        // VM-side canonical-zero-extension + GET_FIELD fix); it must still fail to
-        // compile. (u64 arithmetic now works — see test_unsigned_arith.cpp.)
-        const char* source = R"(
-        fun main(): i32 {
-            var a: u32 = 40;
-            var b: u32 = 2;
-            var c = a + b;
-            return 0;
-        }
-    )";
-        auto result = Backend::run(source);
-        CHECK_FALSE(result.success);
-    }
-
 }  // TEST_SUITE("E2E Narrow Arithmetic")

@@ -79,13 +79,13 @@ Type* TraitSystem::register_builtin_index_trait(StringView name, StringView meth
 void TraitSystem::register_builtin_traits() {
     if (!m_type_env.printable_type()) {
         TypeKind prim_kinds[] = {
-            TypeKind::Bool, TypeKind::I32, TypeKind::I64, TypeKind::U64,
+            TypeKind::Bool, TypeKind::I32, TypeKind::I64, TypeKind::U32, TypeKind::U64,
             TypeKind::F32, TypeKind::F64, TypeKind::String
         };
         Type* printable_type = register_builtin_trait(
             StringView("Printable", 9), StringView("to_string", 9),
             Span<Type*>(nullptr, 0), m_types.string_type(),
-            Span<TypeKind>(prim_kinds, 7), /*register_trait_on_primitives=*/true);
+            Span<TypeKind>(prim_kinds, 8), /*register_trait_on_primitives=*/true);
         m_type_env.set_printable_type(printable_type);
     }
 
@@ -186,14 +186,16 @@ void TraitSystem::register_primitive_operator_methods() {
         }
     };
 
-    // Register for integer types (I32, I64) and the native unsigned type U64.
-    // U64 is full-width, so add/sub/mul/shl/bitwise wrap identically to the signed
-    // ops; the IR builder selects the unsigned IR ops (DivU/ModU/LtU../UShr) for
-    // div/mod/ordered-compare/shr where signedness matters. `return_type = entry.type`
-    // makes `u64 op u64 -> u64`.
+    // Register for integer types (I32, I64) and the native unsigned types U32/U64.
+    // The IR builder selects the unsigned IR ops (DivU/ModU/LtU../UShr) for
+    // div/mod/ordered-compare/shr where signedness matters; add/sub/mul/shl/bitwise
+    // reuse the shared ops. `return_type = entry.type` makes `uN op uN -> uN`.
+    // U32 values are kept canonically zero-extended (lowering's TRUNC_U 32 hook)
+    // so the 64-bit unsigned ops are correct and results wrap at 32 bits.
     struct { TypeKind kind; Type* type; } int_types[] = {
         { TypeKind::I32, m_types.i32_type() },
         { TypeKind::I64, m_types.i64_type() },
+        { TypeKind::U32, m_types.u32_type() },
         { TypeKind::U64, m_types.u64_type() },
     };
     for (auto& entry : int_types) {
@@ -239,22 +241,18 @@ void TraitSystem::register_primitive_operator_methods() {
         register_ops(entry.kind, compound_ops, 4, self_param, m_types.void_type());
     }
 
-    // Equality for the remaining integer kinds (i8/i16/u8/u16/u32):
+    // Equality for the remaining narrow integer kinds (i8/i16/u8/u16):
     // same-type equality on canonically stored values is a bit comparison,
     // so the signed EqI/NeI lowering is correct regardless of signedness.
     // Ordered comparisons, arithmetic, and bitwise ops are deliberately NOT
-    // registered for these kinds. i8/i16/u8/u16 promote to i32 for arithmetic
-    // (handled before operator resolution). u32 still lacks the VM-side width
-    // management (canonical zero-extension + the GET_FIELD sign-extension fix),
-    // so registering its arithmetic would miscompile — full u32 support is
-    // tracked in TODO.md. (u64 moved to the native-arithmetic block above.)
+    // registered: these promote to i32 for arithmetic (handled before operator
+    // resolution). (u32 and u64 have native arithmetic — the block above.)
     {
         struct { TypeKind kind; Type* type; } equality_only_int_types[] = {
             { TypeKind::I8,  m_types.i8_type()  },
             { TypeKind::I16, m_types.i16_type() },
             { TypeKind::U8,  m_types.u8_type()  },
             { TypeKind::U16, m_types.u16_type() },
-            { TypeKind::U32, m_types.u32_type() },
         };
         const char* eq_ops[] = { "eq", "ne" };
         for (auto& entry : equality_only_int_types) {

@@ -967,8 +967,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             const char* fn;
             switch (inst->op) {
                 // Unsigned helpers guard only divide-by-zero (no INT_MIN/-1 case).
-                case IROp::DivU: fn = "roxy_udiv_u64"; break;
-                case IROp::ModU: fn = "roxy_umod_u64"; break;
+                case IROp::DivU: fn = is64 ? "roxy_udiv_u64" : "roxy_udiv_u32"; break;
+                case IROp::ModU: fn = is64 ? "roxy_umod_u64" : "roxy_umod_u32"; break;
                 case IROp::DivI: fn = is64 ? "roxy_idiv_i64" : "roxy_idiv_i32"; break;
                 default:         fn = is64 ? "roxy_imod_i64" : "roxy_imod_i32"; break;
             }
@@ -3327,6 +3327,7 @@ static const char* lookup_static_native_mapping(StringView name) {
         {"bool$$to_string", "roxy_bool_to_string"},
         {"i32$$to_string", "roxy_i32_to_string"},
         {"i64$$to_string", "roxy_i64_to_string"},
+        {"u32$$to_string", "roxy_u32_to_string"},
         {"u64$$to_string", "roxy_u64_to_string"},
         {"f32$$to_string", "roxy_f32_to_string"},
         {"f64$$to_string", "roxy_f64_to_string"},

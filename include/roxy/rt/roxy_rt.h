@@ -42,6 +42,16 @@ static inline int64_t roxy_imod_i64(int64_t a, int64_t b) {
     return a % b;
 }
 // Unsigned division/modulo: only divide-by-zero is undefined (no INT_MIN/-1 trap).
+static inline uint32_t roxy_udiv_u32(uint32_t a, uint32_t b) {
+    assert(b != 0 && "Division by zero");
+    if (b == 0) return 0;
+    return a / b;
+}
+static inline uint32_t roxy_umod_u32(uint32_t a, uint32_t b) {
+    assert(b != 0 && "Division by zero");
+    if (b == 0) return 0;
+    return a % b;
+}
 static inline uint64_t roxy_udiv_u64(uint64_t a, uint64_t b) {
     assert(b != 0 && "Division by zero");
     if (b == 0) return 0;
@@ -345,6 +355,7 @@ void  roxy_string_intern_insert(void* table, const char* chars, uint32_t length,
 void* roxy_bool_to_string(bool val);
 void* roxy_i32_to_string(int32_t val);
 void* roxy_i64_to_string(int64_t val);
+void* roxy_u32_to_string(uint32_t val);
 void* roxy_u64_to_string(uint64_t val);
 void* roxy_f32_to_string(float val);
 void* roxy_f64_to_string(double val);

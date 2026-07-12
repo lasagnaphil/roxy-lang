@@ -72,6 +72,13 @@ private:
     u8 get_result_register(ValueId value);
     u8 ensure_in_register(ValueId value, u8 scratch_index);
     void spill_if_needed(ValueId value, u8 reg);
+    // Re-canonicalize a u32 result to zero-extended form (TRUNC_U 32). u32 values
+    // must stay zero-extended so the 64-bit unsigned ops (LT_U/DIV_U/USHR) are
+    // correct: 64-bit arithmetic can dirty bits >= 32, and GET_FIELD sign-extends
+    // 1-slot loads. A no-op on already-canonical values, so callers may invoke it
+    // after any u32-typed producer. Only emits when reg is a real register (not a
+    // spill sentinel); call before spill_if_needed so the canonical value spills.
+    void canonicalize_u32(IRInst* inst, u8 reg);
 
     // Liveness analysis
     void compute_liveness(IRFunction* ir_func);

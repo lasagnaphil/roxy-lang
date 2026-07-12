@@ -528,6 +528,12 @@ void* roxy_i64_to_string(int64_t val) {
     return roxy_string_new_owned(buf, static_cast<uint32_t>(len));
 }
 
+void* roxy_u32_to_string(uint32_t val) {
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%u", val);
+    return roxy_string_new_owned(buf, static_cast<uint32_t>(len));
+}
+
 void* roxy_u64_to_string(uint64_t val) {
     char buf[32];
     int len = snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(val));

@@ -932,6 +932,13 @@ void BytecodeBuilder::spill_if_needed(ValueId value, u8 reg) {
     }
 }
 
+void BytecodeBuilder::canonicalize_u32(IRInst* inst, u8 reg) {
+    if (reg == 0xFF) return;
+    if (inst->type && inst->type->kind == TypeKind::U32) {
+        emit_abc(Opcode::TRUNC_U, reg, reg, 32);
+    }
+}
+
 // Helper to update last_use_point for a value
 static void mark_use(Vector<LiveRange>& live_ranges, ValueId value, u32 point) {
     if (!value.is_valid()) return;
@@ -1841,6 +1848,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             // LOAD_INT/LOAD_CONST into the constant-pool index field. Saves one
             // dispatch + memory write per iteration in tight loops.
             if (try_emit_rk_binary(inst, dst)) {
+                canonicalize_u32(inst, dst);
                 spill_if_needed(inst->result, dst);
                 break;
             }
@@ -1861,6 +1869,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 !m_value_same_block[inst->result.id]) {
                 m_unfusable_cmp_pcs.insert(cmp_pc);
             }
+            canonicalize_u32(inst, dst);
             spill_if_needed(inst->result, dst);
             break;
         }
@@ -1877,6 +1886,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::B_TO_I: {
             u8 src = ensure_in_register(inst->unary, 1);
             emit_abc(get_opcode(inst->op), dst, src, 0);
+            canonicalize_u32(inst, dst);
             spill_if_needed(inst->result, dst);
             break;
         }
@@ -2224,6 +2234,9 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             u16 slot_offset = static_cast<u16>(inst->field.slot_offset);
             emit_abc(Opcode::GET_FIELD, dst, obj, slot_count);
             emit(static_cast<u32>(slot_offset));  // Second instruction word with slot offset
+            // A u32 field ≥ 2^31 sign-extends through GET_FIELD's 1-slot load;
+            // re-zero-extend so the canonical-u32 invariant holds.
+            canonicalize_u32(inst, dst);
             spill_if_needed(inst->result, dst);
             break;
         }
@@ -2497,6 +2510,8 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             u8 slot_count = static_cast<u8>(inst->load_ptr.slot_count);
             emit_abc(Opcode::GET_FIELD, dst, ptr_reg, slot_count);
             emit(0);  // offset = 0
+            // Same sign-extension hazard as GetField for a u32 load-through-pointer.
+            canonicalize_u32(inst, dst);
             spill_if_needed(inst->result, dst);
             break;
         }

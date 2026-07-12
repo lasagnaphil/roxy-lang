@@ -1010,30 +1010,9 @@ TEST_SUITE("Semantic") {
     }
 
     TEST_CASE("Semantic: unsupported primitive operators error loudly") {
-        SUBCASE("u32 arithmetic") {
-            SemanticTestHelper t;
-            CHECK(!t.run(R"(
-            fun test() {
-                var x: u32 = 40;
-                var y: u32 = 2;
-                var z = x + y;
-            }
-        )"));
-            CHECK(t.has_error_containing("operator '+' is not supported for type 'u32'"));
-        }
-
-        SUBCASE("u32 ordered comparison") {
-            SemanticTestHelper t;
-            CHECK(!t.run(R"(
-            fun test(): bool {
-                var x: u32 = 1;
-                var y: u32 = 2;
-                return x < y;
-            }
-        )"));
-            CHECK(t.has_error_containing("operator '<' is not supported for type 'u32'"));
-        }
-
+        // Float modulo is now the only "numeric type, same type, no registered
+        // operator" case left: narrow ints promote to i32, and u32/u64 have native
+        // arithmetic. (string/bool arithmetic reports "invalid operands" instead.)
         SUBCASE("float modulo") {
             SemanticTestHelper t;
             CHECK(!t.run(R"(
@@ -1046,15 +1025,18 @@ TEST_SUITE("Semantic") {
             CHECK(t.has_error_containing("operator '%' is not supported for type 'f32'"));
         }
 
-        SUBCASE("unary negate on unsigned") {
+        SUBCASE("u32 arithmetic is now supported") {
             SemanticTestHelper t;
-            CHECK(!t.run(R"(
-            fun test(): u32 {
-                var x: u32 = 1;
-                return -x;
+            CHECK(t.run(R"(
+            fun test() {
+                var x: u32 = 40;
+                var y: u32 = 2;
+                var z = x + y;
+                var less = x < y;
+                var neg = -x;
             }
         )"));
-            CHECK(t.has_error_containing("operator '-' is not supported for type 'u32'"));
+            CHECK(t.error_count() == 0);
         }
 
         SUBCASE("u64 equality is supported") {
