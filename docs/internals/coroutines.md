@@ -130,23 +130,40 @@ This works because resume/done dispatch **dynamically**, mirroring the closure d
 - **`done()` is inlined.** `__state` sits at a fixed slot in every coroutine struct, so `done()` is a load + compare against `CORO_STATE_DONE` — no dispatch, no `$$done` function.
 - **Erased deletion.** An owned erased `Coro<T>` drops via `DropKind::Closure`: the VM dispatches the state-struct destructor by runtime `type_id` (`closure_env_dtors`), the C backend by `__resume_idx` (`__closure_delete`, with the resume function registered in `g_closure_fns[]`). Both run `__coro_<func>$$delete`, then free.
 
+## Coroutine Methods
+
+A struct method can be a coroutine — `fun S.count(): Coro<i32> { ... yield ...; }`. It works because a method's `self` is a real first parameter (`ref S`), and coroutine lowering captures every parameter into the state struct, so `self` is captured and ref-counted for the coroutine's lifetime exactly like any `ref` parameter. No coroutine-lowering changes were needed:
+
+```roxy
+struct Counter { start: i32; }
+fun Counter.up_to(limit: i32): Coro<i32> {
+    var i: i32 = self.start;
+    while (i < limit) { yield i; i = i + 1; }
+}
+```
+
+- A method is a coroutine iff its body yields (`MethodDecl::is_coroutine`, classified in `register_method_signature` — the method analogue of `register_fun_signature`). A non-yielding `Coro<T>`-returning method is an ordinary method that returns a first-class coroutine value.
+- The state struct / functions are named from the mangled method name: `__coro_S$$count`, `__coro_S$$count$$resume`, `__coro_S$$count$$delete` (the per-function coro type's `func_name` is set to `mangle_method`'s output so these agree).
+- `self` is always `ref self` — the coroutine borrows the receiver for its whole lifetime, so the receiver must outlive the coroutine (deleting it earlier traps, like any borrowed owner). Value/weak `self` capture is not supported.
+- **Not yet supported:** coroutine methods on generic structs (`fun Box<T>.gen()`) or trait methods — both are rejected with a clear "not yet supported on generic structs or in traits" error. Tracked in TODO.md.
+
 ## Restrictions
 
 - `yield` inside `finally` is a compile-time error — `finally` runs in multiple contexts (normal and exception exit), making coroutine state management infeasible.
 - `return <value>` inside a coroutine (a function that yields) is a compile-time error — use `yield` to produce values; bare `return;` ends the coroutine early. (A non-yielding `Coro<T>`-returning function is not a coroutine and may return a coroutine value.)
-- **Methods cannot be coroutines** — a method returning `Coro<T>` is rejected with "coroutine methods are not yet supported" (the body is still analyzed in coroutine context so its yields type-check without cascading errors). Needs the per-function coro type for methods plus a `self`-carrying state machine; use a free function taking the struct as a parameter instead. Tracked in TODO.md under Planned Features.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `include/roxy/shared/token_kinds.hpp` | `KwYield` token |
-| `include/roxy/compiler/ast.hpp` | `YieldStmt` AST node |
-| `src/roxy/compiler/parser.cpp` | `yield_statement()` parser |
+| `include/roxy/compiler/ast.hpp` | `YieldStmt` AST node; `FunDecl::is_coroutine`, `MethodDecl::is_coroutine` |
+| `src/roxy/compiler/parser.cpp` | `yield_statement()` parser; `MethodDecl::is_coroutine` init (union-safety) |
 | `include/roxy/compiler/types.hpp` | `TypeKind::Coroutine`, `CoroutineTypeInfo` |
 | `src/roxy/compiler/types.cpp` | `coroutine_type()`, `coroutine_type_for_func()`, `lookup_coro_method()`, `compute_drop_plan` (erased → `Closure`) |
 | `src/roxy/compiler/type_checker.cpp` | Coroutine assignability (yield-type match) |
-| `src/roxy/compiler/semantic.cpp` | yield-based coroutine classification (`stmt_contains_yield`), `populate_coro_methods()`, yield/return validation |
+| `src/roxy/compiler/semantic.cpp` | yield-based coroutine classification for functions & methods (`stmt_contains_yield`, `register_method_signature`), coroutine-method body context / generic+trait guards (`analyze_member_body`, `resolve_method_member`), `populate_coro_methods()`, yield/return validation |
+| `src/roxy/compiler/ir_builder.cpp` (`build_method`) | Coroutine-method detection: per-function coro type from `MethodInfo`, `self` captured as a `ref` param |
 | `include/roxy/compiler/ssa_ir.hpp` | `IROp::Yield`, `IROp::FuncIndex`, coroutine metadata on `IRFunction` |
 | `src/roxy/compiler/ir_builder_expr.cpp` | `resume()` → `CallIndirect`, `done()` → inline `__state` compare |
 | `src/roxy/compiler/ir_builder.cpp` | `gen_yield_stmt()`, live-variable capture, resume blocks |

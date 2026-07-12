@@ -1694,6 +1694,12 @@ Decl* Parser::method_declaration(bool is_pub, bool is_native,
     decl->method_decl.is_native = is_native;
     decl->method_decl.trait_name = trait_name;
     decl->method_decl.trait_type_args = trait_type_args;
+    // Classified in semantic analysis (register_method_signature). Must be
+    // initialized here: MethodDecl lives in Decl's union, whose constructor only
+    // zeroes var_decl, so this field would otherwise be garbage. (Same union
+    // hazard the FunDecl::is_coroutine version hit — a non-deterministic
+    // mis-classification.)
+    decl->method_decl.is_coroutine = false;
     return decl;
 }
 

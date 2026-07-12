@@ -941,9 +941,9 @@ TEST_SUITE("Semantic") {
         CHECK(t.error_count() == 0);
     }
 
-    TEST_CASE("Semantic: coroutine methods get an honest unsupported error") {
+    TEST_CASE("Semantic: coroutine methods are supported (self is a captured ref param)") {
         SemanticTestHelper t;
-        CHECK(!t.run(R"(
+        CHECK(t.run(R"(
         struct S { n: i32 = 3; }
 
         fun S.count(): Coro<i32> {
@@ -954,9 +954,41 @@ TEST_SUITE("Semantic") {
             }
         }
     )"));
-        CHECK(t.has_error_containing("coroutine methods are not yet supported"));
-        // The old behavior was a misleading yield-placement error on a method
-        // that plainly returns Coro<T>.
+        CHECK(t.error_count() == 0);
+    }
+
+    TEST_CASE("Semantic: coroutine methods on generic structs are rejected clearly") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        struct Box<T> { value: T; }
+
+        fun Box<T>.gen(): Coro<T> {
+            yield self.value;
+        }
+
+        fun main(): i32 {
+            var b: Box<i32> = Box { value = 5 };
+            return 0;
+        }
+    )"));
+        CHECK(t.has_error_containing("not yet supported on generic structs or in traits"));
+        // Not the misleading yield-placement error.
+        CHECK(!t.has_error_containing("'yield' can only appear inside a coroutine function"));
+    }
+
+    TEST_CASE("Semantic: coroutine trait-impl methods are rejected clearly") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+        trait Gen;
+        fun Gen.produce(): Coro<i32>;
+
+        struct S { n: i32 = 1; }
+
+        fun S.produce(): Coro<i32> for Gen {
+            yield self.n;
+        }
+    )"));
+        CHECK(t.has_error_containing("not yet supported on generic structs or in traits"));
         CHECK(!t.has_error_containing("'yield' can only appear inside a coroutine function"));
     }
 

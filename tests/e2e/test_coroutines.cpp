@@ -1212,4 +1212,206 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "drop R\n");
     }
 
+    // ========================================================================
+    // Coroutine methods (`fun S.count(): Coro<T>`). `self` is captured into the
+    // coroutine state struct like any `ref` parameter.
+    // ========================================================================
+
+    TEST_CASE_TEMPLATE("Coroutine method basic self yield", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct S { n: i32 = 0; }
+        fun S.count(): Coro<i32> {
+            yield self.n;
+        }
+        fun main(): i32 {
+            var s: uniq S = uniq S();
+            s.n = 3;
+            var c = s.count();
+            return c.resume();
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine method state across yields", Backend, RX_E2E_BACKENDS) {
+        // self + a promoted local both survive across yields. (Asserts on stdout
+        // so the multi-value sequence isn't clamped by the C backend's exit code.)
+        const char* source = R"(
+        struct S { n: i32 = 0; }
+        fun S.countdown(): Coro<i32> {
+            var i: i32 = self.n;
+            while (i > 0) {
+                yield i;
+                i = i - 1;
+            }
+        }
+        fun main(): i32 {
+            var s: uniq S = uniq S();
+            s.n = 3;
+            var c = s.countdown();
+            print(f"{c.resume()}");   // 3
+            print(f"{c.resume()}");   // 2
+            print(f"{c.resume()}");   // 1
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "3\n2\n1\n");
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine method done to completion", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct S { n: i32 = 0; }
+        fun S.once(): Coro<i32> { yield self.n; }
+        fun to_int(b: bool): i32 { if (b) { return 1; } return 0; }
+        fun main(): i32 {
+            var s: uniq S = uniq S();
+            s.n = 7;
+            var c = s.once();
+            print(f"{to_int(c.done())}");   // 0 (not done)
+            print(f"{c.resume()}");         // 7
+            c.resume();                     // run past last yield
+            print(f"{to_int(c.done())}");   // 1 (done)
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "0\n7\n1\n");
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine method two live instances", Backend, RX_E2E_BACKENDS) {
+        // Two coroutine values from the same method on different receivers keep
+        // independent state.
+        const char* source = R"(
+        struct Counter { start: i32 = 0; }
+        fun Counter.gen(): Coro<i32> {
+            var i: i32 = self.start;
+            while (i < self.start + 100) {
+                yield i;
+                i = i + 1;
+            }
+        }
+        fun main(): i32 {
+            var a: uniq Counter = uniq Counter();
+            a.start = 10;
+            var b: uniq Counter = uniq Counter();
+            b.start = 20;
+            var ca = a.gen();
+            var cb = b.gen();
+            var r: i32 = 0;
+            r = r + ca.resume();   // 10
+            r = r + cb.resume();   // 20
+            r = r + ca.resume();   // 11
+            r = r + cb.resume();   // 21
+            return r;              // 62
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 62);
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine method inherited field and self method call", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Base { base_val: i32 = 0; }
+        fun Base.get_base(): i32 { return self.base_val; }
+        struct Derived : Base { extra: i32 = 0; }
+        fun Derived.gen(): Coro<i32> {
+            yield self.get_base();   // call an inherited method from the coroutine
+            yield self.extra;        // read own field
+            yield self.base_val;     // read inherited field directly
+        }
+        fun main(): i32 {
+            var d: uniq Derived = uniq Derived();
+            d.base_val = 5;
+            d.extra = 7;
+            var c = d.gen();
+            print(f"{c.resume()}");   // 5 (inherited method)
+            print(f"{c.resume()}");   // 7 (own field)
+            print(f"{c.resume()}");   // 5 (inherited field)
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "5\n7\n5\n");
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine-returning method that forwards (no yield)", Backend, RX_E2E_BACKENDS) {
+        // A non-yielding Coro<T>-returning method is an ordinary method that
+        // returns a first-class coroutine value. Also confirms build_method uses
+        // the MethodInfo return type (resolve_return_type would give `void`).
+        const char* source = R"(
+        fun free_gen(): Coro<i32> { yield 1; yield 2; }
+        struct Factory { unused: i32 = 0; }
+        fun Factory.make(): Coro<i32> {
+            return free_gen();
+        }
+        fun main(): i32 {
+            var f: uniq Factory = uniq Factory();
+            var c = f.make();
+            return c.resume() + c.resume();   // 3
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 3);
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine method balanced teardown", Backend, RX_E2E_BACKENDS) {
+        // The coroutine value and its receiver both live to scope end; LIFO
+        // teardown deletes the coroutine (releasing its self-borrow) before the
+        // receiver — no trap.
+        const char* source = R"(
+        struct S { n: i32 = 0; }
+        fun S.gen(): Coro<i32> { yield self.n; yield self.n; }
+        fun main(): i32 {
+            var s: uniq S = uniq S();
+            s.n = 4;
+            var c = s.gen();
+            var v: i32 = c.resume();
+            return v;   // 4
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 4);
+    }
+
+    TEST_CASE("Coroutine method self-borrow traps if receiver deleted while alive") {
+        // The coroutine borrows `self` for its whole lifetime; deleting the
+        // receiver while the coroutine is still alive must trap. (VM-only: asserts
+        // a runtime trap.)
+        const char* before_resume = R"(
+        struct S { n: i32 = 0; }
+        fun S.gen(): Coro<i32> { yield self.n; yield self.n; }
+        fun main(): i32 {
+            var s: uniq S = uniq S();
+            s.n = 4;
+            var c = s.gen();
+            delete s;          // c still borrows s → trap
+            return 0;
+        }
+    )";
+        CHECK(VMBackend::run(before_resume).success == false);
+
+        const char* mid_iteration = R"(
+        struct S { n: i32 = 0; }
+        fun S.gen(): Coro<i32> { yield self.n; yield self.n; }
+        fun main(): i32 {
+            var s: uniq S = uniq S();
+            s.n = 4;
+            var c = s.gen();
+            var a: i32 = c.resume();   // suspended mid-iteration, still borrows s
+            delete s;                  // trap
+            return a;
+        }
+    )";
+        CHECK(VMBackend::run(mid_iteration).success == false);
+    }
+
 }  // TEST_SUITE("E2E Coroutines")

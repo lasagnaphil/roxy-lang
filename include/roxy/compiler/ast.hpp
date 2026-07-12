@@ -757,6 +757,10 @@ struct MethodDecl {
     bool is_native;            // true for native method declarations
     StringView trait_name;     // Non-empty for "fun Type.method() for Trait"
     Span<TypeExpr*> trait_type_args;   // Type args in "for Trait<Args>"
+    // Set by semantic analysis (register_method_signature): true iff the return
+    // type is Coro<T> AND the body yields — same yield-based classification as
+    // FunDecl::is_coroutine. Read by analyze_member_body and build_method.
+    bool is_coroutine = false;
 };
 
 // Trait declaration: trait Name; or trait Name<T>; or trait Name : Parent;

@@ -698,14 +698,31 @@ void SemanticAnalyzer::resolve_destructor_member(Decl* decl) {
 void SemanticAnalyzer::resolve_method_member(Decl* decl) {
     MethodDecl& method_decl = decl->method_decl;
 
+    // Coroutine trait methods are not supported in v1 (scope: non-generic,
+    // non-trait instance methods). Reject them BEFORE the trait pipeline — the
+    // trait-impl validator doesn't handle a Coro<T> return and misbehaves.
+    // (`Coro` is a reserved builtin type name, so a cheap name check suffices;
+    // a yielding body is what makes it a coroutine vs. a forwarding method.)
+    bool is_coro_method = method_decl.return_type
+        && method_decl.return_type->name == "Coro"_sv
+        && stmt_contains_yield(method_decl.body);
+
     // Check if struct_name is actually a trait name
     Type* trait_lookup = m_type_env.trait_type_by_name(method_decl.struct_name);
     if (trait_lookup && method_decl.trait_name.empty()) {
         // This is a trait method declaration (fun TraitName.method(...))
+        if (is_coro_method) {
+            error(decl->loc, "coroutine methods are not yet supported on generic structs or in traits");
+            return;
+        }
         m_traits.register_trait_method_signature(decl, trait_lookup);
     }
     else if (!method_decl.trait_name.empty()) {
         // This is a trait implementation (fun Type.method(...) for Trait<Args>)
+        if (is_coro_method) {
+            error(decl->loc, "coroutine methods are not yet supported on generic structs or in traits");
+            return;
+        }
         m_traits.resolve_trait_impl_member(decl);
     }
     else {
@@ -1596,6 +1613,26 @@ void SemanticAnalyzer::register_method_signature(Decl* decl) {
     method_info.return_type = method_decl.return_type
         ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
     method_info.decl = decl;
+
+    // A Coro<T>-returning method is a real coroutine only if its body yields
+    // (same yield-based classification as free functions — see
+    // register_fun_signature). A non-yielding one forwards a first-class coroutine
+    // value and stays an ordinary method. Real coroutine methods get a
+    // function-specific coroutine type whose func_name MUST equal the IR function
+    // name `mangle_method(struct, name)` = "<struct>$$<method>" (IRBuilder::
+    // mangle_method), since coroutine lowering builds the state struct / $$delete
+    // from that name and nested coro-in-coro $$delete recursion keys on func_name.
+    if (method_info.return_type && method_info.return_type->is_coroutine()) {
+        method_decl.is_coroutine = stmt_contains_yield(method_decl.body);
+        if (method_decl.is_coroutine) {
+            StringView mangled = format_to_arena(m_allocator, "{}$${}",
+                                                 method_decl.struct_name, method_decl.name);
+            method_info.return_type = m_types.coroutine_type_for_func(
+                method_info.return_type->coro_info.yield_type, mangled);
+            populate_coro_methods(method_info.return_type);
+        }
+    }
+
     append_method(m_allocator, struct_type->struct_info, method_info);
 }
 
@@ -1616,16 +1653,24 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
     FunctionContextScope context_scope(m_function_context, m_lifetimes);
     m_function_context.in_delete_destructor = is_delete_destructor;
 
-    // Coroutine methods are not supported yet: resolve_method_member never
-    // creates the per-function coroutine type (coroutine_type_for_func), and
-    // coroutine lowering has no state-machine path that carries `self`.
-    // Report the real limitation once, then analyze the body in coroutine
-    // context so every `yield` inside doesn't pile on a misleading
-    // "'yield' can only appear inside a coroutine function" error.
-    if (return_type && return_type->is_coroutine()) {
-        error(decl->loc, "coroutine methods are not yet supported; use a free "
-                         "function returning Coro<T> that takes the struct as "
-                         "a parameter");
+    // Coroutine-method context. A method whose body yields (classified in
+    // register_method_signature) is a real coroutine — its `self` is captured as
+    // a `ref` param by coroutine lowering, exactly like a free-function coroutine.
+    // A non-yielding Coro<T>-returning method takes neither branch: it is an
+    // ordinary method that may `return <coro value>` (first-class forwarding).
+    // Ctors/dtors return void, so they never enter here.
+    bool is_coro_method = decl->kind == AstKind::DeclMethod && decl->method_decl.is_coroutine;
+    if (is_coro_method) {
+        m_function_context.in_coroutine = true;
+        m_function_context.coro_yield_type = return_type->coro_info.yield_type;
+    } else if (return_type && return_type->is_coroutine() && stmt_contains_yield(body)) {
+        // A yielding Coro<T>-returning member that was NOT classified as a
+        // coroutine method — i.e. a generic-struct or trait method, which take a
+        // different registration path (register_generic_struct_method /
+        // resolve_trait_impl_member) that doesn't set is_coroutine. Not supported
+        // in v1: report a clear error (still enter coroutine context to suppress
+        // cascading "yield outside coroutine" errors).
+        error(decl->loc, "coroutine methods are not yet supported on generic structs or in traits");
         m_function_context.in_coroutine = true;
         m_function_context.coro_yield_type = return_type->coro_info.yield_type;
     }

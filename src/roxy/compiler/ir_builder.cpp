@@ -747,8 +747,33 @@ IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
     // Set up parameters with 'self' as first parameter
     setup_parameters(decl->params, struct_type);
 
-    // Resolve return type (methods aren't function symbols — pass no name)
-    m_current_func->return_type = resolve_return_type(decl->return_type, StringView());
+    // Resolve return type. Methods have no function symbol, and `Coro` is not a
+    // registered named type, so resolve_return_type(..., "") returns `void` for a
+    // Coro-returning method. Take it from the struct's MethodInfo instead (the
+    // per-function coro type set by register_method_signature) — the SAME pointer
+    // the call site sees, so coroutine_lower stamps generated_struct_type onto the
+    // type observers actually use. Covers both coroutine and forwarding methods.
+    const MethodInfo* method_info = m_types.lookup_method(struct_type, decl->name);
+    if (method_info && method_info->return_type && method_info->return_type->is_coroutine()) {
+        m_current_func->return_type = method_info->return_type;
+    } else {
+        m_current_func->return_type = resolve_return_type(decl->return_type, StringView());
+    }
+
+    // A method is a coroutine (state machine to lower) iff its body yields —
+    // classified in register_method_signature (MethodDecl::is_coroutine). Mirrors
+    // build_function's coroutine block; `self` is captured like any `ref` param.
+    if (decl->is_coroutine && m_current_func->return_type && m_current_func->return_type->is_coroutine()) {
+        m_current_func->is_coroutine = true;
+        m_current_func->coro_type = m_current_func->return_type;
+        m_current_func->coro_yield_type = m_current_func->return_type->coro_info.yield_type;
+        m_current_func->coro_struct_type = m_current_func->return_type->coro_info.generated_struct_type;
+        // Suppress per-frame ref-param inc/dec for the coroutine (the split
+        // scatters them incorrectly); the borrow is counted for the state
+        // struct's lifetime instead. `self` isn't in m_ref_params, but other
+        // `ref` params of the method are. See build_function.
+        m_ref_params.clear_keep_capacity();
+    }
 
     // Check for large struct return - add hidden output pointer as last parameter
     add_hidden_return_param();
