@@ -1,6 +1,7 @@
 #include "roxy/core/doctest/doctest.h"
 
 #include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/string.hpp"
 #include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/parser.hpp"
 #include "roxy/compiler/semantic.hpp"
@@ -10,6 +11,7 @@
 #include "roxy/vm/binding/registry.hpp"
 
 #include <cstring>
+#include <cstdio>
 
 using namespace rx;
 
@@ -1093,6 +1095,114 @@ TEST_SUITE("Semantic") {
     )"));
         CHECK(t.has_error_containing("type 'Point' does not implement Printable"));
         CHECK(!t.has_error_containing("%s'"));
+    }
+
+    // ========================================================================
+    // Error recovery: the analyzer accumulates many genuine errors in one pass
+    // and substitutes never-null `error_type` sentinels so a local failure does
+    // not cascade. These pin the exact recovery behavior (see
+    // docs/internals/error-handling.md); the many single-error cases above
+    // check individual diagnostics, these check the recovery machinery itself.
+    // ========================================================================
+
+    TEST_CASE("Semantic recovery: independent errors accumulate across functions") {
+        // Recovery continues across declarations: each of three functions
+        // carries one independent error, and all three surface in a single pass
+        // (a fail-fast analyzer would stop at the first).
+        SemanticTestHelper t;
+        t.run(R"(
+            fun a(): i32 { return true; }
+            fun b() { undefined_var; }
+            fun c(x: i32): i32 { if (x > 0) { return 1; } }
+        )");
+        CHECK(t.error_count() == 3);
+        CHECK(t.has_error_containing("cannot assign 'bool' to 'i32'"));
+        CHECK(t.has_error_containing("undefined identifier 'undefined_var'"));
+        CHECK(t.has_error_containing("not all code paths return a value"));
+    }
+
+    TEST_CASE("Semantic recovery: undefined identifier does not cascade") {
+        // The undefined name resolves to error_type once; every later use of the
+        // resulting value (arithmetic, f-string) is inert — one diagnostic total.
+        SemanticTestHelper t;
+        t.run(R"(
+            fun f() {
+                var x = undefined_thing;
+                var a = x + 1;
+                var b = x + 2;
+                var c = x * 3;
+                print(f"{x}");
+            }
+        )");
+        CHECK(t.error_count() == 1);
+        CHECK(t.has_error_containing("undefined identifier 'undefined_thing'"));
+    }
+
+    TEST_CASE("Semantic recovery: unknown type annotation does not cascade") {
+        // A bad annotation yields error_type for x; arithmetic and comparisons
+        // on an error_type operand short-circuit, so only the unknown-type error
+        // is reported.
+        SemanticTestHelper t;
+        t.run(R"(
+            fun f() {
+                var x: NotAType = 5;
+                var y = x + 1;
+                var z = x * 2;
+                if (x > 0) { }
+            }
+        )");
+        CHECK(t.error_count() == 1);
+        CHECK(t.has_error_containing("unknown type 'NotAType'"));
+    }
+
+    TEST_CASE("Semantic recovery: wrong argument count does not cascade") {
+        // The call error is reported once; using its result in further
+        // arithmetic adds nothing.
+        SemanticTestHelper t;
+        t.run(R"(
+            fun g(a: i32, b: i32): i32 { return a + b; }
+            fun f() {
+                var r = g(1);
+                var s = r + 1;
+            }
+        )");
+        CHECK(t.error_count() == 1);
+        CHECK(t.has_error_containing("expected 2 arguments but got 1"));
+    }
+
+    TEST_CASE("Semantic recovery: repeated bad field access reports per occurrence") {
+        // Two distinct `p.bogus` sites are two genuine errors (reported once
+        // each), but the `+ 1` on the error-typed result of the second does NOT
+        // add a third — pins both per-occurrence reporting and the no-cascade
+        // bound so a future change that collapses to 1 or leaks to 3 is caught.
+        SemanticTestHelper t;
+        t.run(R"(
+            struct P { x: i32; }
+            fun f() {
+                var p: P;
+                var a = p.bogus;
+                var b = p.bogus + 1;
+            }
+        )");
+        CHECK(t.error_count() == 2);
+        CHECK(t.has_error_containing("struct 'P' has no member 'bogus'"));
+    }
+
+    TEST_CASE("Semantic recovery: error collection is capped at MAX_SEMANTIC_ERRORS") {
+        // A pathological body with far more than the cap of independent errors
+        // must not spew unboundedly — batch-mode collection stops at the cap.
+        rx::String src;
+        src.append("fun f() {\n");
+        char line[64];
+        for (int i = 0; i < 40; i++) {
+            snprintf(line, sizeof(line), "  undefined_%d;\n", i);
+            src.append(line);
+        }
+        src.append("}\n");
+
+        SemanticTestHelper t;
+        t.run(src.c_str());
+        CHECK(t.error_count() == MAX_SEMANTIC_ERRORS);  // 20 in batch mode
     }
 
 }  // TEST_SUITE("Semantic")

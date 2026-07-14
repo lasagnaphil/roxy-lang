@@ -107,5 +107,4 @@ history. Remaining:
 
 ## Testing Gaps
 
-- [ ] Test error recovery in semantic analysis
 - [ ] Add fuzzing for parser/lexer
