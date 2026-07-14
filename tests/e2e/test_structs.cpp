@@ -237,6 +237,39 @@ TEST_SUITE("E2E Structs") {
         CHECK(result.stdout_output == "1\n10\n100\n");
     }
 
+    TEST_CASE_TEMPLATE("Deeply nested structs (7 levels)", Backend, RX_E2E_BACKENDS) {
+        // Field-access chains deeper than the 3-level case above: writes and
+        // reads at 1, 6, and 7 levels of nesting through `.child` hops.
+        const char* source = R"(
+        struct L6 { value: i32; }
+        struct L5 { child: L6; tag: i32; }
+        struct L4 { child: L5; tag: i32; }
+        struct L3 { child: L4; tag: i32; }
+        struct L2 { child: L3; tag: i32; }
+        struct L1 { child: L2; tag: i32; }
+        struct L0 { child: L1; tag: i32; }
+
+        fun main(): i32 {
+            var o: L0;
+            o.tag = 1;
+            o.child.tag = 2;
+            o.child.child.tag = 3;
+            o.child.child.child.tag = 4;
+            o.child.child.child.child.tag = 5;
+            o.child.child.child.child.child.tag = 6;
+            o.child.child.child.child.child.child.value = 700;
+            print(f"{o.tag}");
+            print(f"{o.child.child.child.child.child.tag}");
+            print(f"{o.child.child.child.child.child.child.value}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n6\n700\n");
+    }
+
     TEST_CASE_TEMPLATE("Multiple nested struct variables", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {

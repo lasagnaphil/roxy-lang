@@ -423,6 +423,114 @@ TEST_SUITE("E2E Modules") {
         CHECK(found_cycle_error);
     }
 
+    TEST_CASE("Compiler: diamond dependency graph") {
+        // main -> {left, right}, and both left and right -> base.
+        //       main
+        //      /    \
+        //    left  right
+        //      \    /
+        //      base
+        // `base` is a shared transitive dependency reached via two paths and is
+        // NOT imported by main directly. It must be compiled exactly once and
+        // linked consistently into both `left` and `right`.
+        BumpAllocator allocator(16384);
+
+        const char* base_source = R"(
+        pub fun base_val(): i32 { return 10; }
+    )";
+
+        const char* left_source = R"(
+        import base;
+        pub fun left_val(): i32 { return base.base_val() + 1; }
+    )";
+
+        const char* right_source = R"(
+        import base;
+        pub fun right_val(): i32 { return base.base_val() + 100; }
+    )";
+
+        const char* main_source = R"(
+        import left;
+        import right;
+        fun main(): i32 { return left.left_val() + right.right_val(); }
+    )";
+
+        Compiler compiler(allocator);
+        compiler.add_source("base", base_source, static_cast<u32>(strlen(base_source)));
+        compiler.add_source("left", left_source, static_cast<u32>(strlen(left_source)));
+        compiler.add_source("right", right_source, static_cast<u32>(strlen(right_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
+        REQUIRE(!compiler.has_errors());
+
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
+
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
+
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 121);  // left(10+1=11) + right(10+100=110) = 121
+
+        vm_destroy(&vm);
+        delete module;
+    }
+
+    TEST_CASE("Compiler: deep transitive import chain (4 levels)") {
+        // main -> level3 -> level2 -> level1 -> level0. main imports only level3;
+        // the lower levels are pulled in transitively and must be topologically
+        // ordered (level0 compiled before level1, etc.) for the chained qualified
+        // calls to resolve.
+        BumpAllocator allocator(16384);
+
+        const char* level0_source = R"(
+        pub fun f0(): i32 { return 1; }
+    )";
+        const char* level1_source = R"(
+        import level0;
+        pub fun f1(): i32 { return level0.f0() + 10; }
+    )";
+        const char* level2_source = R"(
+        import level1;
+        pub fun f2(): i32 { return level1.f1() + 100; }
+    )";
+        const char* level3_source = R"(
+        import level2;
+        pub fun f3(): i32 { return level2.f2() + 1000; }
+    )";
+        const char* main_source = R"(
+        import level3;
+        fun main(): i32 { return level3.f3(); }
+    )";
+
+        Compiler compiler(allocator);
+        compiler.add_source("level0", level0_source, static_cast<u32>(strlen(level0_source)));
+        compiler.add_source("level1", level1_source, static_cast<u32>(strlen(level1_source)));
+        compiler.add_source("level2", level2_source, static_cast<u32>(strlen(level2_source)));
+        compiler.add_source("level3", level3_source, static_cast<u32>(strlen(level3_source)));
+        compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
+
+        BCModule* module = compiler.compile();
+        REQUIRE(module != nullptr);
+        REQUIRE(!compiler.has_errors());
+
+        RoxyVM vm;
+        vm_init(&vm);
+        vm_load_module(&vm, module);
+
+        bool success = vm_call(&vm, "main", {});
+        REQUIRE(success);
+
+        Value result = vm_get_result(&vm);
+        CHECK(result.as_int == 1111);  // 1 + 10 + 100 + 1000
+
+        vm_destroy(&vm);
+        delete module;
+    }
+
     TEST_CASE("Compiler: from import with script module") {
         BumpAllocator allocator(16384);
 

@@ -107,7 +107,5 @@ history. Remaining:
 
 ## Testing Gaps
 
-- [ ] Test deeply nested struct field access (>5 levels; currently only 3 levels tested)
 - [ ] Test error recovery in semantic analysis
 - [ ] Add fuzzing for parser/lexer
-- [ ] Test cross-module imports with complex dependency graphs (diamond dependencies, >3 levels)
