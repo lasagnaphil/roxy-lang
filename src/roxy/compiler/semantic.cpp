@@ -3323,6 +3323,15 @@ Decl* SemanticAnalyzer::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
 
         analyze_stmt(fd.body);
 
+        // All-paths-return: a non-void lambda body must terminate (return/throw
+        // or an unreachable fall-through) on every path, exactly like a free
+        // function (analyze_fun_body). Lambdas are never coroutines, so there is
+        // no yield exemption. The `=> expr` short body desugars to a `return`, so
+        // only block-bodied lambdas that fall off the end are flagged here.
+        if (ret_type && !ret_type->is_void() && !m_lifetimes.branch_terminates()) {
+            error_fmt(expr->loc, "not all code paths return a value in lambda");
+        }
+
         m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), expr->loc);
         m_symbols.pop_scope();  // function scope
         // context_scope restores the outer per-function context at block end.

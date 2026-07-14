@@ -78,14 +78,17 @@ Features:
 - Out/inout parameter validation
 - Lifetime analysis (use-after-move detection, definite-termination branch
   merges, scope-exit destructor checks) via `LifetimeChecker`
-- All-paths-return check: a non-void function whose body can fall off the end
-  without a `return`/`throw` is rejected ("not all code paths return a value").
-  It reads `LifetimeChecker::branch_terminates()`, which now recognizes an
-  exhaustive no-`else` `when` (all arms terminating) and an infinite loop as
-  terminating. Infinite loops are recognized only for a literal `while (true)`
-  with no `break` reaching it (a constant-foldable condition such as
-  `while (1 == 1)` is not); coroutines are skipped (they `yield`, never return a
-  value), and constructors/destructors have their own body analyzers.
+- All-paths-return check: a non-void function or lambda whose body can fall off
+  the end without a `return`/`throw` is rejected ("not all code paths return a
+  value" / "…in lambda"). It reads `LifetimeChecker::branch_terminates()`, which
+  now recognizes an exhaustive no-`else` `when` (all arms terminating) and an
+  infinite loop as terminating. Infinite loops are recognized only for a literal
+  `while (true)` with no `break` reaching it (a constant-foldable condition such
+  as `while (1 == 1)` is not); coroutines are skipped (they `yield`, never return
+  a value), and constructors/destructors have their own body analyzers. Lambda
+  bodies are checked in `synthesize_lambda_call_fn` after body analysis (the
+  `=> expr` short body desugars to `{ return expr; }`, so only block-bodied
+  lambdas that fall off the end are flagged).
 
 The analyzer shares its collaborators by reference (no back-reference to the
 analyzer itself): `ErrorReporter` (error collection/formatting), `TypeChecker`

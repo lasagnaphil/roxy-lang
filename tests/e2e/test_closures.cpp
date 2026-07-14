@@ -289,6 +289,74 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
+    TEST_CASE("lambda all-paths-return") {
+        BumpAllocator allocator(65536);
+
+        SUBCASE("Non-void block lambda falling off the end errors") {
+            const char* source = R"(
+            fun main() {
+                var f = fun(x: i32): i32 {
+                    if (x > 0) {
+                        return 1;
+                    }
+                    // else path falls off the end
+                };
+            }
+        )";
+            BCModule* module = compile(allocator, source);
+            CHECK(module == nullptr);  // not all code paths return a value in lambda
+        }
+
+        SUBCASE("Empty non-void block lambda errors") {
+            const char* source = R"(
+            fun main() {
+                var f = fun(): i32 { };
+            }
+        )";
+            BCModule* module = compile(allocator, source);
+            CHECK(module == nullptr);
+        }
+
+        SUBCASE("Lambda returning on all branches compiles") {
+            const char* source = R"(
+            fun main() {
+                var f = fun(x: i32): i32 {
+                    if (x > 0) {
+                        return 1;
+                    } else {
+                        return 2;
+                    }
+                };
+                print(f"{f(5)}");
+            }
+        )";
+            BCModule* module = compile(allocator, source);
+            CHECK(module != nullptr);
+        }
+
+        SUBCASE("Expression-body lambda needs no explicit return") {
+            const char* source = R"(
+            fun main() {
+                var f = fun(x: i32): i32 => x + 1;
+                print(f"{f(5)}");
+            }
+        )";
+            BCModule* module = compile(allocator, source);
+            CHECK(module != nullptr);
+        }
+
+        SUBCASE("Void block lambda without a return is fine") {
+            const char* source = R"(
+            fun main() {
+                var f = fun() { };
+                f();
+            }
+        )";
+            BCModule* module = compile(allocator, source);
+            CHECK(module != nullptr);
+        }
+    }
+
     TEST_CASE_TEMPLATE("function references", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Bare function name to typed variable") {
             const char* source = R"(
