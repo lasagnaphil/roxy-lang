@@ -478,7 +478,8 @@ Coverage-guided libFuzzer targets live in `tests/fuzz/` and build only under
 always-on `Fuzz Regression` doctest suite replays the checked-in seed corpus
 (`tests/fuzz/corpus/`) plus `examples/` through all three harnesses on every
 normal `roxy_tests` run (no fuzzer toolchain needed), so found-and-fixed crashes
-stay fixed. Full build/run instructions: `tests/fuzz/README.md`.
+stay fixed. Architecture + the structure-aware roadmap: `docs/internals/fuzzer.md`;
+build/run quickstart: `tests/fuzz/README.md`.
 
 > The three harnesses each guarantee bounded work per input, so the regression
 > replay is fast — **never** add an OOM/very-slow reproducer to
@@ -519,3 +520,4 @@ stay fixed. Full build/run instructions: `tests/fuzz/README.md`.
   - `c-backend.md` - C backend (AOT compilation via SSA IR → C): Phases 1–4 + Phase 5 partial (function- and statement-level `#line` directives) implemented; remaining Phase 5 items (DCE, Relooper, `switch` lowering) deliberately not pursued
   - `lsp-server.md` - LSP server architecture: map-reduce design, error-recovering parser, indexing, lazy analysis
   - `optimization.md` - SSA IR optimization passes: Phase 1 (in IRBuilder), Phase 2 (DCE, copy propagation), Phase 3 (branch folding, block merging, trivial block-arg elim), and Phase 4 (block-local CSE) all implemented; future phases (global CSE/GVN, LICM, inlining, TCO, escape analysis) design plan
+  - `fuzzer.md` - Fuzzing: coverage-guided libFuzzer targets for lexer/parser/LSP parser + always-on regression replay (implemented); structure-aware (grammar/type-directed) generation with a VM-vs-C differential oracle (design plan)

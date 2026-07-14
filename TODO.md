@@ -127,3 +127,11 @@ history. Remaining:
   discriminant; stray leading tokens like `}`/`"`/`,` with no forward-progress
   guard) and a lexer signed-overflow UB on out-of-range integer literals. One
   finding remains open ↓.
+- [ ] **Structure-aware fuzzing** (design plan in `docs/internals/fuzzer.md` →
+  Roadmap): byte-level mutation plateaus at the parser — reaching sema / IR /
+  lowering / VM / C backend needs valid-by-construction programs. Staged: (1) a
+  grammar generator via libprotobuf-mutator for the parser + sema reject paths;
+  (2) scoping + type-directed generation to reach the IR builder/VM, with a
+  **VM-vs-C-backend differential** oracle (`compile_and_run` vs
+  `compile_and_run_cpp`) that catches miscompiles unit tests miss; (3) `uniq`
+  move-state modeling to reach RAII/drop/codegen paths.
