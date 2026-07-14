@@ -38,7 +38,7 @@ Span<TraitBound> GenericCallResolver::resolve_type_param_bounds(Span<TypeExpr*> 
         // Validate type arg count against trait's type params
         u32 expected_count = trait_type->trait_info.type_params.size();
         if (resolved_type_args.size() != expected_count) {
-            m_reporter.error_fmt(bound_expr->loc, "trait '{}' expects {} type arguments but got {}",
+            m_reporter.error_fmt(bound_expr->loc, "trait '{}' expects {} type argument(s) but got {}",
                      bound_expr->name, expected_count, (u32)resolved_type_args.size());
             continue;
         }
@@ -195,7 +195,7 @@ Type* GenericCallResolver::analyze_type_param_method_call(
 
     // Check argument count
     if (call_expr.arguments.size() != trait_method->param_types.size()) {
-        m_reporter.error_fmt(expr->loc, "method '{}' expects {} arguments but got {}",
+        m_reporter.error_fmt(expr->loc, "method '{}' expects {} argument(s) but got {}",
                  trait_method->name, trait_method->param_types.size(), call_expr.arguments.size());
         return substitute(trait_method->return_type);
     }
@@ -500,7 +500,7 @@ Type* GenericCallResolver::analyze_generic_fun_call(Expr* expr, CallExpr& ce, St
 
     // Validate type arg count
     if (ce.type_args.size() != template_fun_decl.type_params.size()) {
-        m_reporter.error_fmt(expr->loc, "generic function '{}' expects {} type arguments but got {}",
+        m_reporter.error_fmt(expr->loc, "generic function '{}' expects {} type argument(s) but got {}",
                  func_name, template_fun_decl.type_params.size(), ce.type_args.size());
         return m_types.error_type();
     }
@@ -563,7 +563,7 @@ Type* GenericCallResolver::check_instantiated_generic_call(
     FunDecl& inst_fun_decl = inst->instantiated_decl->fun_decl;
 
     if (ce.arguments.size() != inst_fun_decl.params.size()) {
-        m_reporter.error_fmt(expr->loc, "function '{}' expects {} arguments but got {}",
+        m_reporter.error_fmt(expr->loc, "function '{}' expects {} argument(s) but got {}",
                  func_name, inst_fun_decl.params.size(), ce.arguments.size());
         return m_types.error_type();
     }
@@ -711,7 +711,7 @@ Type* GenericCallResolver::resolve_explicit_generic_template_ref(Expr* expr) {
     FunDecl& template_fun_decl = template_decl->fun_decl;
     if (id.generic_args.size() != template_fun_decl.type_params.size()) {
         m_reporter.error_fmt(expr->loc,
-            "generic function '{}' expects {} type arguments but got {}",
+            "generic function '{}' expects {} type argument(s) but got {}",
             id.name, template_fun_decl.type_params.size(), id.generic_args.size());
         return m_types.error_type();
     }

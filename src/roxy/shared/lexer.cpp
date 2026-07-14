@@ -323,7 +323,7 @@ Token Lexer::scan_number() {
             // Hexadecimal
             advance();
             if (!is_hex_digit(peek())) {
-                return error_token("Invalid hexadecimal literal.");
+                return error_token("invalid hexadecimal literal");
             }
             while (is_hex_digit(peek())) {
                 int_value = int_value * 16 + hex_char_to_value(advance());
@@ -332,7 +332,7 @@ Token Lexer::scan_number() {
             // Binary
             advance();
             if (!is_binary_digit(peek())) {
-                return error_token("Invalid binary literal.");
+                return error_token("invalid binary literal");
             }
             while (is_binary_digit(peek())) {
                 int_value = int_value * 2 + (advance() - '0');
@@ -341,7 +341,7 @@ Token Lexer::scan_number() {
             // Octal
             advance();
             if (!is_octal_digit(peek())) {
-                return error_token("Invalid octal literal.");
+                return error_token("invalid octal literal");
             }
             while (is_octal_digit(peek())) {
                 int_value = int_value * 8 + (advance() - '0');
@@ -421,7 +421,7 @@ Token Lexer::scan_string() {
     }
 
     if (is_at_end()) {
-        return error_token("Unterminated string.");
+        return error_token("unterminated string");
     }
 
     // Closing quote
@@ -483,7 +483,7 @@ Token Lexer::scan_fstring_text(bool is_begin) {
         advance();
     }
 
-    return error_token("Unterminated f-string.");
+    return error_token("unterminated f-string");
 }
 
 Token Lexer::next_token() {
@@ -574,7 +574,7 @@ Token Lexer::next_token() {
         case '"': return scan_string();
     }
 
-    return error_token("Unexpected character.");
+    return error_token("unexpected character");
 }
 
 }

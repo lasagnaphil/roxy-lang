@@ -109,6 +109,54 @@ active harm in the error-collecting passes.
 
 ---
 
+## Diagnostic message style
+
+The two strategies above decide *how* a failure propagates; this section fixes
+*how the message reads*, so diagnostics from the lexer, parser, and semantic
+passes look like one voice. User-facing messages print after a location prefix
+(`… in module 'm' at line 4: <message>`), which shapes the rules.
+
+**Case and punctuation.** A user-facing diagnostic **starts lowercase and has no
+trailing period** — `undefined identifier 'x'`, not `Undefined identifier 'x'.`
+This is the Rust/Clang/Swift convention and reads correctly after the `at line N:`
+colon. The first word is lowercased *unless* it is a quoted keyword or a
+type/trait name that carries its own capital (`List constructor …`, `'Self' can
+only be used …`, `Coro requires …`). A multi-sentence diagnostic (a message plus
+an inline hint) still starts lowercase and drops the *trailing* period, but its
+internal sentences keep their capitals and punctuation — e.g. `conditional
+expression cannot select a noncopyable value; it would move an operand without
+nullifying it (double-free). Use an if/else statement … instead`.
+
+**Quoting.** Wrap code fragments — keywords, identifiers, and rendered types — in
+single quotes: `'when'`, `'ref'`, `'uniq {}'`, `struct '{}' has no field '{}'`.
+Keywords are always quoted (`'when' discriminant …`, never `when discriminant …`).
+
+**Canonical phrasings** for recurring families, so the same failure reads the same
+way everywhere:
+
+- **Arity mismatch:** `<subject> expects <N> argument(s) but got <M>` (or `<N> to
+  <M>` for an optional-argument range). The verb is always *expects* (never
+  *takes*); the count noun is the literal `argument(s)` (no hand-rolled
+  singular/plural); the tail is always `but got`. `<subject>` names what was
+  called — `function '{}'`, `method '{}'`, `constructor`, `destructor`, `parent
+  constructor`, `List constructor`, or a bare `call` when no name is in hand. The
+  type-argument variant inserts `type`: `… expects <N> type argument(s) but got
+  <M>`. Fixed-arity builtins use a distinct, deliberately separate form —
+  `List requires exactly 1 type argument`, `Map requires exactly 2 type
+  arguments` — because the count is a constant, not a mismatch to report.
+- **Trait conformance:** always append the word *trait* —
+  `… does not implement the Exception trait`, `catch type must be a struct type
+  that implements the Exception trait`.
+
+**Scope.** These rules govern *user-facing* diagnostics: the lexer
+(`error_token`), the strict and LSP parsers (keep their shared messages in step),
+and the semantic analyzer and its collaborators (`ErrorReporter::error` /
+`error_fmt`). Internal invariant diagnostics — the IR validator and the lowering
+`Internal error: …` messages — are compiler-bug reports, not things a Roxy author
+sees, and stay in their own format (`function '{}' block {}: …`); they are exempt.
+
+---
+
 ## Adding a new fallible operation
 
 Pick the strategy by consumer, matching what's already there:
@@ -116,7 +164,8 @@ Pick the strategy by consumer, matching what's already there:
 1. **Inside an error-collecting pass** (semantic / pipeline): report via the
    `ErrorReporter` (`error` / `error_fmt`) and return an inert sentinel the
    caller tolerates — `error_type` for a `Type*`, or a null AST node that
-   downstream walkers already null-check. Do **not** halt the pass.
+   downstream walkers already null-check. Do **not** halt the pass. Word the
+   message per [Diagnostic message style](#diagnostic-message-style).
 2. **A structural invariant** ("can only fail if the compiler is buggy"):
    fail-fast with a clear message, IR-validator style — first error wins, stop.
 3. **A leaf I/O / parse op** with a binary outcome: return `bool` (with the

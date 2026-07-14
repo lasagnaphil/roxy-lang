@@ -4,7 +4,7 @@ This document tracks known technical debt, incomplete implementations, and plann
 improvements. Completed items are removed as they land — the per-item records
 (measurements, rationale, regression-test pointers) live in this file's git history.
 
-Last updated: 2026-07-14
+Last updated: 2026-07-15
 
 ---
 
@@ -57,7 +57,7 @@ Last updated: 2026-07-14
 
 ## Code Quality Improvements
 
-- [ ] Standardize error message formatting across the compiler: consistent quoting, capitalization, and terminology in diagnostics. (The compile-time `{}`-placeholder/argument-count check that shared this item landed 2026-07-06 — the build was bumped to C++20 and `rx::fmt_string`'s `consteval` constructor now rejects placeholder/arg count mismatches at build time for literal format strings passed to `format_to`/`format`/`error_fmt`/`intern_format`/…; `rx::runtime()` is the escape hatch for dynamic format strings. See `core/format.hpp`.)
+(none currently)
 
 ---
 

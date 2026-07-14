@@ -517,7 +517,7 @@ TEST_SUITE("Semantic") {
             var x = add(1);
         }
     )"));
-        CHECK(t.has_error_containing("arguments"));
+        CHECK(t.has_error_containing("argument(s) but got"));
     }
 
     TEST_CASE("Semantic Error: Duplicate type declaration") {
@@ -1167,7 +1167,7 @@ TEST_SUITE("Semantic") {
             }
         )");
         CHECK(t.error_count() == 1);
-        CHECK(t.has_error_containing("expected 2 arguments but got 1"));
+        CHECK(t.has_error_containing("call expects 2 argument(s) but got 1"));
     }
 
     TEST_CASE("Semantic recovery: repeated bad field access reports per occurrence") {

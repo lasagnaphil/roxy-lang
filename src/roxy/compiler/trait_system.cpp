@@ -440,7 +440,7 @@ bool TraitSystem::resolve_trait_impl_type_args(
             return false;
         }
         if (method_decl.trait_type_args.size() != trait_info.type_params.size()) {
-            m_reporter.error_fmt(loc, "trait '{}' expects {} type argument(s), got {}",
+            m_reporter.error_fmt(loc, "trait '{}' expects {} type argument(s) but got {}",
                      method_decl.trait_name, trait_info.type_params.size(),
                      method_decl.trait_type_args.size());
             return false;

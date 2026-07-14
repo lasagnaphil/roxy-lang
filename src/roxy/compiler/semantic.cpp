@@ -845,7 +845,7 @@ void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
         // Resolve discriminant type - must be enum
         Type* disc_type = resolve_type_expr(wfd.discriminant_type);
         if (!disc_type->is_error() && !disc_type->is_enum()) {
-            error_fmt(wfd.loc, "when discriminant must be an enum type");
+            error_fmt(wfd.loc, "'when' discriminant must be an enum type");
             disc_type = m_types.error_type();
         }
 
@@ -1305,7 +1305,7 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             // Validate arg count
             Decl* template_decl = m_type_env.generics().get_generic_struct_decl(type_expr->name);
             if (template_decl->struct_decl.type_params.size() != type_arg_types.size()) {
-                error_fmt(type_expr->loc, "generic struct '{}' expects {} type arguments but got {}",
+                error_fmt(type_expr->loc, "generic struct '{}' expects {} type argument(s) but got {}",
                          type_expr->name,
                          template_decl->struct_decl.type_params.size(),
                          type_arg_types.size());
@@ -2166,7 +2166,7 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
         if (dtor) {
             // Check argument count
             if (ds.arguments.size() != dtor->param_types.size()) {
-                error_fmt(stmt->loc, "destructor expects {} arguments but got {}",
+                error_fmt(stmt->loc, "destructor expects {} argument(s) but got {}",
                          dtor->param_types.size(), ds.arguments.size());
                 return;
             }
@@ -2322,7 +2322,7 @@ void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
     // The thrown expression must be a struct type that implements Exception trait
     Type* base = expr_type->base_type();
     if (!base->is_struct()) {
-        error(stmt->loc, "throw expression must be a struct type that implements Exception");
+        error(stmt->loc, "throw expression must be a struct type that implements the Exception trait");
         m_lifetimes.set_branch_terminates(true);
         return;
     }
@@ -2391,7 +2391,7 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
             if (!catch_type->is_error()) {
                 Type* base = catch_type->base_type();
                 if (!base->is_struct()) {
-                    error(clause.loc, "catch type must be a struct type that implements Exception");
+                    error(clause.loc, "catch type must be a struct type that implements the Exception trait");
                 } else {
                     Type* exception_trait = m_type_env.exception_type();
                     if (!m_types.implements_trait(base, exception_trait)) {
@@ -3524,7 +3524,7 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
         error(expr->loc,
             "conditional expression cannot select a noncopyable value; it would move "
             "an operand without nullifying it (double-free). Use an if/else statement "
-            "with an explicit move in each branch instead.");
+            "with an explicit move in each branch instead");
         return m_types.error_type();
     }
 
@@ -3720,7 +3720,7 @@ Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) 
 
     if (ce.arguments.size() < ctor.min_args ||
         ce.arguments.size() > ctor.param_types.size()) {
-        error_fmt(expr->loc, "List constructor takes {} to {} arguments but got {}",
+        error_fmt(expr->loc, "List constructor expects {} to {} argument(s) but got {}",
                   ctor.min_args, ctor.param_types.size(), ce.arguments.size());
         return m_types.error_type();
     }
@@ -3800,7 +3800,7 @@ Type* SemanticAnalyzer::analyze_map_constructor_call(Expr* expr, CallExpr& ce) {
     // The semantic layer passes user arguments directly (0 or 1 capacity arg).
     // The hidden key_kind argument is injected at IR generation time.
     if (ce.arguments.size() > 1) {
-        error_fmt(expr->loc, "Map constructor takes 0 to 1 arguments but got {}",
+        error_fmt(expr->loc, "Map constructor expects 0 to 1 argument(s) but got {}",
                   ce.arguments.size());
         return m_types.error_type();
     }
@@ -3887,7 +3887,7 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
         // Type-check arguments if constructor found
         if (ctor) {
             if (ce.arguments.size() != ctor->param_types.size()) {
-                error_fmt(expr->loc, "parent constructor expects {} arguments but got {}",
+                error_fmt(expr->loc, "parent constructor expects {} argument(s) but got {}",
                          ctor->param_types.size(), ce.arguments.size());
                 return m_types.void_type();
             }
@@ -3906,7 +3906,7 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
     if (ctor) {
         // It's a named constructor call
         if (ce.arguments.size() != ctor->param_types.size()) {
-            error_fmt(expr->loc, "parent constructor expects {} arguments but got {}",
+            error_fmt(expr->loc, "parent constructor expects {} argument(s) but got {}",
                      ctor->param_types.size(), ce.arguments.size());
             return m_types.void_type();
         }
@@ -3928,7 +3928,7 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
         // It's a super method call
         // Type-check arguments
         if (ce.arguments.size() != mi->param_types.size()) {
-            error_fmt(expr->loc, "method '{}' expects {} arguments but got {}",
+            error_fmt(expr->loc, "method '{}' expects {} argument(s) but got {}",
                      super_expr.method_name, mi->param_types.size(), ce.arguments.size());
             return mi->return_type;
         }
@@ -3979,9 +3979,8 @@ Type* SemanticAnalyzer::analyze_builtin_method_call(Expr* expr, CallExpr& ce, Ge
     }
 
     if (ce.arguments.size() != mi->param_types.size()) {
-        error_fmt(expr->loc, "{}() takes {} argument{} but got {}",
+        error_fmt(expr->loc, "{}() expects {} argument(s) but got {}",
                  mi->name, mi->param_types.size(),
-                 mi->param_types.size() == 1 ? "" : "s",
                  ce.arguments.size());
         return mi->return_type;
     }
@@ -4004,7 +4003,7 @@ Type* SemanticAnalyzer::analyze_struct_method_call(Expr* expr, CallExpr& ce, Get
 
     // Check argument count (NOT including implicit self)
     if (ce.arguments.size() != mi->param_types.size()) {
-        error_fmt(expr->loc, "method expects {} arguments but got {}",
+        error_fmt(expr->loc, "method expects {} argument(s) but got {}",
                  mi->param_types.size(), ce.arguments.size());
         return mi->return_type;
     }
@@ -4040,7 +4039,7 @@ Type* SemanticAnalyzer::analyze_regular_fun_call(Expr* expr, CallExpr& ce) {
 
     // Check argument count
     if (ce.arguments.size() != fti.param_types.size()) {
-        error_fmt(expr->loc, "expected {} arguments but got {}",
+        error_fmt(expr->loc, "call expects {} argument(s) but got {}",
                  fti.param_types.size(), ce.arguments.size());
         return fti.return_type;
     }
@@ -4243,7 +4242,7 @@ Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, 
     if (ctor) {
         // Check argument count
         if (call_expr.arguments.size() != ctor->param_types.size()) {
-            error_fmt(expr->loc, "constructor expects {} arguments but got {}",
+            error_fmt(expr->loc, "constructor expects {} argument(s) but got {}",
                      ctor->param_types.size(), call_expr.arguments.size());
             return result_type();
         }
