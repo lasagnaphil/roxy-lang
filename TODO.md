@@ -4,7 +4,7 @@ This document tracks known technical debt, incomplete implementations, and plann
 improvements. Completed items are removed as they land — the per-item records
 (measurements, rationale, regression-test pointers) live in this file's git history.
 
-Last updated: 2026-07-12
+Last updated: 2026-07-14
 
 ---
 
@@ -88,9 +88,6 @@ and measurements in git history. Remaining:
   deliberately kept: cold path (struct-keyed map constructors only, ≤2 scans
   each), and an incremental name→index map would need maintenance at every
   build-phase push_back for no measurable win.
-- [ ] Adopt the `"…"_sv` literal (added 2026-07-05 in `core/string_view.hpp`,
-  applied across `ir_builder*.cpp`) in the rest of the codebase where
-  `StringView("…", N)` manual lengths appear.
 
 ---
 

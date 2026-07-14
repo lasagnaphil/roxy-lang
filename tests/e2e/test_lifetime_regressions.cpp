@@ -525,7 +525,7 @@ TEST_SUITE("E2E Lifetime Regressions") {
         RoxyVM vm;
         vm_init(&vm);
         vm_load_module(&vm, module);
-        REQUIRE(vm_call(&vm, StringView("main", 4), {}) == true);
+        REQUIRE(vm_call(&vm, "main"_sv, {}) == true);
         u64 live = vm.allocator->total_allocated - vm.allocator->total_tombstoned;
         // Reclaimed → only a handful of live objects (was ~600, nothing freed).
         CHECK(live < 50);
@@ -555,7 +555,7 @@ TEST_SUITE("E2E Lifetime Regressions") {
         RoxyVM vm;
         vm_init(&vm);
         vm_load_module(&vm, module);
-        REQUIRE(vm_call(&vm, StringView("main", 4), {}) == true);
+        REQUIRE(vm_call(&vm, "main"_sv, {}) == true);
         u64 live = vm.allocator->total_allocated - vm.allocator->total_tombstoned;
         CHECK(live < 50);
         vm_destroy(&vm);

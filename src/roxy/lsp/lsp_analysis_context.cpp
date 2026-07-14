@@ -61,7 +61,7 @@ void LspAnalysisContext::rebuild_declarations(Span<SourceFile> files) {
 
     // Build combined program
     auto* program = m_type_allocator->emplace<Program>();
-    program->module_name = StringView("", 0);  // LSP uses a single unnamed module
+    program->module_name = ""_sv;  // LSP uses a single unnamed module
     if (!all_declarations.empty()) {
         Decl** decl_data = reinterpret_cast<Decl**>(
             m_type_allocator->alloc_bytes(

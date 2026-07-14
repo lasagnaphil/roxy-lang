@@ -44,16 +44,16 @@ Type* TraitSystem::register_builtin_index_trait(StringView name, StringView meth
     // Two type params: <Idx, Output>. Output appears in the method's return type
     // (index) or value parameter (index_mut), since Roxy has no associated types.
     Vector<TypeParam> tparams;
-    TypeParam idx_param; idx_param.name = StringView("Idx", 3);
+    TypeParam idx_param; idx_param.name = "Idx"_sv;
     idx_param.loc = SourceLocation{}; idx_param.bounds = Span<TypeExpr*>();
-    TypeParam out_param; out_param.name = StringView("Output", 6);
+    TypeParam out_param; out_param.name = "Output"_sv;
     out_param.loc = SourceLocation{}; out_param.bounds = Span<TypeExpr*>();
     tparams.push_back(idx_param);
     tparams.push_back(out_param);
     trait_type->trait_info.type_params = m_allocator.alloc_span(tparams);
 
-    Type* idx_tp = m_types.type_param(StringView("Idx", 3), 0);
-    Type* out_tp = m_types.type_param(StringView("Output", 6), 1);
+    Type* idx_tp = m_types.type_param("Idx"_sv, 0);
+    Type* out_tp = m_types.type_param("Output"_sv, 1);
 
     Vector<Type*> method_params;
     method_params.push_back(idx_tp);
@@ -83,7 +83,7 @@ void TraitSystem::register_builtin_traits() {
             TypeKind::F32, TypeKind::F64, TypeKind::String
         };
         Type* printable_type = register_builtin_trait(
-            StringView("Printable", 9), StringView("to_string", 9),
+            "Printable"_sv, "to_string"_sv,
             Span<Type*>(nullptr, 0), m_types.string_type(),
             Span<TypeKind>(prim_kinds, 8), /*register_trait_on_primitives=*/true);
         m_type_env.set_printable_type(printable_type);
@@ -98,7 +98,7 @@ void TraitSystem::register_builtin_traits() {
             TypeKind::String
         };
         Type* hash_trait_type = register_builtin_trait(
-            StringView("Hash", 4), StringView("hash", 4),
+            "Hash"_sv, "hash"_sv,
             Span<Type*>(nullptr, 0), m_types.u64_type(),
             Span<TypeKind>(hashable_kinds, 12), /*register_trait_on_primitives=*/true);
         m_type_env.set_hash_type(hash_trait_type);
@@ -121,7 +121,7 @@ void TraitSystem::register_builtin_traits() {
         // empty and register_trait_on_primitives is irrelevant.
         Span<Type*> eq_params(m_allocator.emplace<Type*>(m_types.self_type()), 1);
         Type* eq_trait_type = register_builtin_trait(
-            StringView("Eq", 2), StringView("eq", 2),
+            "Eq"_sv, "eq"_sv,
             eq_params, m_types.bool_type(),
             Span<TypeKind>(), /*register_trait_on_primitives=*/false);
         m_type_env.set_eq_type(eq_trait_type);
@@ -133,7 +133,7 @@ void TraitSystem::register_builtin_traits() {
         // message()), so register_trait_on_primitives is false.
         TypeKind exc_kinds[] = { TypeKind::ExceptionRef };
         Type* exception_trait_type = register_builtin_trait(
-            StringView("Exception", 9), StringView("message", 7),
+            "Exception"_sv, "message"_sv,
             Span<Type*>(nullptr, 0), m_types.string_type(),
             Span<TypeKind>(exc_kinds, 1), /*register_trait_on_primitives=*/false);
         m_type_env.set_exception_type(exception_trait_type);
@@ -146,12 +146,12 @@ void TraitSystem::register_builtin_traits() {
     // params because Roxy has no associated types for the element (output) type.
     // Registered with decl == nullptr so a user `trait Index<Idx, Output>;` merges
     // rather than colliding (see collect_trait_declaration).
-    if (!m_type_env.trait_type_by_name(StringView("Index", 5))) {
-        register_builtin_index_trait(StringView("Index", 5), StringView("index", 5),
+    if (!m_type_env.trait_type_by_name("Index"_sv)) {
+        register_builtin_index_trait("Index"_sv, "index"_sv,
                                      /*is_mut=*/false);
     }
-    if (!m_type_env.trait_type_by_name(StringView("IndexMut", 8))) {
-        register_builtin_index_trait(StringView("IndexMut", 8), StringView("index_mut", 9),
+    if (!m_type_env.trait_type_by_name("IndexMut"_sv)) {
+        register_builtin_index_trait("IndexMut"_sv, "index_mut"_sv,
                                      /*is_mut=*/true);
     }
 }
@@ -161,7 +161,7 @@ void TraitSystem::register_builtin_traits() {
 void TraitSystem::register_primitive_operator_methods() {
     // Guard: only register once (TypeEnv persists across modules)
     // Use I32's "add" method as a sentinel — if it's already registered, skip.
-    if (m_types.lookup_primitive_method(TypeKind::I32, StringView("add", 3))) return;
+    if (m_types.lookup_primitive_method(TypeKind::I32, "add"_sv)) return;
 
     // Helper: allocate a Span<Type*> with one element from the bump allocator
     auto make_param_span = [this](Type* param) -> Span<Type*> {
@@ -664,7 +664,7 @@ void TraitSystem::inject_default_method(Type* struct_type, Type* trait_type,
         Vector<Type*> concrete_types;
 
         // Always substitute Self -> struct_type
-        param_names.push_back(StringView("Self", 4));
+        param_names.push_back("Self"_sv);
         concrete_types.push_back(struct_type);
 
         // Add trait type params for generic traits

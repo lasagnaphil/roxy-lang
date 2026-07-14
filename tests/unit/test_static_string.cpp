@@ -61,7 +61,7 @@ TEST_SUITE("StaticString") {
 
     TEST_CASE("append StringView") {
         StaticString<32> s("hello");
-        s.append(StringView(" world", 6));
+        s.append(" world"_sv);
         CHECK(s.size() == 11);
         CHECK(strcmp(s.c_str(), "hello world") == 0);
     }
@@ -90,8 +90,8 @@ TEST_SUITE("StaticString") {
 
     TEST_CASE("comparison with StringView") {
         StaticString<32> s("hello");
-        CHECK(s == StringView("hello", 5));
-        CHECK(s != StringView("world", 5));
+        CHECK(s == "hello"_sv);
+        CHECK(s != "world"_sv);
     }
 
     TEST_CASE("comparison with const char*") {

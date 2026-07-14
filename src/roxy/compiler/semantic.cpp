@@ -2778,7 +2778,7 @@ bool SemanticAnalyzer::try_capture_identifier(Expr* expr, Symbol* sym, Type** ou
                     ? m_types.ref_type(enclosing_env_type)
                     : nullptr;
 
-                Expr* env_id = make_identifier_expr(StringView("__env", 5),
+                Expr* env_id = make_identifier_expr("__env"_sv,
                                                     enclosing_env_ref, captured_loc);
                 src = make_get_expr(env_id, captured_name, captured_type, captured_loc);
             }
@@ -2800,7 +2800,7 @@ bool SemanticAnalyzer::try_capture_identifier(Expr* expr, Symbol* sym, Type** ou
         ? m_types.ref_type(innermost_env_type)
         : nullptr;
 
-    Expr* env_id = make_identifier_expr(StringView("__env", 5),
+    Expr* env_id = make_identifier_expr("__env"_sv,
                                         innermost_env_ref, captured_loc);
 
     expr->kind = AstKind::ExprGet;
@@ -2886,12 +2886,12 @@ void SemanticAnalyzer::ensure_self_captured_through(u32 target_idx, Type* struct
             ? m_types.ref_type(outer.env_struct_type)
             : nullptr;
 
-        Expr* env_id = make_identifier_expr(StringView("__env", 5), outer_env_ref, loc);
-        src = make_get_expr(env_id, StringView("__self", 6), ref_self, loc);
+        Expr* env_id = make_identifier_expr("__env"_sv, outer_env_ref, loc);
+        src = make_get_expr(env_id, "__self"_sv, ref_self, loc);
     }
 
     CaptureInfo info{};
-    info.name = StringView("__self", 6);
+    info.name = "__self"_sv;
     info.type = ref_self;
     info.mode = CaptureMode::Copy;       // ref pointer copied
     info.source_symbol = nullptr;
@@ -3052,7 +3052,7 @@ bool SemanticAnalyzer::validate_lambda_captures(LambdaExpr& le, LambdaCaptureCon
                 Type* enclosing_env_ref = enclosing_ctx.env_struct_type
                     ? m_types.ref_type(enclosing_ctx.env_struct_type)
                     : nullptr;
-                Expr* env_id = make_identifier_expr(StringView("__env", 5),
+                Expr* env_id = make_identifier_expr("__env"_sv,
                                                     enclosing_env_ref, entry.loc);
                 return make_get_expr(env_id, entry.name, outer_sym->type, entry.loc);
             };
@@ -3109,7 +3109,7 @@ bool SemanticAnalyzer::validate_lambda_captures(LambdaExpr& le, LambdaCaptureCon
         }
 
         // [copy self] and [weak self] — both are self-only in this commit.
-        if (entry.name != StringView("self", 4)) {
+        if (entry.name != "self"_sv) {
             error_fmt(entry.loc,
                 "[copy ...] / [weak ...] captures are currently restricted to 'self'");
             return false;
@@ -3150,8 +3150,8 @@ bool SemanticAnalyzer::validate_lambda_captures(LambdaExpr& le, LambdaCaptureCon
                 ? m_types.ref_type(outer.env_struct_type)
                 : nullptr;
 
-            Expr* env_id = make_identifier_expr(StringView("__env", 5), outer_env_ref, loc);
-            return make_get_expr(env_id, StringView("__self", 6), ref_self, loc);
+            Expr* env_id = make_identifier_expr("__env"_sv, outer_env_ref, loc);
+            return make_get_expr(env_id, "__self"_sv, ref_self, loc);
         };
 
         if (entry.mode == CaptureMode::Copy) {
@@ -3197,7 +3197,7 @@ bool SemanticAnalyzer::validate_lambda_captures(LambdaExpr& le, LambdaCaptureCon
             src->resolved_type = struct_type;
 
             CaptureInfo info{};
-            info.name = StringView("__self", 6);
+            info.name = "__self"_sv;
             info.type = struct_type;     // value-Self in env
             info.mode = CaptureMode::Copy;
             info.source_symbol = nullptr;
@@ -3223,7 +3223,7 @@ bool SemanticAnalyzer::validate_lambda_captures(LambdaExpr& le, LambdaCaptureCon
             Expr* src = build_outer_self_ref_source(entry.loc);
 
             CaptureInfo info{};
-            info.name = StringView("__self", 6);
+            info.name = "__self"_sv;
             info.type = weak_self;
             info.mode = CaptureMode::Weak;
             info.source_symbol = nullptr;
@@ -3309,7 +3309,7 @@ Decl* SemanticAnalyzer::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
             // lambdas each carry their own `__env`, which is sound — every
             // lambda body becomes its own IR function — and not something the
             // user wrote.
-            bool is_synthesized_env = p.name == StringView("__env", 5);
+            bool is_synthesized_env = p.name == "__env"_sv;
             if (m_symbols.lookup_local(p.name)) {
                 error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
             } else if (is_synthesized_env || check_no_local_shadowing(p.name, p.loc)) {
@@ -3629,8 +3629,8 @@ void SemanticAnalyzer::populate_enum_methods(Type* type) {
     // eq(other: Self): bool, ne(other: Self): bool
     Span<Type*> self_param(m_allocator.emplace<Type*>(type), 1);
     Vector<MethodInfo> methods;
-    methods.push_back(make_method(StringView("eq", 2), self_param, m_types.bool_type()));
-    methods.push_back(make_method(StringView("ne", 2), self_param, m_types.bool_type()));
+    methods.push_back(make_method("eq"_sv, self_param, m_types.bool_type()));
+    methods.push_back(make_method("ne"_sv, self_param, m_types.bool_type()));
     type->enum_info.methods = m_allocator.alloc_span(methods);
 }
 
@@ -3655,8 +3655,8 @@ void SemanticAnalyzer::populate_coro_methods(Type* type) {
 
     // resume() -> yield_type, done() -> bool (no params; self is implicit)
     Vector<MethodInfo> methods;
-    methods.push_back(make_method(StringView("resume", 6), Span<Type*>(), yield_type, resume_native));
-    methods.push_back(make_method(StringView("done", 4), Span<Type*>(), m_types.bool_type(), done_native));
+    methods.push_back(make_method("resume"_sv, Span<Type*>(), yield_type, resume_native));
+    methods.push_back(make_method("done"_sv, Span<Type*>(), m_types.bool_type(), done_native));
     type->coro_info.methods = m_allocator.alloc_span(methods);
 }
 
@@ -3938,7 +3938,7 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
 
 bool SemanticAnalyzer::check_container_copy_method(Expr* expr, Type* base_type,
                                                    StringView method_name) {
-    if (method_name != StringView("copy", 4) || !base_type) return true;
+    if (method_name != "copy"_sv || !base_type) return true;
 
     if (base_type->is_list()) {
         Type* et = base_type->list_info.element_type;
@@ -4614,11 +4614,11 @@ Type* SemanticAnalyzer::analyze_this_expr(Expr* expr) {
             Type* env_ref = innermost.env_struct_type
                 ? m_types.ref_type(innermost.env_struct_type)
                 : nullptr;
-            Expr* env_id = make_identifier_expr(StringView("__env", 5), env_ref, expr->loc);
+            Expr* env_id = make_identifier_expr("__env"_sv, env_ref, expr->loc);
 
             expr->kind = AstKind::ExprGet;
             expr->get.object = env_id;
-            expr->get.name = StringView("__self", 6);
+            expr->get.name = "__self"_sv;
             return info.type;
         }
     }

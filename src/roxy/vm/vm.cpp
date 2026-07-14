@@ -144,8 +144,8 @@ void vm_destroy(RoxyVM* vm) {
     // Tear down noncopyable globals while the heap/allocator is still alive and
     // the execution machinery (register file, local stack) is intact.
     if (vm->module && vm->global_slots && !vm->error
-        && vm->module->find_function(StringView("__module_shutdown", 17)) >= 0) {
-        vm_call(vm, StringView("__module_shutdown", 17), {});
+        && vm->module->find_function("__module_shutdown"_sv) >= 0) {
+        vm_call(vm, "__module_shutdown"_sv, {});
     }
     vm->global_slots.reset();
     vm->global_slots_size = 0;
@@ -242,8 +242,8 @@ bool vm_load_module(RoxyVM* vm, BCModule* module) {
         }
         memset(vm->global_slots.get(), 0, vm->global_slots_size * sizeof(u32));
     }
-    if (module->find_function(StringView("__module_init", 13)) >= 0) {
-        if (!vm_call(vm, StringView("__module_init", 13), {})) {
+    if (module->find_function("__module_init"_sv) >= 0) {
+        if (!vm_call(vm, "__module_init"_sv, {})) {
             return false;  // global initializer failed (vm->error set)
         }
     }

@@ -594,7 +594,7 @@ String CEmitter::request_container_drop_glue(Type* container) {
         def.append("static void ");
         def.append(nv);
         def.append("(void* self) {\n");
-        emit_container_drop_body(container, StringView("self", 4), def);
+        emit_container_drop_body(container, "self"_sv, def);
         def.append("}\n\n");
         m_drop_glue_defs.append(StringView(def.data(), def.size()));
     }
@@ -1434,7 +1434,7 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             // declared in order with matching widths, anonymous unions sized
             // to their largest variant), so slot_offset/slot_count map
             // directly to byte offsets.
-            if (inst->field.field_name == StringView("__zero", 6)) {
+            if (inst->field.field_name == "__zero"_sv) {
                 out.append("    memset((char*)");
                 if (is_pointer_value(inst->field.object)) {
                     emit_value(inst->field.object, out);
@@ -2309,7 +2309,7 @@ void CEmitter::emit_function_prototype(const IRFunction* func, String& out) {
             // is a reliable discriminator. (struct out/inout is already handled
             // by the is_struct branch above and never reaches here.)
             else if (i < func->param_is_ptr.size() && func->param_is_ptr[i]) {
-                bool is_self_receiver = func->params[i].name == StringView("self", 4);
+                bool is_self_receiver = func->params[i].name == "self"_sv;
                 bool base_is_ref = param_type && param_type->is_reference();
                 if (!base_is_ref || !is_self_receiver) {
                     out.push_back('*');
@@ -3878,8 +3878,8 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
             // active (so allocations/constructors work) but before user code,
             // and the teardown after user code, before the ctx is destroyed (so
             // global destructors still have the heap). Skip when absent.
-            bool has_init = find_function(StringView("__module_init", 13)) != nullptr;
-            bool has_shutdown = find_function(StringView("__module_shutdown", 17)) != nullptr;
+            bool has_init = find_function("__module_init"_sv) != nullptr;
+            bool has_shutdown = find_function("__module_shutdown"_sv) != nullptr;
             // `roxy_rt_init` brings up the process-wide slab allocator so
             // `roxy_ctx_init` can pick it up as the default. Pairs with
             // `roxy_rt_shutdown` after the user's `main_entry()` returns.

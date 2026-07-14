@@ -149,10 +149,10 @@ Type* NativeRegistry::resolve_type_expr(TypeExpr* expr,
             result = primitive;
         } else if (expr->type_args.size() > 0) {
             // Generic type application: List<T>, Map<K, V>
-            if (name == StringView("List", 4) && expr->type_args.size() == 1) {
+            if (name == "List"_sv && expr->type_args.size() == 1) {
                 Type* elem = resolve_type_expr(expr->type_args[0], type_param_names, type_args, types);
                 result = types.list_type(elem);
-            } else if (name == StringView("Map", 3) && expr->type_args.size() == 2) {
+            } else if (name == "Map"_sv && expr->type_args.size() == 2) {
                 Type* key = resolve_type_expr(expr->type_args[0], type_param_names, type_args, types);
                 Type* val = resolve_type_expr(expr->type_args[1], type_param_names, type_args, types);
                 result = types.map_type(key, val);

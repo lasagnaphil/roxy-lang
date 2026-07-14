@@ -424,7 +424,7 @@ Type* TypeCache::struct_type(StringView name, Decl* decl, StringView module_name
     type->kind = TypeKind::Struct;
     type->struct_info.name = name;
     // Use empty string "" if module_name is empty to ensure valid StringView
-    type->struct_info.module_name = module_name.empty() ? StringView("", 0) : module_name;
+    type->struct_info.module_name = module_name.empty() ? ""_sv : module_name;
     type->struct_info.decl = decl;
     type->struct_info.parent = nullptr;
     type->struct_info.fields = Span<FieldInfo>();

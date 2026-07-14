@@ -503,22 +503,22 @@ Expr* Parser::primary() {
                     CaptureEntry entry;
                     entry.loc = entry_loc;
 
-                    if (check(TokenKind::Identifier) && m_current.text() == StringView("move", 4)) {
+                    if (check(TokenKind::Identifier) && m_current.text() == "move"_sv) {
                         advance();  // consume 'move'
                         Token cap_name = consume(TokenKind::Identifier, "Expected captured variable name after 'move'");
                         if (m_has_error) return nullptr;
                         entry.name = cap_name.text();
                         entry.mode = CaptureMode::Move;
-                    } else if (check(TokenKind::Identifier) && m_current.text() == StringView("copy", 4)) {
+                    } else if (check(TokenKind::Identifier) && m_current.text() == "copy"_sv) {
                         advance();  // consume 'copy'
                         consume(TokenKind::KwSelf, "[copy ...] is currently restricted to 'self'");
                         if (m_has_error) return nullptr;
-                        entry.name = StringView("self", 4);
+                        entry.name = "self"_sv;
                         entry.mode = CaptureMode::Copy;
                     } else if (match(TokenKind::KwWeak)) {
                         consume(TokenKind::KwSelf, "[weak ...] is currently restricted to 'self'");
                         if (m_has_error) return nullptr;
-                        entry.name = StringView("self", 4);
+                        entry.name = "self"_sv;
                         entry.mode = CaptureMode::Weak;
                     } else {
                         report_error("Expected 'move <name>', '[copy self]', or '[weak self]' in capture list");
@@ -2415,7 +2415,7 @@ StringView Parser::process_fstring_part(const Token& token) {
     }
 
     if (content_start >= content_end) {
-        return StringView("", 0);
+        return ""_sv;
     }
 
     u32 max_len = content_end - content_start;

@@ -1576,7 +1576,7 @@ TEST_SUITE("E2E Exceptions") {
         RoxyVM vm;
         vm_init(&vm);
         vm_load_module(&vm, module);
-        REQUIRE(vm_call(&vm, StringView("main", 4), {}) == true);
+        REQUIRE(vm_call(&vm, "main"_sv, {}) == true);
         // 100 exceptions thrown + caught; all reclaimed → only a handful of live
         // objects (interned strings), not ~100 leaked exception structs.
         u64 live = vm.allocator->total_allocated - vm.allocator->total_tombstoned;

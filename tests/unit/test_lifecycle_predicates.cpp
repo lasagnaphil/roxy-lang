@@ -96,7 +96,7 @@ TEST_SUITE("Lifecycle Predicates") {
     TEST_CASE("enum is trivial") {
         BumpAllocator allocator(4096);
         TypeCache types(allocator);
-        Type* e = types.enum_type(StringView("E", 1), nullptr);
+        Type* e = types.enum_type("E"_sv, nullptr);
         CHECK(e->is_copy());
         CHECK_FALSE(e->needs_drop());
         CHECK(e->is_trivial());
@@ -111,10 +111,10 @@ TEST_SUITE("Lifecycle Predicates") {
         BumpAllocator allocator(4096);
         TypeCache types(allocator);
 
-        Type* has_ref = types.struct_type(StringView("HasRef", 6), nullptr);
+        Type* has_ref = types.struct_type("HasRef"_sv, nullptr);
         auto* rf = reinterpret_cast<FieldInfo*>(
             allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
-        rf[0] = FieldInfo{ StringView("r", 1), types.ref_type(types.i32_type()),
+        rf[0] = FieldInfo{ "r"_sv, types.ref_type(types.i32_type()),
                            /*is_pub=*/true, /*index=*/0, /*slot_offset=*/0, /*slot_count=*/2 };
         has_ref->struct_info.fields = Span<FieldInfo>(rf, 1);
         has_ref->struct_info.when_clauses = Span<WhenClauseInfo>();
@@ -126,11 +126,11 @@ TEST_SUITE("Lifecycle Predicates") {
         CHECK_FALSE(has_ref->is_trivial());
 
         // A struct of only plain fields stays trivial.
-        Type* plain = types.struct_type(StringView("Plain", 5), nullptr);
+        Type* plain = types.struct_type("Plain"_sv, nullptr);
         auto* pf = reinterpret_cast<FieldInfo*>(
             allocator.alloc_bytes(sizeof(FieldInfo) * 2, alignof(FieldInfo)));
-        pf[0] = FieldInfo{ StringView("x", 1), types.i32_type(), true, 0, 0, 1 };
-        pf[1] = FieldInfo{ StringView("y", 1), types.f64_type(), true, 1, 1, 2 };
+        pf[0] = FieldInfo{ "x"_sv, types.i32_type(), true, 0, 0, 1 };
+        pf[1] = FieldInfo{ "y"_sv, types.f64_type(), true, 1, 1, 2 };
         plain->struct_info.fields = Span<FieldInfo>(pf, 2);
         plain->struct_info.when_clauses = Span<WhenClauseInfo>();
         plain->struct_info.destructors = Span<DestructorInfo>();

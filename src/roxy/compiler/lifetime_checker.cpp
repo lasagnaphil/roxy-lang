@@ -306,7 +306,7 @@ void LifetimeChecker::consume_noncopyable(Expr* expr, SourceLocation loc) {
         Type* obj_type = expr->index.object->resolved_type;
         if (obj_type) {
             const MethodInfo* index_method =
-                m_types.lookup_method(obj_type->base_type(), StringView("index", 5));
+                m_types.lookup_method(obj_type->base_type(), "index"_sv);
             if (index_method && !index_method->native_name.empty()) {
                 m_reporter.error(loc, "cannot move a noncopyable value out of a container element; "
                            "borrow it with 'ref' or remove it from the container instead");

@@ -128,7 +128,7 @@ TEST_SUITE("String") {
 
         SUBCASE("from StringView") {
             String s;
-            s = StringView("world", 5);
+            s = "world"_sv;
             CHECK(s == "world");
         }
     }
