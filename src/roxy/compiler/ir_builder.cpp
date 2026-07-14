@@ -1063,9 +1063,12 @@ void IRBuilder::end_function_body() {
         if (m_current_func->return_type->is_void()) {
             finish_block_return(ValueId::invalid());
         } else {
-            // This shouldn't happen if semantic analysis passed
-            // Return a default value
-            ValueId default_val = emit_const_null();
+            // A user function reaches here only on an unreachable fall-off path
+            // (the all-paths-return check rejects a non-void function that can
+            // fall off the end); lambdas/synthetic functions may still land here
+            // with a live path. Emit a well-typed zero rather than emit_const_null(),
+            // whose void* result the C backend rejects when returned as e.g. int32_t.
+            ValueId default_val = emit_zero_value(m_current_func->return_type);
             finish_block_return(default_val);
         }
     }

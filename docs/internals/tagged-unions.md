@@ -1,7 +1,7 @@
 # Tagged Unions (Discriminated Unions)
 
-> **Status:** Core implementation complete. Flow-sensitive typing and
-> exhaustiveness checking are not yet implemented.
+> **Status:** Core implementation complete, including exhaustiveness *detection*
+> (see below). Flow-sensitive typing of variant fields is not yet implemented.
 
 Tagged unions let a struct hold variant-specific fields selected by a discriminant
 enum value. They give memory-efficient sum types with a union layout (all variants
@@ -66,6 +66,18 @@ fun use_skill(skill: ref Skill) {
 
 Matching is **partial** — unhandled cases fall through as no-ops. An optional
 `else` block handles the default:
+
+> **Exhaustiveness detection.** When the cases cover *every* variant of the
+> discriminant enum, the `when` is **exhaustive**: the compiler knows the
+> fall-through can never be taken. It records this on `WhenStmt::is_exhaustive`,
+> which (1) lets `branch_terminates()` propagate — an exhaustive `when` whose
+> every arm returns/throws is treated as terminating, so no trailing return is
+> required — (2) sharpens `uniq` move-state merges (a value moved in every arm is
+> `Moved`, not `MaybeValid`, after the `when`), and (3) makes the IR builder emit
+> an `Unreachable` trap on the impossible fall-through instead of re-joining the
+> merge with pre-`when` values. A *non*-exhaustive no-`else` `when` still falls
+> through as before. This is detection, not enforcement: a non-exhaustive `when`
+> is not an error (partial matching is intentional).
 
 ```roxy
 when skill.type {

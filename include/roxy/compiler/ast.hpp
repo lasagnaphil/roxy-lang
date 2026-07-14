@@ -425,6 +425,12 @@ struct Type;
 //                                 generic struct literals are rewritten to the
 //                                 mangled instance name.
 //
+// --- Semantic flags read by the IR builder ---
+//   WhenStmt.is_exhaustive — set when the cases cover every variant of the
+//     discriminant enum. The IR builder traps the no-else fall-through (which
+//     is then provably unreachable) instead of routing it to the merge block
+//     with the pre-when values.
+//
 // --- Semantic-internal flags (never visible to the IR builder) ---
 //   IdentifierExpr.is_generic_template_ref — set when a bare generic-function
 //     name is referenced; resolved_type stays error_type until a coercion
@@ -559,6 +565,11 @@ struct WhenStmt {
     Span<WhenCase> cases;         // List of cases
     Span<Decl*> else_body;        // Optional else body (empty if no else)
     SourceLocation else_loc;      // Location of else keyword
+    // Set by semantic analysis (analyze_when_stmt): true iff the cases cover
+    // every variant of the discriminant enum. Read by the IR builder to trap
+    // the (provably unreachable) no-else fall-through. See the annotation
+    // contract above struct Expr.
+    bool is_exhaustive = false;
 };
 
 // Throw statement: throw expr;

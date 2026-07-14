@@ -703,4 +703,43 @@ TEST_SUITE("E2E Tagged Unions") {
         CHECK(result.stdout_output == "IA=13\n");
     }
 
+    TEST_CASE_TEMPLATE("exhaustive when over discriminant needs no trailing return",
+                       Backend, RX_E2E_BACKENDS) {
+        // The when covers every variant of the discriminant enum, so it is
+        // exhaustive and terminating — the function needs no trailing return.
+        const char* source = R"(
+        enum Kind { A, B }
+
+        struct Data {
+            when kind: Kind {
+                case A:
+                    val_a: i32;
+                case B:
+                    val_b: i32;
+            }
+        }
+
+        fun describe(d: Data): i32 {
+            when d.kind {
+                case A:
+                    return d.val_a;
+                case B:
+                    return d.val_b;
+            }
+        }
+
+        fun main(): i32 {
+            var a: Data = Data { kind = Kind::A, val_a = 7 };
+            var b: Data = Data { kind = Kind::B, val_b = 9 };
+            print(f"{describe(a)}");
+            print(f"{describe(b)}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "7\n9\n");
+    }
+
 }  // TEST_SUITE("E2E Tagged Unions")

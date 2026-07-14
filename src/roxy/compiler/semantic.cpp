@@ -81,6 +81,69 @@ static bool stmt_contains_yield(Stmt* stmt) {
     }
 }
 
+// A `while (true)` / `while (false)` literal condition. Only the literal is
+// recognized — constant-foldable expressions (e.g. `1 == 1`) are not, so a loop
+// with such a condition is treated as possibly-exiting.
+static bool is_const_true_condition(Expr* cond) {
+    return cond && cond->kind == AstKind::ExprLiteral
+        && cond->literal.literal_kind == LiteralKind::Bool
+        && cond->literal.bool_value;
+}
+
+static bool stmt_has_direct_break(Stmt* stmt);
+
+static bool decl_has_direct_break(Decl* decl) {
+    if (!decl) return false;
+    if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtYield) {
+        return stmt_has_direct_break(&decl->stmt);
+    }
+    return false;
+}
+
+// True if `stmt` contains a `break` that targets the enclosing loop — i.e. one
+// not nested inside a deeper loop (whose `break` binds to that inner loop). Used
+// to distinguish an infinite `while (true) { ... }` (control never falls past
+// it) from one that can exit via `break`.
+static bool stmt_has_direct_break(Stmt* stmt) {
+    if (!stmt) return false;
+    switch (stmt->kind) {
+        case AstKind::StmtBreak:
+            return true;
+        // Nested loops capture their own `break` — do not descend.
+        case AstKind::StmtWhile:
+        case AstKind::StmtFor:
+            return false;
+        case AstKind::StmtBlock:
+            for (Decl* d : stmt->block.declarations) {
+                if (decl_has_direct_break(d)) return true;
+            }
+            return false;
+        case AstKind::StmtIf:
+            return stmt_has_direct_break(stmt->if_stmt.then_branch)
+                || stmt_has_direct_break(stmt->if_stmt.else_branch);
+        case AstKind::StmtWhen: {
+            for (const WhenCase& c : stmt->when_stmt.cases) {
+                for (Decl* d : c.body) {
+                    if (decl_has_direct_break(d)) return true;
+                }
+            }
+            for (Decl* d : stmt->when_stmt.else_body) {
+                if (decl_has_direct_break(d)) return true;
+            }
+            return false;
+        }
+        case AstKind::StmtTry: {
+            if (stmt_has_direct_break(stmt->try_stmt.try_body)) return true;
+            for (const CatchClause& cc : stmt->try_stmt.catches) {
+                if (stmt_has_direct_break(cc.body)) return true;
+            }
+            return stmt_has_direct_break(stmt->try_stmt.finally_body);
+        }
+        default:
+            return false;
+    }
+}
+
 static const ConstructorInfo* find_constructor(Span<ConstructorInfo> constructors, StringView name) {
     for (const auto& constructor : constructors) {
         if (constructor.name == name) {
@@ -1423,15 +1486,20 @@ void SemanticAnalyzer::analyze_fun_body(Decl* decl) {
     // Analyze body
     analyze_stmt(fun_decl.body);
 
-    // No all-paths-return diagnostic yet. LifetimeChecker::branch_terminates()
-    // already computes definite termination, but it is deliberately
-    // conservative: a `when` with no `else` reports non-terminating even when
-    // every enum case returns (the implicit fall-through counts as a live path),
-    // so `!branch_terminates()` would falsely flag the common exhaustive-`when`
-    // function as missing a return. A sound check is blocked on `when`
-    // exhaustiveness analysis (see TODO.md "Exhaustiveness checking"). The old
-    // `Scope::function.has_return`/`mark_return` machinery was never read and has
-    // been removed.
+    // All-paths-return: a non-void function must terminate (return/throw, or an
+    // unreachable fall-through) on every path. branch_terminates() now accounts
+    // for exhaustive no-else `when`s (all arms terminating) and infinite loops,
+    // so it no longer false-flags those. Coroutines never return a value (they
+    // yield), and constructors/destructors go through their own body analyzers,
+    // so neither reaches here as a non-void case. Lambdas analyze via
+    // analyze_lambda_expr and are not covered by this check.
+    Type* ret_type = m_symbols.current_return_type();
+    if (ret_type && !ret_type->is_void()
+            && !decl->fun_decl.is_coroutine
+            && !m_lifetimes.branch_terminates()) {
+        error_fmt(decl->loc, "not all code paths return a value in function '{}'",
+                  decl->fun_decl.name);
+    }
 
     m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), decl->loc);
     m_symbols.pop_scope();
@@ -1920,7 +1988,16 @@ void SemanticAnalyzer::analyze_while_stmt(Stmt* stmt) {
     m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
     m_symbols.pop_scope();
 
-    m_lifetimes.set_branch_terminates(pre_loop_terminates);
+    // An infinite loop with no reachable `break` never falls through — control
+    // after it is unreachable — so the loop counts as terminating (e.g. a
+    // function whose body ends in `while (true) { ... }` needs no trailing
+    // return). Otherwise the body may execute zero times, so restore the
+    // caller's flag (see note above).
+    if (is_const_true_condition(ws.condition) && !stmt_has_direct_break(ws.body)) {
+        m_lifetimes.set_branch_terminates(true);
+    } else {
+        m_lifetimes.set_branch_terminates(pre_loop_terminates);
+    }
 
     MoveStateSnapshot post_body_states = m_lifetimes.save_move_states();
 
@@ -2186,6 +2263,13 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
         case_terminates.push_back(m_lifetimes.branch_terminates());
     }
 
+    // Exhaustive iff the cases cover every variant of the discriminant enum.
+    // `covered_variants` holds exactly the distinct valid variants matched
+    // (invalid names are never inserted, grouped/duplicate names are deduped),
+    // so an equal count means full coverage. Read by the IR builder to trap the
+    // (then unreachable) no-else fall-through.
+    ws.is_exhaustive = covered_variants.size() == eti.variants.size();
+
     // Analyze else body if present
     bool has_else = ws.else_body.size() > 0;
     if (has_else) {
@@ -2205,17 +2289,19 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
 
         case_snapshots.push_back(m_lifetimes.save_move_states());
         case_terminates.push_back(m_lifetimes.branch_terminates());
-    } else {
-        // No else — an unmatched enum value falls past the whole statement,
-        // so the pre-when state is a non-terminating survivor path.
+    } else if (!ws.is_exhaustive) {
+        // Non-exhaustive no-else — an unmatched enum value falls past the whole
+        // statement, so the pre-when state is a non-terminating survivor path.
         case_snapshots.push_back(pre_when_states);
         case_terminates.push_back(false);
     }
+    // Exhaustive no-else: no survivor fall-through path (an unmatched value is
+    // impossible), so merge only the case arms — like a `when` with an else.
 
     // Merge the surviving (non-terminating) case paths. If every path
-    // terminates (only possible when an else exists; otherwise the pre-when
-    // fall-through is always non-terminating), the code after the when is
-    // unreachable and termination propagates upward.
+    // terminates, the code after the when is unreachable and termination
+    // propagates upward. For a non-exhaustive no-else `when` the injected
+    // fall-through path is always non-terminating, so this stays false.
     m_lifetimes.set_branch_terminates(m_lifetimes.merge_branch_snapshots(case_snapshots, case_terminates));
 }
 

@@ -377,7 +377,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Details:** `docs/internals/globals.md` | **Files:** `compiler/ir_builder.cpp` (`collect_globals`/`build_module_init`/`build_module_shutdown`), `compiler/c_emitter.cpp`, `vm/vm.cpp`
 
 ### Control Flow
-**When Statement** - Pattern matching on enum values with phi node support for variable modifications.
+**When Statement** - Pattern matching on enum values with phi node support for variable modifications. Exhaustiveness is *detected* (all variants covered) — not required — and drives all-paths-return, sharper `uniq` move-state merges, and a trap on the impossible no-`else` fall-through.
 **Tests:** `tests/e2e/test_when.cpp`
 
 ### Traits

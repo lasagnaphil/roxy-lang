@@ -793,10 +793,18 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         case_infos.push_back({body_block, &wc});
     }
 
-    // Create else block if there's an else clause
+    // Create else block if there's an else clause. For an exhaustive no-else
+    // `when` (semantic analysis proved the cases cover every variant), the
+    // discriminant always matches a case, so the unmatched fall-through is
+    // unreachable — synthesize a trapping "else" and route the last case's
+    // no-match edge there instead of re-joining the merge with pre-when values.
     IRBlock* else_block = nullptr;
+    bool else_is_trap = false;
     if (ws.else_body.size() > 0) {
         else_block = create_block("when_else");
+    } else if (ws.is_exhaustive) {
+        else_block = create_block("when_unreachable");
+        else_is_trap = true;
     }
 
     // 6. Generate the comparison chain
@@ -877,12 +885,19 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
     if (else_block) {
         restore_scopes(saved);
         set_current_block(else_block);
-        push_scope();
-        for (auto* d : ws.else_body) {
-            gen_decl(d);
+        if (else_is_trap) {
+            // Exhaustive no-else: this edge is provably unreachable. Trap so the
+            // fall-through never re-joins the merge with stale pre-when values —
+            // agreeing with the semantic model, which drops the survivor path.
+            finish_block_unreachable();
+        } else {
+            push_scope();
+            for (auto* d : ws.else_body) {
+                gen_decl(d);
+            }
+            pop_scope();
+            goto_merge_if_open(merge_block, phi_info);
         }
-        pop_scope();
-        goto_merge_if_open(merge_block, phi_info);
     }
 
     // 9. Continue from merge block, bind phi results.

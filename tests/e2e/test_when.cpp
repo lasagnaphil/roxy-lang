@@ -544,4 +544,177 @@ TEST_SUITE("E2E When") {
         CHECK(module == nullptr);  // Should fail: use of possibly moved value
     }
 
+    // ============================================================================
+    // Exhaustiveness Tests
+    // ============================================================================
+
+    TEST_CASE_TEMPLATE("When exhaustive no-else, all cases return, no trailing return",
+                       Backend, RX_E2E_BACKENDS) {
+        // The cases cover every variant, so the (impossible) fall-through is a
+        // trap and the function needs no trailing return — branch_terminates()
+        // propagates the exhaustive when's termination.
+        const char* source = R"(
+        enum Bool2 { True2, False2 }
+
+        fun to_int(b: Bool2): i32 {
+            when b {
+                case True2:
+                    return 1;
+                case False2:
+                    return 0;
+            }
+        }
+
+        fun main(): i32 {
+            print(f"{to_int(Bool2::True2)}");
+            print(f"{to_int(Bool2::False2)}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n0\n");
+    }
+
+    TEST_CASE_TEMPLATE("When exhaustive no-else moves uniq in every arm", Backend, RX_E2E_BACKENDS) {
+        // Moving r in every arm of an exhaustive no-else `when` leaves it Moved
+        // (not MaybeValid) after — the phantom fall-through survivor path is
+        // dropped — so no redundant scope-exit delete and it still runs cleanly.
+        const char* source = R"(
+        struct Resource { value: i32; }
+
+        enum Action { Start, Stop }
+
+        fun consume(r: uniq Resource): i32 { return r.value; }
+
+        fun test(a: Action): i32 {
+            var r: uniq Resource = uniq Resource();
+            r.value = 42;
+            var result: i32 = 0;
+            when a {
+                case Start:
+                    result = consume(r);
+                case Stop:
+                    result = consume(r);
+            }
+            return result;
+        }
+
+        fun main(): i32 {
+            print(f"{test(Action::Start)}");
+            print(f"{test(Action::Stop)}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n42\n");
+    }
+
+    TEST_CASE("When non-exhaustive without trailing return is a compile error") {
+        // Only A and B covered of {A, B, C}; C falls through with no return, so
+        // not all code paths return a value.
+        const char* source = R"(
+        enum E { A, B, C }
+
+        fun f(e: E): i32 {
+            when e {
+                case A:
+                    return 1;
+                case B:
+                    return 2;
+            }
+        }
+
+        fun main(): i32 { return f(E::A); }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail: not all code paths return a value
+    }
+
+    TEST_CASE("Non-void function missing return is a compile error") {
+        const char* source = R"(
+        fun f(x: bool): i32 {
+            if (x) {
+                return 1;
+            }
+        }
+
+        fun main(): i32 { return f(true); }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail: missing return on the else path
+    }
+
+    TEST_CASE_TEMPLATE("Infinite while(true) with inner return needs no trailing return",
+                       Backend, RX_E2E_BACKENDS) {
+        // The loop condition is a literal `true` and the body has no `break`, so
+        // control never falls past the loop — the function is total via the
+        // inner return and needs no trailing return.
+        const char* source = R"(
+        fun spin(n: i32): i32 {
+            var i: i32 = 0;
+            while (true) {
+                if (i >= n) {
+                    return i;
+                }
+                i = i + 1;
+            }
+        }
+
+        fun main(): i32 {
+            print(f"{spin(3)}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "3\n");
+    }
+
+    TEST_CASE("Non-returning infinite while(true) compiles") {
+        // A total function that loops forever: no all-paths-return false positive.
+        const char* source = R"(
+        fun run_forever(): i32 {
+            var i: i32 = 0;
+            while (true) {
+                i = i + 1;
+            }
+        }
+
+        fun main(): i32 { return 0; }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module != nullptr);  // Should compile: infinite loop never falls through
+    }
+
+    TEST_CASE("while(true) with a break needs a trailing return") {
+        // The loop can exit via break, so control falls past it — without a
+        // trailing return this is a missing-return error.
+        const char* source = R"(
+        fun maybe(cond: bool): i32 {
+            while (true) {
+                if (cond) {
+                    break;
+                }
+            }
+        }
+
+        fun main(): i32 { return maybe(true); }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail: break exit path has no return
+    }
+
 }  // TEST_SUITE("E2E When")
