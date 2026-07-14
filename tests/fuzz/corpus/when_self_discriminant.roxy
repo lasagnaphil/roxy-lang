@@ -1,0 +1,19 @@
+// Regression: the LSP error-recovering parser used to infinite-loop on a
+// `when` statement whose discriminant is a member-access expression rooted at
+// the `self` keyword (`when self.kind`), because parse_when_stmt hard-coded an
+// `Identifier(.Identifier)*` discriminant and could not consume `self`, leaving
+// the cases loop parked and spinning. Minimal shape of examples/lox/value.roxy.
+enum K { A, B }
+
+struct S {
+    kind: K;
+    val: i32;
+}
+
+fun S.describe(): string for Printable {
+    when self.kind {
+        case A: return "a";
+        case B: return f"b={self.val}";
+    }
+    return "?";
+}

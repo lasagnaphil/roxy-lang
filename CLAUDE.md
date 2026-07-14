@@ -470,6 +470,21 @@ Everything else (including `--test-case-exclude="*<C>*"`) runs fine inside the
 sandbox. (ASAN is currently disabled — see the AddressSanitizer note above; when
 re-enabled, ASAN builds also need to run outside the sandbox for the symbolizer.)
 
+### Fuzzing (lexer / parser / LSP parser)
+
+Coverage-guided libFuzzer targets live in `tests/fuzz/` and build only under
+`-DENABLE_FUZZERS=ON` with a Clang toolchain that ships the libFuzzer runtime
+(Homebrew LLVM / upstream / Windows LLVM — **not** Apple clang). The
+always-on `Fuzz Regression` doctest suite replays the checked-in seed corpus
+(`tests/fuzz/corpus/`) plus `examples/` through all three harnesses on every
+normal `roxy_tests` run (no fuzzer toolchain needed), so found-and-fixed crashes
+stay fixed. Full build/run instructions: `tests/fuzz/README.md`.
+
+> The three harnesses each guarantee bounded work per input, so the regression
+> replay is fast — **never** add an OOM/very-slow reproducer to
+> `tests/fuzz/corpus/` (the replay has no resource cap). See `TODO.md` for the
+> one open fuzzing finding (an LSP-parser super-linear-memory OOM).
+
 ## Documentation
 
 - `CLAUDE.md` - Quick reference for Claude Code (this file)

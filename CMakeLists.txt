@@ -39,6 +39,32 @@ if(ENABLE_ASAN)
     endif()
 endif()
 
+# Fuzzing option — builds the libFuzzer targets in tests/fuzz/ (lexer, parser,
+# LSP parser). Requires a Clang toolchain that ships the libFuzzer runtime
+# (Homebrew LLVM, upstream LLVM, or Windows LLVM — NOT Apple clang, which omits
+# libclang_rt.fuzzer). Configure a dedicated build dir with that compiler:
+#
+#   cmake -B build-fuzz -G Ninja -DENABLE_FUZZERS=ON \
+#     -DCMAKE_C_COMPILER=$(brew --prefix llvm)/bin/clang \
+#     -DCMAKE_CXX_COMPILER=$(brew --prefix llvm)/bin/clang++
+#   ninja -C build-fuzz fuzz_lexer fuzz_parser fuzz_lsp_parser
+#
+# All TUs are coverage-instrumented (fuzzer-no-link) so the fuzzer sees into the
+# lexer/parser/LSP libraries; each fuzz executable additionally links the
+# libFuzzer driver. UBSan is enabled (aborts on UB, so libFuzzer flags it as a
+# crash). ASAN is intentionally left to the existing ENABLE_ASAN flag so the two
+# compose (ASAN is currently broken on macOS Tahoe — see CLAUDE.md). Asserts
+# stay on (no NDEBUG unless a Release build type is set). See tests/fuzz/README.md.
+option(ENABLE_FUZZERS "Build libFuzzer fuzz targets (requires Clang with the libFuzzer runtime)" OFF)
+if(ENABLE_FUZZERS)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "ENABLE_FUZZERS requires a Clang toolchain (got '${CMAKE_CXX_COMPILER_ID}')")
+    endif()
+    message(STATUS "Fuzzers enabled (libFuzzer coverage + UBSan)")
+    add_compile_options(-fsanitize=fuzzer-no-link,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g -O1)
+    add_link_options(-fsanitize=undefined)
+endif()
+
 # Include directories
 include_directories(include)
 
@@ -180,6 +206,13 @@ add_executable(roxy_tests
     tests/unit/test_runtime_ctx.cpp
     tests/unit/test_container_pin.cpp
 
+    # Fuzz-harness regression replay (seed corpus + examples + inline cases).
+    # The harness bodies are shared with the tests/fuzz/ libFuzzer executables.
+    tests/unit/test_fuzz_regression.cpp
+    tests/fuzz/fuzz_one_lexer.cpp
+    tests/fuzz/fuzz_one_parser.cpp
+    tests/fuzz/fuzz_one_lsp_parser.cpp
+
     # E2E tests
     tests/e2e/test_helpers.cpp
     tests/e2e/test_basics.cpp
@@ -223,3 +256,23 @@ target_compile_definitions(roxy_tests PRIVATE "ROXY_PROJECT_ROOT=\"${CMAKE_SOURC
 # Standalone interpreter executable
 add_executable(roxy src/roxy.cpp)
 target_link_libraries(roxy ${ROXY_LINK_START} roxy_vm roxy_compiler roxy_shared roxy_core ${ROXY_LINK_END})
+
+# Fuzz targets (only when ENABLE_FUZZERS=ON — see the option block above and
+# tests/fuzz/README.md). Each links its component's shared harness body plus the
+# minimal library set, and the libFuzzer driver via -fsanitize=fuzzer.
+if(ENABLE_FUZZERS)
+    # Lexer only.
+    add_executable(fuzz_lexer tests/fuzz/fuzz_lexer.cpp tests/fuzz/fuzz_one_lexer.cpp)
+    target_link_libraries(fuzz_lexer roxy_shared roxy_core)
+    target_link_options(fuzz_lexer PRIVATE -fsanitize=fuzzer)
+
+    # Parser (pulls in the lexer + core).
+    add_executable(fuzz_parser tests/fuzz/fuzz_parser.cpp tests/fuzz/fuzz_one_parser.cpp)
+    target_link_libraries(fuzz_parser ${ROXY_LINK_START} roxy_compiler roxy_shared roxy_core ${ROXY_LINK_END})
+    target_link_options(fuzz_parser PRIVATE -fsanitize=fuzzer)
+
+    # LSP error-recovering parser (roxy_lsp pulls in vm + compiler).
+    add_executable(fuzz_lsp_parser tests/fuzz/fuzz_lsp_parser.cpp tests/fuzz/fuzz_one_lsp_parser.cpp)
+    target_link_libraries(fuzz_lsp_parser ${ROXY_LINK_START} roxy_lsp roxy_vm roxy_compiler roxy_shared roxy_core ${ROXY_LINK_END})
+    target_link_options(fuzz_lsp_parser PRIVATE -fsanitize=fuzzer)
+endif()

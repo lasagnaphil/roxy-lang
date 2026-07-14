@@ -22,6 +22,17 @@ Last updated: 2026-07-14
 
 ## Low Priority
 
+- [ ] **LSP parser super-linear memory on adversarial input**: `fuzz_lsp_parser`
+  found an OOM — a mutated ~8 KB Lox source (near the `-max_len=8192` cap) drives
+  the error-recovering parser to allocate ~2.9 GB (≈370,000× blow-up), so the
+  allocation is super-linear (likely O(n²) bump-allocated CST nodes from
+  overlapping trial-parses / error recovery; *not* generic `<…>` trial-parsing —
+  the reproducer has a single `<`). Terminates (no hang) but exhausts memory.
+  Needs allocation profiling to pin the quadratic site; a cap on total CST node
+  count / recursion depth (bail to a truncated tree) is the likely mitigation.
+  Found 2026-07-14; do **not** add the reproducer to `tests/fuzz/corpus/` — the
+  `Fuzz Regression` doctest replays it with no memory cap. Reproduce with
+  `./build-fuzz/fuzz_lsp_parser -rss_limit_mb=2048 <repro>`.
 - [ ] **Register overflow on huge single functions**: a function with more than
   ~255 simultaneously live values fails bytecode lowering with "Register
   overflow: function uses too many values (max 255)" despite the
@@ -107,4 +118,12 @@ history. Remaining:
 
 ## Testing Gaps
 
-- [ ] Add fuzzing for parser/lexer
+- Fuzzing for the lexer/parser/LSP parser **landed** — coverage-guided libFuzzer
+  targets in `tests/fuzz/` (`fuzz_lexer`/`fuzz_parser`/`fuzz_lsp_parser`, built
+  via `-DENABLE_FUZZERS=ON`) plus an always-on `Fuzz Regression` doctest suite
+  that replays the seed corpus + `examples/` through all three harnesses. See
+  `tests/fuzz/README.md`. The initial campaign found and fixed three real bugs:
+  two LSP error-recovering-parser infinite loops (`when self.<member>`
+  discriminant; stray leading tokens like `}`/`"`/`,` with no forward-progress
+  guard) and a lexer signed-overflow UB on out-of-range integer literals. One
+  finding remains open ↓.

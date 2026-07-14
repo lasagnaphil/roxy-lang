@@ -3,7 +3,14 @@
 
 # Build directories
 build/
+build-fuzz/
 cmake-build-*/
+
+# libFuzzer artifacts (crash/oom/leak/timeout reproducers, working corpora)
+crash-*
+oom-*
+leak-*
+timeout-*
 
 # IDE
 .idea/

@@ -1,0 +1,16 @@
+struct Vec2 { x: f32 = 0.0f; y: f32 = 0.0f; }
+
+fun Vec2.len_sq(): f32 { return self.x * self.x + self.y * self.y; }
+
+enum Color { Red, Green, Blue }
+
+fun main(): i32 {
+    var v: Vec2 = Vec2 { x = 3.0f, y = 4.0f };
+    var total: f32 = 0.0f;
+    for (var i: i32 = 0; i < 10; i = i + 1) {
+        total = total + v.len_sq();
+    }
+    var msg = f"total = {total}";
+    print(msg);
+    return 0;
+}
