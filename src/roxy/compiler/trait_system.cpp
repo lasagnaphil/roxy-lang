@@ -650,6 +650,12 @@ void TraitSystem::inject_default_method(Type* struct_type, Type* trait_type,
     synth->method_decl.is_native = false;
     synth->method_decl.trait_name = trait_type->trait_info.name;
     synth->method_decl.trait_type_args = Span<TypeExpr*>();
+    // MethodDecl lives in the Decl union, so emplace<Decl>() does NOT run its
+    // `is_coroutine = false` default member initializer — this synth starts as
+    // uninitialized bump-allocator bytes and every field must be set explicitly.
+    // Missing this one made a cloned default method (e.g. `Eq.ne`) inherit a
+    // garbage is_coroutine, spuriously rejecting its `return` as a coroutine.
+    synth->method_decl.is_coroutine = trait_md.is_coroutine;
 
     // Build type substitution: always include Self -> struct_type,
     // plus trait type params -> concrete type args for generic traits
