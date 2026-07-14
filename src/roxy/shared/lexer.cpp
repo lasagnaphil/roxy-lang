@@ -307,7 +307,13 @@ Token Lexer::scan_number() {
     token.start = m_source + m_start;
 
     bool is_float = false;
-    i64 int_value = 0;
+    // Accumulate the integer value as unsigned: unsigned overflow is defined
+    // (modular wraparound), whereas signed overflow is UB. A literal larger
+    // than i64 max (e.g. 99999999999999999999) therefore wraps deterministically
+    // instead of triggering undefined behavior; the resulting bit pattern is
+    // stored back into the i64 token value (well-defined two's-complement
+    // conversion in C++20). Range diagnostics, if wanted, belong in sema.
+    u64 int_value = 0;
     f64 float_value = 0.0;
 
     // Check for hex, binary, or octal prefix
@@ -395,7 +401,7 @@ suffixes:
         token.float_value = float_value;
     } else {
         token.kind = TokenKind::IntLiteral;
-        token.int_value = int_value;
+        token.int_value = (i64)int_value;
     }
 
     return token;

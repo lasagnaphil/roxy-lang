@@ -284,10 +284,16 @@ SyntaxNode* LspParser::parse_program() {
     auto builder = begin_node(SyntaxKind::NodeProgram);
 
     while (!is_at_end()) {
+        u32 before = m_current.loc.offset;
         SyntaxNode* decl = parse_declaration();
         if (decl) {
             builder.children.push_back(decl);
         }
+        // Forward-progress backstop: a stray leading token that no sub-parser
+        // can start (`}`, `"`, `,`, `::`, `0x`, …) bottoms out at parse_primary
+        // returning an error node *without consuming*, so without this the loop
+        // spins forever. Skip one token to guarantee progress.
+        if (!is_at_end() && m_current.loc.offset == before) advance();
     }
 
     return finish_node(builder);
@@ -722,7 +728,12 @@ SyntaxNode* LspParser::parse_when_field_decl() {
             add_diagnostic(
                 TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
                 "Expected 'case' in when clause");
+            // Guarantee forward progress (see parse_when_stmt):
+            // synchronize_to_statement_boundary() may stop without consuming,
+            // which would otherwise spin this loop.
+            u32 before = m_current.loc.offset;
             synchronize_to_statement_boundary();
+            if (!is_at_end() && m_current.loc.offset == before) advance();
             continue;
         }
 
@@ -904,10 +915,13 @@ SyntaxNode* LspParser::parse_block_stmt() {
     auto builder = begin_node(SyntaxKind::NodeBlockStmt);
 
     while (!check(TokenKind::RightBrace) && !is_at_end()) {
+        u32 before = m_current.loc.offset;
         SyntaxNode* decl = parse_declaration();
         if (decl) {
             builder.children.push_back(decl);
         }
+        // Forward-progress backstop (see parse_program).
+        if (!is_at_end() && m_current.loc.offset == before) advance();
     }
 
     Token rbrace = consume_or_synthetic(TokenKind::RightBrace, "Expected '}' after block");
@@ -1060,15 +1074,15 @@ SyntaxNode* LspParser::parse_when_stmt() {
     auto builder = begin_node(SyntaxKind::NodeWhenStmt);
     builder.children.push_back(make_token_node(m_previous)); // 'when'
 
-    // Parse discriminant: identifier with optional member access
-    Token name_token = consume_or_synthetic(TokenKind::Identifier, "Expected discriminant after 'when'");
-    builder.children.push_back(make_token_node(name_token));
-
-    while (match(TokenKind::Dot)) {
-        builder.children.push_back(make_token_node(m_previous)); // '.'
-        Token member_token = consume_or_synthetic(TokenKind::Identifier, "Expected member name after '.'");
-        builder.children.push_back(make_token_node(member_token));
-    }
+    // Parse discriminant as a general expression (e.g. `self.kind`, `x`, `a.b`),
+    // matching the compiler parser. Struct-literal parsing is suppressed so the
+    // when body's trailing `{ ... }` is not consumed as `Discriminant { ... }`.
+    // (The previous hard-coded `Identifier(.Identifier)*` form could not consume
+    // a `self`-rooted discriminant, leaving the parser parked and spinning.)
+    m_suppress_struct_literal = true;
+    SyntaxNode* discriminant = parse_expression();
+    m_suppress_struct_literal = false;
+    builder.children.push_back(discriminant);
 
     Token lbrace = consume_or_synthetic(TokenKind::LeftBrace, "Expected '{' after 'when' discriminant");
     builder.children.push_back(make_token_node(lbrace));
@@ -1113,7 +1127,13 @@ SyntaxNode* LspParser::parse_when_stmt() {
             break;
         } else {
             builder.children.push_back(make_error_node("Expected 'case' or 'else' in when statement"));
+            // Guarantee forward progress: synchronize_to_statement_boundary()
+            // stops *at* a statement-start keyword (e.g. `return`) without
+            // consuming it, so without this guard the loop spins forever on
+            // such a token.
+            u32 before = m_current.loc.offset;
             synchronize_to_statement_boundary();
+            if (!is_at_end() && m_current.loc.offset == before) advance();
         }
     }
 
@@ -1500,8 +1520,9 @@ SyntaxNode* LspParser::parse_primary() {
             // Trial parse failed, fall through to non-generic paths
         }
 
-        // Struct literal: Type { ... }
-        if (match(TokenKind::LeftBrace)) {
+        // Struct literal: Type { ... }  (suppressed in `when` discriminant
+        // position so the when body's `{ ... }` is not consumed as `Discr { }`)
+        if (!m_suppress_struct_literal && match(TokenKind::LeftBrace)) {
             auto builder = begin_node(SyntaxKind::NodeStructLiteralExpr);
             builder.start_offset = name_token.loc.offset;
             builder.children.push_back(make_token_node(name_token));

@@ -67,6 +67,13 @@ The parser uses three strategies depending on context:
 2. **Synthetic token insertion** — when a specific token is expected but missing, insert a zero-width synthetic token of the expected kind at the current position, record a diagnostic, and continue.
 3. **Bracket-aware skipping** — when recovering inside brackets, skip to the matching close bracket while tracking nesting depth.
 
+**Forward-progress invariant.** The paramount property of this parser is that it *always terminates* — a hang would freeze the editor. Two subtleties break this if unguarded and are worth calling out because fuzzing (`tests/fuzz/fuzz_lsp_parser`) found both:
+
+- `synchronize_to_statement_boundary()` stops *at* a statement-start keyword (e.g. `return`) **without consuming it**, so the enclosing statement loop can re-parse it. A recovery loop that `continue`s straight back into synchronization therefore spins forever on such a token. The `when`-statement and tagged-union `when`-field case loops guard against this by advancing one token whenever a recovery step consumed nothing.
+- `parse_primary()` returns an error node **without consuming** on a token that cannot start an expression (`}`, `"`, `,`, `::`, …). The unbounded declaration loops (`parse_program`, `parse_block_stmt`) therefore carry a forward-progress backstop: if a full `parse_declaration()` attempt consumed no tokens, skip one so the loop cannot stall.
+
+The rule for any new unbounded recovery loop: **guarantee it consumes at least one token per iteration** (compare `m_current.loc.offset` before/after and `advance()` if unchanged). Relatedly, the `when`-statement discriminant is parsed as a struct-literal-suppressed expression (like the compiler parser), so member-access discriminants such as `when self.kind` parse cleanly instead of falling into non-progressing recovery.
+
 ### CST-to-AST Lowering
 
 For semantic analysis, the CST lowers to the compiler's existing AST format (`lsp/cst_lowering.hpp`). Error nodes lower to `nullptr` or sentinel AST nodes. The semantic analyzer's existing `Error` type kind is extended so that expressions/statements containing error nodes propagate `Error` types without cascading false diagnostics.
@@ -190,5 +197,7 @@ The LSP server shares existing compiler infrastructure rather than duplicating i
 | `tests/unit/test_lsp_hover.cpp` | Hover on vars, functions, fields, types (14 cases) |
 | `tests/unit/test_lsp_semantic_diagnostics.cpp` | Unresolved symbols, type mismatches, missing fields (31 cases) |
 | `tests/unit/test_lsp_references.cpp` | Find references, rename, symbol categories (15 cases) |
+| `tests/fuzz/fuzz_lsp_parser.cpp` | Coverage-guided libFuzzer target (see `tests/fuzz/README.md`) |
+| `tests/unit/test_fuzz_regression.cpp` | Replays the seed corpus + `examples/` through the parser harnesses each test run |
 
 The `roxy_lsp` library depends on `roxy_shared` (lexer, tokens) and `roxy_compiler` (AST types for CST-to-AST lowering).

@@ -20,6 +20,7 @@ private:
     BumpAllocator& m_allocator;
     Token m_current;
     Token m_previous;
+    bool m_suppress_struct_literal = false;  // Suppresses `Ident { }` struct-literal parsing (e.g. in `when` discriminant position)
     Vector<ParseDiagnostic> m_diagnostics;
 
     // Source info (cached from lexer)
