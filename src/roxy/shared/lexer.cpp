@@ -1,5 +1,6 @@
 #include "roxy/shared/lexer.hpp"
 
+#include <cassert>
 #include <cstring>
 
 namespace rx {
@@ -44,7 +45,15 @@ Lexer::Lexer(const char* source, u32 length)
     , m_current(0)
     , m_line(1)
     , m_line_start(0)
-{}
+{
+    // The lexer relies on a NUL sentinel at source[length]: peek() is an
+    // unchecked load, so every scan loop terminates on '\0' at end-of-buffer
+    // rather than a per-byte bounds check. Every caller allocates length+1 and
+    // writes the terminator (read_file, native-signature parsing, LSP
+    // String::content, the fuzz SourceBuffer); this assert locks the contract.
+    // See OPTIMIZATION.md §3.2.
+    assert(source[length] == '\0' && "Lexer source must be NUL-terminated at [length]");
+}
 
 Lexer::SavedPosition Lexer::save_position() const {
     return {m_start, m_current, m_line, m_line_start, m_fstring_brace_depth};
@@ -67,11 +76,16 @@ char Lexer::advance() {
 }
 
 char Lexer::peek() const {
-    if (is_at_end()) return '\0';
+    // Unchecked load — safe because the source buffer carries a NUL sentinel at
+    // [m_length] (asserted in the constructor). '\0' fails every scan-loop
+    // predicate, so m_current never advances past the sentinel; next_token()
+    // keeps the one is_at_end() check that emits the Eof token. See §3.2.
     return m_source[m_current];
 }
 
 char Lexer::peek_next() const {
+    // Keeps its bounds check: when m_current sits on the final NUL sentinel,
+    // m_current + 1 is one past the length+1 allocation.
     if (m_current + 1 >= m_length) return '\0';
     return m_source[m_current + 1];
 }

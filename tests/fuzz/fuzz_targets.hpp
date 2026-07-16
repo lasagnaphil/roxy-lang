@@ -33,32 +33,38 @@ void fuzz_one_lsp_parser(const uint8_t* data, size_t size);
 
 namespace detail {
 
-// An exact-size, NON-null-terminated heap copy of the fuzz input.
+// An exact-(size+1) heap copy of the fuzz input with a single trailing '\0'.
 //
-// The Lexer takes a (const char*, u32) length. libFuzzer inputs are neither
-// null-terminated nor bounded to u32, so we:
+// The Lexer takes a (const char*, u32) length and relies on a NUL sentinel at
+// source[length] (peek() is an unchecked load — see OPTIMIZATION.md §3.2).
+// libFuzzer inputs are neither null-terminated nor bounded to u32, so we:
 //   - Reject > UINT32_MAX inputs (the lexer's offsets are u32; production
 //     sources are far smaller and size is not the property under test).
-//   - Copy into an exact-size heap buffer with NO trailing '\0'. This is
-//     deliberately adversarial: production always null-terminates its source,
-//     so any read past `size` here is a real out-of-bounds access (the lexer's
-//     unchecked `advance()`), which a fresh exact-size allocation makes far
-//     more likely to fault / be caught by ASAN than reading into libFuzzer's
-//     persistent, padded input buffer.
+//   - Copy into a fresh heap buffer of exactly `size + 1` bytes and write the
+//     terminator at [size], matching production's contract (read_file et al.
+//     all allocate length+1). length() still reports the logical `size`.
+// This stays adversarial: the allocation is exactly size+1, so any read *past*
+// the sentinel — the class of bug the sentinel could now mask — lands one byte
+// out of bounds and is caught by ASAN, rather than reading into libFuzzer's
+// persistent, padded input buffer.
 struct SourceBuffer {
-    std::vector<char> bytes;
+    std::vector<char> bytes;  // `len` logical bytes + 1 trailing '\0'
+    uint32_t len = 0;
     bool ok;
 
     SourceBuffer(const uint8_t* data, size_t size)
         : ok(size <= static_cast<size_t>(UINT32_MAX)) {
         if (ok) {
+            len = static_cast<uint32_t>(size);
+            bytes.reserve(size + 1);
             bytes.assign(reinterpret_cast<const char*>(data),
                          reinterpret_cast<const char*>(data) + size);
+            bytes.push_back('\0');
         }
     }
 
     const char* data() const { return bytes.data(); }
-    uint32_t length() const { return static_cast<uint32_t>(bytes.size()); }
+    uint32_t length() const { return len; }
 };
 
 } // namespace detail
