@@ -87,7 +87,7 @@ private:
     // RK-eligible operand position (RHS of any RK op, or either side of a
     // commutative RK op). Such constants don't need a register or LOAD
     // instruction — the RK opcode reads them directly from the constant pool.
-    // Populates m_const_skip_load.
+    // Populates m_requires_register (queried via is_skip_load_const()).
     void compute_const_use_modes(IRFunction* ir_func);
 
     // Free-list register allocation support
@@ -240,9 +240,27 @@ private:
     Vector<LiveRange> m_live_ranges;
     Vector<bool> m_value_same_block;    // true if value's def and last use are in the same block
 
-    // Const SSA values whose LOAD_INT/LOAD_CONST emission can be skipped
-    // because every use is RK-eligible. Populated by compute_const_use_modes().
-    tsl::robin_set<u32> m_const_skip_load;
+    // Dense ValueId-indexed flag: true if the value has at least one use that
+    // requires a register. Built by compute_const_use_modes(). A numeric Const*
+    // whose flag is false is skip-load eligible (no LOAD, no register) — see
+    // is_skip_load_const(). Direct-indexed vector, not a robin_set, since the
+    // ids are dense and it's probed twice per result-producing instruction (§3.8).
+    Vector<bool> m_requires_register;
+
+    // A Const{Int,F,D} SSA value is skip-load eligible iff no use requires a
+    // register. Derived from m_requires_register (built by compute_const_use_modes).
+    bool is_skip_load_const(const IRInst* inst) const {
+        if (!inst->result.is_valid() || inst->result.id >= m_requires_register.size())
+            return false;
+        switch (inst->op) {
+            case IROp::ConstInt:
+            case IROp::ConstF:
+            case IROp::ConstD:
+                return !m_requires_register[inst->result.id];
+            default:
+                return false;
+        }
+    }
 
     // Free-list allocator state
     Vector<u8> m_free_regs;            // pool of available register numbers

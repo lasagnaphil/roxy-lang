@@ -138,7 +138,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_unfusable_cmp_pcs.clear();
     m_nullify_pcs.clear();
     m_ref_inc_pcs.clear();
-    m_const_skip_load.clear();
+    // m_requires_register is rebuilt fresh by compute_const_use_modes().
     m_jump_patches.clear_keep_capacity();
     m_free_regs.clear_keep_capacity();
     m_active.clear_keep_capacity();
@@ -238,7 +238,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                     // Skip register allocation for RK-only constants: the LOAD
                     // is also skipped in lower_instruction, and try_emit_rk_binary
                     // reads the value directly from the constant pool.
-                    if (m_const_skip_load.count(inst->result.id) == 0) {
+                    if (!is_skip_load_const(inst)) {
                         u32 reg_count = get_value_reg_count(inst->type);
                         bool needs_bump = is_call || reg_count > 1;
                         if (needs_bump) {
@@ -954,10 +954,10 @@ static void mark_use(Vector<LiveRange>& live_ranges, ValueId value, u32 point) {
 }
 
 void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
-    // Mark every value that has at least one use requiring a register. After
-    // the walk, ConstInt/ConstF/ConstD values not in `requires_register` get
-    // added to m_const_skip_load — their LOAD will not be emitted and no
-    // register will be allocated.
+    // Mark every value that has at least one use requiring a register. A
+    // ConstInt/ConstF/ConstD value not so marked is skip-load eligible — its
+    // LOAD is not emitted and no register is allocated (see is_skip_load_const,
+    // which reads this dense flag directly; §3.8, no separate skip-load set).
     //
     // Operand-position rules:
     //   - Binary op with RK variant + commutative → both positions skippable
@@ -965,12 +965,12 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
     //   - Binary op with RK variant + non-commutative → only RHS skippable
     //   - All other op positions → require register
     u32 num_values = ir_func->next_value_id;
-    Vector<bool> requires_register;
-    requires_register.reserve(num_values);
-    for (u32 i = 0; i < num_values; i++) requires_register.push_back(false);
+    m_requires_register.clear_keep_capacity();
+    m_requires_register.reserve(num_values);
+    for (u32 i = 0; i < num_values; i++) m_requires_register.push_back(false);
 
     auto mark_reg = [&](ValueId v) {
-        if (v.is_valid() && v.id < num_values) requires_register[v.id] = true;
+        if (v.is_valid() && v.id < num_values) m_requires_register[v.id] = true;
     };
 
     for (IRBlock* block : ir_func->blocks) {
@@ -1132,22 +1132,9 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
         }
     }
 
-    // A constant is skip-load eligible iff it's a numeric Const* AND no use
-    // requires a register. Pre-add to constant pool here so the index is fixed
-    // before lowering walks; otherwise an int that fits in IMM16 (small) might
-    // be pool-added during the LHS visit but not visible until after the binop
-    // emit.
-    for (IRBlock* block : ir_func->blocks) {
-        for (IRInst* inst : block->instructions) {
-            if (!inst->result.is_valid() || inst->result.id >= num_values) continue;
-            bool is_numeric_const = inst->op == IROp::ConstInt
-                                 || inst->op == IROp::ConstF
-                                 || inst->op == IROp::ConstD;
-            if (!is_numeric_const) continue;
-            if (requires_register[inst->result.id]) continue;
-            m_const_skip_load.insert(inst->result.id);
-        }
-    }
+    // Skip-load eligibility (numeric Const* with no register-requiring use) is
+    // now derived on demand from m_requires_register by is_skip_load_const() —
+    // no separate collection pass or set to populate (§3.8).
 }
 
 void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
@@ -1752,7 +1739,7 @@ void BytecodeBuilder::lower_block(IRBlock* block) {
 void BytecodeBuilder::lower_instruction(IRInst* inst) {
     // Skip-load constants have no register and no LOAD; bail before
     // get_result_register, which would error on the missing allocation.
-    if (inst->result.is_valid() && m_const_skip_load.count(inst->result.id)) {
+    if (is_skip_load_const(inst)) {
         return;
     }
     u8 dst = get_result_register(inst->result);
