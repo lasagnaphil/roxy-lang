@@ -78,9 +78,13 @@ public:
 
     // Mark a uniq variable as moved
     void mark_moved(StringView name);
+    // Overload for callers that already resolved the symbol (skips the lookup).
+    void mark_moved(Symbol* sym);
 
     // Mark a uniq variable as live (for reassignment)
     void mark_live(StringView name);
+    // Overload for callers that already resolved the symbol (skips the lookup).
+    void mark_live(Symbol* sym);
 
     // Returns true and writes the current state to `out` if `sym` is
     // move-tracked; false (out untouched) otherwise.
@@ -99,6 +103,9 @@ public:
 
     // Check if a uniq variable is in a moved state and report an error
     bool check_not_moved(StringView name, SourceLocation loc);
+    // Overload for callers that already resolved the symbol (skips the lookup);
+    // `name` is used only for the diagnostic message.
+    bool check_not_moved(Symbol* sym, StringView name, SourceLocation loc);
 
     // Check that an expression is not a field access with move-semantics type.
     // Returns false and reports error if it is (field-level moves are unsound).

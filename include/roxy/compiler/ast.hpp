@@ -15,6 +15,7 @@ struct Stmt;
 struct Decl;
 struct TypeExpr;
 struct Type;
+struct Symbol;
 
 enum class AstKind : u8 {
     // Expressions
@@ -191,6 +192,11 @@ struct IdentifierExpr {
     // non-empty, semantic analysis instantiates the template with these types
     // directly (no inference from surrounding context).
     Span<TypeExpr*> generic_args;
+    // The symbol this identifier resolved to, cached by analyze_identifier_expr
+    // so the call path (analyze_regular_fun_call) can read the callee's FunDecl
+    // params without a second SymbolTable lookup. Null until analyzed / on the
+    // generic-template-ref and undefined paths. See OPTIMIZATION.md §3.4.
+    Symbol* resolved_sym;
 };
 
 // Unary expression: -x, !x, ~x

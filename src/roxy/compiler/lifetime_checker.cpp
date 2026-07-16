@@ -180,7 +180,10 @@ void LifetimeChecker::check_loop_cross_iteration_moves(
 }
 
 bool LifetimeChecker::check_not_moved(StringView name, SourceLocation loc) {
-    Symbol* sym = m_symbols.lookup(name);
+    return check_not_moved(m_symbols.lookup(name), name, loc);
+}
+
+bool LifetimeChecker::check_not_moved(Symbol* sym, StringView name, SourceLocation loc) {
     if (!sym) return true;
     auto it = m_move_states.find(sym);
     if (it == m_move_states.end()) return true;  // Not tracked (not noncopyable)
@@ -323,7 +326,10 @@ void LifetimeChecker::consume_noncopyable(Expr* expr, SourceLocation loc) {
 }
 
 void LifetimeChecker::mark_moved(StringView name) {
-    Symbol* sym = m_symbols.lookup(name);
+    mark_moved(m_symbols.lookup(name));
+}
+
+void LifetimeChecker::mark_moved(Symbol* sym) {
     if (!sym) return;
     auto it = m_move_states.find(sym);
     if (it != m_move_states.end()) {
@@ -332,7 +338,10 @@ void LifetimeChecker::mark_moved(StringView name) {
 }
 
 void LifetimeChecker::mark_live(StringView name) {
-    Symbol* sym = m_symbols.lookup(name);
+    mark_live(m_symbols.lookup(name));
+}
+
+void LifetimeChecker::mark_live(Symbol* sym) {
     if (!sym) return;
     auto it = m_move_states.find(sym);
     if (it != m_move_states.end()) {

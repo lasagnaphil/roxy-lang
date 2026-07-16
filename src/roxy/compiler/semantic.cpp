@@ -2659,6 +2659,13 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
         return m_types.error_type();
     }
 
+    // Cache the resolved symbol for the call path (analyze_regular_fun_call reads
+    // it to fetch the callee's FunDecl params without a second lookup). Safe even
+    // if the capture path below rewrites the expr: that only happens for
+    // capturable (non-Function) symbols, and the call path guards on the callee
+    // still being an ExprIdentifier.
+    id.resolved_sym = sym;
+
     // Closure-capture path: if this identifier resolves across a lambda
     // boundary, record the capture(s) and rewrite the expr in place.
     Type* captured_type = nullptr;
@@ -2669,7 +2676,7 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
     // Check move state for owned variables (uniq refs and value structs with destructors)
     // Note: we check here but the actual move marking happens at call sites, return, delete
     if (sym->type && sym->type->noncopyable()) {
-        m_lifetimes.check_not_moved(id.name, expr->loc);
+        m_lifetimes.check_not_moved(sym, id.name, expr->loc);
     }
 
     return sym->type;
@@ -2744,7 +2751,7 @@ bool SemanticAnalyzer::try_capture_identifier(Expr* expr, Symbol* sym, Type** ou
         // copyable captures (e.g., capturing a moved-from i32 isn't
         // possible since i32 isn't tracked, but for `ref` types the
         // underlying owner could be).
-        if (!m_lifetimes.check_not_moved(captured_name, captured_loc)) {
+        if (!m_lifetimes.check_not_moved(sym, captured_name, captured_loc)) {
             *out = m_types.error_type();
             return true;
         }
@@ -2973,7 +2980,7 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
                           cap.name);
                 continue;
             }
-            m_lifetimes.mark_moved(cap.name);
+            m_lifetimes.mark_moved(cap_sym);
         }
     }
 
@@ -3025,7 +3032,7 @@ bool SemanticAnalyzer::validate_lambda_captures(LambdaExpr& le, LambdaCaptureCon
                 error_fmt(entry.loc, "duplicate capture entry for '{}'", entry.name);
                 return false;
             }
-            if (!m_lifetimes.check_not_moved(entry.name, entry.loc)) return false;
+            if (!m_lifetimes.check_not_moved(outer_sym, entry.name, entry.loc)) return false;
 
             // Walk crossed Lambda boundaries between this lambda and the
             // symbol's defining scope. For each one, propagate a Move-mode
@@ -4044,10 +4051,12 @@ Type* SemanticAnalyzer::analyze_regular_fun_call(Expr* expr, CallExpr& ce) {
         return fti.return_type;
     }
 
-    // Try to get the FunDecl to access parameter modifiers
+    // Try to get the FunDecl to access parameter modifiers. analyze_expr(ce.callee)
+    // above already resolved the identifier and cached its symbol, so reuse that
+    // instead of a second SymbolTable lookup (§3.4).
     Span<Param> params;
     if (ce.callee->kind == AstKind::ExprIdentifier) {
-        Symbol* sym = m_symbols.lookup(ce.callee->identifier.name);
+        Symbol* sym = ce.callee->identifier.resolved_sym;
         if (sym && sym->kind == SymbolKind::Function && sym->decl) {
             params = sym->decl->fun_decl.params;
         }
