@@ -1402,46 +1402,50 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
         }
     }
 
-    // Fixed-point iteration for nested loops
-    bool changed = true;
-    while (changed) {
-        changed = false;
-        for (u32 bi = 0; bi < ir_func->blocks.size(); bi++) {
-            IRBlock* blk = ir_func->blocks[bi];
+    // Process back edges in ascending loop_end order — a single pass that reaches
+    // the same fixed point the former while(changed) iteration did, without
+    // re-walking the block list each round. Rationale: extending a value only ever
+    // *increases* its last_use_point, and each back edge processed later has a
+    // loop_end >= the current one, so no already-processed loop can become
+    // applicable again (its `last_use < loop_end` guard can only have been made
+    // false by an extension, never re-satisfied). Block terminator points strictly
+    // increase with block index, so walking blocks in order already visits back
+    // edges in ascending loop_end order — no explicit sort needed. Nested loops
+    // still compose: an inner loop's extension raises last_use into an enclosing
+    // loop's range, and the enclosing loop (larger loop_end, processed later)
+    // then extends it further.
+    for (u32 bi = 0; bi < ir_func->blocks.size(); bi++) {
+        IRBlock* blk = ir_func->blocks[bi];
+        u32 loop_end = block_points[bi].term_point;
 
-            auto check_back_edge = [&](BlockId target_id) {
-                if (!target_id.is_valid() || target_id.id >= ir_func->blocks.size()) return;
-                u32 target_idx = target_id.id;
-                if (target_idx >= bi) return;  // Not a back edge
+        auto extend_for_back_edge = [&](BlockId target_id) {
+            if (!target_id.is_valid() || target_id.id >= ir_func->blocks.size()) return;
+            if (target_id.id >= bi) return;  // Not a back edge
 
-                // Back edge from bi to target_idx
-                u32 loop_start = block_points[target_idx].first_point;
-                u32 loop_end = block_points[bi].term_point;
-
-                // Extend values defined before the loop but used inside it
-                for (u32 vi = 0; vi < num_values; vi++) {
-                    auto& lr = m_live_ranges[vi];
-                    if (lr.def_point < loop_start &&
-                        lr.last_use_point >= loop_start &&
-                        lr.last_use_point < loop_end) {
-                        lr.last_use_point = loop_end;
-                        changed = true;
-                    }
+            // Back edge from bi to target_idx: extend values defined before the
+            // loop but last-used inside it out to the loop's end.
+            u32 loop_start = block_points[target_id.id].first_point;
+            for (u32 vi = 0; vi < num_values; vi++) {
+                auto& lr = m_live_ranges[vi];
+                if (lr.def_point < loop_start &&
+                    lr.last_use_point >= loop_start &&
+                    lr.last_use_point < loop_end) {
+                    lr.last_use_point = loop_end;
                 }
-            };
-
-            const Terminator& term = blk->terminator;
-            switch (term.kind) {
-                case TerminatorKind::Goto:
-                    check_back_edge(term.goto_target.block);
-                    break;
-                case TerminatorKind::Branch:
-                    check_back_edge(term.branch.then_target.block);
-                    check_back_edge(term.branch.else_target.block);
-                    break;
-                default:
-                    break;
             }
+        };
+
+        const Terminator& term = blk->terminator;
+        switch (term.kind) {
+            case TerminatorKind::Goto:
+                extend_for_back_edge(term.goto_target.block);
+                break;
+            case TerminatorKind::Branch:
+                extend_for_back_edge(term.branch.then_target.block);
+                extend_for_back_edge(term.branch.else_target.block);
+                break;
+            default:
+                break;
         }
     }
 
