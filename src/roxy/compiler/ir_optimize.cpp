@@ -137,7 +137,9 @@ bool run_copy_propagation(IRFunction* func) {
 
     // subst[id] = id        means "no substitution" (root)
     // subst[id] = other.id  means "use other instead of this"
-    Vector<u32> subst(N, 0u);
+    // (Size-only ctor leaves the buffer uninitialized; the loop below writes
+    // every slot, so a fill-with-0 ctor here would just be a wasted O(N) pass.)
+    Vector<u32> subst(N);
     for (u32 i = 0; i < N; i++) subst[i] = i;
 
     // Pass 1: every Copy is a substitution v_result -> v_source.
@@ -664,9 +666,11 @@ bool run_local_cse(IRFunction* func) {
     const u32 N = func->next_value_id;
     if (N == 0) return false;
 
-    Vector<u32> subst(N);
-    for (u32 i = 0; i < N; i++) subst[i] = i;
-    bool any = false;
+    // Collect redirects (duplicate -> canonical) first, so a no-op run — the
+    // common case, ~89% on the Lox workload — skips the subst(N) allocation and
+    // identity fill entirely.
+    struct Redirect { u32 from; u32 to; };
+    Vector<Redirect> redirects;
 
     // One map reused across blocks (CSE is block-local, so clear between them).
     // Hoisting out of the loop keeps the grown bucket array instead of
@@ -682,14 +686,17 @@ bool run_local_cse(IRFunction* func) {
             if (it != seen.end()) {
                 // Redirect this duplicate's uses to the first occurrence.
                 // Don't reinsert: keeps canonical chain shallow.
-                subst[inst->result.id] = it->second.id;
-                any = true;
+                redirects.push_back({inst->result.id, it->second.id});
             } else {
                 seen.insert({key, inst->result});
             }
         }
     }
-    if (!any) return false;
+    if (redirects.empty()) return false;
+
+    Vector<u32> subst(N);
+    for (u32 i = 0; i < N; i++) subst[i] = i;
+    for (const Redirect& r : redirects) subst[r.from] = r.to;
 
     // Path-compress to flatten any redirect chains.
     auto find = [&](u32 id) -> u32 {
