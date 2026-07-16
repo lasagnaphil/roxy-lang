@@ -1,4 +1,5 @@
 #include "roxy/compiler/compiler.hpp"
+#include "roxy/core/trace.hpp"
 #include "roxy/core/unique_ptr.hpp"
 #include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/parser.hpp"
@@ -96,6 +97,7 @@ BCModule* Compiler::compile() {
 }
 
 bool Compiler::parse_all() {
+    ROXY_ZONE("parse");
     for (u32 i = 0; i < m_sources.size(); i++) {
         const SourceModule& src = m_sources[i];
 
@@ -124,6 +126,7 @@ bool Compiler::parse_all() {
 }
 
 bool Compiler::topological_sort() {
+    ROXY_ZONE("topo-sort");
     // Build module name to index map
     tsl::robin_map<StringView, u32> name_to_idx;
     for (u32 i = 0; i < m_sources.size(); i++) {
@@ -184,6 +187,7 @@ bool Compiler::detect_cycle(u32 module_idx, Vector<u8>& state, Vector<u32>& orde
 }
 
 bool Compiler::analyze_all() {
+    ROXY_ZONE("sema");
     // Analyze in topological order (dependencies first)
     for (u32 idx : m_compile_order) {
         const SourceModule& src = m_sources[idx];
@@ -319,6 +323,7 @@ bool Compiler::analyze_all() {
 }
 
 bool Compiler::build_ir_all() {
+    ROXY_ZONE("ir-build");
     // Build IR in topological order — no re-analysis needed,
     // symbols and synthetic_decls were persisted during analyze_all()
     for (u32 idx : m_compile_order) {
@@ -402,36 +407,49 @@ BCModule* Compiler::link_modules() {
     merged_ir.global_slot_count = global_base;
 
     // Coroutine lowering pass: transform coroutine functions into init/resume/done
-    u64 t0 = now_ns();
-    coroutine_lower(&merged_ir, m_allocator, m_type_env);
-    m_timings.coro_lower_ns = now_ns() - t0;
+    {
+        ROXY_ZONE("coro-lower");
+        u64 t0 = now_ns();
+        coroutine_lower(&merged_ir, m_allocator, m_type_env);
+        m_timings.coro_lower_ns = now_ns() - t0;
+    }
 
     // Phase 2 IR optimizations: copy propagation + DCE. Runs after coroutine
     // lowering so generated init/resume/done bodies also benefit, and before
     // validation so the validator checks the post-optimization IR.
-    t0 = now_ns();
-    optimize_module(&merged_ir, m_allocator);
-    m_timings.ir_optimize_ns = now_ns() - t0;
+    {
+        ROXY_ZONE("ir-optimize");
+        u64 t0 = now_ns();
+        optimize_module(&merged_ir, m_allocator);
+        m_timings.ir_optimize_ns = now_ns() - t0;
+    }
 
     // Validate merged IR before lowering
-    t0 = now_ns();
     IRValidator validator;
-    bool valid = validator.validate(&merged_ir);
-    m_timings.ir_validate_ns = now_ns() - t0;
-    if (!valid) {
-        add_error_fmt("IR validation failed: {}", validator.error());
-        return nullptr;
+    {
+        ROXY_ZONE("ir-validate");
+        u64 t0 = now_ns();
+        bool valid = validator.validate(&merged_ir);
+        m_timings.ir_validate_ns = now_ns() - t0;
+        if (!valid) {
+            add_error_fmt("IR validation failed: {}", validator.error());
+            return nullptr;
+        }
     }
 
     // Build bytecode from merged IR
     // Static linking: all cross-module calls are resolved in the lowering phase
     // since m_func_indices contains all functions from all modules
-    t0 = now_ns();
     BytecodeBuilder bc_builder;
     bc_builder.set_registry(m_combined_registry.get());
     bc_builder.set_type_env(&m_type_env);
-    BCModule* module = bc_builder.build(&merged_ir);
-    m_timings.bc_lower_ns = now_ns() - t0;
+    BCModule* module;
+    {
+        ROXY_ZONE("bc-lower");
+        u64 t0 = now_ns();
+        module = bc_builder.build(&merged_ir);
+        m_timings.bc_lower_ns = now_ns() - t0;
+    }
 
     if (!module) {
         const char* msg = bc_builder.error();

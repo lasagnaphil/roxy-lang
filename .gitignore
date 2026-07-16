@@ -6,6 +6,8 @@ build/
 build-fuzz/
 build-profile/
 build-bcprofile/
+build-tracy/
+build-tracy-tools/
 cmake-build-*/
 
 # libFuzzer artifacts (crash/oom/leak/timeout reproducers, working corpora)

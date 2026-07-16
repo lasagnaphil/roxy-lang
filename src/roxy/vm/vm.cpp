@@ -1,6 +1,7 @@
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/object.hpp"
+#include "roxy/core/trace.hpp"
 #include "roxy/rt/slab_allocator.hpp"
 #include "roxy/vm/string.hpp"
 #include "roxy/rt/string_intern.hpp"
@@ -252,6 +253,7 @@ bool vm_load_module(RoxyVM* vm, BCModule* module) {
 }
 
 bool vm_call(RoxyVM* vm, StringView func_name, Span<Value> args) {
+    ROXY_ZONE("vm.run");
     if (vm->module == nullptr) {
         vm->error = "No module loaded";
         return false;

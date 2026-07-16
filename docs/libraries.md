@@ -13,6 +13,18 @@ These libraries are directly embedded in the roxy library, which means as a user
   - Testing framework for unit and E2E tests
   - Header-only, minimal dependencies
 
+## Optional (git submodules)
+
+These are **not** required for a normal build — they sit under `third_party/`,
+are pinned to a release tag, and are wired in behind an `ENABLE_<DEP>` CMake
+option (default OFF). Fetch with `git submodule update --init <path>`.
+
+- **Tracy 0.13.1** (`third_party/tracy`, `-DENABLE_TRACY=ON`)
+  - Cross-platform instrumented profiler; the client compiles into `roxy` and the
+    `tracy-capture` / `tracy-csvexport` tools give a fully terminal (headless)
+    capture-and-export workflow. Zero overhead when the option is off.
+  - See `docs/internals/profiling.md` → "Tracy".
+
 ## Custom (in `roxy_core`)
 
 - **rx::String** (`include/roxy/core/string.hpp`)

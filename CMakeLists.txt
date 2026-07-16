@@ -65,6 +65,28 @@ if(ENABLE_FUZZERS)
     add_link_options(-fsanitize=undefined)
 endif()
 
+# Tracy profiler client — vendored as a submodule (third_party/tracy) so it builds
+# cross-platform from one source (no system package needed). OFF by default and
+# zero-overhead: the ROXY_ZONE/ROXY_FRAME_MARK macros in core/trace.hpp compile to
+# nothing unless this is ON. When ON, capture traces headless with `tracy-capture`
+# and export stats with `tracy-csvexport` (both built from the same submodule) —
+# see docs/internals/profiling.md. Must precede the target definitions below so
+# link_libraries() propagates Tracy::TracyClient to every target.
+option(ENABLE_TRACY "Build with Tracy profiler client instrumentation" OFF)
+if(ENABLE_TRACY)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tracy/CMakeLists.txt")
+        message(FATAL_ERROR "ENABLE_TRACY needs the Tracy submodule: "
+                            "git submodule update --init third_party/tracy")
+    endif()
+    message(STATUS "Tracy profiler client enabled (on-demand)")
+    # On-demand: an instrumented binary runs normally until a profiler connects,
+    # so ENABLE_TRACY builds stay usable for everyday runs and tests.
+    set(TRACY_ON_DEMAND ON CACHE BOOL "Tracy on-demand profiling" FORCE)
+    add_subdirectory(third_party/tracy)
+    add_compile_definitions(ROXY_TRACY=1)
+    link_libraries(Tracy::TracyClient)
+endif()
+
 # Include directories
 include_directories(include)
 

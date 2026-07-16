@@ -2,6 +2,7 @@
 // Usage: roxy [options] <source_file> [program_args...]
 
 #include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/trace.hpp"
 #include "roxy/core/file.hpp"
 #include "roxy/core/unique_ptr.hpp"
 #include "roxy/core/vector.hpp"
@@ -324,6 +325,7 @@ int main(int argc, char** argv) {
             agg.coro_lower_ns += t.coro_lower_ns; agg.ir_optimize_ns += t.ir_optimize_ns;
             agg.ir_validate_ns += t.ir_validate_ns; agg.bc_lower_ns += t.bc_lower_ns;
             agg.total_ns += t.total_ns;
+            ROXY_FRAME_MARK;  // one Tracy frame per compile (no-op unless ENABLE_TRACY)
         }
         print_timings(agg, opts.repeat, 0);
         return 0;

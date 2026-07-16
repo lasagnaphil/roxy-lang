@@ -499,8 +499,13 @@ ninja -C build-profile roxy
 
 The compiler and interpreter are separate regimes — isolate them (a compute
 benchmark is ~100% VM). The interpreter has its own per-opcode profiler under
-`-DENABLE_BC_PROFILE=ON`. Full workflow (sampling profilers, workload classes,
-guardrails, baseline findings): `docs/internals/profiling.md`.
+`-DENABLE_BC_PROFILE=ON`. For a richer, cross-platform, **terminal** profile,
+[Tracy](https://github.com/wolfpld/tracy) is vendored as a submodule
+(`third_party/tracy`) behind `-DENABLE_TRACY=ON` (OFF by default, zero-overhead);
+capture headless with `tracy-capture` and export per-zone stats with
+`tracy-csvexport`, both built from the submodule. Full workflow (sampling
+profilers, Tracy, workload classes, guardrails, baseline findings):
+`docs/internals/profiling.md`.
 
 ## Documentation
 
