@@ -216,8 +216,13 @@ private:
     BCFunction* m_current_func;
     IRFunction* m_current_ir_func;
 
-    // Register allocation map: ValueId.id -> register
-    tsl::robin_map<u32, u8> m_value_to_reg;
+    // ValueId.id -> register, as a dense side table (NO_REG = not in a register).
+    // ValueIds are contiguous in [0, next_value_id), so a flat vector is a direct
+    // O(1) index with no hashing and a cheap per-function refill — far cheaper than
+    // a robin_map on this hot path (register allocation; see profiling.md). Stored
+    // as u16 so registers 0..255 all fit alongside the out-of-band NO_REG sentinel.
+    static constexpr u16 NO_REG = 0xFFFF;
+    Vector<u16> m_value_to_reg;
     u16 m_next_reg;  // u16 to prevent silent wraparound; capped at 255
 
     // Liveness data (computed per function)
@@ -234,17 +239,23 @@ private:
 
     // Register spilling state
     tsl::robin_map<u32, u32> m_spill_slots;   // ValueId.id -> spill stack slot offset
-    tsl::robin_map<u8, u32> m_reg_to_value;   // reverse map: register -> ValueId.id
+    // Reverse map register -> ValueId.id, as a fixed 256-entry table (NO_VALUE =
+    // register free). Only 256 possible register keys, so an array beats a map.
+    static constexpr u32 NO_VALUE = UINT32_MAX;  // == ValueId::invalid().id
+    u32 m_reg_to_value[256];
     bool m_has_spilling;
     u8 m_scratch_regs[2];                     // two scratch registers for reload/spill
 
-    // Local stack allocation: maps ValueId.id -> stack slot offset
-    tsl::robin_map<u32, u32> m_value_to_stack_slot;
-
     u32 m_next_stack_slot;
 
-    // Type information: maps ValueId.id -> Type*
-    tsl::robin_map<u32, Type*> m_value_types;
+    // ValueId.id -> Type*, as a dense side table (nullptr = unknown). ValueIds are
+    // contiguous, so a flat vector replaces the robin_map here too.
+    Vector<Type*> m_value_types;
+
+    // Type of a value, or nullptr if unknown / out of range.
+    Type* value_type_of(u32 id) const {
+        return id < m_value_types.size() ? m_value_types[id] : nullptr;
+    }
 
     // Current module
     BCModule* m_module;

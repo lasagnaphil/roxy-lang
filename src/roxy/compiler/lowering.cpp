@@ -64,7 +64,7 @@ BCModule* BytecodeBuilder::build(IRModule* ir_module) {
 // Helper to compute the number of contiguous arg registers needed for a call instruction
 template <typename F>
 static u32 compute_call_arg_reg_count(IRInst* inst, IRFunction* callee_func,
-                                       const tsl::robin_map<u32, Type*>& value_types,
+                                       const Vector<Type*>& value_types,
                                        F get_struct_slot_count_fn) {
     u32 arg_reg_count = 0;
     bool is_external = (inst->op == IROp::CallExternal);
@@ -77,8 +77,7 @@ static u32 compute_call_arg_reg_count(IRInst* inst, IRFunction* callee_func,
         if (param_is_ptr) {
             arg_reg_count += 1;
         } else {
-            auto type_it = value_types.find(arg_val.id);
-            Type* arg_type = (type_it != value_types.end()) ? type_it->second : nullptr;
+            Type* arg_type = arg_val.id < value_types.size() ? value_types[arg_val.id] : nullptr;
             // Weak refs need 2 registers (pointer + generation)
             if (arg_type && arg_type->kind == TypeKind::Weak) {
                 arg_reg_count += 2;
@@ -116,10 +115,20 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         }
     }
 
-    // Reset state
-    m_value_to_reg.clear();
-    m_value_to_stack_slot.clear();
-    m_value_types.clear();
+    // Reset state.
+    // Dense ValueId-indexed side tables: refill with sentinels, keeping the
+    // buffer (a direct-indexed vector reset, not a hashed clear — see profiling.md).
+    u32 num_values = ir_func->next_value_id;
+    m_value_to_reg.clear_keep_capacity();
+    m_value_to_reg.reserve(num_values);
+    m_value_types.clear_keep_capacity();
+    m_value_types.reserve(num_values);
+    for (u32 i = 0; i < num_values; i++) {
+        m_value_to_reg.push_back(NO_REG);
+        m_value_types.push_back(nullptr);
+    }
+    for (u32 i = 0; i < 256; i++) m_reg_to_value[i] = NO_VALUE;
+
     m_block_offsets.clear();
     m_unfusable_cmp_pcs.clear();
     m_nullify_pcs.clear();
@@ -129,7 +138,6 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_free_regs.clear_keep_capacity();
     m_active.clear_keep_capacity();
     m_spill_slots.clear();
-    m_reg_to_value.clear();
     m_delete_desc_cache.clear();
     m_has_spilling = false;
     m_scratch_regs[0] = m_scratch_regs[1] = 0xFF;
@@ -316,8 +324,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                     // No callee_func at IR time — sum register counts from explicit-arg types.
                     u32 total_arg_regs = 0;
                     for (auto arg_id : inst->call_indirect.args) {
-                        auto type_it = m_value_types.find(arg_id.id);
-                        Type* arg_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+                        Type* arg_type = value_type_of(arg_id.id);
                         u32 sc = get_struct_slot_count(arg_type);
                         if (sc > 0 && sc <= 4) {
                             total_arg_regs += (sc + 1) / 2;
@@ -436,7 +443,6 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             // Allocate local stack space and unpack
             u32 stack_offset = m_next_stack_slot;
             m_next_stack_slot += slot_count;
-            m_value_to_stack_slot[param.value.id] = stack_offset;
 
             // Use the tracked register offset, not get_register() since we'll remap it
             u8 param_reg = prologue_param_reg_offset;
@@ -457,7 +463,6 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             // For value semantics, we need to copy to local stack
             u32 stack_offset = m_next_stack_slot;
             m_next_stack_slot += slot_count;
-            m_value_to_stack_slot[param.value.id] = stack_offset;
 
             u8 param_reg = prologue_param_reg_offset;  // Source pointer (caller's data)
 
@@ -714,9 +719,8 @@ void BytecodeBuilder::ensure_register_window(u16 needed_regs) {
 u8 BytecodeBuilder::allocate_register(ValueId value) {
     if (!value.is_valid()) return 0xFF;
 
-    auto it = m_value_to_reg.find(value.id);
-    if (it != m_value_to_reg.end()) {
-        return it->second;
+    if (m_value_to_reg[value.id] != NO_REG) {
+        return static_cast<u8>(m_value_to_reg[value.id]);
     }
 
     // Determine if this value can reuse a freed register.
@@ -798,24 +802,23 @@ u8 BytecodeBuilder::allocate_register(ValueId value) {
 u8 BytecodeBuilder::get_register(ValueId value) {
     if (!value.is_valid()) return 0xFF;
 
-    auto it = m_value_to_reg.find(value.id);
-    if (it == m_value_to_reg.end()) {
+    u16 reg = m_value_to_reg[value.id];
+    if (reg == NO_REG) {
         report_error("Internal error: SSA value used before allocation");
         return 0xFF;
     }
-    return it->second;
+    return static_cast<u8>(reg);
 }
 
 bool BytecodeBuilder::has_register(ValueId value) const {
     if (!value.is_valid()) return false;
-    return m_value_to_reg.find(value.id) != m_value_to_reg.end();
+    return value.id < m_value_to_reg.size() && m_value_to_reg[value.id] != NO_REG;
 }
 
 void BytecodeBuilder::spill_furthest() {
     // Helper to compute spill slot size for a value
     auto spill_slot_size = [this](u32 value_id) -> u32 {
-        auto type_it = m_value_types.find(value_id);
-        Type* value_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+        Type* value_type = value_type_of(value_id);
         return (value_type && value_type->kind == TypeKind::Weak) ? 4 : 2;
     };
 
@@ -831,15 +834,15 @@ void BytecodeBuilder::spill_furthest() {
             ActiveAlloc furthest = m_active.back();
             m_active.pop_back();
 
-            auto reg_it = m_reg_to_value.find(furthest.reg);
+            u32 spilled_val = m_reg_to_value[furthest.reg];
             u32 slot_size = 2;
-            if (reg_it != m_reg_to_value.end()) {
-                slot_size = spill_slot_size(reg_it->second);
+            if (spilled_val != NO_VALUE) {
+                slot_size = spill_slot_size(spilled_val);
                 u32 spill_slot = m_next_stack_slot;
                 m_next_stack_slot += slot_size;
-                m_spill_slots[reg_it->second] = spill_slot;
-                m_value_to_reg.erase(reg_it->second);
-                m_reg_to_value.erase(furthest.reg);
+                m_spill_slots[spilled_val] = spill_slot;
+                m_value_to_reg[spilled_val] = NO_REG;
+                m_reg_to_value[furthest.reg] = NO_VALUE;
             } else {
                 m_next_stack_slot += 2;
             }
@@ -863,14 +866,14 @@ void BytecodeBuilder::spill_furthest() {
     ActiveAlloc furthest = m_active.back();
     m_active.pop_back();
 
-    auto reg_it = m_reg_to_value.find(furthest.reg);
-    if (reg_it != m_reg_to_value.end()) {
-        u32 slot_size = spill_slot_size(reg_it->second);
+    u32 spilled_val = m_reg_to_value[furthest.reg];
+    if (spilled_val != NO_VALUE) {
+        u32 slot_size = spill_slot_size(spilled_val);
         u32 spill_slot = m_next_stack_slot;
         m_next_stack_slot += slot_size;
-        m_spill_slots[reg_it->second] = spill_slot;
-        m_value_to_reg.erase(reg_it->second);
-        m_reg_to_value.erase(furthest.reg);
+        m_spill_slots[spilled_val] = spill_slot;
+        m_value_to_reg[spilled_val] = NO_REG;
+        m_reg_to_value[furthest.reg] = NO_VALUE;
     } else {
         m_next_stack_slot += 2;
     }
@@ -881,8 +884,7 @@ void BytecodeBuilder::spill_furthest() {
 u8 BytecodeBuilder::get_result_register(ValueId value) {
     if (!value.is_valid()) return 0xFF;
 
-    auto reg_it = m_value_to_reg.find(value.id);
-    if (reg_it != m_value_to_reg.end()) return reg_it->second;
+    if (m_value_to_reg[value.id] != NO_REG) return static_cast<u8>(m_value_to_reg[value.id]);
 
     // Spilled result: compute into scratch[0], will be spilled after
     if (m_spill_slots.count(value.id)) return m_scratch_regs[0];
@@ -894,8 +896,7 @@ u8 BytecodeBuilder::get_result_register(ValueId value) {
 u8 BytecodeBuilder::ensure_in_register(ValueId value, u8 scratch_index) {
     if (!value.is_valid()) return 0xFF;
 
-    auto reg_it = m_value_to_reg.find(value.id);
-    if (reg_it != m_value_to_reg.end()) return reg_it->second;
+    if (m_value_to_reg[value.id] != NO_REG) return static_cast<u8>(m_value_to_reg[value.id]);
 
     auto spill_it = m_spill_slots.find(value.id);
     if (spill_it != m_spill_slots.end()) {
@@ -903,8 +904,7 @@ u8 BytecodeBuilder::ensure_in_register(ValueId value, u8 scratch_index) {
         emit_abi(Opcode::RELOAD_REG, scratch, static_cast<u16>(spill_it->second));
 
         // If this is a weak value (2 registers), also reload the second register
-        auto type_it = m_value_types.find(value.id);
-        Type* value_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+        Type* value_type = value_type_of(value.id);
         if (value_type && value_type->kind == TypeKind::Weak) {
             emit_abi(Opcode::RELOAD_REG, scratch + 1, static_cast<u16>(spill_it->second + 2));
         }
@@ -924,8 +924,7 @@ void BytecodeBuilder::spill_if_needed(ValueId value, u8 reg) {
         emit_abi(Opcode::SPILL_REG, reg, static_cast<u16>(spill_it->second));
 
         // If this is a weak value (2 registers), also spill the second register
-        auto type_it = m_value_types.find(value.id);
-        Type* value_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+        Type* value_type = value_type_of(value.id);
         if (value_type && value_type->kind == TypeKind::Weak) {
             emit_abi(Opcode::SPILL_REG, reg + 1, static_cast<u16>(spill_it->second + 2));
         }
@@ -1947,8 +1946,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                     arg_reg_offset += 1;
                 } else {
                     // Check if argument is a struct or weak ref
-                    auto type_it = m_value_types.find(arg_val.id);
-                    Type* arg_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+                    Type* arg_type = value_type_of(arg_val.id);
 
                     if (arg_type && arg_type->kind == TypeKind::Weak) {
                         // Weak ref: copy 2 consecutive registers (pointer + generation)
@@ -1994,7 +1992,6 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             if (ret_slot_count > 0 && ret_slot_count <= 4) {
                 u32 stack_offset = m_next_stack_slot;
                 m_next_stack_slot += ret_slot_count;
-                m_value_to_stack_slot[inst->result.id] = stack_offset;
 
                 u8 temp_reg = bump_register();
                 emit_abi(Opcode::STACK_ADDR, temp_reg, static_cast<u16>(stack_offset));
@@ -2068,8 +2065,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                     arg_reg_offset += 1;
                 } else {
                     // Check if argument is a struct or weak ref
-                    auto type_it = m_value_types.find(arg_val.id);
-                    Type* arg_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+                    Type* arg_type = value_type_of(arg_val.id);
 
                     if (arg_type && arg_type->kind == TypeKind::Weak) {
                         // Weak ref: copy 2 consecutive registers (pointer + generation)
@@ -2114,7 +2110,6 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             if (ret_slot_count > 0 && ret_slot_count <= 4) {
                 u32 stack_offset = m_next_stack_slot;
                 m_next_stack_slot += ret_slot_count;
-                m_value_to_stack_slot[inst->result.id] = stack_offset;
 
                 u8 temp_reg = bump_register();
                 emit_abi(Opcode::STACK_ADDR, temp_reg, static_cast<u16>(stack_offset));
@@ -2144,8 +2139,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             for (u32 i = 0; i < inst->call_indirect.args.size(); i++) {
                 ValueId arg_val = inst->call_indirect.args[i];
                 u8 arg_src = ensure_in_register(arg_val, 0);
-                auto type_it = m_value_types.find(arg_val.id);
-                Type* arg_type = (type_it != m_value_types.end()) ? type_it->second : nullptr;
+                Type* arg_type = value_type_of(arg_val.id);
 
                 if (arg_type && arg_type->kind == TypeKind::Weak) {
                     if (arg_src != first_arg_reg + arg_reg_offset) {
@@ -2186,7 +2180,6 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             if (ret_slot_count > 0 && ret_slot_count <= 4) {
                 u32 stack_offset = m_next_stack_slot;
                 m_next_stack_slot += ret_slot_count;
-                m_value_to_stack_slot[inst->result.id] = stack_offset;
 
                 u8 temp_reg = bump_register();
                 emit_abi(Opcode::STACK_ADDR, temp_reg, static_cast<u16>(stack_offset));
@@ -2501,7 +2494,6 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             m_next_stack_slot += slot_count;
 
             // Record the stack slot offset for this value
-            m_value_to_stack_slot[inst->result.id] = slot_offset;
 
             // Emit STACK_ADDR to get a pointer to the allocated space
             emit_abi(Opcode::STACK_ADDR, dst, static_cast<u16>(slot_offset));
