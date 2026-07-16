@@ -641,8 +641,12 @@ bool run_local_cse(IRFunction* func) {
     for (u32 i = 0; i < N; i++) subst[i] = i;
     bool any = false;
 
+    // One map reused across blocks (CSE is block-local, so clear between them).
+    // Hoisting out of the loop keeps the grown bucket array instead of
+    // reallocating + rehashing a fresh map per block.
+    tsl::robin_map<CSEKey, ValueId, CSEKeyHash, CSEKeyEq> seen;
     for (IRBlock* block : func->blocks) {
-        tsl::robin_map<CSEKey, ValueId, CSEKeyHash, CSEKeyEq> seen;
+        seen.clear();
         for (IRInst* inst : block->instructions) {
             if (!is_cse_eligible(inst->op)) continue;
             if (!inst->result.is_valid()) continue;
