@@ -1489,15 +1489,25 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     for (u32 vi = 0; vi < num_values; vi++) {
         m_value_same_block.push_back(false);
     }
-    for (u32 bi = 0; bi < ir_func->blocks.size(); bi++) {
-        u32 block_start = block_points[bi].first_point;
-        u32 block_end = block_points[bi].term_point;
-        for (u32 vi = 0; vi < num_values; vi++) {
-            auto& lr = m_live_ranges[vi];
-            if (lr.def_point >= block_start && lr.def_point <= block_end &&
-                lr.last_use_point >= block_start && lr.last_use_point <= block_end) {
-                m_value_same_block[vi] = true;
-            }
+    // A value is same-block iff its def_point and last_use_point fall in one
+    // block. Blocks partition the point space into contiguous ranges ordered by
+    // first_point (block index == RPO position), and last_use_point >= def_point,
+    // so this reduces to: does last_use_point lie within the range of the block
+    // that contains def_point? Binary-search that block per value — O(values *
+    // log blocks) instead of the former O(blocks * values) scan, which was the
+    // dominant cost of compute_liveness on functions with many blocks.
+    for (u32 vi = 0; vi < num_values; vi++) {
+        const auto& lr = m_live_ranges[vi];
+        // Last block whose first_point <= def_point == the block containing it
+        // (ranges are contiguous, so the next block starts past def_point).
+        u32 lo = 0, hi = block_points.size();
+        while (lo < hi) {
+            u32 mid = lo + (hi - lo) / 2;
+            if (block_points[mid].first_point <= lr.def_point) lo = mid + 1;
+            else hi = mid;
+        }
+        if (lo != 0 && lr.last_use_point <= block_points[lo - 1].term_point) {
+            m_value_same_block[vi] = true;
         }
     }
 
