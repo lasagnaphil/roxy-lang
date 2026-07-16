@@ -2,6 +2,7 @@
 
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
+#include "roxy/core/span.hpp"
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/compiler/ssa_ir.hpp"
 
@@ -80,6 +81,22 @@ bool run_block_merging(IRFunction* func);
 // argument from every predecessor's jump target. Returns true if changed.
 bool run_trivial_block_arg_elim(IRFunction* func);
 
+// CSR-encoded predecessor lists: one flat `edges` array partitioned by
+// per-block `offsets`, instead of a Vector<Vector<BlockId>> (which costs
+// one heap allocation per block). preds[b] is a Span over edges. Building
+// this is two flat allocations regardless of block count — compute_predecessors
+// runs once per block-merging pass (in a loop) and once per trivial-arg-elim,
+// so the nested-vector allocations it replaced showed up in the compile profile.
+struct PredecessorMap {
+    Vector<u32> offsets;    // size num_blocks+1; block b: edges[offsets[b] .. offsets[b+1])
+    Vector<BlockId> edges;  // flattened predecessor block ids
+
+    u32 count(u32 block) const { return offsets[block + 1] - offsets[block]; }
+    Span<const BlockId> operator[](u32 block) const {
+        return Span<const BlockId>(edges.data() + offsets[block], count(block));
+    }
+};
+
 // Compute predecessors for every block. preds[b.id] lists every block
 // whose terminator targets b (with duplicates if a Branch's both arms
 // target the same block — those count as two predecessor edges, which
@@ -87,7 +104,7 @@ bool run_trivial_block_arg_elim(IRFunction* func);
 //
 // We do NOT populate IRBlock::predecessors because that field is currently
 // unused outside reorder_blocks_rpo() and could go stale across passes.
-Vector<Vector<BlockId>> compute_predecessors(IRFunction* func);
+PredecessorMap compute_predecessors(IRFunction* func);
 
 // Phase 4: block-local Common Subexpression Elimination. Within each
 // block, builds a hash table keyed on (op, result_type, operands, const

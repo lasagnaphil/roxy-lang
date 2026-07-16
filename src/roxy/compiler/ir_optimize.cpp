@@ -192,25 +192,51 @@ bool run_copy_propagation(IRFunction* func) {
 // Phase 3: control-flow optimizations.
 // =====================================================================
 
-Vector<Vector<BlockId>> compute_predecessors(IRFunction* func) {
-    Vector<Vector<BlockId>> preds(static_cast<u32>(func->blocks.size()));
-    auto add_edge = [&](BlockId from, BlockId to) {
-        if (!to.is_valid() || to.id >= preds.size()) return;
-        preds[to.id].push_back(from);
-    };
-    for (IRBlock* block : func->blocks) {
-        const Terminator& t = block->terminator;
-        switch (t.kind) {
-            case TerminatorKind::Goto:
-                add_edge(block->id, t.goto_target.block);
-                break;
-            case TerminatorKind::Branch:
-                add_edge(block->id, t.branch.then_target.block);
-                add_edge(block->id, t.branch.else_target.block);
-                break;
-            default: break;
+PredecessorMap compute_predecessors(IRFunction* func) {
+    u32 num_blocks = static_cast<u32>(func->blocks.size());
+    PredecessorMap preds;
+    // offsets holds per-block edge counts during the counting pass, then is
+    // prefix-summed in place into CSR start offsets.
+    preds.offsets.reserve(num_blocks + 1);
+    for (u32 i = 0; i <= num_blocks; i++) preds.offsets.push_back(0);
+
+    auto for_each_edge = [&](auto fn) {
+        for (IRBlock* block : func->blocks) {
+            const Terminator& t = block->terminator;
+            switch (t.kind) {
+                case TerminatorKind::Goto:
+                    fn(block->id, t.goto_target.block);
+                    break;
+                case TerminatorKind::Branch:
+                    fn(block->id, t.branch.then_target.block);
+                    fn(block->id, t.branch.else_target.block);
+                    break;
+                default: break;
+            }
         }
-    }
+    };
+
+    // Pass 1: count in-edges per target block (stored shifted by one so the
+    // prefix sum below yields start offsets directly).
+    u32 total_edges = 0;
+    for_each_edge([&](BlockId, BlockId to) {
+        if (!to.is_valid() || to.id >= num_blocks) return;
+        preds.offsets[to.id + 1]++;
+        total_edges++;
+    });
+    for (u32 i = 0; i < num_blocks; i++) preds.offsets[i + 1] += preds.offsets[i];
+
+    // Pass 2: scatter edges into their target's slice. `cursor` (reusing a
+    // copy of the start offsets) tracks the next free slot per block.
+    preds.edges.reserve(total_edges);
+    for (u32 i = 0; i < total_edges; i++) preds.edges.push_back(BlockId::invalid());
+    Vector<u32> cursor;
+    cursor.reserve(num_blocks);
+    for (u32 i = 0; i < num_blocks; i++) cursor.push_back(preds.offsets[i]);
+    for_each_edge([&](BlockId from, BlockId to) {
+        if (!to.is_valid() || to.id >= num_blocks) return;
+        preds.edges[cursor[to.id]++] = from;
+    });
     return preds;
 }
 
@@ -272,7 +298,7 @@ bool run_block_merging(IRFunction* func) {
     // rather than one pass per merge.
     while (pass_changed) {
         pass_changed = false;
-        Vector<Vector<BlockId>> preds = compute_predecessors(func);
+        PredecessorMap preds = compute_predecessors(func);
         for (u32 b_idx = 0; b_idx < func->blocks.size(); b_idx++) {
             IRBlock* B = func->blocks[b_idx];
             if (B->terminator.kind == TerminatorKind::None) continue;  // already-emptied
@@ -386,7 +412,7 @@ static void compact_jump_target(JumpTarget& jt, const Vector<bool>& keep) {
 }
 
 bool run_trivial_block_arg_elim(IRFunction* func) {
-    Vector<Vector<BlockId>> preds = compute_predecessors(func);
+    PredecessorMap preds = compute_predecessors(func);
     const u32 N = func->next_value_id;
     Vector<u32> subst(N);
     for (u32 i = 0; i < N; i++) subst[i] = i;
