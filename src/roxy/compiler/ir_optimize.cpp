@@ -413,23 +413,16 @@ static void compact_jump_target(JumpTarget& jt, const Vector<bool>& keep) {
 
 bool run_trivial_block_arg_elim(IRFunction* func) {
     PredecessorMap preds = compute_predecessors(func);
-    const u32 N = func->next_value_id;
-    Vector<u32> subst(N);
-    for (u32 i = 0; i < N; i++) subst[i] = i;
-    bool any = false;
 
-    // For each block, indices of params to drop.
-    Vector<Vector<bool>> drop_keep(static_cast<u32>(func->blocks.size()));
-    for (u32 b = 0; b < func->blocks.size(); b++) {
-        IRBlock* B = func->blocks[b];
-        drop_keep[b] = Vector<bool>(static_cast<u32>(B->params.size()), true);
-    }
-
-    for (u32 b = 0; b < func->blocks.size(); b++) {
-        IRBlock* B = func->blocks[b];
-        // Skip the entry block — its "params" are function parameters, not
-        // block arguments fed by predecessors. (Entry has no predecessors.)
-        if (b == 0) continue;
+    // Collect droppable params first, WITHOUT allocating the per-value subst
+    // table or per-block keep masks. On typical code this pass is almost always
+    // a no-op (it found nothing on every function of the Lox workload), so the
+    // common path stays down to the predecessor scan — the subst(N) fill and the
+    // per-block Vector<bool> masks only get allocated once there's real work.
+    struct Drop { u32 block; u32 param_idx; u32 param_val; u32 common; };
+    Vector<Drop> drops;
+    for (u32 b = 1; b < func->blocks.size(); b++) {   // skip entry block (b==0):
+        IRBlock* B = func->blocks[b];                 // its params are fn params
         for (u32 pi = 0; pi < B->params.size(); pi++) {
             ValueId param_val = B->params[pi].value;
             if (!param_val.is_valid()) continue;
@@ -450,12 +443,16 @@ bool run_trivial_block_arg_elim(IRFunction* func) {
             }
             if (!unanimous) continue;
             if (!common.is_valid()) continue;  // only self-refs, no real value
-            subst[param_val.id] = common.id;
-            drop_keep[b][pi] = false;
-            any = true;
+            drops.push_back({b, pi, param_val.id, common.id});
         }
     }
-    if (!any) return false;
+    if (drops.empty()) return false;
+
+    // Build the substitution table now that there's work.
+    const u32 N = func->next_value_id;
+    Vector<u32> subst(N);
+    for (u32 i = 0; i < N; i++) subst[i] = i;
+    for (const Drop& d : drops) subst[d.param_val] = d.common;
 
     // Path-compress so chains (param -> param -> value) collapse.
     auto find = [&](u32 id) -> u32 {
@@ -476,18 +473,22 @@ bool run_trivial_block_arg_elim(IRFunction* func) {
         for_each_terminator_operand(block->terminator, [&](ValueId& v) { rewrite(v); });
     }
 
-    // Drop trivial params from each block + matching args from each pred's
-    // jump target.
-    for (u32 b = 0; b < func->blocks.size(); b++) {
-        const Vector<bool>& keep = drop_keep[b];
-        bool any_dropped = false;
-        for (u32 i = 0; i < keep.size(); i++) if (!keep[i]) { any_dropped = true; break; }
-        if (!any_dropped) continue;
+    // Drop trivial params + matching pred args, one affected block at a time.
+    // `drops` is grouped by block (collected in block-ascending order), so each
+    // equal-block run is contiguous — build a keep mask only for those blocks.
+    u32 di = 0;
+    while (di < drops.size()) {
+        u32 b = drops[di].block;
         IRBlock* B = func->blocks[b];
+        Vector<bool> keep(static_cast<u32>(B->params.size()), true);
+        while (di < drops.size() && drops[di].block == b) {
+            keep[drops[di].param_idx] = false;
+            di++;
+        }
         // Compact B->params.
         u32 w = 0;
         for (u32 r = 0; r < B->params.size(); r++) {
-            if (r >= keep.size() || keep[r]) {
+            if (keep[r]) {
                 if (w != r) B->params[w] = B->params[r];
                 w++;
             }
