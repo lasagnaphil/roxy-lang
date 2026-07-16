@@ -129,7 +129,12 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     }
     for (u32 i = 0; i < 256; i++) m_reg_to_value[i] = NO_VALUE;
 
-    m_block_offsets.clear();
+    // BlockId-indexed code-offset table. Ids are dense [0, num_blocks) after RPO
+    // reorder; refill with the NO_OFFSET sentinel, keeping the buffer.
+    u32 num_blocks = ir_func->blocks.size();
+    m_block_offsets.clear_keep_capacity();
+    m_block_offsets.reserve(num_blocks);
+    for (u32 i = 0; i < num_blocks; i++) m_block_offsets.push_back(NO_OFFSET);
     m_unfusable_cmp_pcs.clear();
     m_nullify_pcs.clear();
     m_ref_inc_pcs.clear();
@@ -513,8 +518,8 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     // into contiguous runs of layout positions, and emit one BCExceptionHandler
     // per run that shares the same handler_pc / type_id.
     for (const auto& ir_handler : ir_func->exception_handlers) {
-        auto handler_it = m_block_offsets.find(ir_handler.handler_block.id);
-        if (handler_it == m_block_offsets.end()) continue;
+        u32 handler_offset = block_offset(ir_handler.handler_block.id);
+        if (handler_offset == NO_OFFSET) continue;
 
         // Resolve type_id once (same for every BCExceptionHandler we'll emit).
         u32 type_id = 0;
@@ -567,23 +572,23 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         u32 run_start = body_ids[0];
         u32 run_end = body_ids[0];
         auto emit_range = [&](u32 first_block_id, u32 last_block_id) {
-            auto start_it = m_block_offsets.find(first_block_id);
-            if (start_it == m_block_offsets.end()) return;
+            u32 start_offset = block_offset(first_block_id);
+            if (start_offset == NO_OFFSET) return;
             BCExceptionHandler bc_handler;
-            bc_handler.try_start_pc = start_it->second;
+            bc_handler.try_start_pc = start_offset;
 
             // End PC = offset of the block after the run's last block (or end of code).
             u32 after_block_id = last_block_id + 1;
             if (after_block_id < ir_func->blocks.size()) {
-                auto after_it = m_block_offsets.find(after_block_id);
-                bc_handler.try_end_pc = (after_it != m_block_offsets.end())
-                    ? after_it->second
+                u32 after_offset = block_offset(after_block_id);
+                bc_handler.try_end_pc = (after_offset != NO_OFFSET)
+                    ? after_offset
                     : m_current_func->code.size();
             } else {
                 bc_handler.try_end_pc = m_current_func->code.size();
             }
 
-            bc_handler.handler_pc = handler_it->second;
+            bc_handler.handler_pc = handler_offset;
             bc_handler.type_id = type_id;
             bc_handler.exception_reg = exception_reg;
             m_current_func->exception_handlers.push_back(bc_handler);
@@ -603,22 +608,22 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
 
     // Build cleanup records from IR cleanup info
     for (const auto& ir_cleanup : ir_func->cleanup_info) {
-        auto start_it = m_block_offsets.find(ir_cleanup.start_block.id);
-        auto end_it = m_block_offsets.find(ir_cleanup.end_block.id);
+        u32 start_offset = block_offset(ir_cleanup.start_block.id);
+        u32 end_offset = block_offset(ir_cleanup.end_block.id);
 
-        if (start_it == m_block_offsets.end() || end_it == m_block_offsets.end()) {
+        if (start_offset == NO_OFFSET || end_offset == NO_OFFSET) {
             continue;
         }
 
         BCCleanupRecord record;
-        record.scope_start_pc = start_it->second;
+        record.scope_start_pc = start_offset;
 
         // scope_end_pc is the offset AFTER the end block's last instruction
         BlockId end_block_id = ir_cleanup.end_block;
         if (end_block_id.id + 1 < ir_func->blocks.size()) {
-            auto next_it = m_block_offsets.find(end_block_id.id + 1);
-            if (next_it != m_block_offsets.end()) {
-                record.scope_end_pc = next_it->second;
+            u32 next_offset = block_offset(end_block_id.id + 1);
+            if (next_offset != NO_OFFSET) {
+                record.scope_end_pc = next_offset;
             } else {
                 record.scope_end_pc = m_current_func->code.size();
             }
@@ -2714,12 +2719,12 @@ i16 BytecodeBuilder::branch_offset(u32 from_idx, u32 to_idx) {
 
 void BytecodeBuilder::patch_jumps() {
     for (const JumpPatch& patch : m_jump_patches) {
-        auto it = m_block_offsets.find(patch.target_block.id);
-        if (it == m_block_offsets.end()) {
+        u32 target_offset = block_offset(patch.target_block.id);
+        if (target_offset == NO_OFFSET) {
             continue;  // Invalid target
         }
 
-        i16 relative_offset = branch_offset(patch.instruction_index, it->second);
+        i16 relative_offset = branch_offset(patch.instruction_index, target_offset);
 
         // Patch the instruction
         u32& instr = m_current_func->code[patch.instruction_index];

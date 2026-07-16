@@ -137,8 +137,19 @@ private:
     };
     Vector<JumpPatch> m_jump_patches;
 
-    // Block offsets for jump resolution
-    tsl::robin_map<u32, u32> m_block_offsets;  // BlockId.id -> code offset
+    // Block offsets for jump resolution. BlockId.id is dense [0, blocks.size())
+    // after reorder_blocks_rpo (which renumbers ids to their RPO index), so a
+    // direct-indexed vector with a sentinel beats a hashed map here — the same
+    // transformation that gave the ValueId side tables their win (dbd74a6).
+    // See OPTIMIZATION.md §3.3.
+    static constexpr u32 NO_OFFSET = 0xFFFFFFFFu;
+    Vector<u32> m_block_offsets;  // BlockId.id -> code offset (NO_OFFSET = unset)
+
+    // Code offset recorded for a block, or NO_OFFSET if the id is out of range
+    // (e.g. a one-past-the-last probe) or the block was never emitted.
+    u32 block_offset(u32 block_id) const {
+        return block_id < m_block_offsets.size() ? m_block_offsets[block_id] : NO_OFFSET;
+    }
 
     // Bytecode PCs of integer-compare instructions whose SSA result is live past
     // this block's terminator (i.e. !m_value_same_block). These must NOT be fused
