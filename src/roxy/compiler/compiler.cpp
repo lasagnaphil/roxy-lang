@@ -424,11 +424,16 @@ BCModule* Compiler::link_modules() {
         m_timings.ir_optimize_ns = now_ns() - t0;
     }
 
-    // Validate merged IR before lowering
-    IRValidator validator;
+    // Validate merged IR before lowering. The validator only checks
+    // compiler-internal structural invariants (ValueId ranges, terminator
+    // presence, jump-arg counts) — it catches compiler bugs, never user errors —
+    // so it is gated to builds with asserts enabled (debug, tests, fuzzing).
+    // Release/AOT compiles (NDEBUG) skip it. See OPTIMIZATION.md §3.1.
+#ifndef NDEBUG
     {
         ROXY_ZONE("ir-validate");
         u64 t0 = now_ns();
+        IRValidator validator;
         bool valid = validator.validate(&merged_ir);
         m_timings.ir_validate_ns = now_ns() - t0;
         if (!valid) {
@@ -436,6 +441,7 @@ BCModule* Compiler::link_modules() {
             return nullptr;
         }
     }
+#endif
 
     // Build bytecode from merged IR
     // Static linking: all cross-module calls are resolved in the lowering phase
