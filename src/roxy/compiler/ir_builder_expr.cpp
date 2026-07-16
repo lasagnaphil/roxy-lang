@@ -2201,8 +2201,8 @@ void IRBuilder::emit_variant_guard(ValueId obj, const FieldAccess& access, const
                                       access.when_clause->discriminant_type);
     ValueId matches = emit_binary(IROp::EqI, disc, expected, m_types.bool_type());
 
-    IRBlock* pass_block = create_block(intern_format("{}_pass", label));
-    IRBlock* fail_block = create_block(intern_format("{}_fail", label));
+    IRBlock* pass_block = create_block(intern_concat(label, "_pass"));
+    IRBlock* fail_block = create_block(intern_concat(label, "_fail"));
     finish_block_branch(matches, pass_block->id, fail_block->id);
 
     // In fail block: emit unreachable (will lower to TRAP)

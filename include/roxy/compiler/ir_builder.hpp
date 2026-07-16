@@ -423,6 +423,38 @@ private:
         return format_to_arena(m_allocator, runtime_format_string{fmt.str}, args...);
     }
 
+    // Fast path for synthetic "<prefix><id>" names (temp locals, string temps):
+    // builds the string directly rather than through format_to_arena, which runs
+    // the printf-style formatter twice (a length probe, then the write). One such
+    // name is minted per noncopyable/string call temp during IR building, so this
+    // path was a visible slice of the compile profile's formatting time.
+    StringView intern_synthetic_name(const char* prefix, u32 id) {
+        char buf[24];
+        u32 n = 0;
+        while (*prefix) buf[n++] = *prefix++;            // short fixed prefix ("__tmp"/"__str")
+        char rev[10];                                    // u32 is at most 10 decimal digits
+        u32 digits = 0;
+        do { rev[digits++] = static_cast<char>('0' + id % 10); id /= 10; } while (id);
+        while (digits > 0) buf[n++] = rev[--digits];
+        char* dst = reinterpret_cast<char*>(m_allocator.alloc_bytes(n + 1, 1));
+        for (u32 i = 0; i < n; i++) dst[i] = buf[i];
+        dst[n] = '\0';
+        return StringView(dst, n);
+    }
+
+    // Fast path for "<a><b>" concatenation of two fixed C strings — same output
+    // as intern_format("{}...", ...) but without the double formatter pass. Used
+    // for synthetic block labels (debug-only names), minted per variant guard.
+    StringView intern_concat(const char* a, const char* b) {
+        u32 la = 0; while (a[la]) la++;
+        u32 lb = 0; while (b[lb]) lb++;
+        char* dst = reinterpret_cast<char*>(m_allocator.alloc_bytes(la + lb + 1, 1));
+        for (u32 i = 0; i < la; i++) dst[i] = a[i];
+        for (u32 i = 0; i < lb; i++) dst[la + i] = b[i];
+        dst[la + lb] = '\0';
+        return StringView(dst, la + lb);
+    }
+
     // Zero `slot_count` contiguous u32 slots of `self_ptr` starting at
     // `start_slot`. Used by constructors to null-init a struct's own slot
     // range so the destroy-old preamble in `self.field = …` never runs on

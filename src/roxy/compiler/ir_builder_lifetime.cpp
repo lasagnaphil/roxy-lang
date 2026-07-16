@@ -104,7 +104,7 @@ void IRBuilder::track_noncopyable_call_temp(ValueId val, Type* type) {
     // Skip if already tracked as a temporary (constructor/struct-literal paths
     // self-track their heap temps at creation).
     if (m_ownership.has_temp_for(val)) return;
-    StringView temp_name = intern_format("__tmp{}", m_next_temp_id++);
+    StringView temp_name = intern_synthetic_name("__tmp", m_next_temp_id++);
     define_local(temp_name, val, type);
     u32 scope_depth = static_cast<u32>(m_local_scopes.size());
     m_ownership.track({temp_name, type, scope_depth, false, true,
@@ -115,7 +115,7 @@ void IRBuilder::track_string_temp(ValueId val, Type* type) {
     if (!type || type->kind != TypeKind::String || !m_current_block || !val.is_valid()) return;
     // Skip if already tracked as a temporary (avoid double-tracking).
     if (m_ownership.has_temp_for(val)) return;
-    StringView temp_name = intern_format("__str{}", m_next_temp_id++);
+    StringView temp_name = intern_synthetic_name("__str", m_next_temp_id++);
     define_local(temp_name, val, type);
     u32 scope_depth = static_cast<u32>(m_local_scopes.size());
     m_ownership.track({temp_name, type, scope_depth, false, /*is_temporary=*/true,
