@@ -1027,7 +1027,9 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
         : m_current_func->params.size();
     for (u32 i = 0; i < param_count; i++) {
         BlockParam& bp = m_current_func->params[i];
-        define_local(bp.name, bp.value, bp.type);
+        // Cache the pointer-param bit on the LocalVar (out/inout/self) so
+        // gen_identifier_expr reads it off the binding it already found (§3.7).
+        define_local(bp.name, bp.value, bp.type, m_param_is_ptr.count(bp.name) != 0);
 
         // Track owned parameters — callee now owns them (uniq refs and value
         // structs with destructors). inout/out params are borrows through a

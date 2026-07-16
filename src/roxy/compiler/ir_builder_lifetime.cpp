@@ -14,7 +14,7 @@ namespace rx {
 
 using namespace ir_builder_detail;
 
-void IRBuilder::define_local(StringView name, ValueId value, Type* type) {
+void IRBuilder::define_local(StringView name, ValueId value, Type* type, bool is_ptr) {
     if (m_local_scopes.empty()) return;
 
     // Search for an existing binding in outer scopes and update it
@@ -26,13 +26,18 @@ void IRBuilder::define_local(StringView name, ValueId value, Type* type) {
     for (i32 i = static_cast<i32>(m_local_scopes.size()) - 1; i >= 0; i--) {
         auto it = m_local_scopes[i].find(name);
         if (it != m_local_scopes[i].end()) {
-            m_local_scopes[i][name] = {value, type};
+            // Update value/type; keep the existing is_ptr — ptr-ness is fixed at
+            // definition (an out/inout param's SSA updates store through the
+            // pointer, they never rebind it to a non-pointer). (§3.7)
+            LocalVar& lv = it.value();
+            lv.value = value;
+            lv.type = type;
             return;
         }
     }
 
     // If no existing binding, add to innermost scope (new variable declaration)
-    m_local_scopes.back()[name] = {value, type};
+    m_local_scopes.back()[name] = {value, type, is_ptr};
 }
 
 ValueId IRBuilder::lookup_local(StringView name) {

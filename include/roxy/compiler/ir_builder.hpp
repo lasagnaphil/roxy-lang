@@ -247,6 +247,11 @@ private:
     struct LocalVar {
         ValueId value;
         Type* type;
+        // True for out/inout params and `self` (the pointer-passed params in
+        // m_param_is_ptr). Cached here so gen_identifier_expr can test it off the
+        // LocalVar it already found instead of a separate m_param_is_ptr probe
+        // (§3.7). Fixed at definition — reassignments store through the pointer.
+        bool is_ptr = false;
     };
 
     // ── Branch/merge machinery shared by if / else-if chain / when / try ──
@@ -730,7 +735,7 @@ private:
     void record_scope_cleanup_records(u32 depth);
 
     // Variable management (declared after LocalVar struct)
-    void define_local(StringView name, ValueId value, Type* type);
+    void define_local(StringView name, ValueId value, Type* type, bool is_ptr = false);
     ValueId lookup_local(StringView name);
     LocalVar* find_local(StringView name);  // Returns pointer to LocalVar or nullptr
 

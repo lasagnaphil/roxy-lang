@@ -937,7 +937,8 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
     // wrapping a synthesized trampoline. gen_call_expr's direct-call path
     // doesn't recurse here for callee identifiers, so this only fires in value
     // contexts (var init, argument passing, return, struct literal field, ...).
-    if (LocalVar* lv = find_local(id.name); !lv) {
+    LocalVar* lv = find_local(id.name);
+    if (!lv) {
         // Generic-template ref: semantic analysis stashed the monomorphized
         // name on the identifier post-coercion. The instantiated function
         // type lives in expr->resolved_type. Apply module-local mangling
@@ -1008,12 +1009,18 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
         if (git != m_global_indices.end()) {
             return gen_global_read(git->second, expr->resolved_type);
         }
+
+        // Not a local, function, or global: undefined. lookup_local reports the
+        // internal error and returns invalid (sema should have caught this).
+        return lookup_local(id.name);
     }
 
-    ValueId val = lookup_local(id.name);
+    // Local variable: reuse the LocalVar found above — no second scope walk (was
+    // lookup_local) and no m_param_is_ptr hash probe (is_ptr is cached). (§3.7)
+    ValueId val = lv->value;
 
     // If this is a pointer parameter (out/inout), handle specially
-    if (m_param_is_ptr.count(id.name)) {
+    if (lv->is_ptr) {
         Type* type = expr->resolved_type;
 
         // For struct types, the pointer IS what we need for field access.
