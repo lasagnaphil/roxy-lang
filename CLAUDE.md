@@ -486,6 +486,22 @@ build/run quickstart: `tests/fuzz/README.md`.
 > `tests/fuzz/corpus/` (the replay has no resource cap). See `TODO.md` for the
 > one open fuzzing finding (an LSP-parser super-linear-memory OOM).
 
+### Profiling (compiler / interpreter)
+
+Profile an **optimized** build, never the default `-O0` `build/`:
+
+```bash
+cmake -B build-profile -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS="-fno-omit-frame-pointer"
+ninja -C build-profile roxy
+./build-profile/roxy --time program.roxy        # per-phase compile timing + compile-vs-execute split
+./build-profile/roxy --repeat=200 program.roxy  # avg over 200 in-process compiles (profiler loop)
+```
+
+The compiler and interpreter are separate regimes — isolate them (a compute
+benchmark is ~100% VM). The interpreter has its own per-opcode profiler under
+`-DENABLE_BC_PROFILE=ON`. Full workflow (sampling profilers, workload classes,
+guardrails, baseline findings): `docs/internals/profiling.md`.
+
 ## Documentation
 
 - `CLAUDE.md` - Quick reference for Claude Code (this file)
@@ -521,3 +537,4 @@ build/run quickstart: `tests/fuzz/README.md`.
   - `lsp-server.md` - LSP server architecture: map-reduce design, error-recovering parser, indexing, lazy analysis
   - `optimization.md` - SSA IR optimization passes: Phase 1 (in IRBuilder), Phase 2 (DCE, copy propagation), Phase 3 (branch folding, block merging, trivial block-arg elim), and Phase 4 (block-local CSE) all implemented; future phases (global CSE/GVN, LICM, inlining, TCO, escape analysis) design plan
   - `fuzzer.md` - Fuzzing: coverage-guided libFuzzer targets for lexer/parser/LSP parser + always-on regression replay (implemented); structure-aware (grammar/type-directed) generation with a VM-vs-C differential oracle (design plan)
+  - `profiling.md` - Profiling the compiler & interpreter: RelWithDebInfo build, `roxy --time` per-phase compile timing + compile-vs-execute split, `roxy --repeat=N` in-process compile loop, the `ENABLE_BC_PROFILE` opcode profiler, and the samply/Instruments sampling-profiler workflow

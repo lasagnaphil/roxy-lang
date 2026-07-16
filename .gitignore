@@ -4,6 +4,8 @@
 # Build directories
 build/
 build-fuzz/
+build-profile/
+build-bcprofile/
 cmake-build-*/
 
 # libFuzzer artifacts (crash/oom/leak/timeout reproducers, working corpora)

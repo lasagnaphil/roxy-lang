@@ -16,11 +16,60 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
+#include <chrono>
 
 // tsl::robin_map for visited module tracking (used as set with bool values)
 #include "roxy/core/tsl/robin_map.h"
 
 using namespace rx;
+
+// Monotonic nanosecond timestamp (matches Compiler's phase clock).
+static inline u64 now_ns() {
+    return static_cast<u64>(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+}
+
+// Print the compile-phase breakdown (see `roxy --time`). `t` holds summed
+// nanoseconds across `runs` compiles; values are divided by `runs` for the
+// per-compile average. `execute_ns` is the program's run time (0 = omit, e.g.
+// in the compile-only --repeat harness).
+static void print_timings(const CompileTimings& t, u64 runs, u64 execute_ns) {
+    auto ms = [runs](u64 ns) { return static_cast<double>(ns) / 1.0e6 / static_cast<double>(runs); };
+    double total = ms(t.total_ns);
+    auto pct = [total](double v) { return total > 0.0 ? 100.0 * v / total : 0.0; };
+
+    struct Row { const char* name; double val; };
+    // Sub-phases sum to slightly less than total; the remainder (IR merge,
+    // native binding, registry setup) is reported as "link-other".
+    u64 accounted = t.parse_ns + t.topo_ns + t.sema_ns + t.ir_build_ns +
+                    t.coro_lower_ns + t.ir_optimize_ns + t.ir_validate_ns + t.bc_lower_ns;
+    double other = ms(t.total_ns > accounted ? t.total_ns - accounted : 0);
+    Row rows[] = {
+        {"parse",       ms(t.parse_ns)},
+        {"topo-sort",   ms(t.topo_ns)},
+        {"sema",        ms(t.sema_ns)},
+        {"ir-build",    ms(t.ir_build_ns)},
+        {"coro-lower",  ms(t.coro_lower_ns)},
+        {"ir-optimize", ms(t.ir_optimize_ns)},
+        {"ir-validate", ms(t.ir_validate_ns)},
+        {"bc-lower",    ms(t.bc_lower_ns)},
+        {"link-other",  other},
+    };
+
+    fprintf(stderr, "\n== roxy --time: compile phases");
+    if (runs > 1) fprintf(stderr, " (avg of %llu runs)", (unsigned long long)runs);
+    fprintf(stderr, " ==\n");
+    for (const Row& r : rows) {
+        fprintf(stderr, "  %-12s %10.3f ms  %5.1f%%\n", r.name, r.val, pct(r.val));
+    }
+    fprintf(stderr, "  %-12s %10s  %6s\n", "", "----------", "------");
+    fprintf(stderr, "  %-12s %10.3f ms  %5.1f%%\n", "compile", total, 100.0);
+    if (execute_ns > 0) {
+        fprintf(stderr, "  %-12s %10.3f ms\n", "execute",
+                static_cast<double>(execute_ns) / 1.0e6);
+    }
+}
 
 static void print_usage(const char* program) {
     fprintf(stderr, "Usage: %s [options] <source_file> [args...]\n", program);
@@ -33,6 +82,9 @@ static void print_usage(const char* program) {
     fprintf(stderr, "  --help, -h     Show this help message\n");
     fprintf(stderr, "  --dump-ir      Print SSA IR to stderr after compilation\n");
     fprintf(stderr, "  --dump-bc      Print bytecode disassembly to stderr after compilation\n");
+    fprintf(stderr, "  --time         Print per-phase compile timing and compile-vs-execute split\n");
+    fprintf(stderr, "  --repeat=N     Compile N times and report averaged phase timing (skips\n");
+    fprintf(stderr, "                 execution when N>1; the in-process loop for sampling profilers)\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "The program must define a main() function as the entry point.\n");
     fprintf(stderr, "Imported modules are auto-discovered from the source file's directory.\n");
@@ -43,6 +95,8 @@ struct Options {
     int program_args_start = 0;  // Index into argv where program args begin (0 = none)
     bool dump_ir = false;
     bool dump_bc = false;
+    bool time = false;           // Print per-phase compile timing + compile-vs-execute split
+    u32 repeat = 1;              // Compile-only benchmark loop count (>1 skips execution)
 };
 
 static bool parse_args(int argc, char** argv, Options& opts) {
@@ -54,6 +108,16 @@ static bool parse_args(int argc, char** argv, Options& opts) {
             opts.dump_ir = true;
         } else if (strcmp(argv[i], "--dump-bc") == 0) {
             opts.dump_bc = true;
+        } else if (strcmp(argv[i], "--time") == 0) {
+            opts.time = true;
+        } else if (strncmp(argv[i], "--repeat=", 9) == 0) {
+            long n = strtol(argv[i] + 9, nullptr, 10);
+            if (n < 1) {
+                fprintf(stderr, "Error: --repeat requires a positive integer\n");
+                return false;
+            }
+            opts.repeat = static_cast<u32>(n);
+            opts.time = true;  // repeat implies timing output
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
             return false;
@@ -220,23 +284,55 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Register all discovered source modules (dependencies before dependents,
+    // main last) onto a compiler. Reused by both the normal path and the
+    // --repeat benchmark loop, which builds a fresh compiler each iteration.
+    auto add_sources = [&](Compiler& c) {
+        for (auto& source_file : discovered_modules) {
+            const char* source = reinterpret_cast<const char*>(source_file.buffer.data());
+            u32 len = static_cast<u32>(source_file.buffer.size() - 1);
+            c.add_source(StringView(source_file.module_name.data(),
+                                    static_cast<u32>(source_file.module_name.size())),
+                         source, len);
+        }
+        c.add_source(StringView(main_module_name.data(),
+                                static_cast<u32>(main_module_name.size())),
+                     main_source, main_len);
+    };
+
+    // --repeat=N (N>1): compile-only benchmark loop. A fresh allocator +
+    // compiler per iteration keeps each compile independent; timings are summed
+    // and reported as a per-compile average. Execution is skipped — this is the
+    // in-process loop to run under a sampling profiler for compiler hotspots.
+    if (opts.repeat > 1) {
+        CompileTimings agg{};
+        for (u32 iter = 0; iter < opts.repeat; iter++) {
+            BumpAllocator loop_alloc(65536);
+            Compiler loop_compiler(loop_alloc);
+            add_sources(loop_compiler);
+            BCModule* m = loop_compiler.compile();
+            if (!m) {
+                fprintf(stderr, "Compilation failed (iteration %u):\n", iter);
+                for (const char* error : loop_compiler.errors()) {
+                    fprintf(stderr, "  %s\n", error);
+                }
+                return 1;
+            }
+            const CompileTimings& t = loop_compiler.timings();
+            agg.parse_ns += t.parse_ns;         agg.topo_ns += t.topo_ns;
+            agg.sema_ns += t.sema_ns;           agg.ir_build_ns += t.ir_build_ns;
+            agg.coro_lower_ns += t.coro_lower_ns; agg.ir_optimize_ns += t.ir_optimize_ns;
+            agg.ir_validate_ns += t.ir_validate_ns; agg.bc_lower_ns += t.bc_lower_ns;
+            agg.total_ns += t.total_ns;
+        }
+        print_timings(agg, opts.repeat, 0);
+        return 0;
+    }
+
     // Create allocator and compiler
     BumpAllocator allocator(65536);
     Compiler compiler(allocator);
-
-    // Add discovered modules first (dependencies before dependents)
-    for (auto& source_file : discovered_modules) {
-        const char* source = reinterpret_cast<const char*>(source_file.buffer.data());
-        u32 len = static_cast<u32>(source_file.buffer.size() - 1);
-        compiler.add_source(StringView(source_file.module_name.data(),
-                                       static_cast<u32>(source_file.module_name.size())),
-                           source, len);
-    }
-
-    // Add main module last
-    compiler.add_source(StringView(main_module_name.data(),
-                                   static_cast<u32>(main_module_name.size())),
-                       main_source, main_len);
+    add_sources(compiler);
 
     // Compile all modules
     BCModule* module = compiler.compile();
@@ -328,7 +424,11 @@ int main(int argc, char** argv) {
         ? Span<Value>(&args_value, 1)
         : Span<Value>();
 
-    if (!vm_call(&vm, main_func_name, call_args)) {
+    u64 exec_start = now_ns();
+    bool run_ok = vm_call(&vm, main_func_name, call_args);
+    u64 execute_ns = now_ns() - exec_start;
+
+    if (!run_ok) {
         fprintf(stderr, "Runtime error: %s\n", vm.error ? vm.error : "unknown error");
         vm_destroy(&vm);
         return 1;
@@ -337,6 +437,11 @@ int main(int argc, char** argv) {
     Value result = vm_get_result(&vm);
 
     vm_destroy(&vm);
+
+    // Phase timing: compile breakdown (from the compiler) + execute split.
+    if (opts.time) {
+        print_timings(compiler.timings(), 1, execute_ns);
+    }
 
     // Use integer return value as exit code
     if (result.is_int()) {

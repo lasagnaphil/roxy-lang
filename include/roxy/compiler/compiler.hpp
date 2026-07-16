@@ -25,6 +25,23 @@ struct SourceModule {
     u32 length;             // Source length
 };
 
+// Per-compile wall-clock breakdown, in nanoseconds. Always populated by
+// compile() (the steady_clock overhead is a handful of calls per compile, so
+// there is no reason to gate it). `total_ns` is the whole compile(); the named
+// phases sum to slightly less than it — the remainder (merge, native binding,
+// registry setup) is the pipeline's "other" bucket. See `roxy --time`.
+struct CompileTimings {
+    u64 parse_ns = 0;        // Phase 1: lexer + parser, all modules
+    u64 topo_ns = 0;         // Phase 2: topological sort by imports
+    u64 sema_ns = 0;         // Phase 3: semantic analysis, all modules
+    u64 ir_build_ns = 0;     // Phase 4: AST -> SSA IR, all modules
+    u64 coro_lower_ns = 0;   // Phase 5a: coroutine state-machine lowering
+    u64 ir_optimize_ns = 0;  // Phase 5b: SSA IR optimization passes
+    u64 ir_validate_ns = 0;  // Phase 5c: IR structural validation
+    u64 bc_lower_ns = 0;     // Phase 5d: SSA IR -> bytecode (incl. regalloc)
+    u64 total_ns = 0;        // Whole compile() call
+};
+
 // Compiler - compiles multiple source modules into a single linked BCModule
 //
 // Usage:
@@ -55,6 +72,9 @@ public:
     // Access IR modules (valid after compile() succeeds)
     u32 module_count() const { return static_cast<u32>(m_module_states.size()); }
     IRModule* ir_module(u32 index) const { return m_module_states[index].ir_module; }
+
+    // Per-phase wall-clock breakdown of the last compile() call.
+    const CompileTimings& timings() const { return m_timings; }
 
 private:
     // Compilation phases
@@ -107,6 +127,9 @@ private:
 
     // Combined registry with all native functions (built during compile())
     UniquePtr<NativeRegistry> m_combined_registry;
+
+    // Per-phase wall-clock breakdown of the last compile() (see timings()).
+    CompileTimings m_timings;
 
     // Errors
     Vector<const char*> m_errors;

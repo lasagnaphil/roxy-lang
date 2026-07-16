@@ -13,8 +13,15 @@
 #include "roxy/vm/natives.hpp"
 
 #include <cstring>
+#include <chrono>
 
 namespace rx {
+
+// Monotonic nanosecond timestamp for phase timing (see CompileTimings).
+static inline u64 now_ns() {
+    return static_cast<u64>(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+}
 
 Compiler::Compiler(BumpAllocator& allocator)
     : m_allocator(allocator)
@@ -54,28 +61,38 @@ BCModule* Compiler::compile() {
     // Initialize per-module state
     m_module_states.resize(m_sources.size());
 
+    m_timings = CompileTimings{};
+    u64 compile_start = now_ns();
+
     // Phase 1: Parse all modules
-    if (!parse_all()) {
-        return nullptr;
-    }
+    u64 t0 = now_ns();
+    bool ok = parse_all();
+    m_timings.parse_ns = now_ns() - t0;
+    if (!ok) return nullptr;
 
     // Phase 2: Topologically sort by imports
-    if (!topological_sort()) {
-        return nullptr;
-    }
+    t0 = now_ns();
+    ok = topological_sort();
+    m_timings.topo_ns = now_ns() - t0;
+    if (!ok) return nullptr;
 
     // Phase 3: Semantic analysis (in topological order)
-    if (!analyze_all()) {
-        return nullptr;
-    }
+    t0 = now_ns();
+    ok = analyze_all();
+    m_timings.sema_ns = now_ns() - t0;
+    if (!ok) return nullptr;
 
     // Phase 4: Build IR for all modules
-    if (!build_ir_all()) {
-        return nullptr;
-    }
+    t0 = now_ns();
+    ok = build_ir_all();
+    m_timings.ir_build_ns = now_ns() - t0;
+    if (!ok) return nullptr;
 
-    // Phase 5: Link into single BCModule
-    return link_modules();
+    // Phase 5: Link into single BCModule (sub-phases timed inside)
+    BCModule* module = link_modules();
+
+    m_timings.total_ns = now_ns() - compile_start;
+    return module;
 }
 
 bool Compiler::parse_all() {
@@ -385,16 +402,23 @@ BCModule* Compiler::link_modules() {
     merged_ir.global_slot_count = global_base;
 
     // Coroutine lowering pass: transform coroutine functions into init/resume/done
+    u64 t0 = now_ns();
     coroutine_lower(&merged_ir, m_allocator, m_type_env);
+    m_timings.coro_lower_ns = now_ns() - t0;
 
     // Phase 2 IR optimizations: copy propagation + DCE. Runs after coroutine
     // lowering so generated init/resume/done bodies also benefit, and before
     // validation so the validator checks the post-optimization IR.
+    t0 = now_ns();
     optimize_module(&merged_ir, m_allocator);
+    m_timings.ir_optimize_ns = now_ns() - t0;
 
     // Validate merged IR before lowering
+    t0 = now_ns();
     IRValidator validator;
-    if (!validator.validate(&merged_ir)) {
+    bool valid = validator.validate(&merged_ir);
+    m_timings.ir_validate_ns = now_ns() - t0;
+    if (!valid) {
         add_error_fmt("IR validation failed: {}", validator.error());
         return nullptr;
     }
@@ -402,10 +426,12 @@ BCModule* Compiler::link_modules() {
     // Build bytecode from merged IR
     // Static linking: all cross-module calls are resolved in the lowering phase
     // since m_func_indices contains all functions from all modules
+    t0 = now_ns();
     BytecodeBuilder bc_builder;
     bc_builder.set_registry(m_combined_registry.get());
     bc_builder.set_type_env(&m_type_env);
     BCModule* module = bc_builder.build(&merged_ir);
+    m_timings.bc_lower_ns = now_ns() - t0;
 
     if (!module) {
         const char* msg = bc_builder.error();
