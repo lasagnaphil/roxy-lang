@@ -1803,10 +1803,13 @@ void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
 // ===== Operator Dispatch Helpers =====
 
 Type* SemanticAnalyzer::try_resolve_binary_op(BinaryOp op, Type* left, Type* right) {
-    const char* method_name = binary_op_to_trait_method(op);
-    if (!method_name) return nullptr;
-    StringView name(method_name, static_cast<u32>(strlen(method_name)));
-    const MethodInfo* mi = m_types.lookup_method(left, name);
+    StringView name = binary_op_to_trait_method(op);
+    if (name.empty()) return nullptr;
+    // Primitive operands resolve through a dense (kind, op) table instead of the
+    // name-keyed hash + linear scan in lookup_primitive_method (§3.5).
+    const MethodInfo* mi = left->is_primitive()
+        ? m_types.lookup_primitive_binary_op(left->kind, op)
+        : m_types.lookup_method(left, name);
     if (mi && mi->param_types.size() == 1) {
         if (mi->param_types[0] == right) {
             return mi->return_type;
@@ -1834,10 +1837,11 @@ Type* SemanticAnalyzer::try_resolve_binary_op(BinaryOp op, Type* left, Type* rig
 }
 
 Type* SemanticAnalyzer::try_resolve_unary_op(UnaryOp op, Type* operand) {
-    const char* method_name = unary_op_to_trait_method(op);
-    if (!method_name) return nullptr;
-    StringView name(method_name, static_cast<u32>(strlen(method_name)));
-    const MethodInfo* mi = m_types.lookup_method(operand, name);
+    StringView name = unary_op_to_trait_method(op);
+    if (name.empty()) return nullptr;
+    const MethodInfo* mi = operand->is_primitive()
+        ? m_types.lookup_primitive_unary_op(operand->kind, op)
+        : m_types.lookup_method(operand, name);
     if (mi && mi->param_types.size() == 0 && mi->return_type) {
         return mi->return_type;
     }
@@ -3451,9 +3455,8 @@ Type* SemanticAnalyzer::analyze_binary_expr(Expr* expr) {
         right_type = m_types.i32_type();
     } else if (right_type->is_int_literal() && !left_type->is_int_literal()) {
         // Right is IntLiteral, left is non-integer (e.g., struct) — coerce to method's param type
-        const char* method_name = binary_op_to_trait_method(binary_expr.op);
-        if (method_name) {
-            StringView name(method_name, static_cast<u32>(strlen(method_name)));
+        StringView name = binary_op_to_trait_method(binary_expr.op);
+        if (!name.empty()) {
             const MethodInfo* mi = m_types.lookup_method(left_type, name);
             if (mi && mi->param_types.size() == 1 && mi->param_types[0]->is_integer()) {
                 m_checker.coerce_int_literal(binary_expr.right, mi->param_types[0]);
@@ -3462,9 +3465,8 @@ Type* SemanticAnalyzer::analyze_binary_expr(Expr* expr) {
         }
     } else if (left_type->is_int_literal() && !right_type->is_int_literal()) {
         // Left is IntLiteral, right is non-integer — coerce to method's param type
-        const char* method_name = binary_op_to_trait_method(binary_expr.op);
-        if (method_name) {
-            StringView name(method_name, static_cast<u32>(strlen(method_name)));
+        StringView name = binary_op_to_trait_method(binary_expr.op);
+        if (!name.empty()) {
             const MethodInfo* mi = m_types.lookup_method(right_type, name);
             if (mi && mi->param_types.size() == 1 && mi->param_types[0]->is_integer()) {
                 m_checker.coerce_int_literal(binary_expr.left, mi->param_types[0]);

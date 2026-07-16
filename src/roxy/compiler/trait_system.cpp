@@ -274,6 +274,11 @@ void TraitSystem::register_primitive_operator_methods() {
         const char* string_ops[] = { "eq", "ne" };
         register_ops(TypeKind::String, string_ops, 2, string_param, m_types.bool_type());
     }
+
+    // All primitive operator methods are registered; fold them into the dense
+    // (kind, op) dispatch tables so per-use operator resolution is an array index
+    // rather than a hash + linear scan (§3.5).
+    m_types.build_primitive_operator_tables();
 }
 
 // ===== Trait declaration collection (Pass 1) =====

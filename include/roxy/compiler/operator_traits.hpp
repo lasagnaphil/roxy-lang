@@ -6,36 +6,37 @@
 
 namespace rx {
 
-// Maps binary operators to trait method names.
-// Returns nullptr for operators without a trait mapping (e.g., And/Or).
-inline const char* binary_op_to_trait_method(BinaryOp op) {
+// Maps binary operators to trait method names. Returns an empty view for
+// operators without a trait mapping (e.g., And/Or). The view carries a
+// compile-time length (via _sv), so callers avoid a per-call strlen.
+inline StringView binary_op_to_trait_method(BinaryOp op) {
     switch (op) {
-        case BinaryOp::Add:      return "add";
-        case BinaryOp::Sub:      return "sub";
-        case BinaryOp::Mul:      return "mul";
-        case BinaryOp::Div:      return "div";
-        case BinaryOp::Mod:      return "mod";
-        case BinaryOp::BitAnd:   return "bit_and";
-        case BinaryOp::BitOr:    return "bit_or";
-        case BinaryOp::BitXor:   return "bit_xor";
-        case BinaryOp::Shl:      return "shl";
-        case BinaryOp::Shr:      return "shr";
-        case BinaryOp::Equal:    return "eq";
-        case BinaryOp::NotEqual: return "ne";
-        case BinaryOp::Less:     return "lt";
-        case BinaryOp::LessEq:   return "le";
-        case BinaryOp::Greater:  return "gt";
-        case BinaryOp::GreaterEq: return "ge";
-        default: return nullptr;
+        case BinaryOp::Add:      return "add"_sv;
+        case BinaryOp::Sub:      return "sub"_sv;
+        case BinaryOp::Mul:      return "mul"_sv;
+        case BinaryOp::Div:      return "div"_sv;
+        case BinaryOp::Mod:      return "mod"_sv;
+        case BinaryOp::BitAnd:   return "bit_and"_sv;
+        case BinaryOp::BitOr:    return "bit_or"_sv;
+        case BinaryOp::BitXor:   return "bit_xor"_sv;
+        case BinaryOp::Shl:      return "shl"_sv;
+        case BinaryOp::Shr:      return "shr"_sv;
+        case BinaryOp::Equal:    return "eq"_sv;
+        case BinaryOp::NotEqual: return "ne"_sv;
+        case BinaryOp::Less:     return "lt"_sv;
+        case BinaryOp::LessEq:   return "le"_sv;
+        case BinaryOp::Greater:  return "gt"_sv;
+        case BinaryOp::GreaterEq: return "ge"_sv;
+        default: return {};
     }
 }
 
-// Maps unary operators to trait method names.
-inline const char* unary_op_to_trait_method(UnaryOp op) {
+// Maps unary operators to trait method names. Empty view = no mapping.
+inline StringView unary_op_to_trait_method(UnaryOp op) {
     switch (op) {
-        case UnaryOp::Negate: return "neg";
-        case UnaryOp::BitNot: return "bit_not";
-        default: return nullptr;
+        case UnaryOp::Negate: return "neg"_sv;
+        case UnaryOp::BitNot: return "bit_not"_sv;
+        default: return {};
     }
 }
 

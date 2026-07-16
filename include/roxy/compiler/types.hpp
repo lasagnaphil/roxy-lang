@@ -21,6 +21,8 @@ struct EnumDecl;
 struct FunDecl;
 struct ConstructorDecl;
 struct DestructorDecl;
+enum class BinaryOp : u8;  // defined in ast.hpp; used by the primitive op tables
+enum class UnaryOp : u8;
 
 enum class TypeKind : u8 {
     // Primitives
@@ -523,6 +525,17 @@ public:
     const MethodInfo* lookup_primitive_method(TypeKind kind, StringView name) const;
     bool primitive_implements_trait(TypeKind kind, Type* trait) const;
 
+    // Build the dense primitive operator-dispatch tables from the registered
+    // primitive methods. Must be called once after all primitive operator
+    // methods are registered (the tables hold pointers into m_primitive_methods,
+    // which must be done growing). See OPTIMIZATION.md §3.5.
+    void build_primitive_operator_tables();
+    // O(1) operator lookup for primitive operands: a plain array index, replacing
+    // the name-keyed hash + linear scan of lookup_primitive_method. Returns
+    // nullptr for unregistered (kind, op) pairs — same fall-through as before.
+    const MethodInfo* lookup_primitive_binary_op(TypeKind kind, BinaryOp op) const;
+    const MethodInfo* lookup_primitive_unary_op(TypeKind kind, UnaryOp op) const;
+
     // Unified lookup: works for structs (via hierarchy) AND primitives
     const MethodInfo* lookup_method(Type* type, StringView name, Type** found_in = nullptr) const;
     bool implements_trait(Type* type, Type* trait) const;
@@ -563,6 +576,16 @@ private:
     // Primitive method and trait tables (keyed by TypeKind)
     tsl::robin_map<u8, Vector<MethodInfo>> m_primitive_methods;
     tsl::robin_map<u8, Vector<Type*>> m_primitive_traits;
+
+    // Dense primitive operator-dispatch tables (§3.5): [TypeKind][op] -> method
+    // (nullptr = unregistered). PRIM_OP_KIND_COUNT covers every primitive kind
+    // (is_primitive() is [Void, String]); the op-count constants are asserted
+    // against the enums in build_primitive_operator_tables().
+    static constexpr u32 PRIM_OP_KIND_COUNT = static_cast<u32>(TypeKind::String) + 1;
+    static constexpr u32 BINARY_OP_COUNT = 18;  // BinaryOp::Add .. Shr
+    static constexpr u32 UNARY_OP_COUNT = 4;    // UnaryOp::Negate .. Ref
+    const MethodInfo* m_primitive_binary_ops[PRIM_OP_KIND_COUNT][BINARY_OP_COUNT] = {};
+    const MethodInfo* m_primitive_unary_ops[PRIM_OP_KIND_COUNT][UNARY_OP_COUNT] = {};
 };
 
 // === Unified drop derivation (docs/internals/lifetimes.md "Value lifecycle") ===

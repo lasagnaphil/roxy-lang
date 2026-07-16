@@ -1038,9 +1038,8 @@ ValueId IRBuilder::gen_unary_expr(Expr* expr) {
     // Check for struct unary operator trait dispatch
     Type* operand_type = unary_expr.operand->resolved_type;
     if (operand_type && operand_type->is_struct()) {
-        const char* method_name_str = unary_op_to_trait_method(unary_expr.op);
-        if (method_name_str) {
-            StringView method_name(method_name_str, static_cast<u32>(strlen(method_name_str)));
+        StringView method_name = unary_op_to_trait_method(unary_expr.op);
+        if (!method_name.empty()) {
             Type* found_in = nullptr;
             const MethodInfo* mi = lookup_method_in_hierarchy(operand_type, method_name, &found_in);
             if (mi && found_in) {
@@ -1121,9 +1120,8 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
 
     // Check for struct operator trait dispatch
     if (left_type && left_type->is_struct()) {
-        const char* method_name_str = binary_op_to_trait_method(binary_expr.op);
-        if (method_name_str) {
-            StringView method_name(method_name_str, static_cast<u32>(strlen(method_name_str)));
+        StringView method_name = binary_op_to_trait_method(binary_expr.op);
+        if (!method_name.empty()) {
             Type* found_in = nullptr;
             const MethodInfo* mi = lookup_method_in_hierarchy(left_type, method_name, &found_in);
             if (mi && found_in) {

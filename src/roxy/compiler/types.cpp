@@ -1,4 +1,5 @@
 #include "roxy/compiler/types.hpp"
+#include "roxy/compiler/operator_traits.hpp"  // binary/unary_op_to_trait_method (§3.5)
 
 #include "roxy/core/string.hpp"
 
@@ -530,6 +531,43 @@ const MethodInfo* TypeCache::lookup_primitive_method(TypeKind kind, StringView n
         if (method.name == name) return &method;
     }
     return nullptr;
+}
+
+void TypeCache::build_primitive_operator_tables() {
+    // BinaryOp/UnaryOp have no count sentinel; lock the table widths to the enums.
+    static_assert(static_cast<u32>(BinaryOp::Shr) < BINARY_OP_COUNT,
+                  "BINARY_OP_COUNT too small for BinaryOp");
+    static_assert(static_cast<u32>(UnaryOp::Ref) < UNARY_OP_COUNT,
+                  "UNARY_OP_COUNT too small for UnaryOp");
+
+    // Resolve each (primitive kind, op) once via the existing name lookup so the
+    // per-use path becomes a plain array index. The pointers stay valid because
+    // m_primitive_methods is done growing by the time this runs.
+    for (u32 k = 0; k < PRIM_OP_KIND_COUNT; k++) {
+        TypeKind kind = static_cast<TypeKind>(k);
+        for (u32 o = 0; o < BINARY_OP_COUNT; o++) {
+            StringView name = binary_op_to_trait_method(static_cast<BinaryOp>(o));
+            m_primitive_binary_ops[k][o] =
+                name.empty() ? nullptr : lookup_primitive_method(kind, name);
+        }
+        for (u32 o = 0; o < UNARY_OP_COUNT; o++) {
+            StringView name = unary_op_to_trait_method(static_cast<UnaryOp>(o));
+            m_primitive_unary_ops[k][o] =
+                name.empty() ? nullptr : lookup_primitive_method(kind, name);
+        }
+    }
+}
+
+const MethodInfo* TypeCache::lookup_primitive_binary_op(TypeKind kind, BinaryOp op) const {
+    u32 k = static_cast<u8>(kind);
+    if (k >= PRIM_OP_KIND_COUNT) return nullptr;
+    return m_primitive_binary_ops[k][static_cast<u8>(op)];
+}
+
+const MethodInfo* TypeCache::lookup_primitive_unary_op(TypeKind kind, UnaryOp op) const {
+    u32 k = static_cast<u8>(kind);
+    if (k >= PRIM_OP_KIND_COUNT) return nullptr;
+    return m_primitive_unary_ops[k][static_cast<u8>(op)];
 }
 
 bool TypeCache::primitive_implements_trait(TypeKind kind, Type* trait) const {
