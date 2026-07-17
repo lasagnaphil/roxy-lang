@@ -98,6 +98,11 @@ default `build/` (Debug, `-O0`, asserts live).
 
 ### 3.1 Gate `ir-validate` out of release compiles — guaranteed −2.1%
 
+> **Landed (`9f4aca9`).** `link_modules()` gates the validator behind
+> `#ifndef NDEBUG`; release/AOT compiles skip it (`compiler.cpp:429`). In
+> release builds `ir-validate` now times 0.0 ms — the §2 baseline row below
+> predates the gate.
+
 `Compiler::link_modules()` runs `IRValidator::validate()` unconditionally
 (`src/roxy/compiler/compiler.cpp:428-438`). The validator only checks
 compiler-internal structural invariants (ValueId ranges, terminator presence,
@@ -151,6 +156,12 @@ of re-analyzing the identifier. Pure plumbing; preserve the lambda
 capture-rewrite path in `analyze_identifier_expr`.
 
 ### 3.5 Sema: primitive operator dispatch table
+
+> **Landed (`828724f`).** Dense `m_primitive_binary_ops[kind][op]` /
+> `m_primitive_unary_ops` tables built once in `build_primitive_operator_tables`
+> (`types.cpp:537`); per-use dispatch is `lookup_primitive_binary_op`
+> (`types.cpp:562`), a pure array index. The struct/user-operator path still
+> resolves by name and is subsumed by §5.1.
 
 `i32 + i32` (and every comparison/bitwise/unary/compound op) resolves via
 strings: `binary_op_to_trait_method(op)` → runtime `strlen` → `lookup_method`
@@ -338,6 +349,11 @@ Touches every `expr->lambda.*` reader in sema/IR-build.
 
 ### 5.1 Intern identifiers to `u32` symbol IDs at lex time
 
+> **Design doc:** `docs/internals/identifier-interning.md` — the full
+> implementation plan (Sym/InternTable design, the two name populations, the
+> synthetic-name/mangling hazards, phased migration). The summary below is the
+> roadmap entry; the design doc is the plan of record.
+
 **The single highest-ceiling change.** Today every keyed lookup in sema,
 ir-build, and bc-lower re-hashes identifier bytes (FNV-1a) and every probe
 memcmps; every field/method/variant/trait resolution
@@ -455,6 +471,8 @@ bc-lower 0.781 → 0.533 ms (−32%).
 | `41e9797` | intern_synthetic_name/intern_concat fast paths (no printf formatter) | ir-build −5.8% |
 | `8c8b706` | trivial_block_arg_elim: defer allocs in no-op path | ir-optimize −4.8% |
 | `55d8fda` | local_cse: defer subst alloc; copy-prop: drop zero-fill | ir-optimize −7% |
+| `828724f` | §3.5 dense primitive operator-dispatch tables (name-free) | sema |
+| `9f4aca9` | §3.1 gate ir-validate behind NDEBUG (skip in release) | −2.1% (release) |
 
 ---
 
@@ -538,9 +556,9 @@ genuinely expensive (robin_map bucket rehashes, nested variable-sized
 
 ## 9. Suggested execution order
 
-1. §3.1 ir-validate gate, §3.2 lexer sentinel, §3.3 block-offsets vector —
-   three independent, low-risk wins; land and measure each.
-2. §3.4-3.8 sema/ir-build/bc-lower redundant-lookup batch.
+1. ~~§3.1 ir-validate gate~~ (landed `9f4aca9`), §3.2 lexer sentinel, §3.3
+   block-offsets vector — independent, low-risk wins; land and measure each.
+2. §3.4-3.8 sema/ir-build/bc-lower redundant-lookup batch (§3.5 landed `828724f`).
 3. §4.2 allocator quadratics + §4.3 predecessor sharing + §4.1 liveness
    fusion (bc-lower/ir-optimize structural cleanups).
 4. §4.4-4.6 parser dispatch + declaration-in-place + assigned-vars memo.
