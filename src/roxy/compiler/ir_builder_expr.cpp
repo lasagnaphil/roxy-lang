@@ -2446,12 +2446,16 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
         }
     }
 
-    // String reassignment (`s = other`): release the old string (frees at zero),
-    // then adopt a fresh producer temp or retain an existing owner (finding 9b).
-    // Emitted before define_local so lookup_local still returns the old value.
+    // String reassignment (`s = other`): adopt a fresh producer temp or retain
+    // the existing owner FIRST, then release the old string (frees at zero) —
+    // finding 9b. Retain-before-release matters when the RHS aliases the old
+    // value (`s = s`): releasing first would free the object at count zero and
+    // then retain a dead slot. Emitted before define_local so lookup_local
+    // still returns the old value.
     if (target_type && target_type->kind == TypeKind::String) {
-        emit_str_release(lookup_local(name));
+        ValueId old_value = lookup_local(name);
         consume_or_retain_string(value, target_type, /*adopted_by_variable=*/true);
+        emit_str_release(old_value);
     }
 
     if (target_type && target_type->noncopyable()) {
@@ -2573,12 +2577,13 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
     if (field_type && (field_type->kind == TypeKind::Uniq || field_type->noncopyable())) {
         emit_single_field_destroy(obj, get_expr.name, slot_offset, slot_count, field_type);
     }
-    // A `string` field: release the overwritten string before storing the new one
-    // (finding 9b). The field holds its own count (acquired below), so releasing on
-    // reassignment reclaims it rather than leaking every overwrite.
+    // A `string` field: read the overwritten string now (before the store), but
+    // release it only after the incoming value is retained below (finding 9b).
+    // Retain-before-release matters when the RHS aliases the old field value
+    // (`obj.f = obj.f`): releasing first would free the object at count zero.
+    ValueId overwritten_str = ValueId::invalid();
     if (field_type && field_type->kind == TypeKind::String) {
-        ValueId old_str = emit_get_field(obj, get_expr.name, slot_offset, slot_count, field_type);
-        emit_str_release(old_str);
+        overwritten_str = emit_get_field(obj, get_expr.name, slot_offset, slot_count, field_type);
     }
 
     // Wrap uniq/ref → weak conversion for field assignment
@@ -2603,9 +2608,14 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
         consume_temp_noncopyable(value);
     }
     // A `string` field acquires its own count: retain the stored string (or adopt
-    // a fresh temp) so it survives the source's release (finding 9b).
+    // a fresh temp) so it survives the source's release, then release the
+    // overwritten string read above so reassignment reclaims it rather than
+    // leaking every overwrite (finding 9b).
     if (field_type && field_type->kind == TypeKind::String) {
         consume_or_retain_string(value, field_type, /*adopted_by_variable=*/false);
+        if (overwritten_str.is_valid()) {
+            emit_str_release(overwritten_str);
+        }
     }
 
     // Move semantics: if value is a uniq/move-semantic identifier, mark it as moved
@@ -2671,12 +2681,15 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
             emit_ref_dec(old);
             emit_ref_inc(value);
         }
-        // Overwriting a `string` List element: release the old, retain the new
-        // (the list owns each element; finding 9b). Index is always in bounds.
+        // Overwriting a `string` List element: retain the new, then release the
+        // old (the list owns each element; finding 9b). Retain-before-release
+        // matters when the RHS aliases the old element (`xs[i] = xs[i]`):
+        // releasing first would free the object at count zero. Index is always
+        // in bounds.
         else if (elem_type && elem_type->kind == TypeKind::String && is_list) {
             ValueId old = emit_index_get(obj, index_val, kind, elem_type);
-            emit_str_release(old);
             emit_str_retain(value);
+            emit_str_release(old);
         }
         // Destroy the overwritten element before storing, so a noncopyable old
         // element isn't leaked (mirrors emit_single_field_destroy for fields).
