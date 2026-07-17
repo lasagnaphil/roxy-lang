@@ -31,6 +31,14 @@ void fuzz_one_parser(const uint8_t* data, size_t size);
 // never crash regardless of how broken the input is.
 void fuzz_one_lsp_parser(const uint8_t* data, size_t size);
 
+// Structure-aware target: treats the input as an entropy stream driving the
+// structural generator (tests/fuzz/gen), then compiles and runs the resulting
+// valid-by-construction program through the full pipeline + VM. Reaches sema,
+// IR building, lowering, and the interpreter — passes byte-level fuzzing
+// cannot reach. Defined in fuzz_one_structured.cpp (links the full compiler
+// and VM, unlike the other bodies).
+void fuzz_one_structured(const uint8_t* data, size_t size);
+
 namespace detail {
 
 // An exact-(size+1) heap copy of the fuzz input with a single trailing '\0'.

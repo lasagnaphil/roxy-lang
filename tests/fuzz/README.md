@@ -1,13 +1,20 @@
-# Fuzzing the lexer & parser
+# Fuzzing the lexer, parser & full pipeline
 
-Coverage-guided [libFuzzer](https://llvm.org/docs/LibFuzzer.html) targets for the
-three text-facing front-end components:
+Coverage-guided [libFuzzer](https://llvm.org/docs/LibFuzzer.html) targets — three
+byte-level harnesses for the text-facing front-end components, plus a
+structure-aware harness that drives the whole compiler and VM with
+valid-by-construction generated programs:
 
 | Target            | Component                       | Harness body                    |
 |-------------------|---------------------------------|---------------------------------|
 | `fuzz_lexer`      | `rx::Lexer` (tokenize to EOF)   | `fuzz_one_lexer.cpp`            |
 | `fuzz_parser`     | `rx::Parser` (fail-fast AST)    | `fuzz_one_parser.cpp`          |
 | `fuzz_lsp_parser` | `rx::LspParser` (error-recovering CST) | `fuzz_one_lsp_parser.cpp` |
+| `fuzz_structured` | full pipeline + VM (input = entropy for the `gen/` structural generator, so mutations mutate *program structure*) | `fuzz_one_structured.cpp` |
+
+`gen/` also builds standalone (no fuzzer toolchain) as the `roxy_gen`
+benchmark-corpus CLI — see `docs/internals/fuzzer.md` ("Structural generator")
+and `docs/internals/profiling.md` ("Benchmark corpora at scale").
 
 The `LLVMFuzzerTestOneInput` entry points live in `fuzz_<target>.cpp`; the actual
 harness logic is the shared `rx::fuzz::fuzz_one_*` functions declared in
@@ -35,7 +42,7 @@ Configure a dedicated build directory with the fuzzer-capable compiler:
 cmake -B build-fuzz -G Ninja -DENABLE_FUZZERS=ON \
   -DCMAKE_C_COMPILER=$(brew --prefix llvm)/bin/clang \
   -DCMAKE_CXX_COMPILER=$(brew --prefix llvm)/bin/clang++
-ninja -C build-fuzz fuzz_lexer fuzz_parser fuzz_lsp_parser
+ninja -C build-fuzz fuzz_lexer fuzz_parser fuzz_lsp_parser fuzz_structured
 ```
 
 `ENABLE_FUZZERS=ON` coverage-instruments every TU (`-fsanitize=fuzzer-no-link`)

@@ -76,6 +76,37 @@ stable phase breakdown and the in-process loop to run under a sampling profiler:
 ./build-profile/roxy --repeat=200 examples/lox/main.roxy   # avg of 200 compiles
 ```
 
+### Benchmark corpora at scale: `roxy_gen`
+
+The Lox interpreter (~3.4 KLOC) is the largest hand-written Roxy program. For
+compile-time work at "real-life huge codebase" scale, `roxy_gen` (built with
+the normal `roxy_tests` toolchain — no fuzzer needed) emits a reproducible,
+valid-by-construction multi-module project of any size. It shares the
+structural generator with the fuzzer (`docs/internals/fuzzer.md` → "Structural
+generator"): realistic identifier distributions, a low-index-biased import DAG
+(early modules accumulate fan-in like real "core" modules), structs/enums/
+generics/methods/`when`/f-strings, and a checksum-printing `main` that calls
+into every module.
+
+```bash
+ninja -C build roxy_gen
+./build/roxy_gen --seed=7 --modules=400 --out=/tmp/corpus_400
+./build-profile/roxy --time /tmp/corpus_400/main.roxy
+```
+
+Same seed → byte-identical corpus, so numbers are comparable across compiler
+changes. Generate at several sizes and check time-per-KLOC stays flat — a
+super-linear drift localizes the offending phase immediately:
+
+| `--modules` | LOC | compile (RelWithDebInfo, arm64, 2026-07-17) | ms/KLOC |
+|---|---|---|---|
+| 25 | 15.7k | 37 ms | 2.4 |
+| 100 | 66k | 138 ms | 2.1 |
+| 400 | 257k | 672 ms | 2.6 |
+
+At 257 KLOC the phase split was ir-build 36%, bc-lower 24%, ir-optimize 20%,
+parse 11%, sema 9% — consistent with the single-file findings below.
+
 ### Interpreter: the bytecode opcode profiler
 
 A separate build flag adds per-opcode count + cycle accounting to the dispatch

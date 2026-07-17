@@ -235,6 +235,10 @@ add_executable(roxy_tests
     tests/fuzz/fuzz_one_parser.cpp
     tests/fuzz/fuzz_one_lsp_parser.cpp
 
+    # Structural-generator regression: fixed-seed generated programs must
+    # compile and run (the generator's valid-by-construction contract).
+    tests/unit/test_structured_gen.cpp
+
     # E2E tests
     tests/e2e/test_helpers.cpp
     tests/e2e/test_basics.cpp
@@ -273,7 +277,7 @@ add_executable(roxy_tests
     tests/e2e/test_lox.cpp
     tests/e2e/test_cli.cpp
 )
-target_link_libraries(roxy_tests ${ROXY_LINK_START} roxy_vm roxy_lsp roxy_compiler roxy_shared roxy_core ${ROXY_LINK_END})
+target_link_libraries(roxy_tests roxy_gen_lib ${ROXY_LINK_START} roxy_vm roxy_lsp roxy_compiler roxy_shared roxy_core ${ROXY_LINK_END})
 target_compile_definitions(roxy_tests PRIVATE "ROXY_PROJECT_ROOT=\"${CMAKE_SOURCE_DIR}\"")
 
 # Standalone interpreter executable
@@ -286,6 +290,19 @@ target_link_libraries(roxy ${ROXY_LINK_START} roxy_vm roxy_compiler roxy_shared 
 # compiles to nothing, so a stripped-down configure still builds the suite.
 target_compile_definitions(roxy_tests PRIVATE "ROXY_CLI_PATH=\"$<TARGET_FILE:roxy>\"")
 add_dependencies(roxy_tests roxy)
+
+# Structural program generator (tests/fuzz/gen): type-directed, valid-by-
+# construction Roxy program generation. Shared by three consumers: the
+# roxy_gen benchmark-corpus CLI, the fuzz_structured libFuzzer target, and the
+# "Structured Gen" regression suite in roxy_tests. Pure std C++ — no roxy
+# library dependencies (it only emits source text).
+add_library(roxy_gen_lib STATIC tests/fuzz/gen/generator.cpp)
+target_include_directories(roxy_gen_lib PUBLIC tests/fuzz/gen)
+
+# Benchmark-corpus generator CLI: emits a seeded multi-module project for
+# compile-time profiling (roxy --time). See docs/internals/profiling.md.
+add_executable(roxy_gen tests/fuzz/gen/gen_main.cpp)
+target_link_libraries(roxy_gen roxy_gen_lib)
 
 # Fuzz targets (only when ENABLE_FUZZERS=ON — see the option block above and
 # tests/fuzz/README.md). Each links its component's shared harness body plus the
@@ -305,4 +322,10 @@ if(ENABLE_FUZZERS)
     add_executable(fuzz_lsp_parser tests/fuzz/fuzz_lsp_parser.cpp tests/fuzz/fuzz_one_lsp_parser.cpp)
     target_link_libraries(fuzz_lsp_parser ${ROXY_LINK_START} roxy_lsp roxy_vm roxy_compiler roxy_shared roxy_core ${ROXY_LINK_END})
     target_link_options(fuzz_lsp_parser PRIVATE -fsanitize=fuzzer)
+
+    # Structure-aware: fuzzer bytes -> structural generator -> full compile +
+    # VM run. Reaches sema/IR/lowering/interpreter with valid programs.
+    add_executable(fuzz_structured tests/fuzz/fuzz_structured.cpp tests/fuzz/fuzz_one_structured.cpp)
+    target_link_libraries(fuzz_structured roxy_gen_lib ${ROXY_LINK_START} roxy_vm roxy_compiler roxy_shared roxy_core ${ROXY_LINK_END})
+    target_link_options(fuzz_structured PRIVATE -fsanitize=fuzzer)
 endif()

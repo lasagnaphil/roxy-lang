@@ -480,16 +480,23 @@ Everything else (including `--test-case-exclude="*<C>*"`) runs fine inside the
 sandbox. (ASAN is currently disabled — see the AddressSanitizer note above; when
 re-enabled, ASAN builds also need to run outside the sandbox for the symbolizer.)
 
-### Fuzzing (lexer / parser / LSP parser)
+### Fuzzing (lexer / parser / LSP parser / structural)
 
 Coverage-guided libFuzzer targets live in `tests/fuzz/` and build only under
 `-DENABLE_FUZZERS=ON` with a Clang toolchain that ships the libFuzzer runtime
-(Homebrew LLVM / upstream / Windows LLVM — **not** Apple clang). The
-always-on `Fuzz Regression` doctest suite replays the checked-in seed corpus
-(`tests/fuzz/corpus/`) plus `examples/` through all three harnesses on every
-normal `roxy_tests` run (no fuzzer toolchain needed), so found-and-fixed crashes
-stay fixed. Architecture + the structure-aware roadmap: `docs/internals/fuzzer.md`;
-build/run quickstart: `tests/fuzz/README.md`.
+(Homebrew LLVM / upstream / Windows LLVM — **not** Apple clang). Besides the
+three byte-level front-end targets, `fuzz_structured` drives the **structural
+generator** (`tests/fuzz/gen/` — type-directed, valid-by-construction programs)
+through the full pipeline + VM, so mutations mutate program structure and reach
+sema/IR/lowering/interpreter. The always-on `Fuzz Regression` doctest suite
+replays the checked-in seed corpus (`tests/fuzz/corpus/`) plus `examples/`
+through the byte-level harnesses, and the `Structured Gen` suite replays fixed
+generator seeds (compile + run) — both on every normal `roxy_tests` run (no
+fuzzer toolchain needed), so found-and-fixed crashes stay fixed and the
+generator's model of the language can't drift from the compiler. The same
+generator powers the `roxy_gen` benchmark-corpus CLI (see Profiling below).
+Architecture + roadmap: `docs/internals/fuzzer.md`; quickstart:
+`tests/fuzz/README.md`.
 
 > The three harnesses each guarantee bounded work per input, so the regression
 > replay is fast — **never** add an OOM/very-slow reproducer to
@@ -505,6 +512,10 @@ cmake -B build-profile -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FL
 ninja -C build-profile roxy
 ./build-profile/roxy --time program.roxy        # per-phase compile timing + compile-vs-execute split
 ./build-profile/roxy --repeat=200 program.roxy  # avg over 200 in-process compiles (profiler loop)
+
+# Huge-codebase compile benchmarks: generate a reproducible multi-module corpus
+./build/roxy_gen --seed=7 --modules=400 --out=/tmp/corpus_400   # ~257 KLOC, seeded
+./build-profile/roxy --time /tmp/corpus_400/main.roxy
 ```
 
 The compiler and interpreter are separate regimes — isolate them (a compute
