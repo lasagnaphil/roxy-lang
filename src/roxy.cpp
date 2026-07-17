@@ -413,6 +413,19 @@ int main(int argc, char** argv) {
     // Build argument list for main() if it takes a parameter
     Value args_value;
     if (main_func->param_count == 1) {
+        // Activate the VM's context for these allocations. `roxy_alloc`
+        // dispatches through `roxy_get_ctx()->allocator` and falls back to the
+        // malloc allocator when no context is active (`current_allocator()` in
+        // rt/roxy_rt.cpp) — but `args` is an owned `List`, so `main`
+        // RAII-deletes it at scope exit, and that free runs under the context
+        // `vm_call` installs and returns the memory to the per-VM slab. Without
+        // this guard the list is malloc'd and the slab is handed a pointer it
+        // never produced, aborting at teardown on "SlabAllocator::free called
+        // with unknown pointer" — after main's output, so the program looks
+        // like it worked. vm_init has already pointed `vm.ctx.allocator` at the
+        // slab and wired the intern table by this point.
+        roxy::ScopedContext ctx_guard(&vm.ctx);
+
         // Count program args: source file + remaining CLI arguments
         int program_arg_count = 1;  // source file is args[0]
         if (opts.program_args_start > 0) {

@@ -463,6 +463,16 @@ Cases the C backend can't run are plain `TEST_CASE` (VM-only) with a
 `// VM-only: <reason>` annotation; see `docs/internals/c-backend.md` → "Known
 C-backend gaps" for the current list.
 
+**`E2E CLI` (`tests/e2e/test_cli.cpp`)** is the exception to the "tests link the
+libraries" shape: the driver in `src/roxy.cpp` is its own executable and isn't
+linked into `roxy_tests`, so the only way to cover what it does with argv
+(building the `List<string>` for `main(args)`) is to run the binary. CMake passes
+its path as `ROXY_CLI_PATH` and makes `roxy_tests` depend on the `roxy` target;
+without that define the file compiles to nothing. The cases assert on *how the
+process exited* (`WIFEXITED` vs. signal-terminated), not just stdout — the bug
+they exist for printed correct output and then aborted during teardown. It needs
+no system compiler, so it's sandbox-safe.
+
 **Note for Claude Code:** anything that exercises the C backend — the `*<C>*`
 cases above and the `E2E C Backend` suite — invokes the system C++ compiler, so
 those require running outside the sandbox (`dangerouslyDisableSandbox: true`).

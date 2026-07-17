@@ -271,6 +271,7 @@ add_executable(roxy_tests
     tests/e2e/test_c_backend.cpp
     tests/e2e/test_recursive_types.cpp
     tests/e2e/test_lox.cpp
+    tests/e2e/test_cli.cpp
 )
 target_link_libraries(roxy_tests ${ROXY_LINK_START} roxy_vm roxy_lsp roxy_compiler roxy_shared roxy_core ${ROXY_LINK_END})
 target_compile_definitions(roxy_tests PRIVATE "ROXY_PROJECT_ROOT=\"${CMAKE_SOURCE_DIR}\"")
@@ -278,6 +279,13 @@ target_compile_definitions(roxy_tests PRIVATE "ROXY_PROJECT_ROOT=\"${CMAKE_SOURC
 # Standalone interpreter executable
 add_executable(roxy src/roxy.cpp)
 target_link_libraries(roxy ${ROXY_LINK_START} roxy_vm roxy_compiler roxy_shared roxy_core ${ROXY_LINK_END})
+
+# The driver's own argv handling lives in src/roxy.cpp, which isn't linked into
+# roxy_tests — `tests/e2e/test_cli.cpp` runs the built binary instead, so it
+# needs the path and an ordering dependency. Without ROXY_CLI_PATH that file
+# compiles to nothing, so a stripped-down configure still builds the suite.
+target_compile_definitions(roxy_tests PRIVATE "ROXY_CLI_PATH=\"$<TARGET_FILE:roxy>\"")
+add_dependencies(roxy_tests roxy)
 
 # Fuzz targets (only when ENABLE_FUZZERS=ON — see the option block above and
 # tests/fuzz/README.md). Each links its component's shared harness body plus the
