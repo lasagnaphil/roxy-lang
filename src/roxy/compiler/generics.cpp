@@ -36,8 +36,16 @@ StringView GenericInstantiator::get_fun_template_module(StringView name) const {
     return it != m_fun_template_modules.end() ? it->second : StringView{};
 }
 
-void GenericInstantiator::register_generic_struct(StringView name, Decl* decl) {
+void GenericInstantiator::register_generic_struct(StringView name, Decl* decl, StringView module_name) {
     m_generic_structs[name] = decl;
+    if (!module_name.empty()) {
+        m_struct_template_modules[name] = module_name;
+    }
+}
+
+StringView GenericInstantiator::get_struct_template_module(StringView name) const {
+    auto it = m_struct_template_modules.find(name);
+    return it != m_struct_template_modules.end() ? it->second : StringView{};
 }
 
 void GenericInstantiator::register_generic_struct_method(StringView struct_name, Decl* method_decl) {
@@ -370,6 +378,7 @@ StringView GenericInstantiator::instantiate_struct(StringView name, Span<Type*> 
     instance->instantiated_decl = instantiated;
     instance->concrete_type = concrete_type;
     instance->is_analyzed = false;
+    instance->template_module = get_struct_template_module(name);
 
     // A type argument containing a TypeParam (directly or nested, e.g.
     // Box<List<T>>) means this is an abstract Phase-B checking artifact, not

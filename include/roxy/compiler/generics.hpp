@@ -64,6 +64,12 @@ struct GenericStructInstance {
     // '$'-prefixed argument segment so they can never collide with a
     // concrete instance.
     bool is_abstract;
+    // Module that defined the template. Owns IR emission for this instance's
+    // constructors/destructors/methods, so each is built once (from the
+    // defining module) instead of once per module — mirrors
+    // GenericFunInstance::template_module. Empty in single-module compilations
+    // (the IR builder then falls through and emits from the current module).
+    StringView template_module;
     Vector<Decl*> instantiated_methods;       // Cloned external method DeclMethod nodes
     Vector<Decl*> instantiated_constructors;  // Cloned external constructor DeclConstructor nodes
     Vector<Decl*> instantiated_destructors;   // Cloned external destructor DeclDestructor nodes
@@ -76,10 +82,11 @@ public:
 
     // Register generic templates
     void register_generic_fun(StringView name, Decl* decl, StringView module_name = {});
-    void register_generic_struct(StringView name, Decl* decl);
+    void register_generic_struct(StringView name, Decl* decl, StringView module_name = {});
 
     // Look up the module that registered this template (empty if unknown).
     StringView get_fun_template_module(StringView name) const;
+    StringView get_struct_template_module(StringView name) const;
 
     // Register/query external method templates for generic structs
     void register_generic_struct_method(StringView struct_name, Decl* method_decl);
@@ -185,6 +192,11 @@ private:
 
     // Generic struct templates
     tsl::robin_map<StringView, Decl*> m_generic_structs;
+
+    // Defining module for each generic struct template (cross-module
+    // ownership — IR emission of the instance's ctors/dtors/methods belongs to
+    // this module, so they are built once rather than once per module).
+    tsl::robin_map<StringView, StringView> m_struct_template_modules;
 
     // External method templates for generic structs (struct_name -> list of DeclMethod)
     tsl::robin_map<StringView, Vector<Decl*>> m_generic_struct_methods;

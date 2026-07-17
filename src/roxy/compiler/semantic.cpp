@@ -390,7 +390,8 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
 
             // Register generic structs as templates (not concrete types)
             if (decl->struct_decl.type_params.size() > 0) {
-                m_type_env.generics().register_generic_struct(name, decl);
+                m_type_env.generics().register_generic_struct(
+                    name, decl, m_program ? m_program->module_name : StringView{});
                 continue;
             }
 

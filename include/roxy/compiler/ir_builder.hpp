@@ -75,14 +75,26 @@ private:
     void collect_backend_types(Program* program);
 
     // Invoke fn(instance) for every generic struct instance that reaches
-    // codegen: analyzed, with a concrete type, and not a Phase-B abstract
-    // artifact (those are never codegen'd). This filter previously appeared
-    // verbatim at five build-phase sites.
+    // codegen from THIS module: analyzed, with a concrete type, not a Phase-B
+    // abstract artifact (those are never codegen'd), and owned by the current
+    // module. Ownership mirrors build_generic_fun_instances: an instance's
+    // ctors/dtors/methods are emitted only from the module that defined the
+    // generic struct template, so they are built once instead of once per
+    // module (all instances are visible everywhere because analysis completes
+    // for the whole program before any module's IR build). An empty
+    // template_module (single-module compilation) or empty m_module_name falls
+    // through and emits from the current module. This filter previously
+    // appeared verbatim at five build-phase sites.
     template<typename Fn>
     void for_each_concrete_struct_instance(Fn&& fn) {
         for (auto* instance : m_type_env.generics().all_struct_instances()) {
             if (!instance->is_analyzed || !instance->concrete_type) continue;
             if (instance->is_abstract) continue;
+            bool owns =
+                instance->template_module.empty() ||
+                m_module_name.empty() ||
+                instance->template_module == m_module_name;
+            if (!owns) continue;
             fn(instance);
         }
     }
