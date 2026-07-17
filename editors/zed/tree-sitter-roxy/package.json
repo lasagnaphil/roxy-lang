@@ -1,0 +1,15 @@
+{
+  "name": "tree-sitter-roxy",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for the Roxy scripting language",
+  "main": "bindings/node",
+  "keywords": ["parser", "roxy", "tree-sitter"],
+  "license": "MIT",
+  "tree-sitter": [
+    {
+      "scope": "source.roxy",
+      "file-types": ["roxy"],
+      "injection-regex": "^roxy$"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+id = "roxy"
+name = "Roxy"
+description = "Syntax highlighting and language server support for the Roxy scripting language"
+version = "0.1.0"
+schema_version = 1
+authors = ["Phil Chang"]
+repository = "https://github.com/lasagnaphil/roxy-lang"
+
+# Zed clones this repo at `rev` and compiles <path>/src/parser.c (+ scanner.c)
+# to wasm; it never runs `tree-sitter generate`, which is why src/parser.c is
+# committed. `path` lets the grammar live in a subdirectory — it is a real field
+# on GrammarManifestEntry, just undocumented.
+#
+# `rev` must be a commit that actually contains the grammar. While iterating
+# locally, point `repository` at your checkout and bump `rev` after each commit:
+#
+#   repository = "file:///Users/lasagnaphil/dev/advent-of-code/roxy"
+#   rev = "<local commit sha>"
+[grammars.roxy]
+repository = "https://github.com/lasagnaphil/roxy-lang"
+rev = "0000000000000000000000000000000000000000"
+path = "editors/zed/tree-sitter-roxy"
+
+[language_servers.roxy-lsp]
+name = "Roxy LSP"
+languages = ["Roxy"]
