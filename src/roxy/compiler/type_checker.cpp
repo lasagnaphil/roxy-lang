@@ -30,7 +30,9 @@ bool TypeChecker::is_assignable(Type* target, Type* source) const {
         }
     }
     if (can_convert_ref(source, target)) return true;
-    if (source->is_int_literal() && target->is_integer()) return true;
+    // Unsuffixed literals are polymorphic — see check_assignable for the rule.
+    if (source->is_int_literal() && target->is_numeric()) return true;
+    if (source->is_float_literal() && target->is_float()) return true;
     return false;
 }
 
@@ -83,8 +85,13 @@ bool TypeChecker::check_assignable(Type* target, Type* source, SourceLocation lo
     // Check reference type conversions
     if (can_convert_ref(source, target)) return true;
 
-    // IntLiteral is assignable to any concrete integer type
-    if (source->is_int_literal() && target->is_integer()) return true;
+    // An unsuffixed literal is polymorphic: it adapts to whatever type its
+    // context asks for. An integer literal reaches any numeric type, float
+    // included (`var x: f64 = 1;`); a float literal reaches the float types
+    // (`var x: f32 = 1.0;`) but not an integer, which would truncate. Only
+    // *typed* values are held to strict matching, below.
+    if (source->is_int_literal() && target->is_numeric()) return true;
+    if (source->is_float_literal() && target->is_float()) return true;
 
     // Strict numeric typing: no implicit conversions between numeric types
     if (target->is_numeric() && source->is_numeric() && target != source) {
@@ -232,15 +239,40 @@ void TypeChecker::error_cannot_convert(Type* source, Type* target, SourceLocatio
               context, source_str.data(), target_str.data());
 }
 
-void TypeChecker::coerce_int_literal(Expr* expr, Type* target) {
-    if (!expr || !target || !target->is_integer()) return;
-    if (!expr->resolved_type || !expr->resolved_type->is_int_literal()) return;
+void TypeChecker::coerce_numeric_literal(Expr* expr, Type* target) {
+    if (!expr || !target || !expr->resolved_type) return;
+    Type* source = expr->resolved_type;
+    if (source->is_int_literal()) {
+        // An integer literal adapts to any numeric type, float included.
+        if (!target->is_numeric()) return;
+    } else if (source->is_float_literal()) {
+        // A float literal adapts only among the float types — `var x: i32 = 1.0;`
+        // is still a truncating conversion and stays an error.
+        if (!target->is_float()) return;
+    } else {
+        return;
+    }
     expr->resolved_type = target;
     // Recursively concretize through transparent wrappers
     if (expr->kind == AstKind::ExprGrouping)
-        coerce_int_literal(expr->grouping.expr, target);
+        coerce_numeric_literal(expr->grouping.expr, target);
     else if (expr->kind == AstKind::ExprUnary)
-        coerce_int_literal(expr->unary.operand, target);
+        coerce_numeric_literal(expr->unary.operand, target);
+    else if (expr->kind == AstKind::ExprBinary) {
+        // An all-literal arithmetic expression stays polymorphic (see
+        // analyze_binary_expr), so concretizing it has to reach both operands —
+        // otherwise they would default to i32/f64 in the IR builder while the
+        // expression itself claims `target`. A binary whose operands already
+        // picked up a concrete type isn't a literal type and returned above.
+        coerce_numeric_literal(expr->binary.left, target);
+        coerce_numeric_literal(expr->binary.right, target);
+    }
+    else if (expr->kind == AstKind::ExprTernary) {
+        // Same for an all-literal ternary (analyze_ternary_expr keeps it
+        // polymorphic): both arms have to follow the expression's type.
+        coerce_numeric_literal(expr->ternary.then_expr, target);
+        coerce_numeric_literal(expr->ternary.else_expr, target);
+    }
 }
 
 }

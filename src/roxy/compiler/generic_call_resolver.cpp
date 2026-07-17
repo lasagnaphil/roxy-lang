@@ -308,8 +308,11 @@ bool GenericCallResolver::unify_type_expr(TypeExpr* pattern, Type* concrete,
     // Check if pattern name matches a type parameter
     for (u32 i = 0; i < type_params.size(); i++) {
         if (pattern->name == type_params[i].name && pattern->type_args.size() == 0) {
-            // Default IntLiteral to i32 when binding generic type params
+            // Default an unsuffixed literal to its concrete type when binding
+            // generic type params — `identity(1)` binds T=i32, `identity(1.0)`
+            // binds T=f64, never the polymorphic literal type itself.
             if (concrete->is_int_literal()) concrete = m_types.i32_type();
+            else if (concrete->is_float_literal()) concrete = m_types.f64_type();
             // This is a type parameter reference
             if (bindings[i] == nullptr) {
                 bindings[i] = concrete;
@@ -592,7 +595,7 @@ Type* GenericCallResolver::check_instantiated_generic_call(
 
         if (param_type && !param_type->is_error() && arg_type && !arg_type->is_error()) {
             m_checker.check_assignable(param_type, arg_type, arg.expr->loc);
-            m_checker.coerce_int_literal(arg.expr, param_type);
+            m_checker.coerce_numeric_literal(arg.expr, param_type);
         }
 
         // Move semantics: passing an owned arg to a noncopyable param consumes it.

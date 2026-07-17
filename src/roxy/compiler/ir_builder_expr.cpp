@@ -917,11 +917,25 @@ ValueId IRBuilder::gen_literal_expr(Expr* expr) {
             if (int_type && int_type->is_int_literal()) {
                 int_type = m_types.i32_type();
             }
+            // An unsuffixed literal adapts to a float context (`var x: f64 = 1;`),
+            // and the adapted type is what semantic analysis recorded — so the
+            // constant has to be *converted*, not reinterpreted. Emitting an int
+            // constant with a float type would reach the VM as raw integer bits
+            // read back as a double (1 -> 4.94e-324, a denormal).
+            if (int_type && int_type->is_float()) {
+                return emit_const_float(static_cast<f64>(lit.int_value), int_type);
+            }
             return emit_const_int(lit.int_value, int_type);
         }
         case LiteralKind::F32:
-        case LiteralKind::F64:
-            return emit_const_float(lit.float_value, expr->resolved_type);
+        case LiteralKind::F64: {
+            // Safety net: if FloatLiteral wasn't concretized, default to f64
+            Type* float_type = expr->resolved_type;
+            if (float_type && float_type->is_float_literal()) {
+                float_type = m_types.f64_type();
+            }
+            return emit_const_float(lit.float_value, float_type);
+        }
         case LiteralKind::String:
             return emit_const_string(lit.string_value);
     }

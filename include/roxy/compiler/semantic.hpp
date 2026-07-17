@@ -316,6 +316,11 @@ private:
     // Operator result-type helpers (these dispatch through trait bounds, so they
     // stay on the analyzer; the pure relation/coercion checks live in TypeChecker)
     Type* get_binary_result_type(BinaryOp op, Type* left, Type* right, SourceLocation loc);
+
+    // The concrete type an unsuffixed literal settles on when no context picks
+    // one for it: i32 for an integer literal, f64 for a float one. Returns
+    // `type` unchanged if it isn't a literal type.
+    Type* default_literal_type(Type* type);
     Type* get_unary_result_type(UnaryOp op, Type* operand, SourceLocation loc);
 
     // Unified operator dispatch helpers (work for both primitives and structs)

@@ -56,6 +56,9 @@ enum class TypeKind : u8 {
     // Unsuffixed integer literal type (polymorphic, defaults to i32)
     IntLiteral,
 
+    // Unsuffixed float literal type (polymorphic, defaults to f64)
+    FloatLiteral,
+
     // Exception handling
     ExceptionRef,  // Opaque handle in catch-all blocks, only message() callable
 
@@ -375,6 +378,16 @@ struct Type {
         return kind == TypeKind::IntLiteral;
     }
 
+    bool is_float_literal() const {
+        return kind == TypeKind::FloatLiteral;
+    }
+
+    // Either polymorphic literal kind — an unsuffixed literal that hasn't been
+    // given a concrete type by its context yet.
+    bool is_numeric_literal() const {
+        return is_int_literal() || is_float_literal();
+    }
+
     bool is_exception_ref() const {
         return kind == TypeKind::ExceptionRef;
     }
@@ -490,6 +503,7 @@ public:
     Type* error_type() { return m_error; }
     Type* self_type() { return m_self; }
     Type* int_literal_type() { return m_int_literal; }
+    Type* float_literal_type() { return m_float_literal; }
     Type* exception_ref_type() { return m_exception_ref; }
 
     // Factory methods for compound types (with interning)
@@ -568,6 +582,7 @@ private:
     Type* m_error;
     Type* m_self;
     Type* m_int_literal;
+    Type* m_float_literal;
     Type* m_exception_ref;
 
     // Type interning cache for compound types

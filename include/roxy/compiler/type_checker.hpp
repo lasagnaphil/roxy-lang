@@ -27,7 +27,7 @@ public:
     bool require_types_match(Type* left, Type* right, SourceLocation loc, const char* context);
     void error_cannot_convert(Type* source, Type* target, SourceLocation loc, const char* context);
     String type_string(Type* type);
-    void coerce_int_literal(Expr* expr, Type* target);
+    void coerce_numeric_literal(Expr* expr, Type* target);
 
 private:
     ErrorReporter& m_reporter;

@@ -1374,16 +1374,17 @@ Type* SemanticAnalyzer::analyze_var_initializer(VarDecl& var_decl, Decl* decl, T
             if (var_type->is_nil()) {
                 error(decl->loc, "cannot infer type from nil literal");
                 var_type = m_types.error_type();
-            } else if (var_type->is_int_literal()) {
-                // Default unsuffixed integer literals to i32
-                var_type = m_types.i32_type();
-                m_checker.coerce_int_literal(var_decl.initializer, var_type);
+            } else if (var_type->is_numeric_literal()) {
+                // Nothing to infer from: settle the literal on its default
+                // (i32 for an integer literal, f64 for a float one).
+                var_type = default_literal_type(var_type);
+                m_checker.coerce_numeric_literal(var_decl.initializer, var_type);
             }
         } else if (!m_checker.check_assignable(var_type, init_type, decl->loc)) {
             // Error already reported
         } else {
             // Coerce int literals to the annotated type
-            m_checker.coerce_int_literal(var_decl.initializer, var_type);
+            m_checker.coerce_numeric_literal(var_decl.initializer, var_type);
         }
 
         // Consume noncopyable source (field-move check + mark source as moved)
@@ -2094,7 +2095,7 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
         if (!m_checker.check_assignable(expected, actual, stmt->loc)) {
             // Error already reported
         } else {
-            m_checker.coerce_int_literal(rs.value, expected);
+            m_checker.coerce_numeric_literal(rs.value, expected);
         }
 
         // Consume noncopyable return value (field-move check + mark source as moved)
@@ -2510,7 +2511,7 @@ void SemanticAnalyzer::analyze_yield_stmt(Stmt* stmt) {
     if (!m_checker.check_assignable(m_function_context.coro_yield_type, actual, stmt->loc)) {
         // Error already reported
     } else {
-        m_checker.coerce_int_literal(ys.value, m_function_context.coro_yield_type);
+        m_checker.coerce_numeric_literal(ys.value, m_function_context.coro_yield_type);
     }
 }
 
@@ -2588,9 +2589,10 @@ Type* SemanticAnalyzer::analyze_string_interp_expr(Expr* expr) {
             error(expression->loc, "cannot interpolate void expression in f-string");
             continue;
         }
-        // Coerce IntLiteral to i32 so it has a Printable implementation
-        if (etype->is_int_literal()) {
-            m_checker.coerce_int_literal(expression, m_types.i32_type());
+        // Settle an unsuffixed literal on its default so it has a Printable
+        // implementation — the trait is registered on concrete primitives.
+        if (etype->is_numeric_literal()) {
+            m_checker.coerce_numeric_literal(expression, default_literal_type(etype));
             etype = expression->resolved_type;
         }
         // Uniform trait check for ALL types (primitives and structs)
@@ -2601,6 +2603,13 @@ Type* SemanticAnalyzer::analyze_string_interp_expr(Expr* expr) {
         }
     }
     return m_types.string_type();
+}
+
+Type* SemanticAnalyzer::default_literal_type(Type* type) {
+    if (!type) return type;
+    if (type->is_int_literal()) return m_types.i32_type();
+    if (type->is_float_literal()) return m_types.f64_type();
+    return type;
 }
 
 Type* SemanticAnalyzer::analyze_literal_expr(Expr* expr) {
@@ -2622,7 +2631,9 @@ Type* SemanticAnalyzer::analyze_literal_expr(Expr* expr) {
         case LiteralKind::F32:
             return m_types.f32_type();
         case LiteralKind::F64:
-            return m_types.f64_type();
+            // Unsuffixed: polymorphic until the context picks f32/f64, mirroring
+            // the I32 case above. `1.0f` is LiteralKind::F32 and stays concrete.
+            return m_types.float_literal_type();
         case LiteralKind::String:
             return m_types.string_type();
     }
@@ -3441,25 +3452,47 @@ Type* SemanticAnalyzer::analyze_binary_expr(Expr* expr) {
         return m_types.error_type();
     }
 
-    // Coerce int literals: match the concrete side, or default both to i32
-    if (left_type->is_int_literal() && right_type->is_integer()) {
-        m_checker.coerce_int_literal(binary_expr.left, right_type);
-        left_type = right_type;
-    } else if (right_type->is_int_literal() && left_type->is_integer()) {
-        m_checker.coerce_int_literal(binary_expr.right, left_type);
-        right_type = left_type;
-    } else if (left_type->is_int_literal() && right_type->is_int_literal()) {
-        m_checker.coerce_int_literal(binary_expr.left, m_types.i32_type());
-        m_checker.coerce_int_literal(binary_expr.right, m_types.i32_type());
-        left_type = m_types.i32_type();
-        right_type = m_types.i32_type();
+    // Coerce unsuffixed literals: match the concrete side, or stay polymorphic
+    // if both sides are literals. `is_numeric` and not `is_integer` on the
+    // concrete side so an int literal adapts to a float operand too (`1 + 2.0`).
+    // A float literal only matches a float operand — `1.0 + 2l` stays an error.
+    if (left_type->is_numeric_literal() && right_type->is_numeric()) {
+        m_checker.coerce_numeric_literal(binary_expr.left, right_type);
+        left_type = binary_expr.left->resolved_type;
+    } else if (right_type->is_numeric_literal() && left_type->is_numeric()) {
+        m_checker.coerce_numeric_literal(binary_expr.right, left_type);
+        right_type = binary_expr.right->resolved_type;
+    } else if (left_type->is_numeric_literal() && right_type->is_numeric_literal()) {
+        // Arithmetic on two unsuffixed literals is itself an unsuffixed literal.
+        // If either side is a float literal the pair defaults to f64, otherwise
+        // i32 — mixing them (`1 + 2.0`) makes the result a float literal, which
+        // keeps `var x: f32 = 1 + 2.0;` open to the annotation.
+        bool is_float = left_type->is_float_literal() || right_type->is_float_literal();
+        Type* fallback = is_float ? m_types.f64_type() : m_types.i32_type();
+        Type* literal_type = is_float ? m_types.float_literal_type()
+                                      : m_types.int_literal_type();
+
+        // Resolve against the default to validate the operator and learn the
+        // result shape, but hand back the literal type so an enclosing context
+        // can still choose — `var x: i64 = 1 + 2;`. coerce_numeric_literal
+        // recurses into both operands when that context arrives; with no such
+        // context everything defaults exactly as before.
+        Type* result = get_binary_result_type(binary_expr.op, fallback, fallback, expr->loc);
+        if (result && result->is_numeric()) {
+            return literal_type;
+        }
+        // Comparison (bool) or an error: nothing downstream can pick a type for
+        // the operands, so settle them on the default now.
+        m_checker.coerce_numeric_literal(binary_expr.left, fallback);
+        m_checker.coerce_numeric_literal(binary_expr.right, fallback);
+        return result;
     } else if (right_type->is_int_literal() && !left_type->is_int_literal()) {
         // Right is IntLiteral, left is non-integer (e.g., struct) — coerce to method's param type
         StringView name = binary_op_to_trait_method(binary_expr.op);
         if (!name.empty()) {
             const MethodInfo* mi = m_types.lookup_method(left_type, name);
             if (mi && mi->param_types.size() == 1 && mi->param_types[0]->is_integer()) {
-                m_checker.coerce_int_literal(binary_expr.right, mi->param_types[0]);
+                m_checker.coerce_numeric_literal(binary_expr.right, mi->param_types[0]);
                 right_type = mi->param_types[0];
             }
         }
@@ -3469,7 +3502,7 @@ Type* SemanticAnalyzer::analyze_binary_expr(Expr* expr) {
         if (!name.empty()) {
             const MethodInfo* mi = m_types.lookup_method(right_type, name);
             if (mi && mi->param_types.size() == 1 && mi->param_types[0]->is_integer()) {
-                m_checker.coerce_int_literal(binary_expr.left, mi->param_types[0]);
+                m_checker.coerce_numeric_literal(binary_expr.left, mi->param_types[0]);
                 left_type = mi->param_types[0];
             }
         }
@@ -3507,18 +3540,24 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
     if (then_type->is_error()) return else_type;
     if (else_type->is_error()) return then_type;
 
-    // Coerce int literals in ternary branches
-    if (then_type->is_int_literal() && else_type->is_integer()) {
-        m_checker.coerce_int_literal(ternary_expr.then_expr, else_type);
-        then_type = else_type;
-    } else if (else_type->is_int_literal() && then_type->is_integer()) {
-        m_checker.coerce_int_literal(ternary_expr.else_expr, then_type);
-        else_type = then_type;
-    } else if (then_type->is_int_literal() && else_type->is_int_literal()) {
-        m_checker.coerce_int_literal(ternary_expr.then_expr, m_types.i32_type());
-        m_checker.coerce_int_literal(ternary_expr.else_expr, m_types.i32_type());
-        then_type = m_types.i32_type();
-        else_type = m_types.i32_type();
+    // Coerce unsuffixed literals in ternary branches, mirroring analyze_binary_expr:
+    // match the concrete branch, or keep both polymorphic so an enclosing context
+    // can still choose (`var x: i64 = c ? 1 : 2;`).
+    if (then_type->is_numeric_literal() && else_type->is_numeric()) {
+        m_checker.coerce_numeric_literal(ternary_expr.then_expr, else_type);
+        then_type = ternary_expr.then_expr->resolved_type;
+    } else if (else_type->is_numeric_literal() && then_type->is_numeric()) {
+        m_checker.coerce_numeric_literal(ternary_expr.else_expr, then_type);
+        else_type = ternary_expr.else_expr->resolved_type;
+    } else if (then_type->is_numeric_literal() && else_type->is_numeric_literal()) {
+        if (then_type == else_type) {
+            return then_type;  // both int literals, or both float literals
+        }
+        // One of each (`c ? 1 : 2.0`): the int side adapts to float.
+        m_checker.coerce_numeric_literal(ternary_expr.then_expr, m_types.f64_type());
+        m_checker.coerce_numeric_literal(ternary_expr.else_expr, m_types.f64_type());
+        then_type = ternary_expr.then_expr->resolved_type;
+        else_type = ternary_expr.else_expr->resolved_type;
     }
 
     // A ternary that selects a noncopyable value is unsupported. gen_ternary_expr
@@ -3614,7 +3653,7 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
         // Type check (skip for 'out' since it's write-only)
         if (arg.modifier != ParamModifier::Out) {
             m_checker.check_assignable(param_types[i], arg_type, arg.expr->loc);
-            m_checker.coerce_int_literal(arg.expr, param_types[i]);
+            m_checker.coerce_numeric_literal(arg.expr, param_types[i]);
         }
 
         // Move semantics: passing owned arg to owned param transfers ownership —
@@ -3859,7 +3898,7 @@ void SemanticAnalyzer::check_super_call_arg_types(CallExpr& ce, Span<Type*> para
         if (!m_checker.check_assignable(param_types[i], arg_type, arg.expr->loc)) {
             // Error already reported
         } else {
-            m_checker.coerce_int_literal(arg.expr, param_types[i]);
+            m_checker.coerce_numeric_literal(arg.expr, param_types[i]);
         }
     }
 }
@@ -4210,9 +4249,9 @@ Type* SemanticAnalyzer::analyze_primitive_cast(Expr* expr, Type* target_type) {
     // wrongly fail), and lowering's cast path can't take an IntLiteral source. We
     // pin to i32 (its canonical default), NOT the target — so an out-of-range cast
     // like `u8(300)` still truncates via TRUNC_U rather than becoming a no-op.
-    if (source_type->is_int_literal()) {
-        m_checker.coerce_int_literal(call_expr.arguments[0].expr, m_types.i32_type());
-        source_type = m_types.i32_type();
+    if (source_type->is_numeric_literal()) {
+        source_type = default_literal_type(source_type);
+        m_checker.coerce_numeric_literal(call_expr.arguments[0].expr, source_type);
     }
 
     // Check if the cast is valid
@@ -4301,7 +4340,7 @@ Type* SemanticAnalyzer::analyze_index_expr(Expr* expr) {
     if (method_info && method_info->param_types.size() == 1) {
         if (!idx_type->is_error()) {
             m_checker.check_assignable(method_info->param_types[0], idx_type, index_expr.index->loc);
-            m_checker.coerce_int_literal(index_expr.index, method_info->param_types[0]);
+            m_checker.coerce_numeric_literal(index_expr.index, method_info->param_types[0]);
         }
         return method_info->return_type;
     }
@@ -4489,7 +4528,7 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
     if (assign_expr.op != AssignOp::Assign) {
         // Coerce int literals to the target type before trait lookup
         if (value_type->is_int_literal() && target_type->is_integer()) {
-            m_checker.coerce_int_literal(assign_expr.value, target_type);
+            m_checker.coerce_numeric_literal(assign_expr.value, target_type);
             value_type = target_type;
         }
         // Check for compound assignment trait method (works for both structs and primitives)
@@ -4519,7 +4558,7 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
         get_binary_result_type(binop, target_type, value_type, expr->loc);
     } else {
         m_checker.check_assignable(target_type, value_type, assign_expr.value->loc);
-        m_checker.coerce_int_literal(assign_expr.value, target_type);
+        m_checker.coerce_numeric_literal(assign_expr.value, target_type);
     }
 
     // Reject self-assignment of noncopyables (e.g. `x = x` on a uniq variable):
@@ -4817,7 +4856,7 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
                 value_type = fi.value->resolved_type;
             }
             m_checker.check_assignable(field_type, value_type, fi.loc);
-            m_checker.coerce_int_literal(fi.value, field_type);
+            m_checker.coerce_numeric_literal(fi.value, field_type);
 
             // Consume noncopyable source (field-move check + mark source as moved)
             if (field_type && field_type->noncopyable()) {
@@ -4863,7 +4902,7 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
             // Type-check field value
             Type* value_type = analyze_expr(fi.value);
             m_checker.check_assignable(variant_field_info->type, value_type, fi.loc);
-            m_checker.coerce_int_literal(fi.value, variant_field_info->type);
+            m_checker.coerce_numeric_literal(fi.value, variant_field_info->type);
 
             // Consume noncopyable source (field-move check + mark source as moved)
             if (variant_field_info->type && variant_field_info->type->noncopyable()) {
@@ -4990,8 +5029,10 @@ Type* SemanticAnalyzer::get_unary_result_type(UnaryOp op, Type* operand, SourceL
 
     switch (op) {
         case UnaryOp::Negate:
-            if (operand->is_int_literal())
-                return m_types.int_literal_type();
+            // `-1` / `-1.0` stay polymorphic; coerce_numeric_literal recurses
+            // through the unary to concretize the operand with the expression.
+            if (operand->is_numeric_literal())
+                return operand;
             if (Type* result = try_resolve_unary_op(op, operand))
                 return result;
             if (operand->is_numeric()) {

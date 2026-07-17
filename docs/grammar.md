@@ -153,15 +153,17 @@ DIGIT           -> "0" ... "9" ;
 
 ## Numeric Literals
 
-Roxy supports strict numeric typing with no implicit conversions.
+Roxy has strict numeric typing: **typed values never convert implicitly.** An
+*unsuffixed* literal, though, has no type of its own yet — it adapts to whatever
+its context asks for.
 
 | Literal | Type | Description |
 |---------|------|-------------|
-| `42` | `i32` | Default integer |
+| `42` | polymorphic, defaults to `i32` | Unsuffixed integer |
 | `42u` | `u32` | Unsigned 32-bit |
 | `42l` | `i64` | Signed 64-bit |
 | `42ul` | `u64` | Unsigned 64-bit |
-| `3.14` | `f64` | Default float |
+| `3.14` | polymorphic, defaults to `f64` | Unsuffixed float |
 | `3.14f` | `f32` | 32-bit float |
 
 **Number bases:**
@@ -170,10 +172,44 @@ Roxy supports strict numeric typing with no implicit conversions.
 - Binary: `0b1010`
 - Octal: `0o77`
 
-**Strict typing rules:**
-- No implicit conversions between numeric types
-- Binary operators require matching types: `1 + 2l` is an error (i32 + i64)
-- Use explicit suffixes to match types: `1l + 2l` works (i64 + i64)
+### Literal adaptation
+
+An unsuffixed literal takes its type from context. An integer literal reaches
+any numeric type, float included; a float literal reaches the float types, but
+never an integer — adaptation never introduces a truncating conversion. A
+literal keeps adapting through arithmetic, so an expression built only from
+literals is itself still a literal:
+
+```roxy
+var a: i64 = 1;          // OK: adapts to i64
+var b: i64 = 1 + 2;      // OK: still a literal, so it adapts as a whole
+var c: i64 = 1 + 2l;     // OK: adapts to match the typed operand
+var d: f64 = 1;          // OK: an integer literal reaches float types
+var e: f32 = 3.14;       // OK: adapts to f32
+var f: f64 = 1 + 2.0;    // OK: the integer literal adapts to the float
+
+var g: i32 = 1.0;        // error: a float literal never becomes an integer
+```
+
+With no context to choose for it, a literal settles on its default — `i32` for
+an integer, `f64` for a float:
+
+```roxy
+var x = 1;               // i32
+var y = 1.0 + 2.0;       // f64
+```
+
+### Strict typing rules
+
+Adaptation is a property of literals only. Once a value is typed, matching is
+strict and mixing requires an explicit cast:
+
+```roxy
+var a: i32 = 1;
+var b: i64 = 2l;
+var c: i64 = a + b;      // error: arithmetic requires matching types
+var d: i64 = i64(a) + b; // OK
+```
 
 ## Type Casting
 

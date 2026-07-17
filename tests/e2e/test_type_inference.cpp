@@ -167,15 +167,18 @@ TEST_SUITE("E2E Type Inference") {
             CHECK(!result.success);
         }
 
-        SUBCASE("Cannot assign f64 to f32 variable") {
+        SUBCASE("Unsuffixed float literal coerces to f32") {
+            // Mirrors the i64 subcase above: an unsuffixed literal adapts to
+            // whatever its context asks for. `3.14` is not an f64 until
+            // something makes it one.
             const char* source = R"(
             fun main(): i32 {
-                var x: f32 = 3.14;  // ERROR: 3.14 is f64, cannot assign to f32
+                var x: f32 = 3.14;  // OK: unsuffixed literal coerces to f32
                 return 0;
             }
         )";
             auto result = Backend::run(source);
-            CHECK(!result.success);
+            CHECK(result.success);
         }
 
         SUBCASE("Cannot assign f32 to f64 variable") {
@@ -213,10 +216,36 @@ TEST_SUITE("E2E Type Inference") {
             CHECK(result.success);
         }
 
-        SUBCASE("Cannot mix f32 and f64") {
+        SUBCASE("Unsuffixed float literal coerces in add with f32") {
             const char* source = R"(
             fun main(): i32 {
-                var x = 1.0f + 2.0;  // ERROR: f32 + f64
+                var x = 1.0f + 2.0;  // OK: 2.0 coerces to f32
+                return 0;
+            }
+        )";
+            auto result = Backend::run(source);
+            CHECK(result.success);
+        }
+
+        SUBCASE("Cannot mix typed f32 and f64 values") {
+            // Adaptation is a property of *literals*: once both sides are typed,
+            // strict matching applies and the mix has to be cast explicitly.
+            const char* source = R"(
+            fun main(): i32 {
+                var a: f32 = 1.0f;
+                var b: f64 = 2.0;
+                var c: f64 = a + b;  // ERROR: f32 + f64
+                return 0;
+            }
+        )";
+            auto result = Backend::run(source);
+            CHECK(!result.success);
+        }
+
+        SUBCASE("Cannot mix a float literal with an integer") {
+            const char* source = R"(
+            fun main(): i32 {
+                var x: f64 = 1.0 + 2l;  // ERROR: a float literal is not an integer
                 return 0;
             }
         )";

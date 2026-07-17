@@ -293,6 +293,7 @@ TypeCache::TypeCache(BumpAllocator& allocator)
     m_error = create_primitive(TypeKind::Error);
     m_self = create_primitive(TypeKind::Self);
     m_int_literal = create_primitive(TypeKind::IntLiteral);
+    m_float_literal = create_primitive(TypeKind::FloatLiteral);
     m_exception_ref = create_primitive(TypeKind::ExceptionRef);
 }
 
@@ -720,6 +721,7 @@ u32 get_type_slot_count(Type* type) {
         // 2 slots (8 bytes): 64-bit primitives and pointers
         case TypeKind::I64: case TypeKind::U64:
         case TypeKind::F64:
+        case TypeKind::FloatLiteral:  // Safety net: defaults to f64 (2 slots)
         case TypeKind::String:      // Heap-allocated string object (pointer)
         case TypeKind::Uniq:
         case TypeKind::Ref:
@@ -772,6 +774,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TypeKind::Self: return "Self";
         case TypeKind::ExceptionRef: return "ExceptionRef";
         case TypeKind::IntLiteral: return "i32";
+        case TypeKind::FloatLiteral: return "f64";
         case TypeKind::Nil: return "nil";
         case TypeKind::Error: return "<error>";
     }
@@ -813,6 +816,7 @@ void type_to_string(const Type* type, String& out) {
         case TypeKind::Nil:
         case TypeKind::Self:
         case TypeKind::IntLiteral:
+        case TypeKind::FloatLiteral:
         case TypeKind::ExceptionRef:
         case TypeKind::Error:
             append_string(out, type_kind_to_string(type->kind));

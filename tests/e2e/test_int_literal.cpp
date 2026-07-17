@@ -328,4 +328,200 @@ TEST_SUITE("E2E Int Literals") {
         CHECK(result.stdout_output == "42\n");
     }
 
+    // ========================================================================
+    // Adaptation to float contexts, and surviving constant folding.
+    //
+    // An unsuffixed literal is polymorphic until a context picks its type; it
+    // adapts to any numeric type, float included, and an all-literal arithmetic
+    // expression stays polymorphic so the context still gets to choose. Typed
+    // values are unaffected and still never mix implicitly.
+    //
+    // The float cases check *values*, not just that they compile: the literal
+    // carries an integer payload, so a float-typed literal has to be converted
+    // rather than reinterpreted (1 read back as raw bits is 4.94e-324).
+    // ========================================================================
+
+    TEST_CASE_TEMPLATE("IntLiteral adapts to f64", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var x: f64 = 1;
+            print(f"{x}");
+            print(f"{x + 1.5}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2.5\n");
+    }
+
+    TEST_CASE_TEMPLATE("IntLiteral adapts to f32", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var x: f32 = 2;
+            print(f"{x}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "2\n");
+    }
+
+    TEST_CASE_TEMPLATE("IntLiteral mixed with a float operand", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var x: f64 = 1 + 2.0;
+            var y: f64 = 7.0;
+            print(f"{x}");
+            print(f"{y / 2}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "3\n3.5\n");
+    }
+
+    TEST_CASE_TEMPLATE("IntLiteral survives folding into i64", Backend, RX_E2E_BACKENDS) {
+        // `var x: i64 = 1;` and `1 + 2l` both worked; `1 + 2` did not, because
+        // an all-literal binary defaulted to i32 before the annotation applied.
+        const char* source = R"(
+        fun main(): i32 {
+            var x: i64 = 1 + 2;
+            var y: i64 = (1 + 2) * 3;
+            print(f"{x}");
+            print(f"{y}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "3\n9\n");
+    }
+
+    TEST_CASE_TEMPLATE("IntLiteral adapts through a float parameter", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun scale(v: f64): f64 {
+            return v * 2.0;
+        }
+
+        fun main(): i32 {
+            print(f"{scale(3)}");
+            var l: List<f64> = List<f64>();
+            l.push(4);
+            print(f"{l[0]}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "6\n4\n");
+    }
+
+    TEST_CASE_TEMPLATE("Unannotated literal still defaults to i32", Backend, RX_E2E_BACKENDS) {
+        // Polymorphism must not leak: with no context to choose a type, both a
+        // bare literal and an all-literal expression settle on i32.
+        const char* source = R"(
+        fun main(): i32 {
+            var x = 1;
+            var y = 1 + 2;
+            return x + y;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 4);
+    }
+
+    TEST_CASE_TEMPLATE("Unsuffixed float literal adapts to f32", Backend, RX_E2E_BACKENDS) {
+        // `1.0` is polymorphic like `1` is; `1.0f` is already concrete f32.
+        const char* source = R"(
+        fun main(): i32 {
+            var a: f32 = 1.5;
+            var b: f32 = 1.0 + 2.0f;
+            var c: f64 = 1.0;
+            print(f"{a}");
+            print(f"{b}");
+            print(f"{c}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1.5\n3\n1\n");
+    }
+
+    TEST_CASE_TEMPLATE("All-literal float expressions stay polymorphic", Backend, RX_E2E_BACKENDS) {
+        // The arms/operands must follow the annotation; leaving them at the f64
+        // default while the expression claims f32 reads back the wrong bits.
+        const char* source = R"(
+        fun main(): i32 {
+            var a: f32 = 1.0 + 2.0;
+            var b: f32 = true ? 1.5 : 2.5;
+            var c: f64 = -2.5;
+            print(f"{a}");
+            print(f"{b}");
+            print(f"{c}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "3\n1.5\n-2.5\n");
+    }
+
+    TEST_CASE_TEMPLATE("Unannotated float literal still defaults to f64", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var x = 1.0;
+            var y = 1.0 + 2.0;
+            print(f"{x + y}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "4\n");
+    }
+
+    TEST_CASE("Compile error: float literal doesn't adapt to an integer") {
+        // Adaptation never introduces a truncating conversion.
+        const char* source = R"(
+        fun main(): i32 {
+            var x: i32 = 1.0;
+            return 0;
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
+
+    TEST_CASE("Compile error: typed i32 and i64 still don't mix") {
+        // Adaptation applies to literals only — typed values stay strict.
+        const char* source = R"(
+        fun main(): i32 {
+            var a: i32 = 1;
+            var b: i64 = 2l;
+            var c: i64 = a + b;
+            return 0;
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
+
 }  // TEST_SUITE("E2E Int Literals")
