@@ -759,10 +759,8 @@ private:
     // through the set instead of rescanning `out` per assignment (O(n²)).
     void collect_assigned_vars(Stmt* stmt, Vector<StringView>& out);
     void collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out);
-    void collect_assigned_vars_impl(Stmt* stmt, Vector<StringView>& out,
-                                    tsl::robin_map<StringView, bool>& seen);
-    void collect_assigned_vars_expr_impl(Expr* expr, Vector<StringView>& out,
-                                         tsl::robin_map<StringView, bool>& seen);
+    void collect_assigned_vars_impl(Stmt* stmt, Vector<StringView>& out);
+    void collect_assigned_vars_expr_impl(Expr* expr, Vector<StringView>& out);
     Span<BlockArgPair> make_loop_args(const Vector<LoopVarInfo>& loop_vars);
 
     // Helper to create a span in the allocator
