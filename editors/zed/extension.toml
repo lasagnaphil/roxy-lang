@@ -18,7 +18,7 @@ repository = "https://github.com/lasagnaphil/roxy-lang"
 #   rev = "<local commit sha>"
 [grammars.roxy]
 repository = "https://github.com/lasagnaphil/roxy-lang"
-rev = "0000000000000000000000000000000000000000"
+rev = "ae6ad7e3e7f8b8c04bca2067c54a758c4e63026d"
 path = "editors/zed/tree-sitter-roxy"
 
 [language_servers.roxy-lsp]
