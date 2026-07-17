@@ -131,9 +131,29 @@ bool run_dce(IRFunction* func) {
     return changed;
 }
 
+// True if `inst` is a Copy this pass would propagate (v_result -> v_source).
+// Pinned copies (call-site receiver borrows) must keep a distinct identity from
+// their source — collapsing them would re-merge the borrow with the owned-local
+// it borrows. See IRInst::no_copy_prop.
+static inline bool is_propagatable_copy(const IRInst* inst, u32 self_id, u32 N) {
+    return inst && inst->op == IROp::Copy && !inst->no_copy_prop &&
+           inst->unary.is_valid() && inst->unary.id != self_id && inst->unary.id < N;
+}
+
 bool run_copy_propagation(IRFunction* func) {
     const u32 N = func->next_value_id;
     if (N == 0) return false;
+
+    // Early-out: if there is no propagatable Copy, every pass below is a no-op
+    // (identity subst -> nothing to compress or rewrite). Many functions —
+    // trivial ctors/dtors/accessors, and later fixed-point iterations that have
+    // already collapsed their copies — have none, so skip the subst allocation
+    // and the full operand-rewrite walk. The scan stops at the first copy.
+    bool any_copy = false;
+    for (u32 i = 0; i < N; i++) {
+        if (is_propagatable_copy(func->values_by_id[i], i, N)) { any_copy = true; break; }
+    }
+    if (!any_copy) return false;
 
     // subst[id] = id        means "no substitution" (root)
     // subst[id] = other.id  means "use other instead of this"
@@ -145,15 +165,8 @@ bool run_copy_propagation(IRFunction* func) {
     // Pass 1: every Copy is a substitution v_result -> v_source.
     for (u32 i = 0; i < N; i++) {
         IRInst* inst = func->values_by_id[i];
-        if (!inst) continue;
-        if (inst->op != IROp::Copy) continue;
-        // Pinned copies (call-site receiver borrows) must keep a distinct
-        // identity from their source — collapsing them would re-merge the
-        // borrow with the owned-local it borrows. See IRInst::no_copy_prop.
-        if (inst->no_copy_prop) continue;
-        if (!inst->unary.is_valid()) continue;
-        u32 src = inst->unary.id;
-        if (src != i && src < N) subst[i] = src;
+        if (!is_propagatable_copy(inst, i, N)) continue;
+        subst[i] = inst->unary.id;
     }
 
     // Pass 2: path compression with halving.
