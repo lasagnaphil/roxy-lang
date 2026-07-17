@@ -1,5 +1,6 @@
 #include "roxy/compiler/c_emitter.hpp"
 #include "roxy/compiler/ast.hpp"
+#include "roxy/compiler/mangling.hpp"
 #include "roxy/core/format.hpp"
 #include "roxy/core/static_string.hpp"
 #include "roxy/vm/binding/registry.hpp"
@@ -440,7 +441,7 @@ void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj,
             // Run the struct/coro destructor (a Coro<T>'s state struct dtor cleans
             // its promoted uniq/noncopyable fields).
             Type* st = plan.struct_type;
-            String dtor = format("{}$$delete", st->struct_info.name);
+            String dtor = mangle_destructor_owned(st->struct_info.name);
             bool have_dtor = find_function(StringView(dtor.data(), dtor.size())) != nullptr;
             auto emit_dtor_call = [&](StringView target) {
                 if (!have_dtor) return;
@@ -2623,7 +2624,7 @@ void CEmitter::emit_closure_dispatch(String& out) {
     out.append("    switch (*(uint32_t*)env) {\n");
     for (u32 i = 0; i < m_closure_env_names.size(); i++) {
         StringView env_name = m_closure_env_names[i];
-        String dtor = format("{}$$delete", env_name);
+        String dtor = mangle_destructor_owned(env_name);
         if (!find_function(StringView(dtor.data(), dtor.size()))) continue;  // no dtor
         char cb[32];
         format_to(cb, sizeof(cb), "    case {}: ", i);
@@ -3160,7 +3161,7 @@ void CEmitter::emit_pub_struct_definitions(const IRModule* module, String& out) 
             const MethodInfo& method = info.methods[m];
             if (!method.decl) continue;  // builtin methods have no Roxy decl
             if (!method.decl->method_decl.is_pub) continue;
-            StringView mangled = format_to_arena(m_alloc, "{}$${}", info.name, method.name);
+            StringView mangled = mangle_method(m_alloc, info.name, method.name);
 
             const IRFunction* func = find_function_by_mangled(mangled);
             if (!func) continue;
@@ -3183,7 +3184,7 @@ void CEmitter::emit_pub_make_factories(const IRModule* module, String& out) {
 
         // Locate the pub default destructor (used by every factory). If absent,
         // pass nullptr so `roxy::uniq` only frees without running a destructor.
-        StringView dtor_mangled = format_to_arena(m_alloc, "{}$$delete", struct_name);
+        StringView dtor_mangled = mangle_destructor(m_alloc, struct_name);
         const IRFunction* dtor = find_function_by_mangled(dtor_mangled);
         if (dtor && !dtor->is_pub) dtor = nullptr;
 

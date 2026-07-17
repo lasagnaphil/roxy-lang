@@ -1,4 +1,5 @@
 #include "roxy/compiler/coroutine_lowering.hpp"
+#include "roxy/compiler/mangling.hpp"
 #include "roxy/compiler/types.hpp"
 #include "roxy/core/format.hpp"
 
@@ -276,7 +277,7 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
                 }
                 if (has_dtor) {
                     StringView inner_dtor_sv =
-                        format_to_arena(allocator, "{}$$delete", inner_type->struct_info.name);
+                        mangle_destructor(allocator, inner_type->struct_info.name);
                     Span<ValueId> call_args = alloc_span<ValueId>(allocator, 1);
                     call_args[0] = field_val;
                     emit_call(allocator, dtor_func, cleanup_block,

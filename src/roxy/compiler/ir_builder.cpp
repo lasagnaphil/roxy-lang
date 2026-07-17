@@ -10,6 +10,7 @@
 #include "roxy/compiler/ir_builder.hpp"
 
 #include "ir_builder_internal.hpp"
+#include "roxy/compiler/mangling.hpp"
 
 namespace rx {
 
@@ -964,19 +965,15 @@ IRFunction* IRBuilder::build_cleanup_wrapper(Type* noncopyable_type, u32 wrapper
 // Block management
 
 StringView IRBuilder::mangle_method(StringView struct_name, StringView method_name) {
-    return intern_format("{}$${}", struct_name, method_name);
+    return rx::mangle_method(m_allocator, struct_name, method_name);
 }
 
 StringView IRBuilder::mangle_constructor(StringView struct_name, StringView ctor_name) {
-    if (ctor_name.empty()) {
-        return intern_format("{}$$new", struct_name);
-    }
-    return intern_format("{}$$new$${}", struct_name, ctor_name);
+    return rx::mangle_constructor(m_allocator, struct_name, ctor_name);
 }
 
 StringView IRBuilder::mangle_module_local(StringView name) {
-    if (m_module_name.empty()) return name;
-    return intern_format("{}::{}", m_module_name, name);
+    return rx::mangle_module_local(m_allocator, m_module_name, name);
 }
 
 void IRBuilder::emit_zero_slots(ValueId self_ptr, u32 start_slot, u32 slot_count) {
@@ -1167,10 +1164,7 @@ void IRBuilder::setup_parameters(Span<Param> params, Type* self_type) {
 }
 
 StringView IRBuilder::mangle_destructor(StringView struct_name, StringView dtor_name) {
-    if (dtor_name.empty()) {
-        return intern_format("{}$$delete", struct_name);
-    }
-    return intern_format("{}$$delete$${}", struct_name, dtor_name);
+    return rx::mangle_destructor(m_allocator, struct_name, dtor_name);
 }
 
 }

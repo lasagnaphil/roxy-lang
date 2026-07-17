@@ -124,6 +124,7 @@ add_library(roxy_compiler
     src/roxy/compiler/ir_validator.cpp
     src/roxy/compiler/ir_optimize.cpp
     src/roxy/compiler/generics.cpp
+    src/roxy/compiler/mangling.cpp
     src/roxy/compiler/module_registry.cpp
     src/roxy/compiler/compiler.cpp
     src/roxy/compiler/type_env.cpp

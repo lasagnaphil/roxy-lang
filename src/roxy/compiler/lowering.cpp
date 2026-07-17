@@ -1,4 +1,5 @@
 #include "roxy/compiler/lowering.hpp"
+#include "roxy/compiler/mangling.hpp"
 #include "roxy/compiler/type_env.hpp"
 #include "roxy/core/format.hpp"
 #include "roxy/vm/binding/registry.hpp"
@@ -3353,9 +3354,10 @@ bool BytecodeBuilder::struct_has_default_destructor(Type* struct_type) const {
 }
 
 u16 BytecodeBuilder::lookup_destructor_index(Type* struct_type) const {
-    // Transient lookup key — rx::format grows for arbitrarily long struct names
-    // (deeply monomorphized generics) instead of truncating into a fixed buffer.
-    String dtor_name = format("{}$$delete", struct_type->struct_info.name);
+    // Transient lookup key — mangle_destructor_owned grows for arbitrarily long
+    // struct names (deeply monomorphized generics) instead of truncating into a
+    // fixed buffer. BytecodeBuilder has no arena, so this uses the owned-String form.
+    String dtor_name = mangle_destructor_owned(struct_type->struct_info.name);
     auto it = m_func_indices.find(StringView(dtor_name.data(), dtor_name.size()));
     return it != m_func_indices.end() ? static_cast<u16>(it->second) : 0;
 }

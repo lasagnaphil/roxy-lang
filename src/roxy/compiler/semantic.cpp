@@ -1,4 +1,5 @@
 #include "roxy/compiler/semantic.hpp"
+#include "roxy/compiler/mangling.hpp"
 #include "roxy/compiler/operator_traits.hpp"
 #include "roxy/compiler/module_registry.hpp"
 #include "roxy/core/scoped_value.hpp"
@@ -1689,14 +1690,15 @@ void SemanticAnalyzer::register_method_signature(Decl* decl) {
     // register_fun_signature). A non-yielding one forwards a first-class coroutine
     // value and stays an ordinary method. Real coroutine methods get a
     // function-specific coroutine type whose func_name MUST equal the IR function
-    // name `mangle_method(struct, name)` = "<struct>$$<method>" (IRBuilder::
-    // mangle_method), since coroutine lowering builds the state struct / $$delete
-    // from that name and nested coro-in-coro $$delete recursion keys on func_name.
+    // name mangle_method(struct, name) = "<struct>$$<method>", since coroutine
+    // lowering builds the state struct / $$delete from that name and nested
+    // coro-in-coro $$delete recursion keys on func_name. Routing through the
+    // canonical mangler keeps them identical by construction.
     if (method_info.return_type && method_info.return_type->is_coroutine()) {
         method_decl.is_coroutine = stmt_contains_yield(method_decl.body);
         if (method_decl.is_coroutine) {
-            StringView mangled = format_to_arena(m_allocator, "{}$${}",
-                                                 method_decl.struct_name, method_decl.name);
+            StringView mangled = mangle_method(m_allocator,
+                                               method_decl.struct_name, method_decl.name);
             method_info.return_type = m_types.coroutine_type_for_func(
                 method_info.return_type->coro_info.yield_type, mangled);
             populate_coro_methods(method_info.return_type);
