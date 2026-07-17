@@ -60,6 +60,18 @@ private:
     u8 get_register(ValueId value);
     bool has_register(ValueId value) const;
     u8 bump_register();  // Allocate next fresh register with bounds check
+    // Insert a register into the active set, sorted by last_use (expiry order).
+    void insert_active(u8 reg, u32 last_use);
+    // True if the value is produced by a Call/CallNative/CallExternal/
+    // CallIndirect — such values are never spillable (the call's argument
+    // window is anchored at the result register).
+    bool is_call_result(u32 value_id) const;
+    // Allocate a call's dst register(s) plus its contiguous argument/return
+    // window. Fast path bumps at the frame top (historical layout); when that
+    // would exceed the 255-register frame limit, compacts the window into dead
+    // register space just above the live values, spilling furthest-living
+    // values if needed.
+    void reserve_call_window(IRInst* inst, u32 extra_regs_for_return, u32 total_arg_regs);
 
     // Grow the register window to at least `needed_regs` for a call's
     // argument/return block. Stops if bump_register hits the 255-register cap
@@ -71,6 +83,10 @@ private:
     void spill_furthest();
     u8 get_result_register(ValueId value);
     u8 ensure_in_register(ValueId value, u8 scratch_index);
+    // Emit the LOAD_INT/LOAD_CONST sequence for a Const{Int,F,D} definition
+    // into `dst`. Shared by the normal const lowering path and the on-demand
+    // materialization of skip-load constants in ensure_in_register.
+    void emit_const_load(IRInst* const_def, u8 dst);
     void spill_if_needed(ValueId value, u8 reg);
     // Re-canonicalize a u32 result to zero-extended form (TRUNC_U 32). u32 values
     // must stay zero-extended so the 64-bit unsigned ops (LT_U/DIV_U/USHR) are

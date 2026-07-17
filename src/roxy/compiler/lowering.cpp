@@ -212,11 +212,26 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                 if (!has_register(param.value)) {
                     u32 reg_count = get_value_reg_count(param.type);
                     if (reg_count > 1) {
-                        // Multi-register values (weak refs) need bump allocation
+                        // Multi-register values (weak refs) need bump allocation.
+                        // Map every register to the owner so the spill picker
+                        // recognizes (and skips) the whole group.
                         u8 reg = bump_register();
                         m_value_to_reg[param.value.id] = reg;
                         m_reg_to_value[reg] = param.value.id;
-                        for (u32 r = 1; r < reg_count; r++) bump_register();
+                        for (u32 r = 1; r < reg_count; r++) {
+                            u8 extra_reg = bump_register();
+                            if (extra_reg != 0xFF) m_reg_to_value[extra_reg] = param.value.id;
+                        }
+                        // Track every register in the active set: they expire
+                        // like any other value, and reserve_call_window's live
+                        // floor must see them or a call window would be placed
+                        // on top of them.
+                        if (param.value.id < m_live_ranges.size()) {
+                            u32 last_use = m_live_ranges[param.value.id].last_use_point;
+                            for (u32 r = 0; r < reg_count; r++) {
+                                insert_active(static_cast<u8>(reg + r), last_use);
+                            }
+                        }
                     } else {
                         allocate_register(param.value);
                     }
@@ -240,14 +255,33 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                     // reads the value directly from the constant pool.
                     if (!is_skip_load_const(inst)) {
                         u32 reg_count = get_value_reg_count(inst->type);
-                        bool needs_bump = is_call || reg_count > 1;
-                        if (needs_bump) {
-                            // Calls and multi-register values (weak refs) must use bump
-                            // to ensure contiguous register allocation.
+                        if (is_call) {
+                            // Calls allocate dst + their contiguous arg window
+                            // together in reserve_call_window below (needs the
+                            // per-op arg register count).
+                        } else if (reg_count > 1) {
+                            // Multi-register values (weak refs, register-
+                            // resident small structs) must use bump to ensure
+                            // contiguous register allocation. Map every
+                            // register to the owner so the spill picker
+                            // recognizes (and skips) the whole group.
                             u8 reg = bump_register();
                             m_value_to_reg[inst->result.id] = reg;
                             m_reg_to_value[reg] = inst->result.id;
-                            for (u32 r = 1; r < reg_count; r++) bump_register();
+                            for (u32 r = 1; r < reg_count; r++) {
+                                u8 extra_reg = bump_register();
+                                if (extra_reg != 0xFF) m_reg_to_value[extra_reg] = inst->result.id;
+                            }
+                            // Track every register in the active set: they
+                            // expire like any other value, and
+                            // reserve_call_window's live floor must see them
+                            // or a call window would be placed on top of them.
+                            if (inst->result.id < m_live_ranges.size()) {
+                                u32 last_use = m_live_ranges[inst->result.id].last_use_point;
+                                for (u32 r = 0; r < reg_count; r++) {
+                                    insert_active(static_cast<u8>(reg + r), last_use);
+                                }
+                            }
                         } else {
                             allocate_register(inst->result);
                         }
@@ -257,9 +291,9 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                     m_value_types[inst->result.id] = inst->type;
                 }
 
-                // For calls, reserve contiguous registers for args and struct/weak returns
+                // For calls, reserve dst + contiguous registers for args and
+                // struct/weak returns together (reserve_call_window).
                 if ((inst->op == IROp::Call || inst->op == IROp::CallNative) && inst->result.is_valid()) {
-                    u8 dst = get_register(inst->result);
                     u32 extra_regs_for_return = 0;
                     u32 ret_reg_count = get_value_reg_count(inst->type);
                     if (ret_reg_count > 1) {
@@ -281,12 +315,10 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                     u32 total_arg_regs = compute_call_arg_reg_count(inst, callee_func, m_value_types,
                         [this](Type* t) { return get_struct_slot_count(t); });
 
-                    u16 needed_regs = static_cast<u16>(dst) + static_cast<u16>(extra_regs_for_return) + 1 + static_cast<u16>(total_arg_regs);
-                    ensure_register_window(needed_regs);
+                    reserve_call_window(inst, extra_regs_for_return, total_arg_regs);
                 }
 
                 if (inst->op == IROp::CallExternal && inst->result.is_valid()) {
-                    u8 dst = get_register(inst->result);
                     u32 extra_regs_for_return = 0;
                     u32 ret_reg_count = get_value_reg_count(inst->type);
                     if (ret_reg_count > 1) {
@@ -307,14 +339,12 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                     u32 total_arg_regs = compute_call_arg_reg_count(inst, callee_func, m_value_types,
                         [this](Type* t) { return get_struct_slot_count(t); });
 
-                    u16 needed_regs = static_cast<u16>(dst) + static_cast<u16>(extra_regs_for_return) + 1 + static_cast<u16>(total_arg_regs);
-                    ensure_register_window(needed_regs);
+                    reserve_call_window(inst, extra_regs_for_return, total_arg_regs);
                 }
 
                 // CallIndirect (closure dispatch): callee resolved at runtime, but the
                 // arg register block uses the same convention as direct CALL.
                 if (inst->op == IROp::CallIndirect && inst->result.is_valid()) {
-                    u8 dst = get_register(inst->result);
                     u32 extra_regs_for_return = 0;
                     u32 ret_reg_count = get_value_reg_count(inst->type);
                     if (ret_reg_count > 1) {
@@ -339,8 +369,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                         }
                     }
 
-                    u16 needed_regs = static_cast<u16>(dst) + static_cast<u16>(extra_regs_for_return) + 1 + static_cast<u16>(total_arg_regs);
-                    ensure_register_window(needed_regs);
+                    reserve_call_window(inst, extra_regs_for_return, total_arg_regs);
                 }
 
                 alloc_point++;
@@ -711,6 +740,100 @@ u8 BytecodeBuilder::bump_register() {
     return static_cast<u8>(m_next_reg++);
 }
 
+void BytecodeBuilder::insert_active(u8 reg, u32 last_use) {
+    ActiveAlloc alloc{last_use, reg};
+    auto* pos = m_active.find_if([&](const ActiveAlloc& a) { return a.last_use > last_use; });
+    if (pos) {
+        m_active.insert(pos, alloc);
+    } else {
+        m_active.push_back(alloc);
+    }
+}
+
+bool BytecodeBuilder::is_call_result(u32 value_id) const {
+    if (!m_current_ir_func || value_id >= m_current_ir_func->values_by_id.size()) return false;
+    IRInst* def = m_current_ir_func->values_by_id[value_id];
+    if (!def) return false;
+    return def->op == IROp::Call || def->op == IROp::CallNative ||
+           def->op == IROp::CallExternal || def->op == IROp::CallIndirect;
+}
+
+void BytecodeBuilder::reserve_call_window(IRInst* inst, u32 extra_regs_for_return, u32 total_arg_regs) {
+    ValueId result = inst->result;
+    u32 dst_reg_count = get_value_reg_count(inst->type);
+    if (dst_reg_count == 0) dst_reg_count = 1;
+    // Window layout (interpreter CALL): dst at the base, multi-register
+    // returns right above it, then the contiguous argument block
+    // (first_arg = dst + ret_reg_count). One contiguous block anchored at dst.
+    u32 block_size = extra_regs_for_return + 1 + total_arg_regs;
+
+    u32 last_use = 0;
+    if (result.id < m_live_ranges.size()) {
+        last_use = m_live_ranges[result.id].last_use_point;
+    }
+
+    // Place the window at the lowest register above every live value: dead
+    // space (expired values, earlier call windows) is reused continuously, so
+    // call-dense functions no longer consume a fresh register per call and
+    // long-lived call results settle at low registers instead of stranding at
+    // an ever-rising frame top. Values allocated later may reuse in-window
+    // registers from the free list — safe, because SSA ordering puts their
+    // definitions after this call executes, and loop-carried values are block
+    // params whose back-edge arg uses keep them in the active set here.
+    // Inserting the dst registers into the active set (unlike the historical
+    // bump-only path) lets them expire and return to the free list. Call
+    // results still never *spill* — see spill_furthest.
+    while (true) {
+        u32 floor_reg = 0;
+        for (u32 i = 0; i < m_active.size(); i++) {
+            if (static_cast<u32>(m_active[i].reg) + 1 > floor_reg) {
+                floor_reg = static_cast<u32>(m_active[i].reg) + 1;
+            }
+        }
+        if (m_has_spilling) {
+            // The scratch registers are permanently reserved for spill
+            // reloads; arg MOVs may reload spilled args through them, so the
+            // window must sit strictly above both.
+            u32 scratch_top = static_cast<u32>(m_scratch_regs[0] > m_scratch_regs[1]
+                                                   ? m_scratch_regs[0]
+                                                   : m_scratch_regs[1]) + 1;
+            if (scratch_top > floor_reg) floor_reg = scratch_top;
+        }
+        if (floor_reg + block_size <= 255) {
+            u8 base = static_cast<u8>(floor_reg);
+            m_value_to_reg[result.id] = base;
+            m_reg_to_value[base] = result.id;
+            // The dst register(s) may coincide with expired registers still
+            // sitting in the free list — claim them exclusively until the
+            // result dies, or a later value would allocate the same register
+            // and clobber the live call result. The *arg* registers above dst
+            // may stay in the free list: any value reusing one is defined
+            // after this call executes (SSA ordering), when the transient arg
+            // block is already dead.
+            for (u32 i = 0; i < m_free_regs.size();) {
+                if (m_free_regs[i] >= base && m_free_regs[i] < base + dst_reg_count) {
+                    m_free_regs[i] = m_free_regs.back();
+                    m_free_regs.pop_back();
+                } else {
+                    i++;
+                }
+            }
+            for (u32 r = 0; r < dst_reg_count; r++) {
+                insert_active(static_cast<u8>(base + r), last_use);
+            }
+            ensure_register_window(static_cast<u16>(floor_reg + block_size));
+            return;
+        }
+        // Doesn't fit above the live values — spill the furthest-living ones
+        // until it does.
+        u32 active_before = m_active.size();
+        spill_furthest();
+        if (m_active.size() >= active_before) break;  // nothing spillable left
+    }
+    report_error("Register overflow: function uses too many values (max 255)");
+    m_value_to_reg[result.id] = 0;  // dampen cascading errors downstream
+}
+
 void BytecodeBuilder::ensure_register_window(u16 needed_regs) {
     while (m_next_reg < needed_regs) {
         u16 before = m_next_reg;
@@ -827,17 +950,42 @@ void BytecodeBuilder::spill_furthest() {
         return (value_type && value_type->kind == TypeKind::Weak) ? 4 : 2;
     };
 
+    // Pick the furthest-living *spillable* active entry and remove it.
+    // Not spillable:
+    //  - Call results: the CALL's argument window is anchored at the result
+    //    register (first_arg = dst + ret_reg_count), so a spilled dst would
+    //    re-anchor the window onto the scratch register and clobber live
+    //    registers.
+    //  - Multi-register values (weak refs, register-resident small structs)
+    //    and unowned second-reg entries: the spill/reload bookkeeping tracks
+    //    a single register per value, so evicting part of a pair would free a
+    //    live register without saving it.
+    // Returns false when nothing spillable remains (caller reports the error).
+    auto take_furthest_spillable = [this](ActiveAlloc& out) -> bool {
+        for (u32 i = m_active.size(); i > 0; i--) {
+            u32 idx = i - 1;
+            u32 val = m_reg_to_value[m_active[idx].reg];
+            if (val == NO_VALUE) continue;
+            if (is_call_result(val)) continue;
+            Type* value_type = value_type_of(val);
+            if (value_type && get_value_reg_count(value_type) > 1) continue;
+            out = m_active[idx];
+            for (u32 j = idx + 1; j < m_active.size(); j++) m_active[j - 1] = m_active[j];
+            m_active.pop_back();
+            return true;
+        }
+        return false;
+    };
+
     // First time: reserve 2 scratch registers by spilling the 2 furthest-living values
     if (!m_has_spilling) {
         m_has_spilling = true;
         for (int s = 0; s < 2; s++) {
-            if (m_active.empty()) {
+            ActiveAlloc furthest;
+            if (!take_furthest_spillable(furthest)) {
                 report_error("Internal error: no active values to spill for scratch registers");
                 return;
             }
-            // m_active sorted ascending by last_use — back() is the furthest
-            ActiveAlloc furthest = m_active.back();
-            m_active.pop_back();
 
             u32 spilled_val = m_reg_to_value[furthest.reg];
             u32 slot_size = 2;
@@ -864,12 +1012,11 @@ void BytecodeBuilder::spill_furthest() {
     }
 
     // Spill one more value to free a register for the caller
-    if (m_active.empty()) {
+    ActiveAlloc furthest;
+    if (!take_furthest_spillable(furthest)) {
         report_error("Internal error: no active values to spill");
         return;
     }
-    ActiveAlloc furthest = m_active.back();
-    m_active.pop_back();
 
     u32 spilled_val = m_reg_to_value[furthest.reg];
     if (spilled_val != NO_VALUE) {
@@ -917,8 +1064,70 @@ u8 BytecodeBuilder::ensure_in_register(ValueId value, u8 scratch_index) {
         return scratch;
     }
 
+    // Skip-load constants (compute_const_use_modes) normally never touch a
+    // register — every use reads them from an RK slot. Two paths still land
+    // here needing one in a register: an RK op whose *other* operand is also a
+    // constant (only one can take the K slot), and an RK bail-out when the
+    // constant-pool index outgrows the 8-bit RK field. Materialize on demand
+    // through the normal allocator, at the use point.
+    IRInst* def = nullptr;
+    if (m_current_ir_func && value.id < m_current_ir_func->values_by_id.size()) {
+        def = m_current_ir_func->values_by_id[value.id];
+    }
+    if (def && (def->op == IROp::ConstInt || def->op == IROp::ConstF || def->op == IROp::ConstD)) {
+        // Materialization happens at *emission* time, after all allocation
+        // decisions — the free list here reflects end-of-function state, so a
+        // freed register may still be owned at this program point. A fresh
+        // bump_register() is the only always-safe choice: it sits above every
+        // value and every call window.
+        u8 reg = bump_register();
+        if (reg != 0xFF) {
+            m_value_to_reg[value.id] = reg;
+            emit_const_load(def, reg);
+        }
+        return reg;
+    }
+
     report_error("Internal error: SSA value used before allocation");
     return 0xFF;
+}
+
+void BytecodeBuilder::emit_const_load(IRInst* const_def, u8 dst) {
+    switch (const_def->op) {
+        case IROp::ConstInt: {
+            i64 value = const_def->const_data.int_val;
+            if (value >= IMM16_MIN && value <= IMM16_MAX) {
+                emit_abi(Opcode::LOAD_INT, dst, static_cast<u16>(static_cast<i16>(value)));
+            } else {
+                u16 const_idx = add_constant(BCConstant::make_int(value));
+                emit_abi(Opcode::LOAD_CONST, dst, const_idx);
+            }
+            break;
+        }
+        case IROp::ConstF: {
+            // Get f32 bit pattern and emit as LOAD_INT
+            f32 fval = const_def->const_data.f32_val;
+            u32 bits;
+            memcpy(&bits, &fval, sizeof(bits));
+            if (bits <= 0x7FFF) {
+                // Small positive value - use immediate
+                emit_abi(Opcode::LOAD_INT, dst, static_cast<u16>(bits));
+            } else {
+                // Use constant pool
+                u16 const_idx = add_constant(BCConstant::make_int(static_cast<i64>(bits)));
+                emit_abi(Opcode::LOAD_CONST, dst, const_idx);
+            }
+            break;
+        }
+        case IROp::ConstD: {
+            u16 const_idx = add_constant(BCConstant::make_float(const_def->const_data.f64_val));
+            emit_abi(Opcode::LOAD_CONST, dst, const_idx);
+            break;
+        }
+        default:
+            report_error("Internal error: emit_const_load on a non-constant definition");
+            break;
+    }
 }
 
 void BytecodeBuilder::spill_if_needed(ValueId value, u8 reg) {
@@ -1759,42 +1968,13 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             spill_if_needed(inst->result, dst);
             break;
 
-        case IROp::ConstInt: {
+        case IROp::ConstInt:
+        case IROp::ConstF:
+        case IROp::ConstD:
             // Skip-load case is handled at the top of lower_instruction.
-            i64 value = inst->const_data.int_val;
-            if (value >= IMM16_MIN && value <= IMM16_MAX) {
-                emit_abi(Opcode::LOAD_INT, dst, static_cast<u16>(static_cast<i16>(value)));
-            } else {
-                u16 const_idx = add_constant(BCConstant::make_int(value));
-                emit_abi(Opcode::LOAD_CONST, dst, const_idx);
-            }
+            emit_const_load(inst, dst);
             spill_if_needed(inst->result, dst);
             break;
-        }
-
-        case IROp::ConstF: {
-            // Get f32 bit pattern and emit as LOAD_INT
-            f32 fval = inst->const_data.f32_val;
-            u32 bits;
-            memcpy(&bits, &fval, sizeof(bits));
-            if (bits <= 0x7FFF) {
-                // Small positive value - use immediate
-                emit_abi(Opcode::LOAD_INT, dst, static_cast<u16>(bits));
-            } else {
-                // Use constant pool
-                u16 const_idx = add_constant(BCConstant::make_int(static_cast<i64>(bits)));
-                emit_abi(Opcode::LOAD_CONST, dst, const_idx);
-            }
-            spill_if_needed(inst->result, dst);
-            break;
-        }
-
-        case IROp::ConstD: {
-            u16 const_idx = add_constant(BCConstant::make_float(inst->const_data.f64_val));
-            emit_abi(Opcode::LOAD_CONST, dst, const_idx);
-            spill_if_needed(inst->result, dst);
-            break;
-        }
 
         case IROp::ConstString: {
             StringView sv = inst->const_data.string_val;
