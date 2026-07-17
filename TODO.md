@@ -4,7 +4,7 @@ This document tracks known technical debt, incomplete implementations, and plann
 improvements. Completed items are removed as they land — the per-item records
 (measurements, rationale, regression-test pointers) live in this file's git history.
 
-Last updated: 2026-07-15
+Last updated: 2026-07-17
 
 ---
 
@@ -16,12 +16,65 @@ Last updated: 2026-07-15
 
 ## Medium Priority
 
-(none currently)
+Surfaced 2026-07-17 while making `examples/` compile again — each one is a rule
+users hit immediately, and each was verified against the build.
+
+- [ ] **`Printable` is unreachable except through f-string interpolation**:
+  `print` is registered as `fun print(s: string)` (`natives.cpp` →
+  `register_builtin_natives`), so `print(42)` is a type error ("cannot assign
+  'i32' to 'string'") and every call site has to route through `f"{…}"`. The
+  primitive `to_string` natives are `$$`-mangled (`i32$$to_string`, …), so
+  neither `to_string(42)` nor `42.to_string()` resolves ("cannot access member
+  of non-struct type") — interpolation is the only path to them. A struct that
+  writes `fun T.to_string(): string for Printable` *can* call it directly, so
+  the gap is primitives-only. Wants `print` to take a `Printable` and primitive
+  `to_string` to be reachable by name. (`examples/hello.roxy` was `print(42)`
+  and did not compile — it was cited as evidence that `print` accepts a literal.)
+- [ ] **`List`/`Map` don't implement `Printable`**: `f"{items}"` fails with
+  "type 'List<i32>' does not implement Printable (no to_string method)", so
+  printing a container means a hand-rolled join loop (both showcases now carry
+  one). Needs `to_string` on the generic native container types, with the
+  element's own `Printable` impl threaded through monomorphization.
+- [ ] **A trait bound isn't consulted for interpolation or operator dispatch**:
+  a bound resolves an *explicit* method call — `<T: Eq>` makes `a.eq(b)`
+  type-check in the body, which `examples/showcase.roxy` relies on — but the
+  other two paths to a trait method don't ask it. With `<T: Printable>`,
+  `f"{value}"` is rejected ("type 'T' does not implement Printable"), and with
+  `<T: Ord>`, `a > b` is rejected ("invalid operands for comparison operator")
+  even though `Ord` declares `gt`/`cmp` and operator dispatch is otherwise
+  structural. So a bound is only half usable: the body has to spell out
+  `value.to_string()` / `a.cmp(b)` instead. Verified 2026-07-17. Related to the
+  `Printable` entry above — `to_string()` on a bounded `T` instantiated at a
+  primitive also fails ("cannot access member of non-struct type").
+- [ ] **No immutable borrow for containers**: a container parameter is either
+  owning (`List<T>`, which *moves* the caller's value — `quicksort.roxy`'s
+  `is_sorted(arr)` hit exactly this) or `inout`. `ref List<i32>` parses but
+  won't bind ("cannot assign 'List<i32>' to 'ref List<i32>'"), and the grammar
+  has no call-site `ref` (`argument -> ( "out" | "inout" )? expression`). So a
+  function that only reads its argument must advertise mutation and take
+  `inout`, and needlessly forbids aliasing it.
 
 ---
 
 ## Low Priority
 
+- [ ] **Call depth is capped at 1024 frames with no way to raise it**:
+  `VMConfig::max_call_depth` defaults to 1024 (`vm/vm.hpp`) and `roxy.cpp` never
+  overrides it, so a recursive program deeper than ~1020 frames dies with
+  "Call stack overflow" and the only recourse is rewriting it with an explicit
+  stack. An embedder can set the config; a CLI user can't. A `--max-call-depth`
+  flag (and the matching `--register-file-size`, currently 65536) would cost
+  little. Verified 2026-07-17: `depth(1000)` returns, `depth(10000)` overflows.
+- [ ] **Reading a missing `Map` key is a hard runtime error**: `m[k]` on an
+  absent key aborts the program with "Map key not found" rather than yielding a
+  default, so every read needs a `.contains()` guard (and a second lookup).
+  There is no `get_or` / Option-shaped alternative. Verified 2026-07-17.
+- [ ] **String stdlib gaps**: the primitives are `str_len`, `str_char_at`,
+  `str_substr`, `str_concat`, `str_eq`/`str_ne`, `str_from_code`, `str_to_f64` —
+  no `split`, no integer parse (only `str_to_f64`), so any text handling starts
+  by hand-rolling both. `str_concat` in a loop is quadratic (20k single-char
+  appends measured at 0.34s on the `-O0` build, 2026-07-17); a builder, or a
+  `join`, would remove the usual reason to write that loop.
 - [ ] **LSP parser super-linear memory on adversarial input**: `fuzz_lsp_parser`
   found an OOM — a mutated ~8 KB Lox source (near the `-max_len=8192` cap) drives
   the error-recovering parser to allocate ~2.9 GB (≈370,000× blow-up), so the
