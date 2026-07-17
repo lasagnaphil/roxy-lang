@@ -139,7 +139,7 @@ bool Compiler::topological_sort() {
 
     for (u32 i = 0; i < m_sources.size(); i++) {
         if (state[i] == 0) {
-            if (!detect_cycle(i, state, m_compile_order)) {
+            if (!detect_cycle(i, state, m_compile_order, name_to_idx)) {
                 return false;
             }
         }
@@ -149,14 +149,12 @@ bool Compiler::topological_sort() {
     return true;
 }
 
-bool Compiler::detect_cycle(u32 module_idx, Vector<u8>& state, Vector<u32>& order) {
+bool Compiler::detect_cycle(u32 module_idx, Vector<u8>& state, Vector<u32>& order,
+                            const tsl::robin_map<StringView, u32>& name_to_idx) {
     state[module_idx] = 1; // Visiting
 
-    // Build module name to index map (could cache this)
-    tsl::robin_map<StringView, u32> name_to_idx;
-    for (u32 i = 0; i < m_sources.size(); i++) {
-        name_to_idx[m_sources[i].name] = i;
-    }
+    // name_to_idx is built once in topological_sort and threaded through the
+    // recursion (was rebuilt on every call — O(V*(V+E)) for a pure defect).
 
     // Check all imports
     for (const StringView& import_name : m_module_states[module_idx].imports) {
@@ -175,7 +173,7 @@ bool Compiler::detect_cycle(u32 module_idx, Vector<u8>& state, Vector<u32>& orde
         }
 
         if (state[dep_idx] == 0) {
-            if (!detect_cycle(dep_idx, state, order)) {
+            if (!detect_cycle(dep_idx, state, order, name_to_idx)) {
                 return false;
             }
         }

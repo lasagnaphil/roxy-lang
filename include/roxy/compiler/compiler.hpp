@@ -3,6 +3,7 @@
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/core/string_view.hpp"
+#include "roxy/core/tsl/robin_map.h"
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/unique_ptr.hpp"
 #include "roxy/core/format.hpp"
@@ -88,7 +89,8 @@ private:
     bool topological_sort();
 
     // Detect import cycles using DFS
-    bool detect_cycle(u32 module_idx, Vector<u8>& state, Vector<u32>& order);
+    bool detect_cycle(u32 module_idx, Vector<u8>& state, Vector<u32>& order,
+                      const tsl::robin_map<StringView, u32>& name_to_idx);
 
     // Error reporting
     void add_error(const char* message);

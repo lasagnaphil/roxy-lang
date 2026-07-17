@@ -176,6 +176,23 @@ static void scan_imports(const char* source, u32 len, Vector<String>& module_nam
         Token token = lexer.next_token();
         if (token.kind == TokenKind::Eof) break;
 
+        // Imports are top-of-file: the first top-level declaration keyword
+        // (`pub`/`native` always prefix one, never an import) means no import can
+        // follow, so stop re-lexing the rest of the module. This whole scan runs
+        // once per one-shot compile, ahead of parsing. (§3.9)
+        switch (token.kind) {
+            case TokenKind::KwVar:
+            case TokenKind::KwFun:
+            case TokenKind::KwStruct:
+            case TokenKind::KwEnum:
+            case TokenKind::KwTrait:
+            case TokenKind::KwPub:
+            case TokenKind::KwNative:
+                return;
+            default:
+                break;
+        }
+
         if (token.kind == TokenKind::KwImport || token.kind == TokenKind::KwFrom) {
             // Next token should be the first segment of the module path
             Token name = lexer.next_token();
