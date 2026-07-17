@@ -25,7 +25,9 @@ fun quicksort(arr: inout List<i32>, low: i32, high: i32) {
     }
 }
 
-fun is_sorted(arr: List<i32>): bool {
+// `inout`, not a bare `List<i32>`: a plain container param takes ownership, so
+// the caller's list would be moved away by the call.
+fun is_sorted(arr: inout List<i32>): bool {
     for (var i: i32 = 0; i < arr.len() - 1; i = i + 1) {
         if (arr[i] > arr[i + 1]) {
             return false;
@@ -49,21 +51,21 @@ fun main(): i32 {
     quicksort(inout arr, 0, arr.len() - 1);
 
     // Verify sorted
-    if (is_sorted(arr)) {
-        print_str("PASS: array is sorted");
+    if (is_sorted(inout arr)) {
+        print("PASS: array is sorted");
     } else {
-        print_str("FAIL: array is NOT sorted");
+        print("FAIL: array is NOT sorted");
     }
-    print(arr.len());
+    print(f"{arr.len()}");
 
     // Print first and last few elements to spot check
-    print_str("First 5:");
+    print("First 5:");
     for (var i: i32 = 0; i < 5; i = i + 1) {
-        print(arr[i]);
+        print(f"{arr[i]}");
     }
-    print_str("Last 5:");
+    print("Last 5:");
     for (var i: i32 = arr.len() - 5; i < arr.len(); i = i + 1) {
-        print(arr[i]);
+        print(f"{arr[i]}");
     }
 
     return 0;

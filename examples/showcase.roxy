@@ -56,9 +56,17 @@ struct Pair<T, U> {
     second: U;
 }
 
-fun max<T: Ord>(a: T, b: T): T {
+// Unbounded: the body is type-checked once per instantiation, so `>` only has
+// to be valid for the types `max` is actually called with.
+fun max<T>(a: T, b: T): T {
     if (a > b) return a;
     return b;
+}
+
+// Bounded: `T: Eq` is what makes `a.eq(b)` resolve inside the body. Vec2
+// implements Eq below, so `same(a, b)` type-checks against the bound.
+fun same<T: Eq>(a: T, b: T): bool {
+    return a.eq(b);
 }
 
 // --- Heap allocation with ownership ---
@@ -95,13 +103,18 @@ fun main(): i32 {
     var pair = Pair { first = 10, second = "hello" };
     print(f"pair: ({pair.first}, {pair.second})");
     print(f"max(3, 7) = {max(3, 7)}");
+    print(f"same(a, b) = {same(a, b)}  same(a, a) = {same(a, a)}");
 
-    // Lists and iteration
+    // Lists and iteration. A `List` isn't Printable — interpolate the
+    // elements, not the container.
     var items: List<i32> = List<i32>();
+    var squares: string = "";
     for (var i: i32 = 1; i <= 5; i = i + 1) {
         items.push(i * i);
+        if (i > 1) { squares = squares + ", "; }
+        squares = squares + f"{items[i - 1]}";
     }
-    print(f"squares: {items}");
+    print(f"squares: {squares}");
 
     // Heap-allocated objects with ownership
     var node: uniq Node = uniq Node(42, "answer");

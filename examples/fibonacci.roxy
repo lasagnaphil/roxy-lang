@@ -6,6 +6,6 @@ fun fib(n: i32): i32 {
 }
 
 fun main(): i32 {
-    print(fib(10));
+    print(f"fib(10) = {fib(10)}");
     return 0;
 }

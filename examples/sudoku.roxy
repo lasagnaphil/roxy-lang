@@ -171,7 +171,7 @@ fun Sudoku.solve(): bool {
 
 fun Sudoku.print_board() {
     var sep: string = "+-------+-------+-------+";
-    print_str(sep);
+    print(sep);
     for (var r: i32 = 0; r < 9; r = r + 1) {
         var line: string = "|";
         for (var c: i32 = 0; c < 9; c = c + 1) {
@@ -185,9 +185,9 @@ fun Sudoku.print_board() {
                 line = line + " |";
             }
         }
-        print_str(line);
+        print(line);
         if (r % 3 == 2) {
-            print_str(sep);
+            print(sep);
         }
     }
 }
@@ -205,27 +205,27 @@ fun main(): i32 {
     sudoku.set_row(7, 0, 0, 0, 4, 1, 9, 0, 0, 5);
     sudoku.set_row(8, 0, 0, 0, 0, 8, 0, 0, 7, 9);
 
-    print_str("Puzzle:");
+    print("Puzzle:");
     sudoku.print_board();
 
     if (sudoku.solve()) {
-        print_str("\nSolution:");
+        print("\nSolution:");
         sudoku.print_board();
     } else {
-        print_str("No solution found.");
+        print("No solution found.");
     }
 
     // Generate and solve a random board
     sudoku.new_board(42);
 
-    print_str("\nGenerated Puzzle (seed=42):");
+    print("\nGenerated Puzzle (seed=42):");
     sudoku.print_board();
 
     if (sudoku.solve()) {
-        print_str("\nSolution:");
+        print("\nSolution:");
         sudoku.print_board();
     } else {
-        print_str("No solution found.");
+        print("No solution found.");
     }
 
     return 0;
