@@ -1570,10 +1570,23 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
 
             // Wrap uniq/ref → weak conversion for call arguments (after the gate
             // above, so the gate sees the raw pointer, not the wrapped weak).
-            if (callee_func_type && callee_func_type->is_function() &&
-                i < callee_func_type->func_info.param_types.size()) {
-                Type* param_type = callee_func_type->func_info.param_types[i];
-                args[i] = maybe_wrap_weak(args[i], arg.expr->resolved_type, param_type);
+            // The param index needs the same implicit-self offset the gate uses:
+            // a method callee — user-struct methods and List/Map/Coro builtin
+            // methods alike — carries `self` at param_types[0], so explicit
+            // argument `i` is param_types[i + off]. Indexing with a bare `i`
+            // compared each argument against the *previous* parameter, so a
+            // `uniq`/`ref` passed to a `weak` method parameter (including
+            // `List<weak T>.push`) was never snapshotted into a {pointer,
+            // generation} pair and read back as a dangling reference.
+            if (callee_func_type && callee_func_type->is_function()) {
+                i32 off = self_pass_param_offset(call_expr);
+                if (off >= 0) {
+                    Span<Type*> ptypes = callee_func_type->func_info.param_types;
+                    u32 pidx = i + static_cast<u32>(off);
+                    if (pidx < ptypes.size()) {
+                        args[i] = maybe_wrap_weak(args[i], arg.expr->resolved_type, ptypes[pidx]);
+                    }
+                }
             }
         }
     }

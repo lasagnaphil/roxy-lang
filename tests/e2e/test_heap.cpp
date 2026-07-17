@@ -679,4 +679,166 @@ TEST_SUITE("E2E Heap") {
         CHECK(result.value == 1);
     }
 
+    // ============================================================================
+    // Weak References in Containers
+    //
+    // A `weak T` is {pointer, generation} — 4 slots, so two 64-bit registers.
+    // Every step of a container round-trip has to carry both halves; dropping
+    // the generation leaves a value that WEAK_CHECK reads as dangling and traps
+    // on. These cover the three places that got it wrong: the uniq->weak
+    // conversion at a method argument (ir_builder_expr), the argument marshalling
+    // for CALL_NATIVE (lowering), and the element read-back (INDEX_GET_LIST).
+    // ============================================================================
+
+    TEST_CASE_TEMPLATE("Weak element pushed into List as uniq", Backend, RX_E2E_BACKENDS) {
+        // `push(n)` passes a uniq to a `weak T` parameter: the implicit
+        // uniq->weak conversion has to happen at the argument.
+        const char* source = R"(
+        struct Node {
+            value: i32;
+        }
+
+        fun main(): i32 {
+            var n: uniq Node = uniq Node();
+            n.value = 42;
+            var watchers: List<weak Node> = List<weak Node>();
+            watchers.push(n);
+            return watchers[0].value;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 42);
+    }
+
+    TEST_CASE_TEMPLATE("Weak element pushed into List as weak local", Backend, RX_E2E_BACKENDS) {
+        // Already a weak at the call site — exercises the marshalling only.
+        const char* source = R"(
+        struct Node {
+            value: i32;
+        }
+
+        fun main(): i32 {
+            var n: uniq Node = uniq Node();
+            n.value = 7;
+            var w: weak Node = n;
+            var watchers: List<weak Node> = List<weak Node>();
+            watchers.push(w);
+            return watchers[0].value;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 7);
+    }
+
+    TEST_CASE_TEMPLATE("List<weak T> with several elements", Backend, RX_E2E_BACKENDS) {
+        // Each element must land at its own 4-slot stride.
+        const char* source = R"(
+        struct Node {
+            value: i32;
+        }
+
+        fun main(): i32 {
+            var owned: List<uniq Node> = List<uniq Node>();
+            for (var i: i32 = 0; i < 4; i = i + 1) {
+                var n: uniq Node = uniq Node();
+                n.value = (i + 1) * 10;
+                owned.push(n);
+            }
+
+            var watchers: List<weak Node> = List<weak Node>();
+            for (var i: i32 = 0; i < owned.len(); i = i + 1) {
+                watchers.push(owned[i]);
+            }
+
+            var total: i32 = 0;
+            for (var i: i32 = 0; i < watchers.len(); i = i + 1) {
+                total = total + watchers[i].value;
+            }
+            return total;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 100);  // 10 + 20 + 30 + 40
+    }
+
+    TEST_CASE_TEMPLATE("Weak value in a Map", Backend, RX_E2E_BACKENDS) {
+        // Map values take the same {pointer, generation} round-trip as List
+        // elements.
+        const char* source = R"(
+        struct Node {
+            value: i32;
+        }
+
+        fun main(): i32 {
+            var n: uniq Node = uniq Node();
+            n.value = 99;
+            var m: Map<string, weak Node> = Map<string, weak Node>();
+            m.insert("a", n);
+            return m["a"].value;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 99);
+    }
+
+    TEST_CASE_TEMPLATE("Weak passed to a user method parameter", Backend, RX_E2E_BACKENDS) {
+        // The uniq->weak conversion is indexed off the callee's params, which
+        // for a method start with `self` — so this is the same bug as the List
+        // push, reached through user code rather than a builtin.
+        const char* source = R"(
+        struct Node {
+            value: i32;
+        }
+
+        struct Observer {
+            target: weak Node;
+        }
+
+        fun Observer.watch(n: weak Node) {
+            self.target = n;
+        }
+
+        fun main(): i32 {
+            var n: uniq Node = uniq Node();
+            n.value = 55;
+            var obs: uniq Observer = uniq Observer();
+            obs.watch(n);
+            return obs.target.value;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 55);
+    }
+
+    TEST_CASE_TEMPLATE("List<weak T> round-trips through pop", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Node {
+            value: i32;
+        }
+
+        fun main(): i32 {
+            var n: uniq Node = uniq Node();
+            n.value = 13;
+            var watchers: List<weak Node> = List<weak Node>();
+            watchers.push(n);
+            var w: weak Node = watchers.pop();
+            return w.value;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 13);
+    }
+
 }  // TEST_SUITE("E2E Heap")

@@ -1720,9 +1720,19 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             } else if (header->element_slot_count == 2) {
                 regs[a] = static_cast<u64>(elem[0]) | (static_cast<u64>(elem[1]) << 32);
             } else {
-                u64 val = 0;
-                memcpy(&val, elem, sizeof(u32) * header->element_slot_count);
-                regs[a] = val;
+                // Wider than one register: elements are packed 32-bit slots but
+                // registers are 64-bit, so the value spans (slots + 1) / 2 of
+                // them — the slots->registers rule lowering.cpp uses. `weak T`
+                // is the case that matters (4 slots = {pointer, generation});
+                // packing it into regs[a] alone would both overrun a single u64
+                // and drop the generation, so the following WEAK_CHECK would
+                // read a garbage generation and trap as dangling.
+                u32 slot_count = header->element_slot_count;
+                u32 reg_count = (slot_count + 1) / 2;
+                for (u32 i = 0; i < reg_count; i++) {
+                    regs[a + i] = 0;
+                }
+                memcpy(&regs[a], elem, sizeof(u32) * slot_count);
             }
         } else {
             regs[a] = reinterpret_cast<u64>(list_element_ptr(header, static_cast<u32>(idx)));
@@ -1787,9 +1797,17 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
                 // Sign-extend single-slot integer values (see GET_FIELD comment).
                 regs[a] = static_cast<u64>(static_cast<i64>(static_cast<i32>(value_ptr[0])));
             } else {
-                u64 packed = 0;
-                memcpy(&packed, value_ptr, sizeof(u32) * header->value_slot_count);
-                regs[a] = packed;
+                // Wider than one register: values are packed 32-bit slots but
+                // registers are 64-bit, so the value spans (slots + 1) / 2 of
+                // them (see INDEX_GET_LIST). `weak V` is 4 slots — packing it
+                // into regs[a] alone drops the generation and the next
+                // WEAK_CHECK traps as dangling.
+                u32 slot_count = header->value_slot_count;
+                u32 reg_count = (slot_count + 1) / 2;
+                for (u32 i = 0; i < reg_count; i++) {
+                    regs[a + i] = 0;
+                }
+                memcpy(&regs[a], value_ptr, sizeof(u32) * slot_count);
             }
         } else {
             // Struct value: return a pointer into the map's backing storage.

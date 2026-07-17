@@ -130,6 +130,23 @@ static void native_list_cap(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = static_cast<u64>(cap);
 }
 
+// Copy an inline element out of list storage into the destination register(s).
+// Elements are stored as packed 32-bit slots, but registers are 64-bit, so a
+// wide element spans `(slot_count + 1) / 2` of them — the same slots->registers
+// rule lowering.cpp uses for arguments and returns. `weak T` is the case that
+// matters: it is 4 slots ({ptr, generation}), so writing only regs[dst] would
+// drop the generation and every read back would trap as a dangling reference.
+// Zeroing first keeps the ≤ 2-slot cases byte-identical to the old code path.
+static inline void list_write_element_to_regs(const ListHeader* header, const u32* src,
+                                              u64* regs, u8 dst) {
+    u32 slot_count = header->element_slot_count;
+    u32 reg_count = (slot_count + 1) / 2;
+    for (u32 i = 0; i < reg_count; i++) {
+        regs[dst + i] = 0;
+    }
+    memcpy(&regs[dst], src, sizeof(u32) * slot_count);
+}
+
 // Native function: list_push(lst: List<T>, val: T) -> void
 static void native_list_push(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 2) {
@@ -179,9 +196,7 @@ static void native_list_pop(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         return;
     }
     if (header->element_is_inline) {
-        u64 val = 0;
-        memcpy(&val, ptr, sizeof(u32) * header->element_slot_count);
-        regs[dst] = val;
+        list_write_element_to_regs(header, ptr, regs, dst);
     } else {
         // Struct: return pointer to popped element data
         regs[dst] = reinterpret_cast<u64>(ptr);
@@ -477,9 +492,7 @@ static void native_list_index(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (!ptr) return;
     ListHeader* header = get_list_header(lst_ptr);
     if (header->element_is_inline) {
-        u64 val = 0;
-        memcpy(&val, ptr, sizeof(u32) * header->element_slot_count);
-        regs[dst] = val;
+        list_write_element_to_regs(header, ptr, regs, dst);
     } else {
         regs[dst] = reinterpret_cast<u64>(ptr);
     }
@@ -711,9 +724,15 @@ static inline void map_write_value_to_regs(const MapHeader* header, const u32* s
             // arithmetic ops (which read registers via reg_as_i64).
             regs[dst] = static_cast<u64>(static_cast<i64>(static_cast<i32>(src[0])));
         } else {
-            u64 packed = 0;
-            memcpy(&packed, src, sizeof(u32) * header->value_slot_count);
-            regs[dst] = packed;
+            // Wide values span multiple 64-bit registers ((slots + 1) / 2, as in
+            // lowering.cpp) — `weak V` is 4 slots, so packing into one register
+            // would drop its generation. See list_write_element_to_regs.
+            u32 slot_count = header->value_slot_count;
+            u32 reg_count = (slot_count + 1) / 2;
+            for (u32 i = 0; i < reg_count; i++) {
+                regs[dst + i] = 0;
+            }
+            memcpy(&regs[dst], src, sizeof(u32) * slot_count);
         }
     } else {
         regs[dst] = reinterpret_cast<u64>(src);

@@ -2014,12 +2014,35 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             u32 func_idx = inst->call.native_index;
             u8 arg_count = static_cast<u8>(inst->call.args.size());
 
-            // Copy arguments to consecutive registers starting from dst+1
+            // Copy arguments to consecutive registers starting from dst+1.
+            // A `weak T` is {pointer, generation} and occupies two consecutive
+            // registers, so it takes two moves — the same special case
+            // IROp::Call and IROp::CallIndirect make, and what
+            // compute_call_arg_reg_count already sized this window for.
+            // Advancing by one register per argument instead would leave the
+            // generation as whatever happened to occupy the next register, and
+            // a native storing the value (List<weak T>.push) would record a
+            // garbage generation that traps as dangling on the next read.
             u8 first_arg_reg = dst + 1;
+            u8 arg_reg_offset = 0;
             for (u32 i = 0; i < inst->call.args.size(); i++) {
-                u8 arg_src = ensure_in_register(inst->call.args[i], 0);
-                if (arg_src != first_arg_reg + i) {
-                    emit_abc(Opcode::MOV, first_arg_reg + i, arg_src, 0);
+                ValueId arg_val = inst->call.args[i];
+                u8 arg_src = ensure_in_register(arg_val, 0);
+                Type* arg_type = value_type_of(arg_val.id);
+
+                if (arg_type && arg_type->kind == TypeKind::Weak) {
+                    if (arg_src != first_arg_reg + arg_reg_offset) {
+                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                    }
+                    if ((arg_src + 1) != (first_arg_reg + arg_reg_offset + 1)) {
+                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset + 1, arg_src + 1, 0);
+                    }
+                    arg_reg_offset += 2;
+                } else {
+                    if (arg_src != first_arg_reg + arg_reg_offset) {
+                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
+                    }
+                    arg_reg_offset += 1;
                 }
             }
 
