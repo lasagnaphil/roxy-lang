@@ -86,19 +86,6 @@ users hit immediately, and each was verified against the build.
   Found 2026-07-14; do **not** add the reproducer to `tests/fuzz/corpus/` — the
   `Fuzz Regression` doctest replays it with no memory cap. Reproduce with
   `./build-fuzz/fuzz_lsp_parser -rss_limit_mb=2048 <repro>`.
-- [x] **Register overflow on huge single functions** — fixed 2026-07-17. Root
-  cause (diagnosed with the structural generator's corpora): call results were
-  bump-allocated at the frame top and never entered the active set, so every
-  call permanently consumed its dst register plus its argument window — frames
-  filled monotonically with dead call space, and `ensure_register_window` had
-  no fallback at the 255 cliff. Now `reserve_call_window` places each call's
-  dst+arg window at the lowest register above the live values (dead space is
-  reused continuously; furthest-living values are spilled if even that doesn't
-  fit), call results expire like other values (but are never *spilled* — the
-  arg window is anchored at the dst register), and multi-register values are
-  tracked in the active set (and excluded from spilling, since the spill
-  bookkeeping is single-register).
-
 ---
 
 ## Planned Features
