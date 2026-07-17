@@ -289,6 +289,11 @@ static bool block_in_metadata(IRFunction* func, BlockId b) {
 bool run_block_merging(IRFunction* func) {
     bool any_changed = false;
     bool pass_changed = true;
+    // Per-pass param->arg substitution table (identity when no merge happened).
+    // Sized over the whole value space; lazily initialized on the first merge
+    // of each pass and applied in one function-wide sweep at the end of it.
+    const u32 num_values = func->next_value_id;
+    Vector<u32> subst;
     // Each pass computes predecessors once and applies every independent merge it
     // finds, instead of restarting (recompute + rescan) after each single merge.
     // Merging B into A only *moves* edges — B's successors swap pred B for pred A,
@@ -318,30 +323,29 @@ bool run_block_merging(IRFunction* func) {
             // metadata. (We don't rewrite metadata across a merge in v1.)
             if (block_in_metadata(func, B->id)) continue;
 
-            // Substitute B's params with A's goto args. The args are evaluated in
-            // A's context and strictly dominate B, so they are never B's own params
-            // — the substitution is flat (no transitive chains), so a small per-
-            // param lookup suffices instead of a map over the whole value space.
+            // Substitute B's params with A's goto args. A block param may be
+            // referenced by ANY block B dominates (not just B itself — e.g. a
+            // scope-exit str_release in a later merge block), so the rewrite
+            // must sweep the whole function. Record the substitutions here and
+            // apply them in one function-wide sweep at the end of the pass —
+            // one sweep per pass instead of per merge. Chains (a param
+            // substituted by another merged block's param) are collapsed by
+            // path compression before the sweep.
             Span<BlockArgPair> a_args = A->terminator.goto_target.args;
             // A count mismatch would indicate malformed IR; skip rather than
             // index out of range.
             if (a_args.size() != B->params.size()) continue;
-            auto rewrite = [&](ValueId& v) {
-                if (!v.is_valid()) return;
-                for (u32 i = 0; i < B->params.size(); i++) {
-                    ValueId param = B->params[i].value;
-                    if (param.is_valid() && param.id == v.id) {
-                        v = a_args[i].value;
-                        return;
-                    }
-                }
-            };
-            // Rewrite B's instructions and terminator (B-local refs to its
-            // params now resolve to A's args).
-            for (IRInst* inst : B->instructions) {
-                for_each_operand(inst, [&](ValueId& v) { rewrite(v); });
+            if (subst.empty()) {
+                subst.reserve(num_values);
+                for (u32 i = 0; i < num_values; i++) subst.push_back(i);
             }
-            for_each_terminator_operand(B->terminator, [&](ValueId& v) { rewrite(v); });
+            for (u32 i = 0; i < B->params.size(); i++) {
+                ValueId param = B->params[i].value;
+                ValueId arg = a_args[i].value;
+                if (param.is_valid() && arg.is_valid() && param.id < num_values) {
+                    subst[param.id] = arg.id;
+                }
+            }
 
             // Move B's instructions into A, replace A's terminator.
             for (IRInst* inst : B->instructions) {
@@ -358,6 +362,29 @@ bool run_block_merging(IRFunction* func) {
             any_changed = true;
             // Keep scanning; do not restart. `preds` may now be stale for B's
             // former successors, but only in ways the Goto check above rejects.
+        }
+
+        if (!subst.empty()) {
+            // Path-compress so chains (param -> param -> value) collapse.
+            // Dominance makes cycles impossible: each param maps to a value
+            // defined strictly above it.
+            auto find = [&](u32 id) -> u32 {
+                while (subst[id] != id) { subst[id] = subst[subst[id]]; id = subst[id]; }
+                return id;
+            };
+            for (u32 i = 0; i < num_values; i++) (void)find(i);
+
+            auto rewrite = [&](ValueId& v) {
+                if (!v.is_valid() || v.id >= num_values) return;
+                if (subst[v.id] != v.id) v = ValueId{subst[v.id]};
+            };
+            for (IRBlock* block : func->blocks) {
+                for (IRInst* inst : block->instructions) {
+                    for_each_operand(inst, [&](ValueId& v) { rewrite(v); });
+                }
+                for_each_terminator_operand(block->terminator, [&](ValueId& v) { rewrite(v); });
+            }
+            subst.clear_keep_capacity();
         }
     }
     return any_changed;
@@ -719,6 +746,57 @@ bool run_local_cse(IRFunction* func) {
     return true;
 }
 
+// After reorder_blocks_rpo() drops unreachable blocks (branch folding severed
+// their edges), surviving blocks can still hold cleanup of values those blocks
+// defined. The IR builder emits exactly one such cross-block pattern
+// deliberately: scope-exit cleanup (StrRelease / RefDec / Delete, plus their
+// Nullify narrowing annotations) of a *partially-defined* temp — one defined
+// only on a conditional path, e.g. an owned str_concat temp inside the RHS of
+// `&&`. At runtime that pattern is sound because fresh registers are
+// zero-initialized, so the cleanup no-ops on paths where the temp was never
+// created. Once the defining block is deleted, though, the value has no
+// definition anywhere and lowering would fault allocating it. No surviving
+// definition proves the cleanup can never have anything to clean — remove it.
+static bool run_orphaned_cleanup_elim(IRFunction* func) {
+    const u32 num_values = func->next_value_id;
+    Vector<bool> defined(num_values, false);
+    auto define = [&](ValueId v) {
+        if (v.is_valid() && v.id < num_values) defined[v.id] = true;
+    };
+    for (const BlockParam& param : func->params) define(param.value);
+    for (IRBlock* block : func->blocks) {
+        for (const BlockParam& param : block->params) define(param.value);
+        for (IRInst* inst : block->instructions) define(inst->result);
+    }
+
+    bool changed = false;
+    for (IRBlock* block : func->blocks) {
+        u32 w = 0;
+        for (u32 r = 0; r < block->instructions.size(); r++) {
+            IRInst* inst = block->instructions[r];
+            bool orphaned = false;
+            switch (inst->op) {
+                case IROp::StrRelease:
+                case IROp::RefDec:
+                case IROp::Nullify:
+                case IROp::Delete:
+                    orphaned = inst->unary.is_valid() &&
+                               (inst->unary.id >= num_values || !defined[inst->unary.id]);
+                    break;
+                default:
+                    break;
+            }
+            if (orphaned) {
+                changed = true;
+            } else {
+                block->instructions[w++] = inst;
+            }
+        }
+        while (block->instructions.size() > w) block->instructions.pop_back();
+    }
+    return changed;
+}
+
 void optimize_function(IRFunction* func, BumpAllocator& /*allocator*/) {
     // Phase 2 first to clean up Copy chains (so branch conditions resolve
     // to their underlying ConstBool, not a Copy of one) and dead values.
@@ -753,6 +831,10 @@ void optimize_function(IRFunction* func, BumpAllocator& /*allocator*/) {
     // BlockId reference in terminators and exception/finally/cleanup
     // metadata, so the optimized IR validates and lowers correctly.
     func->reorder_blocks_rpo();
+
+    // Unreachable-block removal can orphan scope-exit cleanup of
+    // partially-defined temps whose defining path was folded away.
+    run_orphaned_cleanup_elim(func);
 }
 
 void optimize_module(IRModule* module, BumpAllocator& allocator) {
