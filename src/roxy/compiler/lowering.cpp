@@ -1324,9 +1324,21 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
         m_live_ranges.push_back(LiveRange{0, 0});
     }
 
-    // Pass 1: assign definition points
+    // Fused Pass 1+2+3: a single forward walk assigns definition points (Pass 1),
+    // scans operands for last-uses (Pass 2), and extends each block param to its
+    // predecessors' terminators (Pass 3). The three are independent (def_point vs
+    // last_use_point), order-tolerant (mark_use is a max), and share one
+    // program-point numbering, so one walk replaces three. Pass 4 (back-edge
+    // extension) stays separate — it reads finalized last_use ranges.
+    //
+    // Correctness of folding Pass 3 into the forward walk: extending a *forward*
+    // target's params is always a no-op (the param's def_point exceeds this
+    // terminator point), and the transient mark is overwritten when the walk
+    // later defines those params; a *back-edge* target was already defined
+    // earlier in the walk, so its extension lands. Same result as three passes.
     u32 point = 0;
     for (IRBlock* block : ir_func->blocks) {
+        // Block params: definition points (Pass 1).
         for (const auto& param : block->params) {
             if (param.value.is_valid() && param.value.id < num_values) {
                 m_live_ranges[param.value.id].def_point = point;
@@ -1334,24 +1346,14 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
             }
             point++;
         }
+
         for (IRInst* inst : block->instructions) {
+            // Result definition point (Pass 1).
             if (inst->result.is_valid() && inst->result.id < num_values) {
                 m_live_ranges[inst->result.id].def_point = point;
                 m_live_ranges[inst->result.id].last_use_point = point;  // at least live at def
             }
-            point++;
-        }
-        point++;  // terminator slot
-    }
-
-    // Pass 2: scan operands to find last uses
-    point = 0;
-    for (IRBlock* block : ir_func->blocks) {
-        // Skip block param slots (they are definitions, not uses)
-        point += block->params.size();
-
-        for (IRInst* inst : block->instructions) {
-            // Extract operands based on op type
+            // Operand last-uses (Pass 2), by op type.
             switch (inst->op) {
                 // Binary ops
                 case IROp::AddI: case IROp::SubI: case IROp::MulI: case IROp::DivI: case IROp::ModI:
@@ -1476,13 +1478,25 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
             point++;
         }
 
-        // Terminator operands
+        // Terminator operand last-uses (Pass 2), plus extension of each jump
+        // target's params to this terminator point (Pass 3). The extension keeps
+        // the register allocator from reusing a block-param register before all
+        // of that block's block-arg MOVs are emitted (parallel-assignment safety).
+        u32 terminator_point = point;
+        auto extend_target_params = [&](const JumpTarget& target) {
+            if (!target.block.is_valid() || target.block.id >= ir_func->blocks.size()) return;
+            IRBlock* target_block = ir_func->blocks[target.block.id];
+            for (u32 i = 0; i < target_block->params.size(); i++) {
+                mark_use(m_live_ranges, target_block->params[i].value, terminator_point);
+            }
+        };
         const Terminator& term = block->terminator;
         switch (term.kind) {
             case TerminatorKind::Goto:
                 for (u32 i = 0; i < term.goto_target.args.size(); i++) {
                     mark_use(m_live_ranges, term.goto_target.args[i].value, point);
                 }
+                if (term.goto_target.args.size() > 0) extend_target_params(term.goto_target);
                 break;
 
             case TerminatorKind::Branch:
@@ -1493,6 +1507,8 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                 for (u32 i = 0; i < term.branch.else_target.args.size(); i++) {
                     mark_use(m_live_ranges, term.branch.else_target.args[i].value, point);
                 }
+                if (term.branch.then_target.args.size() > 0) extend_target_params(term.branch.then_target);
+                if (term.branch.else_target.args.size() > 0) extend_target_params(term.branch.else_target);
                 break;
 
             case TerminatorKind::Return:
@@ -1503,48 +1519,6 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
             case TerminatorKind::Unreachable:
                 break;
         }
-        point++;  // terminator slot
-    }
-
-    // Pass 3: extend block param live ranges to cover predecessor terminators
-    // This prevents the register allocator from reusing block param registers
-    // before all MOVs for block args have been emitted (parallel assignment safety).
-    // For each jump target with args, find the target block's params and extend
-    // their live range to include the predecessor's terminator point.
-    point = 0;
-    for (IRBlock* block : ir_func->blocks) {
-        point += block->params.size();
-        point += block->instructions.size();
-        u32 terminator_point = point;
-
-        auto extend_target_params = [&](const JumpTarget& target) {
-            if (!target.block.is_valid() || target.block.id >= ir_func->blocks.size()) return;
-            IRBlock* target_block = ir_func->blocks[target.block.id];
-            // Extend each param's live range to cover this terminator
-            for (u32 i = 0; i < target_block->params.size(); i++) {
-                mark_use(m_live_ranges, target_block->params[i].value, terminator_point);
-            }
-        };
-
-        const Terminator& term = block->terminator;
-        switch (term.kind) {
-            case TerminatorKind::Goto:
-                if (term.goto_target.args.size() > 0) {
-                    extend_target_params(term.goto_target);
-                }
-                break;
-            case TerminatorKind::Branch:
-                if (term.branch.then_target.args.size() > 0) {
-                    extend_target_params(term.branch.then_target);
-                }
-                if (term.branch.else_target.args.size() > 0) {
-                    extend_target_params(term.branch.else_target);
-                }
-                break;
-            default:
-                break;
-        }
-
         point++;  // terminator slot
     }
 
