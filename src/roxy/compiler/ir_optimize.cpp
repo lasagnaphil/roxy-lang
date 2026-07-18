@@ -299,26 +299,27 @@ static bool block_in_metadata(IRFunction* func, BlockId b) {
     return false;
 }
 
-bool run_block_merging(IRFunction* func) {
+bool run_block_merging(IRFunction* func, PredecessorMap& preds) {
     bool any_changed = false;
-    bool pass_changed = true;
     // Per-pass param->arg substitution table (identity when no merge happened).
     // Sized over the whole value space; lazily initialized on the first merge
     // of each pass and applied in one function-wide sweep at the end of it.
     const u32 num_values = func->next_value_id;
     Vector<u32> subst;
-    // Each pass computes predecessors once and applies every independent merge it
-    // finds, instead of restarting (recompute + rescan) after each single merge.
-    // Merging B into A only *moves* edges — B's successors swap pred B for pred A,
-    // their pred count unchanged — so the only way the in-pass `preds` snapshot
-    // goes stale is by naming a now-emptied block. An emptied block has a None
-    // terminator and fails the Goto check below, so stale entries cause at most a
-    // missed merge (re-attempted next pass), never an incorrect one. Long chains
-    // collapse by roughly half per pass, so this converges in ~log(chain) passes
-    // rather than one pass per merge.
-    while (pass_changed) {
-        pass_changed = false;
-        PredecessorMap preds = compute_predecessors(func);
+    // Each pass applies every independent merge it finds against a single `preds`
+    // snapshot, instead of restarting (recompute + rescan) after each single
+    // merge. Merging B into A only *moves* edges — B's successors swap pred B for
+    // pred A, their pred count unchanged — so the only way the in-pass `preds`
+    // snapshot goes stale is by naming a now-emptied block. An emptied block has a
+    // None terminator and fails the Goto check below, so stale entries cause at
+    // most a missed merge (re-attempted next pass), never an incorrect one. Long
+    // chains collapse by roughly half per pass, so this converges in ~log(chain)
+    // passes rather than one pass per merge.
+    //
+    // `preds` enters valid (built by the caller) and is only rebuilt after a pass
+    // that actually merged; the final no-op pass leaves it valid for the caller.
+    while (true) {
+        bool pass_changed = false;
         for (u32 b_idx = 0; b_idx < func->blocks.size(); b_idx++) {
             IRBlock* B = func->blocks[b_idx];
             if (B->terminator.kind == TerminatorKind::None) continue;  // already-emptied
@@ -399,6 +400,10 @@ bool run_block_merging(IRFunction* func) {
             }
             subst.clear_keep_capacity();
         }
+
+        if (!pass_changed) break;
+        // A merge moved edges, so the snapshot is stale for the next scan.
+        preds = compute_predecessors(func);
     }
     return any_changed;
 }
@@ -453,8 +458,10 @@ static void compact_jump_target(JumpTarget& jt, const Vector<bool>& keep) {
     jt.args = Span<BlockArgPair>(jt.args.data(), w);
 }
 
-bool run_trivial_block_arg_elim(IRFunction* func) {
-    PredecessorMap preds = compute_predecessors(func);
+bool run_trivial_block_arg_elim(IRFunction* func, const PredecessorMap& preds) {
+    // `preds` is supplied by the caller (shared with run_block_merging, which
+    // leaves it valid). This pass rewrites args/params but never CFG edges, so
+    // it neither needs a fresh map nor invalidates the caller's.
 
     // Collect droppable params first, WITHOUT allocating the per-value subst
     // table or per-block keep masks. On typical code this pass is almost always
@@ -827,8 +834,14 @@ void optimize_function(IRFunction* func, BumpAllocator& /*allocator*/) {
     while (changed) {
         changed = false;
         if (run_branch_folding(func)) changed = true;
-        if (run_block_merging(func)) changed = true;
-        if (run_trivial_block_arg_elim(func)) changed = true;
+        // Predecessors are computed once here (after branch folding settled the
+        // CFG edges) and shared by both passes: block-merging refreshes the map
+        // internally only when it merges, and trivial-arg-elim never touches
+        // edges, so the common no-op iteration builds the map exactly once
+        // instead of once per pass. See §4.3.
+        PredecessorMap preds = compute_predecessors(func);
+        if (run_block_merging(func, preds)) changed = true;
+        if (run_trivial_block_arg_elim(func, preds)) changed = true;
         if (run_local_cse(func)) changed = true;
         if (changed) {
             // Re-run Phase 2 to clean up dead values exposed by the CFG

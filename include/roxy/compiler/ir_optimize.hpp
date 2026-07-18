@@ -68,25 +68,32 @@ bool has_side_effect(IROp op);
 // is a ConstBool with a Goto to the taken target. Returns true if changed.
 bool run_branch_folding(IRFunction* func);
 
+struct PredecessorMap;  // defined below; passes take it by reference
+
 // Phase 3: block merging. Merges block B into its sole predecessor A when
 // A's terminator is an unconditional Goto to B. Skips merges that would
 // invalidate exception/finally/cleanup metadata. Merged-away blocks are
 // emptied in place; reorder_blocks_rpo() will drop them. Returns true if
-// any merge occurred.
-bool run_block_merging(IRFunction* func);
+// any merge occurred. `preds` enters valid for the current CFG and is left
+// valid on return (refreshed internally only after a pass that merged), so
+// the caller can reuse it for run_trivial_block_arg_elim without recomputing.
+bool run_block_merging(IRFunction* func, PredecessorMap& preds);
 
 // Phase 3: trivial block-argument elimination. When all predecessors of a
 // block pass the same value for a particular block parameter, replaces the
 // parameter with that value (function-wide substitution) and removes the
 // argument from every predecessor's jump target. Returns true if changed.
-bool run_trivial_block_arg_elim(IRFunction* func);
+// Reads `preds`; does not mutate the CFG's edges, so the caller's map stays
+// valid afterward.
+bool run_trivial_block_arg_elim(IRFunction* func, const PredecessorMap& preds);
 
 // CSR-encoded predecessor lists: one flat `edges` array partitioned by
 // per-block `offsets`, instead of a Vector<Vector<BlockId>> (which costs
 // one heap allocation per block). preds[b] is a Span over edges. Building
-// this is two flat allocations regardless of block count — compute_predecessors
-// runs once per block-merging pass (in a loop) and once per trivial-arg-elim,
-// so the nested-vector allocations it replaced showed up in the compile profile.
+// this is two flat allocations regardless of block count. optimize_function
+// computes it once per fixed-point iteration and threads it through both
+// block-merging and trivial-arg-elim (block-merging refreshes it only after a
+// pass that actually merged), so the common no-op iteration builds it once.
 struct PredecessorMap {
     Vector<u32> offsets;    // size num_blocks+1; block b: edges[offsets[b] .. offsets[b+1])
     Vector<BlockId> edges;  // flattened predecessor block ids

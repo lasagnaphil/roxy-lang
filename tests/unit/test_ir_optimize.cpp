@@ -489,8 +489,9 @@ TEST_SUITE("IR Optimize") {
 
         // Re-running each Phase 3 pass must report no change.
         CHECK_FALSE(run_branch_folding(func));
-        CHECK_FALSE(run_block_merging(func));
-        CHECK_FALSE(run_trivial_block_arg_elim(func));
+        PredecessorMap preds = compute_predecessors(func);
+        CHECK_FALSE(run_block_merging(func, preds));
+        CHECK_FALSE(run_trivial_block_arg_elim(func, preds));
     }
 
     // ===========================================================================
