@@ -141,7 +141,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_ref_inc_pcs.clear();
     // m_requires_register is rebuilt fresh by compute_const_use_modes().
     m_jump_patches.clear_keep_capacity();
-    m_free_regs.clear_keep_capacity();
+    free_regs_reset();
     m_active.clear_keep_capacity();
     m_spill_slots.clear();
     m_delete_desc_cache.clear();
@@ -811,14 +811,7 @@ void BytecodeBuilder::reserve_call_window(IRInst* inst, u32 extra_regs_for_retur
             // may stay in the free list: any value reusing one is defined
             // after this call executes (SSA ordering), when the transient arg
             // block is already dead.
-            for (u32 i = 0; i < m_free_regs.size();) {
-                if (m_free_regs[i] >= base && m_free_regs[i] < base + dst_reg_count) {
-                    m_free_regs[i] = m_free_regs.back();
-                    m_free_regs.pop_back();
-                } else {
-                    i++;
-                }
-            }
+            free_reg_clear_range(base, dst_reg_count);
             for (u32 r = 0; r < dst_reg_count; r++) {
                 insert_active(static_cast<u8>(base + r), last_use);
             }
@@ -859,49 +852,24 @@ u8 BytecodeBuilder::allocate_register(ValueId value) {
     bool can_reuse = (value.id < m_value_same_block.size() && m_value_same_block[value.id]);
 
     u8 reg;
-    if (can_reuse && !m_free_regs.empty()) {
-        // Find the smallest available register for deterministic allocation
-        u32 min_idx = 0;
-        for (u32 i = 1; i < m_free_regs.size(); i++) {
-            if (m_free_regs[i] < m_free_regs[min_idx]) {
-                min_idx = i;
-            }
-        }
-        reg = m_free_regs[min_idx];
-        // Remove by swapping with last element
-        m_free_regs[min_idx] = m_free_regs.back();
-        m_free_regs.pop_back();
+    if (can_reuse && !free_regs_empty()) {
+        // Smallest available register, for deterministic allocation.
+        reg = free_reg_take_min();
     } else {
         // Check if we need to spill before bumping
         u16 reg_limit = m_has_spilling ? static_cast<u16>(m_scratch_regs[0]) : 255;
-        if (m_next_reg >= reg_limit && !m_free_regs.empty()) {
+        if (m_next_reg >= reg_limit && !free_regs_empty()) {
             // Free list has entries (from spilling cross-block values we can't normally reuse)
-            u32 min_idx = 0;
-            for (u32 i = 1; i < m_free_regs.size(); i++) {
-                if (m_free_regs[i] < m_free_regs[min_idx]) {
-                    min_idx = i;
-                }
-            }
-            reg = m_free_regs[min_idx];
-            m_free_regs[min_idx] = m_free_regs.back();
-            m_free_regs.pop_back();
+            reg = free_reg_take_min();
         } else if (m_next_reg >= reg_limit) {
             // No free registers and at the limit — spill to free one
             spill_furthest();
             // After spilling, there should be a register in the free list
-            if (m_free_regs.empty()) {
+            if (free_regs_empty()) {
                 report_error("Internal error: spilling failed to free a register");
                 return 0xFF;
             }
-            u32 min_idx = 0;
-            for (u32 i = 1; i < m_free_regs.size(); i++) {
-                if (m_free_regs[i] < m_free_regs[min_idx]) {
-                    min_idx = i;
-                }
-            }
-            reg = m_free_regs[min_idx];
-            m_free_regs[min_idx] = m_free_regs.back();
-            m_free_regs.pop_back();
+            reg = free_reg_take_min();
         } else {
             reg = bump_register();
         }
@@ -1031,7 +999,7 @@ void BytecodeBuilder::spill_furthest() {
         m_next_stack_slot += 2;
     }
 
-    m_free_regs.push_back(furthest.reg);
+    free_reg_add(furthest.reg);
 }
 
 u8 BytecodeBuilder::get_result_register(ValueId value) {
@@ -1732,19 +1700,25 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
 }
 
 void BytecodeBuilder::expire_before(u32 current_point) {
-    // Pop all entries from the front of m_active whose last_use < current_point
-    // and return their registers to the free list
-    while (!m_active.empty() && m_active.front().last_use < current_point) {
-        u8 freed_reg = m_active.front().reg;
-        // Don't return scratch registers to the free list — they're permanently reserved
+    // Return every register whose value dies before current_point to the free
+    // set. m_active is sorted by last_use ascending, so the expiring entries are
+    // a prefix — count it once, free those registers, then shift the surviving
+    // tail down a single time. (The old code shifted the whole tail per expired
+    // entry: O(prefix * active). Now O(active). See §4.2.)
+    u32 expired = 0;
+    while (expired < m_active.size() && m_active[expired].last_use < current_point) {
+        u8 freed_reg = m_active[expired].reg;
+        // Don't return scratch registers to the free set — they're permanently reserved
         if (!m_has_spilling || (freed_reg != m_scratch_regs[0] && freed_reg != m_scratch_regs[1])) {
-            m_free_regs.push_back(freed_reg);
+            free_reg_add(freed_reg);
         }
-        // Remove front by shifting (m_active is sorted, so we remove from front)
-        for (u32 i = 1; i < m_active.size(); i++) {
-            m_active[i - 1] = m_active[i];
+        expired++;
+    }
+    if (expired > 0) {
+        for (u32 i = expired; i < m_active.size(); i++) {
+            m_active[i - expired] = m_active[i];
         }
-        m_active.pop_back();
+        for (u32 i = 0; i < expired; i++) m_active.pop_back();
     }
 }
 

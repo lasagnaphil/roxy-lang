@@ -9,6 +9,8 @@
 #include "roxy/core/tsl/robin_map.h"
 #include "roxy/core/tsl/robin_set.h"
 
+#include <bit>
+
 namespace rx {
 
 // 16-bit signed immediate range for bytecode encoding
@@ -278,8 +280,35 @@ private:
         }
     }
 
-    // Free-list allocator state
-    Vector<u8> m_free_regs;            // pool of available register numbers
+    // Free-register set: a 256-bit mask (register r is free iff bit r is set).
+    // Replaces a linear-min-scanned Vector<u8> — "smallest free register" is now
+    // a count-trailing-zeros over 4 words instead of a full scan, and freeing a
+    // register is a single bit-set. See §4.2. No duplicates possible (set
+    // semantics), matching the old invariant that a free register appears once.
+    u64 m_free_mask[4];
+
+    void free_regs_reset() { m_free_mask[0] = m_free_mask[1] = m_free_mask[2] = m_free_mask[3] = 0; }
+    void free_reg_add(u8 r) { m_free_mask[r >> 6] |= (u64(1) << (r & 63)); }
+    bool free_regs_empty() const {
+        return (m_free_mask[0] | m_free_mask[1] | m_free_mask[2] | m_free_mask[3]) == 0;
+    }
+    // Take the lowest free register; caller must ensure !free_regs_empty().
+    u8 free_reg_take_min() {
+        for (u32 w = 0; w < 4; w++) {
+            if (m_free_mask[w] != 0) {
+                u32 bit = static_cast<u32>(std::countr_zero(m_free_mask[w]));
+                m_free_mask[w] &= m_free_mask[w] - 1;  // clear lowest set bit
+                return static_cast<u8>(w * 64 + bit);
+            }
+        }
+        return 0xFF;  // unreachable when non-empty
+    }
+    void free_reg_clear_range(u8 base, u32 count) {
+        for (u32 r = base; r < static_cast<u32>(base) + count; r++) {
+            m_free_mask[r >> 6] &= ~(u64(1) << (r & 63));
+        }
+    }
+
     Vector<ActiveAlloc> m_active;      // sorted by last_use ascending
 
     // Register spilling state
