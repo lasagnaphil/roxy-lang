@@ -5,16 +5,41 @@ dense `u32` symbol ID (`Sym`) at lex time, so that name-keyed maps hash and
 compare integers instead of re-running an FNV-1a byte loop and a `memcmp` on
 every probe.
 
-**Status:** in progress. Phase P (canonical mangler, §7) has **landed**
-(`compiler/mangling.{hpp,cpp}`); the `Sym` phases (0–4) are planned. This document
-is the implementation plan; sections other than Phase P do not yet describe
-existing code.
+> **⛔ ABANDONED — measured net regression. Do not re-attempt as specified.**
+>
+> The `Sym` interning approach below was implemented through Phase 0, 1a, 1b,
+> 1c/1d, plus §5.2a, then **reverted**. Measured on the 400-module / 257 KLOC
+> generated corpus (`roxy_gen --seed=7 --modules=400`, interleaved before/after
+> floors — the reliable workload; Lox at ~2 ms is below the noise floor):
+>
+> - **Full interning was +5.6% total compile time** vs. the pre-`Sym` baseline
+>   (parse **+26.7%**, sema **+4.3%**). The driver is the per-identifier-token
+>   **hash + robin_map probe at lex** — paid on hundreds of thousands of tokens,
+>   far more than the downstream lookups it saves.
+> - The cost is **structural and irreducible**: a no-copy `intern_stable` (store
+>   the source-buffer view instead of copying bytes) recovered only ~6% of the
+>   parse tax, proving the cost is the hash/probe, not the copy.
+> - The §5.1 payoff was supposed to come from the **§5.2b `IRInst` union shrink**
+>   (locality on the ~68%-of-compile IR walk). But **§5.2a (contiguous `IRInst`
+>   pool) measured neutral** — the IR walk is **not `IRInst`-cache-locality-bound**
+>   (the bottleneck is the `Vector<IRInst*>` indirection and per-op compute), so
+>   §5.2b (a smaller `IRInst`) would not have helped either, and `BumpAllocator`
+>   cost is size-independent so there's no allocation-time saving.
+>
+> **Only Phase P (the canonical mangler, `compiler/mangling.{hpp,cpp}`) was kept**
+> — it is perf-neutral and eliminated a real 8-way `$$`-mangling drift hazard,
+> independent of interning. See OPTIMIZATION.md §7 for the summary entry, and
+> §5.2 / §8 for where compile-time effort should go instead (the IR walk's
+> indirection and the allocator traffic, *not* `IRInst` locality).
+>
+> The remainder of this document is retained as a record of the design that was
+> built and why it did not pay — it is **not** a description of existing code
+> (only Phase P exists).
 
-**Goal:** replace the raw-`StringView` name representation that flows through the
-lexer, AST, sema, IR builder, and lowering with a `Sym{u32}` that is hashed by
-identity and compared by integer equality. Estimated payoff: **5–15% of total
-compile time**, compounding with the §5.2b `IRInst` union shrink that this change
-unblocks.
+**Original goal (not achieved):** replace the raw-`StringView` name representation
+that flows through the lexer, AST, sema, IR builder, and lowering with a `Sym{u32}`
+hashed by identity and compared by integer equality. Estimated payoff was **5–15%
+of total compile time**; the measured result was **−5.6%** (a regression).
 
 ```
 Source → Lexer[intern] → Token{Sym} → AST{Sym} → Sema{Sym} → IR{Sym} → Lowering → Bytecode

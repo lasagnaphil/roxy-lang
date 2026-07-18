@@ -347,12 +347,17 @@ Touches every `expr->lambda.*` reader in sema/IR-build.
 
 ## 5. Tier 3 — architectural bets (highest ceiling)
 
-### 5.1 Intern identifiers to `u32` symbol IDs at lex time
+### 5.1 Intern identifiers to `u32` symbol IDs at lex time — ⛔ ABANDONED (§7.6)
 
-> **Design doc:** `docs/internals/identifier-interning.md` — the full
-> implementation plan (Sym/InternTable design, the two name populations, the
-> synthetic-name/mangling hazards, phased migration). The summary below is the
-> roadmap entry; the design doc is the plan of record.
+> **Implemented, measured, and reverted — a net regression. See §7.6.** The
+> design and the full findings live in `docs/internals/identifier-interning.md`
+> (retained as a record of what was built and why it didn't pay). Bottom line:
+> interning at lex is a **+5.6% total** regression on the 400-module corpus
+> (parse +26.7%), the cost is the structural per-token hash+probe (not the byte
+> copy), and the §5.2b `IRInst` shrink it was meant to unblock can't help because
+> **§5.2a proved the IR walk is not `IRInst`-locality-bound**. Only Phase P (the
+> canonical mangler) was kept. The optimistic description below is preserved for
+> context but the premise did not hold.
 
 **The single highest-ceiling change.** Today every keyed lookup in sema,
 ir-build, and bc-lower re-hashes identifier bytes (FNV-1a) and every probe
@@ -375,24 +380,30 @@ wide — Token, AST, IR, LSP, and the `intern_format` mangled-name world must
 agree — so migrate behind a typedef with both representations coexisting.
 Cheap down-payment if deferred: the XXH3 hash swap (§3.9).
 
-### 5.2 `IRInst`: contiguous pool + shrunken union
+### 5.2 `IRInst`: contiguous pool + shrunken union — 5.2a tried, NEUTRAL (§7.6)
 
 Two composable steps:
 
-- **5.2a — contiguous pool (do first, measure alone):** allocate `IRInst`s
-  from a dedicated per-function pool instead of interleaving them with
-  span/name allocations in the shared bump arena
-  (`ir_builder_expr.cpp:22-33`), so a block's instructions are back-to-back.
-  Keep `Vector<IRInst*>` for ordering (block-merging and DCE compaction stay
-  cheap pointer moves). Only the allocation site changes. This is a locality
-  change, not the reverted arena-reset pattern.
-- **5.2b — shrink the union (needs §5.1):** the union is sized by
-  `CallExternalData`/`ClosureData` (3× 16-byte StringView/Span,
-  `ssa_ir.hpp:225-247`). With names as `u32`, these drop to ~24 B and
-  `IRInst` goes 80 → ~56 B; moving the rare wide variants behind one arena
-  side-pointer reaches ~48 B. Every `inst->call.*` access site changes.
-
-Benefits every phase that walks IR (~68% of compile).
+- **5.2a — contiguous pool: TRIED AND REVERTED, measured neutral (§7.6).**
+  Allocated `IRInst`s from a dedicated Compiler-owned pool (via an optional
+  `IRBuilder` ctor arg) instead of interleaving them with span/name allocations
+  in the shared bump arena (`ir_builder_expr.cpp:22-33`). On the 400-module
+  corpus this was **neutral-to-slightly-worse** across ir-build / ir-optimize /
+  bc-lower — **the IR-walking phases are not `IRInst`-cache-locality-bound.** The
+  real cost in those phases is the `Vector<IRInst*>` pointer indirection and the
+  per-op compute, not the locality of the targets. This also kills the rationale
+  for 5.2b (below): a *smaller* `IRInst` can't speed up a walk that isn't
+  locality-bound, and `BumpAllocator` is per-alloc (size-independent) so there is
+  no allocation-time saving. If IR-walk cost is ever attacked, target the
+  indirection (e.g. inline small instructions, or SoA the hot fields), not
+  `IRInst` size/locality.
+- **5.2b — shrink the union (needs §5.1): NOT PURSUED — predicted neutral by
+  the 5.2a result.** The union is sized by `CallExternalData`/`ClosureData` (3×
+  16-byte StringView/Span, `ssa_ir.hpp:225-247`); with names as `u32` these drop
+  to ~24 B and `IRInst` goes 80 → ~56 B. But its only benefit is locality on the
+  IR walk, which 5.2a showed is not the bottleneck — so a ~65-site change across
+  lowering + `c_emitter` (miscompile-prone, all-or-nothing to measure) for a
+  predicted-neutral result. Not worth it, and it depends on the abandoned §5.1.
 
 ### 5.3 IR-build scope environment: flat slot array
 
@@ -518,6 +529,24 @@ genuinely expensive (robin_map bucket rehashes, nested variable-sized
    it safe. If retried: the field is a shared sema→IR-builder contract, so any
    caching must produce *exactly* the type the IR-builder fallback would, for
    every member kind, or route methods through a separate field.
+6. **Identifier interning to `u32` Syms at lex time (§5.1) + `IRInst`
+   contiguous pool (§5.2a).** Built through Phase 0/1a/1b/1c/1d + §5.2a, measured
+   on the 400-module / 257 KLOC corpus (the reliable workload — Lox at ~2 ms is
+   below the noise floor and gave misleading sub-2% "wins"), then **reverted**.
+   Interning was **+5.6% total** (parse +26.7%, sema +4.3%): the cost is the
+   per-identifier-token **hash + robin_map probe at lex**, paid on far more tokens
+   than the lookups it saves. It is **structural** — a no-copy `intern_stable`
+   recovered only ~6% of the parse tax, proving the cost is the hash/probe, not
+   the byte copy. The intended payoff (§5.2b `IRInst` shrink → IR-walk locality)
+   evaporated when **§5.2a measured neutral**: the IR walk is not
+   `IRInst`-cache-locality-bound (the bottleneck is `Vector<IRInst*>` indirection
+   + per-op compute), so a smaller `IRInst` cannot help. **Kept only Phase P** (the
+   canonical mangler, `compiler/mangling.{hpp,cpp}`) — perf-neutral, and it
+   eliminated a real 8-way `$$`-mangling drift hazard independent of interning.
+   Methodology lesson: **measure Tier-3 bets on the large `roxy_gen` corpus, not
+   Lox** — every Phase-1 sub-slice looked like a ~1-2% "win" on Lox and was
+   actually noise masking a cumulative regression. Full write-up:
+   `docs/internals/identifier-interning.md`.
 
 ---
 
