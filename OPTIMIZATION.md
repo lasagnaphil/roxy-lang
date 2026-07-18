@@ -7,7 +7,9 @@ It records the measured baseline, the full findings of the 2026-07-17
 whole-codebase study, the prioritized roadmap, and the measurement rules and
 negative results that constrain future work.
 
-Last updated: 2026-07-17. Baseline commit: `55d8fda`.
+Last updated: 2026-07-18. Baseline commit: `55d8fda`. **All of Tier 1 (§3) has
+landed** — the §2 phase numbers predate those landings, so re-baseline
+(`--repeat` + `sample`) before starting Tier-2 work.
 
 ---
 
@@ -96,6 +98,11 @@ default `build/` (Debug, `-O0`, asserts live).
 
 ## 3. Tier 1 — quick wins (low risk, individually measurable)
 
+> **Status: complete.** Every actionable item landed (§3.1, §3.2, §3.3, §3.4,
+> §3.5, §3.7, §3.8, and §3.9's `detect_cycle`/`scan_imports`). §3.6 and §3.9's
+> XXH3 swap were tried and reverted as negative results (§7). Next live work is
+> Tier 2 (§4).
+
 ### 3.1 Gate `ir-validate` out of release compiles — guaranteed −2.1%
 
 > **Landed (`9f4aca9`).** `link_modules()` gates the validator behind
@@ -111,6 +118,12 @@ jump-arg counts) — it catches compiler bugs, never user errors. Gate it behind
 fuzzing. Best impact-to-effort ratio in this document.
 
 ### 3.2 Lexer NUL sentinel — remove the per-byte bounds check
+
+> **Landed (`b8f8d36`).** `peek()` is now an unchecked load
+> (`src/roxy/shared/lexer.cpp:78-84`); the source buffer's NUL sentinel at
+> `[m_length]` (asserted in the `Lexer` constructor) fails every scan-loop
+> predicate, and `next_token()` keeps the single `is_at_end()` check.
+> `peek_next()` retains its bounds check per the caveat below.
 
 `peek()` (`src/roxy/shared/lexer.cpp:69-72`) branches on `is_at_end()` for
 every source character; `skip_whitespace` (~3% of compile) is the hottest
@@ -131,6 +144,11 @@ constructor to lock the contract.
 
 ### 3.3 `m_block_offsets`: robin_map → direct-indexed vector (bc-lower)
 
+> **Landed (`28d3526`).** `m_block_offsets` is now a `Vector<u32>`
+> (`lowering.hpp:162`, sentinel `NO_OFFSET`), refilled per function via
+> `clear_keep_capacity` — the same transformation that delivered −21% on
+> bc-lower for the ValueId maps (`dbd74a6`).
+
 `tsl::robin_map<u32,u32>` BlockId→code-offset (`lowering.hpp:141`), probed once
 per Goto / twice per Branch in `patch_jumps` (`src/roxy/compiler/lowering.cpp:2717`)
 plus per exception-handler/cleanup record. After `reorder_blocks_rpo`,
@@ -140,6 +158,11 @@ plus per exception-handler/cleanup record. After `reorder_blocks_rpo`,
 that delivered −21% on bc-lower for the ValueId maps (`dbd74a6`).
 
 ### 3.4 Sema: stop re-resolving the same symbol (call/identifier/get paths)
+
+> **Landed (`d8e9fc2`).** The callee symbol is resolved once and threaded into
+> the regular-call path; `check_not_moved`/`mark_moved`/`mark_live` gained
+> `Symbol*` overloads so callers pass the symbol they already hold, and
+> `analyze_get_expr` reuses the object lookup.
 
 One ordinary call `foo(a, b)` today performs: `primitive_by_name` (a cascade of
 up to 13 memcmps, `src/roxy/compiler/types.cpp:474-489`), `is_generic_fun` ×2
@@ -196,6 +219,11 @@ read it in Pass 3. Same for methods/ctors/dtors.
 
 ### 3.7 IR-build: `gen_identifier_expr` triple lookup
 
+> **Landed (`87f1585`).** The `LocalVar*` from `find_local` is hoisted and
+> reused instead of re-walking the scope chain via `lookup_local`, and an
+> `is_ptr` bit folded into `LocalVar` (set at param setup) retires the third
+> (`m_param_is_ptr`) lookup.
+
 The most frequent expression kind pays three lookups
 (`src/roxy/compiler/ir_builder_expr.cpp:940`, `:1013`, `:1016`): `find_local`
 (walks the scope chain, already yields the `LocalVar` holding value + type),
@@ -205,6 +233,11 @@ it; fold an `is_ptr` bit into `LocalVar` (set at param setup) so the third
 lookup disappears. Subsumed by §5.3 if that lands, but worth taking now.
 
 ### 3.8 bc-lower: `m_const_skip_load` robin_set → dense bitvector
+
+> **Landed (`3a90eb2`).** `m_const_skip_load` is gone; skip-load eligibility is
+> derived directly from the dense `requires_register` vector
+> (`!requires_register[id]` for a numeric const), which also deleted the second
+> collection pass.
 
 A `robin_set<u32>` of ValueIds (`lowering.hpp:234`) probed **twice per
 result-producing instruction** (`lowering.cpp:236`, `:1750`). The information
@@ -245,6 +278,17 @@ the second collection pass (`:1135-1145`).
 
 ### 4.1 Fuse `compute_liveness` passes 1-3 into one walk (bc-lower)
 
+> **Landed (`aae5373`).** `compute_liveness` folded its first three full-IR
+> walks into one: Pass 1 (def points), Pass 2 (operand last-uses), and Pass 3
+> (extend block params to predecessor terminators) share one program-point
+> numbering and are independent / order-tolerant (`mark_use` is a max). Pass 4
+> (back-edge extension) stays separate — it reads finalized ranges. Folding
+> Pass 3 into the forward walk is sound: a forward target's param extension is a
+> no-op (its def_point exceeds the terminator point) overwritten by the later
+> def; a back-edge target is already defined earlier in the walk, so its
+> extension lands — byte-identical live ranges. Measured **bc-lower −1.8%**,
+> total −0.5% (5/5 rounds negative) on corpus_400. VM suite green (1394 cases).
+
 Passes 1 (def points, `lowering.cpp:1157-1175`), 2 (uses, `:1177-1337`), and
 3 (block-param extension at predecessor terminators, `:1339-1379`) are three
 sequential full-IR walks. `def_point` and `last_use` are independent fields,
@@ -255,6 +299,15 @@ finalized `last_use`. Note: Pass 4 (`:1417-1450`) is O(back_edges × values), a
 latent quadratic on loop-heavy functions; not currently hot, worth watching.
 
 ### 4.2 Register allocator: kill the O(active²) and the linear min-scans
+
+> **Landed (`de54bc5`).** Both parts done. `expire_before` now counts the
+> sorted-prefix of dying entries and shifts the surviving tail once (O(active)
+> instead of O(prefix·active)). The `m_free_regs` `Vector<u8>` became a 256-bit
+> mask (`m_free_mask[4]`): "smallest free register" is `std::countr_zero` over
+> four words, freeing a register is one bit-set, and the three duplicated
+> min-scans collapse to `free_reg_take_min()`. **Measured −18.3% on bc-lower**
+> (77.0 → 62.9 ms on corpus_400), ≈ −2.6% total — the largest single bc-lower
+> win since `dbd74a6`. Verified: full VM test suite green (1394 cases).
 
 - `expire_before` (`lowering.cpp:1532-1547`): each front-pop shifts every
   remaining `m_active` element left, so expiring k entries is O(active²), once
@@ -268,6 +321,15 @@ latent quadratic on loop-heavy functions; not currently hot, worth watching.
 
 ### 4.3 ir-optimize: compute predecessors once per fixed-point iteration
 
+> **Landed (`ecfa693`).** `optimize_function` builds the `PredecessorMap`
+> once per outer iteration (after branch folding settles the edges) and threads
+> it through both `run_block_merging` — which refreshes it internally only after
+> a pass that actually merged, and leaves it valid on return — and
+> `run_trivial_block_arg_elim`, which never touches edges. The common no-op
+> iteration now builds the map once instead of once per pass. Measured
+> **ir-optimize −0.9%** (−0.6 ms on corpus_400), total −0.25% — small but
+> consistent (5/5 rounds negative). VM suite green (1394 cases).
+
 Each iteration builds the CSR `PredecessorMap` twice — inside
 `run_block_merging`'s loop (`ir_optimize.cpp:303`) and again at the top of
 `run_trivial_block_arg_elim` (`:417`) — although trivial-arg-elim was measured
@@ -278,6 +340,13 @@ tolerates stale entries per its own comment at `:289-300`).
 
 ### 4.4 Parser: switch-based dispatch
 
+> **Attempted — measured neutral, reverted (§7.7).** Converting `declaration()`,
+> `statement()`, and `expression()`'s `match()`/`check()` chains to `switch`es on
+> `m_current.kind` left **parse +0.10%** (the phase it targets — dead neutral)
+> and total +0.16%, both inside the noise band, on corpus_400. The dispatch
+> chains are highly branch-predictable, so the CPU predictor already collapses
+> them and a jump table wins nothing at N≈11–19 arms. Tests green; not committed.
+
 An ordinary expression statement runs ~7 failed `match()` calls in
 `declaration()` (`src/roxy/compiler/parser.cpp:1426-1486`) plus ~12 more in
 `statement()` (`:968-1006`) — ~19 sequential kind-compares per statement —and
@@ -287,6 +356,15 @@ operators on every expression. Convert both to a single `switch` on
 
 ### 4.5 Parser: stop allocating + copying a `Stmt` per declaration
 
+> **Attempted — measured neutral, reverted (§7.8).** Built the common expression
+> statement directly into `declaration()`'s wrapping `Decl` (threaded `dest`),
+> skipping a separate `alloc<Stmt>()` and the 88-byte `decl->stmt = *stmt` copy.
+> Across three interleaved corpus_400 runs, parse's delta tracked the *untouched*
+> ir-build / bc-lower phases (a ~−0.7% systematic thermal offset) — no
+> parse-specific signal. A *bump* `alloc<T>()` is a pointer increment (~10 ns),
+> so eliminating one plus a small copy is below the noise floor. Tests green; not
+> committed.
+
 `declaration()` (`parser.cpp:1486-1493`, also `for_statement` `:1099-1106`)
 arena-allocates a `Stmt`, then allocates a `Decl` and **byte-copies the whole
 Stmt into the Decl's union**, abandoning the original — one wasted allocation
@@ -295,6 +373,14 @@ build-in-place variant that fills `decl->stmt` directly; keep the
 `Stmt*`-returning form for `if`/`while`/`for` bodies.
 
 ### 4.6 IR-build: memoize `collect_assigned_vars`
+
+> **Attempted — measured a regression, reverted (§7.9).** Memoizing each compound
+> statement's assigned-var set in a per-function
+> `robin_map<Stmt*, Vector<StringView>>` (cleared in `begin_function_body`) made
+> **ir-build +2.6% slower** (122.9 → 126.0 ms) on corpus_400. Correct
+> (phi/block-arg order preserved, VM suite green), but at this corpus's nesting
+> depth (~3–5) the re-walk savings don't recover the cost of a per-compound-stmt
+> heap `Vector` (one each across ~18K ifs + ~13K loops). Not committed.
 
 Each `gen_if`/`gen_when`/`gen_while`/`gen_for`/`gen_try` calls
 `collect_assigned_vars` (`src/roxy/compiler/ir_builder_stmt.cpp:1335-1484`),
@@ -306,6 +392,18 @@ first-occurrence ordering (phi param order depends on it) and the inout-arg
 write handling (`:1460-1463`).
 
 ### 4.7 Operand-shape LUT: unify three hand-synced ~90-way switches
+
+> **Deferred (not attempted).** After the Tier-2 pass, this was the one item left
+> unimplemented — deliberately. Its stated value is **maintainability** (collapse
+> three hand-synced ~90-way IROp switches into one `operand_shape[256]` table),
+> not compile time, and every dispatch-style change measured this pass (§4.4) was
+> perf-neutral, so it is unlikely to move the metric this program targets. It is
+> also the **highest miscompile risk** in Tier 2: the table feeds
+> `for_each_operand` → liveness → register allocation, so a single wrong entry
+> among the ~90 IROps could miscompile in a way the suite might not catch (cf. the
+> §7.5 double-delete that passed all *compiler* tests). Worth doing as a focused,
+> separately-reviewed **code-quality** change with the `static_assert`-against-
+> enum-count guard the plan describes — but out of scope for a compile-time pass.
 
 `for_each_operand` (`include/roxy/compiler/ir_optimize.hpp:131-252`),
 `compute_liveness` Pass 2 (`lowering.cpp:1185-1305`), and
@@ -324,6 +422,18 @@ Note: `compute_const_use_modes` needs LHS/RHS position awareness for RK ops
 
 ### 4.8 Parser: reserve transient list vectors
 
+> **Landed (`c90994b`).** `reserve(8)` on the three highest-frequency transient
+> parser Vectors — call arguments, function parameters, and block declarations —
+> collapses the core `Vector` 1→2→4→8 malloc/realloc/free ladder to a single
+> allocation. Each reserve is guarded by the same non-empty check that gates the
+> parse loop, so zero-arg calls and empty blocks stay allocation-free (no
+> pessimization of the empty case). Measured **parse −4.4%** (55.9 → 53.4 ms on
+> corpus_400), ≈ −0.5% total. VM suite green. The remaining lower-frequency sites
+> (struct/enum fields, f-string parts, when cases) are available for incremental
+> gains. **This is the item that overturns the §4.4/§4.5 "parse has no headroom"
+> read** — the headroom is in the core-`Vector` realloc ladder (real `malloc`
+> traffic), not in dispatch or bump-allocation.
+
 Core `Vector` grows 1→2→4→8 (`vector.hpp:207-217`), so every parsed list
 (call args, params, block statements, fields, variants — all built in a
 transient `Vector` then copied to the arena via `alloc_span`) pays ~log2(N)
@@ -334,6 +444,16 @@ have different size distributions. This is an allocation-*count* reduction,
 not the reuse pattern that measured slower (§7).
 
 ### 4.9 Box `LambdaExpr` out of the `Expr` union
+
+> **Attempted — neutral on compile time, reverted (§7.10).** Boxing `LambdaExpr`
+> to a `LambdaExpr*` shrank `sizeof(Expr)` 136 → 112 B and the per-node `Expr()`
+> memset 104 → 80 B, but measured neutral on corpus_400 (parse +0.31%, total
+> +0.24% — all phases inside noise): 24 B less memset per node is too small a
+> slice of per-node work to register, and denser nodes don't speed the
+> pointer-chasing AST walks. The change is a real **18% AST-node memory
+> reduction** and a clean design (a rare 104 B variant no longer sizes the hot
+> union), so it may be worth keeping for *footprint* — but that's out of scope
+> for a compile-*time* program. Not committed here.
 
 `sizeof(Expr)` is 136 B driven by the inline `LambdaExpr`
 (`ast.hpp:354-368`), and `Expr()` memsets 104 B on every node
@@ -484,6 +604,16 @@ bc-lower 0.781 → 0.533 ms (−32%).
 | `55d8fda` | local_cse: defer subst alloc; copy-prop: drop zero-fill | ir-optimize −7% |
 | `828724f` | §3.5 dense primitive operator-dispatch tables (name-free) | sema |
 | `9f4aca9` | §3.1 gate ir-validate behind NDEBUG (skip in release) | −2.1% (release) |
+| `b8f8d36` | §3.2 lexer `peek()` unchecked load via NUL sentinel | lexer |
+| `28d3526` | §3.3 direct-index `m_block_offsets` instead of a robin_map | bc-lower |
+| `d8e9fc2` | §3.4 reuse resolved symbols instead of re-looking them up | sema |
+| `87f1585` | §3.7 collapse `gen_identifier_expr`'s triple lookup | ir-build |
+| `3a90eb2` | §3.8 derive const skip-load from dense requires-register flags | bc-lower |
+| `4248e33` | §3.9 free cleanups (`detect_cycle` map, `scan_imports` early-out) | compiler |
+| `de54bc5` | §4.2 bitset free-register set + O(active) `expire_before` | bc-lower −18.3% |
+| `ecfa693` | §4.3 share one `PredecessorMap` across block-merge + trivial-arg-elim | ir-optimize −0.9% |
+| `aae5373` | §4.1 fuse `compute_liveness` passes 1-3 into one IR walk | bc-lower −1.8% |
+| `c90994b` | §4.8 `reserve(8)` the hot transient parser Vectors (guarded) | parse −4.4% |
 
 ---
 
@@ -547,6 +677,64 @@ genuinely expensive (robin_map bucket rehashes, nested variable-sized
    Lox** — every Phase-1 sub-slice looked like a ~1-2% "win" on Lox and was
    actually noise masking a cumulative regression. Full write-up:
    `docs/internals/identifier-interning.md`.
+7. **Parser switch-based dispatch (§4.4)** — replaced the sequential
+   `match()`/`check()` kind-compare chains in `declaration()` / `statement()` /
+   `expression()` with `switch`es on `m_current.kind` (jump table vs. up to ~19
+   sequential compares per statement, 11 per expression). Measured on
+   corpus_400: **parse +0.10%** — the only phase touched, i.e. dead neutral —
+   and total +0.16% ± 0.21% (within noise, if anything marginally worse). The
+   dispatch chains are highly branch-predictable, so the CPU's branch predictor
+   already collapses them; a jump table saves nothing at N≈11–19 arms. Tests
+   stayed green; reverted as a perf-neutral change. (The `expression()` arm did
+   remove a genuine redundancy — an 11-way `check()` chain immediately mirrored
+   by an identical mapping `switch` — worth revisiting as a pure readability
+   cleanup, not a perf change.)
+8. **Build the Decl's statement in place (§4.5)** — the common expression
+   statement was built directly into `declaration()`'s wrapping `Decl` (via a
+   threaded `dest`), skipping a separate `alloc<Stmt>()` and the 88-byte
+   `decl->stmt = *stmt` copy. Measured neutral on corpus_400 across three
+   interleaved runs (one thermally clean): parse's delta tracked the *untouched*
+   ir-build / bc-lower phases (~−0.7% systematic thermal offset), so there was
+   no parse-specific signal. The reason generalizes this section's opening
+   lesson to the *bump* allocator: a bump `alloc<T>()` is a pointer increment
+   (~10 ns), so removing one allocation + a small copy sits below the noise
+   floor. Tests green; reverted. **Meta-finding:** two parse-targeted micro-opts
+   in a row (§4.4, §4.5) measured neutral — parse (~15% of compile) has little
+   headroom in per-node *dispatch* (branch-predictable) or *bump*-allocation
+   (pointer-bump cheap). **Corrected by §4.8:** parse *does* have real headroom
+   in the core-`Vector` 1→2→4→8 malloc/realloc ladder for transient lists —
+   `reserve(8)` there measured **parse −4.4%**. The lesson is narrower than
+   "parse is tapped out": micro-opts that only touch dispatch or bump-allocation
+   don't pay, but cutting genuine `malloc` traffic does.
+9. **Memoize collect_assigned_vars per compound Stmt* (§4.6)** — cached each
+   block/if/while/for/when/try subtree's ordered assigned-var set in a
+   per-function `robin_map<Stmt*, Vector<StringView>>`, cleared in
+   `begin_function_body`, to kill the super-linear re-walk (a statement nested
+   under k control-flow constructs is collected k times). Correct — phi/block-arg
+   order preserved, full VM suite green — but **ir-build +2.6%** (122.9 → 126.0 ms)
+   on corpus_400, a regression. The cache's per-entry heap `Vector` (one per
+   compound statement — ~18K ifs + ~13K loops in the corpus) plus the map hashing
+   cost more than the re-walks they eliminate at this corpus's nesting depth
+   (~3–5). Same lesson as items 1 and 8: memoization pays only when the recomputed
+   work is expensive relative to a heap allocation, and a shallow-nesting re-walk
+   of `StringView`s is not. If revisited, the cache must be allocation-free — e.g.
+   a single flat `StringView` arena with an `(offset, count)` per `Stmt` in the
+   map — to have a chance; the per-entry-`Vector` form is a measured loss.
+10. **Box LambdaExpr out of the Expr union (§4.9)** — replaced the inline
+    `LambdaExpr lambda` (104 B) with a `LambdaExpr*`, dropping `sizeof(Expr)`
+    136 → 112 B and the per-node `Expr()` memset 104 → 80 B. Small, clean change
+    (5 sites: the union member, the parser creation, two `LambdaExpr&` deref
+    bindings in sema/ir-build, and the generics clone's fresh allocation —
+    `emplace` value-initializes, so the analysis fields stay zeroed as the old
+    memset left them). Full VM suite green. But **neutral on compile time**
+    (parse +0.31%, total +0.24% ± 0.80% on corpus_400): the 24-B-smaller memset
+    is a negligible slice of Expr creation, and the smaller node doesn't speed
+    the pointer-chasing AST walks (112 B still spans two cache lines, and nodes
+    aren't visited in allocation order). Reverted for this program. **Caveat /
+    possible keep:** it is a genuine 18% AST-node memory reduction with a clean
+    design (a rare fat variant no longer sizes the hot `Expr` union) — worth
+    resurrecting as a memory-footprint change, which this compile-time-scoped
+    program does not measure.
 
 ---
 
@@ -585,15 +773,17 @@ genuinely expensive (robin_map bucket rehashes, nested variable-sized
 
 ## 9. Suggested execution order
 
-1. ~~§3.1 ir-validate gate~~ (landed `9f4aca9`), §3.2 lexer sentinel, §3.3
-   block-offsets vector — independent, low-risk wins; land and measure each.
-2. §3.4-3.8 sema/ir-build/bc-lower redundant-lookup batch (§3.5 landed `828724f`).
-3. §4.2 allocator quadratics + §4.3 predecessor sharing + §4.1 liveness
+1. ~~Tier 1 (§3) — fully landed~~ (`9f4aca9`, `b8f8d36`, `28d3526`, `d8e9fc2`,
+   `828724f`, `87f1585`, `3a90eb2`, `4248e33`); §3.6 and §3.9's XXH3 swap were
+   reverted (§7). **Re-baseline (`--repeat` + `sample`) before continuing** —
+   the §2 numbers predate these landings.
+2. §4.2 allocator quadratics + §4.3 predecessor sharing + §4.1 liveness
    fusion (bc-lower/ir-optimize structural cleanups).
-4. §4.4-4.6 parser dispatch + declaration-in-place + assigned-vars memo.
-5. Decide the big bets: §5.1 interning groundwork (typedef migration) →
-   §5.2a instruction pool (measure alone) → §5.3 flat slot environment →
-   §5.2b union shrink. §5.4/§5.5 as appetite allows.
+3. §4.4-4.6 parser dispatch + declaration-in-place + assigned-vars memo.
+4. Decide the remaining big bets: ~~§5.1 interning~~ (abandoned, §7.6) and
+   ~~§5.2a instruction pool~~ (neutral, §7.6) are done; §5.3 flat slot
+   environment is the live Tier-3 item, then §5.4 SoA tokens / §5.5 parse
+   parallelism as appetite allows.
 
 Re-profile (`sample` + `--repeat`) after each tier; the ranking above assumes
 the baseline mix, and landing Tier 1 will shift it.
