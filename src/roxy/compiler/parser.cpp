@@ -309,6 +309,7 @@ Expr* Parser::finish_call(Expr* callee) {
     SourceLocation loc = m_previous.loc;
 
     if (!check(TokenKind::RightParen)) {
+        arguments.reserve(8);  // §4.8: one alloc instead of the 1->2->4->8 grow ladder (non-empty only)
         do {
             CallArg arg;
             arg.modifier = ParamModifier::None;
@@ -1009,6 +1010,7 @@ Stmt* Parser::statement() {
 Stmt* Parser::block_statement() {
     SourceLocation loc = m_previous.loc;
     Vector<Decl*> declarations;
+    if (!check(TokenKind::RightBrace) && !is_at_end()) declarations.reserve(8);  // §4.8
 
     while (!check(TokenKind::RightBrace) && !is_at_end()) {
         Decl* decl = declaration();
@@ -1529,6 +1531,7 @@ Vector<Param> Parser::parse_parameters() {
     Vector<Param> params;
 
     if (!check(TokenKind::RightParen)) {
+        params.reserve(8);  // §4.8: skip the grow ladder (non-empty only)
         do {
             Param param;
             param.modifier = ParamModifier::None;
