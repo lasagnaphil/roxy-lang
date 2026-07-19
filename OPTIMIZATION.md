@@ -7,26 +7,36 @@ It records the measured baseline, the full findings of the 2026-07-17
 whole-codebase study, the prioritized roadmap, and the measurement rules and
 negative results that constrain future work.
 
-Last updated: 2026-07-18. Baseline commit: `55d8fda`. **All of Tier 1 (§3) has
-landed** — the §2 phase numbers predate those landings, so re-baseline
-(`--repeat` + `sample`) before starting Tier-2 work.
+Last updated: 2026-07-19. Baseline commit: `ca72ee5`. **Tier 1 (§3) and the
+landed Tier-2 wins (§4.1/§4.2/§4.3/§4.8) are in.** §2 below is re-baselined on
+the 400-module corpus at `ca72ee5` and reflects them; the pre-Tier-2 Lox
+numbers it replaced are gone (Lox is now a smoke test only — see §1).
 
 ---
 
 ## 1. Goals and methodology
 
-The reference workload is `examples/lox/main.roxy` (~3,500 lines, 8 modules) —
-the one reliably large, compiler-heavy program in the repo. All numbers below
-come from:
+The reference workload is the **seeded 400-module corpus** from `roxy_gen`
+(~257 KLOC) — large enough that per-phase effects clear the measurement noise
+floor. `examples/lox/main.roxy` (~3,500 lines, 8 modules) is kept only as a fast
+smoke test: at ~1.9 ms/compile it sits *below* the noise floor, so sub-few-percent
+effects are invisible on it — this misled several Tier-2 sub-measurements before
+they were re-run on the corpus (see §7.6, §7.8). All numbers below come from:
 
 ```bash
 cmake -B build-profile -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
       -DCMAKE_CXX_FLAGS="-fno-omit-frame-pointer"
 ninja -C build-profile roxy
-./build-profile/roxy --repeat=3000 examples/lox/main.roxy    # phase table
-# sampling: run --repeat=15000 in background, then
-/usr/bin/sample <pid> 20 1 -file profile.txt                 # leaf + call-graph
+./build/roxy_gen --seed=7 --modules=400 --out=/tmp/corpus_400   # ~257 KLOC, seeded
+./build-profile/roxy --repeat=20 /tmp/corpus_400/main.roxy      # phase table
+# sampling: run --repeat=400 in background, then
+/usr/bin/sample <pid> 18 1 -file profile.txt                    # leaf + call-graph
 ```
+
+For A/B before/after work, take the **median of several interleaved
+`--repeat=20` rounds** (the corpus compiles in ~340 ms, so each round is a
+sub-second sample); trust a phase delta only when it clears that phase's
+round-to-round noise (roughly ±0.3 % parse/bc-lower, ±0.7 % ir-build, ±1 % total).
 
 Full tooling reference: `docs/internals/profiling.md`. Never profile the
 default `build/` (Debug, `-O0`, asserts live).
@@ -46,53 +56,82 @@ default `build/` (Debug, `-O0`, asserts live).
 
 ---
 
-## 2. Measured baseline (2026-07-17, `55d8fda`, arm64 RelWithDebInfo)
+## 2. Measured baseline (2026-07-19, `ca72ee5`, arm64 RelWithDebInfo, corpus_400)
 
-### Phase breakdown (`--repeat=3000`, total 2.109 ms per compile)
+### Phase breakdown (corpus_400, median of 6×`--repeat=20`, total ~344 ms/compile)
 
-| Phase       | Time     | Share  |
-|-------------|----------|--------|
-| ir-build    | 0.573 ms | 27.2%  |
-| bc-lower    | 0.546 ms | 25.9%  |
-| sema        | 0.352 ms | 16.7%  |
-| ir-optimize | 0.303 ms | 14.3%  |
-| parse       | 0.285 ms | 13.5%  |
-| ir-validate | 0.045 ms |  2.1%  |
-| topo-sort / link-other | ~0.006 ms | 0.3% |
+| Phase       | Time      | Share  |
+|-------------|-----------|--------|
+| ir-build    | 115.0 ms  | 33.4%  |
+| ir-optimize |  65.2 ms  | 18.9%  |
+| bc-lower    |  57.6 ms  | 16.7%  |
+| sema        |  54.5 ms  | 15.8%  |
+| parse       |  51.3 ms  | 14.9%  |
+| ir-validate |   0.0 ms  |  0.0%  |
+| coro-lower / topo-sort / link-other | ~0.4 ms | 0.1% |
 
-### Leaf-level clusters (20 s `sample`, 16,489 leaf samples)
+`ir-validate` is 0.0 ms — gated out of release builds (§3.1). **The mix shifted
+from the pre-Tier-2 Lox baseline:** `ir-build` is now clearly dominant (33 %),
+and `bc-lower` fell from #2 (25.9 % on Lox) to #3 (16.7 %) — partly the §4.1/§4.2
+wins (−20 % bc-lower on the corpus), partly that the corpus's larger, more
+numerous functions weight ir-build and ir-optimize more than Lox does.
 
-| Cluster | Share | Detail |
-|---------|-------|--------|
-| **Allocator traffic** (malloc/free/memmove/memset/bzero) | **~22%** | Top attributed drivers: `IRBuilder::emit_inst` 742 samples, `IRFunction::reorder_blocks_rpo` 379, `SymbolTable::define` 172, then a long tail across parser/lowering |
-| Lexer (`next_token` + `skip_whitespace` + `identifier_type`) | ~8% | 732 + 400 + 166 samples |
-| `compute_liveness` | ~5% | Still the #1 single function (855 samples) |
-| `memcmp` | ~3% | Identifier-content comparisons: `find_variant` 61, `lookup_method_in_hierarchy` 43, `SymbolTable::lookup` 41, `find_variant_field` 40, `lookup_local` 36, `named_type_by_name` 36, `find_field` 34, … |
+Lox smoke test (`--repeat=2000`): ~1.9 ms total, mix ir-build 29 % / bc-lower
+24.6 % / sema 17.8 % / ir-optimize 14.8 % / parse 13.7 %. Note bc-lower still
+dominates *Lox* — the §4.1/§4.2 bc-lower wins are **invisible at Lox scale**,
+exactly why the corpus is the reference.
+
+### Leaf-level clusters (corpus_400, 18 s `sample`, ~15,100 samples)
+
+Caveat: the RelWithDebInfo build inlines aggressively, so many bc-lower /
+ir-optimize / ir-build helpers fold into their callers and carry no *self* time
+— per-function attribution is coarser than the old Lox sample, and the shares
+below (inclusive counts / total) are lower bounds. What stays visible:
+
+| Cluster / function | ~Share | Detail |
+|--------------------|--------|--------|
+| `next_token` + lexer scan | ~2.2% | 328 samples — parse's top single cost |
+| `memcmp` | ~1.8% | 270 — identifier-content compares; still the top non-IR-walk cost (the interning that would kill it was abandoned, §5.1/§7.6) |
+| ir-build `gen_identifier` + `emit_inst` | ~2.7% | 234 + 166 — drivers of the dominant ir-build phase |
+| `SymbolTable` lookup/define | ~1.1% | 168 |
+| `resolve_type_expr` | ~0.5% | 73 — sema type resolution |
+| Allocator traffic (malloc/free/memmove/memset) | ≥~1.2% | ~177 attributed leaves, heavily undercounted (inlined allocations fold into callers) |
+
+`compute_liveness` no longer surfaces as a hot single function — §4.1 fused its
+three IR walks into one and §4.2 removed the register-allocator's linear
+free-register scans.
 
 ### Hot data-structure sizes
 
 | Type | Size | Note |
 |------|------|------|
 | `IRInst` | 80 B | union inflated by 48 B call/closure variants (3× StringView/Span); individually bump-allocated, pointer-chased |
-| `Expr` | 136 B | union inflated by inline `LambdaExpr` (~104 B); `Expr()` memsets 104 B per node |
+| `Expr` | 136 B | union inflated by inline `LambdaExpr` (104 B); `Expr()` memsets ~104 B/node. Boxing it (Expr → 112 B) measured neutral on compile time — reverted, §7.10 |
 | `Token` | 48 B | not stored en masse (parser has 1-token lookahead), so size is only a copy cost |
 | `Type` | 176 B | interned + pointer-shared; size irrelevant |
 
 ### The three central architectural facts
 
-1. **~22% of compile time is allocator traffic.** A large share traces to
-   `Vector::ensure_capacity` (`include/roxy/core/vector.hpp:207`) doubling from
-   capacity 1 — every small list walks the 1→2→4→8 realloc ladder — and to
-   per-instruction bookkeeping in `emit_inst`.
+1. **Allocator traffic is a large, real share.** The old Lox sample put it at
+   ~22 %; the inlined corpus sample attributes only ~1 %+ directly, but Tier-2
+   confirmed the driver both ways — the core `Vector` 1→2→4→8 realloc ladder
+   (`include/roxy/core/vector.hpp:207`), whose `reserve()` alone cut parse −4.4 %
+   (§4.8), plus per-instruction bookkeeping in `emit_inst`. §4.6 showed the
+   reverse: *adding* per-node heap allocations (a memoization cache) cost +2.6 %
+   on ir-build.
 2. **There is no compile-time identifier interning.** Every name is a raw
    `StringView` into the source; `std::hash<StringView>` is a byte-wise FNV-1a
    loop (`include/roxy/core/string_view.hpp:81-93`) re-run on **every** map
-   lookup in sema, ir-build, and bc-lower, and every field/method/variant
-   lookup memcmps string content.
-3. **~68% of compile time (ir-build + ir-optimize + ir-validate + bc-lower)
+   lookup, and every field/method/variant lookup memcmps content (still ~1.8 %
+   of samples). Interning to `u32` symbol IDs was built, measured a **+5.6 %
+   regression**, and abandoned (§5.1/§7.6) — this is now a *known cost*, not an
+   open lever.
+3. **~69 % of compile (ir-build + ir-optimize + bc-lower; `ir-validate` now 0)
    walks one data structure**: `Vector<IRInst*>` pointing at scattered 80-byte
-   instructions interleaved in the bump arena with span/name allocations —
-   poor locality, one pointer-chase per instruction per pass.
+   instructions interleaved in the bump arena — poor locality, one pointer-chase
+   per instruction per pass. §5.2a tried to improve that locality (contiguous
+   `IRInst` pool) and measured neutral (§7.6): the cost is the indirection +
+   per-op compute, not the targets' cache locality.
 
 ---
 
@@ -588,9 +627,11 @@ thread-count flag.
 
 ## 6. Landed optimizations (history)
 
-All measured on Lox, RelWithDebInfo, arm64, interleaved where the effect was
-small. Cumulative through `55d8fda`: total compile 2.545 → ~2.11 ms (≈ −17%);
-bc-lower 0.781 → 0.533 ms (−32%).
+Effects for the Tier-1-and-earlier rows are Lox, RelWithDebInfo, arm64,
+interleaved where small; the Tier-2 rows (§4.1/§4.2/§4.3/§4.8) are corpus_400
+(the reliable workload — see §1). Cumulative Lox through `55d8fda`:
+2.545 → ~2.11 ms (≈ −17%). Cumulative **Tier-2 on corpus_400** (pre-Tier-2
+`ea5da04` → `ca72ee5`): **−4.3 % total**, bc-lower −19 %, parse −3.9 %.
 
 | Commit | Change | Effect |
 |--------|--------|--------|
@@ -774,16 +815,18 @@ genuinely expensive (robin_map bucket rehashes, nested variable-sized
 ## 9. Suggested execution order
 
 1. ~~Tier 1 (§3) — fully landed~~ (`9f4aca9`, `b8f8d36`, `28d3526`, `d8e9fc2`,
-   `828724f`, `87f1585`, `3a90eb2`, `4248e33`); §3.6 and §3.9's XXH3 swap were
-   reverted (§7). **Re-baseline (`--repeat` + `sample`) before continuing** —
-   the §2 numbers predate these landings.
-2. §4.2 allocator quadratics + §4.3 predecessor sharing + §4.1 liveness
-   fusion (bc-lower/ir-optimize structural cleanups).
-3. §4.4-4.6 parser dispatch + declaration-in-place + assigned-vars memo.
-4. Decide the remaining big bets: ~~§5.1 interning~~ (abandoned, §7.6) and
+   `828724f`, `87f1585`, `3a90eb2`, `4248e33`); §3.6 and §3.9's XXH3 swap
+   reverted (§7).
+2. ~~Tier 2 (§4) — landed §4.2/§4.3/§4.1/§4.8~~ (`de54bc5`, `ecfa693`, `aae5373`,
+   `c90994b`; corpus_400: −4.3 % total, bc-lower −19 %, parse −3.9 %). §4.4/§4.5/
+   §4.9 measured neutral, §4.6 a +2.6 % regression (§7.7–§7.10), §4.7 deferred.
+   **§2 re-baselined at `ca72ee5`.**
+3. Tier 3 (§5) — the live bets: ~~§5.1 interning~~ (abandoned, §7.6) and
    ~~§5.2a instruction pool~~ (neutral, §7.6) are done; §5.3 flat slot
-   environment is the live Tier-3 item, then §5.4 SoA tokens / §5.5 parse
-   parallelism as appetite allows.
+   environment is the top remaining item, then §5.4 SoA tokens / §5.5 parse
+   parallelism as appetite allows. **ir-build is now the fattest phase (33 %)** —
+   its `emit_inst` / `gen_identifier` cost (§2 leaf table) is the largest untried
+   target, and §5.3 attacks the scope-map churn under it.
 
-Re-profile (`sample` + `--repeat`) after each tier; the ranking above assumes
-the baseline mix, and landing Tier 1 will shift it.
+Re-profile (`sample` + `--repeat` on corpus_400) after each change; the ranking
+above assumes the current §2 mix at `ca72ee5`.
