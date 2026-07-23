@@ -1806,6 +1806,50 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         return emit_call_native(native_name, method_args, expr->resolved_type, static_cast<u32>(native_idx));
     }
 
+    // Primitive/enum receiver: builtin trait methods (42.to_string(), x.hash())
+    // and operator-named methods (a.eq(b), a.lt(b)) — the latter lower to the
+    // SAME raw IR ops as the operator expression so unsigned semantics
+    // (DivU/ModU/UShr/LtU..GeU for u32/u64) and float selection come out right.
+    if (struct_type && (struct_type->is_primitive() || struct_type->is_enum())) {
+        // (a) Native-backed builtin method (to_string/hash, incl. the enum
+        // delegation to i32$$*): sema recorded the native name. The primitive
+        // natives take the receiver value as arg 0 — prepend_self matches.
+        if (!call_expr.mangled_name.empty()) {
+            StringView native_name = call_expr.mangled_name;
+            i32 native_idx = m_registry.get_index(native_name);
+            Span<ValueId> method_args = prepend_self(obj, args);
+            // String-returning results are tracked by gen_expr's ExprCall arm.
+            return emit_call_native(native_name, method_args, expr->resolved_type,
+                                    static_cast<u32>(native_idx));
+        }
+        // (b) String eq/ne route to the string natives (mirrors gen_binary_expr's
+        // string arm) — must precede (c): EqI on string pointers would compare
+        // identity, not contents.
+        if (struct_type->kind == TypeKind::String && args.size() == 1) {
+            if (get_expr.name == "eq"_sv) {
+                return emit_native("str_eq"_sv, {obj, args[0]}, m_types.bool_type());
+            }
+            if (get_expr.name == "ne"_sv) {
+                return emit_native("str_ne"_sv, {obj, args[0]}, m_types.bool_type());
+            }
+        }
+        // (c) Operator-named method → raw IR op via the same selection helpers
+        // the operator expression uses. Enums compare as i32 discriminants.
+        BinaryOp bop;
+        if (args.size() == 1 && trait_method_to_binary_op(get_expr.name, bop)) {
+            IROp op = is_comparison_binary_op(bop)
+                ? get_comparison_op(bop, struct_type)
+                : get_binary_op(bop, struct_type);
+            return emit_binary(op, obj, args[0], expr->resolved_type);
+        }
+        UnaryOp uop;
+        if (args.size() == 0 && trait_method_to_unary_op(get_expr.name, uop)) {
+            return emit_unary(get_unary_op(uop, struct_type), obj, expr->resolved_type);
+        }
+        report_error("Internal error: unlowerable primitive method call");
+        return ValueId::invalid();
+    }
+
     // User struct method. Look up the method in the type hierarchy to find where it's
     // defined, so mangling uses the correct struct name (important for inheritance).
     Type* method_owner = nullptr;

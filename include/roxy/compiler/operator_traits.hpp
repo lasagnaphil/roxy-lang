@@ -40,6 +40,45 @@ inline StringView unary_op_to_trait_method(UnaryOp op) {
     }
 }
 
+// Inverse of binary_op_to_trait_method. Returns false for names with no
+// operator (including every *_assign method — compound assigns need an lvalue
+// receiver, so an explicit method call like `a.add_assign(b)` on a by-value
+// primitive receiver is deliberately unlowerable). Kept adjacent to the forward
+// map so the two stay a single source of truth.
+inline bool trait_method_to_binary_op(StringView name, BinaryOp& out) {
+    if (name == "add"_sv)      { out = BinaryOp::Add;       return true; }
+    if (name == "sub"_sv)      { out = BinaryOp::Sub;       return true; }
+    if (name == "mul"_sv)      { out = BinaryOp::Mul;       return true; }
+    if (name == "div"_sv)      { out = BinaryOp::Div;       return true; }
+    if (name == "mod"_sv)      { out = BinaryOp::Mod;       return true; }
+    if (name == "bit_and"_sv)  { out = BinaryOp::BitAnd;    return true; }
+    if (name == "bit_or"_sv)   { out = BinaryOp::BitOr;     return true; }
+    if (name == "bit_xor"_sv)  { out = BinaryOp::BitXor;    return true; }
+    if (name == "shl"_sv)      { out = BinaryOp::Shl;       return true; }
+    if (name == "shr"_sv)      { out = BinaryOp::Shr;       return true; }
+    if (name == "eq"_sv)       { out = BinaryOp::Equal;     return true; }
+    if (name == "ne"_sv)       { out = BinaryOp::NotEqual;  return true; }
+    if (name == "lt"_sv)       { out = BinaryOp::Less;      return true; }
+    if (name == "le"_sv)       { out = BinaryOp::LessEq;    return true; }
+    if (name == "gt"_sv)       { out = BinaryOp::Greater;   return true; }
+    if (name == "ge"_sv)       { out = BinaryOp::GreaterEq; return true; }
+    return false;
+}
+
+// Inverse of unary_op_to_trait_method.
+inline bool trait_method_to_unary_op(StringView name, UnaryOp& out) {
+    if (name == "neg"_sv)     { out = UnaryOp::Negate; return true; }
+    if (name == "bit_not"_sv) { out = UnaryOp::BitNot; return true; }
+    return false;
+}
+
+// True for the comparison operators (Equal..GreaterEq — contiguous in the
+// BinaryOp declaration), which lower through get_comparison_op rather than
+// get_binary_op.
+inline bool is_comparison_binary_op(BinaryOp op) {
+    return op >= BinaryOp::Equal && op <= BinaryOp::GreaterEq;
+}
+
 // Maps binary operators to their source spelling (for diagnostics).
 inline const char* binary_op_to_symbol(BinaryOp op) {
     switch (op) {

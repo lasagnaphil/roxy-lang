@@ -4204,6 +4204,51 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                 error_fmt(expr->loc, "Coro has no method '{}'", get_expr.name);
                 return m_types.error_type();
             }
+            // Primitive receiver: builtin trait methods (42.to_string(), x.hash())
+            // dispatch to their registered natives; operator-named methods
+            // (a.eq(b), a.lt(b)) lower to the same raw IR ops as the operator
+            // expression — needed so generic bodies calling bound trait methods
+            // work when instantiated at primitives. An unsuffixed literal
+            // receiver settles on its default type first (42 is IntLiteral,
+            // which carries no methods).
+            if (base_type && (base_type->is_primitive() || base_type->is_numeric_literal())) {
+                if (base_type->is_numeric_literal()) {
+                    m_checker.coerce_numeric_literal(get_expr.object, default_literal_type(base_type));
+                    obj_type = get_expr.object->resolved_type;
+                    base_type = obj_type->base_type();
+                }
+                const MethodInfo* mi = m_types.lookup_primitive_method(base_type->kind, get_expr.name);
+                if (mi) {
+                    BinaryOp bop; UnaryOp uop;
+                    bool op_lowerable = trait_method_to_binary_op(get_expr.name, bop)
+                                     || trait_method_to_unary_op(get_expr.name, uop);
+                    if (!mi->native_name.empty() || op_lowerable) {
+                        return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
+                    }
+                    // Registered but unlowerable as an explicit call — the
+                    // compound-assign methods, which need an assignable receiver.
+                    error_fmt(expr->loc, "method '{}' cannot be called explicitly on type '{}'",
+                             get_expr.name, m_checker.type_string(base_type).data());
+                    return m_types.error_type();
+                }
+                error_fmt(expr->loc, "type '{}' has no method '{}'",
+                         m_checker.type_string(base_type).data(), get_expr.name);
+                return m_types.error_type();
+            }
+            // Enum receiver: eq/ne (and the ordered comparisons) come from the
+            // enum's own method table; to_string/hash delegate to i32's builtin
+            // methods (the native operates on the discriminant — the same
+            // delegation implements_trait already does for trait membership).
+            if (base_type && base_type->is_enum()) {
+                const MethodInfo* mi = m_types.lookup_method(base_type, get_expr.name);
+                if (!mi && (get_expr.name == "to_string"_sv || get_expr.name == "hash"_sv)) {
+                    mi = m_types.lookup_primitive_method(TypeKind::I32, get_expr.name);
+                }
+                if (mi) return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
+                error_fmt(expr->loc, "enum '{}' has no method '{}'",
+                         base_type->enum_info.name, get_expr.name);
+                return m_types.error_type();
+            }
             if (base_type && base_type->is_type_param() && m_generic_calls.has_active_bounds()) {
                 Type* found_in_trait = nullptr;
                 const TraitMethodInfo* trait_method = m_generic_calls.lookup_type_param_method(base_type, get_expr.name, &found_in_trait);

@@ -1205,4 +1205,66 @@ TEST_SUITE("Semantic") {
         CHECK(t.error_count() == MAX_SEMANTIC_ERRORS);  // 20 in batch mode
     }
 
+    // ========================================================================
+    // Primitive/enum receiver method dispatch
+    // ========================================================================
+
+    TEST_CASE("Primitive methods: to_string/hash/operator-named accepted") {
+        SemanticTestHelper t;
+        bool ok = t.run(R"(
+            fun main() {
+                var s: string = 42.to_string();
+                var x: i32 = 7;
+                var h: u64 = x.hash();
+                var b: bool = (1).lt(2);
+                var e: bool = x.eq(7);
+            }
+        )");
+        CHECK(ok);
+    }
+
+    TEST_CASE("Primitive methods: compound-assign methods rejected") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            fun main() {
+                var x: i32 = 1;
+                x.add_assign(2);
+            }
+        )"));
+        CHECK(t.has_error_containing("cannot be called explicitly"));
+    }
+
+    TEST_CASE("Primitive methods: unknown method rejected") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            fun main() {
+                var x: i32 = 1;
+                x.frobnicate();
+            }
+        )"));
+        CHECK(t.has_error_containing("type 'i32' has no method 'frobnicate'"));
+    }
+
+    TEST_CASE("Enum methods: to_string accepted, unknown rejected") {
+        SemanticTestHelper t;
+        bool ok = t.run(R"(
+            enum Color { Red, Green }
+            fun main() {
+                var c: Color = Color::Red;
+                var s: string = c.to_string();
+            }
+        )");
+        CHECK(ok);
+
+        SemanticTestHelper t2;
+        CHECK(!t2.run(R"(
+            enum Color { Red, Green }
+            fun main() {
+                var c: Color = Color::Red;
+                c.frobnicate();
+            }
+        )"));
+        CHECK(t2.has_error_containing("enum 'Color' has no method 'frobnicate'"));
+    }
+
 }  // TEST_SUITE("Semantic")
