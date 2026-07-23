@@ -118,15 +118,18 @@ void TraitSystem::register_builtin_traits() {
     // custom hash/eq runtime dispatch only when K explicitly implements both
     // `Hash` and `Eq` (just defining `hash()` / `eq()` methods isn't enough).
     // We declare `eq(other: Self): bool` as the required trait method so user
-    // `for Eq` impls match against it, but we don't register `eq` as a method
+    // `for Eq` impls match against it, but we don't register `eq` as a METHOD
     // on primitive types — that would shadow the native operator-dispatch
-    // path for `==` on primitives.
+    // path for `==` on primitives (register_primitive_operator_methods already
+    // provides eq/ne with concrete types). Trait MEMBERSHIP is a separate
+    // table: primitives with eq/ne operator methods formally implement Eq so
+    // `<T: Eq>` bounds instantiate at them.
     //
     // Tests / user code may also write `trait Eq;` to declare the trait for
     // operator overloading — collect_trait_declaration (the trait-decl handler) merges that with
     // this builtin instead of erroring on duplicate.
     if (!m_type_env.eq_type()) {
-        // Required method: fun Eq.eq(other: Self): bool. Eq is intentionally not
+        // Required method: fun Eq.eq(other: Self): bool. Only membership is
         // registered on primitives (see comment above), so primitive_kinds is
         // empty and register_trait_on_primitives is irrelevant.
         Span<Type*> eq_params(m_allocator.emplace<Type*>(m_types.self_type()), 1);
@@ -134,7 +137,54 @@ void TraitSystem::register_builtin_traits() {
             "Eq"_sv, "eq"_sv,
             eq_params, m_types.bool_type(),
             Span<TypeKind>(), /*register_trait_on_primitives=*/false);
+        // Membership for every kind that has eq/ne operator methods (matches
+        // register_primitive_operator_methods coverage).
+        TypeKind eq_kinds[] = {
+            TypeKind::Bool,
+            TypeKind::I8, TypeKind::I16, TypeKind::I32, TypeKind::I64,
+            TypeKind::U8, TypeKind::U16, TypeKind::U32, TypeKind::U64,
+            TypeKind::F32, TypeKind::F64,
+            TypeKind::String
+        };
+        for (TypeKind tk : eq_kinds) {
+            m_types.register_primitive_trait(tk, eq_trait_type);
+        }
         m_type_env.set_eq_type(eq_trait_type);
+    }
+
+    // Builtin `Ord` trait: lt/le/gt/ge, each (other: Self): bool. Like Eq, only
+    // MEMBERSHIP is registered on primitives — the concrete lt/le/gt/ge operator
+    // methods come from register_primitive_operator_methods, and explicit calls
+    // (a.lt(b)) lower through the primitive-receiver method path. Registered on
+    // the numeric kinds only: string/bool/narrow ints have no ordered operator
+    // methods. A user `trait Ord : Eq;` redeclaration merges with this builtin
+    // (collect_trait_declaration), which also sets the parent.
+    if (!m_type_env.ord_type()) {
+        Type* ord_trait_type = m_types.trait_type("Ord"_sv, nullptr);
+        m_type_env.register_trait_type("Ord"_sv, ord_trait_type);
+
+        Span<Type*> ord_params(m_allocator.emplace<Type*>(m_types.self_type()), 1);
+        const StringView ord_method_names[] = { "lt"_sv, "le"_sv, "gt"_sv, "ge"_sv };
+        Vector<TraitMethodInfo> ord_methods;
+        for (StringView method_name : ord_method_names) {
+            TraitMethodInfo tmi;
+            tmi.name = method_name;
+            tmi.param_types = ord_params;
+            tmi.return_type = m_types.bool_type();
+            tmi.decl = nullptr;
+            tmi.has_default = false;
+            ord_methods.push_back(tmi);
+        }
+        ord_trait_type->trait_info.methods = m_allocator.alloc_span(ord_methods);
+
+        TypeKind ord_kinds[] = {
+            TypeKind::I32, TypeKind::I64, TypeKind::U32, TypeKind::U64,
+            TypeKind::F32, TypeKind::F64
+        };
+        for (TypeKind tk : ord_kinds) {
+            m_types.register_primitive_trait(tk, ord_trait_type);
+        }
+        m_type_env.set_ord_type(ord_trait_type);
     }
 
     if (!m_type_env.exception_type()) {
@@ -371,12 +421,20 @@ void TraitSystem::register_trait_method_signature(Decl* decl, Type* trait_type) 
     // it as an idempotent re-declaration so user `trait Eq; fun Eq.eq(other:
     // Self): bool;` doesn't conflict with the builtin Eq registration.
     TraitTypeInfo& trait_type_info = trait_type->trait_info;
-    for (const auto& trait_method : trait_type_info.methods) {
+    for (auto& trait_method : trait_type_info.methods) {
         if (trait_method.name == method_decl.name) {
             bool is_builtin_redecl = trait_method.decl == nullptr &&
                 trait_method.param_types.size() == method_decl.params.size();
             if (is_builtin_redecl) {
-                // The builtin shape stays; ignore the redeclaration silently.
+                // The builtin shape (param/return types) stays. When the user's
+                // redeclaration carries a default body, adopt it onto the
+                // builtin-shaped entry so `trait Ord : Eq;` with default
+                // le/gt/ge implementations keeps working now that Ord is a
+                // builtin — inject_default_method reads the decl from here.
+                if (method_decl.body != nullptr) {
+                    trait_method.decl = decl;
+                    trait_method.has_default = true;
+                }
                 return;
             }
             m_reporter.error_fmt(decl->loc, "duplicate trait method '{}' in trait '{}'",

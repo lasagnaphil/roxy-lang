@@ -122,9 +122,13 @@ bool GenericCallResolver::check_type_arg_bounds(StringView template_name, Span<T
                                                 bound.trait->trait_info.name, args);
                 }
 
+                // type_string embeds a trailing NUL (so .data() is a C string);
+                // passing the String object would put that NUL mid-message and
+                // error_fmt's strlen would truncate everything after it.
+                auto concrete_str = m_checker.type_string(concrete_type);
                 m_reporter.error_fmt(loc,
                     "type '{}' does not implement trait '{}' required by type parameter bound on '{}'",
-                    m_checker.type_string(concrete_type), trait_str, template_name);
+                    concrete_str.data(), trait_str, template_name);
                 all_ok = false;
             }
         }
@@ -183,6 +187,23 @@ const TraitMethodInfo* GenericCallResolver::lookup_type_param_method(
         }
     }
     return nullptr;
+}
+
+bool GenericCallResolver::bound_includes_trait(Type* type_param_type, Type* trait) {
+    if (!trait) return false;
+    u32 param_index = type_param_type->type_param_info.index;
+    if (param_index >= m_active_type_param_bounds.size()) return false;
+
+    for (const auto& bound : m_active_type_param_bounds[param_index]) {
+        if (bound.trait == trait) return true;
+        // A bound on a derived trait also satisfies its parents.
+        Type* parent = bound.trait->trait_info.parent;
+        while (parent && parent->is_trait()) {
+            if (parent == trait) return true;
+            parent = parent->trait_info.parent;
+        }
+    }
+    return false;
 }
 
 Type* GenericCallResolver::analyze_type_param_method_call(

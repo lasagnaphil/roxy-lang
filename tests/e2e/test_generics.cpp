@@ -1524,4 +1524,157 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 42);
     }
 
+    // ------------------------------------------------------------------------
+    // Bound-aware f-string interpolation + builtin Ord/Eq at primitives
+    // ------------------------------------------------------------------------
+
+    TEST_CASE_TEMPLATE("Generic bound: f-string on Printable-bounded param", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Vec { x: i32; }
+        fun Vec.to_string(): string for Printable { return f"Vec[{self.x}]"; }
+
+        fun show<T: Printable>(v: T): string {
+            return f"{v}";
+        }
+
+        fun main(): i32 {
+            print(show(42));
+            print(show("hello"));
+            print(show(3.5));
+            print(show(Vec { x = 3 }));
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\nhello\n3.5\nVec[3]\n");
+    }
+
+    TEST_CASE_TEMPLATE("Generic bound: f-string on non-Printable bound (negative)", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun show<T: Hash>(v: T): string {
+            return f"{v}";
+        }
+
+        fun main(): i32 {
+            print(show(42));
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK_FALSE(result.success);
+    }
+
+    TEST_CASE_TEMPLATE("Generic bound: builtin Ord at primitives and structs", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Score { v: i32; }
+        fun Score.lt(other: Score): bool for Ord { return self.v < other.v; }
+        fun Score.le(other: Score): bool for Ord { return self.v <= other.v; }
+        fun Score.gt(other: Score): bool for Ord { return self.v > other.v; }
+        fun Score.ge(other: Score): bool for Ord { return self.v >= other.v; }
+
+        fun max2<T: Ord>(a: T, b: T): T {
+            if (a.lt(b)) { return b; }
+            return a;
+        }
+
+        fun main(): i32 {
+            print(f"{max2(3, 9)}");
+            print(f"{max2(2.5, 1.5)}");
+            // u32 above 2^31: signed compare would invert the answer.
+            var a: u32 = 4000000000u;
+            var b: u32 = 5u;
+            print(f"{max2(a, b)}");
+            print(f"{max2(Score { v = 1 }, Score { v = 5 }).v}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "9\n2.5\n4000000000\n5\n");
+    }
+
+    TEST_CASE_TEMPLATE("Generic bound: Ord body using comparison operator", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun max2<T: Ord>(a: T, b: T): T {
+            if (a < b) { return b; }
+            return a;
+        }
+
+        fun main(): i32 {
+            print(f"{max2(3, 9)}");
+            print(f"{max2(1.5, 0.5)}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "9\n1.5\n");
+    }
+
+    TEST_CASE_TEMPLATE("Generic bound: Ord at enum orders by discriminant", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        enum Color { Red, Green, Blue }
+
+        fun max2<T: Ord>(a: T, b: T): T {
+            if (a.lt(b)) { return b; }
+            return a;
+        }
+
+        fun main(): i32 {
+            print(f"{Color::Red < Color::Blue}");
+            print(f"{max2(Color::Red, Color::Blue).to_string()}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "true\n2\n");
+    }
+
+    TEST_CASE_TEMPLATE("Generic bound: Ord at string (negative)", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun max2<T: Ord>(a: T, b: T): T {
+            if (a.lt(b)) { return b; }
+            return a;
+        }
+
+        fun main(): i32 {
+            max2("a", "b");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK_FALSE(result.success);
+    }
+
+    TEST_CASE_TEMPLATE("Generic bound: builtin Eq at primitives and structs", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Tag { id: i32; }
+        fun Tag.eq(other: Tag): bool for Eq { return self.id == other.id; }
+
+        fun same<T: Eq>(a: T, b: T): bool {
+            return a.eq(b);
+        }
+
+        fun main(): i32 {
+            print(f"{same(7, 7)}");
+            print(f"{same("x", "y")}");
+            print(f"{same(true, true)}");
+            print(f"{same(Tag { id = 1 }, Tag { id = 1 })}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "true\nfalse\ntrue\ntrue\n");
+    }
+
 }  // TEST_SUITE("E2E Generics")

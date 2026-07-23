@@ -1245,6 +1245,77 @@ TEST_SUITE("Semantic") {
         CHECK(t.has_error_containing("type 'i32' has no method 'frobnicate'"));
     }
 
+    // ========================================================================
+    // Bound-aware Printable in Phase B (no instantiation needed)
+    // ========================================================================
+
+    TEST_CASE("Phase B: f-string on Printable-bounded param accepted") {
+        SemanticTestHelper t;
+        bool ok = t.run(R"(
+            fun show<T: Printable>(v: T): string {
+                return f"{v}";
+            }
+        )");
+        CHECK(ok);
+    }
+
+    TEST_CASE("Phase B: f-string on non-Printable bound rejected") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            fun show<T: Hash>(v: T): string {
+                return f"{v}";
+            }
+        )"));
+        CHECK(t.has_error_containing("does not implement Printable"));
+    }
+
+    TEST_CASE("Phase B: f-string bound satisfied through trait parent chain") {
+        SemanticTestHelper t;
+        bool ok = t.run(R"(
+            trait Pretty : Printable;
+
+            fun show<T: Pretty>(v: T): string {
+                return f"{v}";
+            }
+        )");
+        CHECK(ok);
+    }
+
+    TEST_CASE("Phase A: builtin Ord/Eq membership on primitives") {
+        SemanticTestHelper t;
+        bool ok = t.run(R"(
+            fun max2<T: Ord>(a: T, b: T): T {
+                if (a.lt(b)) { return b; }
+                return a;
+            }
+            fun same<T: Eq>(a: T, b: T): bool {
+                return a.eq(b);
+            }
+            fun main() {
+                max2(1, 2);
+                max2(1.5, 2.5);
+                same(1, 2);
+                same("a", "b");
+                same(true, false);
+            }
+        )");
+        CHECK(ok);
+    }
+
+    TEST_CASE("Phase A: Ord not satisfied by string") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            fun max2<T: Ord>(a: T, b: T): T {
+                if (a.lt(b)) { return b; }
+                return a;
+            }
+            fun main() {
+                max2("a", "b");
+            }
+        )"));
+        CHECK(t.has_error_containing("Ord"));
+    }
+
     TEST_CASE("Enum methods: to_string accepted, unknown rejected") {
         SemanticTestHelper t;
         bool ok = t.run(R"(

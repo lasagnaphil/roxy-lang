@@ -39,6 +39,9 @@ public:
     Type* eq_type() const { return m_eq_type; }
     void set_eq_type(Type* type) { m_eq_type = type; }
 
+    Type* ord_type() const { return m_ord_type; }
+    void set_ord_type(Type* type) { m_ord_type = type; }
+
     Type* exception_type() const { return m_exception_type; }
     void set_exception_type(Type* type) { m_exception_type = type; }
 
@@ -53,6 +56,7 @@ private:
     Type* m_printable_type = nullptr;
     Type* m_hash_type = nullptr;
     Type* m_eq_type = nullptr;
+    Type* m_ord_type = nullptr;
     Type* m_exception_type = nullptr;
 };
 

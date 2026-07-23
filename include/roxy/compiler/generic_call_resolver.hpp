@@ -111,6 +111,13 @@ public:
     const TraitMethodInfo* lookup_type_param_method(Type* type_param_type, StringView method_name,
                                                     Type** found_in_trait);
 
+    // True when the active bound set of `type_param_type` includes `trait`,
+    // directly or through a bound trait's parent chain. Traits are TypeEnv
+    // singletons so pointer comparison is valid; the type param is indexed by
+    // its `type_param_info.index` (TypeParam Type*s are not interned). Only
+    // meaningful while has_active_bounds() (Phase B body walk).
+    bool bound_includes_trait(Type* type_param_type, Type* trait);
+
     // Substitute Self/trait-type-params in a trait-method type against the
     // active bounds of `type_param` (the receiver's type parameter).
     Type* substitute_trait_types(Type* type, Type* type_param, Type* found_in_trait);

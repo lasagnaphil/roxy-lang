@@ -321,6 +321,13 @@ private:
     // one for it: i32 for an integer literal, f64 for a float one. Returns
     // `type` unchanged if it isn't a literal type.
     Type* default_literal_type(Type* type);
+
+    // "Is this type printable?" — the sema-level Printable query used by
+    // f-string interpolation (and the print fallback). Extends
+    // TypeCache::implements_trait with the contexts only sema knows:
+    // a TypeParam consults the active Phase B trait bounds, and containers
+    // recurse so List<T>/Map<K,T> work inside bounded template bodies too.
+    bool type_implements_printable(Type* type);
     Type* get_unary_result_type(UnaryOp op, Type* operand, SourceLocation loc);
 
     // Unified operator dispatch helpers (work for both primitives and structs)

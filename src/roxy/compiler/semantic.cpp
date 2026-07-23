@@ -2598,14 +2598,29 @@ Type* SemanticAnalyzer::analyze_string_interp_expr(Expr* expr) {
             m_checker.coerce_numeric_literal(expression, default_literal_type(etype));
             etype = expression->resolved_type;
         }
-        // Uniform trait check for ALL types (primitives and structs)
-        if (!m_types.implements_trait(etype, m_type_env.printable_type())) {
+        // Uniform trait check for ALL types (primitives, structs, containers,
+        // and bounded type params).
+        if (!type_implements_printable(etype)) {
             error_fmt(expression->loc,
                      "type '{}' does not implement Printable (no to_string method)",
                      m_checker.type_string(etype).data());
         }
     }
     return m_types.string_type();
+}
+
+bool SemanticAnalyzer::type_implements_printable(Type* type) {
+    if (!type) return false;
+    // A bounded type parameter (Phase B template-body walk) is printable when
+    // its bound set includes Printable — the concrete per-instantiation
+    // re-analysis still checks the real type.
+    if (type->is_type_param() && m_generic_calls.has_active_bounds()) {
+        return m_generic_calls.bound_includes_trait(type, m_type_env.printable_type());
+    }
+    // Container arm (List<T> printable iff T is; Map iff K and V are) lands
+    // with the synthesized container to_string — until the IR-side conversion
+    // exists, accepting a container here would silently drop the part.
+    return m_types.implements_trait(type, m_type_env.printable_type());
 }
 
 Type* SemanticAnalyzer::default_literal_type(Type* type) {
@@ -3686,11 +3701,18 @@ Type* SemanticAnalyzer::build_method_function_type(Type* self_type, const Method
 void SemanticAnalyzer::populate_enum_methods(Type* type) {
     assert(type && type->is_enum());
 
-    // eq(other: Self): bool, ne(other: Self): bool
+    // eq/ne/lt/le/gt/ge (other: Self): bool. Enums delegate trait membership
+    // to i32 (implements_trait), which claims Eq AND Ord — the ordered
+    // comparisons back that claim, ordering by discriminant (they lower to the
+    // plain integer compare ops, same as `==` on enums today).
     Span<Type*> self_param(m_allocator.emplace<Type*>(type), 1);
     Vector<MethodInfo> methods;
     methods.push_back(make_method("eq"_sv, self_param, m_types.bool_type()));
     methods.push_back(make_method("ne"_sv, self_param, m_types.bool_type()));
+    methods.push_back(make_method("lt"_sv, self_param, m_types.bool_type()));
+    methods.push_back(make_method("le"_sv, self_param, m_types.bool_type()));
+    methods.push_back(make_method("gt"_sv, self_param, m_types.bool_type()));
+    methods.push_back(make_method("ge"_sv, self_param, m_types.bool_type()));
     type->enum_info.methods = m_allocator.alloc_span(methods);
 }
 
