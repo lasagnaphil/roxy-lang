@@ -395,6 +395,21 @@ private:
     ValueId gen_string_interp_expr(Expr* expr);
     ValueId gen_lambda_expr(Expr* expr);
 
+    // Convert `val` of `type` to a string ValueId — the single per-type
+    // to_string dispatch shared by f-string interpolation and the synthesized
+    // container to_string bodies:
+    //   String              -> val unchanged (*out_owned = false — borrowed)
+    //   primitive           -> CallNative on the Printable MethodInfo's
+    //                          registered native_name ("i32$$to_string", ...)
+    //   enum                -> CallNative "i32$$to_string" on the discriminant
+    //   struct              -> resolved call to <Struct>$$to_string
+    //   (container arm added with synthesized container to_string)
+    // Returns invalid for a non-printable type (caller reports). When
+    // *out_owned is true the result is a fresh owned string the CALLER must
+    // release — f-string arms use track_string_temp (scope-exit release);
+    // synthesized container bodies emit explicit StrRelease.
+    ValueId emit_to_string_value(ValueId val, Type* type, bool* out_owned);
+
     // Bare named-function-as-value (`var f = double`). Synthesizes (or reuses
     // a cached) trampoline IRFunction + empty env struct, then emits
     // IROp::Closure pointing at them. The target descriptor selects the body

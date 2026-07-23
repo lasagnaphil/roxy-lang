@@ -3046,6 +3046,40 @@ ValueId IRBuilder::gen_static_get_expr(Expr* expr) {
     return ValueId::invalid();
 }
 
+ValueId IRBuilder::emit_to_string_value(ValueId val, Type* type, bool* out_owned) {
+    Type* string_type = m_types.string_type();
+    *out_owned = true;
+
+    if (type->kind == TypeKind::String) {
+        // String value — use directly, no conversion needed (borrowed).
+        *out_owned = false;
+        return val;
+    }
+    if (type->is_primitive() || type->is_enum()) {
+        // Registration-driven dispatch: the builtin Printable MethodInfo carries
+        // the native link ("i32$$to_string", ...). Enums delegate to i32's on
+        // their underlying discriminant value.
+        TypeKind lookup_kind = type->is_enum() ? TypeKind::I32 : type->kind;
+        const MethodInfo* method_info =
+            m_types.lookup_primitive_method(lookup_kind, "to_string"_sv);
+        if (method_info && !method_info->native_name.empty()) {
+            return emit_native(method_info->native_name, {val}, string_type);
+        }
+        return ValueId::invalid();
+    }
+    if (type->is_struct()) {
+        // Struct with to_string method: call the mangled method.
+        // gen_expr already returns a struct pointer for struct rvalues — the
+        // lowering pass unpacks struct returns into stack-allocated pointers
+        // (see the note in gen_var_decl). Reusing `val` here avoids a second
+        // pass through gen_lvalue_addr, which doesn't accept call/index/method
+        // rvalues and would error with "expression is not a valid lvalue".
+        StringView mangled = mangle_method(type->struct_info.name, "to_string"_sv);
+        return emit_call_resolved(mangled, alloc_span({val}), string_type);
+    }
+    return ValueId::invalid();
+}
+
 ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
     auto& string_interp = expr->string_interp;
     Type* string_type = m_types.string_type();
@@ -3065,49 +3099,15 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
             Type* etype = sub->resolved_type;
             ValueId val = gen_expr(sub);
 
-            if (etype->kind == TypeKind::String) {
-                // String expression — use directly, no conversion needed
-                string_parts.push_back(val);
-            } else {
-                // Need to call to_string native for this type
-                const char* native_name = nullptr;
-                switch (etype->kind) {
-                    case TypeKind::Bool:   native_name = "bool$$to_string"; break;
-                    case TypeKind::I32:    native_name = "i32$$to_string"; break;
-                    case TypeKind::I64:    native_name = "i64$$to_string"; break;
-                    case TypeKind::U32:    native_name = "u32$$to_string"; break;
-                    case TypeKind::U64:    native_name = "u64$$to_string"; break;
-                    case TypeKind::F32:    native_name = "f32$$to_string"; break;
-                    case TypeKind::F64:    native_name = "f64$$to_string"; break;
-                    default: break;
-                }
-
-                if (etype->is_enum()) {
-                    // Enums use i32$$to_string on their underlying value
-                    native_name = "i32$$to_string";
-                }
-
-                if (native_name) {
-                    StringView name(native_name, static_cast<u32>(strlen(native_name)));
-                    ValueId ts = emit_native(name, {val}, string_type);
+            bool owned = false;
+            ValueId ts = emit_to_string_value(val, etype, &owned);
+            if (ts.is_valid()) {
+                if (owned) {
                     // The to_string result is a fresh owned string temp — track
                     // it so it's released at scope exit (finding 9b).
                     track_string_temp(ts, string_type);
-                    string_parts.push_back(ts);
-                } else if (etype->is_struct()) {
-                    // Struct with to_string method: call the mangled method.
-                    // gen_expr already returns a struct pointer for struct rvalues — the
-                    // lowering pass unpacks struct returns into stack-allocated pointers
-                    // (see the note in gen_var_decl). Reusing `val` here avoids a second
-                    // pass through gen_lvalue_addr, which doesn't accept call/index/method
-                    // rvalues and would error with "expression is not a valid lvalue".
-                    StringView mangled = mangle_method(etype->struct_info.name,
-                                                       "to_string"_sv);
-                    ValueId ts = emit_call_resolved(mangled, alloc_span({val}), string_type);
-                    // A user `to_string()` hands off an owned string — track it.
-                    track_string_temp(ts, string_type);
-                    string_parts.push_back(ts);
                 }
+                string_parts.push_back(ts);
             }
         }
     }

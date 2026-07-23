@@ -1,5 +1,7 @@
 #include "roxy/compiler/trait_system.hpp"
 
+#include "roxy/compiler/mangling.hpp"
+
 #include <cstring>
 
 namespace rx {
@@ -28,6 +30,14 @@ Type* TraitSystem::register_builtin_trait(
         mi.param_types = method_param_types;
         mi.return_type = return_type;
         mi.decl = nullptr;
+        // Link the method to its native implementation ("i32$$to_string",
+        // "u8$$hash", ...) so method-call sema/IR and f-string lowering share
+        // one registration-driven source of truth. Kinds outside Bool..String
+        // (e.g. ExceptionRef's `message`) have no native and keep it empty.
+        if (tk >= TypeKind::Bool && tk <= TypeKind::String) {
+            mi.native_name = mangle_method(
+                m_allocator, StringView(type_kind_to_string(tk)), method_name);
+        }
         m_types.register_primitive_method(tk, mi);
         if (register_trait_on_primitives) {
             m_types.register_primitive_trait(tk, trait_type);

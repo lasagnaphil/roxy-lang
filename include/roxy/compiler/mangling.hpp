@@ -6,6 +6,7 @@
 namespace rx {
 
 class BumpAllocator;
+struct Type;
 
 // Canonical name mangling — the single source of truth for how a Roxy struct
 // member (method / constructor / destructor) is spelled as a flat function name.
@@ -42,5 +43,15 @@ String     mangle_destructor_owned(StringView struct_name, StringView dtor_name 
 // "<module>::<name>", or `name` unchanged when module_name is empty (single-file
 // mode) — keeps non-pub names module-private after IR modules are merged.
 StringView mangle_module_local(BumpAllocator& alloc, StringView module_name, StringView name);
+
+// Canonical spelling of a type as a mangled-name component: primitives by their
+// keyword ("i32", "string"), structs/enums/traits by name, and compound types
+// with a reserved single-'$' separator — "List$i32", "Map$string$i32",
+// "uniq$Point", "fun$i32_ret$bool". A TypeParam argument spells as "$T"
+// (reserved leading '$' — marks an ABSTRACT Phase-B instantiation and cannot
+// collide with any user identifier). Used for generic-instantiation suffixes
+// ("identity$i32"), synthesized container methods ("List$i32$$to_string"), and
+// overload mangles.
+StringView mangle_type_name(BumpAllocator& alloc, Type* type);
 
 }  // namespace rx
