@@ -812,7 +812,12 @@ struct Decl {
     };
 
     Decl() : kind(AstKind::DeclVar), loc{0, 0, 0, 0}, body_analyzed(false) {
-        memset(&var_decl, 0, sizeof(var_decl));
+        // Zero the ENTIRE union (not just the first member) so any
+        // subsequently-activated variant starts from a clean slate — FunDecl
+        // is larger than VarDecl, and its tail fields (overload_mangled_name)
+        // would otherwise be recycled-allocation garbage. Same pattern as
+        // Expr's constructor.
+        memset(&var_decl, 0, sizeof(*this) - (reinterpret_cast<char*>(&var_decl) - reinterpret_cast<char*>(this)));
     }
     ~Decl() {}
 };
