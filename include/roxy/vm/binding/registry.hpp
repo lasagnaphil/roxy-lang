@@ -72,6 +72,12 @@ struct NativeFunctionEntry {
     // legacy `bind_native` registration's NativeFunction wrapper is named
     // separately from the typed AOT function).
     StringView aot_symbol_name;
+    // Source-visible name for OVERLOADED natives (bind_native_overload): the
+    // entry is keyed by its "$ol$name$types" mangle (`name` above) while
+    // symbol-table/import registration groups entries sharing this name into
+    // one overload chain. Empty for non-overloaded entries (source name ==
+    // `name`).
+    StringView source_name;
     NativeFunction func;
     NativeTypeInfoMode type_info_mode = NativeTypeInfoMode::Parsed;
     // Type info path: Resolver (deferred type resolution for cross-TypeCache compatibility)
@@ -165,6 +171,16 @@ public:
     // Register a native function with a name override (for $$-mangled names).
     // Usage: registry.bind_native("bool$$to_string", func, "fun to_string(val: bool): string")
     void bind_native(const char* override_name, NativeFunction func, const char* signature);
+
+    // Register one member of an OVERLOADED native function. The entry is keyed
+    // by its "$ol$<name>$<param types>" mangle; the parsed function name is
+    // recorded as `source_name`, and apply_to_symbols / the module-export path
+    // chain same-source_name entries into one overload set. The AOT symbol
+    // defaults to `aot_symbol_name` (or the mangled key when null); parameter
+    // types must be simple named types (i32/string/... — no generics/refs).
+    // Usage: registry.bind_native_overload(fn, "fun print(v: i32)", "roxy_print_i32")
+    void bind_native_overload(NativeFunction func, const char* signature,
+                              const char* aot_symbol_name = nullptr);
 
     // Register a native struct type
     void register_struct(const char* name, std::initializer_list<NativeFieldEntry> fields);

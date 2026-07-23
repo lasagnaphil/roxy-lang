@@ -953,6 +953,42 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
     // contexts (var init, argument passing, return, struct literal field, ...).
     LocalVar* lv = find_local(id.name);
     if (!lv) {
+        // Coerced overloaded-function reference: sema stashed the winning
+        // member's flat name ("$ol$print$string") and symbol. Distinguished
+        // from the generic-template case below by resolved_sym — template
+        // refs never set it (the generic branch in analyze_identifier_expr
+        // fires before symbol lookup).
+        if (id.mangled_name.size() > 0 && id.resolved_sym &&
+            is_function_symbol_kind(id.resolved_sym->kind)) {
+            Symbol* member = id.resolved_sym;
+            FunctionRefTarget target;
+            target.function_type = expr->resolved_type;
+            bool member_is_native = member->kind == SymbolKind::ImportedFunction
+                ? member->imported_func.is_native
+                : (member->decl && member->decl->kind == AstKind::DeclFun &&
+                   member->decl->fun_decl.is_native);
+            if (member_is_native) {
+                target.kind = member->kind == SymbolKind::ImportedFunction
+                    ? FunctionRefTarget::Kind::ImportedNative
+                    : FunctionRefTarget::Kind::Native;
+                target.name = id.mangled_name;
+                i32 idx = m_registry.get_index(id.mangled_name);
+                if (idx < 0) {
+                    report_error("Internal error: overloaded native not in registry");
+                    return ValueId::invalid();
+                }
+                target.native_index = static_cast<u32>(idx);
+            } else if (member->kind == SymbolKind::ImportedFunction) {
+                target.kind = FunctionRefTarget::Kind::ImportedScript;
+                target.name = id.mangled_name;
+                target.module_name = member->imported_func.module_name;
+            } else {
+                target.kind = FunctionRefTarget::Kind::Script;
+                target.name = member->is_pub ? id.mangled_name
+                                             : mangle_module_local(id.mangled_name);
+            }
+            return gen_function_ref(expr, target);
+        }
         // Generic-template ref: semantic analysis stashed the monomorphized
         // name on the identifier post-coercion. The instantiated function
         // type lives in expr->resolved_type. Apply module-local mangling
@@ -1629,13 +1665,22 @@ ValueId IRBuilder::gen_call_direct(Expr* expr, const CallLowering& lowered) {
     // template name ("helper"); the symbol table is keyed by the template name, not
     // the monomorphized name ("helper$i32"), so we look up via orig_name.
     StringView orig_name = call_expr.callee->identifier.name;
-    // Use the mangled name for generic function calls (e.g., "identity$i32")
+    // Use the mangled name for generic function calls ("identity$i32") and
+    // resolved overload calls ("$ol$print$i32" — a registry key or a script
+    // member's flat name).
     StringView func_name = call_expr.mangled_name.size() > 0 ? call_expr.mangled_name : orig_name;
     StringView lookup_name = func_name;
 
-    // Imported functions may have an alias; use the original name for native lookup.
-    Symbol* sym = m_symbols.lookup(orig_name);
-    if (sym && sym->kind == SymbolKind::ImportedFunction) {
+    // Prefer the symbol sema resolved (the WINNING overload member for
+    // overloaded calls); fall back to the head lookup.
+    Symbol* sym = call_expr.callee->identifier.resolved_sym;
+    if (!sym || !is_function_symbol_kind(sym->kind)) {
+        sym = m_symbols.lookup(orig_name);
+    }
+    // Imported functions may have an alias; use the original name for native
+    // lookup — only when sema didn't already record a resolved flat name (an
+    // overloaded call's mangled_name IS the callable name).
+    if (call_expr.mangled_name.size() == 0 && sym && sym->kind == SymbolKind::ImportedFunction) {
         lookup_name = sym->imported_func.original_name;
     }
 

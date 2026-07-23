@@ -242,6 +242,61 @@ void NativeRegistry::bind_native(const char* override_name, NativeFunction func,
     m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
 }
 
+void NativeRegistry::bind_native_overload(NativeFunction func, const char* signature,
+                                          const char* aot_symbol_name) {
+    Decl* decl = parse_signature(signature);
+    assert(decl->kind == AstKind::DeclFun);
+    FunDecl& fun = decl->fun_decl;
+
+    // Mint the "$ol$<name>$<t1>$<t2>..." key from the parsed signature. Param
+    // types must be simple named types so the spelling matches
+    // rx::mangle_overload's mangle_type_name output for the resolved types.
+    u32 total_len = 4 + fun.name.size();  // "$ol$" + name
+    for (const auto& param : fun.params) {
+        assert(param.type && param.type->kind == TypeExprKind::Named &&
+               param.type->type_args.size() == 0 &&
+               param.type->ref_kind == RefKind::None &&
+               "bind_native_overload: parameter types must be simple named types");
+        total_len += 1 + param.type->name.size();
+    }
+    char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(total_len + 1, 1));
+    u32 pos = 0;
+    memcpy(buf + pos, "$ol$", 4); pos += 4;
+    memcpy(buf + pos, fun.name.data(), fun.name.size()); pos += fun.name.size();
+    for (const auto& param : fun.params) {
+        buf[pos++] = '$';
+        memcpy(buf + pos, param.type->name.data(), param.type->name.size());
+        pos += param.type->name.size();
+    }
+    buf[pos] = '\0';
+
+    NativeFunctionEntry entry;
+    entry.name = StringView(buf, total_len);
+    entry.source_name = fun.name;
+    entry.aot_symbol_name = aot_symbol_name
+        ? make_string_view(aot_symbol_name) : entry.name;
+    entry.func = func;
+    entry.type_info_mode = NativeTypeInfoMode::Parsed;
+    entry.param_count = fun.params.size();
+    entry.min_args = entry.param_count;
+    entry.is_method = false;
+    entry.method_kind = GenericMethodKind::Method;
+    entry.return_type_expr = fun.return_type;
+
+    TypeExpr** param_exprs = nullptr;
+    if (entry.param_count > 0) {
+        param_exprs = reinterpret_cast<TypeExpr**>(
+            m_allocator.alloc_bytes(sizeof(TypeExpr*) * entry.param_count, alignof(TypeExpr*)));
+        for (u32 i = 0; i < entry.param_count; i++) {
+            param_exprs[i] = fun.params[i].type;
+        }
+    }
+    entry.param_type_exprs = Span<TypeExpr*>(param_exprs, entry.param_count);
+
+    m_function_entries.push_back(entry);
+    m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
+}
+
 void NativeRegistry::register_struct(const char* name, std::initializer_list<NativeFieldEntry> fields) {
     NativeStructEntry entry;
     entry.name = make_string_view(name);
@@ -596,9 +651,31 @@ void NativeRegistry::apply_to_symbols(SymbolTable& symbols, TypeCache& types, Bu
         Type* func_type = types.function_type(
             Span<Type*>(param_array, entry.param_count), ret_type);
 
-        // Define in symbol table
-        symbols.define(SymbolKind::Function, entry.name, func_type,
-                      SourceLocation{0, 0, 0, 0}, nullptr);
+        // Define under the source-visible name. Overloaded entries
+        // (bind_native_overload) share a source_name — the first defines the
+        // head, the rest chain onto it as one overload set. Overloaded members
+        // are ImportedFunction-kind so imported_func.original_name carries the
+        // registry key ("$ol$print$i32") that call resolution records for the
+        // IR builder; non-overloaded entries keep their historical
+        // Function-kind shape (their name IS the registry key).
+        if (entry.source_name.empty()) {
+            symbols.define(SymbolKind::Function, entry.name, func_type,
+                          SourceLocation{0, 0, 0, 0}, nullptr);
+        } else {
+            Symbol* head = symbols.lookup_local(entry.source_name);
+            Symbol* sym;
+            if (head && is_function_symbol_kind(head->kind)) {
+                sym = symbols.append_overload(head, SymbolKind::ImportedFunction,
+                                              func_type, SourceLocation{0, 0, 0, 0}, nullptr);
+            } else {
+                sym = symbols.define(SymbolKind::ImportedFunction, entry.source_name,
+                                     func_type, SourceLocation{0, 0, 0, 0}, nullptr);
+            }
+            sym->imported_func.module_name = StringView{};
+            sym->imported_func.original_name = entry.name;
+            sym->imported_func.native_index = 0;
+            sym->imported_func.is_native = true;
+        }
     }
 }
 

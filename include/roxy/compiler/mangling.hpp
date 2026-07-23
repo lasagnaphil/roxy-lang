@@ -1,5 +1,6 @@
 #pragma once
 
+#include "roxy/core/span.hpp"
 #include "roxy/core/string.hpp"
 #include "roxy/core/string_view.hpp"
 
@@ -53,5 +54,18 @@ StringView mangle_module_local(BumpAllocator& alloc, StringView module_name, Str
 // ("identity$i32"), synthesized container methods ("List$i32$$to_string"), and
 // overload mangles.
 StringView mangle_type_name(BumpAllocator& alloc, Type* type);
+
+// "$ol$<name>$<param1>$<param2>..." — the flat name of one member of a
+// function overload set (e.g. "$ol$print$i32", "$ol$f$List$i32$string").
+// The reserved LEADING '$' is what makes it collision-proof: user identifiers
+// can't start with '$', and every other mangled namespace (methods
+// "Struct$$m", generic instances "name$i32", module-locals "mod::name")
+// starts with a user identifier — so "$ol$print$i32" can never alias the
+// generic instantiation "print$i32". Contains no "$$", so the C emitter's
+// structural parsers ignore it. Return types are deliberately excluded
+// (return-type-only overloads are redefinition errors). Only members of
+// overload sets (2+ definitions) are mangled — single definitions keep their
+// plain name.
+StringView mangle_overload(BumpAllocator& alloc, StringView fun_name, Span<Type*> param_types);
 
 }  // namespace rx

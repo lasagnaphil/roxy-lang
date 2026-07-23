@@ -258,6 +258,21 @@ private:
     Type* analyze_struct_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, Type* base_type);
     Type* analyze_regular_fun_call(Expr* expr, CallExpr& ce);
 
+    // Overload resolution for calls to a name with 2+ function definitions
+    // (Symbol::next_overload chain). Analyzes arguments once, filters
+    // candidates (shape → exact-with-settled-literals → single-assignable),
+    // commits the winner via the sema→IR annotations (CallExpr.mangled_name /
+    // callee resolved_sym + resolved_type). See docs/internals/overloading.md.
+    Type* analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol* head);
+    // print's Printable fallback: when no print overload matches and the single
+    // argument implements Printable, rewrite the call to print(arg.to_string())
+    // with hand-annotated AST (never re-analyzed — single-shot rule).
+    bool try_print_printable_fallback(Expr* expr, CallExpr& ce, Symbol* head,
+                                      const Vector<Type*>& arg_types);
+    // Overloaded-function-reference coercion in value position (the overload
+    // analogue of coerce_generic_template_ref; same four call sites).
+    bool coerce_overloaded_fun_ref(Expr* expr, Type* expected);
+
     // Shared argument checking for method/function calls
     void check_call_args(Span<CallArg> args, Span<Type*> param_types,
                          Span<Param> params, SourceLocation loc);

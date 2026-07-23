@@ -1,4 +1,5 @@
 #include "roxy/compiler/module_registry.hpp"
+#include "roxy/compiler/ast.hpp"
 #include "roxy/vm/binding/registry.hpp"
 
 namespace rx {
@@ -17,7 +18,10 @@ void ModuleRegistry::register_native_module(StringView name, NativeRegistry* nat
         if (entry.is_method) continue;
 
         ModuleExport exp;
-        exp.name = entry.name;
+        // Overloaded natives export under their source-visible name; the
+        // registry key travels in symbol_name.
+        exp.name = entry.source_name.empty() ? entry.name : entry.source_name;
+        exp.symbol_name = entry.source_name.empty() ? StringView{} : entry.name;
         exp.kind = ExportKind::Function;
         exp.is_native = true;
         exp.is_pub = true;  // All native functions are public
@@ -60,6 +64,11 @@ void ModuleRegistry::add_export(ModuleInfo* module, StringView name, ExportKind 
     exp.is_pub = is_pub;
     exp.index = index;
     exp.decl = decl;
+    // Script overloads carry their signature-suffixed flat name so importers
+    // can call the right member.
+    if (decl && decl->kind == AstKind::DeclFun && kind == ExportKind::Function) {
+        exp.symbol_name = decl->fun_decl.overload_mangled_name;
+    }
 
     module->exports.push_back(exp);
 }

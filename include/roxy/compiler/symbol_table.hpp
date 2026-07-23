@@ -29,6 +29,10 @@ enum class SymbolKind : u8 {
     ImportedFunction,    // Function imported from another module
 };
 
+inline bool is_function_symbol_kind(SymbolKind kind) {
+    return kind == SymbolKind::Function || kind == SymbolKind::ImportedFunction;
+}
+
 // A symbol represents a named entity in the program
 struct Symbol {
     SymbolKind kind;
@@ -43,6 +47,12 @@ struct Symbol {
     // the name was previously unbound). pop_scope restores it, so leaving a
     // scope costs O(symbols in that scope) instead of a full cache rebuild.
     Symbol* shadowed;
+    // Overload chain (function-kind symbols at global scope only). Only the
+    // HEAD symbol lives in the lookup cache and the scope's symbol vector;
+    // chain members are linked here via append_overload and never enter
+    // either, so define/pop_scope/shadow-restore and every existing
+    // first-match lookup are untouched.
+    Symbol* next_overload;
 
     Symbol()
         : kind(SymbolKind::Variable)
@@ -54,6 +64,7 @@ struct Symbol {
         , is_out_inout(false)
         , defining_scope(nullptr)
         , shadowed(nullptr)
+        , next_overload(nullptr)
     {
         // Zero-initialize the union
         param.index = 0;
@@ -136,6 +147,13 @@ public:
     Symbol* define_imported_function(StringView name, Type* type, SourceLocation loc,
                                      StringView module_name, StringView original_name,
                                      u32 native_index, bool is_native);
+
+    // Append a new overload to `head`'s chain (definition order preserved).
+    // The new symbol shares head's name/defining_scope but never enters the
+    // lookup cache or the scope's symbol vector — chain members are reachable
+    // only through head->next_overload.
+    Symbol* append_overload(Symbol* head, SymbolKind kind, Type* type,
+                            SourceLocation loc, Decl* decl = nullptr);
 
     // Symbol lookup
     Symbol* lookup(StringView name) const;           // Look up in all scopes

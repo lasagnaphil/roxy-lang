@@ -23,13 +23,20 @@ enum class ExportKind : u8 {
 
 // Represents a single exported symbol from a module
 struct ModuleExport {
-    StringView name;        // Symbol name
+    StringView name;        // Source-visible symbol name
     ExportKind kind;        // What kind of symbol
     Type* type;             // Type (function type for functions)
     bool is_native;         // True if this is a native function
     bool is_pub;            // True if publicly visible
     u32 index;              // Index in module's function/struct/enum array
     Decl* decl;             // AST declaration (nullptr for native)
+    // Flat/mangled symbol name for members of overload sets — the native
+    // registry key ("$ol$print$i32") or a script overload's
+    // FunDecl::overload_mangled_name. Empty = same as `name` (the common,
+    // non-overloaded case). NOTE: an overloaded name has MULTIPLE exports —
+    // find_export returns only the first; overload-aware consumers must
+    // iterate all matching exports.
+    StringView symbol_name;
 };
 
 // Information about a module

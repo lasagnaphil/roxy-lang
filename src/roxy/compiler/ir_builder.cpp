@@ -602,12 +602,16 @@ Type* IRBuilder::resolve_return_type(TypeExpr* return_type_expr, StringView symb
 }
 
 IRFunction* IRBuilder::build_function(FunDecl* decl) {
+    // Members of an overload set emit under their signature-suffixed flat name
+    // ("$ol$f$i32"); single definitions keep the plain name.
+    StringView base_name = decl->overload_mangled_name.empty()
+        ? decl->name : decl->overload_mangled_name;
     // Non-pub functions are scoped to their module so they don't collide at link time.
     // "main" is the program entry point convention — leave it un-mangled so the host
     // can still invoke it via vm_call(&vm, "main", {}).
     StringView name = (!decl->is_pub && decl->name != "main"_sv)
-        ? mangle_module_local(decl->name)
-        : decl->name;
+        ? mangle_module_local(base_name)
+        : base_name;
     // Source line for AOT `#line` directives. Use the body's first line —
     // typically the same as the function header or the next line after.
     begin_ir_function(name, decl->is_pub, decl->body ? decl->body->loc.line : 0);
@@ -615,7 +619,23 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     // Set up parameters
     setup_parameters(decl->params);
 
-    m_current_func->return_type = resolve_return_type(decl->return_type, decl->name);
+    // For an overload-set member, resolve_return_type's symbol-table shortcut
+    // would read the chain HEAD's function type (wrong member) — walk the
+    // chain to THIS decl's symbol instead.
+    Type* return_type = nullptr;
+    if (!decl->overload_mangled_name.empty()) {
+        for (Symbol* sym = m_symbols.lookup(decl->name); sym; sym = sym->next_overload) {
+            if (sym->decl && &sym->decl->fun_decl == decl &&
+                sym->type && sym->type->is_function()) {
+                return_type = sym->type->func_info.return_type;
+                break;
+            }
+        }
+    }
+    if (!return_type) {
+        return_type = resolve_return_type(decl->return_type, decl->name);
+    }
+    m_current_func->return_type = return_type;
 
     // A function is a coroutine (state machine to lower) iff its body yields —
     // classified once in semantic analysis (FunDecl::is_coroutine). A function

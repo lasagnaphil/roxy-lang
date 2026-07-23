@@ -55,6 +55,29 @@ StringView mangle_module_local(BumpAllocator& alloc, StringView module_name, Str
     return format_to_arena(alloc, runtime(kModuleLocal), module_name, name);
 }
 
+StringView mangle_overload(BumpAllocator& alloc, StringView fun_name, Span<Type*> param_types) {
+    // "$ol$" + name + ("$" + type_name)* — see the header comment for the
+    // collision-proofing rationale.
+    const StringView prefix = "$ol$";
+    u32 total_len = prefix.size() + fun_name.size();
+    Vector<StringView> param_names;
+    for (Type* param_type : param_types) {
+        StringView pname = mangle_type_name(alloc, param_type);
+        param_names.push_back(pname);
+        total_len += 1 + pname.size();  // '$' + name
+    }
+    char* buf = reinterpret_cast<char*>(alloc.alloc_bytes(total_len + 1, 1));
+    u32 pos = 0;
+    memcpy(buf + pos, prefix.data(), prefix.size()); pos += prefix.size();
+    memcpy(buf + pos, fun_name.data(), fun_name.size()); pos += fun_name.size();
+    for (auto& pname : param_names) {
+        buf[pos++] = '$';
+        memcpy(buf + pos, pname.data(), pname.size()); pos += pname.size();
+    }
+    buf[pos] = '\0';
+    return StringView(buf, total_len);
+}
+
 StringView mangle_type_name(BumpAllocator& alloc, Type* type) {
     if (!type) return "void";
 

@@ -344,15 +344,32 @@ void SemanticAnalyzer::import_builtin_prelude() {
 
     // Import all exports from the builtin module into global scope
     for (const ModuleExport& exp : builtin_module->exports) {
-        // Skip if already defined (shouldn't happen, but be safe)
-        if (m_symbols.lookup_local(exp.name)) continue;
+        // The flat/callable name: the registry key for overloaded natives,
+        // otherwise the export name itself.
+        StringView original_name = exp.symbol_name.empty() ? exp.name : exp.symbol_name;
+
+        Symbol* existing = m_symbols.lookup_local(exp.name);
+        if (existing) {
+            // Overloaded natives export one entry per signature under the
+            // same source name — chain the rest onto the head.
+            if (exp.kind == ExportKind::Function && is_function_symbol_kind(existing->kind)) {
+                Symbol* sym = m_symbols.append_overload(
+                    existing, SymbolKind::ImportedFunction, exp.type,
+                    SourceLocation{0, 0, 0, 0}, nullptr);
+                sym->imported_func.module_name = BUILTIN_MODULE_NAME;
+                sym->imported_func.original_name = original_name;
+                sym->imported_func.native_index = exp.index;
+                sym->imported_func.is_native = exp.is_native;
+            }
+            continue;
+        }
 
         // Register the imported symbol based on its kind
         if (exp.kind == ExportKind::Function) {
             m_symbols.define_imported_function(
                 exp.name, exp.type, SourceLocation{0, 0, 0, 0},
                 BUILTIN_MODULE_NAME,
-                exp.name, exp.index, exp.is_native);
+                original_name, exp.index, exp.is_native);
         } else {
             // For structs/enums, define as regular types
             m_symbols.define(static_cast<SymbolKind>(
@@ -381,6 +398,15 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
 
         // Register generic functions as templates (not concrete functions)
         if (decl->kind == AstKind::DeclFun && decl->fun_decl.type_params.size() > 0) {
+            // A name is either generic or overloaded/concrete, never both
+            // (the converse direction is enforced in register_fun_signature).
+            Symbol* existing = m_symbols.lookup(decl->fun_decl.name);
+            if (existing && is_function_symbol_kind(existing->kind)) {
+                error_fmt(decl->loc,
+                         "'{}' is already a concrete function; a name cannot have both generic and concrete definitions",
+                         decl->fun_decl.name);
+                continue;
+            }
             m_type_env.generics().register_generic_fun(
                 decl->fun_decl.name, decl, m_program ? m_program->module_name : StringView{});
             continue;
@@ -712,6 +738,58 @@ void SemanticAnalyzer::register_fun_signature(Decl* decl) {
 
     // Create function type
     Type* func_type = m_types.function_type(param_types, return_type);
+
+    // An existing function-kind symbol of the same name starts/extends an
+    // overload set (chained off the head — see Symbol::next_overload).
+    Symbol* existing = m_symbols.lookup_local(fun_decl.name);
+    if (existing && is_function_symbol_kind(existing->kind)) {
+        if (fun_decl.name == "main"_sv) {
+            error(decl->loc, "'main' cannot be overloaded");
+            return;
+        }
+        // Identical parameter types anywhere in the chain = redefinition
+        // (differing only in return type is also a redefinition). Function
+        // param types are interned, so element-wise pointer equality is exact.
+        for (Symbol* member = existing; member; member = member->next_overload) {
+            Type* member_type = member->type;
+            if (!member_type || !member_type->is_function()) continue;
+            Span<Type*> member_params = member_type->func_info.param_types;
+            if (member_params.size() != param_types.size()) continue;
+            bool same = true;
+            for (u32 i = 0; i < param_types.size(); i++) {
+                if (member_params[i] != param_types[i]) { same = false; break; }
+            }
+            if (same) {
+                error_fmt(decl->loc, "redefinition of '{}' with the same parameter types",
+                         fun_decl.name);
+                return;
+            }
+        }
+        Symbol* sym = m_symbols.append_overload(existing, SymbolKind::Function,
+                                                func_type, decl->loc, decl);
+        sym->is_pub = fun_decl.is_pub;
+        // The set now has 2+ members: back-fill the signature-suffixed flat
+        // name on every script member (the head may have been a plain single
+        // definition until now). Imported/native members already carry their
+        // registry key via imported_func.original_name.
+        for (Symbol* member = existing; member; member = member->next_overload) {
+            if (member->kind == SymbolKind::Function && member->decl &&
+                member->decl->kind == AstKind::DeclFun &&
+                member->decl->fun_decl.overload_mangled_name.empty() &&
+                member->type && member->type->is_function()) {
+                member->decl->fun_decl.overload_mangled_name = mangle_overload(
+                    m_allocator, fun_decl.name, member->type->func_info.param_types);
+            }
+        }
+        return;
+    }
+    // A name is either generic or overloaded/concrete, never both.
+    if (m_type_env.generics().is_generic_fun(fun_decl.name)) {
+        error_fmt(decl->loc,
+                 "'{}' is a generic function; a name cannot have both generic and concrete definitions",
+                 fun_decl.name);
+        return;
+    }
 
     // Define function in global scope
     Symbol* sym = m_symbols.define(SymbolKind::Function, fun_decl.name, func_type, decl->loc, decl);
@@ -1370,6 +1448,13 @@ Type* SemanticAnalyzer::analyze_var_initializer(VarDecl& var_decl, Decl* decl, T
         if (var_type && m_generic_calls.coerce_generic_template_ref(var_decl.initializer, var_type)) {
             init_type = var_decl.initializer->resolved_type;
         }
+        // Deliberately NOT gated on var_type: `var g = f;` with f overloaded
+        // has no target type to pick the member — coerce reports the
+        // ambiguity (instead of the error-typed var surfacing as an internal
+        // lowering failure later).
+        if (coerce_overloaded_fun_ref(var_decl.initializer, var_type)) {
+            init_type = var_decl.initializer->resolved_type;
+        }
         if (!var_type) {
             // Type inference
             var_type = init_type;
@@ -1566,9 +1651,28 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
 
             // Register the imported symbol based on its kind
             if (exp->kind == ExportKind::Function) {
-                m_symbols.define_imported_function(
-                    local_name, exp->type, name.loc,
-                    imp.module_path, exp->name, exp->index, exp->is_native);
+                // An overloaded name has one export PER member — import the
+                // whole set: the first defines the head, the rest chain.
+                Symbol* head = nullptr;
+                for (const ModuleExport& member : module->exports) {
+                    if (member.kind != ExportKind::Function || member.name != name.name) continue;
+                    if (!member.is_pub) continue;
+                    StringView original_name =
+                        member.symbol_name.empty() ? member.name : member.symbol_name;
+                    if (!head) {
+                        head = m_symbols.define_imported_function(
+                            local_name, member.type, name.loc,
+                            imp.module_path, original_name, member.index, member.is_native);
+                    } else {
+                        Symbol* sym = m_symbols.append_overload(
+                            head, SymbolKind::ImportedFunction, member.type,
+                            name.loc, nullptr);
+                        sym->imported_func.module_name = imp.module_path;
+                        sym->imported_func.original_name = original_name;
+                        sym->imported_func.native_index = member.index;
+                        sym->imported_func.is_native = member.is_native;
+                    }
+                }
             } else if (exp->kind == ExportKind::Enum) {
                 // Define the enum type
                 m_symbols.define(SymbolKind::Enum, local_name, exp->type, name.loc, exp->decl);
@@ -2093,6 +2197,9 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
     if (rs.value) {
         Type* actual = analyze_expr(rs.value);
         if (expected && m_generic_calls.coerce_generic_template_ref(rs.value, expected)) {
+            actual = rs.value->resolved_type;
+        }
+        if (expected && coerce_overloaded_fun_ref(rs.value, expected)) {
             actual = rs.value->resolved_type;
         }
         if (!m_checker.check_assignable(expected, actual, stmt->loc)) {
@@ -2705,6 +2812,15 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
     // capturable (non-Function) symbols, and the call path guards on the callee
     // still being an ExprIdentifier.
     id.resolved_sym = sym;
+
+    // Overloaded function in value position: analysis can't pick the member
+    // without a target function type — defer to coerce_overloaded_fun_ref at
+    // the coercion sites (mirrors the generic-template-ref deferral). Call
+    // callees never reach here — analyze_call_expr intercepts them.
+    if (is_function_symbol_kind(sym->kind) && sym->next_overload) {
+        id.is_overloaded_ref = true;
+        return m_types.error_type();
+    }
 
     // Closure-capture path: if this identifier resolves across a lambda
     // boundary, record the capture(s) and rewrite the expr in place.
@@ -3669,9 +3785,12 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
             }
         }
 
-        // Resolve generic-template-ref arg against param type before
-        // assignability checking. Updates arg_type via resolved_type.
+        // Resolve generic-template-ref / overloaded-ref args against the param
+        // type before assignability checking. Updates arg_type via resolved_type.
         if (param_types[i] && m_generic_calls.coerce_generic_template_ref(arg.expr, param_types[i])) {
+            arg_type = arg.expr->resolved_type;
+        }
+        if (param_types[i] && coerce_overloaded_fun_ref(arg.expr, param_types[i])) {
             arg_type = arg.expr->resolved_type;
         }
 
@@ -4117,6 +4236,302 @@ Type* SemanticAnalyzer::analyze_struct_method_call(Expr* expr, CallExpr& ce, Get
     return mi->return_type;
 }
 
+// The flat/callable name of one overload-set member: the registry key for
+// natives ("$ol$print$i32"), the signature-suffixed name for script members.
+static StringView overload_member_flat_name(Symbol* member) {
+    if (member->kind == SymbolKind::ImportedFunction) {
+        return member->imported_func.original_name;
+    }
+    if (member->decl && member->decl->kind == AstKind::DeclFun) {
+        return member->decl->fun_decl.overload_mangled_name;
+    }
+    return StringView{};
+}
+
+bool SemanticAnalyzer::coerce_overloaded_fun_ref(Expr* expr, Type* expected) {
+    if (!expr || expr->kind != AstKind::ExprIdentifier) return true;
+    IdentifierExpr& id = expr->identifier;
+    if (!id.is_overloaded_ref) return true;
+
+    Type* expected_fn = expected ? expected->base_type() : nullptr;
+    if (!expected_fn || !expected_fn->is_function()) {
+        error_fmt(expr->loc,
+            "reference to overloaded function '{}' is ambiguous; a fun(...)-typed "
+            "context (e.g. a typed variable or parameter) is needed to pick the overload",
+            id.name);
+        return false;
+    }
+
+    // Function types are interned — pointer equality is an exact signature match.
+    for (Symbol* member = id.resolved_sym; member; member = member->next_overload) {
+        if (member->type != expected_fn) continue;
+        id.mangled_name = overload_member_flat_name(member);
+        id.resolved_sym = member;
+        id.is_overloaded_ref = false;
+        expr->resolved_type = member->type;
+        return true;
+    }
+    auto expected_str = m_checker.type_string(expected_fn);
+    error_fmt(expr->loc, "no overload of '{}' matches the expected type '{}'",
+             id.name, expected_str.data());
+    return false;
+}
+
+bool SemanticAnalyzer::try_print_printable_fallback(Expr* expr, CallExpr& ce, Symbol* head,
+                                                    const Vector<Type*>& arg_types) {
+    if (head->name != "print"_sv) return false;
+    if (ce.arguments.size() != 1 || arg_types.size() != 1) return false;
+    if (ce.arguments[0].modifier != ParamModifier::None) return false;
+
+    // Settle an unsuffixed literal on its default (can only be reached with a
+    // literal if no numeric print overload exists — settle defensively).
+    Type* arg_type = arg_types[0];
+    if (arg_type && arg_type->is_numeric_literal()) {
+        m_checker.coerce_numeric_literal(ce.arguments[0].expr, default_literal_type(arg_type));
+        arg_type = ce.arguments[0].expr->resolved_type;
+    }
+    if (!arg_type || !type_implements_printable(arg_type)) return false;
+
+    // The rewrite target: the print(string) member.
+    Symbol* string_member = nullptr;
+    for (Symbol* member = head; member; member = member->next_overload) {
+        if (!member->type || !member->type->is_function()) continue;
+        Span<Type*> params = member->type->func_info.param_types;
+        if (params.size() == 1 && params[0] == m_types.string_type()) {
+            string_member = member;
+            break;
+        }
+    }
+    if (!string_member) return false;
+
+    // Synthesize `arg.to_string()` around the ALREADY-analyzed argument —
+    // hand-annotated exactly as the method-call analyzers would have, never
+    // re-analyzed (single-shot rule; precedent: inject_default_method).
+    Expr* arg_expr = ce.arguments[0].expr;
+    Expr* getter = m_allocator.emplace<Expr>();
+    getter->kind = AstKind::ExprGet;
+    getter->loc = arg_expr->loc;
+    getter->get.object = arg_expr;
+    getter->get.name = "to_string"_sv;
+
+    Expr* to_string_call = m_allocator.emplace<Expr>();
+    to_string_call->kind = AstKind::ExprCall;
+    to_string_call->loc = arg_expr->loc;
+    to_string_call->call.callee = getter;
+    to_string_call->call.arguments = Span<CallArg>();
+    to_string_call->resolved_type = m_types.string_type();
+
+    // Per-receiver-kind annotation, mirroring analyze_builtin_method_call /
+    // analyze_struct_method_call. Containers are intercepted BY NAME in the
+    // IR builder, but their MethodInfo still provides the method type.
+    Type* base_type = arg_type->base_type();
+    const MethodInfo* method_info = nullptr;
+    if (base_type->is_primitive()) {
+        method_info = m_types.lookup_primitive_method(base_type->kind, "to_string"_sv);
+    } else if (base_type->is_enum()) {
+        method_info = m_types.lookup_primitive_method(TypeKind::I32, "to_string"_sv);
+    } else if (base_type->is_list()) {
+        populate_list_methods(base_type);
+        method_info = m_types.lookup_method(base_type, "to_string"_sv);
+    } else if (base_type->is_map()) {
+        populate_map_methods(base_type);
+        method_info = m_types.lookup_method(base_type, "to_string"_sv);
+    }
+    if (method_info) {
+        to_string_call->call.mangled_name = method_info->native_name;
+        getter->resolved_type = build_method_function_type(base_type, method_info);
+    } else if (base_type->is_struct()) {
+        Type* found_in_type = nullptr;
+        const MethodInfo* struct_method =
+            lookup_method_in_hierarchy(base_type, "to_string"_sv, &found_in_type);
+        if (!struct_method) return false;  // Printable said yes, so shouldn't happen
+        getter->resolved_type = build_method_function_type(
+            found_in_type ? found_in_type : base_type, struct_method);
+    } else {
+        return false;
+    }
+
+    // Replace the argument span (fresh 1-element span; the original CallArg
+    // is not mutated) and resolve as the string overload.
+    CallArg* new_args = m_allocator.emplace<CallArg>();
+    new_args->expr = to_string_call;
+    new_args->modifier = ParamModifier::None;
+    new_args->modifier_loc = arg_expr->loc;
+    ce.arguments = Span<CallArg>(new_args, 1);
+
+    ce.mangled_name = overload_member_flat_name(string_member);
+    ce.callee->resolved_type = string_member->type;
+    if (ce.callee->kind == AstKind::ExprIdentifier) {
+        ce.callee->identifier.resolved_sym = string_member;
+    }
+    return true;
+}
+
+Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol* head) {
+    Span<CallArg> args = ce.arguments;
+
+    // ---- Phase A: analyze every argument exactly ONCE (single-shot rule) ----
+    Vector<Type*> arg_types;
+    for (u32 i = 0; i < args.size(); i++) {
+        CallArg& arg = args[i];
+        if (arg.modifier == ParamModifier::Out || arg.modifier == ParamModifier::Inout) {
+            if (!is_lvalue(arg.expr)) {
+                error(arg.expr->loc, "'out'/'inout' argument must be a variable");
+            }
+        }
+        Type* arg_type = analyze_expr(arg.expr);
+        // Same element re-typing check_call_args applies for inout/out
+        // container subscripts (see that function for the rationale).
+        if ((arg.modifier == ParamModifier::Inout || arg.modifier == ParamModifier::Out)
+            && arg.expr->kind == AstKind::ExprIndex) {
+            Type* cont = arg.expr->index.object->resolved_type;
+            Type* base = cont ? cont->base_type() : nullptr;
+            Type* elem = nullptr;
+            if (base && base->is_list()) elem = base->list_info.element_type;
+            else if (base && base->is_map()) elem = base->map_info.value_type;
+            if (elem && !elem->is_error()) {
+                arg.expr->resolved_type = elem;
+                arg_type = elem;
+            }
+        }
+        arg_types.push_back(arg_type);
+    }
+
+    // ---- Phase B: candidate filtering over the chain (definition order) ----
+    auto member_param_modifier = [](Symbol* member, u32 i) -> ParamModifier {
+        if (member->decl && member->decl->kind == AstKind::DeclFun &&
+            i < member->decl->fun_decl.params.size()) {
+            return member->decl->fun_decl.params[i].modifier;
+        }
+        return ParamModifier::None;  // natives: no out/inout params
+    };
+    auto shape_matches = [&](Symbol* member) -> bool {
+        if (!member->type || !member->type->is_function()) return false;
+        Span<Type*> param_types = member->type->func_info.param_types;
+        if (param_types.size() != args.size()) return false;
+        for (u32 i = 0; i < args.size(); i++) {
+            if (member_param_modifier(member, i) != args[i].modifier) return false;
+        }
+        return true;
+    };
+    // A wildcard arg (deferred generic-template ref / overloaded ref) matches
+    // any function-typed param position; the winner's commit coerces it.
+    auto arg_is_deferred_ref = [&](u32 i) -> bool {
+        return args[i].expr->kind == AstKind::ExprIdentifier &&
+            (args[i].expr->identifier.is_generic_template_ref ||
+             args[i].expr->identifier.is_overloaded_ref);
+    };
+
+    bool any_shape = false;
+    Symbol* winner = nullptr;
+
+    // Exact pass: unsuffixed literals settle on their defaults, then exact
+    // type equality per position (duplicate signatures are definition errors,
+    // so at most one member can match).
+    for (Symbol* member = head; member; member = member->next_overload) {
+        if (!shape_matches(member)) continue;
+        any_shape = true;
+        Span<Type*> param_types = member->type->func_info.param_types;
+        bool exact = true;
+        for (u32 i = 0; i < args.size(); i++) {
+            if (arg_is_deferred_ref(i)) {
+                if (!param_types[i] || !param_types[i]->base_type()->is_function()) {
+                    exact = false;
+                    break;
+                }
+                continue;
+            }
+            if (default_literal_type(arg_types[i]) != param_types[i]) { exact = false; break; }
+        }
+        if (exact) { winner = member; break; }
+    }
+
+    // Assignable pass (original, unsettled arg types — literal polymorphism
+    // survives): a single assignable candidate wins; two or more is ambiguous.
+    Symbol* ambiguous_with = nullptr;
+    if (!winner) {
+        for (Symbol* member = head; member; member = member->next_overload) {
+            if (!shape_matches(member)) continue;
+            Span<Type*> param_types = member->type->func_info.param_types;
+            bool ok = true;
+            for (u32 i = 0; i < args.size(); i++) {
+                if (arg_is_deferred_ref(i)) {
+                    if (!param_types[i] || !param_types[i]->base_type()->is_function()) {
+                        ok = false;
+                        break;
+                    }
+                    continue;
+                }
+                if (args[i].modifier == ParamModifier::Out) {
+                    // Write-only: the variable's declared type must match.
+                    if (arg_types[i] != param_types[i]) { ok = false; break; }
+                    continue;
+                }
+                if (!m_checker.is_assignable(param_types[i], arg_types[i])) { ok = false; break; }
+            }
+            if (!ok) continue;
+            if (winner) { ambiguous_with = member; break; }
+            winner = member;
+        }
+    }
+
+    if (!winner || ambiguous_with) {
+        if (ambiguous_with) {
+            error_fmt(expr->loc, "ambiguous call to overloaded function '{}'", head->name);
+        } else if (!any_shape) {
+            error_fmt(expr->loc, "no overload of '{}' takes {} argument(s)",
+                     head->name, args.size());
+        } else if (!try_print_printable_fallback(expr, ce, head, arg_types)) {
+            error_fmt(expr->loc, "no matching overload of '{}' for the given argument types",
+                     head->name);
+        } else {
+            return m_types.void_type();  // rewritten to print(arg.to_string())
+        }
+        // List the candidate signatures to make the failure actionable.
+        for (Symbol* member = head; member; member = member->next_overload) {
+            if (!member->type || !member->type->is_function()) continue;
+            auto sig_str = m_checker.type_string(member->type);
+            error_fmt(member->loc.line ? member->loc : expr->loc,
+                     "  candidate: {} {}", head->name, sig_str.data());
+        }
+        return m_types.error_type();
+    }
+
+    // ---- Phase C: commit to the winner ----
+    Span<Type*> param_types = winner->type->func_info.param_types;
+    Span<Param> params = (winner->decl && winner->decl->kind == AstKind::DeclFun)
+        ? winner->decl->fun_decl.params : Span<Param>();
+    for (u32 i = 0; i < args.size(); i++) {
+        CallArg& arg = args[i];
+        // Deferred function-ref args coerce against the winner's param type.
+        if (param_types[i] && m_generic_calls.coerce_generic_template_ref(arg.expr, param_types[i])) {
+            arg_types[i] = arg.expr->resolved_type;
+        }
+        if (param_types[i] && coerce_overloaded_fun_ref(arg.expr, param_types[i])) {
+            arg_types[i] = arg.expr->resolved_type;
+        }
+        if (arg.modifier != ParamModifier::Out) {
+            m_checker.check_assignable(param_types[i], arg_types[i], arg.expr->loc);
+            m_checker.coerce_numeric_literal(arg.expr, param_types[i]);
+        }
+        ParamModifier expected_mod = (params.data() && i < params.size())
+            ? params[i].modifier : ParamModifier::None;
+        (void)expected_mod;  // shape filter already guaranteed modifier equality
+        if (param_types[i] && param_types[i]->noncopyable()
+            && arg.modifier == ParamModifier::None) {
+            m_lifetimes.consume_noncopyable(arg.expr, arg.expr->loc);
+        }
+    }
+
+    // Sema→IR contract: record the resolved member on the AST.
+    ce.mangled_name = overload_member_flat_name(winner);
+    ce.callee->resolved_type = winner->type;
+    if (ce.callee->kind == AstKind::ExprIdentifier) {
+        ce.callee->identifier.resolved_sym = winner;
+    }
+    return winner->type->func_info.return_type;
+}
+
 Type* SemanticAnalyzer::analyze_regular_fun_call(Expr* expr, CallExpr& ce) {
     Type* callee_type = analyze_expr(ce.callee);
     if (callee_type->is_error()) return m_types.error_type();
@@ -4328,6 +4743,17 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         }
     }
 
+    // Overloaded direct call: the callee names a function with 2+ definitions.
+    // Placed after every special case so casts/generics/ctors/methods keep
+    // precedence, and an innermost local shadowing the name (lookup returns
+    // the Variable) still routes to the indirect-call path below.
+    if (call_expr.callee->kind == AstKind::ExprIdentifier) {
+        Symbol* sym = m_symbols.lookup(call_expr.callee->identifier.name);
+        if (sym && is_function_symbol_kind(sym->kind) && sym->next_overload) {
+            return analyze_overloaded_call(expr, call_expr, sym);
+        }
+    }
+
     // Regular function call (fallback)
     return analyze_regular_fun_call(expr, call_expr);
 }
@@ -4482,6 +4908,24 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
             if (!exp->is_pub) {
                 error_fmt(expr->loc, "'{}' is not public in module '{}'", get_expr.name, name);
                 return m_types.error_type();
+            }
+
+            // A module-qualified use of an OVERLOADED export would silently
+            // bind the first member (find_export returns the first match) —
+            // reject with guidance instead of miscompiling.
+            if (exp->kind == ExportKind::Function) {
+                u32 member_count = 0;
+                for (const auto& member : module->exports) {
+                    if (member.kind == ExportKind::Function && member.name == get_expr.name) {
+                        member_count++;
+                    }
+                }
+                if (member_count > 1) {
+                    error_fmt(expr->loc,
+                        "'{}' is overloaded in module '{}'; import it with `from ... import {}` to call it",
+                        get_expr.name, name, get_expr.name);
+                    return m_types.error_type();
+                }
             }
 
             // Mark the expression with the module info for later use by IR builder
@@ -4962,6 +5406,9 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
             Type* value_type = analyze_expr(fi.value);
             Type* field_type = type->struct_info.fields[field_idx].type;
             if (field_type && m_generic_calls.coerce_generic_template_ref(fi.value, field_type)) {
+                value_type = fi.value->resolved_type;
+            }
+            if (field_type && coerce_overloaded_fun_ref(fi.value, field_type)) {
                 value_type = fi.value->resolved_type;
             }
             m_checker.check_assignable(field_type, value_type, fi.loc);

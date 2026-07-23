@@ -3,6 +3,7 @@
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/string.hpp"
 #include "roxy/shared/lexer.hpp"
+#include "roxy/compiler/mangling.hpp"
 #include "roxy/compiler/parser.hpp"
 #include "roxy/compiler/semantic.hpp"
 #include "roxy/compiler/type_env.hpp"
@@ -1394,6 +1395,154 @@ TEST_SUITE("Semantic") {
             }
         )"));
         CHECK(t2.has_error_containing("enum 'Color' has no method 'frobnicate'"));
+    }
+
+    // ========================================================================
+    // Function overloading
+    // ========================================================================
+
+    TEST_CASE("Overloads: SymbolTable chain mechanics") {
+        BumpAllocator allocator{4096};
+        TypeCache types(allocator);
+        SymbolTable symbols(allocator);
+
+        Type* fn_i32 = types.function_type(
+            Span<Type*>(allocator.emplace<Type*>(types.i32_type()), 1), types.void_type());
+        Type* fn_str = types.function_type(
+            Span<Type*>(allocator.emplace<Type*>(types.string_type()), 1), types.void_type());
+
+        Symbol* head = symbols.define(SymbolKind::Function, "f"_sv, fn_i32,
+                                      SourceLocation{0, 0, 0, 0});
+        Symbol* member = symbols.append_overload(head, SymbolKind::Function, fn_str,
+                                                 SourceLocation{0, 0, 0, 0});
+        // Chain order preserved; lookup returns the head; the member shares
+        // name and defining scope but never enters the cache.
+        CHECK(head->next_overload == member);
+        CHECK(member->next_overload == nullptr);
+        CHECK(member->name == "f"_sv);
+        CHECK(member->defining_scope == head->defining_scope);
+        CHECK(symbols.lookup("f"_sv) == head);
+        CHECK(symbols.lookup_local("f"_sv) == head);
+    }
+
+    TEST_CASE("Overloads: mangle_overload spellings") {
+        BumpAllocator allocator{4096};
+        TypeCache types(allocator);
+
+        Type* params1[] = { types.i32_type() };
+        StringView m1 = mangle_overload(allocator, "print"_sv, Span<Type*>(params1, 1));
+        CHECK(m1 == "$ol$print$i32"_sv);
+
+        Type* params2[] = { types.list_type(types.i32_type()), types.string_type() };
+        StringView m2 = mangle_overload(allocator, "f"_sv, Span<Type*>(params2, 2));
+        CHECK(m2 == "$ol$f$List$i32$string"_sv);
+
+        // No "$$" anywhere — the C emitter's structural parsers must ignore it.
+        for (u32 i = 0; i + 1 < m2.size(); i++) {
+            CHECK(!(m2[i] == '$' && m2[i + 1] == '$'));
+        }
+    }
+
+    TEST_CASE("Overloads: accept by type and arity") {
+        SemanticTestHelper t;
+        bool ok = t.run(R"(
+            fun f(x: i32): i32 { return 1; }
+            fun f(s: string): i32 { return 2; }
+            fun f(x: i32, y: i32): i32 { return 3; }
+            fun main() {
+                f(42);
+                f("hi");
+                f(1, 2);
+            }
+        )");
+        CHECK(ok);
+    }
+
+    TEST_CASE("Overloads: duplicate signature rejected") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            fun f(x: i32): i32 { return 1; }
+            fun f(x: i32): string { return "x"; }
+        )"));
+        CHECK(t.has_error_containing("redefinition of 'f' with the same parameter types"));
+    }
+
+    TEST_CASE("Overloads: main cannot be overloaded") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            fun main() {}
+            fun main(x: i32) {}
+        )"));
+        CHECK(t.has_error_containing("'main' cannot be overloaded"));
+    }
+
+    TEST_CASE("Overloads: generic/concrete exclusivity") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            fun f<T>(v: T): T { return v; }
+            fun f(x: i32): i32 { return x; }
+        )"));
+        CHECK(t.has_error_containing("generic"));
+    }
+
+    TEST_CASE("Overloads: ambiguous call rejected with candidates") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            fun f(x: i64): i32 { return 1; }
+            fun f(x: f32): i32 { return 2; }
+            fun main() {
+                f(42);
+            }
+        )"));
+        CHECK(t.has_error_containing("ambiguous call to overloaded function 'f'"));
+        CHECK(t.has_error_containing("candidate:"));
+    }
+
+    TEST_CASE("Overloads: no matching overload rejected") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            fun f(x: i32): i32 { return 1; }
+            fun f(s: string): i32 { return 2; }
+            fun main() {
+                f(true);
+            }
+        )"));
+        CHECK(t.has_error_containing("no matching overload of 'f'"));
+    }
+
+    TEST_CASE("Overloads: ambiguous bare reference rejected") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            fun f(x: i32): i32 { return 1; }
+            fun f(s: string): i32 { return 2; }
+            fun main() {
+                var g = f;
+            }
+        )"));
+        CHECK(t.has_error_containing("reference to overloaded function 'f' is ambiguous"));
+    }
+
+    TEST_CASE("Overloads: user redefinition of builtin print(string) rejected") {
+        // Was a silent shadow before overloading; now an explicit error.
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            fun print(s: string) {}
+        )"));
+        CHECK(t.has_error_containing("redefinition of 'print' with the same parameter types"));
+    }
+
+    TEST_CASE("Overloads: user extension of the print set accepted") {
+        SemanticTestHelper t;
+        bool ok = t.run(R"(
+            struct Matrix { v: i32; }
+            fun print(m: Matrix) {}
+            fun main() {
+                print(Matrix { v = 1 });
+                print("still works");
+                print(42);
+            }
+        )");
+        CHECK(ok);
     }
 
 }  // TEST_SUITE("Semantic")

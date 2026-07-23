@@ -223,7 +223,15 @@ bool Compiler::analyze_all() {
                 if (!decl) continue;
 
                 if (decl->kind == AstKind::DeclFun && decl->fun_decl.is_pub) {
+                    // lookup() returns the overload chain HEAD — for a member
+                    // of an overload set, walk the chain to THIS decl's symbol
+                    // so the export carries the right per-overload type.
                     Symbol* sym = symbols->lookup(decl->fun_decl.name);
+                    while (sym && sym->decl != decl && sym->next_overload) {
+                        sym = sym->next_overload;
+                    }
+                    if (sym && sym->decl != decl) sym = nullptr;
+                    if (!sym) sym = symbols->lookup(decl->fun_decl.name);
                     Type* func_type = sym ? sym->type : nullptr;
 
                     ModuleExport exp;
@@ -234,6 +242,9 @@ bool Compiler::analyze_all() {
                     exp.is_pub = true;
                     exp.index = static_cast<u32>(mod_info->exports.size());
                     exp.decl = decl;
+                    // Overload members export their signature-suffixed flat
+                    // name (empty for single definitions).
+                    exp.symbol_name = decl->fun_decl.overload_mangled_name;
                     mod_info->exports.push_back(exp);
                 }
                 else if (decl->kind == AstKind::DeclStruct && decl->struct_decl.is_pub) {

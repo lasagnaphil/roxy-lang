@@ -123,6 +123,24 @@ Symbol* SymbolTable::define_imported_function(StringView name, Type* type, Sourc
     return sym;
 }
 
+Symbol* SymbolTable::append_overload(Symbol* head, SymbolKind kind, Type* type,
+                                     SourceLocation loc, Decl* decl) {
+    Symbol* sym = m_allocator.emplace<Symbol>();
+    sym->kind = kind;
+    sym->name = head->name;
+    sym->type = type;
+    sym->loc = loc;
+    sym->decl = decl;
+    sym->is_pub = false;
+    sym->defining_scope = head->defining_scope;
+    // NOT pushed into the scope's symbol vector or the lookup cache — the
+    // chain is reachable only through the head (see Symbol::next_overload).
+    Symbol* tail = head;
+    while (tail->next_overload) tail = tail->next_overload;
+    tail->next_overload = sym;
+    return sym;
+}
+
 Symbol* SymbolTable::lookup(StringView name) const {
     auto it = m_lookup_cache.find(name);
     if (it != m_lookup_cache.end()) {

@@ -183,10 +183,17 @@ struct IdentifierExpr {
     // the expression and defers to coerce_generic_template_ref at the
     // assignment site (var init, arg passing, return, struct field).
     bool is_generic_template_ref;
+    // Set when `name` resolves to an OVERLOADED function in value position —
+    // analysis can't pick the overload without a target function type, so it
+    // defers to coerce_overloaded_fun_ref at the same coercion sites the
+    // generic-template-ref uses. Cleared on coercion; an uncoerced reference
+    // is an "ambiguous reference to overloaded function" error.
+    bool is_overloaded_ref;
     // Set after generic-template-ref coercion (or by the parser for explicit
-    // `identity<i32>` syntax) to the monomorphized name (e.g. "identity$i32").
-    // The IR builder routes through gen_function_ref with this name as the
-    // call target.
+    // `identity<i32>` syntax) to the monomorphized name (e.g. "identity$i32"),
+    // or after overloaded-ref coercion to the chosen overload's flat name
+    // ("$ol$print$string"). The IR builder routes through gen_function_ref
+    // with this name as the call target.
     StringView mangled_name;
     // Explicit type arguments parsed in value position: `identity<i32>`. When
     // non-empty, semantic analysis instantiates the template with these types
@@ -419,14 +426,21 @@ struct Type;
 //
 // --- Name annotations (StringViews written by analysis, read at emit) ---
 //   CallExpr.mangled_name         monomorphized name for generic calls
-//                                 ("identity$i32"), or the native symbol for
+//                                 ("identity$i32"), the native symbol for
 //                                 builtin method/constructor calls
-//                                 (list/map/coro/primitive methods).
+//                                 (list/map/coro/primitive methods), or the
+//                                 resolved overload's flat name for calls to
+//                                 an overloaded function ("$ol$print$i32" —
+//                                 a registry key for natives, the member's
+//                                 FunDecl::overload_mangled_name for script
+//                                 functions).
 //   CallExpr.constructor_name     named-constructor name for Type.name(...)
 //                                 and super.name(...) constructor calls
 //                                 (empty for default ctors and methods).
 //   IdentifierExpr.mangled_name   monomorphized target for a generic function
-//                                 reference in value position.
+//                                 reference in value position, or the chosen
+//                                 overload's flat name after
+//                                 coerce_overloaded_fun_ref.
 //   StructLiteralExpr.mangled_name / type_name
 //                                 generic struct literals are rewritten to the
 //                                 mangled instance name.
@@ -444,6 +458,10 @@ struct Type;
 //     params via coerce_generic_template_ref, which clears the flag and
 //     overwrites resolved_type. If no site coerces it, analysis reports an
 //     error — the IR builder must never see the flag still set.
+//   IdentifierExpr.is_overloaded_ref — the overload analogue: a bare reference
+//     to an overloaded function defers to coerce_overloaded_fun_ref at the
+//     same four sites, which picks the member whose function type equals the
+//     expected type. Same never-reaches-the-IR-builder enforcement.
 //
 // --- AST mutation: the single-shot analysis rule ---
 // Beyond annotating, analysis REWRITES the tree it walks:
@@ -667,6 +685,12 @@ struct FunDecl {
     // ordinary function producing a first-class coroutine value. Read by
     // analyze_fun_body and the IR builder to decide state-machine lowering.
     bool is_coroutine = false;
+    // Set by register_fun_signature when this function is a member of an
+    // overload set (a name with 2+ definitions): the signature-suffixed flat
+    // name ("$ol$f$i32$string") the IR builder emits and calls it by.
+    // Empty for single-definition names — their behavior is byte-identical
+    // to before overloading existed.
+    StringView overload_mangled_name;
 };
 
 // Struct field declaration
